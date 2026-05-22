@@ -1,21 +1,95 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices"],
+  "extends": [
+    "config:best-practices"
+  ],
   "timezone": "Europe/Paris",
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "packageRules": [
-    {"matchUpdateTypes": ["minor", "patch", "digest", "pin"], "automerge": true},
-    {"matchUpdateTypes": ["major"], "automerge": false, "labels": ["major-update"]},
-    {"matchManagers": ["gomod"], "groupName": "Go dependencies"},
-    {"matchPackageNames": ["@typescript/native-preview"], "followTag": "beta", "ignoreUnstable": false},
-    {"matchManagers": ["npm"], "matchUpdateTypes": ["minor", "patch"], "groupName": "npm dev dependencies", "schedule": ["before 6am on monday"]}
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin"
+      ],
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "labels": [
+        "major-update"
+      ]
+    },
+    {
+      "matchManagers": [
+        "gomod"
+      ],
+      "groupName": "Go dependencies"
+    },
+    {
+      "matchPackageNames": [
+        "@typescript/native-preview"
+      ],
+      "followTag": "beta",
+      "ignoreUnstable": false
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "npm dev dependencies",
+      "schedule": [
+        "before 6am on monday"
+      ]
+    }
   ],
   "customManagers": [
-    {"customType": "regex", "description": "Dockerfile ARG versions with renovate comments", "managerFilePatterns": ["/Dockerfile$/"], "matchStrings": ["#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\nARG\\s+\\w+=(?<currentValue>\\S+)"]},
-    {"customType": "regex", "description": "golangci-lint version in workflows", "managerFilePatterns": ["/^\\.github/workflows/.+\\.yaml$/"], "matchStrings": ["#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\s*\\n\\s*VERSION=(?<currentValue>\\S+)"]},
-    {"customType": "regex", "description": "vibekit tools.json versions", "managerFilePatterns": ["/tools\\.json$/"], "matchStrings": ["\"version\":\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"[\\s\\S]*?\"repo\":\\s*\"(?<depName>[^\"]+)\""], "datasourceTemplate": "github-releases"}
+    {
+      "customType": "regex",
+      "description": "Dockerfile ARG versions with renovate comments",
+      "managerFilePatterns": [
+        "/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\nARG\\s+\\w+=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "golangci-lint version in workflows",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.yaml$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\s*\\n\\s*VERSION=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "vibekit tools.json versions",
+      "managerFilePatterns": [
+        "/tools\\.json$/"
+      ],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"[\\s\\S]*?\"repo\":\\s*\"(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "ignorePaths": [
+    "compose.yaml"
   ]
 }
