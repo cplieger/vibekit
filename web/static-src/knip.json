@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "app.ts",
+    "sw.ts",
+    "**/*.test.ts",
+    "**/*.fuzz.test.ts",
+    "**/*.property.test.ts"
+  ],
+  "project": [
+    "**/*.ts",
+    "!**/*.d.ts",
+    "!node_modules/**"
+  ],
+  "ignoreDependencies": [
+    "xterm"
+  ],
+  "typescript": {
+    "config": ["tsconfig.json", "tsconfig.sw.json", "tsconfig.node.json"]
+  }
+}

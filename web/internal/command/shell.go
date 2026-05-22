@@ -1,0 +1,131 @@
+package command
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"net/http"
+	"os/exec"
+	"strings"
+	"time"
+
+	"vibekit/internal/api"
+)
+
+// ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
+const ShellOutputCap = 1 * 1024 * 1024
+
+// ShellCappedBuffer writes to an underlying bytes.Buffer, rejecting
+// bytes past the cap.
+type ShellCappedBuffer struct {
+	Buf       bytes.Buffer
+	Truncated bool
+}
+
+func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
+	remaining := ShellOutputCap - b.Buf.Len()
+	if remaining <= 0 {
+		b.Truncated = true
+		return len(p), nil
+	}
+	if len(p) <= remaining {
+		return b.Buf.Write(p)
+	}
+	b.Truncated = true
+	if _, err := b.Buf.Write(p[:remaining]); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// HandleShellInterception runs a "!" prefixed prompt as a local shell command.
+func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) {
+	shellCmd := strings.TrimPrefix(p.Text, "!")
+	shellCmd = strings.TrimSpace(shellCmd)
+	if shellCmd == "" {
+		d.RespondErr(w, http.StatusBadRequest, errEmptyPrompt)
+		return
+	}
+
+	deps.InflightAdd(1)
+	defer deps.InflightDone()
+
+	// Persist the user message.
+	userMsg := api.Message{
+		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
+		Content: p.Text,
+	}
+	var persisted bool
+	var triggerRename bool
+	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			c.Name = api.DefaultChatName
+		}
+		c.Messages = append(c.Messages, userMsg)
+		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
+			name := TruncateRunes(p.Text, 40)
+			if name != p.Text {
+				name += ellipsis
+			}
+			c.Name = name
+			triggerRename = true
+		}
+		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &userMsg))
+		persisted = true
+		return true
+	}); err != nil {
+		d.RespondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !persisted {
+		d.RespondErr(w, http.StatusConflict, errChatNotFound)
+		return
+	}
+	if triggerRename {
+		deps.InflightGo(func() { AsyncRenameChat(deps, cmd.ChatID, p.Text) })
+	}
+
+	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
+	start := time.Now()
+
+	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
+	defer cancel()
+
+	shellProc := exec.CommandContext(ctx, "sh", "-c", shellCmd)
+	shellProc.Dir = deps.WorkDir()
+	var capped ShellCappedBuffer
+	shellProc.Stdout = &capped
+	shellProc.Stderr = &capped
+	runErr := shellProc.Run()
+
+	raw := capped.Buf.String()
+	if runErr != nil {
+		raw += "\n" + runErr.Error()
+	}
+	if capped.Truncated {
+		raw += "\n[output truncated at 1 MiB]"
+	}
+	output := api.SanitizeOutput(raw)
+
+	slog.Info("shell interception complete",
+		"chat_id", cmd.ChatID,
+		"elapsed_ms", time.Since(start).Milliseconds(),
+		"exit_error", runErr != nil,
+		"truncated", capped.Truncated)
+
+	content := "```\n" + strings.TrimRight(output, "\n") + "\n```"
+	msgID := NewMessageID()
+	assistantMsg := api.Message{
+		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
+		Content: content,
+	}
+	appendErr := deps.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
+	if appendErr != nil {
+		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
+	}
+	if _, stillExists := deps.ChatStore().Get(ctx, cmd.ChatID); stillExists {
+		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &assistantMsg))
+		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
+	}
+	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+}

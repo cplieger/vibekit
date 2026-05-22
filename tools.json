@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Tool manifest read by setup-tools.sh on container boot.",
+    "Add tools your AI agent should have access to; they install into",
+    "/config/tools/ and persist across container restarts.",
+    "",
+    "Sections: runtimes, binary, go, npm, pip, custom, cargo, apt.",
+    "Each tool has a version and an 'update' block; set method to 'manual'",
+    "to pin, or use 'github'/'gomod'/'url'/'npm'/'pypi' to track upstream.",
+    "",
+    "The two entries below are harmless demos (GitHub CLI and yq) to show",
+    "what the schema looks like. Remove them if you don't want them; add",
+    "your own tools the same way.",
+    "",
+    "Node.js, npm, and a handful of build essentials are baked into the",
+    "image so MCP servers (npx) always work. kiro-cli is downloaded on",
+    "first boot. These are not listed here and cannot be disabled through",
+    "this manifest."
+  ],
+  "runtimes": {},
+  "binary": {
+    "gh": {
+      "version": "v2.92.0",
+      "update": {
+        "method": "github",
+        "repo": "cli/cli"
+      },
+      "install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_amd64.tar.gz | tar -xz --strip-components=1 -C ${TOOLS} gh_${VERSION_NOPFX}_linux_amd64/bin/gh"
+    },
+    "yq": {
+      "version": "v4.53.2",
+      "update": {
+        "method": "github",
+        "repo": "mikefarah/yq"
+      },
+      "install": "curl -fsSL -o ${BIN}/yq https://github.com/mikefarah/yq/releases/download/${VERSION}/yq_linux_amd64 && chmod 755 ${BIN}/yq"
+    }
+  },
+  "go": {},
+  "npm": {},
+  "pip": {},
+  "custom": {}
+}

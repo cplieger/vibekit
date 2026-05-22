@@ -1,0 +1,256 @@
+package command
+
+// Command handlers for Supervised mode: resolve pending changes,
+// set supervised mode, trust/clear trust.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+
+	"vibekit/internal/api"
+	"vibekit/internal/pending"
+)
+
+// CmdResolvePendingChange settles one staged op.
+func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	var p api.ResolvePendingChangeCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		return
+	}
+	if p.ToolCallID == "" {
+		d.RespondErr(w, http.StatusBadRequest, errResolveMissingID)
+		return
+	}
+	switch p.Action {
+	case api.PendingActionAccept, api.PendingActionReject:
+	default:
+		d.RespondErr(w, http.StatusBadRequest, errResolveBadAction)
+		return
+	}
+	snap, err := deps.PendingStore().Resolve(ctx, p.ToolCallID, p.Action)
+	switch {
+	case errors.Is(err, pending.ErrUnknown):
+		d.RespondErr(w, http.StatusNotFound, errResolveUnknown)
+		return
+	case err != nil:
+		d.RespondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+		ToolCallID: snap.ToolCallID,
+		Action:     p.Action,
+		Path:       snap.Path,
+	}))
+	slog.Info("pending change resolved", "chat_id", cmd.ChatID,
+		"tool_call_id", snap.ToolCallID, "path", snap.Path, "action", p.Action)
+	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+}
+
+// CmdResolveAllPendingChanges settles every op in the chat.
+func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	var p api.ResolveAllPendingChangesCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		return
+	}
+	switch p.Action {
+	case api.PendingActionAccept, api.PendingActionReject:
+	default:
+		d.RespondErr(w, http.StatusBadRequest, errResolveBadAction)
+		return
+	}
+
+	list := deps.PendingStore().ListForChat(cmd.ChatID)
+	if len(list) == 0 {
+		d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: 0})
+		return
+	}
+
+	if p.Action == api.PendingActionReject {
+		snaps := deps.PendingStore().RejectAllForChat(cmd.ChatID)
+		for _, snap := range snaps {
+			deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+				ToolCallID: snap.ToolCallID,
+				Action:     api.PendingActionReject,
+				Path:       snap.Path,
+			}))
+		}
+		slog.Info("bulk pending changes resolved",
+			"chat_id", cmd.ChatID, "action", p.Action, keyResolved, len(snaps))
+		d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
+		return
+	}
+
+	resolved := 0
+	for _, snap := range list {
+		_, err := deps.PendingStore().Resolve(ctx, snap.ToolCallID, p.Action)
+		if errors.Is(err, pending.ErrUnknown) {
+			continue
+		}
+		if err != nil {
+			slog.Warn("bulk resolve: one op failed",
+				"chat_id", cmd.ChatID, "tool_call_id", snap.ToolCallID, keyError, err)
+			continue
+		}
+		deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+			ToolCallID: snap.ToolCallID,
+			Action:     p.Action,
+			Path:       snap.Path,
+		}))
+		resolved++
+	}
+	slog.Info("bulk pending changes resolved",
+		"chat_id", cmd.ChatID, "action", p.Action, keyResolved, resolved)
+	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: resolved})
+}
+
+// CmdSetSupervisedMode toggles the chat's SupervisedMode flag.
+func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	var p api.SetSupervisedModeCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		return
+	}
+
+	var changed bool
+	err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if c.SupervisedMode == p.Enabled {
+			return false
+		}
+		c.SupervisedMode = p.Enabled
+		changed = true
+		return true
+	})
+	if err != nil {
+		d.RespondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !changed {
+		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
+			d.RespondErr(w, http.StatusNotFound, errSetSupervisedMode)
+			return
+		}
+		d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+		return
+	}
+	if !p.Enabled {
+		deps.FlushPendingForChat(ctx, cmd.ChatID, api.ClearReasonModeDisabled)
+		deps.SupervisedClearTrust(cmd.ChatID, api.ClearReasonModeDisabled)
+	}
+	slog.Info("supervised mode toggled",
+		"chat_id", cmd.ChatID, "enabled", p.Enabled)
+	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+}
+
+// CmdResolvePendingChangePartial settles one staged op with merged text.
+func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	var p api.ResolvePendingChangePartialCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		return
+	}
+	if p.ToolCallID == "" {
+		d.RespondErr(w, http.StatusBadRequest, errResolveMissingID)
+		return
+	}
+	if len(p.MergedText) > pending.Cap {
+		d.RespondErr(w, http.StatusRequestEntityTooLarge, errMergedTooLarge)
+		return
+	}
+	snap, err := deps.PendingStore().ResolveWithText(ctx, p.ToolCallID, p.MergedText)
+	switch {
+	case errors.Is(err, pending.ErrUnknown):
+		d.RespondErr(w, http.StatusNotFound, errResolveUnknown)
+		return
+	case errors.Is(err, pending.ErrMergeNotApplicable):
+		d.RespondErr(w, http.StatusBadRequest, err)
+		return
+	case err != nil:
+		d.RespondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+		ToolCallID: snap.ToolCallID,
+		Action:     api.PendingActionAccept,
+		Path:       snap.Path,
+	}))
+	slog.Info("pending change resolved (partial)",
+		"chat_id", cmd.ChatID, "tool_call_id", snap.ToolCallID, "path", snap.Path)
+	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+}
+
+// CmdTrustPendingChanges enables per-turn trust and accepts all outstanding ops.
+func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	if !deps.ChatInSupervisedMode(ctx, cmd.ChatID) {
+		d.RespondErr(w, http.StatusBadRequest,
+			errors.New("chat is not in supervised mode"))
+		return
+	}
+	deps.SupervisedSetTrust(cmd.ChatID)
+
+	resolved := 0
+	for ctx.Err() == nil {
+		list := deps.PendingStore().ListForChat(cmd.ChatID)
+		if len(list) == 0 {
+			break
+		}
+		for _, snap := range list {
+			_, err := deps.PendingStore().Resolve(ctx, snap.ToolCallID, pending.ActionAccept)
+			if errors.Is(err, pending.ErrUnknown) {
+				continue
+			}
+			if err != nil {
+				slog.Warn("trust: resolve op", "chat_id", cmd.ChatID,
+					"tool_call_id", snap.ToolCallID, keyError, err)
+				continue
+			}
+			deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+				ToolCallID: snap.ToolCallID,
+				Action:     api.PendingActionAccept,
+				Path:       snap.Path,
+			}))
+			resolved++
+		}
+	}
+	slog.Info("trust pending changes",
+		"chat_id", cmd.ChatID, "accepted", resolved)
+	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: resolved})
+}
+
+// CmdClearPendingTrust clears the per-turn trust flag.
+func CmdClearPendingTrust(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+	deps := d.Deps()
+	if !d.RequireChatID(w, cmd) {
+		return
+	}
+	deps.SupervisedClearTrust(cmd.ChatID, api.ClearReasonUserCleared)
+	slog.Info("clear pending trust", "chat_id", cmd.ChatID)
+	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+}

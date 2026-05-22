@@ -1,0 +1,523 @@
+// HTTP handlers for the forges package.
+//
+// Routes:
+//   GET    /api/forges                          — list configured forges
+//   POST   /api/forges/refresh                  — re-read CLI configs
+//   POST   /api/forges/oauth/github/start       — start GH device flow
+//   POST   /api/forges/oauth/github/poll        — poll GH device flow
+//   POST   /api/forges/{id}/login/pat           — login via PAT (gitlab/gitea/codeberg)
+//   POST   /api/forges/{id}/probe               — verify auth still works
+//   DELETE /api/forges/{id}                     — disconnect (remove from CLI)
+//
+//   GET    /api/forges/{id}/repos               — list accessible repos
+//   GET    /api/forges/{id}/repos/{owner}/{name}/prs    — list PRs
+//   POST   /api/forges/{id}/repos/{owner}/{name}/prs    — create PR
+//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/merge — merge
+//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/close — close
+//   GET    /api/forges/{id}/repos/{owner}/{name}/issues       — list issues
+//   POST   /api/forges/{id}/repos/{owner}/{name}/issues       — create issue
+//   POST   /api/forges/{id}/repos/{owner}/{name}/issues/{n}/close — close
+//   GET    /api/forges/{id}/repos/{owner}/{name}/checks?ref=… — CI checks
+//   GET    /api/forges/{id}/repos/{owner}/{name}/releases     — list releases
+//   POST   /api/forges/{id}/repos/{owner}/{name}/releases     — create release
+//   GET    /api/forges/{id}/repos/{owner}/{name}/labels       — list labels
+
+package forges
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"vibekit/internal/api"
+)
+
+// HTTPHandler exposes the forges package over HTTP.
+type HTTPHandler struct {
+	manager      *Manager
+	broadcaster  api.Broadcaster
+	probeTimeout time.Duration
+}
+
+// NewHTTPHandler builds an HTTPHandler with the given Manager.
+// broadcaster may be nil; when nil, forge change events are silently dropped.
+func NewHTTPHandler(m *Manager, b api.Broadcaster) *HTTPHandler {
+	return &HTTPHandler{
+		manager:      m,
+		broadcaster:  b,
+		probeTimeout: 20 * time.Second,
+	}
+}
+
+// notifyChanged broadcasts a forges_changed event so the UI's repo
+// picker (and any other listeners) refresh. No-op if no broadcaster
+// is wired.
+func (h *HTTPHandler) notifyChanged(ctx context.Context) {
+	if h.broadcaster == nil {
+		return
+	}
+	h.broadcaster.Broadcast(ctx, api.NewEvent(api.EventForgesChanged, "", api.ForgesChangedPayload{}))
+}
+
+// Compile-time interface assertion.
+var _ api.RouteHandler = (*HTTPHandler)(nil)
+
+// RegisterRoutes installs the /api/forges/* mux entries.
+func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/forges", h.handleForgesList)
+	mux.HandleFunc("/api/forges/", h.handleForgeItem)
+	mux.HandleFunc("/api/forges/refresh", h.handleRefresh)
+	mux.HandleFunc("/api/forges/oauth/github/start", h.handleGitHubDeviceStart)
+	mux.HandleFunc("/api/forges/oauth/github/poll", h.handleGitHubDevicePoll)
+}
+
+// handleForgesList returns all configured forges.
+func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w)
+		return
+	}
+	forges := h.manager.List(r.Context())
+	api.WriteJSON(w, map[string]any{
+		"forges": forges,
+		"kinds":  AllKinds(),
+		"oauth":  map[string]bool{"github": true}, // device flow is built-in
+	})
+}
+
+func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w)
+		return
+	}
+	if err := h.manager.Refresh(r.Context()); err != nil {
+		api.ServerError(w, "refresh failed", err)
+		return
+	}
+	api.Ok(w)
+}
+
+// handleForgeItem dispatches to per-forge sub-resources.
+func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
+	tail := strings.TrimPrefix(r.URL.Path, "/api/forges/")
+	if tail == "" {
+		api.NotFound(w, "missing forge id")
+		return
+	}
+	// First path segment is either "refresh" / "oauth" (handled
+	// above by direct registration) or a forge ID. ID is "kind:host"
+	// — the colon could be percent-encoded but we keep it literal.
+	id, sub, _ := splitFirst(tail, "/")
+	if h.manager.Get(id) == nil {
+		api.NotFound(w, "unknown forge id")
+		return
+	}
+	if sub == "" {
+		switch r.Method {
+		case http.MethodGet:
+			f := h.manager.Get(id)
+			api.WriteJSON(w, f)
+		case http.MethodDelete:
+			h.handleDisconnect(w, r, id)
+		default:
+			api.MethodNotAllowed(w)
+		}
+		return
+	}
+	op, rest, _ := splitFirst(sub, "/")
+	switch op {
+	case "probe":
+		h.handleProbe(w, r, id)
+	case "login":
+		h.handleLogin(w, r, id, rest)
+	case "repos":
+		h.handleRepos(w, r, id, rest)
+	default:
+		api.NotFound(w, "unknown forge sub-resource")
+	}
+}
+
+func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, id string) {
+	f := h.manager.Get(id)
+	if f == nil {
+		api.NotFound(w, "unknown forge")
+		return
+	}
+	if err := Logout(r.Context(), f.Kind, f.Host); err != nil {
+		api.ServerError(w, "disconnect failed", err)
+		return
+	}
+	h.manager.Invalidate()
+	_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after disconnect
+	h.notifyChanged(r.Context())
+	api.Ok(w)
+}
+
+func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), h.probeTimeout)
+	defer cancel()
+	err := h.manager.Probe(ctx, id)
+	f := h.manager.Get(id)
+	if err != nil {
+		api.WriteJSONStatus(w, http.StatusOK, map[string]any{
+			"connected": false,
+			"error":     err.Error(),
+			"forge":     f,
+		})
+		return
+	}
+	api.WriteJSON(w, map[string]any{
+		"connected": true,
+		"forge":     f,
+	})
+}
+
+// handleLogin handles POST /api/forges/{id}/login/pat — the user-
+// supplied PAT path. id is the forge ID we're logging into; the
+// kind+host are derived from id.
+func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, sub string) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w)
+		return
+	}
+	op, _, _ := splitFirst(sub, "/")
+	if op != "pat" {
+		api.NotFound(w, "unknown login method")
+		return
+	}
+	kind, host := splitID(id)
+	if !kind.Valid() {
+		api.BadRequest(w, "invalid forge id")
+		return
+	}
+	var body struct {
+		Token    string `json:"token"`
+		Username string `json:"username"`
+	}
+	api.LimitBody(w, r, api.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		api.BadRequest(w, "invalid json")
+		return
+	}
+	if err := LoginWithPAT(r.Context(), LoginPATParams{
+		Kind:     kind,
+		Host:     host,
+		Token:    body.Token,
+		Username: body.Username,
+	}); err != nil {
+		api.WriteJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	h.manager.Invalidate()
+	_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after PAT login
+	h.notifyChanged(r.Context())
+	api.WriteJSON(w, map[string]string{"status": "complete"})
+}
+
+func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w)
+		return
+	}
+	resp, err := StartGitHubDeviceFlow(r.Context())
+	if err != nil {
+		api.ServerError(w, "device flow failed", err)
+		return
+	}
+	api.WriteJSON(w, resp)
+}
+
+func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w)
+		return
+	}
+	var body struct {
+		DeviceCode string `json:"device_code"`
+	}
+	api.LimitBody(w, r, api.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		api.BadRequest(w, "invalid json")
+		return
+	}
+	res, err := PollGitHubDeviceFlow(r.Context(), body.DeviceCode)
+	if err != nil {
+		api.ServerError(w, "poll failed", err)
+		return
+	}
+	if res.Status == "complete" {
+		h.manager.Invalidate()
+		_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after device flow
+		h.notifyChanged(r.Context())
+	}
+	api.WriteJSON(w, res)
+}
+
+// handleRepos dispatches /api/forges/{id}/repos/* paths.
+func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
+	provider, err := h.manager.Provider(id)
+	if err != nil {
+		api.NotFound(w, err.Error())
+		return
+	}
+	// rest is "" → list repos. Otherwise it's "owner/name[/sub...]".
+	if rest == "" {
+		if r.Method != http.MethodGet {
+			api.MethodNotAllowed(w)
+			return
+		}
+		repos, err := provider.ListRepos(r.Context())
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, map[string]any{"repos": repos})
+		return
+	}
+	owner, after, ok := splitFirst(rest, "/")
+	if !ok || owner == "" {
+		api.BadRequest(w, "missing repo owner")
+		return
+	}
+	name, after2, _ := splitFirst(after, "/")
+	if name == "" {
+		api.BadRequest(w, "missing repo name")
+		return
+	}
+	repo := owner + "/" + name
+	if after2 == "" {
+		api.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
+		return
+	}
+	op, tail, _ := splitFirst(after2, "/")
+	switch op {
+	case "prs":
+		h.handlePRs(w, r, provider, repo, tail)
+	case "issues":
+		h.handleIssues(w, r, provider, repo, tail)
+	case "checks":
+		h.handleChecks(w, r, provider, repo)
+	case "releases":
+		h.handleReleases(w, r, provider, repo)
+	case "labels":
+		h.handleLabels(w, r, provider, repo)
+	default:
+		api.NotFound(w, "unknown repo sub-resource")
+	}
+}
+
+func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
+	if tail == "" {
+		switch r.Method {
+		case http.MethodGet:
+			state := r.URL.Query().Get("state")
+			prs, err := p.ListPRs(r.Context(), repo, state)
+			if err != nil {
+				h.writeOpsError(w, err)
+				return
+			}
+			api.WriteJSON(w, map[string]any{"prs": prs})
+		case http.MethodPost:
+			var params CreatePRParams
+			api.LimitBody(w, r, api.MaxJSONBody)
+			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+				api.BadRequest(w, "invalid json")
+				return
+			}
+			pr, err := p.CreatePR(r.Context(), repo, params)
+			if err != nil {
+				h.writeOpsError(w, err)
+				return
+			}
+			api.WriteJSON(w, pr)
+		default:
+			api.MethodNotAllowed(w)
+		}
+		return
+	}
+	numStr, op, _ := splitFirst(tail, "/")
+	number, err := strconv.Atoi(numStr)
+	if err != nil {
+		api.BadRequest(w, "invalid PR number")
+		return
+	}
+	switch op {
+	case "merge":
+		if r.Method != http.MethodPost {
+			api.MethodNotAllowed(w)
+			return
+		}
+		method := r.URL.Query().Get("method")
+		if err := p.MergePR(r.Context(), repo, number, method); err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.Ok(w)
+	case "close":
+		if r.Method != http.MethodPost {
+			api.MethodNotAllowed(w)
+			return
+		}
+		if err := p.ClosePR(r.Context(), repo, number); err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.Ok(w)
+	default:
+		api.NotFound(w, "unknown PR action")
+	}
+}
+
+func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
+	if tail == "" {
+		switch r.Method {
+		case http.MethodGet:
+			state := r.URL.Query().Get("state")
+			issues, err := p.ListIssues(r.Context(), repo, state)
+			if err != nil {
+				h.writeOpsError(w, err)
+				return
+			}
+			api.WriteJSON(w, map[string]any{"issues": issues})
+		case http.MethodPost:
+			var params CreateIssueParams
+			api.LimitBody(w, r, api.MaxJSONBody)
+			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+				api.BadRequest(w, "invalid json")
+				return
+			}
+			issue, err := p.CreateIssue(r.Context(), repo, params)
+			if err != nil {
+				h.writeOpsError(w, err)
+				return
+			}
+			api.WriteJSON(w, issue)
+		default:
+			api.MethodNotAllowed(w)
+		}
+		return
+	}
+	numStr, op, _ := splitFirst(tail, "/")
+	number, err := strconv.Atoi(numStr)
+	if err != nil {
+		api.BadRequest(w, "invalid issue number")
+		return
+	}
+	if op == "close" {
+		if r.Method != http.MethodPost {
+			api.MethodNotAllowed(w)
+			return
+		}
+		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.Ok(w)
+		return
+	}
+	api.NotFound(w, "unknown issue action")
+}
+
+func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w)
+		return
+	}
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		api.BadRequest(w, "ref query parameter required")
+		return
+	}
+	checks, err := p.CommitStatus(r.Context(), repo, ref)
+	if err != nil {
+		h.writeOpsError(w, err)
+		return
+	}
+	api.WriteJSON(w, map[string]any{"checks": checks})
+}
+
+func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
+	switch r.Method {
+	case http.MethodGet:
+		releases, err := p.ListReleases(r.Context(), repo)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, map[string]any{"releases": releases})
+	case http.MethodPost:
+		var params CreateReleaseParams
+		api.LimitBody(w, r, api.MaxJSONBody)
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			api.BadRequest(w, "invalid json")
+			return
+		}
+		release, err := p.CreateRelease(r.Context(), repo, params)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, release)
+	default:
+		api.MethodNotAllowed(w)
+	}
+}
+
+func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w)
+		return
+	}
+	labels, err := p.ListLabels(r.Context(), repo)
+	if err != nil {
+		h.writeOpsError(w, err)
+		return
+	}
+	api.WriteJSON(w, map[string]any{"labels": labels})
+}
+
+// writeOpsError maps ForgeOps errors to HTTP status codes.
+func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNotInstalled):
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			map[string]string{"error": err.Error(), "code": "cli_not_installed"})
+	case errors.Is(err, ErrNotLoggedIn):
+		api.WriteJSONStatus(w, http.StatusUnauthorized,
+			map[string]string{"error": err.Error(), "code": "not_logged_in"})
+	default:
+		slog.Debug("forges: ops error", "error", err)
+		api.WriteJSONStatus(w, http.StatusInternalServerError,
+			map[string]string{"error": err.Error()})
+	}
+}
+
+// splitID parses "kind:host" → (kind, host). Returns (KindGitHub, "")
+// for malformed input — the caller should validate Kind.Valid().
+func splitID(id string) (Kind, string) {
+	parts := strings.SplitN(id, ":", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return Kind(parts[0]), parts[1]
+}
+
+// splitFirst splits s at the first '/' separator, returning
+// (head, tail, found). If '/' is not present, returns (s, "", false).
+func splitFirst(s, _ string) (string, string, bool) {
+	return strings.Cut(s, "/")
+}
+
+// Compile-time blank assignment to silence unused-import warnings if
+// fmt isn't used in some build tags.
+var _ = fmt.Sprintf

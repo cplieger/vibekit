@@ -1,0 +1,70 @@
+package hub
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"vibekit/internal/api"
+)
+
+// Tests for bridge_lifecycle.go: spawn, lookup, reuse, and teardown of
+// per-chat ACP bridges. Shared fixtures live in shared_test.go.
+
+func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
+	h, _, _ := newTestHub()
+	if sb := h.getBridge("no-such-chat"); sb != nil {
+		t.Errorf("getBridge returned %+v for missing chat", sb)
+	}
+}
+
+func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	sb1, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	if err != nil {
+		t.Fatalf("first create error = %v", err)
+	}
+	sb2, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	if err != nil {
+		t.Fatalf("second create error = %v", err)
+	}
+	if sb1 != sb2 {
+		t.Errorf("second call returned a different bridge")
+	}
+}
+
+func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
+	h, _, _ := newTestHub()
+	_, err := h.getOrCreateBridge(context.Background(), "no-chat", "", "")
+	if err == nil {
+		t.Fatal("expected error for missing chat")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want 'not found'", err)
+	}
+}
+
+func TestCloseBridge_RemovesAndStops(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := sb.bridge.(*fakeBridge)
+
+	h.closeBridge("c1")
+
+	if h.getBridge("c1") != nil {
+		t.Error("bridge still in map after closeBridge")
+	}
+	if !fb.stopped {
+		t.Error("bridge.Stop not called")
+	}
+	// Give forward() a moment to exit.
+	time.Sleep(10 * time.Millisecond)
+}

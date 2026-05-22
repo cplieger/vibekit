@@ -1,0 +1,361 @@
+
+/* ==========================================================================
+   Messages
+   ========================================================================== */
+
+[id="messages-wrap-outer"] { flex: 1; position: relative; min-height: 0; }
+
+[id="messages-wrap"] { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+[id="messages"] {
+  padding: var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  max-width: var(--content-max-w); margin: 0 auto; width: 100%;
+  min-height: 100%; justify-content: flex-end;
+}
+
+/* When the tab is hidden, Chrome pauses CSS animations. Animations that
+   start at opacity:0 would trap new elements invisible until the tab is
+/* data-tab-hidden animation override moved to end of file (specificity ordering) */
+
+/* Model picker */
+[id="model-picker"] {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--sp-4);
+  opacity: 1;
+  transition: opacity var(--dur-enter);
+}
+
+.picker-label {
+  font-size: var(--fs-xl); color: var(--c-text-secondary);
+  font-weight: var(--fw-medium); text-wrap: balance;
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+
+.picker-desc {
+  font-size: var(--fs-sm); color: var(--c-text-tertiary);
+  text-align: center; max-width: 28rem; text-wrap: balance;
+}
+
+.picker-grid {
+  display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  justify-content: center; max-width: 35rem; padding: 0 var(--sp-4);
+}
+
+.picker-btn {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 0.125rem; padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--c-border); border-radius: var(--r);
+  background: var(--c-bg-secondary); color: var(--c-text-primary);
+  font-size: var(--fs-sm); cursor: pointer; min-width: 10rem;
+  text-align: left; transition: border-color var(--dur-micro), background var(--dur-micro), transform var(--dur-micro) var(--ease-micro);
+  animation: vk-scale-in var(--dur-enter) var(--ease-enter) both;
+
+  &:hover { background: var(--c-bg-tertiary); border-color: var(--c-text-tertiary); transform: translateY(-1px); }
+  &:active { transform: translateY(0); }
+  &.active { border-color: var(--c-accent); background: var(--c-accent-subtle); }
+  & .picker-name { font-weight: var(--fw-medium); }
+  & .picker-meta { font-size: var(--fs-xs); color: var(--c-text-tertiary); }
+}
+
+
+/* Message rows with avatars */
+.msg-row {
+  display: flex; align-items: flex-end; gap: var(--sp-2);
+  flex-shrink: 0; animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
+  content-visibility: auto; contain-intrinsic-size: auto 3rem;
+}
+
+.msg-row-user { flex-direction: row-reverse; }
+
+.msg-row-assistant { flex-direction: row; }
+
+.msg-avatar {
+  width: 1.5rem; height: 1.5rem; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--c-text-primary);
+}
+
+.msg-avatar .avatar-icon { border-radius: var(--r); }
+
+
+.message {
+  max-width: 85%; padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-md);
+  line-height: 1.6; overflow-wrap: anywhere;
+
+  &.user {
+    background: var(--c-user-bubble); color: var(--c-text-primary);
+    border-radius: var(--r); position: relative; white-space: pre-wrap;
+
+    &::before {
+      content: ""; position: absolute; bottom: 0.375rem; inset-inline-end: -0.375rem;
+      border: 0.375rem solid transparent; border-inline-start-color: var(--c-user-bubble);
+      border-inline-end: 0;
+    }
+  }
+
+  &.assistant {
+    background: var(--c-agent-bubble); color: var(--c-text-primary);
+    border-radius: var(--r); position: relative; max-width: 40.75rem;
+    width: 100%;
+
+    /* Streaming: height growth animated via interpolate-size (set on
+     * :root) so the bubble expands smoothly as content streams in. */
+    &.streaming {
+      transition: height 0.15s var(--ease-standard);
+    }
+
+    /* Streaming markdown chunks: each new text fragment wraps in a
+     * span[data-vk-stream] that fades in once on mount. The parser is
+     * append-only so already-mounted spans never re-render. */
+    & span[data-vk-stream] {
+      animation: vk-fade-in 200ms var(--ease-standard) both;
+    }
+
+    &::before {
+      content: ""; position: absolute; bottom: 0.375rem; inset-inline-start: -0.375rem;
+      border: 0.375rem solid transparent; border-inline-end-color: var(--c-agent-bubble);
+      border-inline-start: 0;
+    }
+
+    & code {
+      font-family: var(--font-mono); background: oklch(0% 0 0deg / 30%);
+      padding: 0.125rem var(--sp-1); border-radius: calc(var(--r) / 2);
+      font-size: 0.9em;
+    }
+
+    /* Inside pre, code inherits the pre background — no redundant chip. */
+    & pre code {
+      background: transparent; padding: 0; border-radius: 0;
+      font-size: 1em;
+    }
+
+    & :where(strong) {
+      font-weight: var(--fw-semibold);
+      color: var(--c-accent);
+    }
+
+    & :where(em) {
+      font-style: italic;
+      color: var(--c-text-secondary);
+    }
+
+    & :where(pre) {
+      background: oklch(0% 0 0deg / 30%); padding: var(--sp-3);
+      border-radius: var(--r); overflow-x: auto;
+      margin: var(--sp-2) 0;
+      font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+      font-feature-settings: "calt" 1, "liga" 1;
+      font-variant-ligatures: contextual;
+      font-size: var(--fs-sm);
+      line-height: 1.55;
+      position: relative;
+    }
+
+    & :where(a) { color: oklch(81.7% 0.091 277.3deg); }
+
+    & table {
+      border-collapse: collapse; width: 100%; margin: var(--sp-2) 0;
+      font-size: var(--fs-sm);
+    }
+
+    & th, & td {
+      border: 1px solid var(--c-border); padding: var(--sp-1) var(--sp-2);
+    }
+
+    & th {
+      background: var(--c-bg-tertiary); font-weight: var(--fw-medium);
+    }
+
+    & input[type="checkbox"] {
+      accent-color: var(--c-accent); vertical-align: middle;
+      margin-inline-end: var(--sp-1);
+    }
+
+    & ul, & ol {
+      padding-inline-start: 1.5em; margin: var(--sp-2) 0;
+    }
+    & ul.task-list { list-style: none; padding-inline-start: 0; }
+    & li.task-item { margin: var(--sp-1) 0; }
+    & li { margin: var(--sp-1) 0; }
+    & li > ul, & li > ol { margin: var(--sp-1) 0; }
+
+    & blockquote {
+      border-inline-start: 3px solid var(--c-accent);
+      background: color-mix(in srgb, var(--c-accent) 6%, transparent);
+      padding: var(--sp-2) var(--sp-3); margin: var(--sp-2) 0;
+      border-radius: 0 var(--r) var(--r) 0;
+      color: var(--c-text-primary);
+    }
+
+    /* Bold on the purple-tinted blockquote background is unreadable at the
+       same accent color in dark mode — lift it to a very light tint.
+       Light mode has enough contrast at the base accent. */
+    & :where(blockquote) :where(strong) {
+      color: color-mix(in srgb, var(--c-accent) 35%, var(--c-text-primary));
+    }
+
+    :root[data-theme="light"] & :where(blockquote) :where(strong) {
+      color: var(--c-accent);
+    }
+
+    @media (prefers-color-scheme: light) {
+      /* Light mode blockquote strong override (auto-detected theme) */
+      :where(:root:not([data-theme])) & :where(blockquote strong) { /* stylelint-disable-line selector-max-pseudo-class */
+        color: var(--c-accent);
+      }
+    }
+
+    & h1, & h2, & h3, & h4, & h5, & h6 {
+      margin: var(--sp-4) 0 var(--sp-2);
+      font-weight: var(--fw-semibold); line-height: 1.3;
+      color: var(--c-text-primary);
+    }
+    & :first-child { margin-block-start: 0; }
+    & :last-child { margin-block-end: 0; }
+    & h1 { font-size: var(--fs-lg); }
+
+    & h2 {
+      font-size: var(--fs-sm); text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--c-text-secondary);
+    }
+    & h3, & h4, & h5, & h6 { font-size: var(--fs-md); }
+    & p { margin: var(--sp-2) 0; overflow-wrap: anywhere; }
+    & hr { border: none; border-top: 1px solid var(--c-border); margin: var(--sp-3) 0; }
+    & img { max-width: 100%; border-radius: var(--r); }
+  }
+
+  &.system {
+    align-self: center; color: var(--c-text-tertiary);
+    font-style: italic; font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-3);
+  }
+
+  &.inbox-message {
+    border-left: 3px solid var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 5%, transparent);
+    padding: var(--sp-2) var(--sp-3); border-radius: 0.5rem;
+    font-style: normal; color: var(--c-text-secondary);
+  }
+}
+
+/* Reasoning/thinking block (collapsible) */
+.reasoning-block {
+  max-width: var(--content-max-w); margin: var(--sp-1) auto;
+  font-size: var(--fs-sm); color: var(--c-text-tertiary);
+}
+
+.reasoning-summary {
+  cursor: pointer; user-select: none;
+  font-style: italic; padding: var(--sp-1) 0;
+}
+
+.reasoning-body {
+  max-height: 300px; overflow-y: auto;
+  margin: 0; padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--c-border);
+  font-style: italic; white-space: pre-wrap;
+}
+
+/* Boundary divider: centered icon + label with horizontal rules on both
+   sides. Used for `compressed` and `model_switched` events where a new
+   ACP session was started. Distinct from plain system messages so long
+   transcripts have obvious "new session" breakpoints on scroll-back. */
+.boundary {
+  display: flex; align-items: center; gap: var(--sp-2);
+  margin: var(--sp-4) 0;
+  color: var(--c-text-tertiary); font-size: var(--fs-sm);
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+
+  &::before, &::after {
+    content: ""; flex: 1;
+    border-block-start: 1px dashed var(--c-border);
+  }
+  & .boundary-icon { color: var(--c-accent); font-size: 1.1em; }
+  & .boundary-label { font-style: italic; white-space: nowrap; }
+}
+
+.boundary-switched .boundary-icon { color: var(--c-yellow); }
+.boundary-failed .boundary-icon { color: var(--c-red); }
+.boundary-failed .boundary-label { color: var(--c-red); }
+.boundary-agent .boundary-icon { color: var(--c-accent); }
+
+/* Banner stack: persistent per-chat banners above the transcript. */
+.banner-stack {
+  display: flex; flex-direction: column; gap: var(--sp-1);
+  padding: 0 var(--sp-3);
+
+  &:empty { display: none; }
+}
+
+.banner {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: 0.5rem; font-size: var(--fs-sm);
+  border-left: 3px solid;
+}
+
+.banner-error {
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  border-left-color: var(--c-red); color: var(--c-red);
+}
+
+.banner-warning {
+  background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
+  border-left-color: var(--c-yellow); color: var(--c-yellow);
+}
+
+.banner-info {
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  border-left-color: var(--c-accent); color: var(--c-accent);
+}
+
+.banner-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.banner-dismiss {
+  background: none; border: none; cursor: pointer;
+  color: inherit; font-size: 1.25rem; line-height: 1;
+  padding: 0 var(--sp-1); opacity: 0.6;
+
+  &:hover { opacity: 1; }
+}
+
+.code-wrap {
+  position: relative;
+  margin: var(--sp-2) 0;
+}
+
+.code-wrap > pre {
+  margin: 0 !important; /* stylelint-disable-line declaration-no-important */
+}
+
+.code-actions {
+  position: absolute; top: var(--sp-2); inset-inline-end: var(--sp-2);
+  display: flex; gap: 0.25rem; z-index: 1;
+  pointer-events: auto;
+}
+
+.code-act-btn {
+  width: 1.75rem; height: 1.75rem; display: flex; align-items: center; justify-content: center;
+  background: var(--c-bg-secondary); color: var(--c-text-secondary); border: 1px solid var(--c-border);
+  border-radius: var(--r); cursor: pointer; flex-shrink: 0;
+
+  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
+}
+
+[id="scroll-bottom"] {
+  position: absolute; bottom: var(--sp-3); left: 50%;
+  transform: translateX(-50%);
+  min-height: var(--btn-h); padding: 0 var(--sp-3);
+  border-radius: var(--r); border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary); color: var(--c-text-primary);
+  cursor: pointer; display: flex; align-items: center; gap: var(--sp-1);
+  justify-content: center; box-shadow: 0 0.125rem 0.5rem oklch(0% 0 0deg / 30%); z-index: 10;
+  opacity: 1;
+  transition: background var(--dur-micro), color var(--dur-micro), opacity var(--dur-standard);
+  font-size: var(--fs-sm); white-space: nowrap;
+}
+
+[id="scroll-bottom"]:hover { color: var(--c-text-primary); background: var(--c-bg-tertiary); }

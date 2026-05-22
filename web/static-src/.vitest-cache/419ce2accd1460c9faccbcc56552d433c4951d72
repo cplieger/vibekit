@@ -1,0 +1,150 @@
+const __vite_ssr_import_0__ = await __vite_ssr_import__("/node_modules/vitest/dist/index.js", {"importedNames":["describe","it","expect"]});
+const __vite_ssr_import_1__ = await __vite_ssr_import__("/code-blocks.ts", {"importedNames":["isRunnableShell"]});
+// Unit tests for code-blocks.ts — isRunnableShell pure predicate.
+
+
+(0,__vite_ssr_import_0__.describe)("isRunnableShell", () => {
+	const cases = [
+		{
+			name: "valid single-line shell command",
+			lang: "bash",
+			text: "echo hello",
+			expected: true
+		},
+		{
+			name: "empty lang treated as shell",
+			lang: "",
+			text: "ls -la",
+			expected: true
+		},
+		{
+			name: "sh lang accepted",
+			lang: "sh",
+			text: "pwd",
+			expected: true
+		},
+		{
+			name: "zsh lang accepted",
+			lang: "zsh",
+			text: "cd /tmp",
+			expected: true
+		},
+		{
+			name: "console lang accepted",
+			lang: "console",
+			text: "whoami",
+			expected: true
+		},
+		{
+			name: "terminal lang accepted",
+			lang: "terminal",
+			text: "date",
+			expected: true
+		},
+		{
+			name: "shell lang accepted",
+			lang: "shell",
+			text: "uname -a",
+			expected: true
+		},
+		{
+			name: "non-shell lang rejected",
+			lang: "python",
+			text: "print('hi')",
+			expected: false
+		},
+		{
+			name: "non-shell lang go rejected",
+			lang: "go",
+			text: "fmt.Println()",
+			expected: false
+		},
+		{
+			name: "empty text rejected",
+			lang: "bash",
+			text: "",
+			expected: false
+		},
+		{
+			name: "whitespace-only text rejected",
+			lang: "bash",
+			text: "   \n  ",
+			expected: false
+		},
+		{
+			name: "shebang prefix rejected",
+			lang: "bash",
+			text: "#!/bin/bash\necho hi",
+			expected: false
+		},
+		{
+			name: "shebang with env rejected",
+			lang: "sh",
+			text: "#!/usr/bin/env bash\nls",
+			expected: false
+		},
+		{
+			name: "4-line script rejected",
+			lang: "bash",
+			text: "a\nb\nc\nd",
+			expected: false
+		},
+		{
+			name: "3-line script accepted",
+			lang: "bash",
+			text: "a\nb\nc",
+			expected: true
+		},
+		{
+			name: "sudo command rejected",
+			lang: "bash",
+			text: "sudo apt install foo",
+			expected: false
+		},
+		{
+			name: "ssh command rejected",
+			lang: "bash",
+			text: "ssh user@host",
+			expected: false
+		},
+		{
+			name: "scp command rejected",
+			lang: "bash",
+			text: "scp file.txt host:/tmp/",
+			expected: false
+		},
+		{
+			name: "rsync command rejected",
+			lang: "bash",
+			text: "rsync -av src/ dest/",
+			expected: false
+		},
+		{
+			name: "dangerous command mid-line rejected",
+			lang: "sh",
+			text: "echo hi && sudo rm -rf /",
+			expected: false
+		},
+		{
+			name: "text with blank lines counts only non-empty",
+			lang: "bash",
+			text: "a\n\nb\n\nc",
+			expected: true
+		},
+		{
+			name: "3 non-empty lines with trailing newline accepted",
+			lang: "bash",
+			text: "a\nb\nc\n",
+			expected: true
+		}
+	];
+	for (const tc of cases) {
+		(0,__vite_ssr_import_0__.it)(tc.name, () => {
+			(0,__vite_ssr_import_0__.expect)((0,__vite_ssr_import_1__.isRunnableShell)(tc.lang, tc.text)).toBe(tc.expected);
+		});
+	}
+});
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQ0E7QUFDQTs7OztHQUVBLGdDQUFTLHlCQUF5QjtDQUNoQyxNQUFNLFFBQTJFO0VBQy9FO0dBQUUsTUFBTTtHQUFtQyxNQUFNO0dBQVEsTUFBTTtHQUFjLFVBQVU7RUFBSztFQUM1RjtHQUFFLE1BQU07R0FBK0IsTUFBTTtHQUFJLE1BQU07R0FBVSxVQUFVO0VBQUs7RUFDaEY7R0FBRSxNQUFNO0dBQW9CLE1BQU07R0FBTSxNQUFNO0dBQU8sVUFBVTtFQUFLO0VBQ3BFO0dBQUUsTUFBTTtHQUFxQixNQUFNO0dBQU8sTUFBTTtHQUFXLFVBQVU7RUFBSztFQUMxRTtHQUFFLE1BQU07R0FBeUIsTUFBTTtHQUFXLE1BQU07R0FBVSxVQUFVO0VBQUs7RUFDakY7R0FBRSxNQUFNO0dBQTBCLE1BQU07R0FBWSxNQUFNO0dBQVEsVUFBVTtFQUFLO0VBQ2pGO0dBQUUsTUFBTTtHQUF1QixNQUFNO0dBQVMsTUFBTTtHQUFZLFVBQVU7RUFBSztFQUMvRTtHQUFFLE1BQU07R0FBMkIsTUFBTTtHQUFVLE1BQU07R0FBZSxVQUFVO0VBQU07RUFDeEY7R0FBRSxNQUFNO0dBQThCLE1BQU07R0FBTSxNQUFNO0dBQWlCLFVBQVU7RUFBTTtFQUN6RjtHQUFFLE1BQU07R0FBdUIsTUFBTTtHQUFRLE1BQU07R0FBSSxVQUFVO0VBQU07RUFDdkU7R0FBRSxNQUFNO0dBQWlDLE1BQU07R0FBUSxNQUFNO0dBQVcsVUFBVTtFQUFNO0VBQ3hGO0dBQUUsTUFBTTtHQUEyQixNQUFNO0dBQVEsTUFBTTtHQUF3QixVQUFVO0VBQU07RUFDL0Y7R0FBRSxNQUFNO0dBQTZCLE1BQU07R0FBTSxNQUFNO0dBQTJCLFVBQVU7RUFBTTtFQUNsRztHQUFFLE1BQU07R0FBMEIsTUFBTTtHQUFRLE1BQU07R0FBYyxVQUFVO0VBQU07RUFDcEY7R0FBRSxNQUFNO0dBQTBCLE1BQU07R0FBUSxNQUFNO0dBQVcsVUFBVTtFQUFLO0VBQ2hGO0dBQUUsTUFBTTtHQUF5QixNQUFNO0dBQVEsTUFBTTtHQUF3QixVQUFVO0VBQU07RUFDN0Y7R0FBRSxNQUFNO0dBQXdCLE1BQU07R0FBUSxNQUFNO0dBQWlCLFVBQVU7RUFBTTtFQUNyRjtHQUFFLE1BQU07R0FBd0IsTUFBTTtHQUFRLE1BQU07R0FBMkIsVUFBVTtFQUFNO0VBQy9GO0dBQUUsTUFBTTtHQUEwQixNQUFNO0dBQVEsTUFBTTtHQUF3QixVQUFVO0VBQU07RUFDOUY7R0FBRSxNQUFNO0dBQXVDLE1BQU07R0FBTSxNQUFNO0dBQTRCLFVBQVU7RUFBTTtFQUM3RztHQUFFLE1BQU07R0FBK0MsTUFBTTtHQUFRLE1BQU07R0FBZSxVQUFVO0VBQUs7RUFDekc7R0FBRSxNQUFNO0dBQW9ELE1BQU07R0FBUSxNQUFNO0dBQWEsVUFBVTtFQUFLO0NBQzlHO0NBRUEsS0FBSyxNQUFNLE1BQU0sT0FBTztLQUN0QiwwQkFBRyxHQUFHLFlBQVk7TUFDaEIsaUNBQU8sdUNBQWdCLEdBQUcsTUFBTSxHQUFHLElBQUksQ0FBQyxFQUFFLEtBQUssR0FBRyxRQUFRO0VBQzVELENBQUM7Q0FDSDtBQUNGLENBQUMiLCJuYW1lcyI6W10sImlnbm9yZUxpc3QiOltdLCJzb3VyY2VzIjpbImNvZGUtYmxvY2tzLnRlc3QudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLy8gVW5pdCB0ZXN0cyBmb3IgY29kZS1ibG9ja3MudHMg4oCUIGlzUnVubmFibGVTaGVsbCBwdXJlIHByZWRpY2F0ZS5cbmltcG9ydCB7IGRlc2NyaWJlLCBpdCwgZXhwZWN0IH0gZnJvbSBcInZpdGVzdFwiO1xuaW1wb3J0IHsgaXNSdW5uYWJsZVNoZWxsIH0gZnJvbSBcIi4vY29kZS1ibG9ja3MuanNcIjtcblxuZGVzY3JpYmUoXCJpc1J1bm5hYmxlU2hlbGxcIiwgKCkgPT4ge1xuICBjb25zdCBjYXNlczogeyBuYW1lOiBzdHJpbmc7IGxhbmc6IHN0cmluZzsgdGV4dDogc3RyaW5nOyBleHBlY3RlZDogYm9vbGVhbiB9W10gPSBbXG4gICAgeyBuYW1lOiBcInZhbGlkIHNpbmdsZS1saW5lIHNoZWxsIGNvbW1hbmRcIiwgbGFuZzogXCJiYXNoXCIsIHRleHQ6IFwiZWNobyBoZWxsb1wiLCBleHBlY3RlZDogdHJ1ZSB9LFxuICAgIHsgbmFtZTogXCJlbXB0eSBsYW5nIHRyZWF0ZWQgYXMgc2hlbGxcIiwgbGFuZzogXCJcIiwgdGV4dDogXCJscyAtbGFcIiwgZXhwZWN0ZWQ6IHRydWUgfSxcbiAgICB7IG5hbWU6IFwic2ggbGFuZyBhY2NlcHRlZFwiLCBsYW5nOiBcInNoXCIsIHRleHQ6IFwicHdkXCIsIGV4cGVjdGVkOiB0cnVlIH0sXG4gICAgeyBuYW1lOiBcInpzaCBsYW5nIGFjY2VwdGVkXCIsIGxhbmc6IFwienNoXCIsIHRleHQ6IFwiY2QgL3RtcFwiLCBleHBlY3RlZDogdHJ1ZSB9LFxuICAgIHsgbmFtZTogXCJjb25zb2xlIGxhbmcgYWNjZXB0ZWRcIiwgbGFuZzogXCJjb25zb2xlXCIsIHRleHQ6IFwid2hvYW1pXCIsIGV4cGVjdGVkOiB0cnVlIH0sXG4gICAgeyBuYW1lOiBcInRlcm1pbmFsIGxhbmcgYWNjZXB0ZWRcIiwgbGFuZzogXCJ0ZXJtaW5hbFwiLCB0ZXh0OiBcImRhdGVcIiwgZXhwZWN0ZWQ6IHRydWUgfSxcbiAgICB7IG5hbWU6IFwic2hlbGwgbGFuZyBhY2NlcHRlZFwiLCBsYW5nOiBcInNoZWxsXCIsIHRleHQ6IFwidW5hbWUgLWFcIiwgZXhwZWN0ZWQ6IHRydWUgfSxcbiAgICB7IG5hbWU6IFwibm9uLXNoZWxsIGxhbmcgcmVqZWN0ZWRcIiwgbGFuZzogXCJweXRob25cIiwgdGV4dDogXCJwcmludCgnaGknKVwiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwibm9uLXNoZWxsIGxhbmcgZ28gcmVqZWN0ZWRcIiwgbGFuZzogXCJnb1wiLCB0ZXh0OiBcImZtdC5QcmludGxuKClcIiwgZXhwZWN0ZWQ6IGZhbHNlIH0sXG4gICAgeyBuYW1lOiBcImVtcHR5IHRleHQgcmVqZWN0ZWRcIiwgbGFuZzogXCJiYXNoXCIsIHRleHQ6IFwiXCIsIGV4cGVjdGVkOiBmYWxzZSB9LFxuICAgIHsgbmFtZTogXCJ3aGl0ZXNwYWNlLW9ubHkgdGV4dCByZWplY3RlZFwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCIgICBcXG4gIFwiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwic2hlYmFuZyBwcmVmaXggcmVqZWN0ZWRcIiwgbGFuZzogXCJiYXNoXCIsIHRleHQ6IFwiIyEvYmluL2Jhc2hcXG5lY2hvIGhpXCIsIGV4cGVjdGVkOiBmYWxzZSB9LFxuICAgIHsgbmFtZTogXCJzaGViYW5nIHdpdGggZW52IHJlamVjdGVkXCIsIGxhbmc6IFwic2hcIiwgdGV4dDogXCIjIS91c3IvYmluL2VudiBiYXNoXFxubHNcIiwgZXhwZWN0ZWQ6IGZhbHNlIH0sXG4gICAgeyBuYW1lOiBcIjQtbGluZSBzY3JpcHQgcmVqZWN0ZWRcIiwgbGFuZzogXCJiYXNoXCIsIHRleHQ6IFwiYVxcbmJcXG5jXFxuZFwiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwiMy1saW5lIHNjcmlwdCBhY2NlcHRlZFwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCJhXFxuYlxcbmNcIiwgZXhwZWN0ZWQ6IHRydWUgfSxcbiAgICB7IG5hbWU6IFwic3VkbyBjb21tYW5kIHJlamVjdGVkXCIsIGxhbmc6IFwiYmFzaFwiLCB0ZXh0OiBcInN1ZG8gYXB0IGluc3RhbGwgZm9vXCIsIGV4cGVjdGVkOiBmYWxzZSB9LFxuICAgIHsgbmFtZTogXCJzc2ggY29tbWFuZCByZWplY3RlZFwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCJzc2ggdXNlckBob3N0XCIsIGV4cGVjdGVkOiBmYWxzZSB9LFxuICAgIHsgbmFtZTogXCJzY3AgY29tbWFuZCByZWplY3RlZFwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCJzY3AgZmlsZS50eHQgaG9zdDovdG1wL1wiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwicnN5bmMgY29tbWFuZCByZWplY3RlZFwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCJyc3luYyAtYXYgc3JjLyBkZXN0L1wiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwiZGFuZ2Vyb3VzIGNvbW1hbmQgbWlkLWxpbmUgcmVqZWN0ZWRcIiwgbGFuZzogXCJzaFwiLCB0ZXh0OiBcImVjaG8gaGkgJiYgc3VkbyBybSAtcmYgL1wiLCBleHBlY3RlZDogZmFsc2UgfSxcbiAgICB7IG5hbWU6IFwidGV4dCB3aXRoIGJsYW5rIGxpbmVzIGNvdW50cyBvbmx5IG5vbi1lbXB0eVwiLCBsYW5nOiBcImJhc2hcIiwgdGV4dDogXCJhXFxuXFxuYlxcblxcbmNcIiwgZXhwZWN0ZWQ6IHRydWUgfSxcbiAgICB7IG5hbWU6IFwiMyBub24tZW1wdHkgbGluZXMgd2l0aCB0cmFpbGluZyBuZXdsaW5lIGFjY2VwdGVkXCIsIGxhbmc6IFwiYmFzaFwiLCB0ZXh0OiBcImFcXG5iXFxuY1xcblwiLCBleHBlY3RlZDogdHJ1ZSB9LFxuICBdO1xuXG4gIGZvciAoY29uc3QgdGMgb2YgY2FzZXMpIHtcbiAgICBpdCh0Yy5uYW1lLCAoKSA9PiB7XG4gICAgICBleHBlY3QoaXNSdW5uYWJsZVNoZWxsKHRjLmxhbmcsIHRjLnRleHQpKS50b0JlKHRjLmV4cGVjdGVkKTtcbiAgICB9KTtcbiAgfVxufSk7XG4iXSwiZmlsZSI6Ii9jb2RlLWJsb2Nrcy50ZXN0LnRzIn0=
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZWRVcmxzIjoiMyIsIm1hcHBpbmdzIjpmYWxzZX0sIi93b3Jrc3BhY2UvaG9tZWxhYi9hcHBzL3ZpYmVraXQvd2ViL3N0YXRpYy1zcmMvY29kZS1ibG9ja3MudGVzdC50cyIsIi9jb2RlLWJsb2Nrcy50ZXN0LnRzIixbIjQiLCI1Il0sIi9ub2RlX21vZHVsZXMvdml0ZXN0L2Rpc3QvaW5kZXguanMiLCIvY29kZS1ibG9ja3MudHMiXQ==

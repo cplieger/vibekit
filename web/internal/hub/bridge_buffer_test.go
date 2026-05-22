@@ -1,0 +1,296 @@
+package hub
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"vibekit/internal/api"
+	"vibekit/internal/buffer"
+)
+
+// Tests for bridge_buffer.go: buffer.Buffer lifecycle + emitTurnEndedWithStats
+// persistence behaviour. Shared fixtures live in shared_test.go.
+
+func TestTrackFileChanges_Table(t *testing.T) {
+	tests := []struct {
+		name      string
+		diffs     []api.ToolDiff
+		isNewFile bool
+		wantFiles map[string]*api.FileChange
+	}{
+		{
+			name:      "nil_diffs",
+			diffs:     nil,
+			wantFiles: nil,
+		},
+		{
+			name:      "empty_path_skipped",
+			diffs:     []api.ToolDiff{{Path: "", NewText: "x\n"}},
+			wantFiles: map[string]*api.FileChange{},
+		},
+		{
+			name:      "single_create",
+			diffs:     []api.ToolDiff{{Path: "a.go", NewText: "line1\nline2\n"}},
+			isNewFile: true,
+			wantFiles: map[string]*api.FileChange{"a.go": {LinesAdded: 2, IsNewFile: true}},
+		},
+		{
+			name:      "single_edit",
+			diffs:     []api.ToolDiff{{Path: "b.go", OldText: "old\n", NewText: "new\nmore\n"}},
+			wantFiles: map[string]*api.FileChange{"b.go": {LinesAdded: 2, LinesRemoved: 1}},
+		},
+		{
+			name: "multi_diff_same_path_accumulates",
+			diffs: []api.ToolDiff{
+				{Path: "c.go", NewText: "a\n"},
+				{Path: "c.go", OldText: "x\ny\n", NewText: "z\n"},
+			},
+			wantFiles: map[string]*api.FileChange{"c.go": {LinesAdded: 2, LinesRemoved: 2}},
+		},
+		{
+			name: "multi_path",
+			diffs: []api.ToolDiff{
+				{Path: "d.go", NewText: "one\n"},
+				{Path: "e.go", OldText: "rm\n"},
+			},
+			wantFiles: map[string]*api.FileChange{
+				"d.go": {LinesAdded: 1},
+				"e.go": {LinesRemoved: 1},
+			},
+		},
+		{
+			name:      "newText_only_counts_added",
+			diffs:     []api.ToolDiff{{Path: "f.go", NewText: "a\nb\nc\n"}},
+			wantFiles: map[string]*api.FileChange{"f.go": {LinesAdded: 3}},
+		},
+		{
+			name:      "oldText_only_counts_removed",
+			diffs:     []api.ToolDiff{{Path: "g.go", OldText: "x\ny\n"}},
+			wantFiles: map[string]*api.FileChange{"g.go": {LinesRemoved: 2}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &buffer.Buffer{}
+			buf.TrackFileChanges(tt.diffs, tt.isNewFile)
+			if tt.wantFiles == nil {
+				if len(buf.ChangedFiles) > 0 {
+					t.Fatalf("ChangedFiles = %v, want nil/empty", buf.ChangedFiles)
+				}
+				return
+			}
+			if len(buf.ChangedFiles) != len(tt.wantFiles) {
+				t.Fatalf("len(ChangedFiles) = %d, want %d", len(buf.ChangedFiles), len(tt.wantFiles))
+			}
+			for path, want := range tt.wantFiles {
+				got, ok := buf.ChangedFiles[path]
+				if !ok {
+					t.Errorf("missing path %q", path)
+					continue
+				}
+				if got.LinesAdded != want.LinesAdded {
+					t.Errorf("%s: LinesAdded = %d, want %d", path, got.LinesAdded, want.LinesAdded)
+				}
+				if got.LinesRemoved != want.LinesRemoved {
+					t.Errorf("%s: LinesRemoved = %d, want %d", path, got.LinesRemoved, want.LinesRemoved)
+				}
+				if got.IsNewFile != want.IsNewFile {
+					t.Errorf("%s: IsNewFile = %v, want %v", path, got.IsNewFile, want.IsNewFile)
+				}
+			}
+		})
+	}
+}
+
+func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// Start a turn: one chunk then end.
+	h.translateACPEvent("c1", newChunkMsg(t, "finished"))
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %+v", c.Messages)
+	}
+	if c.Messages[0].Role != api.RoleAssistant || c.Messages[0].Content != "finished" {
+		t.Errorf("message mismatch: %+v", c.Messages[0])
+	}
+	// Buffer should be cleared.
+	if h.bridge.assistantBufs.Get("c1") != nil {
+		t.Errorf("buffer not cleared after turn_ended")
+	}
+}
+
+func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 || c.Messages[0].Role != api.RoleEvent || c.Messages[0].EventKind != api.EventCancelled {
+		t.Errorf("messages = %+v", c.Messages)
+	}
+}
+
+func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 0 {
+		t.Errorf("messages = %+v (expected none)", c.Messages)
+	}
+}
+
+func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// Simulate a tool call in progress.
+	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
+	// Cancel the turn.
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	// Should have the assistant message + the cancelled event.
+	if len(c.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %+v", len(c.Messages), c.Messages)
+	}
+	// The assistant message should have the tool call marked as failed.
+	assistantMsg := c.Messages[0]
+	if len(assistantMsg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
+	}
+	if assistantMsg.ToolCalls[0].Status != api.ToolFailed {
+		t.Errorf("tool status = %q, want %q", assistantMsg.ToolCalls[0].Status, api.ToolFailed)
+	}
+}
+
+func TestToolStartTimeTracking(t *testing.T) {
+	buf := &buffer.Buffer{ToolStartTimes: make(map[string]int64)}
+	buf.RecordToolStart("tc1")
+
+	// Small sleep to ensure non-zero duration.
+	dur := buf.ComputeDuration("tc1")
+	if dur < 0 {
+		t.Errorf("duration = %d, want >= 0", dur)
+	}
+	// Second call should return 0 (start time consumed).
+	dur2 := buf.ComputeDuration("tc1")
+	if dur2 != 0 {
+		t.Errorf("second duration = %d, want 0", dur2)
+	}
+}
+
+func TestMarkCancelledToolsFailed(t *testing.T) {
+	buf := &buffer.Buffer{
+		ToolCalls: []api.ToolCall{
+			{ID: "tc1", Status: api.ToolInProgress},
+			{ID: "tc2", Status: api.ToolCompleted},
+			{ID: "tc3", Status: api.ToolPending},
+		},
+	}
+	changed := buf.MarkCancelledToolsFailed()
+	if len(changed) != 2 {
+		t.Fatalf("changed = %d, want 2", len(changed))
+	}
+	if buf.ToolCalls[0].Status != api.ToolFailed {
+		t.Errorf("tc1 status = %q, want failed", buf.ToolCalls[0].Status)
+	}
+	if buf.ToolCalls[1].Status != api.ToolCompleted {
+		t.Errorf("tc2 status = %q, want completed (unchanged)", buf.ToolCalls[1].Status)
+	}
+	if buf.ToolCalls[2].Status != api.ToolFailed {
+		t.Errorf("tc3 status = %q, want failed", buf.ToolCalls[2].Status)
+	}
+}
+
+func TestThoughtChunkSetsOperationType(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// Send a thought chunk.
+	raw := mustJSON(t, map[string]any{
+		"sessionUpdate": "agent_thought_chunk",
+		"content":       map[string]any{"type": "text", "text": "Let me think..."},
+	})
+	h.translateACPEvent("c1", &api.RPCResponse{
+		Method: "session/update",
+		Params: mustJSON(t, map[string]any{"update": raw}),
+	})
+
+	// End the turn.
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(c.Messages))
+	}
+	if c.Messages[0].OperationType != api.OperationTypeReasoning {
+		t.Errorf("operation_type = %q, want Reasoning", c.Messages[0].OperationType)
+	}
+	if c.Messages[0].Content != "Let me think..." {
+		t.Errorf("content = %q, want 'Let me think...'", c.Messages[0].Content)
+	}
+}
+
+func TestToolCallDurationMs(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// Send a tool call.
+	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
+
+	// Send a tool call update with completed status.
+	raw := mustJSON(t, map[string]any{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "tc1",
+		"status":        "completed",
+		"content":       []any{},
+	})
+	h.translateACPEvent("c1", &api.RPCResponse{
+		Method: "session/update",
+		Params: mustJSON(t, map[string]any{"update": raw}),
+	})
+
+	// End the turn and check the persisted tool call has a duration.
+	h.emitTurnEndedWithStats(context.Background(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(c.Messages))
+	}
+	if len(c.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(c.Messages[0].ToolCalls))
+	}
+	tc := c.Messages[0].ToolCalls[0]
+	if tc.DurationMs < 0 {
+		t.Errorf("duration_ms = %d, want >= 0", tc.DurationMs)
+	}
+	if tc.Status != api.ToolCompleted {
+		t.Errorf("status = %q, want completed", tc.Status)
+	}
+}
+
+func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+
+	// Start a turn on a different chat ID to exercise the chatID parameter.
+	h.translateACPEvent("c2", newChunkMsg(t, "hello from c2"))
+	h.emitTurnEndedWithStats(context.Background(), "c2", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c2")
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %+v", c.Messages)
+	}
+	if c.Messages[0].Content != "hello from c2" {
+		t.Errorf("content = %q, want 'hello from c2'", c.Messages[0].Content)
+	}
+}

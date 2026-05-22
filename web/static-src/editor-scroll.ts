@@ -1,0 +1,62 @@
+// ---------------------------------------------------------------------------
+// Line-jump scroll helpers for the editor pane. Kept separate so editor.ts
+// stays focused on file-state + mode management. Called by `openFile(path,
+// line?)` after the target file's content is rendered.
+// ---------------------------------------------------------------------------
+
+import { $ } from "./dom.js";
+
+/** Smooth-scroll the editor pane so the given 1-based line lands in the
+ *  upper third of the viewport. */
+export function scrollToEditorLine(line: number): void {
+  const scroller = $.editorHighlight.parentElement;
+  if (scroller === null) return;
+  const lh = getLineHeight();
+  const pad = getPaddingTop();
+  const target = pad + (line - 1) * lh;
+  const top = Math.max(0, target - scroller.clientHeight / 3);
+  scroller.scrollTo({ top, behavior: "smooth" });
+}
+
+/** Flash a thin highlight behind the given 1-based line for ~1.2s. Fires
+ *  after scroll so the user's eye catches the target. */
+export function flashEditorLine(line: number): void {
+  const scroller = $.editorHighlight.parentElement;
+  if (scroller === null) return;
+  const lh = getLineHeight();
+  const pad = getPaddingTop();
+  const flash = document.createElement("div");
+  flash.className = "editor-line-flash";
+  flash.style.top = `${String(pad + (line - 1) * lh)}px`;
+  flash.style.height = `${String(lh)}px`;
+  scroller.appendChild(flash);
+  setTimeout(() => flash.remove(), 1200);
+}
+
+let cachedLineHeight: number | null = null;
+let cachedPaddingTop: number | null = null;
+
+/** Invalidate cached layout values (call when editor font size changes). */
+export function invalidateEditorScrollCache(): void {
+  cachedLineHeight = null;
+  cachedPaddingTop = null;
+}
+
+function getLineHeight(): number {
+  if (cachedLineHeight !== null) return cachedLineHeight;
+  const style = getComputedStyle($.editorCode);
+  const lh = parseFloat(style.lineHeight);
+  if (Number.isFinite(lh) && lh > 0) { cachedLineHeight = lh; return lh; }
+  const fs = parseFloat(style.fontSize);
+  const val = Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 18;
+  cachedLineHeight = val;
+  return val;
+}
+
+function getPaddingTop(): number {
+  if (cachedPaddingTop !== null) return cachedPaddingTop;
+  const pad = parseFloat(getComputedStyle($.editorHighlight).paddingTop);
+  const val = Number.isFinite(pad) && pad >= 0 ? pad : 0;
+  cachedPaddingTop = val;
+  return val;
+}

@@ -1,0 +1,512 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"testing/fstest"
+	"vibekit/internal/api"
+)
+
+func TestSyncPushPreferences(t *testing.T) {
+	mp := &testPush{}
+	s := &Server{push: mp}
+
+	// Both true by default.
+	s.syncPushPreferences(map[string]json.RawMessage{})
+	if !mp.prefs[api.PushKindAgentFinished] || !mp.prefs[api.PushKindPermission] {
+		t.Error("defaults should be true")
+	}
+
+	// Set agent_finished to false.
+	s.syncPushPreferences(map[string]json.RawMessage{
+		"notify_agent_finished": json.RawMessage(`false`),
+		"notify_permission":     json.RawMessage(`true`),
+	})
+	if mp.prefs[api.PushKindAgentFinished] {
+		t.Error("agent_finished should be false")
+	}
+	if !mp.prefs[api.PushKindPermission] {
+		t.Error("permission should be true")
+	}
+}
+
+type testPush struct {
+	prefs map[api.PushKind]bool
+}
+
+var _ api.PushService = (*testPush)(nil)
+
+func (p *testPush) RegisterRoutes(*http.ServeMux)                      {}
+func (p *testPush) Subscribe(api.PushSubscription)                     {}
+func (p *testPush) Unsubscribe(string)                                 {}
+func (p *testPush) Send(context.Context, string, string, api.PushKind) {}
+func (p *testPush) HasSubscribers() bool                               { return false }
+func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)         { p.prefs = prefs }
+func (p *testPush) ReloadPreferences(context.Context)                  {}
+func (p *testPush) Close()                                             {}
+
+func TestSafeKiroSetting(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		// Original settings
+		{"chat.enableCheckpoint", "chat.enableCheckpoint"},
+		{"chat.enableTodoList", "chat.enableTodoList"},
+		{"chat.enableKnowledge", "chat.enableKnowledge"},
+		{"telemetry.enabled", "telemetry.enabled"},
+		// New settings (Wave 1 items 15, 16)
+		{"chat.enableSubagent", "chat.enableSubagent"},
+		{"chat.enablePromptHints", "chat.enablePromptHints"},
+		{"chat.enableContextUsageIndicator", "chat.enableContextUsageIndicator"},
+		{"chat.disableAutoCompaction", "chat.disableAutoCompaction"},
+		{"hooks.showStatus", "hooks.showStatus"},
+		{"compaction.excludeContextWindowPercent", "compaction.excludeContextWindowPercent"},
+		{"compaction.excludeMessages", "compaction.excludeMessages"},
+		// Rejected settings
+		{"chat.defaultModel", ""},
+		{"api.timeout", ""},
+		{"arbitrary.key", ""},
+	}
+	for _, tt := range tests {
+		got := safeKiroSetting(tt.key)
+		if got != tt.want {
+			t.Errorf("safeKiroSetting(%q) = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestSafeKiroSettingValue(t *testing.T) {
+	tests := []struct {
+		val  string
+		want string
+	}{
+		{"true", "true"},
+		{"false", "false"},
+		{"15", "15"},
+		{"100", "100"},
+		{"0", "0"},
+		{"abc", ""},
+		{"12.5", ""},
+		{"", ""},
+		{"12345", ""}, // too long
+		{"-1", ""},    // negative
+	}
+	for _, tt := range tests {
+		got := safeKiroSettingValue(tt.val)
+		if got != tt.want {
+			t.Errorf("safeKiroSettingValue(%q) = %q, want %q", tt.val, got, tt.want)
+		}
+	}
+}
+
+func TestParseKiroSettingOutput(t *testing.T) {
+	// kiro-cli appends a " (global)" or " (local)" scope suffix to
+	// every non-empty settings value. Left unstripped, the settings
+	// page compared `"true (global)"` against `"true"` and showed
+	// every enabled toggle as off. Verify the stripper handles the
+	// cases we've actually observed plus a couple of defensive ones.
+	tests := []struct {
+		in, want string
+	}{
+		{"true (global)", "true"},
+		{"false (global)", "false"},
+		{"true (local)", "true"},
+		{"7 (global)", "7"},
+		{"true (global)\n", "true"},
+		{"  true (global)  ", "true"},
+		{"", ""},
+		{"true", "true"},
+		{"plain-value", "plain-value"},
+		// No leading paren: nothing to strip, bare text survives.
+		{"name (with parens) (global)", "name (with parens)"},
+	}
+	for _, tt := range tests {
+		if got := parseKiroSettingOutput(tt.in); got != tt.want {
+			t.Errorf("parseKiroSettingOutput(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func FuzzSafeKiroSettingValue(f *testing.F) {
+	f.Add("true")
+	f.Add("false")
+	f.Add("0")
+	f.Add("9999")
+	f.Add("12345")
+	f.Add("")
+	f.Add("-1")
+	f.Add("abc")
+	f.Add("12.5")
+
+	f.Fuzz(func(t *testing.T, v string) {
+		got := safeKiroSettingValue(v)
+		if got == "" {
+			return // rejected — fine
+		}
+		// Invariant: accepted values are either "true"/"false" or
+		// numeric strings of 1-4 digits (non-negative integer).
+		if got == "true" || got == "false" {
+			return
+		}
+		if len(got) > 4 || len(got) == 0 {
+			t.Fatalf("accepted %q with len %d (want 1-4 digit number or bool)", got, len(got))
+		}
+		for _, c := range got {
+			if c < '0' || c > '9' {
+				t.Fatalf("accepted %q containing non-digit %q", got, c)
+			}
+		}
+	})
+}
+
+func FuzzParseKiroSettingOutput(f *testing.F) {
+	// Seed corpus from existing test cases.
+	seeds := []string{
+		"true (global)", "false (global)", "true (local)",
+		"7 (global)", "true (global)\n", "  true (global)  ",
+		"", "true", "plain-value",
+		"name (with parens) (global)",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		output := parseKiroSettingOutput(input)
+		trimmed := strings.TrimSpace(input)
+		// Output must be a substring of the trimmed input (no fabrication).
+		if output != "" && !strings.Contains(trimmed, output) {
+			t.Errorf("output %q is not a substring of trimmed input %q", output, trimmed)
+		}
+		// Output length must not exceed trimmed input length.
+		if len(output) > len(trimmed) {
+			t.Errorf("output %q longer than trimmed input %q", output, trimmed)
+		}
+		// Must never panic (implicit: reaching here means no panic).
+	})
+}
+
+func TestModelHidden(t *testing.T) {
+	tests := []struct {
+		desc string
+		want bool
+	}{
+		{"A great model for coding", false},
+		{"[Deprecated] Old model", true},
+		{"[Legacy] Older model", true},
+		{"[deprecated] lowercase tag", true},
+		{"[legacy] lowercase tag", true},
+		{"This model is deprecated in prose", false},
+		{"Model [DEPRECATED] uppercase", true},
+		{"Model [LEGACY] uppercase", true},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := api.TagExcluded(tt.desc, api.HiddenTags)
+		if got != tt.want {
+			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tt.desc, got, tt.want)
+		}
+	}
+}
+
+func TestStripCodeFence(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"no fence passthrough", "plain text\nmore lines", "plain text\nmore lines"},
+		{"fence with language tag", "```go\nfunc main() {}\n```", "func main() {}"},
+		{"fence without language tag", "```\nsome code\n```", "some code"},
+		{"fence with trailing whitespace", "```js\nlet x = 1;\n```  \n", "let x = 1;"},
+		{"bare triple backtick no newline", "```", "```"},
+		{"empty content between fences", "```\n\n```", ""},
+		{"multiline content", "```python\nimport os\nprint(os.getcwd())\n```", "import os\nprint(os.getcwd())"},
+		{"no trailing fence", "```go\nfunc main() {}", "func main() {}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := api.StripCodeFence(tt.input)
+			if got != tt.want {
+				t.Errorf("StripCodeFence(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSteeringInclusion(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"standard front-matter", "---\ninclusion: manual\ndescription: test\n---\n# Doc", "manual"},
+		{"always inclusion", "---\ninclusion: always\n---\n# Doc", "always"},
+		{"fileMatch inclusion", "---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc", "fileMatch"},
+		{"no front-matter defaults to always", "# Just a heading\nSome content", "always"},
+		{"empty file defaults to always", "", "always"},
+		{"front-matter without inclusion defaults to always", "---\ndescription: no inclusion key\n---\n# Doc", "always"},
+		{"unclosed front-matter defaults to always", "---\ninclusion: manual\n# No closing fence", "always"},
+		{"inclusion with extra whitespace", "---\ninclusion:   manual  \n---\n# Doc", "manual"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSteeringInclusion([]byte(tt.content))
+			if got != tt.want {
+				t.Errorf("parseSteeringInclusion() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSteeringInclusion_NilData(t *testing.T) {
+	got := parseSteeringInclusion(nil)
+	if got != "always" {
+		t.Errorf("parseSteeringInclusion(nil) = %q, want %q", got, "always")
+	}
+}
+
+func TestSpaHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		fs         fstest.MapFS
+		path       string
+		wantCode   int
+		wantBody   string
+		wantHeader string // Cache-Control value, empty to skip check
+	}{
+		{
+			name: "serves existing file",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html>index</html>")},
+				"style.css":  {Data: []byte("body{}")},
+				"js/app.js":  {Data: []byte("console.log('hi')")},
+			},
+			path:     "/style.css",
+			wantCode: http.StatusOK,
+			wantBody: "body{}",
+		},
+		{
+			name: "falls back to index for unknown path",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html>index</html>")},
+			},
+			path:     "/chat/abc123",
+			wantCode: http.StatusOK,
+			wantBody: "<html>index</html>",
+		},
+		{
+			name: "root serves index",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html>root</html>")},
+			},
+			path:     "/",
+			wantCode: http.StatusOK,
+			wantBody: "<html>root</html>",
+		},
+		{
+			name: "sets cache-control header",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html></html>")},
+			},
+			path:       "/",
+			wantCode:   http.StatusOK,
+			wantHeader: "no-cache",
+		},
+		{
+			name: "directory falls back to index",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html>fallback</html>")},
+				"assets":     {Mode: fs.ModeDir},
+			},
+			path:     "/assets",
+			wantCode: http.StatusOK,
+			wantBody: "<html>fallback</html>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := spaHandler(tt.fs)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+			if tt.wantBody != "" && !containsSubstring(rec.Body.String(), tt.wantBody) {
+				t.Errorf("body = %q, want to contain %q", rec.Body.String(), tt.wantBody)
+			}
+			if tt.wantHeader != "" {
+				if got := rec.Header().Get("Cache-Control"); got != tt.wantHeader {
+					t.Errorf("Cache-Control = %q, want %q", got, tt.wantHeader)
+				}
+			}
+		})
+	}
+}
+
+func containsSubstring(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || findSubstring(s, sub))
+}
+
+func findSubstring(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func FuzzParseSteeringInclusion(f *testing.F) {
+	// Seed corpus from existing unit test inputs.
+	seeds := []string{
+		"---\ninclusion: manual\ndescription: test\n---\n# Doc",
+		"---\ninclusion: always\n---\n# Doc",
+		"---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n# Doc",
+		"# Just a heading\nSome content",
+		"",
+		"---\ndescription: no inclusion key\n---\n# Doc",
+		"---\ninclusion: manual\n# No closing fence",
+		"---\ninclusion:   manual  \n---\n# Doc",
+		// Adversarial cases.
+		"---\n---\n",
+		"---\n\n---\n",
+		"---\n---",
+		string([]byte{0x00, 0x01, 0x02}),
+		"---\n" + strings.Repeat("a", 10000) + "\n---\n",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, content string) {
+		// Must not panic (implicit: reaching here means no panic).
+		_ = parseSteeringInclusion([]byte(content))
+	})
+}
+
+func BenchmarkScanKiroDirFS(b *testing.B) {
+	makeDocs := func(n int) fstest.MapFS {
+		m := fstest.MapFS{
+			"steering":  &fstest.MapFile{Mode: fs.ModeDir},
+			"skills":    &fstest.MapFile{Mode: fs.ModeDir},
+			"skills/s1": &fstest.MapFile{Mode: fs.ModeDir},
+			"agents":    &fstest.MapFile{Mode: fs.ModeDir},
+			"agents/a.md": &fstest.MapFile{
+				Data: []byte("---\ninclusion: always\n---\n# Agent"),
+			},
+		}
+		for i := range n {
+			name := "steering/doc" + strings.Repeat("x", 3) + string(rune('a'+i%26)) + ".md"
+			m[name] = &fstest.MapFile{
+				Data: []byte("---\ninclusion: manual\ndescription: benchmark doc\n---\n# Heading\nContent here for realism.\n"),
+			}
+		}
+		return m
+	}
+
+	for _, count := range []int{5, 20, 50} {
+		name := string(rune('0'+count/10)) + string(rune('0'+count%10)) + "_docs"
+		b.Run(name, func(b *testing.B) {
+			m := makeDocs(count)
+			ctx := context.Background()
+			b.ResetTimer()
+			for range b.N {
+				_ = scanKiroDirFS(ctx, m, "test/.kiro")
+			}
+		})
+	}
+}
+
+func FuzzScanKiroDirFS(f *testing.F) {
+	f.Add("normal.md", "other.md", "skill1")
+	f.Add("has-dash.md", "agent.md", "sk")
+	f.Add("", ".hidden.md", "")
+	f.Add("a.txt", "b.md", "dir")
+
+	f.Fuzz(func(t *testing.T, steeringName, agentName, skillName string) {
+		m := fstest.MapFS{
+			"steering": &fstest.MapFile{Mode: fs.ModeDir},
+			"agents":   &fstest.MapFile{Mode: fs.ModeDir},
+			"skills":   &fstest.MapFile{Mode: fs.ModeDir},
+		}
+		if steeringName != "" {
+			m["steering/"+steeringName] = &fstest.MapFile{
+				Data: []byte("---\ninclusion: always\n---\n# Doc"),
+			}
+		}
+		if agentName != "" {
+			m["agents/"+agentName] = &fstest.MapFile{
+				Data: []byte("# Agent"),
+			}
+		}
+		if skillName != "" {
+			m["skills/"+skillName] = &fstest.MapFile{Mode: fs.ModeDir}
+		}
+
+		items := scanKiroDirFS(context.Background(), m, "prefix/.kiro")
+
+		for _, item := range items {
+			if strings.Contains(item.Path, "\x00") {
+				t.Errorf("item.Path contains null byte: %q", item.Path)
+			}
+			if item.Type != "steering" && item.Type != "skill" && item.Type != "agent" {
+				t.Errorf("item.Type = %q, want steering|skill|agent", item.Type)
+			}
+			if item.Name == "" {
+				t.Errorf("item.Name is empty for path %q", item.Path)
+			}
+		}
+	})
+}
+
+func TestHandleHealth_returns_ok(t *testing.T) {
+	s := &Server{}
+	s.ready.Store(true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json prefix", ct)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if got["status"] != "ok" {
+		t.Errorf("status = %q, want ok", got["status"])
+	}
+}
+
+func TestHandleHealth_unready(t *testing.T) {
+	s := &Server{} // ready defaults to false (zero value)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if got["status"] != "unready" {
+		t.Errorf("status = %q, want unready (canonical wire shape)", got["status"])
+	}
+	if got["reason"] == "" {
+		t.Errorf("unready response missing reason field")
+	}
+}

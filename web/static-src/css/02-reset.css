@@ -1,0 +1,28 @@
+
+/* ==========================================================================
+   Reset & Base
+   ========================================================================== */
+
+@layer reset {
+* { margin: 0; padding: 0; box-sizing: border-box; }
+::selection { background: color-mix(in srgb, var(--c-accent) 25%, transparent); color: var(--c-text-primary); }
+:where(input, textarea, select) { caret-color: var(--c-accent); }
+:is(.steering-textarea, .auth-input, [id="prompt-input"], .modal-input, .page-textarea, .tool-form-input, .tool-form-select, .git-commit-input):focus { outline: none; border-color: var(--c-accent); }
+:is(.steering-textarea, .auth-input, .git-commit-input, [id="prompt-input"], .modal-input, .page-textarea, .tool-form-input)::placeholder { color: var(--c-text-tertiary); }
+
+body {
+  font-family: var(--font-sans); font-size: var(--fs-base);
+  background: var(--c-bg-primary); color: var(--c-text-primary);
+  height: 100vh; overflow: hidden;
+  font-optical-sizing: auto;
+  scrollbar-gutter: stable;
+  text-wrap: pretty;
+  touch-action: pan-x pan-y;
+}
+:where(button) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
+[id="app"] { display: grid; grid-template-columns: 1fr; position: fixed; inset: 0; }
+
+[id="chat-area"] { margin-inline-start: var(--sidebar-w); }
+
+} /* @layer reset */

@@ -1,0 +1,61 @@
+__vite_ssr_exportName__("planToMarkdown", () => { try { return planToMarkdown } catch {} });
+__vite_ssr_exportName__("writePlanDraft", () => { try { return writePlanDraft } catch {} });
+__vite_ssr_exportName__("runPlan", () => { try { return runPlan } catch {} });
+const __vite_ssr_import_0__ = await __vite_ssr_import__("/api-client.ts", {"importedNames":["apiPutOrError","apiDelete"]});
+const __vite_ssr_import_1__ = await __vite_ssr_import__("/chat-commands.ts", {"importedNames":["sendPromptTo"]});
+const __vite_ssr_import_2__ = await __vite_ssr_import__("/banner-stack.ts", {"importedNames":["showBanner"]});
+
+
+
+/** Serialize a plan into markdown suitable for the draft file + prompt
+*  body. High-priority items are marked inline so the agent sees them. */
+function planToMarkdown(entries) {
+	const lines = ["# Plan", ""];
+	for (const e of entries) {
+		const marker = e.status === "completed" ? "x" : " ";
+		const hi = e.priority === "high" ? " **[high priority]**" : "";
+		lines.push(`- [${marker}] ${e.content}${hi}`);
+	};
+	return lines.join("\n") + "\n";
+};
+/** Write the plan-draft file on the server. Returns true on success.
+*  On failure surfaces a dismissible error banner so the user sees
+*  *why* the Edit/Run click went nowhere — silent no-op is the worst
+*  UX: the buttons look broken. 413 (plan > 256 KB server cap) is
+*  the expected failure for large plans; other statuses (chat gone,
+*  disk full, permission) render with the server's error text. */
+async function writePlanDraft(chatID, content) {
+	if (chatID === "") return false;
+	const r = await (0,__vite_ssr_import_0__.apiPutOrError)(`/api/chats/${encodeURIComponent(chatID)}/plan-draft`, { content });
+	if (!r.ok) {
+		const msg = r.status === 413 ? "Plan is too large to save (256 KB limit). Trim some items and try again." : r.error !== "" ? `Could not save plan draft: ${r.error}` : "Could not save plan draft.";
+		(0,__vite_ssr_import_2__.showBanner)(chatID, "plan_draft_write_failed", msg, "error", true);
+		return false;
+	};
+	return true;
+};
+/** Delete the plan-draft file on the server. Silent best-effort. */
+async function deletePlanDraft(chatID) {
+	if (chatID === "") return;
+	await (0,__vite_ssr_import_0__.apiDelete)(`/api/chats/${encodeURIComponent(chatID)}/plan-draft`);
+}
+/** Hand the plan to the running agent as a prompt. The agent decides
+*  whether to switch modes / agents — vibekit doesn't force anything.
+*  Runs under the shared thinking lifecycle so the send button shows
+*  "busy" for the whole handoff.
+*
+*  Only deletes the draft on send/queue. If the prompt was rejected
+*  (e.g. parent chat tombstoned mid-handoff, chat frozen because a
+*  tangent landed between the Edit and Send clicks), the draft stays
+*  on disk so the user's work survives the failure and they can retry
+*  from the editor. */
+async function runPlan(chatID, content) {
+	if (chatID === "" || content.trim() === "") return;
+	const result = await (0,__vite_ssr_import_1__.sendPromptTo)(chatID, `Please implement this plan:\n\n${content}`);
+	if (result === "failed") return;
+	await deletePlanDraft(chatID);
+}
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQUEsQ0FBQTs7O0FBY0E7QUFDQTtBQUNBOzs7Ozs7QUFJTyxTQUFTLGVBQWUsU0FBOEI7Q0FDM0QsTUFBTSxRQUFrQixDQUFDLFVBQVUsRUFBRTtDQUNyQyxLQUFLLE1BQU0sS0FBSyxTQUFTO0VBQ3ZCLE1BQU0sU0FBUyxFQUFFLFdBQVcsY0FBYyxNQUFNO0VBQ2hELE1BQU0sS0FBSyxFQUFFLGFBQWEsU0FBUyx5QkFBeUI7RUFDNUQsTUFBTSxLQUFLLE1BQU0sT0FBTyxJQUFJLEVBQUUsVUFBVSxJQUFJO0NBQzlDO0NBQ0EsT0FBTyxNQUFNLEtBQUssSUFBSSxJQUFJO0FBQzVCOzs7Ozs7O0FBUU8sZUFBZSxlQUFlLFFBQWdCLFNBQW1DO0NBQ3RGLElBQUksV0FBVyxJQUFJLE9BQU87Q0FDMUIsTUFBTSxJQUFJLFNBQU0scUNBQ2QsY0FBYyxtQkFBbUIsTUFBTSxFQUFFLGNBQWMsRUFBRSxRQUFRLENBQ25FO0NBQ0EsSUFBSSxDQUFDLEVBQUUsSUFBSTtFQUNULE1BQU0sTUFBTSxFQUFFLFdBQVcsTUFDckIsNkVBQ0EsRUFBRSxVQUFVLEtBQ1YsOEJBQThCLEVBQUUsVUFDaEM7S0FDTixrQ0FBVyxRQUFRLDJCQUEyQixLQUFLLFNBQVMsSUFBSTtFQUNoRSxPQUFPO0NBQ1Q7Q0FDQSxPQUFPO0FBQ1Q7O0FBR0EsZUFBZSxnQkFBZ0IsUUFBK0I7Q0FDNUQsSUFBSSxXQUFXLElBQUk7Q0FDbkIsU0FBTSxpQ0FBVSxjQUFjLG1CQUFtQixNQUFNLEVBQUUsWUFBWTtBQUN2RTs7Ozs7Ozs7Ozs7QUFZTyxlQUFlLFFBQVEsUUFBZ0IsU0FBZ0M7Q0FDNUUsSUFBSSxXQUFXLE1BQU0sUUFBUSxLQUFLLE1BQU0sSUFBSTtDQUM1QyxNQUFNLFNBQVMsU0FBTSxvQ0FBYSxRQUFRLGtDQUFrQyxTQUFTO0NBQ3JGLElBQUksV0FBVyxVQUFVO0NBQ3pCLE1BQU0sZ0JBQWdCLE1BQU07QUFDOUIiLCJuYW1lcyI6W10sImlnbm9yZUxpc3QiOltdLCJzb3VyY2VzIjpbInBsYW4tYWN0aW9ucy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS1cbi8vIFBsYW4gaGFuZG9mZjogdGhlIFJ1biAvIEVkaXQgYWN0aW9ucyBvbiBwbGFuIGNhcmRzIGFuZCB0aGUgZWRpdG9yJ3Ncbi8vIFwiU2VuZCBwbGFuXCIgdG9vbGJhciBidXR0b24gYWxsIHJvdXRlIHRocm91Z2ggdGhpcyBtb2R1bGUgc28gdGhlIGZsb3dcbi8vIGxpdmVzIGluIG9uZSBwbGFjZS5cbi8vXG4vLyBUaGUgcGxhbm5lciBhZ2VudCBpcyBleHBlY3RlZCB0byBkZWNsYXJlIHNlc3Npb24gbW9kZXMgdGhhdCBpbmNsdWRlIGFcbi8vIFwiYnVpbGRcIiBvciBcImltcGxlbWVudFwiIHZhcmlhbnQg4oCUIHdoZW4gdGhlIGFnZW50IGRlY2lkZXMgdGhlIHBsYW4gaXNcbi8vIHJlYWR5LCBpdCBpc3N1ZXMgYSBgc3dpdGNoX21vZGVgIHRvb2wgY2FsbCB0aGF0IHRoZSB1c2VyIGFwcHJvdmVzLFxuLy8gYW5kIHRoZSBuZXh0IHByb21wdCBydW5zIGluIHRoZSBuZXcgbW9kZS4gdmliZWtpdCBkb2VzIE5PVCBmb3JjZSBhblxuLy8gYWdlbnQgc3dhcCBiZWhpbmQgdGhlIHVzZXIncyBiYWNrOyB3ZSBqdXN0IGhhbmQgdGhlIHBsYW4gdG8gdGhlXG4vLyBydW5uaW5nIGFnZW50IGFzIGEgcHJvbXB0IGFuZCBsZXQgaXQgY2hvb3NlIHdoYXQgdG8gZG8uXG4vLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS1cblxuaW1wb3J0IHR5cGUgeyBQbGFuRW50cnkgfSBmcm9tIFwiLi90eXBlcy5qc1wiO1xuaW1wb3J0IHsgYXBpUHV0T3JFcnJvciwgYXBpRGVsZXRlIH0gZnJvbSBcIi4vYXBpLWNsaWVudC5qc1wiO1xuaW1wb3J0IHsgc2VuZFByb21wdFRvIH0gZnJvbSBcIi4vY2hhdC1jb21tYW5kcy5qc1wiO1xuaW1wb3J0IHsgc2hvd0Jhbm5lciB9IGZyb20gXCIuL2Jhbm5lci1zdGFjay5qc1wiO1xuXG4vKiogU2VyaWFsaXplIGEgcGxhbiBpbnRvIG1hcmtkb3duIHN1aXRhYmxlIGZvciB0aGUgZHJhZnQgZmlsZSArIHByb21wdFxuICogIGJvZHkuIEhpZ2gtcHJpb3JpdHkgaXRlbXMgYXJlIG1hcmtlZCBpbmxpbmUgc28gdGhlIGFnZW50IHNlZXMgdGhlbS4gKi9cbmV4cG9ydCBmdW5jdGlvbiBwbGFuVG9NYXJrZG93bihlbnRyaWVzOiBQbGFuRW50cnlbXSk6IHN0cmluZyB7XG4gIGNvbnN0IGxpbmVzOiBzdHJpbmdbXSA9IFtcIiMgUGxhblwiLCBcIlwiXTtcbiAgZm9yIChjb25zdCBlIG9mIGVudHJpZXMpIHtcbiAgICBjb25zdCBtYXJrZXIgPSBlLnN0YXR1cyA9PT0gXCJjb21wbGV0ZWRcIiA/IFwieFwiIDogXCIgXCI7XG4gICAgY29uc3QgaGkgPSBlLnByaW9yaXR5ID09PSBcImhpZ2hcIiA/IFwiICoqW2hpZ2ggcHJpb3JpdHldKipcIiA6IFwiXCI7XG4gICAgbGluZXMucHVzaChgLSBbJHttYXJrZXJ9XSAke2UuY29udGVudH0ke2hpfWApO1xuICB9XG4gIHJldHVybiBsaW5lcy5qb2luKFwiXFxuXCIpICsgXCJcXG5cIjtcbn1cblxuLyoqIFdyaXRlIHRoZSBwbGFuLWRyYWZ0IGZpbGUgb24gdGhlIHNlcnZlci4gUmV0dXJucyB0cnVlIG9uIHN1Y2Nlc3MuXG4gKiAgT24gZmFpbHVyZSBzdXJmYWNlcyBhIGRpc21pc3NpYmxlIGVycm9yIGJhbm5lciBzbyB0aGUgdXNlciBzZWVzXG4gKiAgKndoeSogdGhlIEVkaXQvUnVuIGNsaWNrIHdlbnQgbm93aGVyZSDigJQgc2lsZW50IG5vLW9wIGlzIHRoZSB3b3JzdFxuICogIFVYOiB0aGUgYnV0dG9ucyBsb29rIGJyb2tlbi4gNDEzIChwbGFuID4gMjU2IEtCIHNlcnZlciBjYXApIGlzXG4gKiAgdGhlIGV4cGVjdGVkIGZhaWx1cmUgZm9yIGxhcmdlIHBsYW5zOyBvdGhlciBzdGF0dXNlcyAoY2hhdCBnb25lLFxuICogIGRpc2sgZnVsbCwgcGVybWlzc2lvbikgcmVuZGVyIHdpdGggdGhlIHNlcnZlcidzIGVycm9yIHRleHQuICovXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gd3JpdGVQbGFuRHJhZnQoY2hhdElEOiBzdHJpbmcsIGNvbnRlbnQ6IHN0cmluZyk6IFByb21pc2U8Ym9vbGVhbj4ge1xuICBpZiAoY2hhdElEID09PSBcIlwiKSByZXR1cm4gZmFsc2U7XG4gIGNvbnN0IHIgPSBhd2FpdCBhcGlQdXRPckVycm9yPHsgb2s/OiBib29sZWFuIH0+KFxuICAgIGAvYXBpL2NoYXRzLyR7ZW5jb2RlVVJJQ29tcG9uZW50KGNoYXRJRCl9L3BsYW4tZHJhZnRgLCB7IGNvbnRlbnQgfSxcbiAgKTtcbiAgaWYgKCFyLm9rKSB7XG4gICAgY29uc3QgbXNnID0gci5zdGF0dXMgPT09IDQxM1xuICAgICAgPyBcIlBsYW4gaXMgdG9vIGxhcmdlIHRvIHNhdmUgKDI1NiBLQiBsaW1pdCkuIFRyaW0gc29tZSBpdGVtcyBhbmQgdHJ5IGFnYWluLlwiXG4gICAgICA6IHIuZXJyb3IgIT09IFwiXCJcbiAgICAgICAgPyBgQ291bGQgbm90IHNhdmUgcGxhbiBkcmFmdDogJHtyLmVycm9yfWBcbiAgICAgICAgOiBcIkNvdWxkIG5vdCBzYXZlIHBsYW4gZHJhZnQuXCI7XG4gICAgc2hvd0Jhbm5lcihjaGF0SUQsIFwicGxhbl9kcmFmdF93cml0ZV9mYWlsZWRcIiwgbXNnLCBcImVycm9yXCIsIHRydWUpO1xuICAgIHJldHVybiBmYWxzZTtcbiAgfVxuICByZXR1cm4gdHJ1ZTtcbn1cblxuLyoqIERlbGV0ZSB0aGUgcGxhbi1kcmFmdCBmaWxlIG9uIHRoZSBzZXJ2ZXIuIFNpbGVudCBiZXN0LWVmZm9ydC4gKi9cbmFzeW5jIGZ1bmN0aW9uIGRlbGV0ZVBsYW5EcmFmdChjaGF0SUQ6IHN0cmluZyk6IFByb21pc2U8dm9pZD4ge1xuICBpZiAoY2hhdElEID09PSBcIlwiKSByZXR1cm47XG4gIGF3YWl0IGFwaURlbGV0ZShgL2FwaS9jaGF0cy8ke2VuY29kZVVSSUNvbXBvbmVudChjaGF0SUQpfS9wbGFuLWRyYWZ0YCk7XG59XG5cbi8qKiBIYW5kIHRoZSBwbGFuIHRvIHRoZSBydW5uaW5nIGFnZW50IGFzIGEgcHJvbXB0LiBUaGUgYWdlbnQgZGVjaWRlc1xuICogIHdoZXRoZXIgdG8gc3dpdGNoIG1vZGVzIC8gYWdlbnRzIOKAlCB2aWJla2l0IGRvZXNuJ3QgZm9yY2UgYW55dGhpbmcuXG4gKiAgUnVucyB1bmRlciB0aGUgc2hhcmVkIHRoaW5raW5nIGxpZmVjeWNsZSBzbyB0aGUgc2VuZCBidXR0b24gc2hvd3NcbiAqICBcImJ1c3lcIiBmb3IgdGhlIHdob2xlIGhhbmRvZmYuXG4gKlxuICogIE9ubHkgZGVsZXRlcyB0aGUgZHJhZnQgb24gc2VuZC9xdWV1ZS4gSWYgdGhlIHByb21wdCB3YXMgcmVqZWN0ZWRcbiAqICAoZS5nLiBwYXJlbnQgY2hhdCB0b21ic3RvbmVkIG1pZC1oYW5kb2ZmLCBjaGF0IGZyb3plbiBiZWNhdXNlIGFcbiAqICB0YW5nZW50IGxhbmRlZCBiZXR3ZWVuIHRoZSBFZGl0IGFuZCBTZW5kIGNsaWNrcyksIHRoZSBkcmFmdCBzdGF5c1xuICogIG9uIGRpc2sgc28gdGhlIHVzZXIncyB3b3JrIHN1cnZpdmVzIHRoZSBmYWlsdXJlIGFuZCB0aGV5IGNhbiByZXRyeVxuICogIGZyb20gdGhlIGVkaXRvci4gKi9cbmV4cG9ydCBhc3luYyBmdW5jdGlvbiBydW5QbGFuKGNoYXRJRDogc3RyaW5nLCBjb250ZW50OiBzdHJpbmcpOiBQcm9taXNlPHZvaWQ+IHtcbiAgaWYgKGNoYXRJRCA9PT0gXCJcIiB8fCBjb250ZW50LnRyaW0oKSA9PT0gXCJcIikgcmV0dXJuO1xuICBjb25zdCByZXN1bHQgPSBhd2FpdCBzZW5kUHJvbXB0VG8oY2hhdElELCBgUGxlYXNlIGltcGxlbWVudCB0aGlzIHBsYW46XFxuXFxuJHtjb250ZW50fWApO1xuICBpZiAocmVzdWx0ID09PSBcImZhaWxlZFwiKSByZXR1cm47XG4gIGF3YWl0IGRlbGV0ZVBsYW5EcmFmdChjaGF0SUQpO1xufVxuIl0sImZpbGUiOiIvcGxhbi1hY3Rpb25zLnRzIn0=
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZWRVcmxzIjoiMyIsIm1hcHBpbmdzIjpmYWxzZX0sIi93b3Jrc3BhY2UvaG9tZWxhYi9hcHBzL3ZpYmVraXQvd2ViL3N0YXRpYy1zcmMvcGxhbi1hY3Rpb25zLnRzIiwiL3BsYW4tYWN0aW9ucy50cyIsWyI0IiwiNSIsIjYiXSwiL2FwaS1jbGllbnQudHMiLCIvY2hhdC1jb21tYW5kcy50cyIsIi9iYW5uZXItc3RhY2sudHMiXQ==

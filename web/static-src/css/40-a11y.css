@@ -1,0 +1,133 @@
+
+/* Utility: must override all display values unconditionally. */
+.hidden { display: none !important; } /* stylelint-disable-line declaration-no-important */
+
+/* Modals use opacity+pointer-events for exit animation instead of display:none */
+.modal-overlay.hidden { display: flex !important; } /* stylelint-disable-line declaration-no-important */
+
+/* Initial loading screen: shown until auth state is resolved. */
+[id="app-loading"] {
+  position: fixed; inset: 0; z-index: 400;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--c-bg-primary);
+}
+
+[id="app-loading"] svg { animation: vk-skeleton 1.5s ease-in-out infinite; }
+
+[id="app"].app-hidden { visibility: hidden; }
+
+/* ==========================================================================
+   Accessibility
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* stylelint-disable declaration-no-important, time-min-milliseconds -- intentionally near-zero for a11y */
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* stylelint-enable declaration-no-important, time-min-milliseconds */
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --c-border: oklch(45% 0 0deg);
+    --c-text-tertiary: oklch(70% 0 0deg);
+  }
+}
+
+@media (forced-colors: active) {
+  .modal-card, .popup, .tool-call, .subagent-call { border: 1px solid CanvasText; }
+}
+
+/* ==========================================================================
+   Follow-along viewer
+   ========================================================================== */
+
+.follow-waiting {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--c-text-tertiary); font-size: var(--fs-sm);
+}
+
+.follow-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-block-end: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm); color: var(--c-text-secondary);
+  position: sticky; inset-block-start: 0; z-index: 1;
+}
+
+.follow-path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left; flex: 1;
+}
+
+.follow-open-btn, .follow-pause-btn {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: var(--c-text-secondary); padding: var(--sp-1);
+  border-radius: var(--r); transition: color var(--dur-micro), background var(--dur-micro) var(--ease-micro);
+  display: flex; align-items: center;
+  &:hover { color: var(--c-text-primary); background: var(--c-bg-hover); }
+}
+
+.follow-pause-btn {
+  /* Default: show pause bars, hide play triangle */
+  & .follow-play-icon { display: none; }
+  & .follow-pause-icon { display: block; }
+
+  /* Paused: show play triangle, hide pause bars */
+  &[aria-pressed="true"] .follow-play-icon { display: block; }
+  &[aria-pressed="true"] .follow-pause-icon { display: none; }
+  &[aria-pressed="true"] { color: var(--c-accent); }
+}
+
+.follow-code {
+  flex: 1; overflow: auto; padding: 0;
+}
+
+.follow-pre {
+  margin: 0; padding: 0; font-family: var(--font-mono);
+  font-size: var(--fs-xs); line-height: 1.5;
+}
+
+.follow-line {
+  display: flex; padding-inline: var(--sp-2);
+  transition: background var(--dur-standard);
+}
+
+.follow-active-line {
+  background: color-mix(in srgb, var(--c-accent) 15%, transparent);
+  border-inline-start: 2px solid var(--c-accent);
+  padding-inline-start: calc(var(--sp-2) - 2px);
+}
+
+.follow-gutter {
+  flex-shrink: 0; width: 3.5rem; text-align: end;
+  padding-inline-end: var(--sp-3); color: var(--c-text-tertiary);
+  user-select: none;
+}
+
+.follow-text { white-space: pre; }
+
+.skeleton-follow-line {
+  height: 0.875rem; margin: var(--sp-2) var(--sp-4);
+  border-radius: var(--r);
+}
+
+.follow-skeleton { padding: var(--sp-3) 0; }
+
+.follow-error {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--sp-2);
+  height: 100%; color: var(--c-text-tertiary); font-size: var(--fs-sm);
+  text-align: center; padding: var(--sp-4);
+  & code { font-size: var(--fs-xs); color: var(--c-text-secondary); word-break: break-all; }
+}
+
+/* ==========================================================================
+   Mobile
+   ========================================================================== */
+

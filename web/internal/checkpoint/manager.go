@@ -1,0 +1,284 @@
+// Per-chat checkpoint Manager, content-addressed edition.
+//
+// File-level, content-addressed checkpoints inspired by the Kiro
+// IDE's `session-file-snapshots` design. Invariants we guarantee:
+//
+//   - Per-FILE snapshots, not per-WORKSPACE. Restoring a chat's
+//     checkpoint only touches files that chat's agent edited.
+//     Unrelated user edits (other chats' agents, editor buffers,
+//     shell side-effects) survive every Restore.
+//   - Global, deduplicated blob store shared across chats.
+//   - Append-only fsync'd JSONL event log per chat — durable
+//     after Append returns.
+//   - Tag grammar `N` / `N.K`; client is unaware of the rewrite.
+//   - Message-count watermark per snapshot → transcript and file
+//     rollback stay coupled.
+//   - Two-phase atomic restore with a journal: `restore_started`
+//     before phase 2, `restore_committed` after. A crash between
+//     the two reruns the commit on next load.
+//   - Cross-chat conflict detection via a shared index: when we
+//     see disk content that doesn't match what another chat left
+//     there, a `conflict_detected` event is emitted and an
+//     optional broadcast callback fires so clients can surface
+//     the drift inline on the affected tool call.
+
+package checkpoint
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+)
+
+// ErrPathEscape signals that a workspace-relative path resolves
+// outside the workdir boundary. Distinct from a generic error so
+// callers can classify the failure without string matching.
+var ErrPathEscape = errors.New("path escapes workdir")
+
+// ConflictBroadcaster is the hook the Manager calls to fan conflict
+// events out to SSE subscribers. Takes the payload by pointer so the
+// hot path doesn't copy ~90 bytes per call.
+type ConflictBroadcaster func(chatID string, payload *ConflictPayload)
+
+// restoreStageSuffix is the temp-file pattern used by both
+// CheckoutFile and stageRestoreLocked for two-phase atomic writes.
+// Single constant so cleanup tooling or tests that glob for orphaned
+// staging files can reference it instead of hardcoding the pattern.
+const restoreStageSuffix = ".vibekit-restore-*"
+
+// ConflictPayload is what the broadcaster receives per conflict.
+// Exported because the server's SSE wiring lives outside the
+// package and needs the shape.
+type ConflictPayload struct {
+	Path        string `json:"path"`
+	OtherChat   string `json:"other_chat"`
+	ExpectedSHA string `json:"expected_sha"`
+	ActualSHA   string `json:"actual_sha"`
+	Tag         string `json:"tag"`
+	TS          int64  `json:"ts"`
+}
+
+// managerDeps bundles the shared infrastructure that every Manager
+// in a Store receives. These are identical for every Manager the
+// Store creates; only chatID, workDir, and log vary per chat.
+type managerDeps struct {
+	blobs  *blobStore
+	index  *crossChatIndex
+	onConf ConflictBroadcaster
+	gcLock *sync.RWMutex
+}
+
+// Manager owns one chat's checkpoint log and drives all snapshot /
+// restore / diff operations on behalf of that chat. Safe for
+// concurrent use — every entry point serializes on m.mu.
+type Manager struct {
+	*managerDeps
+
+	loadErr error
+	log     *eventLog
+	state   *state
+	chatID  string
+	workDir string
+	mu      sync.Mutex
+	loadMu  sync.Mutex
+	loaded  bool
+}
+
+// newManager builds a Manager instance. Callers go through Store.get;
+// this constructor isn't exported because the Store owns registry
+// semantics (one Manager per chat, lazy init). gcLock is a shared
+// pointer to the Store's RWMutex so every caller of Manager.Snapshot
+// takes the same read lock that runGCOnce blocks against — even
+// future refactors that hand *Manager out to callers that bypass
+// Store.Snapshot inherit the coordination.
+func newManager(chatID, workDir string, log *eventLog, deps *managerDeps) *Manager {
+	return &Manager{
+		managerDeps: deps,
+		chatID:      chatID,
+		workDir:     workDir,
+		log:         log,
+		state:       newState(),
+	}
+}
+
+// --- Internals ---
+
+// ensureLoaded replays the event log into state and, if the replay
+// ends on a dangling `restore_started` (crash between phase 2 open
+// and phase 2 close), re-runs the restore. Recovery is idempotent:
+// re-running a restore that already landed is a no-op on every
+// file (renames fail silently when source == target content).
+//
+// After replay, applies all snapshot events to the shared cross-chat
+// index so the conflict detector has this chat's observations without
+// requiring an eager full-scan at startup.
+//
+// Callers must hold m.mu.
+//
+// INVARIANT: returns with m.mu held.
+func (m *Manager) ensureLoaded(ctx context.Context) error {
+	if m.loaded {
+		return m.loadErr
+	}
+	// Release m.mu during the expensive I/O (event log read + replay)
+	// so concurrent callers on other code paths aren't blocked for the
+	// full replay duration. loadMu serializes the one-shot replay itself.
+	m.mu.Unlock()
+	m.loadMu.Lock()
+	// Double-check after acquiring loadMu — another goroutine may have
+	// completed the replay while we waited.
+	if m.loaded {
+		m.loadMu.Unlock()
+		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
+		return m.loadErr
+	}
+	events, err := m.log.Read()
+	if err != nil {
+		m.loadErr = err
+		m.loaded = true
+		m.loadMu.Unlock()
+		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
+		return err
+	}
+	st := replay(events)
+	// Populate the cross-chat index with this chat's snapshot events.
+	if m.index != nil {
+		for i := range events {
+			m.index.apply(m.chatID, &events[i])
+		}
+	}
+	m.loadMu.Unlock()
+	// Re-acquire m.mu for the state swap and any recovery.
+	m.mu.Lock()
+	if m.loaded {
+		// Another goroutine beat us between loadMu.Unlock and mu.Lock.
+		return m.loadErr
+	}
+	m.state = st
+	m.loaded = true
+
+	if m.state.pendingRestore == "" {
+		return nil
+	}
+	// Recovery path: the previous process opened a restore
+	// journal but never closed it. Re-run the restore and
+	// journal the close.
+	tag := m.state.pendingRestore
+	slog.Info("checkpoint: recovering interrupted restore",
+		"chat_id", m.chatID, "tag", tag)
+	if _, err := m.restoreLocked(ctx, tag, true); err != nil {
+		slog.Error("checkpoint: restore recovery failed",
+			"chat_id", m.chatID, "tag", tag, "error", err)
+		m.loadErr = err
+		return err
+	}
+	return nil
+}
+
+// loadAndValidateTag performs the common three-step prelude shared by
+// RestorePreview, Restore, CheckoutFile, and Diff: ensure the event
+// log is loaded, check for context cancellation, and verify the tag
+// exists. Callers must hold m.mu.
+func (m *Manager) loadAndValidateTag(ctx context.Context, tag string) error {
+	if err := m.ensureLoaded(ctx); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, ok := m.state.tags[tag]; !ok {
+		return fmt.Errorf("%w: %q", ErrTagNotFound, tag)
+	}
+	return nil
+}
+
+// absPath turns a workspace-relative path into the on-disk absolute
+// path, refusing anything that would resolve outside workDir. Two
+// threat models the refusal closes:
+//
+//  1. Corrupt log: Restore reads paths straight from events.jsonl,
+//     so a tampered entry with ".." or "" could produce a path
+//     outside (or equal to) m.workDir.
+//  2. Empty-string footgun: filepath.Rel(m.workDir, m.workDir)
+//     returns ".", not an error, so without the explicit rel=="."
+//     check an empty relPath would silently resolve to the workdir
+//     root and callers would try to read/write/rename the workspace
+//     itself at the next disk op.
+//
+// NOTE: this function does NOT evaluate symlinks. Callers that
+// perform destructive filesystem operations (write, rename, remove)
+// must defend against agent-planted symlink escapes separately —
+// today the staged tmp path uses os.CreateTemp with a random
+// suffix, which prevents pre-planted symlinks at deterministic
+// staging paths. Parent-dir symlink traversal via os.MkdirAll is a
+// known residual gap; closing it requires migrating restore +
+// checkout to os.Root (Go 1.24+) so Rename/MkdirAll/Remove refuse
+// to traverse symlinks that escape workDir.
+func (m *Manager) absPath(relPath string) (string, error) {
+	if filepath.IsAbs(relPath) {
+		return "", fmt.Errorf("%w: %q", ErrPathEscape, relPath)
+	}
+	clean := filepath.Clean(filepath.Join(m.workDir, relPath))
+	rel, err := filepath.Rel(m.workDir, clean)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: %q", ErrPathEscape, relPath)
+	}
+	return clean, nil
+}
+
+// safeGetBlob reads a blob or returns nil. Diff line-counting treats
+// missing blobs as empty content so a blob GC'd between the
+// snapshot and the diff request doesn't wedge the UI.
+func (m *Manager) safeGetBlob(ctx context.Context, sha string) []byte {
+	if sha == "" {
+		return nil
+	}
+	data, err := m.blobs.Get(ctx, sha)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// readBeforeSHALocked reads the pre-write content at abs, stores it
+// as a blob, and returns its SHA. Returns ("", nil) for missing
+// files (expected — first snapshot of a new path), over-cap files
+// (logged Warn; the snapshot still lands without a rollback
+// target), and the race where the file disappears between Stat and
+// ReadFile. Separated from Snapshot so the multi-branch
+// stat/cap/read/error bookkeeping doesn't push Snapshot's
+// cyclomatic complexity past gocyclo's threshold.
+func (m *Manager) readBeforeSHALocked(ctx context.Context, relPath, abs string) (string, error) {
+	info, statErr := os.Stat(abs)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat pre-snapshot content: %w", statErr)
+	}
+	if info.Size() > contentCap {
+		slog.Warn("checkpoint: pre-write content exceeds cap, skipping beforeSHA",
+			"chat_id", m.chatID, "path", relPath,
+			"size", info.Size(), "cap", contentCap)
+		return "", nil
+	}
+	data, rErr := os.ReadFile(abs)
+	if rErr != nil {
+		if os.IsNotExist(rErr) {
+			// Race: file existed at Stat, gone at ReadFile.
+			// Treat as "did not exist" for rollback purposes.
+			return "", nil
+		}
+		return "", fmt.Errorf("read pre-snapshot content: %w", rErr)
+	}
+	sha, putErr := m.blobs.Put(ctx, data)
+	if putErr != nil {
+		return "", fmt.Errorf("blob put (before): %w", putErr)
+	}
+	return sha, nil
+}

@@ -1,0 +1,514 @@
+// ---------------------------------------------------------------------------
+// Tab bar: single observable store of open tabs. Rendering, localStorage
+// persistence, and URL routing are three subscribers of the same store;
+// any mutation (open, close, activate, rename, reorder) flows through one
+// primitive and fans out.
+//
+// Per-device UI state: tab order + active tab persist in localStorage
+// via ui-state.ts. Not synced to the server.
+// ---------------------------------------------------------------------------
+
+import { pushRoute } from "./router.js";
+import type { Route, SettingsTab } from "./router.js";
+import {
+  ICON_CLOSE,
+  ICON_TAB_CHAT, ICON_TAB_PLAN, ICON_TAB_SETTINGS, ICON_TAB_GIT,
+  ICON_TAB_FILES, ICON_TAB_EDITOR, ICON_TAB_FOLLOW, ICON_TAB_HISTORY,
+} from "./icons.js";
+import * as uiState from "./ui-state.js";
+import { $ } from "./dom.js";
+import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
+
+// --- Types ---
+
+type TabKind =
+  | "chat" | "plan" | "settings" | "git" | "files" | "editor" | "follow" | "history";
+
+/** Everything needed to render and route a tab. */
+export interface TabSpec {
+  id: string;
+  name: string;
+  kind: TabKind;
+  /** CSS selector for the view element to show. */
+  view: string;
+  /** The URL route this tab maps to. */
+  route: Route;
+  /** Called when the tab becomes active. */
+  onShow?: (() => void) | undefined;
+  /** Called when the tab is closed. */
+  onClose?: (() => void) | undefined;
+}
+
+// --- Singleton tab IDs (single source of truth) ---
+
+const TAB_SETTINGS = "__settings__";
+const TAB_GIT      = "__git__";
+const TAB_FILES    = "__files__";
+const TAB_HISTORY  = "__history__";
+
+const ICONS: Readonly<Record<TabKind, string>> = {
+  chat: ICON_TAB_CHAT,
+  plan: ICON_TAB_PLAN,
+  settings: ICON_TAB_SETTINGS,
+  git: ICON_TAB_GIT,
+  files: ICON_TAB_FILES,
+  editor: ICON_TAB_EDITOR,
+  follow: ICON_TAB_FOLLOW,
+  history: ICON_TAB_HISTORY,
+};
+
+/** Default view selector for each tab kind. Callers can omit `view` from
+ *  TabSpec when the standard mapping applies. */
+export const TAB_VIEWS: Record<TabKind, string> = {
+  chat: "#chat-view",
+  plan: "#chat-view",
+  settings: "#settings-view",
+  git: "#git-view",
+  files: "#files-view",
+  editor: "#editor-view",
+  follow: "#follow-view",
+  history: "#history-view",
+};
+
+// --- Store ---
+
+interface Callbacks {
+  onActivate: ((id: string) => void) | null;
+  onEmpty: (() => void) | null;
+}
+
+interface Internal {
+  emptyTimer: ReturnType<typeof setTimeout> | null;
+  vtPending: Promise<void> | null;
+  renderQueued: boolean;
+}
+
+interface State {
+  tabs: TabSpec[];
+  active: string;
+}
+
+const state: State = { tabs: [], active: "" };
+const callbacks: Callbacks = { onActivate: null, onEmpty: null };
+const internal: Internal = { emptyTimer: null, vtPending: null, renderQueued: false };
+type Subscriber = (s: State) => void;
+const subscribers = new Set<Subscriber>();
+
+function emit(): void {
+  for (const fn of subscribers) fn(state);
+}
+
+function subscribe(fn: Subscriber): () => void {
+  subscribers.add(fn);
+  return (): void => { subscribers.delete(fn); };
+}
+
+// --- Public API ---
+
+/** Open a tab (or activate it if already open). */
+export function openTab(spec: TabSpec): void {
+  const idx = state.tabs.findIndex((t) => t.id === spec.id);
+  if (idx >= 0) {
+    // Callbacks may have changed; swap them in.
+    state.tabs[idx] = { ...state.tabs[idx]!, onShow: spec.onShow, onClose: spec.onClose };
+    activateTab(spec.id);
+    return;
+  }
+  state.tabs.push(spec);
+  activateTab(spec.id);
+}
+
+/** Activate an existing tab. */
+export function activateTab(id: string): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab === undefined || state.active === id) return;
+  state.active = id;
+  emit();
+  tab.onShow?.();
+  callbacks.onActivate?.(id);
+}
+
+/** Close a tab. Activates the neighbor or fires onEmpty if none remain. */
+export function closeTab(id: string): void {
+  const idx = state.tabs.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const tab = state.tabs[idx]!;
+  tab.onClose?.();
+  state.tabs.splice(idx, 1);
+
+  if (state.active === id) {
+    const next = state.tabs[Math.min(idx, state.tabs.length - 1)];
+    if (next !== undefined) {
+      state.active = next.id;
+      emit();
+      next.onShow?.();
+    } else {
+      state.active = "";
+      emit();
+      scheduleEmpty();
+    }
+  } else {
+    emit();
+  }
+}
+
+export function renameTab(id: string, name: string): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab === undefined || tab.name === name) return;
+  tab.name = name;
+  emit();
+}
+
+/** Set a status indicator on a tab: "thinking" (pulsing accent dot),
+ *  "permission" (amber dot), or "" to clear. */
+export function setTabStatus(id: string, status: "" | "thinking" | "permission"): void {
+  const el = document.querySelector(`[data-tab-id="${id}"] .tab-status-dot`) as HTMLElement | null;
+  if (el === null) return;
+  el.classList.toggle("hidden", status === "");
+  el.classList.toggle("tab-dot-thinking", status === "thinking");
+  el.classList.toggle("tab-dot-permission", status === "permission");
+}
+
+function reorderTabs(order: string[]): void {
+  const byID = new Map(state.tabs.map((t) => [t.id, t]));
+  const next: TabSpec[] = [];
+  for (const id of order) {
+    const t = byID.get(id);
+    if (t !== undefined) { next.push(t); byID.delete(id); }
+  }
+  // Preserve any unknown tabs at the end (defensive; order drift).
+  for (const t of byID.values()) next.push(t);
+  state.tabs = next;
+  emit();
+}
+
+export function hasTab(id: string): boolean { return state.tabs.some((t) => t.id === id); }
+export function getActiveTabId(): string { return state.active; }
+/** Return all open tab IDs. Used by system handlers to reconcile tabs
+ *  without DOM scraping. */
+export function getOpenTabIDs(): string[] { return state.tabs.map((t) => t.id); }
+
+// --- Activation listener ---
+export function setOnActivate(fn: (id: string) => void): void { callbacks.onActivate = fn; }
+
+// --- Empty-state timer ---
+
+export function setOnEmpty(fn: () => void): void { callbacks.onEmpty = fn; }
+
+function scheduleEmpty(): void {
+  if (internal.emptyTimer !== null) clearTimeout(internal.emptyTimer);
+  internal.emptyTimer = setTimeout(() => {
+    internal.emptyTimer = null;
+    callbacks.onEmpty?.();
+  }, 500);
+}
+
+// Clear empty timer on any activation.
+subscribe(() => {
+  if (state.active !== "" && internal.emptyTimer !== null) {
+    clearTimeout(internal.emptyTimer);
+    internal.emptyTimer = null;
+  }
+});
+
+// --- Persistence (subscriber) ---
+
+subscribe(() => {
+  uiState.save({
+    tab_order: state.tabs.map((t) => t.id),
+    active_view: state.active,
+  });
+});
+
+/** Restore tabs to match saved order and active ID. Called once at startup
+ *  after modules have registered their tabs. */
+export function restoreTabState(): void {
+  const saved = uiState.load();
+  if (saved.tab_order.length > 0) reorderTabs(saved.tab_order);
+  if (saved.active_view !== "" && hasTab(saved.active_view)) {
+    activateTab(saved.active_view);
+  }
+}
+
+// Wire drag-to-reorder callback.
+setReorderCallback(reorderTabs);
+
+// --- View / route (subscriber) ---
+
+const ALL_VIEWS_SELECTOR = "[data-tab-view]";
+
+/** Icon buttons that should show `.active` when their singleton tab is
+ *  active. Non-singleton kinds (chat, plan, editor) are never in this
+ *  map. */
+const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = {
+  settings: () => $.settingsBtn,
+  git:      () => $.gitBtn,
+  files:    () => $.filesBtn,
+  history:  () => $.historyBtn,
+};
+
+function syncSidebarButtons(activeKind: TabKind | null): void {
+  for (const [kind, getter] of Object.entries(ACTIVE_BTN)) {
+    getter().classList.toggle("active", kind === activeKind);
+  }
+}
+
+// Queued view transition: wraps DOM swaps in startViewTransition so
+// tab switches get a cross-fade. Queue prevents overlapping jank.
+function viewTransition(fn: () => void): void {
+  if (!document.startViewTransition) { fn(); return; }
+  const run = (): void => {
+    const t = document.startViewTransition(fn);
+    internal.vtPending = t.finished.then(() => { internal.vtPending = null; });
+    t.ready.catch(() => {});
+    t.finished.catch(() => { internal.vtPending = null; });
+  };
+  if (internal.vtPending !== null) void internal.vtPending.then(run);
+  else run();
+}
+
+function showView(tab: TabSpec): void {
+  viewTransition(() => {
+    for (const el of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
+      (el as HTMLElement).classList.add("hidden");
+    }
+    document.querySelector(tab.view)?.classList.remove("hidden");
+  });
+
+  // Mobile toolbar title reads directly from the tab name.
+  $.toolbarTitle.textContent = tab.kind === "chat" || tab.kind === "plan" ? "" : tab.name;
+
+  // Close mobile sidebar after switching.
+  $.sidebar.classList.remove("open");
+
+  syncSidebarButtons(tab.kind);
+
+  pushRoute(tab.route);
+}
+
+subscribe((s) => {
+  const active = s.tabs.find((t) => t.id === s.active);
+  if (active !== undefined) showView(active);
+  else syncSidebarButtons(null);
+});
+
+// --- DOM rendering (subscriber) ---
+
+subscribe(() => {
+  if (internal.renderQueued) return;
+  internal.renderQueued = true;
+  requestAnimationFrame(() => { internal.renderQueued = false; renderDOM(); });
+});
+
+function renderDOM(): void {
+  const list = $.tabList;
+
+  const existing = new Map<string, HTMLElement>();
+  for (const el of [...list.children]) {
+    const id = (el as HTMLElement).dataset["tabId"];
+    if (id !== undefined) existing.set(id, el as HTMLElement);
+  }
+
+  const activeIDs = new Set(state.tabs.map((t) => t.id));
+
+  // Remove orphans with an exit animation.
+  for (const [id, el] of existing) {
+    if (!activeIDs.has(id)) {
+      el.classList.add("exiting");
+      el.addEventListener("animationend", () => el.remove(), { once: true });
+      existing.delete(id);
+    }
+  }
+
+  // Insert + position. Skip over exiting elements when checking
+  // whether a tab is already in the right spot — they're still in the
+  // DOM (animating out) but shouldn't affect sibling ordering. Moving
+  // a sibling past an exiting element would cause it to jump instead
+  // of smoothly sliding up as the exiting element's height collapses.
+  let prev: HTMLElement | null = null;
+  for (const tab of state.tabs) {
+    let el = existing.get(tab.id);
+    if (el === undefined) {
+      el = createTabEl(tab);
+      if (prev !== null) prev.after(el); else list.prepend(el);
+      el.classList.add("entering");
+    } else {
+      const nameEl = el.querySelector(".tab-name") as HTMLElement | null;
+      if (nameEl !== null && nameEl.textContent !== tab.name) nameEl.textContent = tab.name;
+      let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
+      while (expectedNext !== null && (expectedNext as HTMLElement).classList?.contains("exiting")) {
+        expectedNext = expectedNext.nextSibling;
+      }
+      if (el !== expectedNext) {
+        if (prev !== null) prev.after(el); else list.prepend(el);
+      }
+    }
+    el.classList.toggle("active", tab.id === state.active);
+    el.setAttribute("aria-selected", tab.id === state.active ? "true" : "false");
+    el.tabIndex = tab.id === state.active ? 0 : -1;
+    prev = el;
+  }
+}
+
+function createTabEl(tab: TabSpec): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "tab";
+  el.dataset["tabId"] = tab.id;
+  el.setAttribute("role", "tab");
+
+  const icon = document.createElement("span");
+  icon.className = "tab-icon";
+  icon.innerHTML = ICONS[tab.kind];
+
+  const name = document.createElement("span");
+  name.className = "tab-name";
+  name.textContent = tab.name;
+
+  const close = document.createElement("button");
+  close.className = "tab-close";
+  close.innerHTML = ICON_CLOSE;
+  close.setAttribute("aria-label", `Close ${tab.name}`);
+  close.addEventListener("pointerup", (e) => {
+    e.stopPropagation();
+    closeTab(tab.id);
+  });
+
+  const statusDot = document.createElement("span");
+  statusDot.className = "tab-status-dot hidden";
+
+  el.append(icon, name, statusDot, close);
+  attachTabInteraction(el, tab.id);
+  return el;
+}
+
+// --- Interaction (click, middle-click, drag, keyboard) ---
+
+function attachTabInteraction(el: HTMLElement, id: string): void {
+  // Click to activate (any target outside .tab-close).
+  el.addEventListener("pointerup", (e) => {
+    if (isDragHandled()) return;
+    if ((e.target as HTMLElement).closest(".tab-close") !== null) return;
+    if (!e.isPrimary) return;
+    activateTab(id);
+  });
+
+  // Middle-click to close.
+  el.addEventListener("auxclick", (e) => {
+    if (e.button === 1) { e.preventDefault(); closeTab(id); }
+  });
+
+  // Keyboard navigation: Enter/Space activates, Delete closes, arrows move focus.
+  el.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        activateTab(id);
+        break;
+      case "Delete":
+      case "Backspace":
+        e.preventDefault();
+        closeTab(id);
+        break;
+      case "ArrowDown":
+      case "ArrowUp":
+      case "Home":
+      case "End": {
+        e.preventDefault();
+        const tabs = [...(el.parentElement?.children ?? [])] as HTMLElement[];
+        const i = tabs.indexOf(el);
+        let target: HTMLElement | undefined;
+        if (e.key === "ArrowDown") target = tabs[i + 1];
+        else if (e.key === "ArrowUp") target = tabs[i - 1];
+        else if (e.key === "Home") target = tabs[0];
+        else target = tabs[tabs.length - 1];
+        target?.focus();
+        break;
+      }
+    }
+  });
+
+  attachDrag(el);
+}
+
+
+
+// --- Singleton tab helpers ---
+
+/** Open or toggle a singleton (always-one-instance) tab. If it's already the
+ *  active tab, close it; otherwise open/activate. */
+function toggleSingleton(spec: TabSpec): void {
+  if (hasTab(spec.id) && state.active === spec.id) {
+    closeTab(spec.id);
+    return;
+  }
+  openTab(spec);
+}
+
+/** Toggle the Settings tab. If already open and active, close; otherwise
+ *  open/activate, landing on the given tab (default: General). */
+export function toggleSettingsView(tab: SettingsTab = "general", onShow?: () => void): void {
+  toggleSingleton({
+    id: TAB_SETTINGS, name: "Settings", kind: "settings",
+    view: TAB_VIEWS.settings,
+    route: { kind: "settings", tab },
+    onShow,
+  });
+}
+
+/** Switch the Settings panel to a specific tab. No-op if Settings is not
+ *  currently open. Used by router-driven navigation where we don't want
+ *  to toggle — only change the inner tab. */
+export function setSettingsTab(tab: SettingsTab): void {
+  const spec = state.tabs.find((t) => t.id === TAB_SETTINGS);
+  if (spec === undefined) return;
+  spec.route = { kind: "settings", tab };
+  if (state.active === TAB_SETTINGS) emit();
+}
+
+export function toggleGitView(onShow: () => void): void {
+  toggleSingleton({
+    id: TAB_GIT, name: "Source Control", kind: "git",
+    view: TAB_VIEWS.git, route: { kind: "git" }, onShow,
+  });
+}
+
+export function toggleFilesView(onShow: () => void, onClose?: () => void): void {
+  toggleSingleton({
+    id: TAB_FILES, name: "Files", kind: "files",
+    view: TAB_VIEWS.files, route: { kind: "files", path: "." }, onShow, onClose,
+  });
+}
+
+export function toggleHistoryView(onShow: () => void, onClose?: () => void): void {
+  toggleSingleton({
+    id: TAB_HISTORY, name: "History", kind: "history",
+    view: TAB_VIEWS.history, route: { kind: "history" }, onShow, onClose,
+  });
+}
+
+export function openEditorView(filePath: string, onShow: () => void, onClose?: () => void): void {
+  const id = `editor:${filePath}`;
+  const name = filePath.split("/").pop() ?? filePath;
+  openTab({
+    id, name, kind: "editor",
+    view: TAB_VIEWS.editor,
+    route: { kind: "file", path: filePath },
+    onShow, onClose,
+  });
+}
+
+// --- Test helpers (no-op in production; used by tabs.test.ts) ---
+
+/** Reset all tab state. Exported for test isolation only. */
+export function _resetForTest(): void {
+  state.tabs = [];
+  state.active = "";
+  callbacks.onActivate = null;
+  callbacks.onEmpty = null;
+  if (internal.emptyTimer !== null) clearTimeout(internal.emptyTimer);
+  internal.emptyTimer = null;
+  internal.vtPending = null;
+  internal.renderQueued = false;
+  subscribers.clear();
+}

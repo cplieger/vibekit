@@ -1,0 +1,38 @@
+{
+  "entry": ["app.ts", "sw.ts"],
+  "ignorePatterns": ["node_modules/**"],
+  "ignoreExports": [
+    {
+      "file": "smd.ts",
+      "exports": ["*"]
+    }
+  ],
+  "usedClassMembers": [
+    "active",
+    "addPendingPermission",
+    "appendChunk",
+    "appendMessage",
+    "clearPendingPermissions",
+    "dequeuePrompt",
+    "element",
+    "enqueuePrompt",
+    "finalize",
+    "getText",
+    "isThinking",
+    "loadList",
+    "loadMessages",
+    "queuedPrompt",
+    "removeChat",
+    "removePendingPermission",
+    "setActive",
+    "setAvailableCommands",
+    "setCurrentMode",
+    "setQueuedPrompt",
+    "setThinking",
+    "setWorkingLabel",
+    "subscribe",
+    "upsertHeader",
+    "upsertMessage",
+    "upsertToolCall"
+  ]
+}

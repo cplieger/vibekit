@@ -1,0 +1,77 @@
+
+/* ==========================================================================
+   Editor
+   ========================================================================== */
+
+.editor-page {
+  display: flex; flex-direction: column; height: 100%;
+  padding: 0;
+  opacity: 1; transition: opacity var(--dur-standard);
+
+  @starting-style { opacity: 0; }
+}
+
+.editor-filename {
+  font-family: var(--font-mono); font-size: var(--fs-sm);
+  color: var(--c-text-primary); font-weight: var(--fw-medium);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  border-radius: var(--r); padding: var(--sp-2) var(--sp-3);
+  min-height: var(--input-h); display: flex; align-items: center;
+}
+
+.editor-error {
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--c-red); font-size: var(--fs-sm);
+}
+
+.editor-body {
+  flex: 1; display: grid; grid-template-columns: auto 1fr;
+  overflow: auto; min-height: 0; position: relative;
+}
+
+.editor-gutter {
+  grid-column: 1; grid-row: 1;
+  padding: var(--sp-4) var(--sp-2) var(--sp-4) var(--sp-3);
+  font-family: var(--font-mono); font-size: var(--fs-sm);
+  line-height: 1.6; tab-size: 4;
+  color: var(--c-text-tertiary); text-align: end;
+  user-select: none; border-inline-end: 1px solid var(--c-border);
+  background: var(--c-bg-secondary); margin: 0;
+  white-space: pre;
+}
+
+.editor-highlight {
+  grid-column: 2; grid-row: 1;
+  padding: var(--sp-4);
+  font-family: var(--font-mono); font-size: var(--fs-sm);
+  line-height: 1.6; tab-size: 4;
+  color: var(--c-text-primary); background: var(--c-bg-primary);
+  margin: 0; white-space: pre; overflow-x: auto;
+}
+
+.editor-content {
+  grid-column: 2; grid-row: 1;
+  width: 100%; resize: none;
+  background: color-mix(in srgb, var(--c-accent) 3%, var(--c-bg-primary));
+  color: var(--c-text-primary);
+  border: none; border-inline-start: 0.125rem solid var(--c-accent);
+  padding: var(--sp-4);
+  font-family: var(--font-mono); font-size: var(--fs-sm);
+  line-height: 1.6; tab-size: 4;
+  outline: none; overflow: auto;
+  margin: 0; white-space: pre;
+}
+
+/* Line-jump flash: a brief full-width highlight at the target line after
+   openFile(path, line). Anchored absolute inside .editor-body so it lands
+   at the correct pixel offset regardless of gutter/highlight grid layout.
+   Placed via inline `top` + `height`; opacity animates out to 0. */
+.editor-line-flash {
+  position: absolute;
+  inset-inline: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--c-accent) 40%, transparent);
+  animation: vk-fade-in 1s var(--ease-standard) both;
+}
+

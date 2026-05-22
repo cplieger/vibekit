@@ -1,0 +1,50 @@
+
+/*
+ * ANSI terminal color classes for ansi_up (use_classes=true mode).
+ * Standard 8 colors + bright variants, plus modifiers.
+ * Colors tuned for dark backgrounds (vibekit's default theme).
+ */
+
+/* --- Foreground --- */
+.ansi-black-fg   { color: #555 }
+.ansi-red-fg     { color: #f55 }
+.ansi-green-fg   { color: #5f5 }
+.ansi-yellow-fg  { color: #ff5 }
+.ansi-blue-fg    { color: #55f }
+.ansi-magenta-fg { color: #f5f }
+.ansi-cyan-fg    { color: #5ff }
+.ansi-white-fg   { color: #ccc }
+
+.ansi-bright-black-fg   { color: #888 }
+.ansi-bright-red-fg     { color: #f88 }
+.ansi-bright-green-fg   { color: #8f8 }
+.ansi-bright-yellow-fg  { color: #ff8 }
+.ansi-bright-blue-fg    { color: #88f }
+.ansi-bright-magenta-fg { color: #f8f }
+.ansi-bright-cyan-fg    { color: #8ff }
+.ansi-bright-white-fg   { color: #fff }
+
+/* --- Background --- */
+.ansi-black-bg   { background-color: #000 }
+.ansi-red-bg     { background-color: #a00 }
+.ansi-green-bg   { background-color: #0a0 }
+.ansi-yellow-bg  { background-color: #a50 }
+.ansi-blue-bg    { background-color: #00a }
+.ansi-magenta-bg { background-color: #a0a }
+.ansi-cyan-bg    { background-color: #0aa }
+.ansi-white-bg   { background-color: #aaa }
+
+.ansi-bright-black-bg   { background-color: #555 }
+.ansi-bright-red-bg     { background-color: #f55 }
+.ansi-bright-green-bg   { background-color: #5f5 }
+.ansi-bright-yellow-bg  { background-color: #ff5 }
+.ansi-bright-blue-bg    { background-color: #55f }
+.ansi-bright-magenta-bg { background-color: #f5f }
+.ansi-bright-cyan-bg    { background-color: #5ff }
+.ansi-bright-white-bg   { background-color: #fff }
+
+/* --- Modifiers --- */
+.ansi-bold      { font-weight: 700 }
+.ansi-dim       { opacity: 0.7 }
+.ansi-italic    { font-style: italic }
+.ansi-underline { text-decoration: underline }

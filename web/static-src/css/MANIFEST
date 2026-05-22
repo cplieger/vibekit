@@ -1,0 +1,33 @@
+# vibekit/web/static/style.css bundle manifest
+# Files concatenated in declared order by lib/shell/build-css.sh.
+#
+# Slicing follows the existing @layer cascade:
+#   00-03  layer declaration, @property defs, @layer tokens/reset/base
+#   10-22  @layer components (split by feature: chat, tools, input, ...)
+#   30     @layer utilities
+#   40     a11y (between utilities-close and mobile-open)
+#   50     @layer mobile
+#   60-61  MCP integrations (live in implicit outer layer, post-mobile)
+00-header.css
+01-tokens.css
+02-reset.css
+03-base.css
+10-shell-app.css
+11-popups.css
+12-chat.css
+13-messages.css
+14-tools.css
+15-ansi.css
+15-input.css
+16-login.css
+17-settings.css
+18-pages.css
+19-files.css
+20-editor.css
+21-shell-panel.css
+22-scrollbar.css
+30-utilities.css
+40-a11y.css
+50-mobile.css
+60-mcp.css
+61-mcp-tools.css

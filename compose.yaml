@@ -1,0 +1,27 @@
+services:
+  # ----------------------------------------------------------------------------
+  # Vibekit for Kiro - Kiro CLI + dev tools in a browser terminal
+  # ----------------------------------------------------------------------------
+  vibekit:
+    # Permissions and configuration
+    extends:
+      file: ./base.yaml
+      service: root-proxy-safer
+    image: ghcr.io/cplieger/vibekit:2026.05.20-105bb54@sha256:96db1f744679c7e918078de9d18e8e7111babd537051611773700415ad751bd6
+    container_name: vibekit
+
+    # Resource limits
+    mem_limit: 8g
+    memswap_limit: 8g
+    pids_limit: 1024
+
+    # Networking
+    ports:
+      - "9847:9847"
+
+    # Volumes
+    volumes:
+      # All container state (tools, home, chats, settings, keys)
+      - ${CONFIG_ROOT}/vibekit/config:/config
+      # Workspace - independent git clone
+      - ${CONFIG_ROOT}/vibekit/workspace:/workspace

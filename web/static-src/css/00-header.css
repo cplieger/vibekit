@@ -1,0 +1,29 @@
+@layer reset, tokens, components, utilities, mobile;
+
+/* @view-transition { navigation: auto; } — REMOVED: triggers full-page
+   bitmap snapshots on every pushState/replaceState, causing GPU memory
+   pressure and overheating on phones/tablets. Explicit startViewTransition()
+   calls in tabs.ts and files.ts handle the transitions that matter. */
+
+@property --c-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: oklch(59% 0.254 295.8deg);
+}
+
+@property --mcp-hue {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --stagger-index {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/* ==========================================================================
+   Design System
+   ========================================================================== */
+

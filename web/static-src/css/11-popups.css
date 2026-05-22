@@ -1,0 +1,27 @@
+
+/* ==========================================================================
+   Popups (shared)
+   ========================================================================== */
+
+.popup {
+  position: absolute; top: calc(100% + 0.25rem); right: 0;
+  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  border-radius: var(--r); min-width: 13.75rem; max-height: 20rem;
+  overflow-y: auto; z-index: 200;
+  box-shadow: 0 0.5rem 1.5rem oklch(0% 0 0deg / 50%);
+}
+
+.popup-list { padding: var(--sp-1); }
+
+.popup-item {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; padding: var(--sp-2) var(--sp-3);
+  border: none; background: none; color: var(--c-text-primary);
+  font-size: var(--fs-base); cursor: pointer;
+  border-radius: var(--r); text-align: left; gap: var(--sp-2);
+
+  &:hover { background: var(--c-bg-tertiary); }
+  &.active { color: var(--c-text-primary); background: var(--c-accent-subtle); }
+}
+
+.popup-meta { font-size: var(--fs-xs); color: var(--c-text-tertiary); flex-shrink: 0; }

@@ -1,0 +1,119 @@
+__vite_ssr_exportName__("sendPromptTo", () => { try { return sendPromptTo } catch {} });
+__vite_ssr_exportName__("switchModel", () => { try { return switchModel } catch {} });
+__vite_ssr_exportName__("resolvePendingChange", () => { try { return resolvePendingChange } catch {} });
+const __vite_ssr_import_0__ = await __vite_ssr_import__("/store.ts", {"importedNames":["setThinking","enqueuePrompt"]});
+const __vite_ssr_import_1__ = await __vite_ssr_import__("/transport.ts");
+const __vite_ssr_import_2__ = await __vite_ssr_import__("/session-context.ts", {"importedNames":["getCurrentAgent","getCurrentModel"]});
+const __vite_ssr_import_3__ = await __vite_ssr_import__("/editor-types.ts", {"importedNames":["getActiveFilePath","getOpenFilePaths"]});
+const __vite_ssr_import_4__ = await __vite_ssr_import__("/attachments.ts", {"importedNames":["takeAttachments"]});
+// ---------------------------------------------------------------------------
+// Low-level "send a command that affects a chat's turn state" primitives.
+//
+// Any module that needs to post prompt or switch-model imports from here.
+// The shared lifecycle rules live in exactly one place:
+//
+//   1. `store.setThinking(chatID, true)` before posting.
+//   2. 409 busy on prompts queues the text for the next turn end.
+//   3. Other failures clear thinking so send-state settles on "blocked"
+//      (transport.ts already called setLastError).
+//   4. Success leaves thinking=true; SSE turn_ended / error will clear it.
+//
+// This module is a *leaf* from the dependency-graph standpoint: it imports
+// only store-singleton, session-context, and transport. Callers higher in
+// the tree (chat.ts, plan-actions.ts) layer domain behaviour on top.
+//
+// Terminology: "switch model" kills the ACP session, starts a fresh one
+// with the chosen model, and primes it with the transcript. kiro-cli
+// cannot swap models mid-session. Agent changes are deliberately NOT
+// part of this command — the running agent itself is responsible for
+// switching modes via a `switch_mode` permission request; vibekit never
+// forces an agent change on a live chat.
+//
+// Compaction and mode changes are intentionally NOT exposed as typed
+// client commands:
+//   - /compact is reachable via the slash-command menu: user types
+//     "/compact", the text flows through sendPromptTo as a normal
+//     prompt, and kiro-cli natively parses it and compacts history.
+//   - session/set_mode is agent-driven: the agent issues a switch_mode
+//     tool call that the user approves via the permission dialog, and
+//     the server executes the set_mode call on the user's behalf.
+// ---------------------------------------------------------------------------
+
+
+
+
+
+/** Post a prompt to a chat with the shared thinking + 409-queue
+*  lifecycle. Returns "sent" on 2xx, "queued" on 409 (the prompt
+*  will drain when the in-flight turn ends), or "failed" on any other
+*  error. Callers that want to know whether the server took the
+*  prompt (e.g. plan handoff deleting its draft) inspect the result;
+*  most callers still ignore it. */
+async function sendPromptTo(chatID, text, opts = {}) {
+	(0,__vite_ssr_import_0__.setThinking)(chatID, true);
+	const messageID = __vite_ssr_import_1__.newMessageID();
+	const attachments = (0,__vite_ssr_import_4__.takeAttachments)();
+	const result = await __vite_ssr_import_1__.send({
+		type: "prompt",
+		chat_id: chatID,
+		payload: {
+			text,
+			message_id: messageID,
+			agent: opts.agent ?? (0,__vite_ssr_import_2__.getCurrentAgent)(),
+			model: opts.model ?? (0,__vite_ssr_import_2__.getCurrentModel)(),
+			active_file: (0,__vite_ssr_import_3__.getActiveFilePath)(),
+			open_files: (0,__vite_ssr_import_3__.getOpenFilePaths)(),
+			attachments: attachments.length > 0 ? attachments : undefined
+		}
+	});
+	if (result.ok) return "sent";
+	if (result.status === 409) {
+		(0,__vite_ssr_import_0__.enqueuePrompt)(chatID, text);
+		return "queued";
+	};
+	(0,__vite_ssr_import_0__.setThinking)(chatID, false);
+	return "failed";
+};
+/** Send a standalone switch_model command. Used by the model picker
+*  on the chat view. Shares the thinking lifecycle with sendPromptTo
+*  so the send button reflects "busy" while the server primes the
+*  new bridge.
+*
+*  switch_model emits no `turn_ended` (no assistant reply), so we
+*  clear `thinking` on any non-409 response. 409 is NOT expected —
+*  we queue model switches client-side before they hit the wire (see
+*  model-switcher.ts) — but the defensive unwind is kept in case
+*  a race slips through.
+*
+*  Returns true when the server accepted the switch (or we queued it);
+*  false when the call failed and the caller should clear any in-flight
+*  UI state. */
+async function switchModel(chatID, model) {
+	if (chatID === "") return false;
+	(0,__vite_ssr_import_0__.setThinking)(chatID, true);
+	const result = await __vite_ssr_import_1__.send({
+		type: "switch_model",
+		chat_id: chatID,
+		payload: { model }
+	});
+	if (result.status !== 409) {
+		(0,__vite_ssr_import_0__.setThinking)(chatID, false);
+	};
+	return result.ok || result.status === 409;
+};
+/** Resolve a single pending change (accept or reject). Shared by
+*  supervised-pill.ts, editor-pending.ts, and messages-actions.ts. */
+function resolvePendingChange(chatID, toolCallID, action) {
+	void __vite_ssr_import_1__.send({
+		type: "resolve_pending_change",
+		chat_id: chatID,
+		payload: {
+			tool_call_id: toolCallID,
+			action
+		}
+	});
+}
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQUEsQ0FBQTs7O0FBaUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0FBY08sZUFBZSxhQUNwQixRQUFnQixNQUFjLE9BQXVCLENBQUMsR0FDZjtJQUN2QyxtQ0FBWSxRQUFRLElBQUk7Q0FFeEIsTUFBTSxZQUFZLHNCQUFVLGFBQWE7Q0FDekMsTUFBTSxpQkFBYyx1Q0FBZ0I7Q0FDcEMsTUFBTSxTQUFTLE1BQU0sc0JBQVUsS0FBSztFQUNsQyxNQUFNO0VBQVUsU0FBUztFQUN6QixTQUFTO0dBQ1A7R0FBTSxZQUFZO0dBQ2xCLE9BQU8sS0FBSyxZQUFTLHVDQUFnQjtHQUNyQyxPQUFPLEtBQUssWUFBUyx1Q0FBZ0I7R0FDckMsZ0JBQWEseUNBQWtCO0dBQy9CLGVBQVksd0NBQWlCO0dBQzdCLGFBQWEsWUFBWSxTQUFTLElBQUksY0FBYztFQUN0RDtDQUNGLENBQUM7Q0FFRCxJQUFJLE9BQU8sSUFBSSxPQUFPO0NBRXRCLElBQUksT0FBTyxXQUFXLEtBQUs7S0FDekIscUNBQWMsUUFBUSxJQUFJO0VBQzFCLE9BQU87Q0FDVDtJQUVBLG1DQUFZLFFBQVEsS0FBSztDQUN6QixPQUFPO0FBQ1Q7Ozs7Ozs7Ozs7Ozs7OztBQWdCTyxlQUFlLFlBQVksUUFBZ0IsT0FBaUM7Q0FDakYsSUFBSSxXQUFXLElBQUksT0FBTztJQUMxQixtQ0FBWSxRQUFRLElBQUk7Q0FDeEIsTUFBTSxTQUFTLE1BQU0sc0JBQVUsS0FBSztFQUNsQyxNQUFNO0VBQWdCLFNBQVM7RUFDL0IsU0FBUyxFQUFFLE1BQU07Q0FDbkIsQ0FBQztDQUNELElBQUksT0FBTyxXQUFXLEtBQUs7S0FDekIsbUNBQVksUUFBUSxLQUFLO0NBQzNCO0NBQ0EsT0FBTyxPQUFPLE1BQU0sT0FBTyxXQUFXO0FBQ3hDOzs7QUFJTyxTQUFTLHFCQUNkLFFBQWdCLFlBQW9CLFFBQzlCO0NBQ04sS0FBSyxzQkFBVSxLQUFLO0VBQ2xCLE1BQU07RUFDTixTQUFTO0VBQ1QsU0FBUztHQUFFLGNBQWM7R0FBWTtFQUFPO0NBQzlDLENBQUM7QUFDSCIsIm5hbWVzIjpbXSwiaWdub3JlTGlzdCI6W10sInNvdXJjZXMiOlsiY2hhdC1jb21tYW5kcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS1cbi8vIExvdy1sZXZlbCBcInNlbmQgYSBjb21tYW5kIHRoYXQgYWZmZWN0cyBhIGNoYXQncyB0dXJuIHN0YXRlXCIgcHJpbWl0aXZlcy5cbi8vXG4vLyBBbnkgbW9kdWxlIHRoYXQgbmVlZHMgdG8gcG9zdCBwcm9tcHQgb3Igc3dpdGNoLW1vZGVsIGltcG9ydHMgZnJvbSBoZXJlLlxuLy8gVGhlIHNoYXJlZCBsaWZlY3ljbGUgcnVsZXMgbGl2ZSBpbiBleGFjdGx5IG9uZSBwbGFjZTpcbi8vXG4vLyAgIDEuIGBzdG9yZS5zZXRUaGlua2luZyhjaGF0SUQsIHRydWUpYCBiZWZvcmUgcG9zdGluZy5cbi8vICAgMi4gNDA5IGJ1c3kgb24gcHJvbXB0cyBxdWV1ZXMgdGhlIHRleHQgZm9yIHRoZSBuZXh0IHR1cm4gZW5kLlxuLy8gICAzLiBPdGhlciBmYWlsdXJlcyBjbGVhciB0aGlua2luZyBzbyBzZW5kLXN0YXRlIHNldHRsZXMgb24gXCJibG9ja2VkXCJcbi8vICAgICAgKHRyYW5zcG9ydC50cyBhbHJlYWR5IGNhbGxlZCBzZXRMYXN0RXJyb3IpLlxuLy8gICA0LiBTdWNjZXNzIGxlYXZlcyB0aGlua2luZz10cnVlOyBTU0UgdHVybl9lbmRlZCAvIGVycm9yIHdpbGwgY2xlYXIgaXQuXG4vL1xuLy8gVGhpcyBtb2R1bGUgaXMgYSAqbGVhZiogZnJvbSB0aGUgZGVwZW5kZW5jeS1ncmFwaCBzdGFuZHBvaW50OiBpdCBpbXBvcnRzXG4vLyBvbmx5IHN0b3JlLXNpbmdsZXRvbiwgc2Vzc2lvbi1jb250ZXh0LCBhbmQgdHJhbnNwb3J0LiBDYWxsZXJzIGhpZ2hlciBpblxuLy8gdGhlIHRyZWUgKGNoYXQudHMsIHBsYW4tYWN0aW9ucy50cykgbGF5ZXIgZG9tYWluIGJlaGF2aW91ciBvbiB0b3AuXG4vL1xuLy8gVGVybWlub2xvZ3k6IFwic3dpdGNoIG1vZGVsXCIga2lsbHMgdGhlIEFDUCBzZXNzaW9uLCBzdGFydHMgYSBmcmVzaCBvbmVcbi8vIHdpdGggdGhlIGNob3NlbiBtb2RlbCwgYW5kIHByaW1lcyBpdCB3aXRoIHRoZSB0cmFuc2NyaXB0LiBraXJvLWNsaVxuLy8gY2Fubm90IHN3YXAgbW9kZWxzIG1pZC1zZXNzaW9uLiBBZ2VudCBjaGFuZ2VzIGFyZSBkZWxpYmVyYXRlbHkgTk9UXG4vLyBwYXJ0IG9mIHRoaXMgY29tbWFuZCDigJQgdGhlIHJ1bm5pbmcgYWdlbnQgaXRzZWxmIGlzIHJlc3BvbnNpYmxlIGZvclxuLy8gc3dpdGNoaW5nIG1vZGVzIHZpYSBhIGBzd2l0Y2hfbW9kZWAgcGVybWlzc2lvbiByZXF1ZXN0OyB2aWJla2l0IG5ldmVyXG4vLyBmb3JjZXMgYW4gYWdlbnQgY2hhbmdlIG9uIGEgbGl2ZSBjaGF0LlxuLy9cbi8vIENvbXBhY3Rpb24gYW5kIG1vZGUgY2hhbmdlcyBhcmUgaW50ZW50aW9uYWxseSBOT1QgZXhwb3NlZCBhcyB0eXBlZFxuLy8gY2xpZW50IGNvbW1hbmRzOlxuLy8gICAtIC9jb21wYWN0IGlzIHJlYWNoYWJsZSB2aWEgdGhlIHNsYXNoLWNvbW1hbmQgbWVudTogdXNlciB0eXBlc1xuLy8gICAgIFwiL2NvbXBhY3RcIiwgdGhlIHRleHQgZmxvd3MgdGhyb3VnaCBzZW5kUHJvbXB0VG8gYXMgYSBub3JtYWxcbi8vICAgICBwcm9tcHQsIGFuZCBraXJvLWNsaSBuYXRpdmVseSBwYXJzZXMgaXQgYW5kIGNvbXBhY3RzIGhpc3RvcnkuXG4vLyAgIC0gc2Vzc2lvbi9zZXRfbW9kZSBpcyBhZ2VudC1kcml2ZW46IHRoZSBhZ2VudCBpc3N1ZXMgYSBzd2l0Y2hfbW9kZVxuLy8gICAgIHRvb2wgY2FsbCB0aGF0IHRoZSB1c2VyIGFwcHJvdmVzIHZpYSB0aGUgcGVybWlzc2lvbiBkaWFsb2csIGFuZFxuLy8gICAgIHRoZSBzZXJ2ZXIgZXhlY3V0ZXMgdGhlIHNldF9tb2RlIGNhbGwgb24gdGhlIHVzZXIncyBiZWhhbGYuXG4vLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS1cblxuaW1wb3J0IHsgc2V0VGhpbmtpbmcsIGVucXVldWVQcm9tcHQgfSBmcm9tIFwiLi9zdG9yZS5qc1wiO1xuaW1wb3J0ICogYXMgdHJhbnNwb3J0IGZyb20gXCIuL3RyYW5zcG9ydC5qc1wiO1xuaW1wb3J0IHsgZ2V0Q3VycmVudEFnZW50LCBnZXRDdXJyZW50TW9kZWwgfSBmcm9tIFwiLi9zZXNzaW9uLWNvbnRleHQuanNcIjtcbmltcG9ydCB7IGdldEFjdGl2ZUZpbGVQYXRoLCBnZXRPcGVuRmlsZVBhdGhzIH0gZnJvbSBcIi4vZWRpdG9yLXR5cGVzLmpzXCI7XG5pbXBvcnQgeyB0YWtlQXR0YWNobWVudHMgfSBmcm9tIFwiLi9hdHRhY2htZW50cy5qc1wiO1xuXG4vKiogT3B0aW9ucyBmb3IgdGhlIGxvdy1sZXZlbCBwcm9tcHQgc2VuZGVyLiAqL1xuZXhwb3J0IGludGVyZmFjZSBTZW5kUHJvbXB0T3B0cyB7XG4gIGFnZW50Pzogc3RyaW5nO1xuICBtb2RlbD86IHN0cmluZztcbn1cblxuLyoqIFBvc3QgYSBwcm9tcHQgdG8gYSBjaGF0IHdpdGggdGhlIHNoYXJlZCB0aGlua2luZyArIDQwOS1xdWV1ZVxuICogIGxpZmVjeWNsZS4gUmV0dXJucyBcInNlbnRcIiBvbiAyeHgsIFwicXVldWVkXCIgb24gNDA5ICh0aGUgcHJvbXB0XG4gKiAgd2lsbCBkcmFpbiB3aGVuIHRoZSBpbi1mbGlnaHQgdHVybiBlbmRzKSwgb3IgXCJmYWlsZWRcIiBvbiBhbnkgb3RoZXJcbiAqICBlcnJvci4gQ2FsbGVycyB0aGF0IHdhbnQgdG8ga25vdyB3aGV0aGVyIHRoZSBzZXJ2ZXIgdG9vayB0aGVcbiAqICBwcm9tcHQgKGUuZy4gcGxhbiBoYW5kb2ZmIGRlbGV0aW5nIGl0cyBkcmFmdCkgaW5zcGVjdCB0aGUgcmVzdWx0O1xuICogIG1vc3QgY2FsbGVycyBzdGlsbCBpZ25vcmUgaXQuICovXG5leHBvcnQgYXN5bmMgZnVuY3Rpb24gc2VuZFByb21wdFRvKFxuICBjaGF0SUQ6IHN0cmluZywgdGV4dDogc3RyaW5nLCBvcHRzOiBTZW5kUHJvbXB0T3B0cyA9IHt9LFxuKTogUHJvbWlzZTxcInNlbnRcIiB8IFwicXVldWVkXCIgfCBcImZhaWxlZFwiPiB7XG4gIHNldFRoaW5raW5nKGNoYXRJRCwgdHJ1ZSk7XG5cbiAgY29uc3QgbWVzc2FnZUlEID0gdHJhbnNwb3J0Lm5ld01lc3NhZ2VJRCgpO1xuICBjb25zdCBhdHRhY2htZW50cyA9IHRha2VBdHRhY2htZW50cygpO1xuICBjb25zdCByZXN1bHQgPSBhd2FpdCB0cmFuc3BvcnQuc2VuZCh7XG4gICAgdHlwZTogXCJwcm9tcHRcIiwgY2hhdF9pZDogY2hhdElELFxuICAgIHBheWxvYWQ6IHtcbiAgICAgIHRleHQsIG1lc3NhZ2VfaWQ6IG1lc3NhZ2VJRCxcbiAgICAgIGFnZW50OiBvcHRzLmFnZW50ID8/IGdldEN1cnJlbnRBZ2VudCgpLFxuICAgICAgbW9kZWw6IG9wdHMubW9kZWwgPz8gZ2V0Q3VycmVudE1vZGVsKCksXG4gICAgICBhY3RpdmVfZmlsZTogZ2V0QWN0aXZlRmlsZVBhdGgoKSxcbiAgICAgIG9wZW5fZmlsZXM6IGdldE9wZW5GaWxlUGF0aHMoKSxcbiAgICAgIGF0dGFjaG1lbnRzOiBhdHRhY2htZW50cy5sZW5ndGggPiAwID8gYXR0YWNobWVudHMgOiB1bmRlZmluZWQsXG4gICAgfSxcbiAgfSk7XG5cbiAgaWYgKHJlc3VsdC5vaykgcmV0dXJuIFwic2VudFwiO1xuXG4gIGlmIChyZXN1bHQuc3RhdHVzID09PSA0MDkpIHtcbiAgICBlbnF1ZXVlUHJvbXB0KGNoYXRJRCwgdGV4dCk7XG4gICAgcmV0dXJuIFwicXVldWVkXCI7XG4gIH1cblxuICBzZXRUaGlua2luZyhjaGF0SUQsIGZhbHNlKTtcbiAgcmV0dXJuIFwiZmFpbGVkXCI7XG59XG5cbi8qKiBTZW5kIGEgc3RhbmRhbG9uZSBzd2l0Y2hfbW9kZWwgY29tbWFuZC4gVXNlZCBieSB0aGUgbW9kZWwgcGlja2VyXG4gKiAgb24gdGhlIGNoYXQgdmlldy4gU2hhcmVzIHRoZSB0aGlua2luZyBsaWZlY3ljbGUgd2l0aCBzZW5kUHJvbXB0VG9cbiAqICBzbyB0aGUgc2VuZCBidXR0b24gcmVmbGVjdHMgXCJidXN5XCIgd2hpbGUgdGhlIHNlcnZlciBwcmltZXMgdGhlXG4gKiAgbmV3IGJyaWRnZS5cbiAqXG4gKiAgc3dpdGNoX21vZGVsIGVtaXRzIG5vIGB0dXJuX2VuZGVkYCAobm8gYXNzaXN0YW50IHJlcGx5KSwgc28gd2VcbiAqICBjbGVhciBgdGhpbmtpbmdgIG9uIGFueSBub24tNDA5IHJlc3BvbnNlLiA0MDkgaXMgTk9UIGV4cGVjdGVkIOKAlFxuICogIHdlIHF1ZXVlIG1vZGVsIHN3aXRjaGVzIGNsaWVudC1zaWRlIGJlZm9yZSB0aGV5IGhpdCB0aGUgd2lyZSAoc2VlXG4gKiAgbW9kZWwtc3dpdGNoZXIudHMpIOKAlCBidXQgdGhlIGRlZmVuc2l2ZSB1bndpbmQgaXMga2VwdCBpbiBjYXNlXG4gKiAgYSByYWNlIHNsaXBzIHRocm91Z2guXG4gKlxuICogIFJldHVybnMgdHJ1ZSB3aGVuIHRoZSBzZXJ2ZXIgYWNjZXB0ZWQgdGhlIHN3aXRjaCAob3Igd2UgcXVldWVkIGl0KTtcbiAqICBmYWxzZSB3aGVuIHRoZSBjYWxsIGZhaWxlZCBhbmQgdGhlIGNhbGxlciBzaG91bGQgY2xlYXIgYW55IGluLWZsaWdodFxuICogIFVJIHN0YXRlLiAqL1xuZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHN3aXRjaE1vZGVsKGNoYXRJRDogc3RyaW5nLCBtb2RlbDogc3RyaW5nKTogUHJvbWlzZTxib29sZWFuPiB7XG4gIGlmIChjaGF0SUQgPT09IFwiXCIpIHJldHVybiBmYWxzZTtcbiAgc2V0VGhpbmtpbmcoY2hhdElELCB0cnVlKTtcbiAgY29uc3QgcmVzdWx0ID0gYXdhaXQgdHJhbnNwb3J0LnNlbmQoe1xuICAgIHR5cGU6IFwic3dpdGNoX21vZGVsXCIsIGNoYXRfaWQ6IGNoYXRJRCxcbiAgICBwYXlsb2FkOiB7IG1vZGVsIH0sXG4gIH0pO1xuICBpZiAocmVzdWx0LnN0YXR1cyAhPT0gNDA5KSB7XG4gICAgc2V0VGhpbmtpbmcoY2hhdElELCBmYWxzZSk7XG4gIH1cbiAgcmV0dXJuIHJlc3VsdC5vayB8fCByZXN1bHQuc3RhdHVzID09PSA0MDk7XG59XG5cbi8qKiBSZXNvbHZlIGEgc2luZ2xlIHBlbmRpbmcgY2hhbmdlIChhY2NlcHQgb3IgcmVqZWN0KS4gU2hhcmVkIGJ5XG4gKiAgc3VwZXJ2aXNlZC1waWxsLnRzLCBlZGl0b3ItcGVuZGluZy50cywgYW5kIG1lc3NhZ2VzLWFjdGlvbnMudHMuICovXG5leHBvcnQgZnVuY3Rpb24gcmVzb2x2ZVBlbmRpbmdDaGFuZ2UoXG4gIGNoYXRJRDogc3RyaW5nLCB0b29sQ2FsbElEOiBzdHJpbmcsIGFjdGlvbjogXCJhY2NlcHRcIiB8IFwicmVqZWN0XCIsXG4pOiB2b2lkIHtcbiAgdm9pZCB0cmFuc3BvcnQuc2VuZCh7XG4gICAgdHlwZTogXCJyZXNvbHZlX3BlbmRpbmdfY2hhbmdlXCIsXG4gICAgY2hhdF9pZDogY2hhdElELFxuICAgIHBheWxvYWQ6IHsgdG9vbF9jYWxsX2lkOiB0b29sQ2FsbElELCBhY3Rpb24gfSxcbiAgfSk7XG59XG4iXSwiZmlsZSI6Ii9jaGF0LWNvbW1hbmRzLnRzIn0=
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZWRVcmxzIjoiMyIsIm1hcHBpbmdzIjpmYWxzZX0sIi93b3Jrc3BhY2UvaG9tZWxhYi9hcHBzL3ZpYmVraXQvd2ViL3N0YXRpYy1zcmMvY2hhdC1jb21tYW5kcy50cyIsIi9jaGF0LWNvbW1hbmRzLnRzIixbIjQiLCI1IiwiNiIsIjciLCI4Il0sIi9zdG9yZS50cyIsIi90cmFuc3BvcnQudHMiLCIvc2Vzc2lvbi1jb250ZXh0LnRzIiwiL2VkaXRvci10eXBlcy50cyIsIi9hdHRhY2htZW50cy50cyJd

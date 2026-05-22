@@ -1,0 +1,32 @@
+
+/* ==========================================================================
+   Chat Area
+   ========================================================================== */
+
+[id="chat-area"] { display: flex; flex-direction: column; height: 100%; overflow: hidden; container: chat-area / inline-size; }
+
+.mobile-only {
+  display: none;
+}
+
+.chat-toolbar {
+  position: absolute; top: calc(var(--sp-3) + env(safe-area-inset-top, 0)); right: var(--sp-3);
+  display: flex; align-items: center; gap: 0.125rem;
+  z-index: 10;
+  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  border-radius: var(--r); padding: 0.125rem;
+
+  & .icon-btn {
+    min-width: var(--btn-h); min-height: var(--btn-h);
+    display: flex; align-items: center; justify-content: center;
+    border-radius: calc(var(--r) - 0.125rem);
+  }
+  & .mobile-only { display: none; }
+}
+
+.toolbar-title {
+  display: none; font-size: var(--fs-lg); font-weight: var(--fw-semibold);
+  color: var(--c-text-primary); margin-inline-end: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-inline-start: var(--sp-2);
+}

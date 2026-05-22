@@ -1,0 +1,94 @@
+
+/* ==========================================================================
+   Universal interaction feedback
+   ========================================================================== */
+
+/* Press scale: every interactive element gets a subtle inward press on
+ * :active. The 0.96 factor is small enough to feel tactile without
+ * looking like a bounce. Spring easing on release makes the return
+ * feel physical. Scoped via :where() so specificity stays at 0 and
+ * component-level overrides (e.g. send-btn's 0.92) win naturally. */
+:where(
+  .icon-btn, .action-pill, .btn, .btn-small, .pill,
+  .sidebar-action-btn, .turn-action-btn, .picker-btn,
+  .chip, .list-row-btn, .git-action-btn, .mcp-modal-tab,
+  .history-modal-row, .tab, .perm-mode
+):active {
+  transform: scale(0.96);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+/* ==========================================================================
+   Canonical keyframe library (vk-* prefix)
+   ========================================================================== */
+
+@keyframes vk-fade-in    { from { opacity: 0 } }
+
+@keyframes vk-fade-out   { to { opacity: 0 } }
+
+@keyframes vk-slide-up   { from { opacity: 0; transform: translateY(6px) } }
+
+@keyframes vk-slide-down { from { opacity: 0; transform: translateY(-6px) } }
+
+@keyframes vk-slide-in-x { from { opacity: 0; transform: translateX(-0.75rem) } }
+
+@keyframes vk-scale-in   { from { opacity: 0; transform: scale(0.95) } }
+
+@keyframes vk-scale-out  { to { opacity: 0; transform: scale(0.95) } }
+
+@keyframes vk-spin       { to { transform: rotate(360deg) } }
+
+@keyframes vk-breathe    { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+
+@keyframes vk-ping {
+  0% { transform: scale(1); opacity: 0.6 }
+  15% { transform: scale(2.5); opacity: 0 }
+  100% { opacity: 0 }
+}
+
+@keyframes vk-bounce-dot {
+  0%, 80%, 100% { opacity: 0.5; transform: scale(0) }
+  40% { opacity: 1; transform: scale(1) }
+
+}
+
+@keyframes vk-skeleton {
+  0%, 100% { opacity: 0.4 }
+  50% { opacity: 0.15 }
+}
+
+/* Streaming word-fade removed — the per-word-span approach caused
+ * words to re-render in already-written sections when markdown
+ * structure changed mid-stream. Visual smoothness now comes from the
+ * chat-entry animation + height interpolation + flush throttle. */
+
+/* Chat-chrome entry animation. Applies to every realtime-appended
+ * element in the message list — user messages, assistant bubbles,
+ * checkpoints, plans, tool cards, subagent crew cards, boundary
+ * dividers, reasoning blocks, system messages, the turn-actions row
+ * below assistant messages. One unified motion language: 4px
+ * upward slide + opacity fade, 200ms ease-out. Historical bulk
+ * renders (chat switch, prependMessages) bypass appendMessage so
+ * scrolling back doesn't re-animate old content. */
+@keyframes vk-chat-entry {
+  from { opacity: 0; transform: translateY(4px) }
+}
+
+[data-chat-entry] {
+  animation: vk-chat-entry 200ms var(--ease-enter) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-chat-entry] { animation-duration: 10ms; }
+}
+
+/* Last-message padding during streaming removed — the MutationObserver
+ * auto-scroll in scroll.ts keeps the latest content visible without
+ * forcing a minimum height on the message element itself. The 50dvh
+ * rule was causing one-sentence replies to render as half-viewport
+ * tall boxes. */
+
+/* ==========================================================================
+   Sidebar
+   ========================================================================== */
+

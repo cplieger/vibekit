@@ -1,0 +1,880 @@
+
+/* ==========================================================================
+   Settings: tabbed shell
+   ========================================================================== */
+
+.settings-shell {
+  max-width: var(--content-max-w); margin: 0 auto; width: 100%;
+  padding: var(--sp-4); display: flex; flex-direction: column;
+  flex: 1; min-height: 0; gap: var(--sp-3);
+}
+
+.settings-header {
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  position: sticky; top: 0; z-index: 1;
+  background: var(--c-bg-primary);
+  padding-block-end: var(--sp-2);
+}
+
+.settings-title-row {
+  padding-top: calc(0.3125rem + env(safe-area-inset-top, 0));
+  display: flex; align-items: center; gap: var(--sp-3);
+}
+
+.settings-save-status {
+  font-size: var(--fs-xs); color: var(--c-text-tertiary);
+  display: inline-flex; align-items: center;
+  opacity: 1;
+  transition: opacity 0.4s;
+}
+
+.settings-save-status.fade-out { opacity: 0; }
+
+/* Desktop tab bar: segmented-control pills. */
+.settings-tab-bar {
+  display: flex; flex-wrap: wrap; gap: 0.25rem;
+  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: 0.25rem;
+}
+
+.settings-tab {
+  flex: 1; min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent; border: 1px solid transparent;
+  border-radius: calc(var(--r) - 0.125rem);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  font-family: var(--font-sans);
+  cursor: pointer; white-space: nowrap;
+  text-overflow: ellipsis; overflow: hidden;
+  transition: background var(--dur-micro), color var(--dur-micro), border-color var(--dur-micro) var(--ease-micro);
+
+  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
+
+  &.active {
+    background: var(--c-bg-primary);
+    color: var(--c-text-primary);
+    border-color: var(--c-border);
+    box-shadow: 0 1px 2px oklch(0% 0 0deg / 8%);
+  }
+}
+
+/* Mobile tab select: native dropdown, hidden on desktop. */
+.settings-tab-select-wrap { display: none; }
+
+.settings-tab-select {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font-family: var(--font-sans); font-size: var(--fs-md);
+  appearance: auto; /* keep the native chevron for platform affinity */
+}
+
+/* Panel body container. One panel visible at a time (others get .hidden). */
+.settings-panel {
+  display: flex; flex-direction: column;
+  min-height: 0;
+  gap: var(--sp-4);
+}
+
+/* Intro blurb at the top of a panel. */
+.settings-panel-intro {
+  font-size: var(--fs-sm); color: var(--c-text-secondary);
+  line-height: 1.55;
+  margin: 0;
+  text-wrap: pretty;
+}
+
+/* Section with an inline action bar on the right (e.g. Installed tools + buttons). */
+.section-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  padding-block-start: var(--sp-2);
+}
+
+:where(.section-header-row) .section-title,
+:where(.section-header-row) h3.section-title { padding-block-start: 0; }
+
+/* --- Settings → Git & forges --- */
+
+.forges-encryption-note {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.forges-encryption-note-plain {
+  border-color: color-mix(in srgb, var(--c-warning, var(--c-accent)) 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-warning, var(--c-accent)) 8%, transparent);
+}
+
+.forges-section {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.forges-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.forges-empty {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm); color: var(--c-text-tertiary);
+  font-style: italic;
+}
+
+.forges-list {
+  display: flex; flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.forge-row {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-bg-primary);
+  display: flex; flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.forge-row-draft {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--c-accent) 55%, var(--c-border));
+  background: color-mix(in srgb, var(--c-accent) 4%, transparent);
+}
+
+.forge-row-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+
+.forge-row-name {
+  font-weight: 600; color: var(--c-text-primary);
+}
+
+.forge-row-host {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+}
+
+.forge-row-form {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* Token field: password input + show/hide toggle button. Uses
+ * single-dash modifier naming so it reads consistently with the
+ * rest of the codebase. */
+.forge-field-token {
+  /* No extra rules; the wrapper exists so the token row can have a
+   * show/hide button inline next to the input without disrupting the
+   * single-column flow of the other .forge-field entries. */
+}
+
+.forge-field {
+  display: flex; flex-direction: column;
+  gap: 4px;
+}
+
+.forge-field-label {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-weight: 500;
+}
+
+.forge-token-row {
+  display: flex; align-items: stretch;
+  gap: var(--sp-1);
+}
+
+:where(.forge-token-row) .tool-form-input {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+
+.forge-reveal-btn {
+  flex-shrink: 0;
+  width: var(--btn-h); min-height: var(--btn-h);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.forge-reveal-btn:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}
+
+.forge-actions {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--sp-2);
+  padding-block-start: var(--sp-1);
+}
+
+.forge-status {
+  font-size: var(--fs-xs);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+}
+
+.forge-status-pending {
+  color: var(--c-text-tertiary);
+}
+
+.forge-status-ok {
+  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary));
+  background: color-mix(in srgb, var(--c-accent-2, #66e6bb) 12%, transparent);
+}
+
+.forge-status-error {
+  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
+  background: color-mix(in srgb, var(--c-danger, #e66666) 12%, transparent);
+}
+
+/* Device flow + import UI */
+.forge-device-flow {
+  border: 1px dashed var(--c-accent);
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  background: color-mix(in srgb, var(--c-accent) 4%, transparent);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+
+.forge-device-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  text-align: center;
+  user-select: all;
+}
+
+.forge-device-instructions { font-size: var(--fs-sm); }
+.forge-device-status { font-size: var(--fs-sm); color: var(--c-text-tertiary); }
+
+.forge-oauth-btn, .forge-import-btn { flex-shrink: 0; }
+
+/* --- Forge status cards --- */
+
+.forge-card {
+  border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-text-tertiary);
+  border-radius: var(--r);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-bg-primary);
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+.forge-card-connected { border-left-color: var(--c-accent-2, #66e6bb); }
+.forge-card-error { border-left-color: var(--c-danger, #e66666); }
+
+.forge-card-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+.forge-card-icon { display: inline-flex; color: var(--c-text-secondary); }
+.forge-card-name { font-weight: 600; color: var(--c-text-primary); flex: 1; }
+
+.forge-status-badge {
+  font-size: var(--fs-xs); font-weight: 500;
+  padding: 2px var(--sp-2); border-radius: 999px;
+}
+.forge-status-badge-connected { color: var(--c-accent-2, #66e6bb); }
+.forge-status-badge-error { color: var(--c-danger, #e66666); }
+.forge-status-badge-unknown { color: var(--c-text-tertiary); }
+
+.forge-details {
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  padding-left: calc(14px + var(--sp-2));
+}
+
+.forge-card-actions {
+  display: flex; gap: var(--sp-2);
+  padding-left: calc(14px + var(--sp-2));
+}
+
+.forge-flash {
+  font-size: var(--fs-xs);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  animation: forge-flash-fade 4s ease-out forwards;
+}
+.forge-flash-ok { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary)); }
+.forge-flash-error { color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary)); }
+
+@keyframes forge-flash-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* --- Unified repo picker --- */
+
+.repo-picker-trigger {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  min-width: 22ch;
+  max-width: 44ch;
+  transition: border-color var(--dur-micro) var(--ease-micro);
+}
+
+.repo-picker-trigger:hover { border-color: var(--c-accent); }
+
+.repo-picker-trigger-empty {
+  color: var(--c-text-tertiary);
+  font-style: italic;
+}
+
+.repo-picker-trigger-stack {
+  display: flex; flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  text-align: start;
+}
+
+.repo-picker-trigger-name {
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.repo-picker-trigger-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.repo-picker-chevron {
+  display: inline-flex;
+  color: var(--c-text-tertiary);
+}
+
+/* Forge badge glyph (GH/GL/CB/GT) next to the repo name. */
+.repo-picker-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  font-size: 10px; font-weight: 700;
+  font-family: var(--font-mono);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-secondary);
+  flex-shrink: 0;
+}
+
+.repo-picker-badge-github   { background: color-mix(in srgb, #2da44e 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2da44e 40%, var(--c-border)); }
+.repo-picker-badge-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
+.repo-picker-badge-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
+.repo-picker-badge-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
+
+/* State glyph (cloned/remote/local-only) on the right of a row. */
+.repo-picker-state {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.repo-picker-state-synced { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); }
+.repo-picker-state-local  { color: var(--c-text-tertiary); }
+.repo-picker-state-remote { color: var(--c-text-tertiary); }
+
+/* Dialog shell. Uses <dialog> so we get focus trap + Escape for free. */
+.repo-picker-dialog {
+  padding: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  width: min(640px, 90vw);
+  max-height: min(80vh, 720px);
+  flex-direction: column;
+}
+
+.repo-picker-dialog[open] { display: flex; }
+
+.repo-picker-dialog::backdrop {
+  background: color-mix(in srgb, #000 40%, transparent);
+}
+
+.repo-picker-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.repo-picker-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.repo-picker-header-actions {
+  display: flex; gap: var(--sp-2); align-items: center;
+}
+
+.repo-picker-search-row {
+  padding: var(--sp-3) var(--sp-4) 0;
+}
+
+.repo-picker-chips {
+  display: flex; flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-4) 0;
+}
+
+.repo-picker-chip {
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.repo-picker-chip:hover { background: var(--c-bg-hover); }
+
+.repo-picker-chip-active {
+  background: color-mix(in srgb, var(--c-accent) 20%, var(--c-bg-secondary));
+  border-color: color-mix(in srgb, var(--c-accent) 50%, var(--c-border));
+  color: var(--c-text-primary);
+}
+
+.repo-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  display: flex; flex-direction: column;
+  gap: 2px;
+}
+
+.repo-picker-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.repo-picker-row:hover { background: var(--c-bg-hover); }
+
+.repo-picker-row-selected {
+  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-accent) 6%, transparent);
+}
+
+.repo-picker-row-cloning { opacity: 0.6; pointer-events: none; }
+
+.repo-picker-row-stack {
+  display: flex; flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-picker-row-name {
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.repo-picker-row-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.repo-picker-row-right {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.repo-picker-row-age {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.repo-picker-empty {
+  padding: var(--sp-4);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+/* --- Pull request panel (inside the git view) --- */
+
+.git-pr-section {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+  margin-block-start: var(--sp-3);
+}
+
+.git-pr-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.git-pr-empty {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  font-style: italic;
+}
+
+.git-pr-skeleton {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.git-pr-list {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.git-pr-row {
+  display: flex; flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+}
+
+.git-pr-row-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.git-pr-row-num {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.git-pr-row-title {
+  color: var(--c-text-primary);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
+
+.git-pr-row-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.git-pr-row-actions {
+  display: flex; flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding-block-start: var(--sp-1);
+}
+
+.git-pr-merge-method {
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font-size: var(--fs-xs);
+}
+
+.git-pr-badge {
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-tertiary);
+  font-variant-caps: all-small-caps;
+}
+
+.git-pr-badge-draft { border-color: color-mix(in srgb, var(--c-text-tertiary) 35%, var(--c-border)); }
+.git-pr-badge-ok      { border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border)); color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); }
+.git-pr-badge-error   { border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border));   color: color-mix(in srgb, var(--c-danger, #e66666) 85%, var(--c-text-primary)); }
+.git-pr-badge-pending { border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));           color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary)); }
+
+/* PR creation dialog (two-stage edit → submit). */
+.pr-dialog {
+  padding: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  width: min(640px, 90vw);
+  max-height: 90vh;
+  flex-direction: column;
+}
+
+.pr-dialog[open] { display: flex; }
+
+.pr-dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
+
+.pr-dialog-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.pr-dialog-title { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+
+.pr-dialog-body {
+  padding: var(--sp-4);
+  display: flex; flex-direction: column;
+  gap: var(--sp-3);
+  overflow-y: auto;
+}
+
+.pr-dialog-row {
+  display: flex; align-items: flex-end; gap: var(--sp-2);
+}
+
+.pr-dialog-field {
+  display: flex; flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pr-dialog-arrow {
+  padding-block-end: var(--sp-2);
+  color: var(--c-text-tertiary);
+}
+
+.pr-dialog-check {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.pr-body-textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  min-height: 12rem;
+  resize: vertical;
+}
+
+.pr-dialog-footer {
+  display: flex; justify-content: flex-end; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--c-border);
+}
+
+/* --- CI pill (next to the branch name) --- */
+
+.git-ci-pill {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  margin-inline-start: var(--sp-1);
+}
+
+.git-ci-pill:hover { background: var(--c-bg-hover); }
+
+.git-ci-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--c-text-tertiary);
+  flex-shrink: 0;
+}
+
+.git-ci-pill-success   { border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border)); }
+
+.git-ci-pill-success .git-ci-dot { background: var(--c-accent-2, #66e6bb); }
+
+.git-ci-pill-failure,
+.git-ci-pill-error     { border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border)); }
+
+.git-ci-pill-failure .git-ci-dot,
+.git-ci-pill-error .git-ci-dot { background: var(--c-danger, #e66666); }
+
+.git-ci-pill-pending   { border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border)); }
+
+.git-ci-pill-pending .git-ci-dot {
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard, ease-in-out) infinite;
+}
+
+.git-ci-pill-canceled .git-ci-dot { background: var(--c-text-tertiary); }
+
+.git-ci-panel {
+  position: absolute;
+  z-index: 20;
+  margin-top: var(--sp-1);
+  min-width: 18rem; max-width: 28rem;
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-2) 0;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+}
+
+.git-ci-panel-head {
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-tertiary);
+}
+
+.git-ci-panel-list {
+  list-style: none; margin: 0; padding: 0;
+}
+
+.git-ci-panel-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.git-ci-panel-row-success .git-ci-dot { background: var(--c-accent-2, #66e6bb); }
+
+.git-ci-panel-row-failure .git-ci-dot,
+.git-ci-panel-row-error .git-ci-dot   { background: var(--c-danger, #e66666); }
+
+.git-ci-panel-row-pending .git-ci-dot {
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard, ease-in-out) infinite;
+}
+
+.git-ci-panel-name {
+  flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.git-ci-panel-link {
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
+  text-decoration: none;
+}
+
+.git-ci-panel-link:hover { text-decoration: underline; }
+
+/* --- Empty-state banner (top of git view) --- */
+
+.git-forges-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  margin-block-end: var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-accent) 6%, transparent);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.git-forges-banner-link {
+  color: var(--c-accent);
+  text-decoration: none;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.git-forges-banner-link:hover { text-decoration: underline; }
+
+.action-bar-inline { padding: 0; margin: 0; }
+
+/* Row below a section header: action pills on the left, an auxiliary
+ * toggle (e.g. auto-update) pushed to the right via margin-auto. Used
+ * on the Tools tab so controls sit under the header/description, not
+ * beside it. */
+.section-actions-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-block: var(--sp-2);
+}
+
+.section-actions-toggle {
+  margin-inline: auto 0;
+}
+
+/* Mobile: swap pill bar for the native select. */
+@media (width <= 40rem) {
+  .settings-tab-bar { display: none; }
+  .settings-tab-select-wrap { display: block; }
+}
+
+/* Account + About + Diagnostics sections on Settings → General. Flat
+   inline rows: label on the left, value / action on the right, stacking
+   on mobile when the container narrows past the natural wrap point. */
+.identity-row {
+  display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.identity-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.identity-auth { font-size: var(--fs-md); color: var(--c-text-primary); }
+
+.identity-email {
+  font-size: var(--fs-sm); color: var(--c-text-secondary);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  overflow-wrap: anywhere;
+}
+
+.about-grid {
+  display: grid; grid-template-columns: max-content 1fr;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.about-grid dt { color: var(--c-text-secondary); }
+
+.about-grid dd {
+  margin: 0; color: var(--c-text-primary);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  overflow-wrap: anywhere;
+}
+
+/* Inline dropdown used in Settings → Custom instructions (default
+   agent picker). Mirrors .settings-tab-select styling so both lives
+   behave identically. */
+.page-select {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font-family: var(--font-sans); font-size: var(--fs-md);
+  appearance: auto;
+}
