@@ -75,3 +75,6 @@ linters:
       - path: web/internal/
         linters:
           - goconst
+      - path: web/cmd/
+        linters:
+          - goconst
