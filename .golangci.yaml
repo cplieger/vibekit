@@ -78,3 +78,10 @@ linters:
       - path: web/cmd/
         linters:
           - goconst
+      # Performance: range value copies and large params — not critical for this codebase
+      - text: "rangeValCopy:"
+        linters:
+          - gocritic
+      - text: "hugeParam:"
+        linters:
+          - gocritic
