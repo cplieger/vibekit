@@ -16,7 +16,6 @@
 // writes Info or Debug based on whatever the LevelVar says at log
 // time, so the PATCH endpoint that flips the bool also flips the
 // level for subsequent calls.
-
 package logctl
 
 import (

@@ -220,7 +220,7 @@ func (s *Store) SetKnownTools(name string, tools []string) {
 	for _, srv := range s.servers {
 		if srv.Name == name {
 			srv.KnownTools = tools
-			_ = s.persist(context.Background()) //nolint:errcheck // best-effort; stale cache is acceptable
+			_ = s.persist(context.Background())
 			return
 		}
 	}

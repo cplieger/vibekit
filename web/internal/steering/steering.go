@@ -494,7 +494,6 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 // forgeCLI returns the CLI tool for the kind. Mirrors forges.Kind.CLI()
 // without requiring a dependency on the forges package.
 //
-//nolint:goconst // these are wire-format kind values shared across packages
 func forgeCLI(kind string) string {
 	switch kind {
 	case "github":

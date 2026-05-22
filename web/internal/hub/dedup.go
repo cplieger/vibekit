@@ -42,7 +42,7 @@ type evictionHeap []evictionItem
 func (h evictionHeap) Len() int           { return len(h) }
 func (h evictionHeap) Less(i, j int) bool { return h[i].ts.Before(h[j].ts) }
 func (h evictionHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *evictionHeap) Push(x any)        { *h = append(*h, x.(evictionItem)) } //nolint:errcheck // heap.Interface guarantees the pushed type matches.
+func (h *evictionHeap) Push(x any)        { *h = append(*h, x.(evictionItem)) } //nolint:errcheck // heap interface contract
 func (h *evictionHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -92,7 +92,7 @@ func (c *idempotencyCache) Record(reqID string, result []byte) {
 		// Try heap-based O(log n) eviction first. Skip stale keys
 		// that were already pruned by the TTL sweep.
 		for c.evictHeap.Len() > 0 {
-			oldest := heap.Pop(&c.evictHeap).(evictionItem) //nolint:errcheck // heap.Interface guarantees the popped type matches what was pushed.
+			oldest := heap.Pop(&c.evictHeap).(evictionItem) //nolint:errcheck // heap returns evictionItem
 			if _, ok := c.entries[oldest.key]; ok {
 				delete(c.entries, oldest.key)
 				evicted = true

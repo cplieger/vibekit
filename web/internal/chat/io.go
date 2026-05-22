@@ -13,7 +13,7 @@ import (
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes
 // size cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
 func readCappedFile(path, label string) ([]byte, error) {
-	f, err := os.Open(path) // #nosec G304 -- path built from validated chat id
+	f, err := os.Open(path) //nolint:gosec // G304,G703: path built from validated chat ID
 	if err != nil {
 		return nil, err
 	}

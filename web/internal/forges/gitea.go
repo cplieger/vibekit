@@ -124,7 +124,8 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 		return nil, fmt.Errorf("tea repos list: decode: %w", err)
 	}
 	repos := make([]Repo, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		owner := r.Owner.Login
 		if owner == "" && strings.Contains(r.FullName, "/") {
 			owner = strings.SplitN(r.FullName, "/", 2)[0]
@@ -179,7 +180,8 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 		return nil, fmt.Errorf("tea pulls: decode: %w", err)
 	}
 	prs := make([]PR, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		state := normalizePRState(r.State)
 		if r.Merged {
 			state = "merged"
@@ -203,7 +205,7 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 }
 
 // CreatePR opens a new pull request via tea pr create.
-func (p *giteaProvider) CreatePR(ctx context.Context, repo string, params CreatePRParams) (*PR, error) {
+func (p *giteaProvider) CreatePR(ctx context.Context, repo string, params *CreatePRParams) (*PR, error) {
 	args := p.withLogin("pulls", "create",
 		"--repo", repo,
 		"--title", params.Title,
@@ -266,7 +268,7 @@ func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, me
 	}
 	// tea doesn't have a direct merge command yet; use the API.
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/pulls/%d/merge", p.host, owner, name, number)
-	body := fmt.Sprintf(`{"Do":"%s"}`, style)
+	body := fmt.Sprintf(`{"Do":%q}`, style)
 	return p.apiPostJSON(ctx, endpoint, []byte(body))
 }
 
@@ -308,7 +310,8 @@ func (p *giteaProvider) parseIssues(data []byte) ([]Issue, error) {
 		return nil, fmt.Errorf("tea issues: decode: %w", err)
 	}
 	issues := make([]Issue, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		labels := make([]string, 0, len(r.Labels))
 		for _, l := range r.Labels {
 			labels = append(labels, l.Name)
@@ -347,9 +350,10 @@ func (p *giteaProvider) CreateIssue(ctx context.Context, repo string, params Cre
 		if listErr == nil && len(issues) > 0 {
 			// Return the newest issue by creation time.
 			newest := issues[0]
-			for _, i := range issues {
+			for idx := range issues {
+				i := &issues[idx]
 				if i.CreatedAt > newest.CreatedAt {
-					newest = i
+					newest = *i
 				}
 			}
 			return &newest, nil

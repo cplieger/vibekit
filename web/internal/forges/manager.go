@@ -56,7 +56,7 @@ func (m *Manager) List(ctx context.Context) []ConfiguredForge {
 	stale := time.Since(m.cacheAt) > m.ttl
 	m.mu.RUnlock()
 	if stale {
-		_ = m.Refresh(ctx) //nolint:errcheck // best-effort cache refresh; List returns whatever's cached
+		_ = m.Refresh(ctx)
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -86,7 +86,7 @@ func (m *Manager) Get(id string) *ConfiguredForge {
 }
 
 // Refresh re-reads all CLI config files and rebuilds the forge list.
-func (m *Manager) Refresh(ctx context.Context) error {
+func (m *Manager) Refresh(_ context.Context) error {
 	root, err := configHome()
 	if err != nil {
 		return err

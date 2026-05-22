@@ -51,7 +51,7 @@ func extractPRNumberFromURL(url string) int {
 	if len(m) < 2 {
 		return 0
 	}
-	n, _ := strconv.Atoi(m[1]) //nolint:errcheck // regex guarantees decimal digits
+	n, _ := strconv.Atoi(m[1])
 	return n
 }
 
@@ -61,7 +61,7 @@ func extractIssueNumberFromURL(url string) int {
 	if len(m) < 2 {
 		return 0
 	}
-	n, _ := strconv.Atoi(m[1]) //nolint:errcheck // regex guarantees decimal digits
+	n, _ := strconv.Atoi(m[1])
 	return n
 }
 

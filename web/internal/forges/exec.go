@@ -64,7 +64,7 @@ func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, cli, args...)
+	cmd := exec.CommandContext(ctx, cli, args...) //nolint:gosec // G702: user-initiated git command
 	cmd.Env = sanitizeEnv(os.Environ())
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)

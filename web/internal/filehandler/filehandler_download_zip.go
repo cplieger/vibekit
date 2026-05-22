@@ -49,7 +49,7 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	flusher, _ := w.(http.Flusher) //nolint:errcheck // ok=false handled by nil check at use sites
+	flusher, _ := w.(http.Flusher)
 	ctx := r.Context()
 	var totalBytes int64
 	var fileCount int
@@ -89,7 +89,7 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return false
 		}
-		n, _ := io.Copy(fw, f) //nolint:errcheck // streaming write; partial bytes counted via n
+		n, _ := io.Copy(fw, f)
 		totalBytes += n
 		fileCount++
 		if flusher != nil {

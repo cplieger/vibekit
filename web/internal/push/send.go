@@ -184,7 +184,7 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 	body := make([]byte, 0, 16+4+1+len(ephPubBytes)+len(ciphertext))
 	body = append(body, salt...)
 	body = binary.BigEndian.AppendUint32(body, 4096)
-	body = append(body, byte(len(ephPubBytes)))
+	body = append(body, byte(len(ephPubBytes))) //nolint:gosec // G115: value bounded by protocol
 	body = append(body, ephPubBytes...)
 	body = append(body, ciphertext...)
 

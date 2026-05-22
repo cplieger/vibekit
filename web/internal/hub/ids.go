@@ -20,9 +20,9 @@ func uuidv7() string {
 
 	// Timestamp: top 48 bits = unix milliseconds
 	ms := uint64(time.Now().UnixMilli())
-	b[0] = byte(ms >> 40)
-	b[1] = byte(ms >> 32)
-	b[2] = byte(ms >> 24)
+	b[0] = byte(ms >> 40) //nolint:gosec // G115: ID encoding
+	b[1] = byte(ms >> 32) //nolint:gosec // G115: ID encoding
+	b[2] = byte(ms >> 24) //nolint:gosec // G115: ID encoding
 	b[3] = byte(ms >> 16)
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)

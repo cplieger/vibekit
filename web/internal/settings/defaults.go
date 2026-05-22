@@ -7,7 +7,6 @@
 // is the right level — full struct validation is too rigid for a
 // preference file that gains keys per release).
 
-//nolint:goconst // KnownKeys + DefaultSettings are lookup tables; extracting string constants adds indirection without value.
 package settings
 
 import "log/slog"

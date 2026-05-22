@@ -83,7 +83,8 @@ func (p *gitlabProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 		return nil, fmt.Errorf("glab list repos: decode: %w", err)
 	}
 	repos := make([]Repo, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		repos = append(repos, Repo{
 			Owner:         r.Namespace.FullPath,
 			Name:          r.Path,
@@ -127,7 +128,8 @@ func (p *gitlabProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 		return nil, fmt.Errorf("glab mr list: decode: %w", err)
 	}
 	prs := make([]PR, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		prs = append(prs, PR{
 			Number:       r.IID,
 			Title:        r.Title,
@@ -147,7 +149,7 @@ func (p *gitlabProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 }
 
 // CreatePR opens a new MR.
-func (p *gitlabProvider) CreatePR(ctx context.Context, repo string, params CreatePRParams) (*PR, error) {
+func (p *gitlabProvider) CreatePR(ctx context.Context, repo string, params *CreatePRParams) (*PR, error) {
 	args := p.withHost("mr", "create",
 		"--repo", repo,
 		"--title", params.Title,
@@ -253,7 +255,8 @@ func (p *gitlabProvider) ListIssues(ctx context.Context, repo, state string) ([]
 		return nil, fmt.Errorf("glab issue list: decode: %w", err)
 	}
 	issues := make([]Issue, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		issues = append(issues, Issue{
 			Number:    r.IID,
 			Title:     r.Title,

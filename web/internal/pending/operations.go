@@ -124,7 +124,7 @@ func (s *Store) Add(ctx context.Context, p *AddParams) (waitCh <-chan struct{}, 
 // Returns ErrUnknown if the id isn't pending. Merged text must be
 // under Cap bytes; callers validate before invoking. Accept semantics
 // are implicit — to reject everything, use plain Resolve(…, "reject").
-func (s *Store) ResolveWithText(ctx context.Context, toolCallID, mergedText string) (api.PendingChange, error) {
+func (s *Store) ResolveWithText(_ context.Context, toolCallID, mergedText string) (api.PendingChange, error) {
 	if len(mergedText) > Cap {
 		return api.PendingChange{}, errors.New("pending: merged_text exceeds cap")
 	}
@@ -157,7 +157,7 @@ func (s *Store) ResolveWithText(ctx context.Context, toolCallID, mergedText stri
 // ErrUnknown (the op is gone by then). On success, returns the op's
 // snapshot so the hub can broadcast the resolved event with the
 // original path/kind (the caller may not have them handy).
-func (s *Store) Resolve(ctx context.Context, toolCallID string, action api.PendingAction) (api.PendingChange, error) {
+func (s *Store) Resolve(_ context.Context, toolCallID string, action api.PendingAction) (api.PendingChange, error) {
 	s.mu.Lock()
 	op, ok := s.ops[toolCallID]
 	if !ok {

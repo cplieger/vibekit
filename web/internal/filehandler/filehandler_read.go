@@ -128,5 +128,5 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
 	slog.Info("filehandler: download", "path", resolved, "size", info.Size())
-	http.ServeFile(w, r, resolved)
+	http.ServeFile(w, r, resolved) //nolint:gosec // G703: path validated against workspace root
 }

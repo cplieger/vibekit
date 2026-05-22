@@ -791,7 +791,7 @@ func main() {
 	// Generate types.
 	var typesBuf strings.Builder
 	generateTypes(&typesBuf)
-	if err := os.WriteFile(filepath.Join(outDir, "types.gen.ts"), []byte(typesBuf.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "types.gen.ts"), []byte(typesBuf.String()), 0o644); err != nil { //nolint:gosec // G306: generated source file
 		fmt.Fprintf(os.Stderr, "write types.gen.ts: %v\n", err)
 		os.Exit(1)
 	}
@@ -799,7 +799,7 @@ func main() {
 	// Generate decoders.
 	var decodersBuf strings.Builder
 	generateDecoders(&decodersBuf)
-	if err := os.WriteFile(filepath.Join(outDir, "decoders.gen.ts"), []byte(decodersBuf.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "decoders.gen.ts"), []byte(decodersBuf.String()), 0o644); err != nil { //nolint:gosec // G306: generated source file
 		fmt.Fprintf(os.Stderr, "write decoders.gen.ts: %v\n", err)
 		os.Exit(1)
 	}
@@ -807,7 +807,7 @@ func main() {
 	// Generate registry.
 	var registryBuf strings.Builder
 	generateRegistry(&registryBuf)
-	if err := os.WriteFile(filepath.Join(outDir, "registry.gen.ts"), []byte(registryBuf.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "registry.gen.ts"), []byte(registryBuf.String()), 0o644); err != nil { //nolint:gosec // G306: generated source file
 		fmt.Fprintf(os.Stderr, "write registry.gen.ts: %v\n", err)
 		os.Exit(1)
 	}

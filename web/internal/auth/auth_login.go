@@ -170,7 +170,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// device-code TTL + 1m grace. The select below separately
 	// bounds the URL-discovery phase at LoginURLTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginProcessCap)
-	cmd := exec.CommandContext(ctx, h.cliPath, buildLoginArgs(provider, region)...)
+	cmd := exec.CommandContext(ctx, h.cliPath, buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
 	setLoginProcAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

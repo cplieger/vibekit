@@ -134,7 +134,7 @@ func Handler() http.HandlerFunc {
 		writeCounter(&b, PushSends)
 		writeHistogram(&b, HTTPDuration)
 		writeProcessMetrics(&b)
-		w.Write([]byte(b.String())) //nolint:errcheck // ResponseWriter writes never return an actionable error
+		_, _ = w.Write([]byte(b.String()))
 	}
 }
 

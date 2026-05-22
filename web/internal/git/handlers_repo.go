@@ -58,7 +58,6 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 				return nil
 			})
 		}
-		//nolint:errcheck // per-goroutine errors logged inside the closure; Wait's aggregated error carries no new info.
 		_ = g.Wait()
 		sort.Strings(found)
 		repos = append(repos, found...)

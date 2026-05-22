@@ -15,7 +15,7 @@ import (
 )
 
 // CmdResolvePendingChange settles one staged op.
-func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -55,7 +55,7 @@ func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.Response
 }
 
 // CmdResolveAllPendingChanges settles every op in the chat.
-func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -117,7 +117,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 }
 
 // CmdSetSupervisedMode toggles the chat's SupervisedMode flag.
-func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -245,7 +245,7 @@ func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseW
 }
 
 // CmdClearPendingTrust clears the per-turn trust flag.
-func CmdClearPendingTrust(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdClearPendingTrust(d *Dispatcher, _ context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return

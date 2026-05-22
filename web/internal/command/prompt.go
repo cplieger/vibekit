@@ -80,7 +80,7 @@ func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, 
 }
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, p *api.PromptCommand, params map[string]any) *api.RPCResponse {
+func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, p *api.PromptCommand, params map[string]any) *api.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
 	if !deps.IsEmptyTurn(resp, chatID) {
 		return resp
 	}
@@ -130,7 +130,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) (frozen bool, err error) {
+func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) (frozen bool, err error) { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
 	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if exists && c.Frozen {
@@ -165,7 +165,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 }
 
 // CmdPrompt handles the prompt command.
-func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if cmd.ChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest, errMissingChatID)

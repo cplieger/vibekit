@@ -97,7 +97,7 @@ func InjectToken(ctx context.Context, kind Kind, host, token, username string) e
 
 // RemoveToken deletes the credential entry for kind/host from the
 // CLI's config. Used on disconnect.
-func RemoveToken(ctx context.Context, kind Kind, host string) error {
+func RemoveToken(_ context.Context, kind Kind, host string) error {
 	if host == "" {
 		host = kind.DefaultHost()
 	}
@@ -629,7 +629,7 @@ func setupGitTea(host string) error {
 		return err
 	}
 	credFile := filepath.Join(home, ".git-credentials")
-	existing, _ := os.ReadFile(credFile) //nolint:errcheck // file may not exist yet; empty bytes treated as "no entries"
+	existing, _ := os.ReadFile(credFile)
 	lines := strings.Split(string(existing), "\n")
 	prefix := fmt.Sprintf("https://oauth2:%s@%s/", token, host)
 	hostMarker := "@" + host + "/"
@@ -649,7 +649,7 @@ func setupGitTea(host string) error {
 	}
 	// Ensure git uses the store helper.
 	gitCfg := filepath.Join(home, ".gitconfig")
-	cfgData, _ := os.ReadFile(gitCfg) //nolint:errcheck // missing gitconfig is fine — git config will create it
+	cfgData, _ := os.ReadFile(gitCfg)
 	if !strings.Contains(string(cfgData), "credential.helper = store") &&
 		!strings.Contains(string(cfgData), "helper = store") {
 		_, err := runCmd(context.Background(), CmdTimeout, nil, "git",

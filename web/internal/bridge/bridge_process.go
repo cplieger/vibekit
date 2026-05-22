@@ -85,7 +85,7 @@ func (b *Bridge) Stop() {
 			// switch / cull-idle cycles do not leak zombies. Kill
 			// guarantees a non-zero exit status, so we intentionally
 			// discard the returned error.
-			_ = b.cmd.Wait() //nolint:errcheck // expected non-zero exit after Kill
+			_ = b.cmd.Wait()
 		}
 	})
 }
@@ -113,7 +113,7 @@ func (b *Bridge) startProcess(agent, model string, extraArgs []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	b.cmd = exec.CommandContext(ctx, b.cliPath, args...)
+	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from config
 	// Belt-and-braces graceful shutdown when lifecycleCtx is canceled.
 	// Default CommandContext behavior is immediate SIGKILL; Cancel + WaitDelay
 	// (Go 1.20+) escalate to SIGKILL only after a 5s SIGTERM grace period,

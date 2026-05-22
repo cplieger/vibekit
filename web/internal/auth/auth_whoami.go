@@ -51,7 +51,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// the bundled binary path), never user input — no G204 risk. The
 	// repo-wide gosec G204 exclusion already suppresses the warning;
 	// no //nolint needed.
-	cmd := exec.CommandContext(ctx, h.cliPath, "whoami", "--format", "json")
+	cmd := exec.CommandContext(ctx, h.cliPath, "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
 	var stderr bytes.Buffer
 	var stdoutBuf bytes.Buffer
 	// Bounded stderr capture so a runaway or hostile kiro-cli can't

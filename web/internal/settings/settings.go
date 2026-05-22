@@ -60,7 +60,6 @@ type result struct {
 }
 
 func (c *cache) load() ([]byte, error) {
-	//nolint:errcheck // error is wrapped inside the `result` struct; sfGroup.Do's err return would duplicate.
 	v, _, _ := c.sfGroup.Do("load", func() (any, error) {
 		path := filepath.Join(c.configDir, filename)
 		info, statErr := os.Stat(path)

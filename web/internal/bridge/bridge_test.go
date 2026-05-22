@@ -708,7 +708,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	notifLine := append(notifMsg, '\n')
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		b.StopTimer()
 
 		pr, pw, _ := os.Pipe()

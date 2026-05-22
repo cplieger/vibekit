@@ -72,7 +72,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(data) //nolint:errcheck // best-effort response write
+		_, _ = w.Write(data)
 	case http.MethodPut, http.MethodPatch:
 		api.LimitBody(w, r, api.MaxJSONBody)
 		var patch map[string]json.RawMessage
@@ -101,7 +101,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				if info, sErr := f.Stat(); sErr == nil && info.Size() <= maxSettingsBytes {
 					data := make([]byte, info.Size())
 					if _, rErr := io.ReadFull(f, data); rErr == nil {
-						json.Unmarshal(data, &existing) //nolint:errcheck // best-effort read
+						_ = json.Unmarshal(data, &existing)
 					}
 				}
 			}

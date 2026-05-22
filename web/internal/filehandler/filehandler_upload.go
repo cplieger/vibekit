@@ -24,7 +24,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	// gosec:G120 is a false positive: r.Body is capped by MaxBytesReader
 	// above, so ParseMultipartForm can't cause memory exhaustion here.
-	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil {
+	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { //nolint:gosec // G120: size bounded by nginx proxy
 		// Split the error classes so clients can distinguish
 		// "too big, retry smaller" (413) from "invalid multipart"
 		// (400). Client disconnects during upload are dropped at
@@ -190,7 +190,7 @@ func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) 
 	// direct-open used). Combined with resolvePath's EvalSymlinks
 	// check, the upload destination is sandboxed even when a sibling
 	// in the directory is a traversal-pointing symlink.
-	if renameErr := os.Rename(tmpName, dest); renameErr != nil {
+	if renameErr := os.Rename(tmpName, dest); renameErr != nil { //nolint:gosec // G703: path validated against workspace root
 		err = renameErr
 		return n, err
 	}

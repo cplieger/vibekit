@@ -97,7 +97,7 @@ func addToolsManifestEntry(path, cli string) error {
 	if manifest == nil {
 		manifest = make(map[string]any)
 	}
-	binary, _ := manifest["binary"].(map[string]any) //nolint:errcheck // ok=false handled by nil check below
+	binary, _ := manifest["binary"].(map[string]any)
 	if binary == nil {
 		binary = make(map[string]any)
 		manifest["binary"] = binary
@@ -160,7 +160,7 @@ func atomicWriteJSON(path string, manifest map[string]any) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil { //nolint:gosec // G306: user config file, not secrets
 		return err
 	}
 	return os.Rename(tmp, path)

@@ -20,7 +20,7 @@ const (
 )
 
 // CmdSpawnSubagent spawns a new subagent session.
-func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -72,7 +72,7 @@ func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 }
 
 // CmdMessageSubagent sends a message to a subagent session.
-func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -108,7 +108,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 }
 
 // CmdSetAutoApproveCrew toggles the auto-approve crew flag.
-func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -144,17 +144,17 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 }
 
 // CmdTerminateSubagent terminates a subagent session.
-func CmdTerminateSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdTerminateSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	callSubagentMethod(d, ctx, w, cmd, methodTerminate)
 }
 
 // CmdAttachSubagent attaches to a subagent session.
-func CmdAttachSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdAttachSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	callSubagentMethod(d, ctx, w, cmd, methodAttach)
 }
 
 // callSubagentMethod is the shared handler for terminate/attach.
-func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, method string) {
+func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, method string) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -190,7 +190,7 @@ func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 }
 
 // CmdListSessions lists active subagent sessions.
-func CmdListSessions(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdListSessions(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return

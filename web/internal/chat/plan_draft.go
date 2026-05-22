@@ -33,7 +33,7 @@ func (s *Store) GetPlanDraft(ctx context.Context, chatID api.ChatID) (string, er
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	f, err := os.Open(path) // #nosec G304 -- path built from validated chat id
+	f, err := os.Open(path) // #nosec G304 -- path built from validated chat id //nolint:gosec // G703: path within workspace
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
@@ -84,7 +84,7 @@ func (s *Store) SetPlanDraft(ctx context.Context, chatID api.ChatID, content str
 	if s.isTombstoned(chatID) {
 		return &StoreError{Kind: ErrKindTombstoned, Detail: string(chatID)}
 	}
-	if _, statErr := os.Stat(chatPath); errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(chatPath); errors.Is(statErr, os.ErrNotExist) { //nolint:gosec // G703: path within workspace
 		return &StoreError{Kind: ErrKindNotFound, Detail: string(chatID)}
 	}
 	if err := ctx.Err(); err != nil {
@@ -94,7 +94,7 @@ func (s *Store) SetPlanDraft(ctx context.Context, chatID api.ChatID, content str
 }
 
 // DeletePlanDraft removes the draft file for chatID. No-op if missing.
-func (s *Store) DeletePlanDraft(ctx context.Context, chatID api.ChatID) error {
+func (s *Store) DeletePlanDraft(_ context.Context, chatID api.ChatID) error {
 	path, err := s.planDraftPathFor(chatID)
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func (s *Store) DeletePlanDraft(ctx context.Context, chatID api.ChatID) error {
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path within workspace
 		return err
 	}
 	slog.Debug("chat plan_draft delete", "chat_id", chatID)

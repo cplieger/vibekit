@@ -6,7 +6,6 @@
 // net/http.CrossOriginProtection, which checks Sec-Fetch-Site first
 // (preferred per OWASP Fetch Metadata) and falls back to comparing the
 // Origin header host against the Host header.
-
 package server
 
 import (

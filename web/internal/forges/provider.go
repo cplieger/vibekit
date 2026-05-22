@@ -217,7 +217,7 @@ type ForgeOps interface {
 	ListPRs(ctx context.Context, repo, state string) ([]PR, error)
 
 	// CreatePR opens a new pull/merge request.
-	CreatePR(ctx context.Context, repo string, p CreatePRParams) (*PR, error)
+	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
 
 	// MergePR merges an open PR. method is "merge" | "squash" | "rebase".
 	MergePR(ctx context.Context, repo string, number int, method string) error

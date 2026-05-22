@@ -20,7 +20,7 @@ const (
 )
 
 // CmdCreateChat creates a new chat with the given metadata.
-func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -61,7 +61,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 }
 
 // CmdDeleteChat removes a chat and cascades to tangent children.
-func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	var tangentChildren []string
 	tangentList := deps.ChatStore().List(ctx)
@@ -91,7 +91,7 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 }
 
 // CmdCancel cancels the active turn, if any.
-func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	deps.FlushPendingForChat(ctx, cmd.ChatID, api.ClearReasonCancelled)
 	deps.SupervisedClearTrust(cmd.ChatID, api.ClearReasonCancelled)
@@ -109,7 +109,7 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
-func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	sb := deps.GetBridge(cmd.ChatID)
 	if sb == nil {
@@ -129,7 +129,7 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 }
 
 // CmdRestoreCheckpoint rolls the workspace back to the given tag.
-func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if deps.Checkpoints() == nil {
 		api.BadRequest(w, "checkpoints not available")
@@ -182,7 +182,7 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 }
 
 // CmdUndoEdit restores a single file to its contents at the given tag.
-func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if deps.Checkpoints() == nil {
 		api.BadRequest(w, "checkpoints not available")

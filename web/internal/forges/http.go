@@ -154,7 +154,7 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	h.manager.Invalidate()
-	_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after disconnect
+	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
 	api.Ok(w)
 }
@@ -219,7 +219,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		return
 	}
 	h.manager.Invalidate()
-	_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after PAT login
+	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
 	api.WriteJSON(w, map[string]string{"status": "complete"})
 }
@@ -257,7 +257,7 @@ func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Requ
 	}
 	if res.Status == "complete" {
 		h.manager.Invalidate()
-		_ = h.manager.Refresh(r.Context()) //nolint:errcheck // best-effort refresh after device flow
+		_ = h.manager.Refresh(r.Context())
 		h.notifyChanged(r.Context())
 	}
 	api.WriteJSON(w, res)
@@ -334,7 +334,7 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 				api.BadRequest(w, "invalid json")
 				return
 			}
-			pr, err := p.CreatePR(r.Context(), repo, params)
+			pr, err := p.CreatePR(r.Context(), repo, &params)
 			if err != nil {
 				h.writeOpsError(w, err)
 				return
@@ -504,7 +504,7 @@ func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 
 // splitID parses "kind:host" → (kind, host). Returns (KindGitHub, "")
 // for malformed input — the caller should validate Kind.Valid().
-func splitID(id string) (Kind, string) {
+func splitID(id string) (kind Kind, ref string) {
 	parts := strings.SplitN(id, ":", 2)
 	if len(parts) != 2 {
 		return "", ""
@@ -514,7 +514,7 @@ func splitID(id string) (Kind, string) {
 
 // splitFirst splits s at the first '/' separator, returning
 // (head, tail, found). If '/' is not present, returns (s, "", false).
-func splitFirst(s, _ string) (string, string, bool) {
+func splitFirst(s, _ string) (head, tail string, found bool) {
 	return strings.Cut(s, "/")
 }
 

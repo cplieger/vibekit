@@ -126,7 +126,8 @@ func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 		return nil, err
 	}
 	prs := make([]PR, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		prs = append(prs, PR{
 			Number:       r.Number,
 			Title:        r.Title,
@@ -146,7 +147,7 @@ func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 }
 
 // CreatePR opens a new pull request via gh pr create.
-func (p *githubProvider) CreatePR(ctx context.Context, repo string, params CreatePRParams) (*PR, error) {
+func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *CreatePRParams) (*PR, error) {
 	args := p.withHost("pr", "create",
 		"--repo", repo,
 		"--title", params.Title,
@@ -254,7 +255,8 @@ func (p *githubProvider) ListIssues(ctx context.Context, repo, state string) ([]
 		return nil, err
 	}
 	issues := make([]Issue, 0, len(raw))
-	for _, r := range raw {
+	for i := range raw {
+		r := &raw[i]
 		labels := make([]string, 0, len(r.Labels))
 		for _, l := range r.Labels {
 			labels = append(labels, l.Name)

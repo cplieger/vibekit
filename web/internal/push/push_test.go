@@ -765,7 +765,7 @@ func BenchmarkPushEncrypt(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		ephPriv, err := ecdh.P256().GenerateKey(rand.Reader)
 		if err != nil {
 			b.Fatal(err)

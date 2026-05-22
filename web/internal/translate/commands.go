@@ -16,7 +16,7 @@ var browserIncompatibleCommands = map[string]struct{}{
 func FilterCommands(commands []map[string]any, toolsCount, mcpRunning, mcpTotal int) []map[string]any {
 	out := make([]map[string]any, 0, len(commands))
 	for _, c := range commands {
-		name, _ := c["name"].(string) //nolint:errcheck // non-string is treated as empty and filtered
+		name, _ := c["name"].(string)
 		if _, drop := browserIncompatibleCommands[name]; drop {
 			continue
 		}

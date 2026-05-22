@@ -96,7 +96,7 @@ func buildHookDoc(p *hookCreatePayload) map[string]any {
 }
 
 // CmdCreateHook creates a hook file from chat context.
-func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	_ = ctx // reserved for future use
 	deps := d.Deps()
 	p, safeName, code, vErr := validateHookPayload(cmd)

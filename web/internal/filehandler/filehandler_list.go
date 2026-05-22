@@ -116,7 +116,7 @@ func isWritable(dir string) bool {
 	if closeErr := f.Close(); closeErr != nil {
 		slog.Debug("filehandler: probe close failed", "path", name, "error", closeErr)
 	}
-	if rmErr := os.Remove(name); rmErr != nil {
+	if rmErr := os.Remove(name); rmErr != nil { //nolint:gosec // G703: path validated against workspace root
 		slog.Warn("filehandler: probe cleanup failed", "path", name, "error", rmErr)
 	}
 	return true

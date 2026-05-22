@@ -72,7 +72,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 		return nil, fmt.Errorf("device flow: github contact: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) //nolint:errcheck // EOF/IO errors handled by status check below
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("device flow: github status %d: %s", resp.StatusCode, body)
 	}
@@ -126,7 +126,7 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 		return PollResult{}, fmt.Errorf("poll: github contact: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) //nolint:errcheck // EOF/IO errors surface via decode failure below
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var raw struct {
 		AccessToken      string `json:"access_token"`
 		Error            string `json:"error"`
@@ -202,12 +202,12 @@ func LoginWithPAT(ctx context.Context, p LoginPATParams) error {
 	user, err := provider.Whoami(ctx)
 	if err != nil {
 		// Roll back the bad token.
-		_ = RemoveToken(ctx, p.Kind, p.Host) //nolint:errcheck // best-effort rollback; primary error already returned
+		_ = RemoveToken(ctx, p.Kind, p.Host)
 		return fmt.Errorf("validate: %w", err)
 	}
 	// If username wasn't supplied, persist the discovered one.
 	if p.Username == "" && user != nil && user.Login != "" {
-		_ = InjectToken(ctx, p.Kind, p.Host, p.Token, user.Login) //nolint:errcheck // metadata refresh; ignored if write fails
+		_ = InjectToken(ctx, p.Kind, p.Host, p.Token, user.Login)
 	}
 	return nil
 }

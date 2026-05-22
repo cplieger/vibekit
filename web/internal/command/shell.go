@@ -39,7 +39,7 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) {
+func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
@@ -91,7 +91,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
 	defer cancel()
 
-	shellProc := exec.CommandContext(ctx, "sh", "-c", shellCmd)
+	shellProc := exec.CommandContext(ctx, "sh", "-c", shellCmd) //nolint:gosec // G702: user-initiated shell command
 	shellProc.Dir = deps.WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped

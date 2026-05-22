@@ -47,8 +47,8 @@ func (t *Translator) HandleInboxNotification(ctx context.Context, chatID api.Cha
 	if json.Unmarshal(msg.Params, &p) != nil {
 		return
 	}
-	fromSession, _ := p["fromSessionId"].(string) //nolint:errcheck // type assertion, not error
-	content, _ := p["content"].(string)           //nolint:errcheck // type assertion, not error
+	fromSession, _ := p["fromSessionId"].(string)
+	content, _ := p["content"].(string)          
 	if content == "" {
 		raw, err := json.Marshal(p)
 		if err == nil {

@@ -40,7 +40,7 @@ func (s *Store) Archive(ctx context.Context, chatID api.ChatID) error {
 		return err
 	}
 	dstPath := filepath.Join(archiveDir, string(chatID)+chatFileSuffix)
-	if err := os.Rename(srcPath, dstPath); err != nil {
+	if err := os.Rename(srcPath, dstPath); err != nil { //nolint:gosec // G703: paths built from validated chat ID
 		m.Unlock()
 		return err
 	}
@@ -49,7 +49,7 @@ func (s *Store) Archive(ctx context.Context, chatID api.ChatID) error {
 	// drafts don't silently outlive the archived chat.
 	draftSrc := filepath.Join(s.dir, string(chatID)+planDraftSuffix)
 	draftDst := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: paths built from validated chat ID
 		slog.Warn("chat archive: plan-draft move failed",
 			"chat_id", chatID, "error", err)
 	}
@@ -337,13 +337,13 @@ func (s *Store) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	}
 	m := s.lock(chatID)
 	m.Lock()
-	if err := os.Remove(chatPath); err != nil {
+	if err := os.Remove(chatPath); err != nil { //nolint:gosec // G703: path within workspace root
 		m.Unlock()
 		return err
 	}
 	archiveDir := s.archivePath()
 	draftPath := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path within workspace root
 		slog.Warn("chat delete_archived: remove plan-draft",
 			"chat_id", chatID, "error", err)
 	}

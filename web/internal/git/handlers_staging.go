@@ -32,7 +32,6 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		func() {
 			fetchCtx, cancel := context.WithTimeout(ctx, h.timeouts.Fetch)
 			defer cancel()
-			//nolint:errcheck // fetch result is logged inside the closure; Do's shared error duplicates that signal.
 			_, _, _ = h.fetchFlight.Do(dir, func() (any, error) {
 				if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
 					slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(out))
@@ -73,7 +72,6 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	//nolint:errcheck // per-goroutine errors logged inside closures; Wait's aggregated error carries no new info.
 	_ = g.Wait()
 
 	st.Ahead = ahead

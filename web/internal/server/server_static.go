@@ -18,7 +18,7 @@ func spaHandler(staticFS fs.FS) http.Handler {
 		}
 		// Serve the file if it exists and is not a directory.
 		if info, err := fs.Stat(staticFS, p); err == nil && !info.IsDir() {
-			http.ServeFileFS(w, r, staticFS, p)
+			http.ServeFileFS(w, r, staticFS, p) //nolint:gosec // G703: embedded static assets
 			return
 		}
 		// SPA fallback: serve index.html for client-side routes.

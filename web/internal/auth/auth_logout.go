@@ -36,7 +36,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		"user_agent", r.Header.Get("User-Agent"))
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, h.cliPath, "logout")
+	cmd := exec.CommandContext(ctx, h.cliPath, "logout") //nolint:gosec // G204: binary path from config
 	// Put the logout subprocess in its own process group so the
 	// timeout branch can reap the whole tree (bun + Node helper
 	// children) via killLoginProcess. CommandContext's default

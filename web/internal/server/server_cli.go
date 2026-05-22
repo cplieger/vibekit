@@ -26,7 +26,7 @@ type execCLIRunner struct {
 }
 
 func (r *execCLIRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, r.cliPath, args...).CombinedOutput()
+	return exec.CommandContext(ctx, r.cliPath, args...).CombinedOutput() //nolint:gosec // G204: binary path from config
 }
 
 // cliTimeouts holds the timeout budget for each kiro-cli subprocess
