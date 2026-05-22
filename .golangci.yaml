@@ -71,3 +71,7 @@ linters:
           - usetesting
           - noctx
           - revive
+      # API decode/events: lookup table strings and event type names
+      - path: web/internal/
+        linters:
+          - goconst
