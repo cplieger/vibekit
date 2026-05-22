@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server and TypeScript ---
-FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8 AS builder
+FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -11,8 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Go for building the web server
 # renovate: datasource=golang-version depName=golang
+ARG TARGETARCH
+ARG TARGETOS=linux
 ARG GO_VERSION=1.26.3
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -83,7 +85,7 @@ RUN set -eu; \
         cat "static-src/css/${line}" >> static/style.css; \
     done < static-src/css/MANIFEST
 
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \
     -o /app/vibekit .
 
