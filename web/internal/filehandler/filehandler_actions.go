@@ -55,7 +55,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("filehandler: action body too large",
 				"limit", api.MaxJSONBody, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "request body too large"})
+				map[string]string{api.JSONKeyError: "request body too large"})
 			return
 		}
 		api.BadRequest(w, "invalid json")
@@ -81,7 +81,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("filehandler: action failed",
 			"action", body.Action, "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": body.Action + " failed"})
+			map[string]string{api.JSONKeyError: body.Action + " failed"})
 		return
 	}
 	api.Ok(w)
@@ -248,7 +248,7 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, res
 	if scErr != nil {
 		if errors.Is(scErr, errOversize) {
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "source file too large to copy"})
+				map[string]string{api.JSONKeyError: "source file too large to copy"})
 			return errHandled
 		}
 		return scErr

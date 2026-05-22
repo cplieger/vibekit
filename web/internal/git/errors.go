@@ -10,6 +10,11 @@ import (
 	"vibekit/internal/api"
 )
 
+const (
+	jsonKeyOutput = "output"
+	refHEAD       = "HEAD"
+)
+
 // --- git error taxonomy ---
 
 // ErrorKind is a machine-readable discriminator for git handler errors.
@@ -27,7 +32,7 @@ const (
 // writeGitError writes a structured error response with a stable
 // machine-readable kind and an optional human-readable detail field.
 func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
-	resp := map[string]string{"error": string(kind)}
+	resp := map[string]string{api.JSONKeyError: string(kind)}
 	if detail != "" {
 		resp["detail"] = detail
 	}

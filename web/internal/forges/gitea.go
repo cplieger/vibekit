@@ -73,9 +73,9 @@ func (p *giteaProvider) Whoami(ctx context.Context) (*User, error) {
 
 func (p *giteaProvider) userViaAPI(ctx context.Context, login string) (*User, error) {
 	endpoint := fmt.Sprintf("https://%s/api/v1/users/%s", p.host, login)
-	out, err := runCmd(ctx, CmdTimeout, nil, "curl", "--silent", "--show-error",
-		"--max-time", "20",
-		"--header", "Accept: application/json",
+	out, err := runCmd(ctx, CmdTimeout, nil, "curl", flagSilent, flagShowError,
+		flagMaxTime, "20",
+		flagHeader, "Accept: application/json",
 		endpoint,
 	)
 	if err != nil {
@@ -150,7 +150,7 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 // ListPRs lists pulls for repo.
 func (p *giteaProvider) ListPRs(ctx context.Context, repo, state string) ([]PR, error) {
 	if state == "" {
-		state = "open"
+		state = stateOpen
 	}
 	args := p.withLogin("pulls", "list", "--repo", repo, "--state", state, "--output", "json", "--limit", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "tea", args...)
@@ -184,7 +184,7 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 		r := &raw[i]
 		state := normalizePRState(r.State)
 		if r.Merged {
-			state = "merged"
+			state = stateMerged
 		}
 		prs = append(prs, PR{
 			Number:       r.Number,
@@ -224,7 +224,7 @@ func (p *giteaProvider) CreatePR(ctx context.Context, repo string, params *Creat
 	number := extractPRNumberFromURL(string(out))
 	if number == 0 {
 		// Fallback: list and find newest by source branch.
-		prs, listErr := p.ListPRs(ctx, repo, "open")
+		prs, listErr := p.ListPRs(ctx, repo, stateOpen)
 		if listErr == nil {
 			for i := range prs {
 				if prs[i].SourceBranch == params.SourceBranch {
@@ -257,10 +257,10 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
 	style := "merge"
 	switch method {
-	case "squash":
-		style = "squash"
-	case "rebase":
-		style = "rebase"
+	case mergeSquash:
+		style = mergeSquash
+	case mergeRebase:
+		style = mergeRebase
 	}
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
@@ -278,13 +278,13 @@ func (p *giteaProvider) ClosePR(ctx context.Context, repo string, number int) er
 		return err
 	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/pulls/%d", p.host, owner, name, number)
-	body := []byte(`{"state":"closed"}`)
+	body := []byte(`{"state":stateClosed}`)
 	return p.apiPatchJSON(ctx, endpoint, body)
 }
 
 func (p *giteaProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
 	if state == "" {
-		state = "open"
+		state = stateOpen
 	}
 	args := p.withLogin("issues", "list", "--repo", repo, "--state", state, "--output", "json", "--limit", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "tea", args...)
@@ -346,7 +346,7 @@ func (p *giteaProvider) CreateIssue(ctx context.Context, repo string, params Cre
 	}
 	number := extractIssueNumberFromURL(string(out))
 	if number == 0 {
-		issues, listErr := p.ListIssues(ctx, repo, "open")
+		issues, listErr := p.ListIssues(ctx, repo, stateOpen)
 		if listErr == nil && len(issues) > 0 {
 			// Return the newest issue by creation time.
 			newest := issues[0]
@@ -386,7 +386,7 @@ func (p *giteaProvider) CloseIssue(ctx context.Context, repo string, number int)
 		return err
 	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/issues/%d", p.host, owner, name, number)
-	body := []byte(`{"state":"closed"}`)
+	body := []byte(`{"state":stateClosed}`)
 	return p.apiPatchJSON(ctx, endpoint, body)
 }
 
@@ -413,7 +413,7 @@ func (p *giteaProvider) CommitStatus(ctx context.Context, repo, ref string) ([]C
 	for _, c := range raw {
 		status := mapGiteaStatus(c.Status)
 		conclusion := ""
-		if status == "completed" {
+		if status == stateCompleted {
 			conclusion = mapGiteaConclusion(c.Status)
 		}
 		checks = append(checks, Check{
@@ -525,9 +525,9 @@ func (p *giteaProvider) apiGet(ctx context.Context, endpoint string) ([]byte, er
 		return nil, err
 	}
 	args := []string{
-		"--silent", "--show-error", "--max-time", "30",
-		"--header", "Accept: application/json",
-		"--header", "Authorization: token " + token,
+		flagSilent, flagShowError, flagMaxTime, "30",
+		flagHeader, "Accept: application/json",
+		flagHeader, "Authorization: token " + token,
 		endpoint,
 	}
 	return runCmd(ctx, CmdTimeout, nil, "curl", args...)
@@ -540,10 +540,10 @@ func (p *giteaProvider) apiPostJSON(ctx context.Context, endpoint string, body [
 		return err
 	}
 	args := []string{
-		"--silent", "--show-error", "--max-time", "30",
+		flagSilent, flagShowError, flagMaxTime, "30",
 		"--fail",
-		"--header", "Content-Type: application/json",
-		"--header", "Authorization: token " + token,
+		flagHeader, "Content-Type: application/json",
+		flagHeader, "Authorization: token " + token,
 		"--data-binary", "@-",
 		endpoint,
 	}
@@ -558,11 +558,11 @@ func (p *giteaProvider) apiPatchJSON(ctx context.Context, endpoint string, body 
 		return err
 	}
 	args := []string{
-		"--silent", "--show-error", "--max-time", "30",
+		flagSilent, flagShowError, flagMaxTime, "30",
 		"--fail",
 		"--request", "PATCH",
-		"--header", "Content-Type: application/json",
-		"--header", "Authorization: token " + token,
+		flagHeader, "Content-Type: application/json",
+		flagHeader, "Authorization: token " + token,
 		"--data-binary", "@-",
 		endpoint,
 	}
@@ -572,24 +572,24 @@ func (p *giteaProvider) apiPatchJSON(ctx context.Context, endpoint string, body 
 
 func mapGiteaStatus(s string) string {
 	switch strings.ToLower(s) {
-	case "pending":
+	case statePending:
 		return "queued"
 	case "running":
 		return "in_progress"
-	case "success", "failure", "error", "warning":
-		return "completed"
+	case statusSuccess, statusFailure, statusError, "warning":
+		return stateCompleted
 	}
 	return s
 }
 
 func mapGiteaConclusion(s string) string {
 	switch strings.ToLower(s) {
-	case "success":
-		return "success"
-	case "failure", "error":
-		return "failure"
+	case statusSuccess:
+		return statusSuccess
+	case statusFailure, statusError:
+		return statusFailure
 	case "warning":
-		return "skipped"
+		return stateSkipped
 	}
 	return ""
 }

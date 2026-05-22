@@ -15,7 +15,7 @@ import (
 )
 
 // CmdForkChat creates a tangent (side conversation) from the current chat.
-func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	p, ok := parseForkPayload(d, w, cmd)
 	if !ok {
@@ -109,7 +109,7 @@ func parseForkPayload(d *Dispatcher, w http.ResponseWriter, cmd *api.ClientComma
 // fetchForkParent loads the parent chat and enforces the precondition
 // (not frozen, not itself a tangent). Returns the parent and true on
 // success, or nil+false after writing a 4xx/5xx response.
-func fetchForkParent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, deps Dependencies, chatID api.ChatID) (*api.Chat, bool) {
+func fetchForkParent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, deps Dependencies, chatID api.ChatID) (*api.Chat, bool) { //nolint:revive // context-as-argument: dispatcher handler signature
 	parent, ok := deps.ChatStore().Get(ctx, chatID)
 	if !ok {
 		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
@@ -127,7 +127,7 @@ func fetchForkParent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, 
 }
 
 // CmdMergeTangent merges the last Q&A pair from the tangent back to the parent.
-func CmdMergeTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdMergeTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -175,7 +175,7 @@ func CmdMergeTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, 
 }
 
 // CmdDiscardTangent discards the tangent and unfreezes the parent.
-func CmdDiscardTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdDiscardTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -213,7 +213,7 @@ func CmdDiscardTangent(d *Dispatcher, ctx context.Context, w http.ResponseWriter
 
 // MergeLastExchange finds the last user + assistant message pair and
 // appends them to the target chat.
-func MergeLastExchange(deps Dependencies, ctx context.Context, targetChatID api.ChatID, msgs []api.Message) bool {
+func MergeLastExchange(deps Dependencies, ctx context.Context, targetChatID api.ChatID, msgs []api.Message) bool { //nolint:revive // context-as-argument: dispatcher handler signature
 	var lastUser, lastAssistant *api.Message
 	for i := range slices.Backward(msgs) {
 		m := &msgs[i]

@@ -33,7 +33,7 @@ func (s *Store) GetPlanDraft(ctx context.Context, chatID api.ChatID) (string, er
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	f, err := os.Open(path) // #nosec G304 -- path built from validated chat id //nolint:gosec // G703: path within workspace
+	f, err := os.Open(path) //nolint:gosec // G304,G703: path built from validated chat ID
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}

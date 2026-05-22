@@ -35,7 +35,7 @@ type DeviceFlowResponse struct {
 
 // PollResult is the per-poll status during the device flow.
 type PollResult struct {
-	Status string `json:"status"` // "pending", "complete", "expired", "error"
+	Status string `json:"status"` // statePending, stateComplete, "expired", "error"
 	Error  string `json:"error,omitempty"`
 }
 
@@ -100,7 +100,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 }
 
 // PollGitHubDeviceFlow checks if the user has approved the device.
-// On "complete", the token is written to gh's config and the helper
+// On stateComplete, the token is written to gh's config and the helper
 // is set up. Caller should then call Manager.Refresh to surface the
 // new login.
 func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, error) {
@@ -138,27 +138,27 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 	if raw.Error != "" {
 		switch raw.Error {
 		case "authorization_pending", "slow_down":
-			return PollResult{Status: "pending"}, nil
+			return PollResult{Status: statePending}, nil
 		case "expired_token":
 			return PollResult{Status: "expired", Error: "device code expired"}, nil
 		case "access_denied":
-			return PollResult{Status: "error", Error: "access denied"}, nil
+			return PollResult{Status: statusError, Error: "access denied"}, nil
 		}
-		return PollResult{Status: "error", Error: raw.ErrorDescription}, nil
+		return PollResult{Status: statusError, Error: raw.ErrorDescription}, nil
 	}
 	if raw.AccessToken == "" {
-		return PollResult{Status: "error", Error: "empty access_token"}, nil
+		return PollResult{Status: statusError, Error: "empty access_token"}, nil
 	}
 	// Token in hand. Ensure gh is installed, inject, and refresh.
 	if err := EnsureCLI(ctx, KindGitHub); err != nil {
-		return PollResult{Status: "error", Error: fmt.Sprintf("install gh: %v", err)}, nil
+		return PollResult{Status: statusError, Error: fmt.Sprintf("install gh: %v", err)}, nil
 	}
 	// Username can be discovered via gh after injection. Pass empty
 	// for now; the manager refresh will repopulate from gh's view.
 	if err := InjectToken(ctx, KindGitHub, "github.com", raw.AccessToken, ""); err != nil {
-		return PollResult{Status: "error", Error: fmt.Sprintf("inject token: %v", err)}, nil
+		return PollResult{Status: statusError, Error: fmt.Sprintf("inject token: %v", err)}, nil
 	}
-	return PollResult{Status: "complete"}, nil
+	return PollResult{Status: stateComplete}, nil
 }
 
 // LoginPATParams describes a PAT-based login (GitLab/Gitea/Codeberg).

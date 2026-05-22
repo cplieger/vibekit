@@ -87,7 +87,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
-		ref = "HEAD"
+		ref = refHEAD
 	}
 	if !isValidGitRef(ref) {
 		slog.Warn("git show: invalid ref rejected", "repo", h.repoDir(repoFromQuery(r)), "ref", ref)
@@ -147,7 +147,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	// Show remote branch log if available, fall back to local
-	ref := "HEAD"
+	ref := refHEAD
 	if branch, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil && branch != "" {
 		if _, err := gitCmd(ctx, dir, "rev-parse", "--verify", "origin/"+branch); err == nil {
 			ref = "origin/" + branch
@@ -266,7 +266,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, map[string]string{"error": "remove failed"})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: "remove failed"})
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
@@ -308,7 +308,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, map[string]string{"error": "no origin remote"})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: "no origin remote"})
 		return
 	}
 	// Defense-in-depth: the origin URL came from git config and could
@@ -319,7 +319,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// os.RemoveAll so a rejected reclone leaves the working tree
 	// intact.
 	if !isAllowedRemoteScheme(remote) {
-		api.WriteJSON(w, map[string]string{"error": "origin has unsupported scheme for re-clone"})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: "origin has unsupported scheme for re-clone"})
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -327,7 +327,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// partial delete doesn't strand the repo in an unreclonable state.
 	if rmErr := os.RemoveAll(dir); rmErr != nil {
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		api.WriteJSON(w, map[string]string{"error": "remove failed"})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: "remove failed"})
 		return
 	}
 	// `--` barrier: the origin URL came from git config, but a prior

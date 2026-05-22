@@ -135,7 +135,7 @@ func writeGHHosts(host, token, username string) error {
 	hosts[host] = ghHostEntry{
 		OAuthToken:  token,
 		User:        username,
-		GitProtocol: "https",
+		GitProtocol: protoHTTPS,
 	}
 	return writeYAML(path, marshalGHHosts(hosts))
 }
@@ -206,7 +206,7 @@ func loadGHHosts(path string) (map[string]ghHostEntry, error) {
 		switch key {
 		case "oauth_token":
 			entry.OAuthToken = val
-		case "user":
+		case fieldUser:
 			entry.User = val
 		case "git_protocol":
 			entry.GitProtocol = val
@@ -229,7 +229,7 @@ func marshalGHHosts(hosts map[string]ghHostEntry) string {
 		}
 		gp := e.GitProtocol
 		if gp == "" {
-			gp = "https"
+			gp = protoHTTPS
 		}
 		fmt.Fprintf(&b, "    git_protocol: %s\n", gp)
 	}
@@ -240,7 +240,7 @@ func marshalGHHosts(hosts map[string]ghHostEntry) string {
 // credential helper. Best-effort: a setup failure doesn't block
 // login (the token is already stored).
 func setupGitGH(ctx context.Context, host string) error {
-	args := []string{"auth", "setup-git", "--hostname", host}
+	args := []string{"auth", "setup-git", flagHostname, host}
 	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
 	if err != nil && errors.Is(err, ErrNotInstalled) {
 		// gh isn't on PATH; install was supposed to run before this.
@@ -273,7 +273,7 @@ func writeGLabConfig(host, token, username string) error {
 	cfg.Hosts[host] = glabHostEntry{
 		Token:    token,
 		User:     username,
-		Protocol: "https",
+		Protocol: protoHTTPS,
 		APIHost:  host,
 	}
 	if cfg.Editor == "" {
@@ -366,7 +366,7 @@ func loadGLabConfig(path string) (*glabConfig, error) {
 			switch key {
 			case "token":
 				entry.Token = val
-			case "user":
+			case fieldUser:
 				entry.User = val
 			case "git_protocol":
 				entry.Protocol = val
@@ -396,7 +396,7 @@ func marshalGLabConfig(cfg *glabConfig) string {
 			}
 			gp := e.Protocol
 			if gp == "" {
-				gp = "https"
+				gp = protoHTTPS
 			}
 			fmt.Fprintf(&b, "        git_protocol: %s\n", gp)
 			if e.APIHost != "" {
@@ -408,7 +408,7 @@ func marshalGLabConfig(cfg *glabConfig) string {
 }
 
 func setupGitGLab(ctx context.Context, host string) error {
-	args := []string{"auth", "git-credential", "configure", "--hostname", host}
+	args := []string{"auth", "git-credential", "configure", flagHostname, host}
 	_, err := runCmd(ctx, CmdTimeout, nil, "glab", args...)
 	if err != nil && errors.Is(err, ErrNotInstalled) {
 		return err
@@ -554,7 +554,7 @@ func loadTeaConfig(path string) (*teaConfig, error) {
 			current.URL = val
 		case "token":
 			current.Token = val
-		case "user":
+		case fieldUser:
 			current.User = val
 		case "default":
 			current.Default = val == "true"
@@ -644,7 +644,7 @@ func setupGitTea(host string) error {
 		out = append(out, l)
 	}
 	out = append(out, prefix)
-	if err := os.WriteFile(credFile, []byte(strings.Join(out, "\n")+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(credFile, []byte(strings.Join(out, "\n")+"\n"), 0o600); err != nil { //nolint:gosec // G703: credFile from validated config
 		return fmt.Errorf("write git-credentials: %w", err)
 	}
 	// Ensure git uses the store helper.

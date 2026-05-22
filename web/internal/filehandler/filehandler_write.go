@@ -21,7 +21,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 			slog.Warn("filehandler: write body too large",
 				"path", resolved, "limit", maxFileSize, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "file too large"})
+				map[string]string{api.JSONKeyError: errFileTooLarge})
 			return
 		}
 		api.BadRequest(w, "invalid json")
@@ -41,7 +41,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 	fail := func(stage string, err error) {
 		slog.Warn("filehandler: "+stage, "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "write failed"})
+			map[string]string{api.JSONKeyError: "write failed"})
 	}
 	// O_NOFOLLOW on the write prevents a dangling symlink planted
 	// between resolvePath's EvalSymlinks and this open from steering

@@ -87,7 +87,7 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
-		"oauth":  map[string]bool{"github": true}, // device flow is built-in
+		"oauth":  map[string]bool{string(KindGitHub): true}, // device flow is built-in
 	})
 }
 
@@ -171,7 +171,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	if err != nil {
 		api.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
-			"error":     err.Error(),
+			statusError:     err.Error(),
 			"forge":     f,
 		})
 		return
@@ -215,13 +215,13 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		Token:    body.Token,
 		Username: body.Username,
 	}); err != nil {
-		api.WriteJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		api.WriteJSONStatus(w, http.StatusBadRequest, map[string]string{api.JSONKeyError: err.Error()})
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	api.WriteJSON(w, map[string]string{"status": "complete"})
+	api.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
 func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +255,7 @@ func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Requ
 		api.ServerError(w, "poll failed", err)
 		return
 	}
-	if res.Status == "complete" {
+	if res.Status == stateComplete {
 		h.manager.Invalidate()
 		_ = h.manager.Refresh(r.Context())
 		h.notifyChanged(r.Context())
@@ -357,13 +357,13 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 			api.MethodNotAllowed(w)
 			return
 		}
-		method := r.URL.Query().Get("method")
+		method := r.URL.Query().Get(fieldMethod)
 		if err := p.MergePR(r.Context(), repo, number, method); err != nil {
 			h.writeOpsError(w, err)
 			return
 		}
 		api.Ok(w)
-	case "close":
+	case stateClose:
 		if r.Method != http.MethodPost {
 			api.MethodNotAllowed(w)
 			return
@@ -413,7 +413,7 @@ func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p For
 		api.BadRequest(w, "invalid issue number")
 		return
 	}
-	if op == "close" {
+	if op == stateClose {
 		if r.Method != http.MethodPost {
 			api.MethodNotAllowed(w)
 			return
@@ -491,14 +491,14 @@ func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			map[string]string{"error": err.Error(), "code": "cli_not_installed"})
+			map[string]string{api.JSONKeyError: err.Error(), "code": "cli_not_installed"})
 	case errors.Is(err, ErrNotLoggedIn):
 		api.WriteJSONStatus(w, http.StatusUnauthorized,
-			map[string]string{"error": err.Error(), "code": "not_logged_in"})
+			map[string]string{api.JSONKeyError: err.Error(), "code": "not_logged_in"})
 	default:
 		slog.Debug("forges: ops error", "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": err.Error()})
+			map[string]string{api.JSONKeyError: err.Error()})
 	}
 }
 

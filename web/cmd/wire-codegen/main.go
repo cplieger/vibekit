@@ -20,25 +20,35 @@ import (
 	"vibekit/internal/forges"
 )
 
+const (
+	tsUnknown      = "unknown"
+	tsIdentityCast = "(v) => v as unknown"
+	enumCancelled  = "cancelled"
+	enumDelete     = "delete"
+	enumPending    = "pending"
+	typeMessage    = "Message"
+
+)
+
 // EnumDef defines a named string enum with its valid values.
 type EnumDef struct{ Values []string }
 
 // Enums maps Go type names to their enum values.
 var Enums = map[string]EnumDef{
 	"Role":              {Values: []string{"user", "assistant", "event"}},
-	"EventKind":         {Values: []string{"interrupted", "cancelled", "model_switched", "compacted", "crew", "agent_switched", "compaction_failed", "inbox"}},
-	"ToolKind":          {Values: []string{"execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"}},
-	"ToolStatus":        {Values: []string{"pending", "in_progress", "completed", "failed"}},
-	"PlanStatus":        {Values: []string{"pending", "in_progress", "completed"}},
-	"CrewStatus":        {Values: []string{"working", "terminated", "error", "pending"}},
-	"PendingChangeKind": {Values: []string{"create", "edit", "delete"}},
-	"StopReason":        {Values: []string{"end_turn", "cancelled", "interrupted"}},
+	"EventKind":         {Values: []string{"interrupted", enumCancelled, "model_switched", "compacted", "crew", "agent_switched", "compaction_failed", "inbox"}},
+	"ToolKind":          {Values: []string{"execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", enumDelete, "move", "command", "browser", "switch_mode", "mcp", "other"}},
+	"ToolStatus":        {Values: []string{enumPending, "in_progress", "completed", "failed"}},
+	"PlanStatus":        {Values: []string{enumPending, "in_progress", "completed"}},
+	"CrewStatus":        {Values: []string{"working", "terminated", "error", enumPending}},
+	"PendingChangeKind": {Values: []string{"create", "edit", enumDelete}},
+	"StopReason":        {Values: []string{"end_turn", enumCancelled, "interrupted"}},
 	"ErrorCode":         {Values: []string{"recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "model_not_found", "agent_config_error", "rate_limit", "stream_timeout", "spawn_failed", "switch_failed", "compaction_failed"}},
 	"ForgeKind":         {Values: []string{"github", "gitlab", "codeberg", "gitea"}},
 	"Kind":              {Values: []string{"github", "gitlab", "codeberg", "gitea"}}, // forges.Kind = ForgeKind
 	"Transport":         {Values: []string{"stdio", "http"}},
 	"PendingAction":     {Values: []string{"accept", "reject"}},
-	"ClearReason":       {Values: []string{"turn_ended", "cancelled", "mode_disabled", "chat_deleted", "shutdown", "user_cleared"}},
+	"ClearReason":       {Values: []string{"turn_ended", enumCancelled, "mode_disabled", "chat_deleted", "shutdown", "user_cleared"}},
 }
 
 // enumTSName maps Go enum type names to their TS type name (for dedup/aliasing).
@@ -112,10 +122,10 @@ var SSEEvents = []SSERegEntry{
 	{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
 	{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
 	{EventType: "mcp_oauth_needed", TypeName: "MCPOAuthPayload"},
-	{EventType: "message_appended", TypeName: "Message"},
+	{EventType: "message_appended", TypeName: typeMessage},
 	{EventType: "message_chunk", TypeName: "MessageChunkPayload"},
-	{EventType: "message_created", TypeName: "Message"},
-	{EventType: "message_updated", TypeName: "Message"},
+	{EventType: "message_created", TypeName: typeMessage},
+	{EventType: "message_updated", TypeName: typeMessage},
 	{EventType: "pending_change_added", TypeName: "PendingChangeAddedPayload"},
 	{EventType: "pending_change_resolved", TypeName: "PendingChangeResolvedPayload"},
 	{EventType: "pending_changes_cleared", TypeName: "PendingChangesClearedPayload"},
@@ -206,7 +216,7 @@ func tsType(t reflect.Type) string {
 	}
 	// json.RawMessage → unknown
 	if t == reflect.TypeFor[json.RawMessage]() {
-		return "unknown"
+		return tsUnknown
 	}
 	// time.Time → string
 	if t == reflect.TypeFor[time.Time]() {
@@ -226,12 +236,12 @@ func tsType(t reflect.Type) string {
 	case reflect.Map:
 		return "Record<string, " + tsType(t.Elem()) + ">"
 	case reflect.Interface:
-		return "unknown"
+		return tsUnknown
 	case reflect.Struct:
 		// Anonymous struct — shouldn't happen for registered types.
-		return "unknown"
+		return tsUnknown
 	}
-	return "unknown"
+	return tsUnknown
 }
 
 // tsEnumName returns the TS name for a Go enum type.
@@ -393,10 +403,12 @@ func elemDecoderExpr(t reflect.Type) string {
 		return "(v) => { if (typeof v !== \"string\") throw new TypeError(\"expected string\"); return v as string; }"
 	}
 	if t.Kind() == reflect.Interface {
-		return "(v) => v as unknown"
+		return tsIdentityCast
+
 	}
 	if isRawMessage(t) {
-		return "(v) => v as unknown"
+		return tsIdentityCast
+
 	}
 	if t.Kind() == reflect.Map {
 		return "(v) => asObject(v)"
@@ -404,7 +416,8 @@ func elemDecoderExpr(t reflect.Type) string {
 	if t.Name() != "" {
 		return decoderName(t.Name())
 	}
-	return "(v) => v as unknown"
+	return tsIdentityCast
+
 }
 
 // generateTypes writes types.gen.ts.
@@ -749,7 +762,7 @@ func sanitizeVarName(wireName string) string {
 	// Avoid collisions with "o", "out", "v" and JS reserved words.
 	switch s {
 	case "o", "out", "v", "private", "public", "protected", "class",
-		"return", "delete", "default", "export", "import", "new", "this":
+		"return", enumDelete, "default", "export", "import", "new", "this":
 		return s + "Val"
 	}
 	return s

@@ -14,6 +14,11 @@ import (
 	"vibekit/internal/version"
 )
 
+const (
+	jsonKeyOutput = "output"
+	jsonKeyModels = "models"
+)
+
 // CLIRunner abstracts subprocess execution for kiro-cli commands,
 // enabling unit testing of handler logic without a real binary.
 type CLIRunner interface {
@@ -58,7 +63,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		filtered []map[string]any
 	}
 
-	v, err, _ := s.modelsSF.Do("models", func() (any, error) {
+	v, err, _ := s.modelsSF.Do(jsonKeyModels, func() (any, error) {
 		out, runErr := s.cliRunner.Run(ctx, "chat", "--list-models", "--format", "json")
 		if runErr != nil {
 			return nil, runErr
@@ -93,17 +98,17 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		slog.Warn("list-models failed", "error", err)
-		api.WriteJSON(w, map[string]any{"models": []any{}})
+		api.WriteJSON(w, map[string]any{jsonKeyModels: []any{}})
 		return
 	}
 	result, ok := v.(*modelsResult)
 	if !ok {
 		slog.Error("list-models: singleflight returned unexpected type",
 			"type", fmt.Sprintf("%T", v))
-		api.WriteJSON(w, map[string]any{"models": []any{}})
+		api.WriteJSON(w, map[string]any{jsonKeyModels: []any{}})
 		return
 	}
-	api.WriteJSON(w, map[string]any{"models": result.filtered})
+	api.WriteJSON(w, map[string]any{jsonKeyModels: result.filtered})
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +134,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	out, err := s.cliRunner.Run(ctx, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
-		api.WriteJSON(w, map[string]string{"error": "diagnostic command failed"})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: "diagnostic command failed"})
 		return
 	}
 	api.WriteJSON(w, map[string]string{"report": string(out)})
@@ -175,7 +180,7 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		out, err := s.cliRunner.Run(ctx, "settings", key, value)
 		if err != nil {
-			api.WriteJSON(w, map[string]string{"error": strings.TrimSpace(string(out))})
+			api.WriteJSON(w, map[string]string{api.JSONKeyError: strings.TrimSpace(string(out))})
 			return
 		}
 		api.Ok(w)
@@ -197,7 +202,7 @@ func (s *Server) handleToolsInstall(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh")
 	out, err := cmd.CombinedOutput()
-	result := map[string]string{"output": string(out)}
+	result := map[string]string{jsonKeyOutput: string(out)}
 	if err != nil {
 		result["error"] = err.Error()
 	}

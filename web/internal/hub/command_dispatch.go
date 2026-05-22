@@ -40,7 +40,7 @@ func (h *Hub) respond(w http.ResponseWriter, reqID string, body any) {
 }
 
 func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {
-	api.WriteJSONStatus(w, code, map[string]string{"error": err.Error()})
+	api.WriteJSONStatus(w, code, map[string]string{api.JSONKeyError: err.Error()})
 }
 
 // requireChatID validates that cmd.ChatID is non-empty and writes a

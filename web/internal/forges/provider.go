@@ -158,8 +158,8 @@ type CreateIssueParams struct {
 // Check is a single CI status check for a commit.
 type Check struct {
 	Name       string `json:"name"`
-	Status     string `json:"status"`     // "queued" | "in_progress" | "completed"
-	Conclusion string `json:"conclusion"` // "success" | "failure" | "cancelled" | "skipped" | ""
+	Status     string `json:"status"`     // "queued" | "in_progress" | stateCompleted
+	Conclusion string `json:"conclusion"` // statusSuccess | statusFailure | "cancelled" | stateSkipped | ""
 	URL        string `json:"url,omitempty"`
 }
 
@@ -213,19 +213,19 @@ type ForgeOps interface {
 	ListRepos(ctx context.Context) ([]Repo, error)
 
 	// ListPRs lists pull/merge requests for repo. state is one of
-	// "open", "closed", "merged", "all".
+	// stateOpen, stateClosed, stateMerged, "all".
 	ListPRs(ctx context.Context, repo, state string) ([]PR, error)
 
 	// CreatePR opens a new pull/merge request.
 	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
 
-	// MergePR merges an open PR. method is "merge" | "squash" | "rebase".
+	// MergePR merges an open PR. method is "merge" | mergeSquash | mergeRebase.
 	MergePR(ctx context.Context, repo string, number int, method string) error
 
 	// ClosePR closes (without merging) an open PR.
 	ClosePR(ctx context.Context, repo string, number int) error
 
-	// ListIssues lists issues for repo. state is "open", "closed", "all".
+	// ListIssues lists issues for repo. state is stateOpen, stateClosed, "all".
 	ListIssues(ctx context.Context, repo, state string) ([]Issue, error)
 
 	// CreateIssue files a new issue.

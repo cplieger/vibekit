@@ -106,7 +106,7 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{"add", "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, map[string]string{"error": gitexec.ScrubAuth(out)})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(out)})
 		return
 	}
 	api.Ok(w)
@@ -131,9 +131,9 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
-	args := append([]string{"reset", "HEAD", "--"}, files...)
+	args := append([]string{"reset", refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, map[string]string{"error": gitexec.ScrubAuth(out)})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(out)})
 		return
 	}
 	api.Ok(w)
@@ -180,7 +180,7 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		api.WriteJSON(w, map[string]string{"error": gitexec.ScrubAuth(strings.Join(errs, "\n"))})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(strings.Join(errs, "\n"))})
 		return
 	}
 	api.Ok(w)

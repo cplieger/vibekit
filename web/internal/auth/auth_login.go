@@ -94,7 +94,7 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 			slog.Warn("login: body exceeds limit",
 				"limit_bytes", api.MaxJSONBody)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "request too large"})
+				map[string]string{api.JSONKeyError: "request too large"})
 			return "", "", false
 		}
 		slog.Warn("login: decode body", "error", err)
@@ -178,7 +178,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		slog.Error("login: stdout pipe failed",
 			"error", err, "cli_path", h.cliPath)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "login unavailable"})
+			map[string]string{api.JSONKeyError: "login unavailable"})
 		return
 	}
 	// Capture stderr into a bounded buffer separate from stdout so
@@ -190,7 +190,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := cmd.Start(); err != nil {
 		cancel()
 		status := classifyLoginStartErr(err, h.cliPath)
-		api.WriteJSONStatus(w, status, map[string]string{"error": "login unavailable"})
+		api.WriteJSONStatus(w, status, map[string]string{api.JSONKeyError: "login unavailable"})
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
@@ -254,7 +254,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		attrs = append(attrs, stderrAttr(&stderrBuf)...)
 		slog.Warn("login: timeout waiting for auth URL", attrs...)
 		api.WriteJSONStatus(w, http.StatusGatewayTimeout,
-			map[string]string{"error": "timeout waiting for auth URL"})
+			map[string]string{api.JSONKeyError: "timeout waiting for auth URL"})
 	}
 }
 
@@ -402,7 +402,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		// recognise instead of the generic "no auth URL" sentinel,
 		// which read as "something broke" to users.
 		if strings.Contains(strings.ToLower(line), "already logged in") {
-			urlCh <- map[string]string{"error": "already_logged_in"}
+			urlCh <- map[string]string{api.JSONKeyError: "already_logged_in"}
 			return
 		}
 		if after, found := strings.CutPrefix(line, "Code:"); found {
@@ -428,7 +428,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 			slog.Warn("login: output line cap hit without auth URL",
 				"lines", lineCount,
 				"first_and_last_sample", ring.Sample())
-			urlCh <- map[string]string{"error": "CLI produced too much output without auth URL"}
+			urlCh <- map[string]string{api.JSONKeyError: "CLI produced too much output without auth URL"}
 			return
 		}
 	}
@@ -439,7 +439,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		// event on its own.
 		slog.Warn("login: scanner failed before URL",
 			"error", err, "lines_read", lineCount)
-		urlCh <- map[string]string{"error": "scanner error: " + err.Error()}
+		urlCh <- map[string]string{api.JSONKeyError: "scanner error: " + err.Error()}
 		return
 	}
 	// Clean EOF without a URL. No log at this layer — handleLogin's
@@ -447,5 +447,5 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	// already surface the failure with richer context. Emitting a
 	// second Warn here duplicated every timeout event on Loki's
 	// level=warn stream without adding information.
-	urlCh <- map[string]string{"error": "no auth URL found in CLI output"}
+	urlCh <- map[string]string{api.JSONKeyError: "no auth URL found in CLI output"}
 }

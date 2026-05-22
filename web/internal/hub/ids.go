@@ -23,9 +23,9 @@ func uuidv7() string {
 	b[0] = byte(ms >> 40) //nolint:gosec // G115: ID encoding
 	b[1] = byte(ms >> 32) //nolint:gosec // G115: ID encoding
 	b[2] = byte(ms >> 24) //nolint:gosec // G115: ID encoding
-	b[3] = byte(ms >> 16)
-	b[4] = byte(ms >> 8)
-	b[5] = byte(ms)
+	b[3] = byte(ms >> 16) //nolint:gosec // G115: ID encoding
+	b[4] = byte(ms >> 8) //nolint:gosec // G115: ID encoding
+	b[5] = byte(ms) //nolint:gosec // G115: ID encoding
 
 	// Version: bits 48-51 = 0111 (version 7)
 	b[6] = (b[6] & 0x0F) | 0x70

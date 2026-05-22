@@ -14,6 +14,11 @@ import (
 	"vibekit/internal/api"
 )
 
+const (
+	errFileTooLarge = "file too large"
+	errReadFailed   = "read failed"
+)
+
 // --- /api/file (GET read) + /api/file/download ---
 
 func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath string, h *Handler) {
@@ -28,7 +33,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 		}
 		slog.Warn("filehandler: open failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "read failed"})
+			map[string]string{api.JSONKeyError: errReadFailed})
 		return
 	}
 	defer f.Close()
@@ -36,7 +41,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 	if err != nil {
 		slog.Warn("filehandler: stat failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "read failed"})
+			map[string]string{api.JSONKeyError: errReadFailed})
 		return
 	}
 	if info.IsDir() {
@@ -45,7 +50,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 	}
 	if info.Size() > maxFileSize {
 		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			map[string]string{"error": "file too large"})
+			map[string]string{api.JSONKeyError: errFileTooLarge})
 		return
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -55,17 +60,17 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 	if err != nil {
 		slog.Warn("filehandler: read failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "read failed"})
+			map[string]string{api.JSONKeyError: errReadFailed})
 		return
 	}
 	if int64(len(data)) > maxFileSize {
 		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			map[string]string{"error": "file too large"})
+			map[string]string{api.JSONKeyError: errFileTooLarge})
 		return
 	}
 	if looksBinary(data) {
 		api.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
-			map[string]string{"error": "binary file"})
+			map[string]string{api.JSONKeyError: "binary file"})
 		return
 	}
 	api.WriteJSON(w, map[string]string{"content": string(data), "path": reqPath})
@@ -108,7 +113,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("filehandler: download stat failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{"error": "read failed"})
+			map[string]string{api.JSONKeyError: errReadFailed})
 		return
 	}
 	if info.IsDir() {
@@ -117,7 +122,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if info.Size() > maxCopySize {
 		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			map[string]string{"error": "file too large to download"})
+			map[string]string{api.JSONKeyError: "file too large to download"})
 		return
 	}
 	name := filepath.Base(resolved)

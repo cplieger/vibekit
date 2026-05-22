@@ -162,7 +162,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 }
 
 // CmdResolvePendingChangePartial settles one staged op with merged text.
-func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -203,7 +203,7 @@ func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.R
 }
 
 // CmdTrustPendingChanges enables per-turn trust and accepts all outstanding ops.
-func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -245,7 +245,7 @@ func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseW
 }
 
 // CmdClearPendingTrust clears the per-turn trust flag.
-func CmdClearPendingTrust(d *Dispatcher, _ context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdClearPendingTrust(d *Dispatcher, _ context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return

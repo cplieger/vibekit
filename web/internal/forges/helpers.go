@@ -9,6 +9,36 @@ import (
 	"time"
 )
 
+const (
+	stateMerged    = "merged"
+	stateCompleted = "completed"
+	stateClosed    = "closed"
+	stateClose     = "close"
+	stateComplete  = "complete"
+	statusFailure  = "failure"
+	flagHostname   = "--hostname"
+	flagMaxTime    = "--max-time"
+	flagHeader     = "--header"
+	protoHTTPS     = "https"
+	versionLatest  = "latest"
+	actionInstall  = "install"
+	stateOpen      = "open"
+	stateSkipped   = "skipped"
+	statePending   = "pending"
+	mergeSquash    = "squash"
+	mergeRebase    = "rebase"
+	statusError    = "error"
+	statusSuccess  = "success"
+	stateOpened     = "opened"
+	flagShowError  = "--show-error"
+	flagSilent     = "--silent"
+	fieldUser      = "user"
+	fieldVersion   = "version"
+	fieldUpdate    = "update"
+	fieldMethod    = "method"
+	fieldRepo      = "repo"
+)
+
 // parseRFC3339Millis parses an RFC 3339 timestamp string into Unix
 // milliseconds. Returns 0 on parse failure (caller decides whether
 // the missing field is fatal).
@@ -66,15 +96,15 @@ func extractIssueNumberFromURL(url string) int {
 }
 
 // normalizePRState maps provider-specific state strings into our
-// canonical set: "open", "closed", "merged", "draft".
+// canonical set: stateOpen, stateClosed, stateMerged, "draft".
 func normalizePRState(s string) string {
 	switch strings.ToLower(s) {
-	case "open", "opened":
-		return "open"
-	case "closed", "close":
-		return "closed"
-	case "merged":
-		return "merged"
+	case stateOpen, stateOpened:
+		return stateOpen
+	case stateClosed, stateClose:
+		return stateClosed
+	case stateMerged:
+		return stateMerged
 	case "draft":
 		return "draft"
 	}
@@ -82,13 +112,13 @@ func normalizePRState(s string) string {
 }
 
 // normalizeIssueState maps provider-specific issue states into our
-// canonical set: "open", "closed".
+// canonical set: stateOpen, stateClosed.
 func normalizeIssueState(s string) string {
 	switch strings.ToLower(s) {
-	case "open", "opened":
-		return "open"
-	case "closed", "close":
-		return "closed"
+	case stateOpen, stateOpened:
+		return stateOpen
+	case stateClosed, stateClose:
+		return stateClosed
 	}
 	return strings.ToLower(s)
 }

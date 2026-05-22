@@ -2,6 +2,8 @@ package mcp
 
 import "context"
 
+const jsonKeyName = "name"
+
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
 // stays focused on persistence and life-cycle.
 
@@ -94,7 +96,7 @@ func (t Transport) buildACP(s *Server) acpServer {
 func stdioBuilder(s *Server) acpServer {
 	entry := acpServer{
 		"type":    string(TransportStdio),
-		"name":    s.Name,
+		jsonKeyName:    s.Name,
 		"command": s.Command,
 		"args":    argsArray(s.Args),
 		"env":     pairsArray(s.Env),
@@ -108,7 +110,7 @@ func stdioBuilder(s *Server) acpServer {
 func remoteBuilder(s *Server) acpServer {
 	entry := acpServer{
 		"type":    string(s.Transport),
-		"name":    s.Name,
+		jsonKeyName:    s.Name,
 		"url":     s.URL,
 		"headers": pairsArray(s.Headers),
 	}
@@ -154,12 +156,12 @@ func argsArray(in []string) []string {
 }
 
 // pairsArray returns the ACP-spec array-of-objects shape for env vars
-// and HTTP headers: [{"name":..., "value":...}, ...]. Always emits at
+// and HTTP headers: [{jsonKeyName:..., "value":...}, ...]. Always emits at
 // least [] for the empty case so required-but-empty JSON is valid.
 func pairsArray(in []KeyPair) []map[string]string {
 	out := make([]map[string]string, 0, len(in))
 	for _, kv := range in {
-		out = append(out, map[string]string{"name": kv.Name, "value": kv.Value})
+		out = append(out, map[string]string{jsonKeyName: kv.Name, "value": kv.Value})
 	}
 	return out
 }

@@ -7,6 +7,9 @@ import (
 	"net/http"
 )
 
+// JSONKeyError is the standard JSON error response key.
+const JSONKeyError = "error"
+
 // MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
 const MaxJSONBody = 1024 * 1024
 
@@ -60,27 +63,27 @@ func WriteRawJSON(w http.ResponseWriter, data []byte) {
 
 // BadRequest writes a 400 with {"error": msg}.
 func BadRequest(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusBadRequest, map[string]string{"error": msg})
+	WriteJSONStatus(w, http.StatusBadRequest, map[string]string{JSONKeyError: msg})
 }
 
 // Forbidden writes a 403 with {"error": msg}.
 func Forbidden(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusForbidden, map[string]string{"error": msg})
+	WriteJSONStatus(w, http.StatusForbidden, map[string]string{JSONKeyError: msg})
 }
 
 // NotFound writes a 404 with {"error": msg}.
 func NotFound(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusNotFound, map[string]string{"error": msg})
+	WriteJSONStatus(w, http.StatusNotFound, map[string]string{JSONKeyError: msg})
 }
 
 // Conflict writes a 409 with {"error": msg}.
 func Conflict(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusConflict, map[string]string{"error": msg})
+	WriteJSONStatus(w, http.StatusConflict, map[string]string{JSONKeyError: msg})
 }
 
 // MethodNotAllowed writes a 405 with a standard message.
 func MethodNotAllowed(w http.ResponseWriter) {
-	WriteJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	WriteJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{JSONKeyError: "method not allowed"})
 }
 
 // InternalError writes a 500 with {"error": "internal error"} and logs
@@ -90,7 +93,7 @@ func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
 		slog.Error("api: internal error", "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: "internal error"})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message
@@ -101,7 +104,7 @@ func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
 		slog.Error("api: server error", "client_msg", clientMsg, "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": clientMsg})
+	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: clientMsg})
 }
 
 // Ok writes a 200 with {"ok": true} — the standard "action succeeded"

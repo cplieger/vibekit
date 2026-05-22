@@ -37,7 +37,7 @@ func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 	// at construction time. Skip the git subprocesses below — their
 	// output would only be used to build a prompt we can't send.
 	if h.prompter == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": api.ErrMsgUtilityUnavailable})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
 		return
 	}
 	dir := h.repoDir(body.Repo)
@@ -69,7 +69,7 @@ func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := extractCommitMessage(result)
-	api.WriteJSON(w, map[string]string{"output": msg})
+	api.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
 }
 
 // defaultPRBase is the assumed base branch when a PR-description
@@ -90,7 +90,7 @@ func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 	// Fail fast when the utility bridge isn't wired (see
 	// handleCommitMessage for the rationale).
 	if h.prompter == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": api.ErrMsgUtilityUnavailable})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
 		return
 	}
 	dir := h.repoDir(body.Repo)
@@ -145,7 +145,7 @@ func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 	result = api.StripCodeFence(result)
 	result = strings.TrimSpace(result)
 
-	api.WriteJSON(w, map[string]string{"output": result})
+	api.WriteJSON(w, map[string]string{jsonKeyOutput: result})
 }
 
 // handlePRFetch fetches a pull request's head ref into a local branch

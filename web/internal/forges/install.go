@@ -119,32 +119,32 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 	switch cli {
 	case "gh":
 		return map[string]any{
-			"version": "latest",
-			"update": map[string]any{
-				"method": "github",
-				"repo":   "cli/cli",
+			fieldVersion: versionLatest,
+			fieldUpdate: map[string]any{
+				fieldMethod: string(KindGitHub),
+				fieldRepo:   "cli/cli",
 			},
-			"install": "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION#v}_linux_amd64.tar.gz | " +
+			actionInstall: "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION#v}_linux_amd64.tar.gz | " +
 				"tar -xz -C ${TOOLS} --strip-components=2 gh_${VERSION#v}_linux_amd64/bin/gh",
 		}, nil
 	case "glab":
 		return map[string]any{
-			"version": "latest",
-			"update": map[string]any{
-				"method": "github",
-				"repo":   "gitlab-org/cli",
+			fieldVersion: versionLatest,
+			fieldUpdate: map[string]any{
+				fieldMethod: string(KindGitHub),
+				fieldRepo:   "gitlab-org/cli",
 			},
-			"install": "curl -fsSL https://github.com/gitlab-org/cli/releases/download/${VERSION}/glab_${VERSION#v}_Linux_x86_64.tar.gz | " +
+			actionInstall: "curl -fsSL https://github.com/gitlab-org/cli/releases/download/${VERSION}/glab_${VERSION#v}_Linux_x86_64.tar.gz | " +
 				"tar -xz -C ${TOOLS} --strip-components=1 bin/glab",
 		}, nil
 	case "tea":
 		return map[string]any{
-			"version": "latest",
-			"update": map[string]any{
-				"method": "github",
-				"repo":   "https://gitea.com/gitea/tea",
+			fieldVersion: versionLatest,
+			fieldUpdate: map[string]any{
+				fieldMethod: string(KindGitHub),
+				fieldRepo:   "https://gitea.com/gitea/tea",
 			},
-			"install": "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION#v}/tea-${VERSION#v}-linux-amd64 && chmod +x ${BIN}/tea",
+			actionInstall: "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION#v}/tea-${VERSION#v}-linux-amd64 && chmod +x ${BIN}/tea",
 		}, nil
 	}
 	return nil, fmt.Errorf("forges: no install template for %q", cli)

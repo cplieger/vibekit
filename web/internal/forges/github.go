@@ -34,7 +34,7 @@ func (p *githubProvider) Host() string { return p.host }
 // withHost prepends the --hostname flag to args so commands target
 // the right gh-configured host. Required for GitHub Enterprise.
 func (p *githubProvider) withHost(args ...string) []string {
-	return append([]string{"--hostname", p.host}, args...)
+	return append([]string{flagHostname, p.host}, args...)
 }
 
 // Whoami queries gh's auth status to confirm login + return the user.
@@ -49,7 +49,7 @@ func (p *githubProvider) Whoami(ctx context.Context) (*User, error) {
 		Email   string `json:"email"`
 		HTMLURL string `json:"html_url"`
 	}
-	args := []string{"api", "user", "--hostname", p.host}
+	args := []string{"api", fieldUser, flagHostname, p.host}
 	if err := runJSON(ctx, CmdTimeout, &raw, "gh", args...); err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (p *githubProvider) Whoami(ctx context.Context) (*User, error) {
 func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 	// gh repo list uses repository "graph" output with structured fields.
 	fields := "name,owner,nameWithOwner,defaultBranchRef,description,isPrivate,isArchived,isFork,sshUrl,url,updatedAt"
-	args := p.withHost("repo", "list", "--json", fields, "--limit", "300")
+	args := p.withHost(fieldRepo, "list", "--json", fields, "--limit", "300")
 	var raw []struct {
 		Name             string                 `json:"name"`
 		Owner            struct{ Login string } `json:"owner"`
@@ -104,7 +104,7 @@ func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 // ListPRs lists pull requests for repo.
 func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR, error) {
 	if state == "" {
-		state = "open"
+		state = stateOpen
 	}
 	fields := "number,title,body,state,author,headRefName,baseRefName,url,createdAt,updatedAt,mergeable,isDraft"
 	args := p.withHost("pr", "list", "--repo", repo, "--state", state, "--json", fields, "--limit", "100")
@@ -211,13 +211,13 @@ func (p *githubProvider) viewPR(ctx context.Context, repo string, number int) (*
 	}, nil
 }
 
-// MergePR merges a PR. method: "merge" | "squash" | "rebase".
+// MergePR merges a PR. method: "merge" | mergeSquash | mergeRebase.
 func (p *githubProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
 	args := p.withHost("pr", "merge", strconv.Itoa(number), "--repo", repo)
 	switch method {
-	case "squash":
+	case mergeSquash:
 		args = append(args, "--squash")
-	case "rebase":
+	case mergeRebase:
 		args = append(args, "--rebase")
 	default:
 		args = append(args, "--merge")
@@ -228,7 +228,7 @@ func (p *githubProvider) MergePR(ctx context.Context, repo string, number int, m
 
 // ClosePR closes an open PR without merging.
 func (p *githubProvider) ClosePR(ctx context.Context, repo string, number int) error {
-	args := p.withHost("pr", "close", strconv.Itoa(number), "--repo", repo)
+	args := p.withHost("pr", stateClose, strconv.Itoa(number), "--repo", repo)
 	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
 	return err
 }
@@ -236,7 +236,7 @@ func (p *githubProvider) ClosePR(ctx context.Context, repo string, number int) e
 // ListIssues lists issues for repo.
 func (p *githubProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
 	if state == "" {
-		state = "open"
+		state = stateOpen
 	}
 	fields := "number,title,body,state,author,url,labels,createdAt,updatedAt"
 	args := p.withHost("issue", "list", "--repo", repo, "--state", state, "--json", fields, "--limit", "100")
@@ -334,7 +334,7 @@ func (p *githubProvider) viewIssue(ctx context.Context, repo string, number int)
 
 // CloseIssue closes an open issue.
 func (p *githubProvider) CloseIssue(ctx context.Context, repo string, number int) error {
-	args := p.withHost("issue", "close", strconv.Itoa(number), "--repo", repo)
+	args := p.withHost("issue", stateClose, strconv.Itoa(number), "--repo", repo)
 	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
 	return err
 }
@@ -347,7 +347,7 @@ func (p *githubProvider) CommitStatus(ctx context.Context, repo, ref string) ([]
 		return nil, err
 	}
 	endpoint := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs", owner, name, ref)
-	args := []string{"api", endpoint, "--hostname", p.host}
+	args := []string{"api", endpoint, flagHostname, p.host}
 	out, err := runCmd(ctx, ListTimeout, nil, "gh", args...)
 	if err != nil {
 		return nil, err

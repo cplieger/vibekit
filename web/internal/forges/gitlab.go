@@ -32,7 +32,7 @@ func (p *gitlabProvider) Host() string { return p.host }
 // var or per-config-section host; --hostname is supported on most
 // commands.
 func (p *gitlabProvider) withHost(args ...string) []string {
-	return append([]string{"--hostname", p.host}, args...)
+	return append([]string{flagHostname, p.host}, args...)
 }
 
 // Whoami uses glab api to fetch the authenticated user.
@@ -43,7 +43,7 @@ func (p *gitlabProvider) Whoami(ctx context.Context) (*User, error) {
 		Email    string `json:"public_email"`
 		WebURL   string `json:"web_url"`
 	}
-	args := p.withHost("api", "user")
+	args := p.withHost("api", fieldUser)
 	if err := runJSON(ctx, CmdTimeout, &raw, "glab", args...); err != nil {
 		return nil, err
 	}
@@ -215,9 +215,9 @@ func (p *gitlabProvider) viewPR(ctx context.Context, repo string, number int) (*
 func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
 	args := p.withHost("mr", "merge", strconv.Itoa(number), "--repo", repo, "--yes")
 	switch method {
-	case "squash":
+	case mergeSquash:
 		args = append(args, "--squash")
-	case "rebase":
+	case mergeRebase:
 		args = append(args, "--rebase")
 	}
 	_, err := runCmd(ctx, CmdTimeout, nil, "glab", args...)
@@ -225,15 +225,15 @@ func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, m
 }
 
 func (p *gitlabProvider) ClosePR(ctx context.Context, repo string, number int) error {
-	args := p.withHost("mr", "close", strconv.Itoa(number), "--repo", repo)
+	args := p.withHost("mr", stateClose, strconv.Itoa(number), "--repo", repo)
 	_, err := runCmd(ctx, CmdTimeout, nil, "glab", args...)
 	return err
 }
 
 func (p *gitlabProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
 	switch state {
-	case "", "open":
-		state = "opened"
+	case "", stateOpen:
+		state = stateOpened
 	}
 	args := p.withHost("issue", "list", "--repo", repo, "--state", state, "--output", "json", "--per-page", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "glab", args...)
@@ -324,7 +324,7 @@ func (p *gitlabProvider) viewIssue(ctx context.Context, repo string, number int)
 }
 
 func (p *gitlabProvider) CloseIssue(ctx context.Context, repo string, number int) error {
-	args := p.withHost("issue", "close", strconv.Itoa(number), "--repo", repo)
+	args := p.withHost("issue", stateClose, strconv.Itoa(number), "--repo", repo)
 	_, err := runCmd(ctx, CmdTimeout, nil, "glab", args...)
 	return err
 }
@@ -354,7 +354,7 @@ func (p *gitlabProvider) CommitStatus(ctx context.Context, repo, ref string) ([]
 	for _, c := range raw {
 		conclusion := ""
 		status := mapGLabStatus(c.Status)
-		if status == "completed" {
+		if status == stateCompleted {
 			conclusion = mapGLabConclusion(c.Status)
 		}
 		checks = append(checks, Check{
@@ -448,34 +448,34 @@ func (p *gitlabProvider) ListLabels(ctx context.Context, repo string) ([]Label, 
 }
 
 // mrStateForListing maps the unified state filter to glab's expected
-// values. glab uses "opened" rather than "open" and treats merged as
-// a separate state outside of "closed".
+// values. glab uses stateOpened rather than stateOpen and treats merged as
+// a separate state outside of stateClosed.
 func mrStateForListing(s string) string {
 	switch s {
-	case "open":
-		return "opened"
-	case "merged":
-		return "merged"
-	case "closed":
-		return "closed"
+	case stateOpen:
+		return stateOpened
+	case stateMerged:
+		return stateMerged
+	case stateClosed:
+		return stateClosed
 	case "all":
 		return "all"
 	case "":
-		return "opened"
+		return stateOpened
 	}
 	return s
 }
 
 // mapGLabStatus converts a GitLab pipeline status to our canonical
-// "queued" / "in_progress" / "completed" set.
+// "queued" / "in_progress" / stateCompleted set.
 func mapGLabStatus(s string) string {
 	switch s {
-	case "pending", "created", "scheduled":
+	case statePending, "created", "scheduled":
 		return "queued"
 	case "running":
 		return "in_progress"
-	case "success", "failed", "canceled", "skipped", "manual":
-		return "completed"
+	case statusSuccess, "failed", "canceled", stateSkipped, "manual":
+		return stateCompleted
 	}
 	return s
 }
@@ -484,16 +484,16 @@ func mapGLabStatus(s string) string {
 // conclusion field.
 func mapGLabConclusion(s string) string {
 	switch s {
-	case "success":
-		return "success"
+	case statusSuccess:
+		return statusSuccess
 	case "failed":
-		return "failure"
+		return statusFailure
 	case "canceled":
 		return "cancelled"
-	case "skipped":
-		return "skipped"
+	case stateSkipped:
+		return stateSkipped
 	case "manual":
-		return "skipped"
+		return stateSkipped
 	}
 	return ""
 }

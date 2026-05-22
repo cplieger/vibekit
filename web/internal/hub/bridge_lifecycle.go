@@ -8,6 +8,8 @@ import (
 	"vibekit/internal/api"
 )
 
+const contentTypeText = "text"
+
 // primeReason is the reason a bridge needs priming on the next prompt.
 // Only switch currently needs it; restart-recovery uses session/load
 // (kiro-cli restores context itself). The unset zero value is safe to
@@ -245,7 +247,7 @@ func (h *Hub) primeIfNeeded(ctx context.Context, chatID api.ChatID, sb *sharedBr
 
 	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason)
 	_, err := sb.bridge.Call(ctx, methodPrompt, sessionParams(sb, map[string]any{
-		"prompt": []map[string]any{{"type": "text", "text": prime}},
+		"prompt": []map[string]any{{"type": contentTypeText, contentTypeText: prime}},
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)

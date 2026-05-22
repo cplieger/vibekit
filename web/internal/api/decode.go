@@ -28,7 +28,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 				"method", r.Method, "path", r.URL.Path,
 				"limit", MaxJSONBody, "error", maxErr)
 			WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "request body too large"})
+				map[string]string{JSONKeyError: "request body too large"})
 			return false
 		}
 		slog.Debug("api: decode invalid json",

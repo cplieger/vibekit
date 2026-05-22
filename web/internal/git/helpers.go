@@ -41,12 +41,12 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) {
 	api.DecodeBodyOptional(w, r, v)
 }
 
-// writeCmdResult writes a git-command result: {"output":
+// writeCmdResult writes a git-command result: {jsonKeyOutput:
 // gitexec.ScrubAuth(out)} on success, {"error": gitexec.ScrubAuth(errMsg)} on
 // failure. errMsg is the subprocess combined output when non-empty;
 // otherwise err.Error().
 //
-// On failure the "output" field is intentionally omitted so clients
+// On failure the jsonKeyOutput field is intentionally omitted so clients
 // cannot confuse a partial stdout stream with a successful response
 // — presence-of-field is the success signal, not string emptiness.
 //
@@ -63,10 +63,10 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 		if strings.TrimSpace(msg) == "" {
 			msg = err.Error()
 		}
-		api.WriteJSON(w, map[string]string{"error": gitexec.ScrubAuth(msg)})
+		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(msg)})
 		return
 	}
-	api.WriteJSON(w, map[string]string{"output": gitexec.ScrubAuth(out)})
+	api.WriteJSON(w, map[string]string{jsonKeyOutput: gitexec.ScrubAuth(out)})
 }
 
 // gitExec delegates to the shared gitexec package for hardened

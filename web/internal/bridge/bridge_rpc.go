@@ -13,6 +13,8 @@ import (
 	"vibekit/internal/api"
 )
 
+const jsonRPCVersion = "2.0"
+
 // bridgeExitedResp is the pointer-identity sentinel readLoop's drain
 // sends into each pending channel on exit. Call's ch-receive branch
 // compares pointer identity against this value and translates it to
@@ -124,7 +126,7 @@ func (b *Bridge) deregisterPending(id int64) {
 // enforced by Stop → readLoop fanout; no in-Call timeout is needed.
 func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
 	id := b.nextID.Add(1)
-	req := api.RPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
+	req := api.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
 	ch := make(chan *api.RPCResponse, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
@@ -167,7 +169,7 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	req := api.RPCNotification{JSONRPC: "2.0", Method: method, Params: params}
+	req := api.RPCNotification{JSONRPC: jsonRPCVersion, Method: method, Params: params}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -185,7 +187,7 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 	if cErr := ctx.Err(); cErr != nil {
 		return cErr
 	}
-	resp := api.RPCResponseOut{JSONRPC: "2.0", ID: id}
+	resp := api.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
 		code := -32603
 		msg := err.Error()
