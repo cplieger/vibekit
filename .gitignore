@@ -4,3 +4,4 @@
 web/vibekit
 web/static-src/node_modules/
 .vitest-cache/
+web/static/style.css
