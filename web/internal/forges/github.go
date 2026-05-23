@@ -158,10 +158,13 @@ func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 
 // CreatePR opens a new pull request via gh pr create.
 func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *CreatePRParams) (*PR, error) {
+	// Pass the body via stdin (--body-file -) rather than --body STRING.
+	// AI-generated PR descriptions can exceed ARG_MAX (~128 KB on Linux);
+	// stdin has no such limit. Title is short enough to stay as a flag arg.
 	args := p.withHost("pr", "create",
 		"--repo", repo,
 		"--title", params.Title,
-		"--body", params.Body,
+		"--body-file", "-",
 		"--head", params.SourceBranch,
 		"--base", params.TargetBranch,
 	)
@@ -171,7 +174,7 @@ func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *Crea
 	for _, lbl := range params.Labels {
 		args = append(args, "--label", lbl)
 	}
-	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
+	out, err := runCmdEnv(ctx, CmdTimeout, []byte(params.Body), p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -288,15 +291,17 @@ func (p *githubProvider) ListIssues(ctx context.Context, repo, state string) ([]
 
 // CreateIssue files a new issue.
 func (p *githubProvider) CreateIssue(ctx context.Context, repo string, params CreateIssueParams) (*Issue, error) {
+	// Body via stdin (--body-file -) for the same reason as CreatePR:
+	// avoids ARG_MAX on long bodies.
 	args := p.withHost("issue", "create",
 		"--repo", repo,
 		"--title", params.Title,
-		"--body", params.Body,
+		"--body-file", "-",
 	)
 	for _, lbl := range params.Labels {
 		args = append(args, "--label", lbl)
 	}
-	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
+	out, err := runCmdEnv(ctx, CmdTimeout, []byte(params.Body), p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -419,8 +424,11 @@ func (p *githubProvider) CreateRelease(ctx context.Context, repo string, params 
 	if params.Name != "" {
 		args = append(args, "--title", params.Name)
 	}
+	// Notes via stdin (--notes-file -) for the same ARG_MAX reasoning
+	// as CreatePR. Empty body still goes through stdin (gh treats it
+	// as no notes); harmless and keeps the call site simple.
 	if params.Body != "" {
-		args = append(args, "--notes", params.Body)
+		args = append(args, "--notes-file", "-")
 	}
 	if params.Target != "" {
 		args = append(args, "--target", params.Target)
@@ -431,7 +439,11 @@ func (p *githubProvider) CreateRelease(ctx context.Context, repo string, params 
 	if params.Prerelease {
 		args = append(args, "--prerelease")
 	}
-	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
+	var stdin []byte
+	if params.Body != "" {
+		stdin = []byte(params.Body)
+	}
+	out, err := runCmdEnv(ctx, CmdTimeout, stdin, p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
