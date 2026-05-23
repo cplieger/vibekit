@@ -317,9 +317,20 @@ function handleRepoSelection(entry: RepoEntry | null): void {
  *  registry summary and toggle the toolbar+panel visibility to make
  *  room for it. Called both when selection drops to null and when
  *  the registry changes while no selection exists. */
+/** Choose the right empty-state variant based on the picker's
+ *  registry summary and toggle the toolbar+panel visibility to make
+ *  room for it. Called both when selection drops to null and when
+ *  the registry changes while no selection exists. */
 function showEmptyStateForCurrentRegistry(): void {
   const summary = getRegistrySummary();
-  const variant = summary.forgeConnectedCount === 0 ? "forges-needed" : "pick-or-clone";
+  // Variant rule: if there's nothing pickable, route the user to
+  // forge settings — regardless of *why* the registry is empty.
+  // That covers no-forge-connected, forge-with-broken-listing
+  // (e.g. a transient gh API failure), and brand-new-account-with-
+  // zero-repos all in one. Asking the user to "Choose a repository"
+  // when the picker has nothing to show is confusing — the only
+  // useful next step is to add or reconnect a forge in settings.
+  const variant = summary.entryCount === 0 ? "forges-needed" : "pick-or-clone";
   showGitEmptyState(variant);
   // The toolbar is irrelevant without a repo and crowds the empty
   // state.
