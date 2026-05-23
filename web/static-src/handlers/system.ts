@@ -11,7 +11,7 @@
 
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
-import { setLastModel } from "../session-context.js";
+import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
   setAvailableCommands,
@@ -21,8 +21,12 @@ import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
 
 onSSE("settings_updated", () => {
+  // Reconcile our cache from the server's view. Use restoreLastModel
+  // (cache-only) rather than setLastModel — setLastModel calls
+  // patchSettings, which writes the value back to the server, which
+  // re-broadcasts settings_updated, looping forever at debounce speed.
   void syncSettings().then((s) => {
-    if (s.last_model !== undefined) setLastModel(s.last_model);
+    if (s.last_model !== undefined) restoreLastModel(s.last_model);
   });
   refreshCompactionThreshold();
   void refreshRetention();

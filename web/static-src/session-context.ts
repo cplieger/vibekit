@@ -21,6 +21,15 @@ class SessionContextController {
 
   getLastModel(): string { return this.lastModelCache; }
   setLastModel(id: string): void {
+    // Guard against redundant writes: an earlier bug had the SSE
+    // settings_updated handler calling setLastModel with the
+    // server-confirmed value, which patched it straight back, which
+    // triggered another settings_updated, which… looped at debounce
+    // speed forever. The handler now uses restoreLastModel for that
+    // path, but a no-op guard here prevents any other caller from
+    // re-introducing the loop. It also avoids waking the save
+    // indicator for writes that don't change anything.
+    if (this.lastModelCache === id) return;
     this.lastModelCache = id;
     void patchSettings({ last_model: id });
   }
