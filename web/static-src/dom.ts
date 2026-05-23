@@ -210,6 +210,7 @@ class Elements {
   get uploadProgress(): HTMLDivElement { return el("upload-progress"); }
   get uploadProgressFill(): HTMLDivElement { return el("upload-progress-fill"); }
   get uploadProgressLabel(): HTMLElement { return el("upload-progress-label"); }
+  get uploadProgressCancel(): HTMLButtonElement { return el("upload-progress-cancel"); }
 
   // Theme toggle
   get themeBtn(): HTMLButtonElement { return el("theme-btn"); }

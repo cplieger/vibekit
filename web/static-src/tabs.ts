@@ -354,6 +354,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
   const el = document.createElement("div");
   el.className = "tab";
   el.dataset["tabId"] = tab.id;
+  el.dataset["kind"] = tab.kind;
   el.setAttribute("role", "tab");
 
   const icon = document.createElement("span");

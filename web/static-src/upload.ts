@@ -27,12 +27,25 @@ export function uploadFiles(opts: UploadOptions): void {
   const progress = $.uploadProgress;
   const fill = $.uploadProgressFill;
   const label = $.uploadProgressLabel;
+  const cancelBtn = $.uploadProgressCancel;
 
   progress.classList.remove("upload-closed");
   fill.style.width = "0%";
   label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
 
   const xhr = new XMLHttpRequest();
+
+  // Wire the user-visible cancel button to xhr.abort(). We still expose
+  // opts.signal for programmatic abort (e.g. chat delete, navigation);
+  // both paths converge on xhr.abort() below.
+  cancelBtn.classList.remove("hidden");
+  const onCancelClick = (): void => { xhr.abort(); };
+  cancelBtn.addEventListener("click", onCancelClick, { once: true });
+  const teardownCancelUI = (): void => {
+    cancelBtn.classList.add("hidden");
+    cancelBtn.removeEventListener("click", onCancelClick);
+  };
+
   xhr.open("POST", "/api/file/upload");
   xhr.timeout = 300_000; // 5 minutes
   xhr.upload.addEventListener("progress", (e: ProgressEvent) => {
@@ -43,6 +56,7 @@ export function uploadFiles(opts: UploadOptions): void {
     }
   });
   xhr.addEventListener("load", () => {
+    teardownCancelUI();
     fill.style.width = "100%";
     label.textContent = "Upload complete";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
@@ -52,16 +66,19 @@ export function uploadFiles(opts: UploadOptions): void {
     opts.onComplete?.(paths);
   });
   xhr.addEventListener("error", () => {
+    teardownCancelUI();
     label.textContent = "Upload failed";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload failed");
   });
   xhr.addEventListener("timeout", () => {
+    teardownCancelUI();
     label.textContent = "Upload timed out";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload timed out");
   });
   xhr.addEventListener("abort", () => {
+    teardownCancelUI();
     label.textContent = "Upload cancelled";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
   });

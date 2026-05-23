@@ -74,6 +74,27 @@
   font-size: var(--fs-xs); color: var(--c-text-secondary); white-space: nowrap;
 }
 
+.upload-progress-cancel {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem;
+  padding: 0;
+  background: transparent; border: none;
+  color: var(--c-text-secondary);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+
+  &:hover {
+    background: var(--c-bg-hover);
+    color: var(--c-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent); outline-offset: 1px;
+  }
+}
+
 /* File picker popup */
 .filepicker-card {
   width: min(31.25rem, 90vw); max-height: 60vh;

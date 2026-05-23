@@ -222,8 +222,13 @@ async function checkAuthAndStart(): Promise<void> {
   try {
     const ok = await loadList();
     skel.remove();
+    // If share-target intends to create a session (e.g. ?agent=planner),
+    // skip the default empty-state createSession so we don't end up with
+    // an unused "New conversation" tab next to the planner.
+    const wantsAgent = new URLSearchParams(location.search).get("agent");
+    const shareWillCreate = wantsAgent === "planner";
     if (!ok || getSessions().length === 0) {
-      createSession();
+      if (!shareWillCreate) createSession();
     } else {
       for (const s of getSessions()) {
         openChatTab(s.id, s.name, s.agent);
@@ -235,12 +240,13 @@ async function checkAuthAndStart(): Promise<void> {
     }
   } catch {
     skel.remove();
-    createSession();
+    const wantsAgent = new URLSearchParams(location.search).get("agent");
+    if (wantsAgent !== "planner") createSession();
   }
   suppressPush(false);
 
-  applyInitialRoute();
   applyShareTarget();
+  applyInitialRoute();
 }
 
 function onLoginSuccess(): void {
