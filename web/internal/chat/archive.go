@@ -70,19 +70,24 @@ func (s *Store) Archive(ctx context.Context, chatID api.ChatID) error {
 // parse are logged and skipped so one bad entry never hides the rest.
 // Files larger than maxChatFileBytes are skipped with a warn — an
 // out-of-band writer cannot OOM the process via the history modal.
+// Always returns a non-nil slice so JSON encoders emit `[]` rather
+// than `null` for an empty archive.
 func (s *Store) ListArchived(ctx context.Context) []api.ChatHeader {
 	// Coalesce concurrent History-tab opens into a single directory scan.
 	v, err, _ := s.listArchivedSF.Do("list", func() (any, error) {
 		return s.listArchivedOnce(ctx), nil
 	})
 	if err != nil || v == nil {
-		return nil
+		return []api.ChatHeader{}
 	}
 	headers, ok := v.([]api.ChatHeader)
 	if !ok {
 		slog.Error("chat list_archived: singleflight returned unexpected type",
 			"type", fmt.Sprintf("%T", v))
-		return nil
+		return []api.ChatHeader{}
+	}
+	if headers == nil {
+		return []api.ChatHeader{}
 	}
 	return headers
 }
@@ -94,7 +99,7 @@ func (s *Store) listArchivedOnce(ctx context.Context) []api.ChatHeader {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Error("chat list_archived", "dir", archiveDir, "error", err)
 		}
-		return nil
+		return []api.ChatHeader{}
 	}
 	// Collect valid filenames first.
 	var valid []chatEntry
@@ -111,7 +116,7 @@ func (s *Store) listArchivedOnce(ctx context.Context) []api.ChatHeader {
 		valid = append(valid, chatEntry{id: id, path: filepath.Join(archiveDir, e.Name())})
 	}
 	if len(valid) == 0 {
-		return nil
+		return []api.ChatHeader{}
 	}
 
 	// Bounded-parallel header reads matching List()'s worker pool pattern.

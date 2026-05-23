@@ -1024,6 +1024,50 @@ func TestHandlePlanDraft_MethodNotAllowed(t *testing.T) {
 
 // --- Extended HTTP handler coverage ---
 
+func TestHandleList_EmptyStoreReturnsEmptyArrayNotNull(t *testing.T) {
+	// Regression: Go's json.Marshal of a nil slice emits `null`. The
+	// frontend wire decoder rejects null for fields typed as array
+	// ("$.chat_list.chats: expected array, got null") and the chat
+	// list quietly stops working after a fresh container init.
+	// List() must always return a non-nil slice so JSON encodes `[]`.
+	s, _ := newTestStore(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"chats":[]`) {
+		t.Errorf("body should contain `\"chats\":[]`, got: %s", body)
+	}
+	if strings.Contains(body, `"chats":null`) {
+		t.Errorf("body must not contain `\"chats\":null`: %s", body)
+	}
+}
+
+func TestHandleArchived_EmptyStoreReturnsEmptyArrayNotNull(t *testing.T) {
+	// Sister regression for the archive list — same nil-slice trap.
+	s, _ := newTestStore(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/archived", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleArchivedChats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	// The archived endpoint wraps under "chats" too (see
+	// handleArchivedChats); update the assertion if that ever
+	// diverges.
+	if strings.Contains(body, `:null`) {
+		t.Errorf("archived body has a null field: %s", body)
+	}
+}
+
 func TestHandleList_RejectsNonGET(t *testing.T) {
 	s, _ := newTestStore(t)
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
@@ -1831,10 +1875,16 @@ func TestListArchived_ReturnsHeadersSortedByUpdatedAtDesc(t *testing.T) {
 	}
 }
 
-func TestListArchived_EmptyDirReturnsNil(t *testing.T) {
+func TestListArchived_EmptyDirReturnsEmptySlice(t *testing.T) {
+	// ListArchived now returns a non-nil empty slice so JSON marshals
+	// as `[]` rather than `null` (see TestHandleArchived_…NotNull).
 	s, _ := newTestStore(t)
-	if got := s.ListArchived(context.Background()); got != nil {
-		t.Errorf("ListArchived(no archive dir) = %v, want nil", got)
+	got := s.ListArchived(context.Background())
+	if got == nil {
+		t.Fatal("ListArchived(no archive dir) = nil, want []")
+	}
+	if len(got) != 0 {
+		t.Errorf("ListArchived(no archive dir) = %v, want empty slice", got)
 	}
 }
 

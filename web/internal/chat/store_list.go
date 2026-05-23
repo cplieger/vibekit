@@ -14,7 +14,9 @@ import (
 
 // List returns every chat's header (no messages) sorted by UpdatedAt desc.
 // Files that fail to parse or read are logged and skipped — one bad file
-// must not hide the rest from the sidebar.
+// must not hide the rest from the sidebar. Always returns a non-nil
+// slice so JSON encoders emit `[]` for an empty registry rather than
+// `null` (which the wire decoder rejects as a type error).
 func (s *Store) List(ctx context.Context) []api.ChatHeader {
 	// Coalesce concurrent sidebar refreshes into a single directory scan.
 	// listOnce always returns (any, nil), so err is informational only;
@@ -25,13 +27,16 @@ func (s *Store) List(ctx context.Context) []api.ChatHeader {
 	})
 	if err != nil {
 		slog.Warn("chat list: singleflight returned error", "error", err)
-		return nil
+		return []api.ChatHeader{}
 	}
 	headers, ok := v.([]api.ChatHeader)
 	if !ok {
 		slog.Error("chat list: singleflight returned unexpected type",
 			"type", fmt.Sprintf("%T", v))
-		return nil
+		return []api.ChatHeader{}
+	}
+	if headers == nil {
+		return []api.ChatHeader{}
 	}
 	return headers
 }
@@ -40,7 +45,7 @@ func (s *Store) listOnce(ctx context.Context) []api.ChatHeader {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat list", "dir", s.dir, "error", err)
-		return nil
+		return []api.ChatHeader{}
 	}
 	// Collect valid filenames first.
 	var valid []chatEntry
@@ -58,7 +63,7 @@ func (s *Store) listOnce(ctx context.Context) []api.ChatHeader {
 		valid = append(valid, chatEntry{id: id, path: filepath.Join(s.dir, name)})
 	}
 	if len(valid) == 0 {
-		return nil
+		return []api.ChatHeader{}
 	}
 
 	// Bounded-parallel header reads. Workers read from a shared index;
