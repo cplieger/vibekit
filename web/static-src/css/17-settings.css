@@ -101,39 +101,21 @@
 
 /* --- Settings → Git & forges --- */
 
-.forges-encryption-note {
-  padding: var(--sp-2) var(--sp-3);
+/* Card layout for the forges connection panel rendered by
+ * forge-auth.ts → renderForgesPanel(). The panel mounts on
+ * <div id="forges-panel"> in the Git & forges settings tab. */
+.forge-card {
   border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-text-tertiary);
   border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
-.forges-encryption-note-plain {
-  border-color: color-mix(in srgb, var(--c-warning, var(--c-accent)) 40%, var(--c-border));
-  background: color-mix(in srgb, var(--c-warning, var(--c-accent)) 8%, transparent);
-}
-
-.forges-section {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-bg-primary);
   display: flex; flex-direction: column;
   gap: var(--sp-2);
 }
 
-.forges-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.forges-empty {
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-sm); color: var(--c-text-tertiary);
-  font-style: italic;
-}
-
-.forges-list {
-  display: flex; flex-direction: column;
-  gap: var(--sp-3);
+.forge-card-header {
+  display: flex; align-items: center; gap: var(--sp-2);
 }
 
 .forge-row {
@@ -145,44 +127,8 @@
   gap: var(--sp-3);
 }
 
-.forge-row-draft {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--c-accent) 55%, var(--c-border));
-  background: color-mix(in srgb, var(--c-accent) 4%, transparent);
-}
-
-.forge-row-head {
-  display: flex; align-items: center; gap: var(--sp-2);
-}
-
-.forge-row-name {
-  font-weight: 600; color: var(--c-text-primary);
-}
-
-.forge-row-host {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  padding: 2px var(--sp-2);
-  border-radius: 999px;
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-}
-
-.forge-row-form {
-  display: flex; flex-direction: column;
-  gap: var(--sp-2);
-}
-
-/* Token field: password input + show/hide toggle button. Uses
- * single-dash modifier naming so it reads consistently with the
- * rest of the codebase. */
-.forge-field-token {
-  /* No extra rules; the wrapper exists so the token row can have a
-   * show/hide button inline next to the input without disrupting the
-   * single-column flow of the other .forge-field entries. */
-}
-
+/* Form field labels in the PR creation dialog (unrelated to forges,
+ * just shares a name). */
 .forge-field {
   display: flex; flex-direction: column;
   gap: 4px;
@@ -194,39 +140,8 @@
   font-weight: 500;
 }
 
-.forge-token-row {
-  display: flex; align-items: stretch;
-  gap: var(--sp-1);
-}
-
-:where(.forge-token-row) .tool-form-input {
-  flex: 1;
-  font-family: var(--font-mono);
-}
-
-.forge-reveal-btn {
-  flex-shrink: 0;
-  width: var(--btn-h); min-height: var(--btn-h);
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  color: var(--c-text-secondary);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.forge-reveal-btn:hover {
-  background: var(--c-bg-hover);
-  color: var(--c-text-primary);
-}
-
-.forge-actions {
-  display: flex; flex-wrap: wrap; align-items: center;
-  gap: var(--sp-2);
-  padding-block-start: var(--sp-1);
-}
-
+/* Forge connection status pill — used by pr-panel.ts to surface the
+ * forge-auth state of the currently selected repo. */
 .forge-status {
   font-size: var(--fs-xs);
   padding: 2px var(--sp-2);
@@ -247,15 +162,7 @@
   background: color-mix(in srgb, var(--c-danger, #e66666) 12%, transparent);
 }
 
-/* Device flow + import UI */
-.forge-device-flow {
-  border: 1px dashed var(--c-accent);
-  border-radius: var(--r);
-  padding: var(--sp-3) var(--sp-4);
-  background: color-mix(in srgb, var(--c-accent) 4%, transparent);
-  display: flex; flex-direction: column; gap: var(--sp-2);
-}
-
+/* GitHub OAuth device-flow display: user code + status line. */
 .forge-device-code {
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
@@ -269,63 +176,7 @@
   user-select: all;
 }
 
-.forge-device-instructions { font-size: var(--fs-sm); }
 .forge-device-status { font-size: var(--fs-sm); color: var(--c-text-tertiary); }
-
-.forge-oauth-btn, .forge-import-btn { flex-shrink: 0; }
-
-/* --- Forge status cards --- */
-
-.forge-card {
-  border: 1px solid var(--c-border);
-  border-left: 3px solid var(--c-text-tertiary);
-  border-radius: var(--r);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--c-bg-primary);
-  display: flex; flex-direction: column;
-  gap: var(--sp-2);
-}
-.forge-card-connected { border-left-color: var(--c-accent-2, #66e6bb); }
-.forge-card-error { border-left-color: var(--c-danger, #e66666); }
-
-.forge-card-header {
-  display: flex; align-items: center; gap: var(--sp-2);
-}
-.forge-card-icon { display: inline-flex; color: var(--c-text-secondary); }
-.forge-card-name { font-weight: 600; color: var(--c-text-primary); flex: 1; }
-
-.forge-status-badge {
-  font-size: var(--fs-xs); font-weight: 500;
-  padding: 2px var(--sp-2); border-radius: 999px;
-}
-.forge-status-badge-connected { color: var(--c-accent-2, #66e6bb); }
-.forge-status-badge-error { color: var(--c-danger, #e66666); }
-.forge-status-badge-unknown { color: var(--c-text-tertiary); }
-
-.forge-details {
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-  padding-left: calc(14px + var(--sp-2));
-}
-
-.forge-card-actions {
-  display: flex; gap: var(--sp-2);
-  padding-left: calc(14px + var(--sp-2));
-}
-
-.forge-flash {
-  font-size: var(--fs-xs);
-  padding: 2px var(--sp-2);
-  border-radius: 999px;
-  animation: forge-flash-fade 4s ease-out forwards;
-}
-.forge-flash-ok { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary)); }
-.forge-flash-error { color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary)); }
-
-@keyframes forge-flash-fade {
-  0%, 70% { opacity: 1; }
-  100% { opacity: 0; }
-}
 
 /* --- Unified repo picker --- */
 
@@ -496,6 +347,14 @@
 
 .repo-picker-row-cloning { opacity: 0.6; pointer-events: none; }
 
+.repo-picker-row-clone-btn {
+  /* Compact action affordance on remote-only rows; appears in the
+   * row's right cluster next to the age + state glyph. The base
+   * .btn-small handles padding/border; we just keep its hit target
+   * from disturbing the row body's click semantics. */
+  flex-shrink: 0;
+}
+
 .repo-picker-row-stack {
   display: flex; flex-direction: column;
   gap: 1px;
@@ -544,6 +403,25 @@
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--sp-3);
 }
+
+.git-pr-placeholder {
+  display: flex; align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.git-pr-placeholder-link {
+  flex-shrink: 0;
+  color: var(--c-accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.git-pr-placeholder-link:hover { text-decoration: underline; }
 
 .git-pr-empty {
   font-size: var(--fs-sm);
@@ -786,13 +664,21 @@
 
 .git-ci-panel-link:hover { text-decoration: underline; }
 
-/* --- Empty-state banner (top of git view) --- */
+/* --- Status banner (top of git view) ---
+ * Single banner that surfaces forge auth issues, gh CLI install/login
+ * needs, or the forges-not-connected advisory. Driven by
+ * git-status-banner.ts; replaces the previous separate
+ * .git-forges-banner / .forge-auth-banner / #git-gh-section paths.
+ */
 
-.git-forges-banner {
-  display: flex; align-items: center; justify-content: space-between;
+.git-status-banner {
+  margin-block-end: var(--sp-3);
+}
+
+.git-status-banner-row {
+  display: flex; align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
-  margin-block-end: var(--sp-3);
   border: 1px solid color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
   background: color-mix(in srgb, var(--c-accent) 6%, transparent);
   border-radius: var(--r);
@@ -800,14 +686,109 @@
   color: var(--c-text-secondary);
 }
 
-.git-forges-banner-link {
-  color: var(--c-accent);
-  text-decoration: none;
-  font-weight: 500;
-  flex-shrink: 0;
+/* Forge-auth-failed is the urgent state — paint it warning-ish. */
+.git-status-banner-row[data-state="forge-auth-failed"] {
+  border-color: color-mix(in srgb, var(--c-warning, var(--c-danger, #e66666)) 50%, var(--c-border));
+  background: color-mix(in srgb, var(--c-warning, var(--c-danger, #e66666)) 8%, transparent);
 }
 
-.git-forges-banner-link:hover { text-decoration: underline; }
+.git-status-banner-icon { flex-shrink: 0; font-size: var(--fs-md); }
+
+.git-status-banner-msg { flex: 1; min-width: 0; }
+
+.git-status-banner-cta { flex-shrink: 0; }
+
+.git-status-banner-dismiss {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+
+/* --- Source Control empty state --- */
+
+.git-empty-state {
+  margin-block: var(--sp-6);
+  display: flex; align-items: center; justify-content: center;
+}
+
+.git-empty-state-card {
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-5);
+  text-align: center;
+  max-width: 32rem;
+}
+
+.git-empty-state-icon {
+  color: var(--c-text-tertiary);
+  display: inline-flex;
+}
+
+.git-empty-state-headline {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+}
+
+.git-empty-state-sub {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  line-height: 1.5;
+}
+
+.git-empty-state-cta {
+  margin-block-start: var(--sp-2);
+}
+
+/* --- Overflow menu (popover) --- */
+
+.overflow-menu {
+  z-index: 50;
+  display: flex; flex-direction: column;
+  min-width: 12rem;
+  padding: var(--sp-1);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 25%, transparent);
+}
+
+.overflow-menu-item {
+  display: flex; align-items: center;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--r) - 2px);
+  text-align: start;
+  cursor: pointer;
+}
+
+.overflow-menu-item:hover:not([aria-disabled="true"]) {
+  background: var(--c-bg-hover);
+}
+
+.overflow-menu-item:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -1px;
+}
+
+.overflow-menu-item[aria-disabled="true"],
+.overflow-menu-item:disabled {
+  color: var(--c-text-tertiary);
+  cursor: default;
+}
+
+.overflow-menu-item-danger:not([aria-disabled="true"]) {
+  color: var(--c-danger, #e66666);
+}
+.overflow-menu-item-danger:hover:not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--c-danger, #e66666) 10%, transparent);
+}
 
 .action-bar-inline { padding: 0; margin: 0; }
 

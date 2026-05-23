@@ -1,0 +1,121 @@
+// ---------------------------------------------------------------------------
+// Lightweight popover menu used by the source-control toolbar's
+// overflow "⋯" trigger. No new dependencies — pure DOM and a single
+// outside-click + Escape handler.
+//
+// Items are passed in declaratively so different surfaces can share
+// the component (today: git toolbar; future: repo-picker row menu,
+// PR-row menu).
+// ---------------------------------------------------------------------------
+
+export interface OverflowMenuItem {
+  /** Stable identifier — also used as data-overflow-item attribute. */
+  id: string;
+  label: string;
+  /** When true, render with a danger style. */
+  danger?: boolean;
+  /** When true, the item is rendered as disabled and clicks are
+   *  ignored. */
+  disabled?: boolean;
+  onSelect(): void;
+}
+
+interface OpenedMenu {
+  root: HTMLElement;
+  trigger: HTMLElement;
+  cleanup: () => void;
+}
+
+let opened: OpenedMenu | null = null;
+
+/** Open an overflow menu anchored to `trigger`. Closes any previously
+ *  open menu and installs an outside-click + Escape close. */
+export function openOverflowMenu(
+  trigger: HTMLElement,
+  items: readonly OverflowMenuItem[],
+): void {
+  closeOverflowMenu();
+
+  const root = document.createElement("div");
+  root.className = "overflow-menu";
+  root.setAttribute("role", "menu");
+
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "overflow-menu-item";
+    btn.dataset["overflowItem"] = item.id;
+    btn.setAttribute("role", "menuitem");
+    btn.textContent = item.label;
+    if (item.danger === true) btn.classList.add("overflow-menu-item-danger");
+    if (item.disabled === true) {
+      btn.disabled = true;
+      btn.setAttribute("aria-disabled", "true");
+    }
+    btn.addEventListener("click", () => {
+      if (item.disabled === true) return;
+      closeOverflowMenu();
+      item.onSelect();
+    });
+    root.appendChild(btn);
+  }
+
+  // Position the menu under-right of the trigger so it sits in the
+  // toolbar's typical reading direction. Caller can override by
+  // restyling .overflow-menu in their own CSS file if needed.
+  const rect = trigger.getBoundingClientRect();
+  root.style.position = "fixed";
+  root.style.top = `${rect.bottom + 4}px`;
+  // Prefer right-aligning the menu to the trigger so wider menus
+  // don't escape the right edge of the viewport on smaller screens.
+  root.style.right = `${Math.max(0, window.innerWidth - rect.right)}px`;
+
+  document.body.appendChild(root);
+
+  const onDocumentClick = (e: MouseEvent): void => {
+    const target = e.target as Node | null;
+    if (target === null) return;
+    if (root.contains(target)) return;
+    if (trigger.contains(target)) return;
+    closeOverflowMenu();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closeOverflowMenu();
+    }
+  };
+
+  // Defer outside-click attach to next tick so the click that opened
+  // the menu doesn't immediately close it (the click still bubbles
+  // up to document).
+  setTimeout(() => {
+    document.addEventListener("click", onDocumentClick);
+    document.addEventListener("keydown", onKey);
+  }, 0);
+
+  const cleanup = (): void => {
+    document.removeEventListener("click", onDocumentClick);
+    document.removeEventListener("keydown", onKey);
+    root.remove();
+  };
+
+  opened = { root, trigger, cleanup };
+
+  // Focus the first non-disabled item for keyboard users.
+  const firstEnabled = root.querySelector<HTMLButtonElement>(
+    ".overflow-menu-item:not([aria-disabled='true'])",
+  );
+  firstEnabled?.focus();
+}
+
+/** Close any currently-open overflow menu. No-op if none open. */
+export function closeOverflowMenu(): void {
+  if (opened === null) return;
+  const o = opened;
+  opened = null;
+  o.cleanup();
+}
+
+/** Test seam: report whether a menu is currently open. */
+export function _isOverflowMenuOpen(): boolean { return opened !== null; }

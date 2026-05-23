@@ -142,14 +142,12 @@ class Elements {
   // Git panel (added 2026 audit)
   get gitOutputBar(): HTMLDivElement { return el("git-output-bar"); }
   get gitRepoSection(): HTMLDivElement { return el("git-repo-section"); }
-  get gitCloneSection(): HTMLDivElement { return el("git-clone-section"); }
   get gitStagedSection(): HTMLDivElement { return el("git-staged-section"); }
   get gitStagedList(): HTMLDivElement { return el("git-staged-list"); }
   get gitChangedList(): HTMLDivElement { return el("git-changed-list"); }
   get gitLogList(): HTMLDivElement { return el("git-log-list"); }
-  get gitGhSection(): HTMLElement { return el("git-gh-section"); }
+  get gitRepoBar(): HTMLDivElement { return el("git-repo-bar"); }
   get gitCommitMsg(): HTMLTextAreaElement { return el("git-commit-msg"); }
-  get gitCloneUrl(): HTMLInputElement { return el("git-clone-url"); }
   get gitNewBranch(): HTMLInputElement { return el("git-new-branch"); }
   get gitBranchList(): HTMLDivElement { return el("git-branch-list"); }
   get gitRefreshBtn(): HTMLButtonElement { return el("git-refresh-btn"); }
@@ -159,15 +157,11 @@ class Elements {
   get gitCommitBtn(): HTMLButtonElement { return el("git-commit-btn"); }
   get gitPushBtn(): HTMLButtonElement { return el("git-push-btn"); }
   get gitPullBtn(): HTMLButtonElement { return el("git-pull-btn"); }
-  get gitCloneBtn(): HTMLButtonElement { return el("git-clone-btn"); }
-  get gitCloneToggleBtn(): HTMLButtonElement { return el("git-clone-toggle-btn"); }
-  get gitInitBtn(): HTMLButtonElement { return el("git-init-btn"); }
-  get gitRemoveRepoBtn(): HTMLButtonElement { return el("git-remove-repo-btn"); }
+  get gitOverflowBtn(): HTMLButtonElement { return el("git-overflow-btn"); }
   get gitAiMsgBtn(): HTMLButtonElement { return el("git-ai-msg-btn"); }
   get gitCreateBranchBtn(): HTMLButtonElement { return el("git-create-branch-btn"); }
   get gitStashBtn(): HTMLButtonElement { return el("git-stash-btn"); }
   get gitStashPopBtn(): HTMLButtonElement { return el("git-stash-pop-btn"); }
-  get gitGhAuthBtn(): HTMLButtonElement { return el("git-gh-auth-btn"); }
 
   // Kiro config viewer (list rendered into the Instructions tab)
   get kiroConfigList(): HTMLDivElement { return el("kiro-config-list"); }
@@ -176,6 +170,7 @@ class Elements {
   get prSection(): HTMLElement { return el("git-pr-section"); }
   get prList(): HTMLDivElement { return el("git-pr-list"); }
   get prEmpty(): HTMLElement { return el("git-pr-empty"); }
+  get prPlaceholder(): HTMLElement { return el("git-pr-placeholder"); }
   get prCreateDialog(): HTMLDialogElement { return el("pr-create-dialog"); }
   get prDialogStatus(): HTMLElement { return el("pr-dialog-status"); }
   get prBase(): HTMLInputElement { return el("pr-base"); }

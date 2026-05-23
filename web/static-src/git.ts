@@ -17,6 +17,8 @@ import { gitSkeleton } from "./skeleton.js";
 import { apiGet, apiPost, apiPut } from "./api-client.js";
 import {
   initRepoPicker, getSelectedEntry, onSelectionChange, selectById,
+  openPickerDialog, onRegistryChange, getRegistrySummary,
+  type RegistrySummary,
 } from "./repo-picker.js";
 import { initCIPill, refreshCIPill } from "./pr-checks.js";
 import type { RepoEntry } from "./forge-types.js";
@@ -25,6 +27,14 @@ import {
   renderStashButtons, updateGitBadge,
 } from "./git-render.js";
 import { registerGitCore } from "./git-core.js";
+import {
+  initStatusBanner, setBanner, clearBanner,
+} from "./git-status-banner.js";
+import {
+  initGitEmptyState, showGitEmptyState, hideGitEmptyState,
+} from "./git-empty-state.js";
+import { openOverflowMenu } from "./overflow-menu.js";
+import { withAsyncFeedback } from "./async-button.js";
 import type {
   GitFileEntry, GitStatusData, GitViewState, GitPostResult, GitErrorRule,
 } from "./git-types.js";
@@ -140,18 +150,34 @@ function gitGet(path: string, extra = "", signal?: AbortSignal): Promise<unknown
   return apiGet<unknown>(`${path}${gitRepoParam()}${extra}`, signal);
 }
 
-/** Fire a mutating gitPost, show its output, then refresh status. */
-function mutateAndRefresh(label: string, endpoint: string, body: Record<string, unknown> = {}): void {
+/** Fire a mutating gitPost, show its output, then refresh status.
+ *  Throws on logical failure (server returned an `error` field, or the
+ *  request itself failed) so callers wiring buttons through
+ *  withAsyncFeedback get an error glyph for free. */
+async function mutateAndRefresh(label: string, endpoint: string, body: Record<string, unknown> = {}): Promise<void> {
   gitClearOutput(); gitShowOutput(`${label}...`);
-  gitPost(endpoint, body).then((d) => {
+  try {
+    const d = await gitPost(endpoint, body);
     const raw = d.error ?? d.output ?? "Done";
     const friendly = friendlyGitError(raw);
     gitShowOutput(friendly ?? raw);
     if (friendly !== null && GIT_ERROR_RULES.some(r => r.triggerAuth === true && raw.includes(r.match))) {
-      showForgeAuthBanner();
+      setBanner("forge-auth-failed");
     }
     refreshGitStatus();
-  }).catch(() => { gitShowOutput(`${label} failed`); });
+    if (d.error !== undefined && d.error !== "") {
+      throw new Error(d.error);
+    }
+  } catch (e) {
+    // gitPost itself already mapped most failure shapes into d.error;
+    // a thrown exception here means the request never reached or the
+    // network layer rejected. Surface a friendly line and re-throw so
+    // withAsyncFeedback shows the error glyph.
+    if (!(e instanceof Error) || !String(e.message).startsWith("")) {
+      gitShowOutput(`${label} failed`);
+    }
+    throw e;
+  }
 }
 
 export const GIT_ERROR_RULES: readonly GitErrorRule[] = [
@@ -178,27 +204,6 @@ export function friendlyGitError(text: string): string | null {
 function gitShowOutput(text: string): void { panel.showOutput(text); }
 function gitClearOutput(): void { panel.clearOutput(); }
 
-/** Show a dismissible banner linking to forge settings when auth fails. */
-function showForgeAuthBanner(): void {
-  const existing = document.getElementById("forge-auth-banner");
-  if (existing !== null) return; // already showing
-  const banner = document.createElement("div");
-  banner.id = "forge-auth-banner";
-  banner.className = "forge-auth-banner";
-  banner.innerHTML =
-    '<span>⚠ Forge authentication issue — </span>' +
-    '<button type="button" class="action-pill" data-action="open-forge-settings">Open Settings → Git</button>' +
-    '<button type="button" class="forge-auth-banner-dismiss" aria-label="Dismiss">✕</button>';
-  banner.querySelector("[data-action='open-forge-settings']")!.addEventListener("click", () => {
-    // Navigate to settings git tab
-    document.querySelector<HTMLElement>("[data-tab='settings']")?.click();
-    banner.remove();
-  });
-  banner.querySelector(".forge-auth-banner-dismiss")!.addEventListener("click", () => banner.remove());
-  const gitPanel = document.getElementById("git-panel") ?? document.getElementById("git-section");
-  if (gitPanel !== null) gitPanel.prepend(banner);
-}
-
 export function remoteToWebUrl(remote: string): string {
   let url = remote.replace(/\.git$/, "");
   if (url.startsWith("git@")) url = url.replace(":", "/").replace("git@", "https://");
@@ -213,30 +218,75 @@ export function initGitPanel(): void {
   initRepoPicker();
   initCIPill();
 
-  $.gitRefreshBtn.addEventListener("click", refreshGitStatus);
-  $.gitStageAllBtn.addEventListener("click", () => mutateAndRefresh("Staging", "/api/git/stage", { files: ["."] }));
-  $.gitUnstageAllBtn.addEventListener("click", gitUnstageAll);
-  $.gitDiscardAllBtn.addEventListener("click", gitDiscardAll);
-  $.gitCommitBtn.addEventListener("click", gitCommit);
-  $.gitPushBtn.addEventListener("click", () => {
-    mutateAndRefresh("Pushing", "/api/git/push");
-    // After a push, the forge may have new PR checks; give them a
-    // few seconds to spin up before asking for a fresh summary.
-    setTimeout(() => void refreshCIPill(), 3000);
+  $.gitRefreshBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitRefreshBtn, () => refreshGitStatus()));
+  $.gitStageAllBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitStageAllBtn, () =>
+      mutateAndRefresh("Staging", "/api/git/stage", { files: ["."] })));
+  $.gitUnstageAllBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitUnstageAllBtn, gitUnstageAll));
+  $.gitDiscardAllBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitDiscardAllBtn, gitDiscardAll));
+  $.gitCommitBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitCommitBtn, gitCommit));
+  $.gitPushBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitPushBtn, async () => {
+      await mutateAndRefresh("Pushing", "/api/git/push");
+      // After a push, the forge may have new PR checks; give them a
+      // few seconds to spin up before asking for a fresh summary.
+      setTimeout(() => void refreshCIPill(), 3000);
+    }));
+  $.gitPullBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitPullBtn, () => mutateAndRefresh("Pulling", "/api/git/pull")));
+  $.gitOverflowBtn.addEventListener("click", () => {
+    const key = selectedRepoKey();
+    const isWorkspace = key === "" || key === ".";
+    openOverflowMenu($.gitOverflowBtn, [
+      {
+        id: "reclone",
+        label: "Re-clone…",
+        // Re-clone needs an origin to fetch from, so it's only useful
+        // for non-workspace clones.
+        disabled: isWorkspace,
+        onSelect: () => { gitReclone(); },
+      },
+      {
+        id: "remove",
+        label: "Remove from registry…",
+        danger: true,
+        // Workspace root isn't an entry to remove.
+        disabled: isWorkspace,
+        onSelect: () => { gitRemoveRepo(); },
+      },
+    ]);
   });
-  $.gitPullBtn.addEventListener("click", () => mutateAndRefresh("Pulling", "/api/git/pull"));
-  $.gitCloneBtn.addEventListener("click", gitClone);
-  $.gitCloneToggleBtn.addEventListener("click", gitReclone);
-  $.gitInitBtn.addEventListener("click", () => {
-    $.gitCloneSection.classList.toggle("hidden");
-  });
-  $.gitRemoveRepoBtn.addEventListener("click", gitRemoveRepo);
-  $.gitAiMsgBtn.addEventListener("click", gitAiMessage);
+  $.gitAiMsgBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitAiMsgBtn, gitAiMessage));
   $.gitBranchBtn.addEventListener("click", openBranchModal);
   $.gitCreateBranchBtn.addEventListener("click", gitCreateBranch);
-  $.gitStashBtn.addEventListener("click", () => mutateAndRefresh("Stashing", "/api/git/stash"));
-  $.gitStashPopBtn.addEventListener("click", () => mutateAndRefresh("Popping stash", "/api/git/stash-pop"));
-  $.gitGhAuthBtn.addEventListener("click", gitGhAuth);
+  $.gitStashBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitStashBtn, () => mutateAndRefresh("Stashing", "/api/git/stash")));
+  $.gitStashPopBtn.addEventListener("click", () =>
+    void withAsyncFeedback($.gitStashPopBtn, () => mutateAndRefresh("Popping stash", "/api/git/stash-pop")));
+
+  initStatusBanner({
+    onConnectForge: () => { window.location.assign("/settings/git"); },
+    onAuthenticateGh: () => { void gitGhAuth(); },
+  });
+
+  initGitEmptyState({
+    onConnectForge: () => { window.location.assign("/settings/git"); },
+    onChooseRepo: () => { openPickerDialog(); },
+  });
+
+  // Re-evaluate empty-state variant whenever the registry refreshes
+  // (e.g. user connects a new forge in another tab → forges_changed
+  // SSE → repo-picker refetch → registry summary update). Only acts
+  // when no repo is selected; selection-driven changes flow through
+  // handleRepoSelection.
+  onRegistryChange((_summary: RegistrySummary) => {
+    if (getSelectedEntry() === null) showEmptyStateForCurrentRegistry();
+  });
 
   onSelectionChange((entry) => handleRepoSelection(entry));
 }
@@ -250,16 +300,31 @@ function handleRepoSelection(entry: RepoEntry | null): void {
     panel.viewState = { status: "no-repo" };
     applyNoRepoState();
     $.gitRepoSection.classList.add("hidden");
-    $.gitCloneSection.classList.remove("hidden");
+    showEmptyStateForCurrentRegistry();
     return;
   }
   panel.viewState = { status: "loading", repoKey: key };
   applyRepoState();
-  $.gitCloneSection.classList.add("hidden");
+  hideGitEmptyState();
+  $.gitRepoBar.classList.remove("hidden");
   $.gitRepoSection.classList.remove("hidden");
   $.gitBranchBtn.textContent = entry.local_branch !== undefined && entry.local_branch !== ""
     ? entry.local_branch : "loading...";
   refreshGitStatusQuick();
+}
+
+/** Choose the right empty-state variant based on the picker's
+ *  registry summary and toggle the toolbar+panel visibility to make
+ *  room for it. Called both when selection drops to null and when
+ *  the registry changes while no selection exists. */
+function showEmptyStateForCurrentRegistry(): void {
+  const summary = getRegistrySummary();
+  const variant = summary.forgeConnectedCount === 0 ? "forges-needed" : "pick-or-clone";
+  showGitEmptyState(variant);
+  // The toolbar is irrelevant without a repo and crowds the empty
+  // state.
+  $.gitRepoBar.classList.add("hidden");
+  $.gitRepoSection.classList.add("hidden");
 }
 
 // --- Load / render ---
@@ -288,8 +353,6 @@ export function loadGitRepos(): void {
 function applyNoRepoState(): void {
   $.gitBranchBtn.classList.add("hidden");
   $.gitBranchBtn.textContent = "";
-  $.gitCloneToggleBtn.disabled = true;
-  $.gitRemoveRepoBtn.disabled = true;
   $.gitRefreshBtn.disabled = true;
 }
 
@@ -297,8 +360,6 @@ function applyNoRepoState(): void {
  *  repo-level actions that were disabled by applyNoRepoState. */
 function applyRepoState(): void {
   $.gitBranchBtn.classList.remove("hidden");
-  $.gitCloneToggleBtn.disabled = false;
-  $.gitRemoveRepoBtn.disabled = false;
   $.gitRefreshBtn.disabled = false;
 }
 
@@ -314,11 +375,11 @@ function refreshGitStatusQuick(): void {
   });
 }
 
-export function refreshGitStatus(): void {
+export function refreshGitStatus(): Promise<void> {
   panel.abortPending();
   panel.statusController = new AbortController();
   const { signal } = panel.statusController;
-  void gitGet("/api/git/status", "", signal).then((d) => {
+  return gitGet("/api/git/status", "", signal).then((d) => {
     if (d === null || signal.aborted) return;
     setStatusData(d as GitStatusData);
     renderGitPanel();
@@ -349,66 +410,43 @@ function renderGitPanel(): void {
 
   $.gitStageAllBtn.disabled = unstaged.length === 0;
   $.gitDiscardAllBtn.disabled = unstaged.length === 0;
-  const key = selectedRepoKey();
-  $.gitRemoveRepoBtn.disabled = key === "" || key === ".";
+  // (Re-clone / Remove-from-registry live on the overflow menu and
+  //  derive their disabled state at open-time from selectedRepoKey().)
 
   renderStagedSection(staged);
   renderChangedList(unstaged);
   renderPushPullButtons();
   renderStashButtons();
 
-  $.gitGhSection.classList.toggle("hidden", d.has_gh);
+  if (d.has_gh) clearBanner("gh-cli-missing");
+  else setBanner("gh-cli-missing");
   updateGitBadge();
   loadGitLog();
 }
 
 // --- Actions ---
 
-function gitUnstageAll(): void {
+async function gitUnstageAll(): Promise<void> {
   const staged = (getStatusData()?.files ?? []).filter((f) => f.staged).map((f) => f.path);
   if (staged.length === 0) return;
-  gitPost("/api/git/unstage", { files: staged })
-    .then(() => refreshGitStatus()).catch(() => {});
+  const d = await gitPost("/api/git/unstage", { files: staged });
+  refreshGitStatus();
+  if (d.error !== undefined && d.error !== "") throw new Error(d.error);
 }
 
-function gitCommit(): void {
+async function gitCommit(): Promise<void> {
   const msg = $.gitCommitMsg.value.trim();
   if (msg === "") return;
   gitClearOutput(); gitShowOutput("Committing...");
-  gitPost("/api/git/commit", { message: msg }).then((d) => {
-    gitShowOutput(d.error ?? d.output ?? "Done");
+  const d = await gitPost("/api/git/commit", { message: msg });
+  gitShowOutput(d.error ?? d.output ?? "Done");
+  if (d.error === undefined || d.error === "") {
     $.gitCommitMsg.value = "";
-    refreshGitStatus();
-  }).catch(() => { gitShowOutput("Commit failed"); });
+  }
+  refreshGitStatus();
+  if (d.error !== undefined && d.error !== "") throw new Error(d.error);
 }
 
-function gitClone(): void {
-  const url = $.gitCloneUrl.value.trim();
-  if (url === "") return;
-  panel.abortClone();
-  panel.cloneController = new AbortController();
-  const { signal } = panel.cloneController;
-  gitClearOutput(); gitShowOutput("Cloning...");
-  void apiPost<GitPostResult>("/api/git/clone", { url }, signal).then((d) => {
-    if (signal.aborted) return;
-    const raw = d?.error ?? d?.output ?? (d === null ? "Clone failed" : "Done");
-    const text = String(raw);
-    const needsAuth =
-      GIT_ERROR_RULES.some(r => r.triggerAuth === true && text.includes(r.match));
-    if (needsAuth) {
-      gitShowOutput(
-        "Clone failed: this repo looks private. Run `gh auth login` in the shell below, then retry.",
-      );
-      gitGhAuth();
-    } else {
-      gitShowOutput(text);
-      $.gitCloneUrl.value = "";
-      $.gitCloneSection.classList.add("hidden");
-      // Trigger a registry refresh so the new clone appears in the picker.
-      void apiPost("/api/forges/refresh", {});
-    }
-  });
-}
 
 /** Re-clone the selected repo. Resolves its `origin` URL, nukes the
  *  local copy, and re-fetches. */
@@ -459,37 +497,48 @@ function gitRemoveRepo(): void {
   );
 }
 
-function gitAiMessage(): void {
-  const btn = $.gitAiMsgBtn;
+async function gitAiMessage(): Promise<void> {
   const msg = $.gitCommitMsg;
-  btn.disabled = true;
-  btn.classList.add("btn-loading");
+  const prevPlaceholder = msg.placeholder;
   msg.placeholder = "Generating commit message\u2026";
-  gitPost("/api/git/commit-message", {}).then((d) => {
+  try {
+    const d = await gitPost("/api/git/commit-message", {});
     const text = d.output ?? d.error ?? "";
     if (text !== "") {
       msg.value = text;
       msg.rows = Math.min(10, Math.max(3, text.split("\n").length + 1));
+      msg.placeholder = prevPlaceholder;
     } else {
       msg.placeholder = "Stage changes first";
     }
-  }).catch(() => { msg.placeholder = "Generation failed"; }).finally(() => {
-    btn.disabled = false;
-    btn.classList.remove("btn-loading");
-  });
+    if (d.error !== undefined && d.error !== "") throw new Error(d.error);
+  } catch (e) {
+    msg.placeholder = "Generation failed";
+    throw e;
+  }
 }
 
-function gitDiscardAll(): void {
+function gitDiscardAll(): Promise<void> {
   const unstaged = (getStatusData()?.files ?? []).filter((f) => !f.staged);
-  if (unstaged.length === 0) return;
-  showConfirm(
-    `Discard all ${String(unstaged.length)} changed file(s)? This cannot be undone.`,
-    () => {
-      gitPost("/api/git/discard", { files: unstaged.map((f) => f.path) })
-        .then(() => refreshGitStatus()).catch(() => {});
-    },
-    "Discard",
-  );
+  if (unstaged.length === 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    showConfirm(
+      `Discard all ${String(unstaged.length)} changed file(s)? This cannot be undone.`,
+      () => {
+        gitPost("/api/git/discard", { files: unstaged.map((f) => f.path) })
+          .then((d) => {
+            refreshGitStatus();
+            if (d.error !== undefined && d.error !== "") {
+              reject(new Error(d.error));
+            } else {
+              resolve();
+            }
+          })
+          .catch((e: unknown) => { reject(e instanceof Error ? e : new Error(String(e))); });
+      },
+      "Discard",
+    );
+  });
 }
 
 function loadGitLog(): void {
@@ -600,27 +649,12 @@ function gitCreateBranch(): void {
 
 // --- GitHub CLI auth flow (install gh, then run gh auth login in the shell) ---
 
-function gitGhAuth(): void {
-  const btn = $.gitGhAuthBtn;
-  btn.disabled = true;
-  btn.replaceChildren(spinnerNode(), document.createTextNode("Adding gh to tools..."));
-  void ensureGhInstalled(btn);
-}
-
-function spinnerNode(): HTMLDivElement {
-  const d = document.createElement("div");
-  d.className = "spinner-sm";
-  d.style.display = "inline-block";
-  d.style.verticalAlign = "middle";
-  d.style.marginRight = "6px";
-  return d;
-}
-
-async function ensureGhInstalled(btn: HTMLButtonElement): Promise<void> {
+async function gitGhAuth(): Promise<void> {
+  gitClearOutput();
+  gitShowOutput("Adding gh to tools…");
   const tools = await apiGet<Record<string, Record<string, unknown>>>("/api/tools");
   if (tools === null) {
-    btn.textContent = "Failed";
-    btn.disabled = false;
+    gitShowOutput("Failed to read tools.json");
     return;
   }
   if (tools["binary"]?.["gh"] === undefined) {
@@ -632,15 +666,13 @@ async function ensureGhInstalled(btn: HTMLButtonElement): Promise<void> {
     };
     await apiPut("/api/tools", tools);
   }
-  btn.replaceChildren(spinnerNode(), document.createTextNode("Installing gh (this may take a moment)..."));
+  gitShowOutput("Installing gh (this may take a moment)…");
   const installData = await apiPost<{ error?: string }>("/api/tools/install");
   if (installData === null || installData.error !== undefined) {
-    btn.textContent = "Install failed";
-    btn.disabled = false;
+    gitShowOutput(`Install failed${installData?.error !== undefined ? `: ${installData.error}` : ""}`);
     return;
   }
-  btn.textContent = "Authenticate with gh";
-  btn.disabled = false;
+  gitShowOutput("Running 'gh auth login' in the shell below…");
   document.dispatchEvent(new CustomEvent("shell-run", { detail: "gh auth login" }));
   refreshGitStatus();
 }

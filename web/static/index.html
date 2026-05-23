@@ -537,57 +537,9 @@
           <div class="settings-panel hidden" data-settings-panel="git">
             <p class="settings-panel-intro">Sign in to GitHub, GitLab, Codeberg, or a self-hosted Gitea/Forgejo instance. Your tokens unlock creating pull requests with AI-generated descriptions, listing PRs across every signed-in forge, merge/close actions, and CI status for the branches you're working on. Tokens are stored encrypted on this server; multiple accounts per forge are supported (e.g. personal + work GitHub).</p>
 
-            <div id="forges-encryption-note" class="section-hint forges-encryption-note"></div>
-
-            <section class="page-section forges-section" data-forge-kind="github">
-              <div class="forges-section-head">
-                <h3 class="section-title">GitHub</h3>
-                <button type="button" class="btn-small forges-add-btn" data-add-kind="github">Add account</button>
-              </div>
-              <p class="section-hint">Create a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">fine-grained token</a> with <em>repo</em> and <em>pull requests</em> scopes (or a classic PAT with the <em>repo</em> scope). Paste it below; we store it encrypted on disk.</p>
-              <div class="forges-list" data-forge-list="github"></div>
-              <div class="forges-empty" data-forge-empty="github">No GitHub accounts configured.</div>
-            </section>
-
-            <section class="page-section forges-section" data-forge-kind="gitlab">
-              <div class="forges-section-head">
-                <h3 class="section-title">GitLab</h3>
-                <button type="button" class="btn-small forges-add-btn" data-add-kind="gitlab">Add account</button>
-              </div>
-              <p class="section-hint">Create a <a href="https://gitlab.com/-/user_settings/personal_access_tokens" target="_blank" rel="noopener">personal access token</a> with <em>api</em> scope. Point it at a self-hosted GitLab by changing the host field.</p>
-              <div class="forges-list" data-forge-list="gitlab"></div>
-              <div class="forges-empty" data-forge-empty="gitlab">No GitLab accounts configured.</div>
-            </section>
-
-            <section class="page-section forges-section" data-forge-kind="codeberg">
-              <div class="forges-section-head">
-                <h3 class="section-title">Codeberg</h3>
-                <button type="button" class="btn-small forges-add-btn" data-add-kind="codeberg">Add account</button>
-              </div>
-              <p class="section-hint">Create a <a href="https://codeberg.org/user/settings/applications" target="_blank" rel="noopener">token</a> with <em>repository</em> and <em>issue</em> scopes.</p>
-              <div class="forges-list" data-forge-list="codeberg"></div>
-              <div class="forges-empty" data-forge-empty="codeberg">No Codeberg accounts configured.</div>
-            </section>
-
-            <section class="page-section forges-section" data-forge-kind="gitea">
-              <div class="forges-section-head">
-                <h3 class="section-title">Gitea &amp; Forgejo (self-hosted)</h3>
-                <button type="button" class="btn-small forges-add-btn" data-add-kind="gitea">Add instance</button>
-              </div>
-              <p class="section-hint">Any Gitea-compatible forge you host yourself (Forgejo is supported via the same driver). Host is required; defaults work for codeberg.org above.</p>
-              <div class="forges-list" data-forge-list="gitea"></div>
-              <div class="forges-empty" data-forge-empty="gitea">No self-hosted instances configured.</div>
-            </section>
-
-            <section class="page-section forges-section" data-forge-kind="bitbucket">
-              <div class="forges-section-head">
-                <h3 class="section-title">Bitbucket</h3>
-                <button type="button" class="btn-small forges-add-btn" data-add-kind="bitbucket">Add account</button>
-              </div>
-              <p class="section-hint">Connect your Bitbucket Cloud account via OAuth or add a personal <a href="https://bitbucket.org/account/settings/app-passwords/" target="_blank" rel="noopener">app password</a> with <em>repository</em> read/write permissions.</p>
-              <div class="forges-list" data-forge-list="bitbucket"></div>
-              <div class="forges-empty" data-forge-empty="bitbucket">No Bitbucket accounts configured.</div>
-            </section>
+            <!-- Mount point for the dynamic forges panel; populated by
+                 initForgeAuth() in forge-auth.ts on tab activation. -->
+            <div id="forges-panel"></div>
           </div>
 
         </div>
@@ -597,38 +549,31 @@
       <div id="git-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">Source Control</h2>
-          <div id="git-forges-banner" class="git-forges-banner hidden" role="note">
-            <span>Public repos only. Sign in to a forge to unlock PR creation, merging, and CI status.</span>
-            <a href="/settings/git" class="git-forges-banner-link">Settings → Git</a>
-          </div>
+          <!-- Source-control status banner: at most one of forge-auth-failed,
+               gh-cli-missing, forges-not-connected. Populated by
+               git-status-banner.ts; replaces the previous separate
+               #git-forges-banner static element, the dynamically-prepended
+               #forge-auth-banner from git.ts, and the gh button section. -->
+          <div id="git-status-banner" class="git-status-banner hidden" role="status" aria-live="polite"></div>
+          <!-- Empty-state mount: rendered by git-empty-state.ts when no
+               repo is selected. Two variants: forges-needed (no forge
+               connected) and pick-or-clone (forge connected, no repo
+               picked yet). When visible, the toolbar + git-repo-section
+               below stay hidden. -->
+          <div id="git-empty-state" class="git-empty-state hidden"></div>
           <!-- Repo selector + repo-level actions -->
-          <div class="git-repo-bar" data-repo-picker>
+          <div id="git-repo-bar" class="git-repo-bar" data-repo-picker>
             <button type="button" id="git-repo-trigger" class="repo-picker-trigger" data-repo-picker-trigger aria-haspopup="dialog" aria-label="Choose a repository">
               <span class="repo-picker-trigger-empty">Choose a repository</span>
               <span class="repo-picker-chevron" aria-hidden="true"></span>
             </button>
             <button type="button" id="git-branch-btn" class="git-branch-btn" data-tooltip="Switch branch" aria-label="Switch branch"></button>
-            <button type="button" id="git-clone-toggle-btn" class="git-action-btn" data-tooltip="Re-clone selected repo (discards local copy)" aria-label="Re-clone selected repo (discards local copy)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><circle cx="12" cy="13" r="2"/><path d="M12 15v5"/></svg>
+            <button type="button" id="git-overflow-btn" class="git-action-btn" data-tooltip="More repo actions" aria-label="More repo actions" aria-haspopup="menu">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
             </button>
-            <button type="button" id="git-init-btn" class="git-action-btn" data-tooltip="Add external repository" aria-label="Add external repository">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-            <button type="button" id="git-remove-repo-btn" class="git-action-btn" data-tooltip="Remove repository" aria-label="Remove repository">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-            </button>
-            <button type="button" id="git-refresh-btn" class="git-action-btn" data-tooltip="Refresh" aria-label="Refresh">
+            <button type="button" id="git-refresh-btn" class="git-action-btn" data-tooltip="Refresh status" aria-label="Refresh status">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
             </button>
-          </div>
-          <!-- Add external repo (URL input) -->
-          <div id="git-clone-section" class="hidden">
-            <div class="git-clone-row">
-              <input id="git-clone-url" class="tool-form-input" type="text"
-                aria-label="Repository URL"
-                placeholder="https://github.com/user/repo.git">
-              <button type="button" id="git-clone-btn" class="btn-small"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/><path d="M12 8v6m-3-3 3 3 3-3"/></svg> Add</button>
-            </div>
           </div>
           <!-- Git output (rolling last line, click for full) -->
           <div id="git-output-bar" class="git-output-bar hidden"></div>
@@ -668,10 +613,15 @@
               <div class="git-section-header">
               <h3 class="section-title">Changes</h3>
             </div>
-            <div class="action-bar">
+            <div class="action-bar action-bar-local" aria-label="Local changes actions">
               <button type="button" id="git-stage-all-btn" class="action-pill" data-tooltip="Stage all" aria-label="Stage all">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               </button>
+              <button type="button" id="git-discard-all-btn" class="action-pill git-discard-btn" data-tooltip="Discard all" aria-label="Discard all">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+              </button>
+            </div>
+            <div class="action-bar action-bar-sync" aria-label="Sync actions">
               <button type="button" id="git-pull-btn" class="action-pill" data-tooltip="Pull" aria-label="Pull" disabled>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
               </button>
@@ -681,20 +631,19 @@
               <button type="button" id="git-stash-pop-btn" class="action-pill" data-tooltip="Pop stash" aria-label="Pop stash" disabled>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8V5a2 2 0 00-2-2H5a2 2 0 00-2 2v3"/><path d="M21 16v3a2 2 0 01-2 2H5a2 2 0 01-2-2v-3"/><path d="M12 8v8M8 12l4 4 4-4"/></svg>
               </button>
-              <button type="button" id="git-discard-all-btn" class="action-pill git-discard-btn" data-tooltip="Discard all" aria-label="Discard all">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-              </button>
             </div>
             <div id="git-changed-list" class="git-file-list"></div>
-            <!-- gh auth -->
-            <div id="git-gh-section" class="hidden">
-                  <button type="button" id="git-gh-auth-btn" class="btn-small">Authenticate with gh</button>
-            </div>
-            <!-- PR panel: list + create for the selected repo's forge. Hidden when no credential is attached. -->
+            <!-- PR panel: list + create for the selected repo's forge.
+                 When the active repo has no forge credential, a small
+                 placeholder takes over inside the same section. -->
             <div id="git-pr-section" class="git-pr-section hidden">
               <div class="git-section-header git-pr-section-header">
                 <h3 class="section-title">Pull requests</h3>
                 <button type="button" id="git-pr-new-btn" class="btn-small btn-primary">New pull request</button>
+              </div>
+              <div id="git-pr-placeholder" class="git-pr-placeholder hidden">
+                <span>No forge connected for this repo. Connect one to create and review pull requests.</span>
+                <a href="/settings/git" class="git-pr-placeholder-link">Settings → Git</a>
               </div>
               <div id="git-pr-empty" class="git-empty git-pr-empty hidden">No open pull requests.</div>
               <div id="git-pr-list" class="git-pr-list"></div>

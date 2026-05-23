@@ -20,6 +20,8 @@ import { relativeTime } from "./files-shared.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { RepoEntry, ForgeKind } from "./forge-types.js";
 import { ICON_CHEVRON_DOWN_SM, iconEl } from "./icons.js";
+import { setBanner, clearBanner } from "./git-status-banner.js";
+import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
 interface ForgesListResponse { forges: ConfiguredForge[] }
@@ -40,10 +42,40 @@ class RepoPickerController {
   orgFilter = "";
   refetchController: AbortController | null = null;
   readonly selectionListeners = new Set<(e: RepoEntry | null) => void>();
+  readonly registryListeners = new Set<(s: RegistrySummary) => void>();
+  forgeConnectedCount = 0;
   initialized = false;
 }
 
 const ctrl = new RepoPickerController();
+
+/** Snapshot of the current registry, fired by onRegistryChange after
+ *  every successful refetch. Lets callers like the git empty-state
+ *  component decide which variant to show without re-fetching the
+ *  forges list themselves. */
+export interface RegistrySummary {
+  /** Number of configured forges that returned `connected: true`. */
+  forgeConnectedCount: number;
+  /** Total entries in the unified registry (local + remote). */
+  entryCount: number;
+  /** Number of entries that are local clones (have local_path). */
+  localRepoCount: number;
+}
+
+function buildRegistrySummary(): RegistrySummary {
+  let local = 0;
+  for (const e of ctrl.entries) if (e.is_local === true) local++;
+  return {
+    forgeConnectedCount: ctrl.forgeConnectedCount,
+    entryCount: ctrl.entries.length,
+    localRepoCount: local,
+  };
+}
+
+function notifyRegistryListeners(): void {
+  const summary = buildRegistrySummary();
+  for (const fn of ctrl.registryListeners) fn(summary);
+}
 
 // --- Public API ---
 
@@ -74,6 +106,22 @@ export function onSelectionChange(fn: (e: RepoEntry | null) => void): () => void
   return (): void => { ctrl.selectionListeners.delete(fn); };
 }
 
+/** Subscribe to registry changes (after every refetch). Fires once
+ *  immediately with the current summary so callers don't need to
+ *  bootstrap separately. Returns an unsubscribe function. */
+export function onRegistryChange(fn: (s: RegistrySummary) => void): () => void {
+  ctrl.registryListeners.add(fn);
+  fn(buildRegistrySummary());
+  return (): void => { ctrl.registryListeners.delete(fn); };
+}
+
+/** Return a snapshot of the current registry — entries, forge count,
+ *  local-clone count. Synchronous; caller may also subscribe via
+ *  onRegistryChange to be notified of future updates. */
+export function getRegistrySummary(): RegistrySummary {
+  return buildRegistrySummary();
+}
+
 /** Programmatically set the selection by entry id. No-op if the id
  *  isn't in the current cache (e.g. a saved selection from a previous
  *  session whose repo has since been removed). */
@@ -86,7 +134,7 @@ export function selectById(id: string): void {
 /** Open the picker dialog. Exposed so other modules (e.g. an empty
  *  state "Choose a repo" button in the git panel) can trigger the
  *  same UI. */
-function openPickerDialog(): void {
+export function openPickerDialog(): void {
   const dlg = getDialog();
   if (dlg === null) return;
   // Reset filters so the user sees the full list every time they open
@@ -132,6 +180,7 @@ async function refetch(): Promise<void> {
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
   const forges = (forgesRes?.forges ?? []).filter((f) => f.connected);
+  ctrl.forgeConnectedCount = forges.length;
 
   // 3. Remote repos per forge (parallel).
   const remoteByForge = await Promise.all(
@@ -221,16 +270,24 @@ async function refetch(): Promise<void> {
   renderTrigger();
   renderList();
   renderChips();
+  notifyRegistryListeners();
 }
 
-/** Show or hide the "sign in to unlock PRs" banner based on whether
- *  any registry entry carries a forge credential. Pure DOM mutation;
- *  called after every refetch. */
+/** Push or clear the "no forge connected" banner state based on
+ *  whether any registry entry carries a forge credential. Source of
+ *  truth for the forges-not-connected banner key; the unified
+ *  git-status-banner module decides priority + render. */
 function updateForgesBanner(): void {
-  const banner = document.getElementById("git-forges-banner");
-  if (banner === null) return;
   const anyCredentialled = ctrl.entries.some((e) => e.forge_id !== undefined && e.forge_id !== "");
-  banner.classList.toggle("hidden", anyCredentialled || ctrl.entries.length === 0);
+  // No entries at all → suppress; the empty-state UI (PR 2) will own
+  // that state. We only fire forges-not-connected when the user has
+  // local clones but no forge auth, since that's the case where PR /
+  // CI features go missing.
+  if (anyCredentialled || ctrl.entries.length === 0) {
+    clearBanner("forges-not-connected");
+  } else {
+    setBanner("forges-not-connected");
+  }
 }
 
 function defaultSelection(): RepoEntry | null {
@@ -419,12 +476,31 @@ function buildRow(e: RepoEntry): HTMLElement {
   }
   const glyph = stateGlyph(e);
   if (glyph !== null) right.appendChild(glyph);
+
+  // Inline Clone affordance for remote-only entries. The row body is
+  // still clickable as a fallback, but a visible button is the primary
+  // path so users don't have to guess that "click row" means "clone".
+  if (e.is_local !== true && typeof e.clone_url === "string" && e.clone_url !== "") {
+    const cloneBtn = document.createElement("button");
+    cloneBtn.type = "button";
+    cloneBtn.className = "btn-small repo-picker-row-clone-btn";
+    cloneBtn.textContent = "Clone";
+    cloneBtn.dataset["repoPickerCloneBtn"] = e.id;
+    cloneBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void withAsyncFeedback(cloneBtn, () => cloneAndSelect(e, row), { keepLabel: true });
+    });
+    right.appendChild(cloneBtn);
+  }
   row.appendChild(right);
 
   row.addEventListener("click", () => {
     if (e.is_local !== true && e.clone_url !== undefined) {
-      // Remote-only: clone into workspace before selecting.
-      void cloneAndSelect(e, row);
+      // Remote-only: clone into workspace before selecting. Re-uses
+      // the row body as the visible target for feedback (so the
+      // existing repo-picker-row-cloning class still applies); the
+      // dedicated Clone button gets its own withAsyncFeedback above.
+      void cloneAndSelect(e, row).catch(() => undefined);
       return;
     }
     pick(e);
@@ -447,20 +523,30 @@ async function cloneAndSelect(e: RepoEntry, row: HTMLElement): Promise<void> {
   if (e.clone_url === undefined || e.clone_url === "") {
     return;
   }
+  // Guard: if a clone is already in flight for this row, ignore the
+  // duplicate trigger (e.g. user clicks both the Clone button and the
+  // row body, or clicks Clone twice rapidly).
+  if (row.classList.contains("repo-picker-row-cloning")) return;
   row.classList.add("repo-picker-row-cloning");
   const orig = row.querySelector<HTMLSpanElement>(".repo-picker-row-age");
   if (orig !== null) orig.textContent = "Cloning…";
   // Clone via the local git endpoint (credential helper is now
   // configured globally by each forge CLI's setup-git, so plain
   // git clone works for private repos).
-  const res = await apiPost<{ output?: string; error?: string }>(
-    `/api/git/clone`,
-    { url: e.clone_url },
-  );
-  row.classList.remove("repo-picker-row-cloning");
+  let res: { output?: string; error?: string } | null;
+  try {
+    res = await apiPost<{ output?: string; error?: string }>(
+      `/api/git/clone`,
+      { url: e.clone_url },
+    );
+  } finally {
+    row.classList.remove("repo-picker-row-cloning");
+  }
   if (res === null || (res.error !== undefined && res.error !== "")) {
     if (orig !== null) orig.textContent = "Clone failed";
-    return;
+    // Surface as a thrown error so withAsyncFeedback can show the
+    // error glyph on the button that triggered this.
+    throw new Error(res?.error ?? "clone failed");
   }
   // Refetch so the entry is re-rendered as cloned, then select it.
   await refetch();
@@ -536,3 +622,5 @@ export function __testSetEntries(entries: RepoEntry[]): void { ctrl.entries = en
 export function __testSetSearch(s: string): void { ctrl.search = s; }
 /** @internal Set controller orgFilter for testing filtered(). */
 export function __testSetOrgFilter(f: string): void { ctrl.orgFilter = f; }
+/** @internal Build a single row for testing the Clone button affordance. */
+export function __testBuildRow(e: RepoEntry): HTMLElement { return buildRow(e); }

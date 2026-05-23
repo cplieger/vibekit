@@ -454,6 +454,13 @@
 
 .action-bar-spread { justify-content: space-between; }
 
+/* When local + sync action bars sit back-to-back under a single
+ * section header (Changes), drop the bottom padding of the first
+ * and the top padding of the second so they read as one logical
+ * cluster split into two semantic groups. */
+.action-bar-local + .action-bar-sync { padding-block-start: 0; }
+.action-bar-local { padding-block-end: var(--sp-1); }
+
 /* Shared button base for action-pill, btn, btn-save, btn-small */
 .action-pill, .btn, .btn-save, .btn-small {
   display: flex; align-items: center; justify-content: center;
@@ -566,21 +573,6 @@
 .git-commit-btn {
   display: flex; align-items: center; gap: var(--sp-1);
   align-self: flex-start;
-}
-
-.git-clone-row {
-  display: flex; gap: var(--sp-2); align-items: stretch;
-  margin-block-end: var(--sp-2);
-}
-
-:where(.git-clone-row) .tool-form-input {
-  flex: 1;
-  min-height: var(--btn-h);
-
-  /* Match .btn-small height so the input and the "Add" button share a
-   * single visual row. align-items: stretch alone isn't enough because
-   * the button has fixed min-height from .btn-small; without this the
-   * input's default line-height would leave it shorter. */
 }
 
 .git-loading {

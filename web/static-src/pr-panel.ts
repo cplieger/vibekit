@@ -71,7 +71,26 @@ class PRPanelController {
   }
 
   private renderFrame(): void {
-    $.prSection.classList.toggle("hidden", !this.shouldShow(this.activeEntry));
+    const entry = this.activeEntry;
+    if (entry === null) {
+      // No repo selected — hide the section entirely. The empty-state
+      // component is what fills the page in this state.
+      $.prSection.classList.add("hidden");
+      return;
+    }
+    // A repo is selected: keep the section visible so users
+    // discover that PR creation is a vibekit feature, even when no
+    // forge is configured for this repo.
+    $.prSection.classList.remove("hidden");
+    const hasCred = this.shouldShow(entry);
+    $.prPlaceholder.classList.toggle("hidden", hasCred);
+    $.prNewBtn.classList.toggle("hidden", !hasCred);
+    if (!hasCred) {
+      // Without a credential we can't render a PR list; clear any
+      // stale state so switching repos doesn't bleed through.
+      $.prList.replaceChildren();
+      $.prEmpty.classList.add("hidden");
+    }
   }
 
   // --- List ---
