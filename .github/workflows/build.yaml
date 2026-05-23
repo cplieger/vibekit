@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - 'Dockerfile'
-      - 'go.mod'
-      - '*.go'
-      - 'internal/**'
+      - 'web/**'
+      - '!web/go.sum'
+      - 'entrypoint.sh'
+      - 'setup-tools.sh'
+      - 'tools.json'
   workflow_dispatch:
 
 concurrency:
