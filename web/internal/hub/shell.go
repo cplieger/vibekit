@@ -235,7 +235,7 @@ func handleShellControl(sm *ShellManager, sess *shellSession, ctrl *controlMsg) 
 		if !ok {
 			return
 		}
-		if err := signalShellGroup(sess.cmd, sig); err != nil {
+		if err := signalShellGroup(sess.cmd, sess.ptmx, sig); err != nil {
 			slog.Error("shell signal", "error", err, "signal", ctrl.Name)
 		}
 	case "kill":

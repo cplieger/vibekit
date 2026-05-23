@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"testing"
 )
@@ -89,14 +90,25 @@ func TestStartShell_Unix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("PTY not supported on windows")
 	}
+	// If /dev/ptmx isn't openable in this environment (some hardened
+	// CI sandboxes, WSL without /dev/pts, etc.) the PTY layer will
+	// fail for environmental reasons we can't control. Detect that
+	// here so we only skip in genuinely PTY-less sandboxes; if PTY
+	// works, a nil session below is a real regression (e.g. the
+	// Setpgid+Setsid EPERM bug — see TestSetShellProcAttr_PTYStart).
+	f, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("PTY unavailable in this environment: %v", err)
+	}
+	_ = f.Close()
+
 	h, _, _ := newTestHub()
 	h.shellMgr = NewShellManager(context.Background(), "/tmp")
 	sess := h.shellMgr.start()
 	if sess == nil {
-		// PTY may fail in restricted environments (CI, WSL, containers
-		// without /dev/ptmx). The scrollback and signal tests cover the
-		// logic; this test is for integration only.
-		t.Skip("startShell returned nil (PTY unavailable in this environment)")
+		t.Fatal("h.shellMgr.start() returned nil despite /dev/ptmx being " +
+			"available; check the server log for a 'shell start' error " +
+			"(commonly the Setpgid+Setsid EPERM regression)")
 	}
 	defer h.shellMgr.kill()
 

@@ -4,6 +4,7 @@ package hub
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -13,7 +14,7 @@ import (
 func setShellProcAttr(_ *exec.Cmd) {}
 
 // signalShellGroup is unsupported on non-unix platforms.
-func signalShellGroup(_ *exec.Cmd, _ syscall.Signal) error {
+func signalShellGroup(_ *exec.Cmd, _ *os.File, _ syscall.Signal) error {
 	return errors.New("shell signals not supported on this platform")
 }
 
