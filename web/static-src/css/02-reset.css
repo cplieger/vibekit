@@ -5,6 +5,13 @@
 
 @layer reset {
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* The universal `*` rule above wipes the UA stylesheet's
+   `dialog { margin: auto }` centering for modal dialogs, so without
+   this rule every showModal()-opened dialog renders anchored to the
+   top-left of the viewport. `:modal` only matches dialogs in the
+   top layer (i.e. shown via showModal), preserving author-positioned
+   non-modal popovers untouched. */
+dialog:modal { margin: auto; }
 ::selection { background: color-mix(in srgb, var(--c-accent) 25%, transparent); color: var(--c-text-primary); }
 :where(input, textarea, select) { caret-color: var(--c-accent); }
 :is(.steering-textarea, .auth-input, [id="prompt-input"], .modal-input, .page-textarea, .tool-form-input, .tool-form-select, .git-commit-input):focus { outline: none; border-color: var(--c-accent); }
