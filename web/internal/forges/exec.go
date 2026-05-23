@@ -56,6 +56,15 @@ func (e *CmdError) Unwrap() error { return e.Err }
 // Returns a *CmdError for non-zero exit. Stderr is always normalized
 // for inspection by callers (e.g. login.go inspecting auth errors).
 func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string, args ...string) (stdout []byte, err error) {
+	return runCmdEnv(ctx, timeout, stdin, nil, cli, args...)
+}
+
+// runCmdEnv is runCmd with extra environment variables merged into
+// the subprocess env. Used by providers that prefer env-var host
+// configuration over CLI flags — e.g. gh's GH_HOST works for every
+// subcommand, while `--hostname` is rejected by `gh repo list`,
+// `gh issue list`, and others.
+func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEnv []string, cli string, args ...string) (stdout []byte, err error) {
 	if _, lookErr := exec.LookPath(cli); lookErr != nil {
 		return nil, fmt.Errorf("%w: %s not on PATH", ErrNotInstalled, cli)
 	}
@@ -66,6 +75,9 @@ func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string
 	}
 	cmd := exec.CommandContext(ctx, cli, args...) //nolint:gosec // G702: user-initiated git command
 	cmd.Env = sanitizeEnv(os.Environ())
+	if len(extraEnv) > 0 {
+		cmd.Env = append(cmd.Env, extraEnv...)
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -99,7 +111,12 @@ func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string
 
 // runJSON executes a CLI command and parses its stdout as JSON into v.
 func runJSON(ctx context.Context, timeout time.Duration, v any, cli string, args ...string) error {
-	out, err := runCmd(ctx, timeout, nil, cli, args...)
+	return runJSONEnv(ctx, timeout, nil, v, cli, args...)
+}
+
+// runJSONEnv is runJSON with extra environment variables merged in.
+func runJSONEnv(ctx context.Context, timeout time.Duration, extraEnv []string, v any, cli string, args ...string) error {
+	out, err := runCmdEnv(ctx, timeout, nil, extraEnv, cli, args...)
 	if err != nil {
 		return err
 	}

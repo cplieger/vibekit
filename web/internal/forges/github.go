@@ -31,10 +31,20 @@ func newGitHub(host string) *githubProvider {
 func (p *githubProvider) Kind() Kind   { return KindGitHub }
 func (p *githubProvider) Host() string { return p.host }
 
-// withHost prepends the --hostname flag to args so commands target
-// the right gh-configured host. Required for GitHub Enterprise.
+// withHost is a pass-through that's kept as a single seam for any
+// future per-host flag plumbing. The actual host targeting happens
+// via envHost (GH_HOST environment variable) — gh's --hostname flag
+// is per-subcommand and not supported by `gh repo list`,
+// `gh issue list`, and others, so we drove the consistency at the
+// env-var layer instead.
 func (p *githubProvider) withHost(args ...string) []string {
-	return append([]string{flagHostname, p.host}, args...)
+	return args
+}
+
+// envHost returns the env-var pair that targets gh at p.host. Apply
+// to every gh subprocess via runJSONEnv / runCmdEnv.
+func (p *githubProvider) envHost() []string {
+	return []string{"GH_HOST=" + p.host}
 }
 
 // Whoami queries gh's auth status to confirm login + return the user.
@@ -49,8 +59,8 @@ func (p *githubProvider) Whoami(ctx context.Context) (*User, error) {
 		Email   string `json:"email"`
 		HTMLURL string `json:"html_url"`
 	}
-	args := []string{"api", fieldUser, flagHostname, p.host}
-	if err := runJSON(ctx, CmdTimeout, &raw, "gh", args...); err != nil {
+	args := []string{"api", fieldUser}
+	if err := runJSONEnv(ctx, CmdTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	return &User{
@@ -78,7 +88,7 @@ func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 		IsArchived       bool                   `json:"isArchived"`
 		IsFork           bool                   `json:"isFork"`
 	}
-	if err := runJSON(ctx, ListTimeout, &raw, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	repos := make([]Repo, 0, len(raw))
@@ -122,7 +132,7 @@ func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 		Number      int                    `json:"number"`
 		IsDraft     bool                   `json:"isDraft"`
 	}
-	if err := runJSON(ctx, ListTimeout, &raw, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	prs := make([]PR, 0, len(raw))
@@ -161,7 +171,7 @@ func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *Crea
 	for _, lbl := range params.Labels {
 		args = append(args, "--label", lbl)
 	}
-	out, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +202,7 @@ func (p *githubProvider) viewPR(ctx context.Context, repo string, number int) (*
 		Number      int                    `json:"number"`
 		IsDraft     bool                   `json:"isDraft"`
 	}
-	if err := runJSON(ctx, CmdTimeout, &r, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, CmdTimeout, p.envHost(), &r, "gh", args...); err != nil {
 		return nil, err
 	}
 	return &PR{
@@ -222,14 +232,14 @@ func (p *githubProvider) MergePR(ctx context.Context, repo string, number int, m
 	default:
 		args = append(args, "--merge")
 	}
-	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	_, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	return err
 }
 
 // ClosePR closes an open PR without merging.
 func (p *githubProvider) ClosePR(ctx context.Context, repo string, number int) error {
 	args := p.withHost("pr", stateClose, strconv.Itoa(number), "--repo", repo)
-	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	_, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	return err
 }
 
@@ -251,7 +261,7 @@ func (p *githubProvider) ListIssues(ctx context.Context, repo, state string) ([]
 		Labels    []struct{ Name string } `json:"labels"`
 		Number    int                     `json:"number"`
 	}
-	if err := runJSON(ctx, ListTimeout, &raw, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	issues := make([]Issue, 0, len(raw))
@@ -286,7 +296,7 @@ func (p *githubProvider) CreateIssue(ctx context.Context, repo string, params Cr
 	for _, lbl := range params.Labels {
 		args = append(args, "--label", lbl)
 	}
-	out, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +322,7 @@ func (p *githubProvider) viewIssue(ctx context.Context, repo string, number int)
 		Labels    []struct{ Name string } `json:"labels"`
 		Number    int                     `json:"number"`
 	}
-	if err := runJSON(ctx, CmdTimeout, &r, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, CmdTimeout, p.envHost(), &r, "gh", args...); err != nil {
 		return nil, err
 	}
 	labels := make([]string, 0, len(r.Labels))
@@ -335,7 +345,7 @@ func (p *githubProvider) viewIssue(ctx context.Context, repo string, number int)
 // CloseIssue closes an open issue.
 func (p *githubProvider) CloseIssue(ctx context.Context, repo string, number int) error {
 	args := p.withHost("issue", stateClose, strconv.Itoa(number), "--repo", repo)
-	_, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	_, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	return err
 }
 
@@ -347,8 +357,8 @@ func (p *githubProvider) CommitStatus(ctx context.Context, repo, ref string) ([]
 		return nil, err
 	}
 	endpoint := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs", owner, name, ref)
-	args := []string{"api", endpoint, flagHostname, p.host}
-	out, err := runCmd(ctx, ListTimeout, nil, "gh", args...)
+	args := []string{"api", endpoint}
+	out, err := runCmdEnv(ctx, ListTimeout, nil, p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +396,7 @@ func (p *githubProvider) ListReleases(ctx context.Context, repo string) ([]Relea
 		IsDraft      bool   `json:"isDraft"`
 		IsPrerelease bool   `json:"isPrerelease"`
 	}
-	if err := runJSON(ctx, ListTimeout, &raw, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	releases := make([]Release, 0, len(raw))
@@ -421,7 +431,7 @@ func (p *githubProvider) CreateRelease(ctx context.Context, repo string, params 
 	if params.Prerelease {
 		args = append(args, "--prerelease")
 	}
-	out, err := runCmd(ctx, CmdTimeout, nil, "gh", args...)
+	out, err := runCmdEnv(ctx, CmdTimeout, nil, p.envHost(), "gh", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +455,7 @@ func (p *githubProvider) ListLabels(ctx context.Context, repo string) ([]Label, 
 		Color       string `json:"color"`
 		Description string `json:"description"`
 	}
-	if err := runJSON(ctx, ListTimeout, &raw, "gh", args...); err != nil {
+	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
 	}
 	labels := make([]Label, 0, len(raw))
