@@ -6,7 +6,8 @@
 // singleton instance, preserving the existing public API.
 // ---------------------------------------------------------------------------
 
-import { closeModal, showConfirm, RollingOutput } from "./modals.js";
+import { closeModal, RollingOutput } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE, ICON_REFRESH } from "./icons.js";
 import { apiGet } from "./api-client.js";
@@ -180,11 +181,13 @@ class ToolsManager {
     delBtn.className = "list-row-btn"; delBtn.setAttribute("data-tooltip", "Delete");
     delBtn.innerHTML = ICON_CLOSE;
     delBtn.addEventListener("click", () => {
-      showConfirm(`Remove ${name}?`, () => {
+      void (async () => {
+        const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
+        if (!ok) return;
         delete this.toolsData[sec]![name];
         this.saveToolsData();
         this.renderToolsList();
-      });
+      })();
     });
     actions.append(editBtn, delBtn);
     return actions;

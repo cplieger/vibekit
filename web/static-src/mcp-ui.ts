@@ -4,7 +4,8 @@
 
 import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { closeModal, showConfirm } from "./modals.js";
+import { closeModal } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
   type Server, type RuntimeStatus, type RuntimeState,
@@ -216,16 +217,18 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("aria-label", `Remove ${s.name}`);
   btn.innerHTML = ICON_TRASH_14;
   btn.addEventListener("click", () => {
-    showConfirm(
-      `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
-      () => {
-        const row = btn.closest<HTMLDivElement>(".mcp-row");
-        void deleteServer.dispatch({ id: s.id, row: row! }).then((r) => {
-          if (r !== null) void refetchServers();
-        });
-      },
-      "Remove",
-    );
+    void (async () => {
+      const ok = await confirmDialog(
+        `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
+        "Remove",
+        "destructive",
+      );
+      if (!ok) return;
+      const row = btn.closest<HTMLDivElement>(".mcp-row");
+      void deleteServer.dispatch({ id: s.id, row: row! }).then((r) => {
+        if (r !== null) void refetchServers();
+      });
+    })();
   });
   return btn;
 }

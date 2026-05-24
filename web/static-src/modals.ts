@@ -86,25 +86,10 @@ export function closeTopModal(): boolean {
   return true;
 }
 
-export function showConfirm(text: string, onOk: () => void, okLabel?: string): void {
-  const textEl = el<HTMLElement>("confirm-text");
-  const cancelBtn = el<HTMLButtonElement>("confirm-cancel");
-  const okBtn = el<HTMLButtonElement>("confirm-ok");
-  textEl.textContent = text;
-
-  // Clone-replace buttons to strip any stale listeners from a
-  // previous showConfirm that was dismissed via Escape (which
-  // bypasses the per-call cleanup closure).
-  const freshCancel = cancelBtn.cloneNode(true) as HTMLButtonElement;
-  cancelBtn.replaceWith(freshCancel);
-  const freshOk = okBtn.cloneNode(true) as HTMLButtonElement;
-  freshOk.textContent = okLabel ?? "Remove";
-  okBtn.replaceWith(freshOk);
-
-  $.confirmModal.classList.remove("hidden");
-  freshCancel.addEventListener("click", () => closeModal($.confirmModal));
-  freshOk.addEventListener("click", () => { closeModal($.confirmModal); onOk(); });
-}
+// showConfirm removed — use confirm() from "./confirm.js" instead.
+// The static #confirm-modal element in index.html is kept to avoid
+// touching markup; if no callers reappear, it can be deleted in a
+// follow-up. confirm.ts creates its own <dialog> on demand.
 
 /** Active login-poll abort controller; aborted when the modal is dismissed. */
 let loginPollAbort: AbortController | null = null;

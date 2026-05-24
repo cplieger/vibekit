@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { showConfirm } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
@@ -131,7 +131,10 @@ function confirmStopEditing(): void {
   const state = fileStates.get(getActiveFilePathInternal());
   if (state === undefined) return;
   if (state.current !== state.original) {
-    showConfirm("Discard unsaved changes?", () => stopEditing(state), "Discard");
+    void (async () => {
+      const ok = await confirmDialog("Discard unsaved changes?", "Discard", "destructive");
+      if (ok) stopEditing(state);
+    })();
   } else {
     stopEditing(state);
   }

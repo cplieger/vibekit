@@ -10,7 +10,7 @@ import { $, maybeViewTransition } from "./dom.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
-import { showConfirm } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import * as uiState from "./ui-state.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { pushRoute } from "./router.js";
@@ -474,12 +474,14 @@ function deleteSelected(): void {
   if (state.selected.size === 0) return;
   const names = [...state.selected];
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`;
-  showConfirm(`Delete ${label}? This cannot be undone.`, () => {
+  void (async () => {
+    const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
+    if (!ok) return;
     void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then(() => {
       state.deselectAll();
       setTimeout(loadDir, 200);
     });
-  }, "Delete");
+  })();
 }
 
 function downloadSelected(): void {

@@ -11,7 +11,8 @@ vi.mock("./dom.js", () => ({
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
 vi.mock("./tabs.js", () => ({ toggleFilesView: vi.fn() }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
-vi.mock("./modals.js", () => ({ showConfirm: vi.fn() }));
+vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
+vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));
 vi.mock("./ui-state.js", () => ({ save: vi.fn() }));
 vi.mock("./upload.js", () => ({ uploadFiles: vi.fn() }));
 vi.mock("./icons.js", () => ({ fileIcon: vi.fn(() => ""), FILE_ICONS: {} }));
