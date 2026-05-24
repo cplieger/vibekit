@@ -18,7 +18,7 @@ import { onSSE } from "./bus.js";
 import { renderForgesPanel } from "./forge-auth.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_GLOBE, ICON_TRASH } from "./icons.js";
+import { ICON_GLOBE, ICON_TRASH, ICON_EXTERNAL } from "./icons.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -184,9 +184,10 @@ function renderRepoRow(forge: ConfiguredForge, repo: Repo): HTMLElement {
     open.href = repo.url;
     open.target = "_blank";
     open.rel = "noreferrer";
-    open.className = "btn-small";
-    open.textContent = "↗";
+    open.className = "icon-btn";
+    open.innerHTML = ICON_EXTERNAL;
     open.title = "Open on forge";
+    open.setAttribute("aria-label", "Open on forge");
     actions.appendChild(open);
   }
 

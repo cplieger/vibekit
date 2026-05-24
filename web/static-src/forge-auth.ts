@@ -26,6 +26,7 @@
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { ICON_EXTERNAL } from "./icons.js";
 import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
 
 interface ForgesListResponse {
@@ -279,7 +280,9 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
     manage.target = "_blank";
     manage.rel = "noreferrer";
     manage.className = "btn-small forge-account-manage";
-    manage.textContent = "Manage ↗";
+    manage.innerHTML = `<span>Manage</span>${ICON_EXTERNAL}`;
+    manage.title = "Manage account on forge";
+    manage.setAttribute("aria-label", "Manage account on forge");
     actions.appendChild(manage);
   }
 

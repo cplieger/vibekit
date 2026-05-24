@@ -18,6 +18,7 @@ import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { ICON_EXTERNAL } from "./icons.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
 // --- Types ---
@@ -328,8 +329,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     open.href = pr.url;
     open.target = "_blank";
     open.rel = "noreferrer";
-    open.className = "btn-small";
-    open.textContent = "Open ↗";
+    open.className = "btn-small git-pr-row-open";
+    open.innerHTML = `${ICON_EXTERNAL}<span>Open</span>`;
+    open.title = "Open on forge";
+    open.setAttribute("aria-label", "Open on forge");
     actions.appendChild(open);
   }
 
@@ -337,7 +340,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   merge.type = "button";
   merge.className = "btn-small btn-primary";
   merge.textContent = "Merge";
-  merge.disabled = pr.mergeable !== true;
+  const mergeReason = computeMergeBlockReason(pr);
+  merge.disabled = mergeReason !== "";
+  merge.title = mergeReason !== ""
+    ? `Cannot merge: ${mergeReason}`
+    : "Merge this pull request";
   merge.addEventListener("click", () => {
     void withAsyncFeedback(merge, async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
@@ -499,6 +506,30 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
 }
 
 // --- Helpers ---
+
+/** Explain why the Merge button is disabled, or "" if it should be
+ *  enabled. The PR struct only exposes `mergeable` (bool) + `draft`
+ *  (bool) — not the rich GitHub mergeStateStatus / GitLab merge_status
+ *  values — so the reason is somewhat coarse. We pick the most
+ *  actionable phrasing we can from those two flags so the user sees
+ *  something concrete on hover instead of a silently-disabled button.
+ *
+ *  Possible returns:
+ *    "" — enabled, no reason
+ *    "PR is a draft. Mark it as ready for review first."
+ *    "this PR isn't mergeable — likely conflicts, failing required
+ *      checks, or branch protection. Check the PR on the forge for
+ *      details."
+ */
+function computeMergeBlockReason(pr: PR): string {
+  if (pr.draft === true) {
+    return "PR is a draft. Mark it as ready for review first.";
+  }
+  if (pr.mergeable !== true) {
+    return "this PR isn't mergeable — likely conflicts, failing required checks, or branch protection. Open it on the forge for details.";
+  }
+  return "";
+}
 
 function escapeHTML(s: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
