@@ -89,12 +89,14 @@ export function openOverflowMenu(
   };
   const onScrollOrResize = (): void => { closeOverflowMenu(); };
 
+  // Attach keydown immediately — Escape doesn't need deferral.
+  document.addEventListener("keydown", onKey);
+
   // Defer outside-click attach to next tick so the click that opened
   // the menu doesn't immediately close it (the click still bubbles
   // up to document).
   const deferTimer = setTimeout(() => {
     document.addEventListener("click", onDocumentClick);
-    document.addEventListener("keydown", onKey);
   }, 0);
 
   document.addEventListener("scroll", onScrollOrResize, true);

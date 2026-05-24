@@ -41,6 +41,14 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
     }
   });
 
+  valIn.addEventListener("blur", () => {
+    if (valIn.value === "" && !("secret" in valIn.dataset)) {
+      valIn.value = SECRET_MASK;
+      valIn.type = "password";
+      valIn.dataset["secret"] = "true";
+    }
+  });
+
   const del = document.createElement("button");
   del.type = "button";
   del.className = "icon-btn mcp-pair-del";

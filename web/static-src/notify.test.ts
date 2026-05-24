@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { urlBase64ToUint8Array } from "./notify.js";
+import { urlBase64ToUint8Array } from "./push-util.js";
 
 /** Encode a Uint8Array as URL-safe base64 (no padding). */
 function toUrlBase64(bytes: Uint8Array): string {

@@ -22,7 +22,7 @@ interface ArchivedHeader {
 }
 
 class HistoryController {
-  private historyController: AbortController | null = null;
+  private tableAbortController: AbortController | null = null;
   private archivedController: AbortController | null = null;
 
   init(): void {
@@ -43,8 +43,8 @@ class HistoryController {
 
   teardown(): void {
     loadHistoryAction.cancel();
-    this.historyController?.abort();
-    this.historyController = null;
+    this.tableAbortController?.abort();
+    this.tableAbortController = null;
     this.archivedController?.abort();
     this.archivedController = null;
   }
@@ -55,9 +55,9 @@ class HistoryController {
     container.replaceChildren();
 
     loadHistoryAction.cancel();
-    this.historyController?.abort();
-    this.historyController = new AbortController();
-    const { signal } = this.historyController;
+    this.tableAbortController?.abort();
+    this.tableAbortController = new AbortController();
+    const { signal } = this.tableAbortController;
 
     const d = await loadHistoryAction.dispatch(undefined);
     if (signal.aborted) return;
@@ -110,7 +110,7 @@ class HistoryController {
     }
 
     // Bug 1: Use signal-bound listener so it's automatically removed on next
-    // loadHistoryTable call (which aborts historyController).
+    // loadHistoryTable call (which aborts tableAbortController).
     container.addEventListener("click", (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
       if (target === null) return;

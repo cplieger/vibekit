@@ -111,7 +111,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn accept";
         btn.textContent = "\u2713 Accept";
-        btn.addEventListener("click", () => { acceptCb(idx, newLines); btn.disabled = true; });
+        btn.addEventListener("click", () => { acceptCb(idx, newLines); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.reject"); if (sib) sib.disabled = true; });
         toolbar.appendChild(btn);
       }
 
@@ -122,7 +122,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn reject";
         btn.textContent = "\u2717 Reject";
-        btn.addEventListener("click", () => { rejectCb(idx); btn.disabled = true; });
+        btn.addEventListener("click", () => { rejectCb(idx); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.accept"); if (sib) sib.disabled = true; });
         toolbar.appendChild(btn);
       }
 

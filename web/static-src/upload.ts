@@ -86,20 +86,18 @@ export function uploadFiles(opts: UploadOptions): void {
       label.textContent = "Upload complete";
       setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
       // Use server-returned filenames (sanitized via filepath.Base) when available.
+      const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
       let paths: string[];
       try {
         const body = JSON.parse(xhr.responseText) as { uploaded?: string[] };
         if (Array.isArray(body.uploaded) && body.uploaded.length > 0) {
-          const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
           paths = body.uploaded.map((name: string) => sep + name);
         } else {
           // Fallback to client names if server doesn't return the array.
-          const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
           paths = [];
           for (const f of opts.files) paths.push(sep + f.name);
         }
       } catch {
-        const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
         paths = [];
         for (const f of opts.files) paths.push(sep + f.name);
       }

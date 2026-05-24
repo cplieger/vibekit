@@ -510,12 +510,13 @@ function downloadSelected(): void {
     body: JSON.stringify({ paths }),
     signal: zipController.signal,
   }).then(async (res) => {
-    clearTimeout(zipTimeout);
     if (!res.ok) {
+      clearTimeout(zipTimeout);
       toastError("Download failed");
       return;
     }
     const blob = await res.blob();
+    clearTimeout(zipTimeout);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

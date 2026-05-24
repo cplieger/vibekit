@@ -1,7 +1,7 @@
 // Actions for tools.ts user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./api.js";
+import { apiAction } from "./index.js";
 
 export const installTools = apiAction<void, { output?: string; error?: string }>({
   name: "tools.install",

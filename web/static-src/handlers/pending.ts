@@ -31,7 +31,7 @@ onSSE("pending_change_resolved", (chatID, p) => {
 
 onSSE("pending_changes_cleared", (chatID, p) => {
   clearPendingChanges(chatID);
-  emitBus(BUS_PENDING_CLEARED, { chatID, reason: p?.reason ?? "" });
+  emitBus(BUS_PENDING_CLEARED, { chatID, reason: p.reason ?? "" });
 });
 
 onSSE("pending_trust_enabled", (chatID) => {

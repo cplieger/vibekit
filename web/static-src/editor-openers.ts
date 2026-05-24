@@ -12,7 +12,7 @@ import { apiGet, withTimeout, API_TIMEOUT_MS } from "./api-client.js";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
-  fileStates, getActiveFilePathInternal, setActiveFilePath,
+  fileStates, getActiveFilePath, setActiveFilePath,
   isPendingPath, routeForPath, freshState,
   pendingDiffSource, gitDiffSource, registerCloseFile,
 } from "./editor-types.js";
@@ -117,7 +117,7 @@ export async function fetchGitDiffSources(state: FileState, repo: string, ref: s
   if (result === null) {
     state.loaded = true;
     state.error = "Failed to load diff";
-    if (getActiveFilePathInternal() === state.path) restoreUI(state);
+    if (getActiveFilePath() === state.path) restoreUI(state);
     return;
   }
   if (state.mode.kind !== "diff") return;
@@ -139,7 +139,7 @@ export async function fetchGitDiffSources(state: FileState, repo: string, ref: s
   }
   state.loaded = true;
   state.error = error;
-  if (getActiveFilePathInternal() === state.path) restoreUI(state);
+  if (getActiveFilePath() === state.path) restoreUI(state);
 }
 
 export function activateFile(path: string): void {
@@ -169,7 +169,7 @@ export function activateFile(path: string): void {
 }
 
 function saveCurrentState(): void {
-  const activeFilePath = getActiveFilePathInternal();
+  const activeFilePath = getActiveFilePath();
   if (activeFilePath === "") return;
   const state = fileStates.get(activeFilePath);
   if (state !== undefined && state.loaded && (state.mode.kind === "edit" && state.mode.editing || state.mode.kind === "conflict")) {
@@ -287,7 +287,7 @@ export function closeEditorFile(path: string): void {
   fileStates.delete(path);
   pendingLines.delete(path);
   closeTab(`editor:${path}`);
-  const activeFilePath = getActiveFilePathInternal();
+  const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) setActiveFilePath("");
   persistOpenFiles();
 }

@@ -44,10 +44,11 @@ export interface TransportActionDefinition<TArgs>
 export function transportAction<TArgs>(
   def: TransportActionDefinition<TArgs>,
 ): Action<TArgs, void> {
+  const { command, ...rest } = def;
   return defineAction<TArgs, void>({
-    ...def,
+    ...rest,
     run: async (args, signal) => {
-      const cmd = def.command(args);
+      const cmd = command(args);
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call
       // setLastError would block the prompt send button for actions

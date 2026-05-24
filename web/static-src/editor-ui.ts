@@ -9,7 +9,7 @@ import { apiGet } from "./api-client.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
 import {
-  getActiveFilePathInternal, isPlanDraftPath, fileStates,
+  getActiveFilePath, isPlanDraftPath, fileStates,
 } from "./editor-types.js";
 
 // --- Pending line jump state (shared with openers) ---
@@ -44,7 +44,7 @@ export async function fetchAgentLines(path: string, signal?: AbortSignal): Promi
   );
   if (data === null) return;
   if (signal?.aborted === true) return;
-  if (getActiveFilePathInternal() !== path) return;
+  if (getActiveFilePath() !== path) return;
   agentLineCache.set(path, data.changes ?? []);
   agentLineSetCache.delete(path);
   // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
@@ -80,7 +80,7 @@ export function updateGutter(content: string): void {
   const lineCount = content.split("\n").length;
   const gutter = $.editorGutter;
   const currentCount = gutter.children.length;
-  const agentLines = getAgentLines(getActiveFilePathInternal());
+  const agentLines = getAgentLines(getActiveFilePath());
 
   if (currentCount > lineCount) {
     for (let i = currentCount; i > lineCount; i--) {
@@ -101,7 +101,7 @@ export function rebuildGutter(content: string): void {
   const lineCount = content.split("\n").length;
   const gutter = $.editorGutter;
   gutter.replaceChildren();
-  const agentLines = getAgentLines(getActiveFilePathInternal());
+  const agentLines = getAgentLines(getActiveFilePath());
   for (let i = 1; i <= lineCount; i++) {
     const line = document.createElement("div");
     line.className = "gutter-line";

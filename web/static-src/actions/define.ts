@@ -162,8 +162,12 @@ export function defineAction<TArgs, TResult>(
     d: ActionDefinition<TArgs, TResult>,
   ): void {
     if (opts.silent === true) return;
-    const msg = opts.successMessage ?? resolveToast(d.success, args, result);
-    if (msg !== null) toastSuccess(msg);
+    try {
+      const msg = opts.successMessage ?? resolveToast(d.success, args, result);
+      if (msg !== null) toastSuccess(msg);
+    } catch (e) {
+      console.error(`[actions] emitSuccessToast for ${d.name} threw`, e);
+    }
   }
 
   function emitErrorToast(
@@ -178,18 +182,23 @@ export function defineAction<TArgs, TResult>(
     // the callsite forgot to pass it.
     const spec = def.error;
     if (spec === false) return;
-    const fallback = `${defaultErrorPrefix(def.name)}: ${err.message}`;
-    let msg: string;
-    if (opts.errorPrefix !== undefined) {
-      msg = `${opts.errorPrefix}: ${err.message}`;
-    } else if (typeof spec === "string") {
-      msg = `${spec}: ${err.message}`;
-    } else if (typeof spec === "function") {
-      msg = spec(args, err);
-    } else {
-      msg = fallback;
+    try {
+      const fallback = `${defaultErrorPrefix(def.name)}: ${err.message}`;
+      let msg: string;
+      if (opts.errorPrefix !== undefined) {
+        msg = `${opts.errorPrefix}: ${err.message}`;
+      } else if (typeof spec === "string") {
+        msg = `${spec}: ${err.message}`;
+      } else if (typeof spec === "function") {
+        msg = spec(args, err);
+      } else {
+        msg = fallback;
+      }
+      toastError(msg);
+    } catch (e) {
+      console.error(`[actions] emitErrorToast for ${def.name} threw`, e);
+      toastError(`${defaultErrorPrefix(def.name)}: ${err.message}`);
     }
-    toastError(msg);
   }
 
   function emitCancelled(

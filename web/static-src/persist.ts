@@ -42,6 +42,7 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
   }
   const p = new Promise<{} | null>((resolve) => { patchResolvers.push(resolve); });
   if (patchTimer !== undefined) return p;
+  showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     const body = patchQueue;
@@ -50,7 +51,6 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     patchQueue = {};
     patchInputs = [];
     patchResolvers = [];
-    showSaving();
     const gen = ++patchGen;
     void patchAppSettingsAction.dispatch(
       {
@@ -62,7 +62,7 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
       if (gen === patchGen) {
         if (r === null) showError(); else showSaved();
       }
-      for (const resolve of resolvers) resolve(r as {} | null);
+      for (const resolve of resolvers) resolve(r ?? {});
     });
   }, 300);
   return p;

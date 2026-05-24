@@ -55,6 +55,11 @@ class PromptInputController {
   // Send-button state
   private state: SendState = { kind: "idle" };
 
+  // Cached DOM references for applyButtonState
+  private cancelHalf: HTMLElement | null = null;
+  private divider: Element | null = null;
+  private sendWrap: HTMLElement | null = null;
+
   private exitCycling(): void { this.idx = -1; this.draft = ""; }
 
   private userPrompts(): string[] {
@@ -98,12 +103,9 @@ class PromptInputController {
     $.sendBtn.disabled = disableForm;
     $.promptInput.disabled = k === "queued" || k === "blocked";
 
-    const cancelHalf = document.getElementById("cancel-half");
-    const divider = document.querySelector(".send-divider");
-    const wrap = document.getElementById("send-wrap");
-    if (cancelHalf !== null) cancelHalf.classList.toggle("hidden", k !== "busy");
-    if (divider !== null) divider.classList.toggle("hidden", k !== "busy");
-    if (wrap !== null) wrap.classList.toggle("send-wrap-busy", k === "busy");
+    if (this.cancelHalf !== null) this.cancelHalf.classList.toggle("hidden", k !== "busy");
+    if (this.divider !== null) this.divider.classList.toggle("hidden", k !== "busy");
+    if (this.sendWrap !== null) this.sendWrap.classList.toggle("send-wrap-busy", k === "busy");
   }
 
   setSendState(next: SendState): void {
@@ -120,8 +122,12 @@ class PromptInputController {
     const form = $.promptForm;
     const input = $.promptInput;
 
-    const cancelHalf = document.getElementById("cancel-half");
-    cancelHalf?.addEventListener("click", (e: MouseEvent) => {
+    // Cache DOM references for applyButtonState.
+    this.cancelHalf = document.getElementById("cancel-half");
+    this.divider = document.querySelector(".send-divider");
+    this.sendWrap = document.getElementById("send-wrap");
+
+    this.cancelHalf?.addEventListener("click", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (this.state.kind === "busy") onCancel();

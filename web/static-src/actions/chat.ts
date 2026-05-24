@@ -1,8 +1,8 @@
 // Actions for chat lifecycle: delete, archive, restore, discard tangent,
 // load history, delete archived, cancel, switch model, send prompt, resolve
-// pending change, resolve all pending, permission response, restore
-// checkpoint, fork, merge tangent, set supervised, set auto-approve crew,
-// trust pending, clear pending trust.
+// pending change, resolve all pending, permission response, restore checkpoint,
+// fork, merge tangent, set supervised, set auto-approve crew, trust pending,
+// clear pending trust.
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
@@ -52,7 +52,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
   optimistic: ({ chatID, enabled }) => {
     const session = get(chatID);
     if (session === undefined) return undefined;
-    const prev = session.supervised_mode;
+    const prev: boolean = session.supervised_mode ?? false;
     setSupervisedMode(chatID, enabled);
     return { prev };
   },

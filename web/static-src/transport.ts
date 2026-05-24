@@ -228,9 +228,10 @@ class TransportController {
     };
     source.onerror = (): void => {
       if (source.readyState === EventSource.CLOSED) {
+        const bo = this.nextBackoff();
         this.conn = { phase: "idle" };
         this.onStatus("disconnected");
-        this.scheduleReconnect(this.nextBackoff());
+        this.scheduleReconnect(bo);
       }
     };
   }

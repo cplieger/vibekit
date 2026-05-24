@@ -67,6 +67,8 @@ describe("patchSettings debounce coalescing", () => {
   });
 
   it("property: N rapid calls produce merged result matching Object.assign", async () => {
+    // NOTE: This property test uses Math.random for fuzzing. Failures may not
+    // be reproducible without seeding. Log `iter` on failure to narrow down.
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
       fetchSpy.mockClear();

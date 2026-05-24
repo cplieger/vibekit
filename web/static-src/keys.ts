@@ -62,7 +62,6 @@ export function initKeyboardShortcuts(actions: {
 
     for (const s of shortcuts) {
       if (s.key.toLowerCase() !== e.key.toLowerCase()) continue;
-      if (s.ctrl === true && !mod) continue;
       if (s.shift === true && !e.shiftKey) continue;
       if (s.shift !== true && e.shiftKey) continue;
 

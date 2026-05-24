@@ -336,7 +336,7 @@ class FollowController {
     probe.remove();
 
     // Attach scroll handler for virtual rendering.
-    if (this.scrollHandler !== null) pre.removeEventListener("scroll", this.scrollHandler);
+    // NOTE: No need to remove old handler — pre is freshly created each loadFile call.
     this.scrollHandler = () => { this.renderWindow(pre); };
     pre.style.overflow = "auto";
     pre.addEventListener("scroll", this.scrollHandler);

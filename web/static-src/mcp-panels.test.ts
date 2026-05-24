@@ -24,7 +24,10 @@ vi.mock("./mcp-pairs.js", () => ({
   appendKeyPair: () => {},
   collectKeyPairs: () => [],
 }));
-vi.mock("./icons.js", () => ({ ICON_CLOSE: "" }));
+vi.mock(import("./icons.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual };
+});
 vi.mock("./actions/mcp.js", () => ({
   saveServer: { dispatch: async () => ({}) },
 }));

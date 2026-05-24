@@ -74,10 +74,17 @@ export function openChatTab(id: string, name: string, agent: string): void {
       }
       // Retention > 0: archive so the chat appears in History.
       // Retention = 0: delete permanently (no history).
+      // Zero-message chats were never persisted server-side — just
+      // remove locally without hitting the server.
       if (isRetentionEnabled()) {
         archiveChat(id);
       } else {
-        deleteChat(id);
+        const s = get(id);
+        if (s !== undefined && s.message_count === 0) {
+          removeChat(id);
+        } else {
+          deleteChat(id);
+        }
       }
     },
   });

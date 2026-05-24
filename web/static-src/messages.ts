@@ -44,6 +44,7 @@ import {
   buildCrewCardForReplay, clearCrews, addToolToCrewRow, getCrewToolEl,
   onCrewToolCompleted, setSubagentActivity,
 } from "./crew-card.js";
+import { formatToolActivity } from "./format-tool-activity.js";
 
 export { getScrollEl, scrollToBottom, setLoadMore };
 export { showPermissionDialog, hidePermission } from "./permission.js";
@@ -491,11 +492,8 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   out.appendChild(pre);
 }
 
-/** Format a tool title for the collapsed crew-row activity line. */
-export function formatToolActivity(title: string): string {
-  const clean = title.startsWith("Running: ") ? title.slice(9) : title;
-  return clean.length > 50 ? clean.slice(0, 47) + "\u2026" : clean;
-}
+export { formatToolActivity } from "./format-tool-activity.js";
+
 
 /** Insert an inline diff preview from ACP tool_call content.diff blocks.
  *  Delegates to tool-card.ts's insertDiffPreview. Skips if the card

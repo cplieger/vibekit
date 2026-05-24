@@ -14,7 +14,7 @@ const AWAY_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 const TOKEN_THRESHOLD = 5_000;
 
 class AwaySummaryController {
-  private lastVisibleAt = Date.now();
+  private lastHiddenAt = Date.now();
   private lastContextPct = 0;
   private lastMsgCount = 0;
   private lastChatId = "";
@@ -31,7 +31,7 @@ class AwaySummaryController {
   }
 
   private snapshotState(): void {
-    this.lastVisibleAt = Date.now();
+    this.lastHiddenAt = Date.now();
     const s = getActive();
     if (s !== undefined) {
       this.lastChatId = s.id;
@@ -41,7 +41,7 @@ class AwaySummaryController {
   }
 
   private checkAway(): void {
-    const elapsed = Date.now() - this.lastVisibleAt;
+    const elapsed = Date.now() - this.lastHiddenAt;
     if (elapsed < AWAY_THRESHOLD_MS) return;
 
     const s = getActive();

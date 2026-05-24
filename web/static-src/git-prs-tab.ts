@@ -417,7 +417,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
  *  haven't fetched groups yet, refetch first; the source branch is
  *  pre-filled from the call site so the user doesn't have to retype. */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
-  if (lastGroups.length === 0) await refreshPRs();
+  if (lastGroups.length === 0) {
+    try { await refreshPRs(); } catch { /* ignore — we'll check lastGroups below */ }
+  }
   const group = lastGroups.find((g) => g.name === repoName);
   if (group === undefined) {
     // Repo not in any forge group (probably not on a connected
@@ -498,6 +500,7 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
 
   // Stage 2: review + submit.
   newSubmit.addEventListener("click", async () => {
+    newSubmit.disabled = true;
     if (status !== null) { status.textContent = "Opening PR…"; status.className = "forge-status"; }
     const res = await apiPost<{ number?: number; error?: string }>(
       `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
@@ -511,10 +514,12 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     );
     if (res === null) {
       if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      newSubmit.disabled = false;
       return;
     }
     if (res.error !== undefined && res.error !== "") {
       if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      newSubmit.disabled = false;
       return;
     }
     dlg.close();

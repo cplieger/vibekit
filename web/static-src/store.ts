@@ -137,6 +137,16 @@ const decodeChatGetResponseLocal: Decoder<{
 // --- Index helpers ---
 export function clearMsgIndex(sessionID: string): void { msgIndex.delete(sessionID); }
 
+/** Invalidate a background session's cache so the next switch refetches. */
+export function invalidateSession(chatID: string): void {
+  const s = sessionIndex.get(chatID);
+  if (s === undefined) return;
+  s.messages = [];
+  s.has_more = false;
+  clearMsgIndex(chatID);
+  emit();
+}
+
 function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
   for (let i = 0; i < messages.length; i++) idx.set(messages[i]!.id, i);

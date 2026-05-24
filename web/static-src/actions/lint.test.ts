@@ -56,7 +56,7 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
   "forge-auth.ts",      // apiPost in revalidateInBackground (probe per forge)
 
   // Fire-and-forget cleanup after successful plan send.
-  "plan-actions.ts",    // await apiDelete plan-draft
+  "plan-actions.ts",    // await apiDelete plan-draft + await apiPutOrError plan update
 ]);
 
 /** Regex for forbidden patterns. Each match is a regression candidate.

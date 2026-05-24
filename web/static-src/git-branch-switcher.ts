@@ -65,6 +65,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
         const row = document.createElement("button");
         row.type = "button";
         row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
+        row.setAttribute("role", "menuitem");
         row.textContent = b.name;
         if (b.current) row.setAttribute("data-tooltip", "Current branch");
         row.addEventListener("click", () => {
@@ -97,9 +98,11 @@ function closePopover(): void {
   if (openPopover === null) return;
   openPopover.remove();
   openPopover = null;
+  const savedAnchor = activeAnchor;
   activeAnchor = null;
   document.removeEventListener("click", outsideClickHandler);
   document.removeEventListener("keydown", escapeHandler);
+  savedAnchor?.focus();
 }
 
 function outsideClickHandler(e: MouseEvent): void {

@@ -14,7 +14,7 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands, setCurrentMode, version, clearMsgIndex,
+  setAvailableCommands, setCurrentMode, clearMsgIndex, invalidateSession,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -131,6 +131,10 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
   // loadMessages response. The activeId check guards against
   // reloading a chat the user isn't looking at (server-side archive
   // flow etc. don't restore checkpoints, but defence in depth).
+  // Clear the auto-approve crew cache — checkpoint restore may have
+  // rolled back past the crew event that set it.
+  delete (s as unknown as Record<string, unknown>)["_hasCrew"];
+
   if (getActiveId() === chatID) {
     s.messages = [];
     s.has_more = false;
@@ -143,9 +147,6 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
   } else {
     // Background chat: just invalidate the cache so the next switch
     // refetches from scratch.
-    s.messages = [];
-    s.has_more = false;
-    clearMsgIndex(chatID);
-    version.value = version.peek() + 1;
+    invalidateSession(chatID);
   }
 });

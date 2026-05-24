@@ -59,10 +59,11 @@ export interface ApiActionDefinition<TArgs, TResult>
 export function apiAction<TArgs, TResult = unknown>(
   def: ApiActionDefinition<TArgs, TResult>,
 ): Action<TArgs, TResult> {
+  const { request, ...rest } = def;
   return defineAction<TArgs, TResult>({
-    ...def,
+    ...rest,
     run: async (args, signal) => {
-      const spec = def.request(args);
+      const spec = request(args);
       return executeRequest<TResult>(spec, signal);
     },
   });

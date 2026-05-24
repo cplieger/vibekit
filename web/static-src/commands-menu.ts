@@ -181,6 +181,7 @@ class CommandsMenuController {
       description: opt.description ?? "",
     }));
     this.popover.classList.remove("hidden");
+    this.popover.setAttribute("aria-label", `Options for ${command}`);
     this.popover.innerHTML = "";
     options.forEach((opt, i) => {
       const row = buildPopoverRow({
@@ -189,6 +190,7 @@ class CommandsMenuController {
         onClick: () => this.acceptOption(command, opt.label),
         index: i,
       });
+      row.id = `cmd-opt-${i}`;
       this.popover?.appendChild(row);
     });
     this.renderSelection();

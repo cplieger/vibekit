@@ -166,7 +166,8 @@ onSSE("permission_needed", (chatID, p) => {
         requestID: p.request_id,
         optionID,
       }).then((result) => {
-        if (result !== null && subSid !== undefined && subSid !== "") {
+        if (result === null) return;
+        if (subSid !== undefined && subSid !== "") {
           setSubagentPendingApproval(subSid, false);
         }
       });
@@ -217,6 +218,10 @@ onSSE("error", (chatID, p) => {
 
   const code = p.code ?? "";
   const msg = p.message ?? "";
+
+  // Only surface errors for the active chat to avoid polluting the
+  // send-button state with errors from background chats.
+  if (chatID !== getActiveId()) return;
 
   const route = ERROR_ROUTES[code];
   if (route !== undefined && route.surface === "banner") {

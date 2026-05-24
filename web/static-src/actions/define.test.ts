@@ -17,7 +17,7 @@ vi.mock("../toast.js", () => ({
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { ActionError } from "./error.js";
-import { recentLog, _resetForTest as resetRegistry, subscribe } from "./registry.js";
+import { recentLog, _resetForTest as resetRegistry, subscribe, pendingFor } from "./registry.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
@@ -409,5 +409,21 @@ describe("registry", () => {
     unsub();
     await action.dispatch({});
     expect(calls).toBe(after1);
+  });
+});
+
+describe("pendingFor — public API", () => {
+  it("returns the action mid-flight, then empty after completion", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.slow",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const p = action.dispatch({});
+    expect(pendingFor("test.slow").length).toBe(1);
+    expect(pendingFor("test.slow")[0]?.name).toBe("test.slow");
+    resolve();
+    await p;
+    expect(pendingFor("test.slow").length).toBe(0);
   });
 });

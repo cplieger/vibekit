@@ -5,6 +5,7 @@
 import { $, el } from "./dom.js";
 import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
+import { isSafeUrl } from "./utils-url.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 
 export function closeModal(modal: HTMLDivElement): void {
@@ -180,9 +181,10 @@ function doLogin(
     }
     if (d.url !== undefined) {
       const codeText = d.code !== undefined ? `Code: ${d.code}` : "";
-      status.innerHTML = `${escText(codeText)}<br><a href="${escText(d.url)}" `
-        + `target="_blank" rel="noopener" style="color:var(--c-accent)">`
-        + `Open login page</a><br>`
+      const urlHtml = isSafeUrl(d.url)
+        ? `<a href="${escText(d.url)}" target="_blank" rel="noopener" style="color:var(--c-accent)">Open login page</a>`
+        : `<span style="color:var(--c-text-tertiary)">${escText(d.url)}</span>`;
+      status.innerHTML = `${escText(codeText)}<br>${urlHtml}<br>`
         + `<span style="color:var(--c-text-tertiary)">Complete login in the browser, then come back.</span>`;
       const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
       const ctrl = new AbortController();

@@ -144,6 +144,7 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
       state.active = next.id;
       emit();
       next.onShow?.();
+      callbacks.onActivate?.(next.id);
     } else {
       state.active = "";
       emit();

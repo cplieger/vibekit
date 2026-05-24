@@ -21,6 +21,7 @@ import { isToolActive } from "./tool-schema.js";
 import { getActiveId } from "./store.js";
 import { sendMessage } from "./actions/crew.js";
 import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
+import { formatToolActivity } from "./format-tool-activity.js";
 
 const cards = new Map<string, HTMLDivElement>();
 const cardState = new WeakMap<HTMLDivElement, string>();
@@ -441,12 +442,7 @@ function getOrCreateToolContainer(
 }
 
 
-/** Format a tool title for the collapsed-row activity line.
- *  Strips "Running: " prefix and truncates to 50 chars. */
-export function formatToolActivity(title: string): string {
-  const clean = title.startsWith("Running: ") ? title.slice(9) : title;
-  return clean.length > 50 ? clean.slice(0, 47) + "\u2026" : clean;
-}
+export { formatToolActivity } from "./format-tool-activity.js";
 
 /** Update the activity line when a tool call completes. Called from
  *  messages.ts updateToolCall after propagating to the crew-row clone. */

@@ -40,6 +40,10 @@ let kiroSettingGen = 0;
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
+/** Fetch settings from server and apply notification state only.
+ *  Used for lightweight re-sync (e.g. after login) without touching
+ *  per-device UI state. Compare with restoreAll() which also restores
+ *  localStorage-based UI (shell, file browser, editor tabs, theme). */
 export async function syncSettings(): Promise<AppSettings> {
   const s = await loadSettings();
   restoreNotifications(s);
@@ -47,7 +51,8 @@ export async function syncSettings(): Promise<AppSettings> {
 }
 
 /** Restore all state: per-device UI from localStorage, global prefs from
- *  the loaded settings payload. Called once at startup. */
+ *  the loaded settings payload. Called once at startup. Unlike syncSettings(),
+ *  this also restores shell, file browser, editor tabs, and theme. */
 export function restoreAll(s: AppSettings): void {
   const ui = uiState.load();
   if (ui.shell_open) restoreShell();

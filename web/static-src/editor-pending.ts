@@ -8,13 +8,13 @@ import { getActiveId, get } from "./store.js";
 import { resolvePendingChangeAction } from "./actions/chat.js";
 import { resolvePendingPartial } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
-import { fileStates, getActiveFilePathInternal, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
+import { fileStates, getActiveFilePath, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 
 /** Resolve the active pending-change tab. Works for both Accept and
  *  Reject; the server handles the rest. Closes the tab on success. */
 export async function resolveActivePending(action: "accept" | "reject"): Promise<void> {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
@@ -56,7 +56,7 @@ function pendingHunkCountFor(state: FileState): number {
 
 /** Apply the active pending op with only the user-accepted hunks. */
 export async function applyActivePendingPartial(): Promise<void> {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
@@ -190,7 +190,7 @@ function buildUnifiedDiffLines(state: FileState): string[] {
 
 /** Toolbar variant: discuss the whole change (no specific hunk). */
 export function openDiscussPromptForActive(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   openDiscussPrompt(state.path, "");
 }

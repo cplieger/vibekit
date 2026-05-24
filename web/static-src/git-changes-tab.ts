@@ -152,6 +152,16 @@ function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
 
+  // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
+  const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
+  for (const k of userCollapsedRepos) if (!activeRepos.has(k)) userCollapsedRepos.delete(k);
+  for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
+  for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
+  for (const k of expandedDiffPaths) {
+    const repo = k.slice(0, k.indexOf("\0"));
+    if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
+  }
+
   // Bug 1: Skip re-render entirely if a commit textarea is focused
   // to avoid destroying user input mid-typing.
   const focused = document.activeElement;
@@ -704,7 +714,8 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
       assertOk(msg);
-      ta.value = msg.message ?? "";
+      commitMessages.set(r.repo, msg.message ?? "");
+      if (ta.isConnected) ta.value = msg.message ?? "";
     });
   });
   row.appendChild(ai);

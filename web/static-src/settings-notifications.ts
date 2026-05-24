@@ -52,6 +52,9 @@ export function initNotificationToggles(): void {
     }
   });
 
+  // Set initial sub-option visibility based on current toggle state.
+  updateSub();
+
   notifyToggle.addEventListener("change", () => {
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked) {
@@ -66,6 +69,8 @@ export function initNotificationToggles(): void {
         permissionToggle.checked = true;
         mutatedInputs.push(permissionToggle);
       }
+      // Show sub-options optimistically.
+      updateSub();
       // Defer in-memory state updates until PATCH succeeds (Bug 3 fix).
       void patchSettings({
         notifications_enabled: true,

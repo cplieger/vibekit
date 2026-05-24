@@ -47,10 +47,10 @@ export async function withAsyncFeedback(
   fn: () => Promise<unknown>,
   opts: AsyncFeedbackOptions = {},
 ): Promise<void> {
-  // Bug 3: reject on any active status (pending, success, error display)
+  // Guard: reject re-entry while any status is active (pending, success, error display)
   if (btn.dataset["asyncStatus"] !== undefined) return;
 
-  // Bug 4: cancel any pending reset timer from a prior cycle
+  // Cancel any pending reset timer from a prior cycle to avoid stale restores
   const prevTimer = resetTimers.get(btn);
   if (prevTimer !== undefined) {
     clearTimeout(prevTimer);

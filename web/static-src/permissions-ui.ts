@@ -77,9 +77,9 @@ class PermissionsUIController {
 
     el("trust-list-add").addEventListener("click", () => this.toggleMenu());
 
+    const adder = el("trust-list-add");
+    const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
-      const adder = el("trust-list-add");
-      const menu = el("trust-list-menu");
       const t = e.target as Node;
       if (!adder.contains(t) && !menu.contains(t)) menu.classList.add("hidden");
     });

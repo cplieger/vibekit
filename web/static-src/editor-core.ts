@@ -23,7 +23,7 @@ import {
   activateFile, closeEditorFile, fetchGitDiffSources,
 } from "./editor-openers.js";
 import {
-  fileStates, getActiveFilePathInternal,
+  fileStates, getActiveFilePath,
   freshState, isPendingPath, parsePendingPath,
   planDraftChatID, unsavedDiffSource, gitDiffSource,
 } from "./editor-types.js";
@@ -33,14 +33,14 @@ import type { FileState } from "./editor-types.js";
 // Consumers that import from editor-core.ts continue to work.
 
 export {
-  fileStates, getActiveFilePathInternal, setActiveFilePath,
+  fileStates, setActiveFilePath,
   freshState, isPendingPath, parsePendingPath, isPlanDraftPath,
   routeForPath, pendingDiffSource, gitDiffSource, getCachedDiff,
   getActiveFilePath, getOpenFilePaths, getDirtyEditorPaths,
 } from "./editor-types.js";
 export type { FileMode, FileState } from "./editor-types.js";
 
-// Re-export closeEditorFile from editor-openers (editor-pending.ts imports it from here)
+// Re-export closeEditorFile from editor-openers (editor-pending.ts imports closeFile from editor-types)
 export { closeEditorFile } from "./editor-openers.js";
 
 export function initEditor(): void {
@@ -66,7 +66,7 @@ export function initEditor(): void {
     }
   });
   $.editorContent.addEventListener("input", () => {
-    const state = fileStates.get(getActiveFilePathInternal());
+    const state = fileStates.get(getActiveFilePath());
     if (state === undefined) return;
     state.current = $.editorContent.value;
     $.editorSaveBtn.disabled = state.current === state.original;
@@ -91,10 +91,11 @@ export function restoreEditorTabs(paths: string[]): void {
 // --- Mode switches ---
 
 function toggleDiffMode(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   if (state.mode.kind === "diff") {
     state.mode = { kind: "edit", editing: false };
+    state.cachedDiff = null;
     state.pendingHunkCount = null;
     renderEditModeUI(state);
     return;
@@ -104,16 +105,18 @@ function toggleDiffMode(): void {
     kind: "diff",
     diffSource: unsavedDiffSource(state.original, state.current),
   };
+  state.cachedDiff = null;
   state.pendingHunkCount = null;
   restoreUI(state);
 }
 
 function startEditing(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   if (state.mode.kind === "diff") {
     state.returnToGitDiff = state.mode.diffSource.fromGit === true
       ? { ref: state.mode.diffSource.oldLabel, repo: state.repo } : null;
+    state.cachedDiff = null;
     state.pendingHunkCount = null;
   }
   state.mode = { kind: "edit", editing: true };
@@ -122,13 +125,14 @@ function startEditing(): void {
   updateGutter(state.current);
   $.editorContent.focus();
   $.editorEditBtn.classList.add("hidden");
+  $.editorDiffBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
   $.editorSaveBtn.disabled = state.current === state.original;
 }
 
 function confirmStopEditing(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   if (state.current !== state.original) {
     void (async () => {
@@ -164,7 +168,7 @@ function stopEditing(state: FileState): void {
 }
 
 function saveFile(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const content = $.editorContent.value;
   $.editorSaveBtn.disabled = true;
@@ -199,7 +203,7 @@ function saveFile(): void {
 // --- Plan handoff ---
 
 async function sendActivePlan(): Promise<void> {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const chatID = planDraftChatID(state.path);
   if (chatID === "") return;

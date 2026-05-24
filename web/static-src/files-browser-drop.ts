@@ -16,7 +16,8 @@ export interface DragDropContext {
 }
 
 export function initBrowserDragDrop(ctx: DragDropContext): void {
-  const wrap = $.fbList.parentElement as HTMLDivElement;
+  const wrap = $.fbList.parentElement;
+  if (wrap === null) return;
   let dropTargetFolder = "";
 
   const clearDropTarget = (): void => {

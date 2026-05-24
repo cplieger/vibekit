@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Styled tooltip system: replaces bare `title` attributes with positioned,
-// delay-aware tooltips. First tooltip in a group delays 300ms; subsequent
+// delay-aware tooltips. First tooltip in a group delays 1000ms; subsequent
 // peers show instantly while the group is "warm" (500ms cooldown).
 //
 // Uses pointerover/pointerout (which bubble) rather than
