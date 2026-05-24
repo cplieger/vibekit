@@ -121,4 +121,110 @@ describe("forge-auth: 4-section layout", () => {
     await renderForgesPanel();
     expect(panel().querySelector(".forge-error")).not.toBeNull();
   });
+
+  it("renders an SVG icon (not a letter) in each kind badge", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
+      const badge = panel().querySelector<HTMLElement>(`.forge-kind-section[data-kind='${k}'] .forge-kind-badge`);
+      expect(badge).not.toBeNull();
+      const svg = badge!.querySelector("svg");
+      expect(svg, `${k} badge should contain an svg`).not.toBeNull();
+      expect(svg!.getAttribute("viewBox")).toBe("0 0 24 24");
+      // No leftover letter text inside the badge.
+      expect(badge!.textContent?.trim() ?? "").toBe("");
+    }
+  });
+
+  it("PAT form hides the host field for github + codeberg, shows it for gitlab + gitea", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    // Open every PAT form: github via "Add a PAT", others via "Add account".
+    const ghPat = panel().querySelector<HTMLButtonElement>(".forge-kind-section[data-kind='github'] [data-forge-add-pat]");
+    ghPat!.click();
+    for (const k of ["gitlab", "codeberg", "gitea"]) {
+      const add = panel().querySelector<HTMLButtonElement>(`.forge-kind-section[data-kind='${k}'] [data-forge-add]`);
+      add!.click();
+    }
+    const inputs: Record<string, HTMLInputElement | null> = {};
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
+      const form = panel().querySelector<HTMLFormElement>(`.forge-kind-section[data-kind='${k}'] form.forge-pat-form`);
+      expect(form, `${k} PAT form should be open`).not.toBeNull();
+      inputs[k] = form!.querySelector<HTMLInputElement>("input");
+    }
+    expect(inputs["github"]!.type).toBe("hidden");
+    expect(inputs["github"]!.value).toBe("github.com");
+    expect(inputs["codeberg"]!.type).toBe("hidden");
+    expect(inputs["codeberg"]!.value).toBe("codeberg.org");
+    expect(inputs["gitlab"]!.type).toBe("text");
+    expect(inputs["gitea"]!.type).toBe("text");
+    expect(inputs["gitea"]!.value).toBe("");
+    expect(inputs["gitea"]!.placeholder).toBe("your-host.example.com");
+  });
+
+  it("the gitea section is labeled 'Gitea / Forgejo'", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const title = panel().querySelector(".forge-kind-section[data-kind='gitea'] .forge-kind-title")?.textContent;
+    expect(title).toBe("Gitea / Forgejo");
+  });
+
+  it("does not duplicate @username in meta when the primary line is already the username", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        // Account with no email — primary should be the username, meta should NOT add @cplieger.
+        { id: "github:github.com", kind: "github", host: "github.com", username: "cplieger", connected: true },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
+    expect(row.querySelector(".forge-account-primary")?.textContent).toBe("cplieger");
+    const meta = row.querySelector(".forge-account-meta")?.textContent ?? "";
+    expect(meta).not.toContain("@cplieger");
+    expect(meta).toBe("github.com");
+  });
+
+  it("clicking 'Add account' twice toggles the form open then closed", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='gitlab']")!;
+    const btn = section.querySelector<HTMLButtonElement>("[data-forge-add]")!;
+    const slot = section.querySelector<HTMLElement>("[data-forge-slot]")!;
+    btn.click();
+    expect(slot.querySelector("form.forge-pat-form"), "first click opens").not.toBeNull();
+    expect(slot.dataset["mode"]).toBe("add");
+    btn.click();
+    expect(slot.querySelector("form.forge-pat-form"), "second click closes").toBeNull();
+    expect(slot.dataset["mode"]).toBeUndefined();
+  });
+
+  it("clicking 'Add a PAT' twice toggles the GitHub PAT form open then closed", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github']")!;
+    const btn = section.querySelector<HTMLButtonElement>("[data-forge-add-pat]")!;
+    const slot = section.querySelector<HTMLElement>("[data-forge-slot]")!;
+    btn.click();
+    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.dataset["mode"]).toBe("pat");
+    btn.click();
+    expect(slot.querySelector("form.forge-pat-form")).toBeNull();
+    expect(slot.dataset["mode"]).toBeUndefined();
+  });
 });

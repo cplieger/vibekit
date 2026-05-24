@@ -117,24 +117,31 @@
   display: flex; align-items: center; gap: var(--sp-2);
 }
 
-/* Two-letter kind badge (GH/GL/CB/GT) — mirrors .repo-picker-badge
+/* Two-letter kind badge (SVG glyph) — mirrors .repo-picker-badge
  * for visual consistency between the picker and the forges page. */
 .forge-kind-badge {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px;
   border-radius: 4px;
-  font-size: 10px; font-weight: 700;
-  font-family: var(--font-mono);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
   color: var(--c-text-secondary);
   flex-shrink: 0;
 }
 
-.forge-kind-github   { background: color-mix(in srgb, #2da44e 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2da44e 40%, var(--c-border)); }
+.forge-kind-badge svg {
+  width: 14px; height: 14px;
+  display: block;
+}
+
+.forge-kind-github   { background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary)); border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border)); }
+.forge-kind-github svg   { fill: var(--c-text-primary); }
 .forge-kind-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
+.forge-kind-gitlab svg   { fill: #fc6d26; }
 .forge-kind-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
+.forge-kind-codeberg svg { fill: #2185d0; }
 .forge-kind-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
+.forge-kind-gitea svg    { fill: #609926; }
 
 .forge-kind-title {
   margin: 0;
