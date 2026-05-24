@@ -591,6 +591,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* When the age column is repurposed as the clone spinner: align the
+ * inline SVG and let .icon-spinner own the rotation. */
+.repo-picker-row-age.repo-picker-row-spinner {
+  display: inline-flex; align-items: center;
+  color: var(--c-accent);
+}
+
+.repo-picker-row-age.repo-picker-row-spinner svg {
+  width: 12px; height: 12px;
+}
+
 .repo-picker-empty {
   padding: var(--sp-4);
   text-align: center;

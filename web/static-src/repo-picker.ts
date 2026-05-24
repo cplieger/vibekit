@@ -19,7 +19,7 @@ import { onSSE } from "./bus.js";
 import { relativeTime } from "./files-shared.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { RepoEntry, ForgeKind } from "./forge-types.js";
-import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, iconEl } from "./icons.js";
+import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, ICON_SPINNER, iconEl } from "./icons.js";
 import { setBanner, clearBanner } from "./git-status-banner.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -421,36 +421,61 @@ function remoteOnlyClonable(): RepoEntry[] {
   );
 }
 
-/** Clone every remote-only entry sequentially. Visible feedback is on
- *  the Clone all button itself (disabled + label). Per-repo failures
- *  surface as a row-state update on each row but do not abort the
- *  batch — partial success beats none. */
+/** Clone every remote-only entry sequentially. Each row gets a
+ *  spinner up front; we run the clone API calls one at a time
+ *  (avoids fighting for the same workdir + makes failures
+ *  attributable). After all calls complete we do a single refetch
+ *  and trust the resulting `is_local` flag as the authoritative
+ *  success signal — apiPost can return an apparent error even when
+ *  the clone landed (transient stderr noise). Rows that didn't
+ *  end up cloned get marked "Clone failed" with a tooltip. */
 async function cloneAllRemoteOnly(btn: HTMLButtonElement): Promise<void> {
   const candidates = remoteOnlyClonable();
   if (candidates.length === 0) return;
   const originalLabel = btn.textContent ?? "Clone all";
   btn.disabled = true;
+
+  // Phase 1: paint a spinner on every candidate row up front so the
+  // user sees that ALL of them are queued, not just the active one.
+  for (const entry of candidates) {
+    const row = findRowById(entry.id);
+    if (row !== null) markRowCloning(row);
+  }
+
+  // Phase 2: serial clones, capturing any apparent errors per id.
+  const errorById = new Map<string, string>();
   let done = 0;
-  let failed = 0;
   for (const entry of candidates) {
     btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
-    const row = document.querySelector<HTMLElement>(
-      `.repo-picker-row [data-repo-picker-clone-btn="${cssEscape(entry.id)}"]`,
-    )?.closest<HTMLElement>(".repo-picker-row") ?? null;
+    const row = findRowById(entry.id) ?? document.createElement("div");
     try {
-      await cloneAndSelect(entry, row ?? document.createElement("div"), { skipPick: true });
-      done++;
-    } catch {
-      failed++;
+      // skipRefetch + skipPick: the batch handles refetch once at
+      // the end. The spinner stays visible the whole time.
+      await cloneAndSelect(entry, row, { skipPick: true, skipRefetch: true });
+    } catch (err) {
+      errorById.set(entry.id, err instanceof Error ? err.message : String(err));
     }
+    done++;
   }
+
+  // Phase 3: single authoritative refetch + per-row status check.
+  // After this call the rows are re-rendered fresh, so we re-locate
+  // by id and only stamp errors on the ones that didn't land.
+  await refetch();
+  let failed = 0;
+  for (const entry of candidates) {
+    const fresh = ctrl.entries.find((x) => x.id === entry.id);
+    if (fresh?.is_local === true) continue; // success, row already shows synced
+    const row = findRowById(entry.id);
+    if (row !== null) markRowCloneFailed(row, errorById.get(entry.id) ?? "clone failed");
+    failed++;
+  }
+
   btn.textContent = originalLabel;
   refreshCloneAllState();
-  // Final refetch to ensure rows re-render in their new cloned state.
-  await refetch();
-  if (failed > 0) {
-    btn.title = `Cloned ${done}, ${failed} failed`;
-  }
+  btn.title = failed > 0
+    ? `Cloned ${candidates.length - failed}, ${failed} failed`
+    : `Cloned ${candidates.length} repo${candidates.length === 1 ? "" : "s"}`;
 }
 
 /** Tiny CSS.escape polyfill — we only use it to safely build a
@@ -599,7 +624,7 @@ function rowSecondary(e: RepoEntry): string {
 async function cloneAndSelect(
   e: RepoEntry,
   row: HTMLElement,
-  opts: { skipPick?: boolean } = {},
+  opts: { skipPick?: boolean; skipRefetch?: boolean } = {},
 ): Promise<void> {
   if (e.clone_url === undefined || e.clone_url === "") {
     return;
@@ -608,32 +633,106 @@ async function cloneAndSelect(
   // duplicate trigger (e.g. user clicks both the Clone button and the
   // row body, or clicks Clone twice rapidly).
   if (row.classList.contains("repo-picker-row-cloning")) return;
-  row.classList.add("repo-picker-row-cloning");
-  const orig = row.querySelector<HTMLSpanElement>(".repo-picker-row-age");
-  if (orig !== null) orig.textContent = "Cloning…";
+  markRowCloning(row);
+
   // Clone via the local git endpoint (credential helper is now
   // configured globally by each forge CLI's setup-git, so plain
   // git clone works for private repos).
-  let res: { output?: string; error?: string } | null;
+  //
+  // We capture any apparent error from the API response but do NOT
+  // immediately surface it. `git clone` can spit non-empty stderr
+  // (warnings, credential helper noise) that gets routed into our
+  // error field even when the clone has actually landed on disk.
+  // The truth is whether the entry shows up as is_local on the
+  // next /api/git/repos refresh; trust that over the API's view.
+  let cloneError: string | null = null;
   try {
-    res = await apiPost<{ output?: string; error?: string }>(
+    const res = await apiPost<{ output?: string; error?: string }>(
       `/api/git/clone`,
       { url: e.clone_url },
     );
-  } finally {
-    row.classList.remove("repo-picker-row-cloning");
+    if (res === null) {
+      cloneError = "network error";
+    } else if (res.error !== undefined && res.error !== "") {
+      cloneError = res.error;
+    }
+  } catch (err) {
+    cloneError = err instanceof Error ? err.message : String(err);
   }
-  if (res === null || (res.error !== undefined && res.error !== "")) {
-    if (orig !== null) orig.textContent = "Clone failed";
-    // Surface as a thrown error so withAsyncFeedback can show the
-    // error glyph on the button that triggered this.
-    throw new Error(res?.error ?? "clone failed");
+
+  if (opts.skipRefetch === true) {
+    // Caller (e.g. cloneAllRemoteOnly batch) will refetch + check
+    // status itself after all clones complete. We stay in cloning
+    // (spinner) state until then. Surface any apparent error so
+    // the batch can record it per-id.
+    if (cloneError !== null) throw new Error(cloneError);
+    return;
   }
-  if (opts.skipPick === true) return;
-  // Refetch so the entry is re-rendered as cloned, then select it.
+
+  // Refetch + verify the entry actually landed locally. This is the
+  // authoritative success check: api response can be misleading.
   await refetch();
   const fresh = ctrl.entries.find((x) => x.id === e.id);
-  if (fresh !== undefined) pick(fresh);
+  const actuallyCloned = fresh?.is_local === true;
+
+  // refetch() re-renders all rows; find the fresh element for this
+  // entry to layer post-clone state on.
+  const newRow = findRowById(e.id);
+
+  if (!actuallyCloned) {
+    if (newRow !== null) markRowCloneFailed(newRow, cloneError ?? "clone failed");
+    throw new Error(cloneError ?? "clone failed");
+  }
+
+  // Success — the row already re-rendered with the synced (green)
+  // glyph via stateGlyph(). Pick if requested.
+  if (opts.skipPick !== true && fresh !== undefined) pick(fresh);
+}
+
+/** Replace the row's age column with a spinner and mark the row as
+ *  cloning. Idempotent. */
+function markRowCloning(row: HTMLElement): void {
+  row.classList.add("repo-picker-row-cloning");
+  const ageEl = row.querySelector<HTMLSpanElement>(".repo-picker-row-age");
+  if (ageEl !== null) {
+    ageEl.innerHTML = ICON_SPINNER;
+    ageEl.classList.add("repo-picker-row-spinner");
+    ageEl.removeAttribute("title");
+  } else {
+    // No age element yet — append a spinner to the right region so
+    // the user still sees an in-flight indicator.
+    const right = row.querySelector<HTMLElement>(".repo-picker-row-right");
+    if (right !== null) {
+      const sp = document.createElement("span");
+      sp.className = "repo-picker-row-age repo-picker-row-spinner";
+      sp.innerHTML = ICON_SPINNER;
+      right.prepend(sp);
+    }
+  }
+}
+
+/** After refetch we know the entry didn't land locally — show
+ *  "Clone failed" with a tooltip carrying the actual error. */
+function markRowCloneFailed(row: HTMLElement, msg: string): void {
+  row.classList.remove("repo-picker-row-cloning");
+  const ageEl = row.querySelector<HTMLSpanElement>(".repo-picker-row-age");
+  if (ageEl !== null) {
+    ageEl.classList.remove("repo-picker-row-spinner");
+    ageEl.textContent = "Clone failed";
+    ageEl.title = msg;
+  }
+}
+
+/** Find a freshly-rendered row by entry id. After refetch() the
+ *  previous row reference is stale; we re-locate by stable id via
+ *  the per-row Clone button's data attribute (rows that have been
+ *  cloned no longer carry one — for those the row already shows the
+ *  synced glyph and we don't need to touch it). */
+function findRowById(id: string): HTMLElement | null {
+  const btn = document.querySelector<HTMLElement>(
+    `[data-repo-picker-clone-btn="${cssEscape(id)}"]`,
+  );
+  return btn?.closest<HTMLElement>(".repo-picker-row") ?? null;
 }
 
 function pick(e: RepoEntry): void {
