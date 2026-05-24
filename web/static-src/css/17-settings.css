@@ -328,6 +328,18 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Skeleton placeholder for the primary identity line while the
+ * background probe is still fetching email + username. Inherits
+ * the .skeleton shimmer animation; sized to roughly an email's
+ * worth of width so the row doesn't reflow when the real value
+ * lands. */
+.forge-account-primary-skeleton {
+  display: inline-block;
+  width: 12em;
+  height: 0.875rem;
+  border-radius: 0.25rem;
+}
+
 .forge-account-meta {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);

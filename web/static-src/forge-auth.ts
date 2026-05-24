@@ -294,7 +294,17 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   primary.className = "forge-account-primary";
   const hasEmail = a.email !== undefined && a.email !== "";
   const hasUsername = a.username !== undefined && a.username !== "";
-  primary.textContent = hasEmail ? a.email! : (hasUsername ? a.username! : a.host);
+  if (hasEmail || hasUsername) {
+    primary.textContent = hasEmail ? a.email! : a.username!;
+  } else {
+    // No identity data yet (this is the first paint right after a
+    // PAT submit / OAuth complete; the background probe hasn't
+    // populated email or username yet). Show a skeleton bar
+    // instead of falling back to the host string — the host is
+    // already shown on the meta line below.
+    primary.classList.add("skeleton", "forge-account-primary-skeleton");
+    primary.setAttribute("aria-label", "Loading account identity…");
+  }
   id.appendChild(primary);
   const meta = document.createElement("span");
   meta.className = "forge-account-meta";
