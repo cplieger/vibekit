@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
 
 interface ForgesListResponse {
@@ -115,8 +116,14 @@ function hostPlaceholder(kind: ForgeKind): string {
 }
 
 /** Render the full forges panel. Idempotent; call after every list
- *  mutation to refresh. */
-export async function renderForgesPanel(): Promise<void> {
+ *  mutation to refresh.
+ *
+ *  When `revalidate` is true (the default), connected accounts are
+ *  re-probed in parallel after the initial paint. Tokens can be
+ *  silently revoked or expire; this catches that on page open. The
+ *  initial paint shows last-known state immediately; the panel
+ *  re-renders once when all probes have settled. */
+export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Promise<void> {
   const root = document.getElementById("forges-panel");
   if (root === null) return;
 
@@ -126,6 +133,30 @@ export async function renderForgesPanel(): Promise<void> {
     return;
   }
 
+  paintForgesData(root, data);
+
+  if (opts.revalidate !== false) {
+    const ids = data.forges.filter((f) => f.connected).map((f) => f.id);
+    if (ids.length > 0) {
+      void revalidateInBackground(root, ids);
+    }
+  }
+}
+
+/** Re-probe every connected account in parallel; on completion, re-fetch
+ *  /api/forges and re-paint with the post-probe state. */
+async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise<void> {
+  await Promise.allSettled(
+    ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {})),
+  );
+  const data = await apiGet<ForgesListResponse>("/api/forges");
+  if (data !== null && data !== undefined && document.body.contains(root)) {
+    paintForgesData(root, data);
+  }
+}
+
+/** Paint the data into the root element. Pure rendering — no API calls. */
+function paintForgesData(root: HTMLElement, data: ForgesListResponse): void {
   // Bucket accounts by kind.
   const byKind = new Map<ForgeKind, ConfiguredForge[]>();
   for (const k of ALL_KINDS) byKind.set(k, []);
@@ -477,7 +508,12 @@ async function doPATConnect(
 
 async function onSignOut(f: ConfiguredForge): Promise<void> {
   const label = f.email ?? f.username ?? f.host;
-  if (!confirm(`Sign out of ${label}? The token will be removed from the CLI config.`)) return;
+  const ok = await confirmDialog(
+    `Sign out of ${label}? The token will be removed from the CLI config.`,
+    "Sign out",
+    "destructive",
+  );
+  if (!ok) return;
   await apiDelete(`/api/forges/${encodeURIComponent(f.id)}`);
   void renderForgesPanel();
 }

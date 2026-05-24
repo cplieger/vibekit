@@ -8,10 +8,18 @@ vi.mock("./api-client.js", () => ({
   apiDelete: vi.fn(() => Promise.resolve(null)),
 }));
 
+vi.mock("./confirm.js", () => ({
+  confirm: vi.fn(() => Promise.resolve(true)),
+}));
+
 import { renderForgesPanel } from "./forge-auth.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, apiPost, apiDelete } from "./api-client.js";
+import { confirm as confirmDialog } from "./confirm.js";
 
 const mockedApiGet = vi.mocked(apiGet);
+const mockedApiPost = vi.mocked(apiPost);
+const mockedApiDelete = vi.mocked(apiDelete);
+const mockedConfirm = vi.mocked(confirmDialog);
 
 function setupDOM(): void {
   document.body.innerHTML = `<div id="forges-panel"></div>`;
@@ -226,5 +234,94 @@ describe("forge-auth: 4-section layout", () => {
     btn.click();
     expect(slot.querySelector("form.forge-pat-form")).toBeNull();
     expect(slot.dataset["mode"]).toBeUndefined();
+  });
+
+  it("re-probes connected accounts in the background on page open", async () => {
+    // Initial: two connected accounts.
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        { id: "github:github.com",   kind: "github",   host: "github.com",   username: "alice", connected: true },
+        { id: "codeberg:codeberg.org", kind: "codeberg", host: "codeberg.org", username: "bob",   connected: true },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    // Post-probe re-fetch — only need to return so the re-paint is reachable.
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    // Allow the void revalidateInBackground microtasks to flush.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    // Two probes fired (one per connected account), pointed at the right URLs.
+    const probeCalls = mockedApiPost.mock.calls.filter(
+      ([path]) => typeof path === "string" && path.includes("/probe"),
+    );
+    expect(probeCalls.length).toBe(2);
+    expect(probeCalls.some(([p]) => (p as string).includes("github%3Agithub.com"))).toBe(true);
+    expect(probeCalls.some(([p]) => (p as string).includes("codeberg%3Acodeberg.org"))).toBe(true);
+  });
+
+  it("does not probe disconnected accounts on page open", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", connected: false, last_error: "expired" },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    await Promise.resolve(); await Promise.resolve();
+
+    const probeCalls = mockedApiPost.mock.calls.filter(
+      ([path]) => typeof path === "string" && path.includes("/probe"),
+    );
+    expect(probeCalls.length).toBe(0);
+  });
+
+  it("sign-out uses the custom styled confirm dialog (not the native popup)", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", email: "a@x.io", connected: true },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    // Empty re-fetch after delete.
+    mockedApiGet.mockResolvedValue({ forges: [], kinds: ["github", "gitlab", "codeberg", "gitea"] });
+    mockedConfirm.mockResolvedValueOnce(true);
+
+    await renderForgesPanel();
+    const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
+      .find((b) => b.textContent === "Sign out")!;
+    signOutBtn.click();
+    // Allow handler microtasks to run.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    expect(mockedConfirm).toHaveBeenCalled();
+    const [msg, label, variant] = mockedConfirm.mock.calls[0]!;
+    expect(msg).toContain("Sign out of a@x.io");
+    expect(label).toBe("Sign out");
+    expect(variant).toBe("destructive");
+    expect(mockedApiDelete).toHaveBeenCalledWith("/api/forges/github%3Agithub.com");
+  });
+
+  it("sign-out cancellation does not delete", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", connected: true },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    mockedConfirm.mockResolvedValueOnce(false);
+    mockedApiDelete.mockClear();
+
+    await renderForgesPanel();
+    const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
+      .find((b) => b.textContent === "Sign out")!;
+    signOutBtn.click();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    expect(mockedConfirm).toHaveBeenCalled();
+    expect(mockedApiDelete).not.toHaveBeenCalled();
   });
 });
