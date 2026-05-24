@@ -540,13 +540,22 @@
            Tab 3 (Sources): forge accounts + cloneable repos per forge. -->
       <div id="git-view" class="hidden" data-tab-view>
         <div class="page-content">
-          <header class="git-page-header">
-            <h2 class="page-title">Source Control</h2>
-            <nav id="git-tab-bar" class="git-tab-bar" role="tablist" aria-label="Source control tabs">
-              <button type="button" class="git-tab active" role="tab" aria-selected="true" data-git-tab="changes">Changes</button>
-              <button type="button" class="git-tab" role="tab" aria-selected="false" data-git-tab="prs">Pull requests</button>
-              <button type="button" class="git-tab" role="tab" aria-selected="false" data-git-tab="sources">Sources</button>
+          <header class="settings-header">
+            <div class="settings-title-row">
+              <h2 class="page-title">Source Control</h2>
+            </div>
+            <nav id="git-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Source control tabs">
+              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-git-tab="changes">Changes</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="prs">Pull requests</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="sources">Sources</button>
             </nav>
+            <label class="settings-tab-select-wrap" aria-label="Source control tabs">
+              <select id="git-tab-select" class="settings-tab-select">
+                <option value="changes">Changes</option>
+                <option value="prs">Pull requests</option>
+                <option value="sources">Sources</option>
+              </select>
+            </label>
           </header>
           <!-- Source-control status banner: at most one of forge-auth-failed,
                gh-cli-missing, forges-not-connected. Populated by

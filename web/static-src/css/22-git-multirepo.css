@@ -2,42 +2,10 @@
    Git multi-repo dashboard
    ========================================================================== */
 
-/* Page header: title on the left, tabs on the right (or wrapping). */
-.git-page-header {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-3);
-  flex-wrap: wrap;
-  padding-block: 0 var(--sp-3);
-}
-
-.git-tab-bar {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-}
-
-.git-tab {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  padding: var(--sp-1) var(--sp-3);
-  font: inherit;
-  color: var(--c-text-secondary);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro), color var(--dur-micro) var(--ease-micro);
-}
-
-.git-tab:hover { color: var(--c-text-primary); background: var(--c-bg-tertiary); }
-.git-tab.active {
-  color: var(--c-text-primary);
-  background: var(--c-bg-primary);
-  box-shadow: inset 0 0 0 1px var(--c-border);
-  font-weight: 500;
-}
+/* Note: the page header (title + tab bar) reuses the existing
+ * .settings-header / .settings-tab-bar / .settings-tab classes from
+ * 17-settings.css for visual consistency with the Settings view. We
+ * don't redeclare those here. */
 
 .git-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 

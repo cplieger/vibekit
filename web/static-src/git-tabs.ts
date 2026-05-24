@@ -43,6 +43,16 @@ export function initGitTabs(): void {
     btn?.addEventListener("click", () => setGitTab(tab));
   }
 
+  // Mobile: <select> mirroring the desktop pill bar. Hidden via CSS
+  // on wide viewports; on narrow it replaces the bar.
+  const select = document.getElementById("git-tab-select") as HTMLSelectElement | null;
+  if (select !== null) {
+    select.addEventListener("change", () => {
+      const v = select.value;
+      if (GIT_TABS.includes(v as GitTab)) setGitTab(v as GitTab);
+    });
+  }
+
   wireArrowNav(bar, "[data-git-tab]", { orientation: "horizontal" });
 
   onGitTabChange((tab) => {
@@ -51,6 +61,7 @@ export function initGitTabs(): void {
       btn?.classList.toggle("active", t === tab);
       btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
     }
+    if (select !== null) select.value = tab;
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
       panel.classList.toggle("hidden", panel.dataset["gitPanel"] !== tab);
     }
