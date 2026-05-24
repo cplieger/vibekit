@@ -137,7 +137,6 @@ class Elements {
   get gitOutputModal(): HTMLDivElement { return el("git-output-modal"); }
   get gitBranchModal(): HTMLDivElement { return el("git-branch-modal"); }
   get subagentModal(): HTMLDivElement { return el("subagent-modal"); }
-  get confirmModal(): HTMLDivElement { return el("confirm-modal"); }
 
   // Git panel (added 2026 audit)
   get gitOutputBar(): HTMLDivElement { return el("git-output-bar"); }

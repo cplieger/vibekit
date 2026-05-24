@@ -14,7 +14,7 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands, version, clearMsgIndex,
+  setAvailableCommands, setCurrentMode, version, clearMsgIndex,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -88,6 +88,15 @@ onSSE("commands_updated", (chatID, payload) => {
 // future enhancements (e.g. a "compacting..." toast) have a hook.
 onSSE("compaction_started", () => {
   // intentional no-op; see comment above
+});
+
+// Mode switch echo: when the agent switches modes (via a switch_mode
+// tool call that the user approved), the server broadcasts the new
+// mode_id. Reflect it in the store so any UI reading current_mode_id
+// stays current without waiting for the next chat_updated rebuild.
+onSSE("mode_changed", (chatID, p) => {
+  if (chatID === "") return;
+  setCurrentMode(chatID, p.mode_id);
 });
 
 // Steering inclusion: render "Context loaded: tech.md, go.md" badges

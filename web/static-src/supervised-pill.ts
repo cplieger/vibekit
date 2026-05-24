@@ -13,9 +13,9 @@
 //
 // Reuse: every interactive surface comes from existing primitives —
 // pill-expand.ts for the popover, file-label for file chips, tool-card
-// diff-summary span for +N -M, transport.send for the commands, the
-// store for state. No new pill-chrome CSS; we extend the existing
-// .pill-expandable / .pill-expanded rules.
+// diff-summary span for +N -M, action framework (actions/chat.ts) for
+// the commands, the store for state. No new pill-chrome CSS; we
+// extend the existing .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
 import { getActive, version } from "./store.js";

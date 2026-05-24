@@ -24,6 +24,11 @@ const DELAY_COLD = 1000;
 const DELAY_WARM = 0;
 const COOLDOWN = 500;
 
+// Module-level counter for unique tooltip element ids (used as the
+// target of aria-describedby on the anchor). Resets only on full
+// page reload — tooltips are short-lived so collision risk is nil.
+let tipIDSeq = 0;
+
 class TooltipController {
   private state: TooltipState = { kind: "idle" };
   private warmUntil = 0;
@@ -82,7 +87,13 @@ class TooltipController {
     tip.className = "vk-tooltip";
     tip.textContent = text;
     tip.setAttribute("role", "tooltip");
+    // Generate a unique id so screen readers can associate the
+    // tooltip with the anchor via aria-describedby. Without this the
+    // tooltip is purely visual — AT users never hear the content.
+    const tipID = `vk-tip-${++tipIDSeq}`;
+    tip.id = tipID;
     document.body.appendChild(tip);
+    anchor.setAttribute("aria-describedby", tipID);
 
     const rect = anchor.getBoundingClientRect();
     const tipRect = tip.getBoundingClientRect();
@@ -110,6 +121,9 @@ class TooltipController {
 
     if (this.state.kind === "visible") {
       const tip = this.state.tip;
+      // Drop the aria-describedby pointer before fade so AT doesn't
+      // re-announce the tooltip while it animates out.
+      this.state.anchor.removeAttribute("aria-describedby");
       tip.classList.add("fading-out");
       this.state = { kind: "fading", tip };
 
@@ -135,6 +149,7 @@ class TooltipController {
         clearTimeout(this.state.timer);
         break;
       case "visible":
+        this.state.anchor.removeAttribute("aria-describedby");
         this.state.tip.remove();
         break;
       case "fading":

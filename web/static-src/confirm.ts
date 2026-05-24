@@ -15,12 +15,18 @@ function ensureDialog(): HTMLDialogElement {
   if (dialogEl !== null) return dialogEl;
   dialogEl = document.createElement("dialog");
   dialogEl.className = "vk-confirm-dialog";
+  // The <dialog> element gets implicit role="dialog". For destructive
+  // variants we upgrade to role="alertdialog" at show-time so AT
+  // announces the message with the urgency it deserves.
   dialogEl.innerHTML = `
-    <p class="vk-confirm-msg"></p>
+    <p class="vk-confirm-msg" id="vk-confirm-msg"></p>
     <div class="vk-confirm-actions">
       <button type="button" class="vk-confirm-cancel btn-small">Cancel</button>
       <button type="button" class="vk-confirm-ok btn-small confirm-danger">Confirm</button>
     </div>`;
+  // aria-labelledby links the dialog accname to the message paragraph
+  // so SR users hear the message when the dialog opens.
+  dialogEl.setAttribute("aria-labelledby", "vk-confirm-msg");
   document.body.appendChild(dialogEl);
   return dialogEl;
 }
@@ -36,6 +42,14 @@ export function confirm(
     const msg = d.querySelector(".vk-confirm-msg") as HTMLParagraphElement;
     const okBtn = d.querySelector(".vk-confirm-ok") as HTMLButtonElement;
     const cancelBtn = d.querySelector(".vk-confirm-cancel") as HTMLButtonElement;
+
+    // Upgrade to alertdialog for destructive prompts so screen readers
+    // treat them as urgent / interruptive.
+    if (variant === "destructive") {
+      d.setAttribute("role", "alertdialog");
+    } else {
+      d.removeAttribute("role");
+    }
 
     msg.textContent = message;
     okBtn.textContent = confirmLabel;

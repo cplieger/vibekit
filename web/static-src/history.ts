@@ -206,16 +206,9 @@ class HistoryController {
       }
     }, { signal });
   }
-
-  refreshVisibility(): void {
-    void this.loadArchived();
-  }
 }
 
 const historyCtrl = new HistoryController();
 
 export function initHistory(): void { historyCtrl.init(); }
 export function showHistoryView(): void { historyCtrl.showView(); }
-
-
-export function refreshHistoryVisibility(): void { historyCtrl.refreshVisibility(); }
