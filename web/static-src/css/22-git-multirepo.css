@@ -16,6 +16,27 @@
 
 .git-tab-toolbar .tool-form-input { flex: 1; min-width: 0; }
 
+/* Filter input wrapper: positions a small magnifier SVG inside the
+ * input on the leading side. The input gets extra padding-inline-start
+ * so the typed text doesn't overlap the icon. */
+.git-tab-filter-wrap {
+  position: relative;
+  flex: 1; min-width: 0;
+  display: flex; align-items: center;
+}
+
+.git-tab-filter-icon {
+  position: absolute;
+  inset-inline-start: var(--sp-3);
+  color: var(--c-text-tertiary);
+  pointer-events: none;
+}
+
+.git-tab-filter-wrap .tool-form-input {
+  width: 100%;
+  padding-inline-start: calc(var(--sp-3) + 14px + var(--sp-2));
+}
+
 .git-tab-toolbar .icon-btn {
   width: 32px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
