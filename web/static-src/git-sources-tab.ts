@@ -225,12 +225,15 @@ function renderRepoRow(forge: ConfiguredForge, repo: Repo): HTMLElement {
   if (cloned) {
     const trash = document.createElement("button");
     trash.type = "button";
-    trash.className = "icon-btn";
+    trash.className = "icon-btn danger";
     trash.innerHTML = ICON_TRASH;
     trash.title = "Remove local copy";
     trash.setAttribute("aria-label", "Remove local copy");
     trash.addEventListener("click", () => {
-      void withAsyncFeedback(trash, () => removeLocal(repo, !!repo.url), { keepLabel: true });
+      // Default keepLabel=false so the spinner replaces the trash
+      // icon while in flight (then ✓/✗ on completion). For an
+      // icon-only button there's no label to keep.
+      void withAsyncFeedback(trash, () => removeLocal(repo, !!repo.url));
     });
     actions.appendChild(trash);
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {

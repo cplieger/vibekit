@@ -68,7 +68,11 @@ export function initChangesTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void withAsyncFeedback(refreshBtn, () => refreshChanges(), { keepLabel: true });
+      // Default keepLabel=false: the icon is replaced by the
+      // spinner while the refresh is in flight (then ✓/✗). The
+      // button has no text label to keep, so this reads cleaner
+      // than the icon + spinner side-by-side variant.
+      void withAsyncFeedback(refreshBtn, () => refreshChanges());
     });
   }
 
