@@ -335,56 +335,117 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
 // flow working in the rewrite without a port of the old single-repo
 // dialog.
 
-async function openNewPRDialog(g: RepoGroup): Promise<void> {
-  const dlg = document.createElement("dialog");
-  dlg.className = "vk-confirm-dialog git-pr-create-dialog";
-  dlg.innerHTML = `
-    <h3 style="margin:0 0 var(--sp-3); font-size: var(--fs-md);">New pull request — ${escapeHTML(g.full_name)}</h3>
-    <form>
-      <div style="display: grid; gap: var(--sp-2);">
-        <label>Source branch <input name="source" class="tool-form-input" required placeholder="feature-branch"></label>
-        <label>Target branch <input name="target" class="tool-form-input" required value="main" placeholder="main"></label>
-        <label>Title <input name="title" class="tool-form-input" required></label>
-        <label>Body <textarea name="body" class="tool-form-input" rows="4"></textarea></label>
-      </div>
-      <div class="vk-confirm-actions" style="margin-block-start: var(--sp-3);">
-        <button type="button" class="btn-small" data-cancel>Cancel</button>
-        <button type="submit" class="btn-small btn-primary">Open PR</button>
-      </div>
-    </form>
-  `;
-  document.body.appendChild(dlg);
-  dlg.showModal();
+/** Open the New PR dialog targeting a specific local repo by name.
+ *  Used by the contextual "Open PR" hint on the Changes tab. If we
+ *  haven't fetched groups yet, refetch first; the source branch is
+ *  pre-filled from the call site so the user doesn't have to retype. */
+export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
+  if (lastGroups.length === 0) await refreshPRs();
+  const group = lastGroups.find((g) => g.name === repoName);
+  if (group === undefined) {
+    // Repo not in any forge group (probably not on a connected
+    // forge). Render a small inline error in the mount.
+    const root = document.getElementById("git-prs-mount");
+    if (root !== null) {
+      root.innerHTML = `<div class="git-multirepo-error">No connected forge knows about <strong>${escapeHTML(repoName)}</strong> — connect one in Sources.</div>`;
+    }
+    return;
+  }
+  await openNewPRDialog(group, sourceBranch);
+}
 
-  const form = dlg.querySelector("form")!;
-  const cancel = dlg.querySelector("[data-cancel]") as HTMLButtonElement;
-  cancel.addEventListener("click", () => { dlg.close(); dlg.remove(); });
+async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
+  const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
+  if (dlg === null) {
+    // Fallback (shouldn't happen — the dialog is in index.html).
+    alert("PR dialog not available");
+    return;
+  }
 
-  await new Promise<void>((resolve) => {
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const data = new FormData(form);
-      const body = {
-        source_branch: String(data.get("source") ?? ""),
-        target_branch: String(data.get("target") ?? "main"),
-        title: String(data.get("title") ?? ""),
-        body: String(data.get("body") ?? ""),
-      };
-      const res = await apiPost<{ number?: number; error?: string }>(
-        `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
-        body,
-      );
-      if (res === null || (res.error !== undefined && res.error !== "")) {
-        alert(`Failed: ${res?.error ?? "network error"}`);
-        return;
-      }
-      dlg.close();
-      dlg.remove();
-      await refreshPRs();
-      resolve();
-    });
-    dlg.addEventListener("close", () => { dlg.remove(); resolve(); });
+  const baseInput = document.getElementById("pr-base") as HTMLInputElement;
+  const headInput = document.getElementById("pr-head") as HTMLInputElement;
+  const titleInput = document.getElementById("pr-title") as HTMLInputElement;
+  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement;
+  const draftInput = document.getElementById("pr-draft") as HTMLInputElement;
+  const status = document.getElementById("pr-dialog-status");
+  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement;
+  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement;
+
+  // Stage 1: edit. Pre-fill base/head, generate title+body via AI.
+  baseInput.value = "main";
+  headInput.value = sourceBranch;
+  titleInput.value = "";
+  bodyInput.value = "";
+  draftInput.checked = false;
+  if (status !== null) {
+    status.textContent = "Generating description…";
+    status.className = "forge-status";
+  }
+
+  // Drop any prior listeners by cloning the buttons.
+  const newSubmit = submitBtn.cloneNode(true) as HTMLButtonElement;
+  submitBtn.replaceWith(newSubmit);
+  const newGenerate = generateBtn.cloneNode(true) as HTMLButtonElement;
+  generateBtn.replaceWith(newGenerate);
+  // The static close buttons (data-pr-close) keep their close handler
+  // wired in index.html-side via this closure too.
+  for (const btn of dlg.querySelectorAll<HTMLButtonElement>("[data-pr-close]")) {
+    const fresh = btn.cloneNode(true) as HTMLButtonElement;
+    btn.replaceWith(fresh);
+    fresh.addEventListener("click", () => dlg.close());
+  }
+
+  const generate = async (): Promise<void> => {
+    if (status !== null) status.textContent = "Generating description…";
+    const res = await apiPost<{ title?: string; body?: string; error?: string }>(
+      `/api/git/pr-description`,
+      { repo: g.name, branch: baseInput.value.trim() || "main" },
+    );
+    if (res === null) {
+      if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      return;
+    }
+    if (res.error !== undefined && res.error !== "") {
+      if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      return;
+    }
+    if (res.title !== undefined && titleInput.value === "") titleInput.value = res.title;
+    if (res.body !== undefined && bodyInput.value === "") bodyInput.value = res.body;
+    if (status !== null) { status.textContent = "Description generated. Edit and submit."; status.className = "forge-status ok"; }
+  };
+
+  newGenerate.addEventListener("click", () => { void generate(); });
+
+  // Stage 2: review + submit.
+  newSubmit.addEventListener("click", async () => {
+    if (status !== null) { status.textContent = "Opening PR…"; status.className = "forge-status"; }
+    const res = await apiPost<{ number?: number; error?: string }>(
+      `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
+      {
+        source_branch: headInput.value.trim(),
+        target_branch: baseInput.value.trim(),
+        title: titleInput.value.trim(),
+        body: bodyInput.value,
+        draft: draftInput.checked,
+      },
+    );
+    if (res === null) {
+      if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      return;
+    }
+    if (res.error !== undefined && res.error !== "") {
+      if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      return;
+    }
+    dlg.close();
+    await refreshPRs();
   });
+
+  dlg.showModal();
+  // Kick off the AI generation immediately so it overlaps with the
+  // user picking up the form. Errors are non-fatal — they just leave
+  // the title/body blank for the user to fill manually.
+  void generate();
 }
 
 // --- Helpers ---

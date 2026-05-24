@@ -46,6 +46,12 @@ interface StatusAllResponse {
 let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 
+/** Repos that recently received a successful push. Used to surface a
+ *  contextual "Open PR" hint in their section header for a few
+ *  re-renders after the push. */
+const recentlyPushed = new Set<string>();
+const RECENTLY_PUSHED_TTL_MS = 60_000;
+
 // --- Public API ---
 
 /** Initialise the Changes tab. Wires the filter input, the global
@@ -148,7 +154,20 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   header.className = "git-repo-section-header";
   header.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
   header.innerHTML = renderHeaderHTML(r);
-  header.addEventListener("click", () => {
+  header.addEventListener("click", (ev) => {
+    // If the click target is inside a branch chip, route to the
+    // branch switcher instead of toggling the section. The chip
+    // intercepts at the bubbling phase before this listener.
+    const target = ev.target as HTMLElement | null;
+    const chip = target?.closest<HTMLElement>("[data-branch-trigger]");
+    if (chip !== null && chip !== undefined && header.contains(chip)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      void import("./git-branch-switcher.js").then(({ openBranchSwitcher }) => {
+        openBranchSwitcher(r.repo, chip);
+      });
+      return;
+    }
     const open = section.classList.toggle("expanded");
     header.setAttribute("aria-expanded", open ? "true" : "false");
   });
@@ -166,6 +185,11 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
 
   // Action bar
   body.appendChild(renderActionBar(r));
+
+  // Open-PR hint after a successful push (transient).
+  if (recentlyPushed.has(r.repo) && isFeatureBranch(r.branch)) {
+    body.appendChild(renderOpenPRHint(r));
+  }
 
   // File list (staged first, then unstaged)
   if (filteredFiles.length === 0 && !r.has_dirty) {
@@ -188,6 +212,9 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     body.appendChild(renderCommitArea(r));
   }
 
+  // Recent commits sub-section (collapsed by default; expand → fetch).
+  body.appendChild(renderRecentCommits(r));
+
   section.appendChild(body);
   return section;
 }
@@ -200,10 +227,16 @@ function renderHeaderHTML(r: RepoStatus): string {
     : "";
   const stashes = r.stashes > 0 ? ` <span class="git-repo-stashes" title="${r.stashes} stash${r.stashes === 1 ? "" : "es"}">📦${r.stashes}</span>` : "";
   const branch = escapeHTML(r.branch || "(detached)");
+  // The branch chip is a span (not a nested button — buttons can't
+  // be inside a button per HTML spec) but the section header captures
+  // the click and routes it through openBranchSwitcher when the
+  // target was inside the chip.
   return `
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
-    <span class="git-repo-section-meta">${branch}${ahead}${behind}${stashes}</span>
+    <span class="git-repo-section-meta">
+      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" title="Switch branch">${branch}</span>${ahead}${behind}${stashes}
+    </span>
   `;
 }
 
@@ -259,7 +292,15 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     const push = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
     push.classList.add("btn-primary");
     push.addEventListener("click", () => {
-      void withAsyncFeedback(push, () => mutateRepo("/api/git/push", r.repo, {}));
+      void withAsyncFeedback(push, async () => {
+        await mutateRepo("/api/git/push", r.repo, {});
+        // Mark for "Open PR" hint surfacing on next renders.
+        recentlyPushed.add(r.repo);
+        setTimeout(() => {
+          recentlyPushed.delete(r.repo);
+          paint();
+        }, RECENTLY_PUSHED_TTL_MS);
+      });
     });
     bar.appendChild(push);
   }
@@ -297,17 +338,22 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const li = document.createElement("li");
   li.className = `git-file-row${f.staged ? " staged" : ""}`;
 
+  // Top row: status + path + actions. The whole top row is the
+  // click target for toggling the inline diff.
+  const top = document.createElement("div");
+  top.className = "git-file-row-top";
+
   const status = document.createElement("span");
   status.className = "git-file-status";
   status.textContent = f.display || statusLetter(f.status);
   status.title = describeStatus(f.status);
-  li.appendChild(status);
+  top.appendChild(status);
 
   const path = document.createElement("span");
   path.className = "git-file-path";
   path.textContent = f.path;
   path.title = f.path;
-  li.appendChild(path);
+  top.appendChild(path);
 
   const actions = document.createElement("span");
   actions.className = "git-file-actions";
@@ -337,8 +383,128 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
         if (ok) await mutateRepo("/api/git/discard", r.repo, { files: [f.path] });
       }, true));
   }
-  li.appendChild(actions);
+  top.appendChild(actions);
+  li.appendChild(top);
+
+  // Inline diff drawer (hidden until clicked). Lazy-loaded.
+  const diffDrawer = document.createElement("div");
+  diffDrawer.className = "git-file-diff hidden";
+  li.appendChild(diffDrawer);
+
+  let loadedDiff = false;
+  top.addEventListener("click", () => {
+    const opening = diffDrawer.classList.toggle("hidden") === false;
+    li.classList.toggle("expanded", opening);
+    if (opening && !loadedDiff) {
+      loadedDiff = true;
+      diffDrawer.textContent = "Loading diff…";
+      void apiGet<{ diff?: string }>(
+        `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
+      ).then((data) => {
+        if (data === null) {
+          diffDrawer.textContent = "Failed to load diff.";
+          return;
+        }
+        const diff = data.diff ?? "";
+        if (diff.trim() === "") {
+          diffDrawer.textContent = "(no diff available — file may be binary or empty)";
+          return;
+        }
+        diffDrawer.replaceChildren();
+        const pre = document.createElement("pre");
+        pre.className = "git-file-diff-pre";
+        pre.appendChild(renderDiffWithColors(diff));
+        diffDrawer.appendChild(pre);
+      });
+    }
+  });
+
   return li;
+}
+
+/** Render a unified-diff string with simple +/- coloring. Splits on
+ *  newlines and wraps each line in a span with a class derived from
+ *  its first character. Hunk headers (@@) get their own class. */
+function renderDiffWithColors(diff: string): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  for (const line of diff.split("\n")) {
+    const span = document.createElement("span");
+    span.className = "git-diff-line";
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      span.classList.add("git-diff-line-meta");
+    } else if (line.startsWith("@@")) {
+      span.classList.add("git-diff-line-hunk");
+    } else if (line.startsWith("+")) {
+      span.classList.add("git-diff-line-add");
+    } else if (line.startsWith("-")) {
+      span.classList.add("git-diff-line-del");
+    }
+    span.textContent = line + "\n";
+    frag.appendChild(span);
+  }
+  return frag;
+}
+
+function renderRecentCommits(r: RepoStatus): HTMLElement {
+  // Collapsible sub-section: header is a button; body holds either
+  // a "Loading..." indicator, the rendered commits list, or an
+  // error message. Lazy-load: only fetch when the user expands.
+  const wrap = document.createElement("details");
+  wrap.className = "git-recent-commits";
+
+  const summary = document.createElement("summary");
+  summary.className = "git-recent-commits-summary";
+  summary.textContent = "Recent commits";
+  wrap.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "git-recent-commits-body";
+  body.textContent = "Loading…";
+  wrap.appendChild(body);
+
+  let loaded = false;
+  wrap.addEventListener("toggle", () => {
+    if (!wrap.open || loaded) return;
+    loaded = true;
+    void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
+      `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
+    ).then((data) => {
+      if (data === null) {
+        body.textContent = "Failed to load.";
+        return;
+      }
+      const entries = data.entries ?? [];
+      if (entries.length === 0) {
+        body.textContent = "No commits.";
+        return;
+      }
+      body.replaceChildren();
+      const list = document.createElement("ul");
+      list.className = "git-recent-commits-list";
+      for (const line of entries.slice(0, 20)) {
+        const li = document.createElement("li");
+        li.className = "git-recent-commits-row";
+        // line shape: "<sha> <subject>"
+        const sp = line.indexOf(" ");
+        if (sp > 0) {
+          const sha = document.createElement("code");
+          sha.className = "git-recent-commits-sha";
+          sha.textContent = line.slice(0, sp);
+          li.appendChild(sha);
+          const sub = document.createElement("span");
+          sub.className = "git-recent-commits-subject";
+          sub.textContent = line.slice(sp + 1);
+          li.appendChild(sub);
+        } else {
+          li.textContent = line;
+        }
+        list.appendChild(li);
+      }
+      body.appendChild(list);
+    });
+  });
+
+  return wrap;
 }
 
 function renderCommitArea(r: RepoStatus): HTMLElement {
@@ -405,6 +571,49 @@ async function mutateRepo(path: string, repo: string, body: Record<string, unkno
 }
 
 // --- Helpers ---
+
+/** Heuristic: branches named "main", "master", "develop", "trunk"
+ *  aren't feature branches and shouldn't trigger the post-push
+ *  "Open PR" hint. Anything else is treated as a feature branch
+ *  candidate. */
+function isFeatureBranch(branch: string): boolean {
+  if (branch === "") return false;
+  switch (branch.toLowerCase()) {
+    case "main":
+    case "master":
+    case "develop":
+    case "trunk":
+      return false;
+    default:
+      return true;
+  }
+}
+
+/** Banner shown briefly after a successful push: invites the user to
+ *  open a PR for the just-pushed branch. Click switches to the PRs
+ *  tab and opens the new-PR dialog with source_branch pre-filled. */
+function renderOpenPRHint(r: RepoStatus): HTMLElement {
+  const hint = document.createElement("div");
+  hint.className = "git-open-pr-hint";
+  hint.innerHTML = `
+    <span class="git-open-pr-hint-icon" aria-hidden="true">💡</span>
+    <span class="git-open-pr-hint-msg">Pushed <strong>${escapeHTML(r.branch)}</strong> to origin. Open a pull request?</span>
+  `;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-small btn-primary";
+  btn.textContent = "Open PR";
+  btn.addEventListener("click", () => {
+    void (async () => {
+      const { setGitTab } = await import("./git-tabs.js");
+      const { openNewPRForRepo } = await import("./git-prs-tab.js");
+      setGitTab("prs");
+      await openNewPRForRepo(r.repo, r.branch);
+    })();
+  });
+  hint.appendChild(btn);
+  return hint;
+}
 
 function statusLetter(s: string): string {
   if (s.length >= 1) return s.charAt(0);

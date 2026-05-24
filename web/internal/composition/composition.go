@@ -141,9 +141,10 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		for i := range configured {
 			f := &configured[i]
 			p := steering.ForgeProvider{
-				Kind: string(f.Kind),
-				Host: f.Host,
-				User: f.Username,
+				Kind:  string(f.Kind),
+				Host:  f.Host,
+				User:  f.Username,
+				Email: f.Email,
 			}
 			// Best-effort: enumerate repos for this provider via the CLI.
 			if ops, opsErr := forgesPkg.New(f.Kind, f.Host); opsErr == nil {

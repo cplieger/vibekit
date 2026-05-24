@@ -143,6 +143,46 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, map[string]any{"repos": repos})
 }
 
+// handleFileDiff returns the working-tree diff for a single file
+// against HEAD. Used by the Changes tab's inline diff viewer.
+//
+// Path validation mirrors handleShow: relative paths only, no
+// traversal, no leading `-`, no control bytes.
+func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("path")
+	if file == "" {
+		api.BadRequest(w, "path required")
+		return
+	}
+	if strings.HasPrefix(file, "-") ||
+		strings.Contains(file, "..") ||
+		strings.IndexFunc(file, func(r rune) bool { return r < 0x20 || r == 0x7f }) != -1 ||
+		strings.HasPrefix(file, "/") {
+		slog.Warn("git file-diff: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(file))
+		api.BadRequest(w, "invalid path")
+		return
+	}
+	dir := h.repoDir(repoFromQuery(r))
+	if !api.IsGitRepo(dir) {
+		api.BadRequest(w, "not a git repo")
+		return
+	}
+	// `git diff HEAD -- <path>` gives both staged and unstaged
+	// changes for the file in a single unified-diff output. Untracked
+	// files have no HEAD entry; fall back to `--no-index` against
+	// /dev/null, which renders the file as all-additions.
+	out, err := gitCmd(r.Context(), dir, "diff", "HEAD", "--", file)
+	if err != nil || strings.TrimSpace(out) == "" {
+		// `--no-index` exits non-zero when there's a diff (not an
+		// error condition). Capture combined output regardless.
+		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-index", "--", "/dev/null", file)
+		if strings.TrimSpace(out2) != "" {
+			out = out2
+		}
+	}
+	api.WriteJSON(w, map[string]string{"diff": out})
+}
+
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("path")
 	if file == "" {

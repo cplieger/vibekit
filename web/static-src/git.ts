@@ -26,6 +26,7 @@ import { initChangesTab, refreshChanges } from "./git-changes-tab.js";
 import { initPRsTab, refreshPRs } from "./git-prs-tab.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
+import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
 
 let initialized = false;
 
@@ -39,6 +40,7 @@ export function initGitPanel(): void {
     initChangesTab();
     initPRsTab();
     initSourcesTab();
+    initGitBadge();
     initStatusBanner({
       // Connect-forge CTA from the banner: switch to the Sources tab,
       // which holds the per-forge account UI.
@@ -91,14 +93,17 @@ export function loadGitRepos(): void {
 export function syncGitRepo(_repo: string): void { /* no-op */ }
 
 /** Refresh the changes-tab view. Used by handlers/turn.ts when the
- *  agent finishes a turn that touched files. */
+ *  agent finishes a turn that touched files. Also kicks the sidebar
+ *  badge so the dot reflects the new state. */
 export function refreshGitBadge(): void {
   void refreshChanges();
+  void refreshBadgeImpl();
 }
 
 /** Mark git state as dirty so the changes view refetches. The legacy
  *  name comes from when the badge had its own dirty flag; today it
- *  just kicks the changes-tab refresh. */
+ *  triggers both the tab refresh and the sidebar badge re-derivation. */
 export function markGitDirty(): void {
   void refreshChanges();
+  void refreshBadgeImpl();
 }
