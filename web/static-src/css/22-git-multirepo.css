@@ -517,68 +517,16 @@ a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
   align-items: center;
 }
 
-/* Sources tab */
+/* Sources tab: bare mount, the rest of the layout comes from
+ * forge-auth.ts (forge-kind-section + per-account collapsible repos).
+ * The .git-sources-cloned-dot rule below is reused by forge-auth's
+ * per-repo state indicator, so we keep it here in the multirepo
+ * stylesheet rather than fragmenting the colour token usage. */
 .git-sources-mount {
   display: flex; flex-direction: column;
   gap: var(--sp-4);
   padding-block: var(--sp-2);
 }
-
-.git-sources-repos {
-  display: flex; flex-direction: column;
-  gap: var(--sp-2);
-  padding-block-start: var(--sp-2);
-  border-block-start: 1px dashed var(--c-border);
-}
-
-.git-sources-repos-heading-row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.git-sources-repos-heading {
-  margin: 0;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--c-text-secondary);
-}
-
-.git-sources-repo-list {
-  list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column;
-  gap: 1px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  overflow: hidden;
-}
-
-.git-sources-repo-empty {
-  padding: var(--sp-3) var(--sp-4);
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
-
-.git-sources-repo-row {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-primary);
-}
-
-.git-sources-repo-row.cloned .git-sources-repo-name {
-  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 75%, var(--c-text-primary));
-}
-
-.git-sources-repo-state {
-  width: 18px;
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  color: var(--c-text-tertiary);
-}
-
-.git-sources-repo-state svg { width: 14px; height: 14px; }
-.repo-picker-state-synced { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); font-weight: 600; }
 
 /* Cloned indicator: tiny green circle with the same vk-ping ripple
  * the sidebar status-dot uses when connected. The ::after layer
@@ -598,26 +546,4 @@ a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
   border-radius: 50%;
   background: var(--c-green);
   animation: vk-ping 4s ease-out infinite;
-}
-
-.git-sources-repo-identity {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
-  gap: 1px;
-}
-
-.git-sources-repo-name {
-  font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.git-sources-repo-meta {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.git-sources-repo-actions {
-  display: flex; align-items: center; gap: var(--sp-1);
-  flex-shrink: 0;
 }

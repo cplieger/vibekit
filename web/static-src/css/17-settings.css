@@ -171,12 +171,20 @@
 
 /* Slim single-line row per connected account. Identity on the left,
  * actions on the right. */
+/* Account row is now a column: top row (identity + actions) plus an
+ * optional collapsible repos footer. Width spans the full section. */
 .forge-account-row {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  display: flex; flex-direction: column;
+  padding: 0;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
+  overflow: hidden;
+}
+
+.forge-account-row-top {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
 }
 
 .forge-account-row-error {
@@ -184,11 +192,91 @@
   background: color-mix(in srgb, var(--c-danger, #e66666) 5%, var(--c-bg-secondary));
 }
 
-.forge-account-empty {
+/* Per-account collapsible repo list. The summary line shows
+ * "X repos, Y cloned locally" with a chevron that rotates on open. */
+.forge-account-repos {
+  border-block-start: 1px solid var(--c-border);
+}
+
+.forge-account-repos-summary {
+  display: flex; align-items: center; gap: var(--sp-2);
+  list-style: none;
+  cursor: pointer;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  user-select: none;
+}
+
+.forge-account-repos-summary::-webkit-details-marker { display: none; }
+
+.forge-account-repos-summary:hover {
+  background: var(--c-bg-tertiary);
+}
+
+.forge-account-repos-chevron {
+  display: inline-block;
+  color: var(--c-text-tertiary);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.forge-account-repos[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
+  transform: rotate(90deg);
+}
+
+.forge-account-repos-empty {
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
   font-style: italic;
+}
+
+.forge-account-repos-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  border-block-start: 1px solid var(--c-border);
+}
+
+.forge-account-repo-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+}
+
+.forge-account-repo-row:first-child { border-block-start: 0; }
+
+.forge-account-repo-state {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+}
+
+.forge-account-repo-state svg { width: 14px; height: 14px; }
+
+.forge-account-repo-identity {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  gap: 1px;
+}
+
+.forge-account-repo-name {
+  font-weight: 500;
+  color: var(--c-text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-repo-tags {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-repo-actions {
+  display: flex; align-items: center; gap: var(--sp-1);
+  flex-shrink: 0;
 }
 
 .forge-account-identity {

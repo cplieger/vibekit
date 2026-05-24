@@ -26,14 +26,18 @@
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EXTERNAL, ICON_PLUS_16 } from "./icons.js";
-import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
+import { ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_TRASH } from "./icons.js";
+import { withAsyncFeedback } from "./async-button.js";
+import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
   kinds: ForgeKind[];
   oauth?: Partial<Record<ForgeKind, boolean>>;
 }
+
+interface RepoListResponse { repos: Repo[] }
+interface LocalReposResponse { repos: string[] }
 
 interface DeviceFlowResponse {
   user_code: string;
@@ -47,6 +51,23 @@ interface PollResult {
   status: "pending" | "complete" | "expired" | "error";
   error?: string;
 }
+
+// --- Module state -----------------------------------------------------
+
+/** Cached repo list keyed by forge ID. Populated on every render so
+ *  each account's collapsible footer can show "X repos, Y cloned" and
+ *  list the repos accessible to that forge. */
+let lastReposByForge: Record<string, Repo[]> = {};
+
+/** Names of locally-cloned repos. Used to compute the cloned-count
+ *  per-account and to drive the green dot / Trash button per row. */
+let lastLocalNames: Set<string> = new Set();
+
+/** Forge IDs whose collapsible footer should render expanded on the
+ *  next paint. Populated when the user successfully adds an account
+ *  (PAT submit or OAuth complete) so the user lands on the freshly-
+ *  added account with its repos visible. Cleared after one paint. */
+const expandOnNextPaint: Set<string> = new Set();
 
 const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
@@ -134,6 +155,13 @@ export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Pr
     return;
   }
 
+  // Refresh repo + local-clone caches in parallel with the forges
+  // list. The per-account collapsible footer renders from these.
+  await Promise.all([
+    refreshLocalNames(),
+    refreshReposByForge(data.forges),
+  ]);
+
   paintForgesData(root, data);
 
   if (opts.revalidate !== false) {
@@ -144,6 +172,24 @@ export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Pr
   }
 }
 
+async function refreshLocalNames(): Promise<void> {
+  const r = await apiGet<LocalReposResponse>("/api/git/repos");
+  lastLocalNames = new Set((r?.repos ?? []).filter((n) => n !== "."));
+}
+
+async function refreshReposByForge(forges: ConfiguredForge[]): Promise<void> {
+  const map: Record<string, Repo[]> = {};
+  await Promise.all(
+    forges.filter((f) => f.connected).map(async (f) => {
+      const r = await apiGet<RepoListResponse>(
+        `/api/forges/${encodeURIComponent(f.id)}/repos`,
+      );
+      map[f.id] = r?.repos ?? [];
+    }),
+  );
+  lastReposByForge = map;
+}
+
 /** Re-probe every connected account in parallel; on completion, re-fetch
  *  /api/forges and re-paint with the post-probe state. */
 async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise<void> {
@@ -152,6 +198,10 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
   );
   const data = await apiGet<ForgesListResponse>("/api/forges");
   if (data !== null && data !== undefined && document.body.contains(root)) {
+    await Promise.all([
+      refreshLocalNames(),
+      refreshReposByForge(data.forges),
+    ]);
     paintForgesData(root, data);
   }
 }
@@ -232,7 +282,12 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   li.dataset["id"] = a.id;
   if (!a.connected) li.classList.add("forge-account-row-error");
 
-  // Identity column: prefer email, fallback to username; always show host.
+  // Top row: identity (left) + actions (right). Same columns as
+  // before; just wrapped in a div so the collapsible repos footer
+  // below it stacks on its own row.
+  const top = document.createElement("div");
+  top.className = "forge-account-row-top";
+
   const id = document.createElement("div");
   id.className = "forge-account-identity";
   const primary = document.createElement("span");
@@ -244,8 +299,6 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   const meta = document.createElement("span");
   meta.className = "forge-account-meta";
   const parts: string[] = [];
-  // Only show @username on the meta line if it's not already the primary
-  // text — otherwise we'd render the same handle twice.
   if (hasEmail && hasUsername) parts.push("@" + a.username!);
   if (a.host !== "") parts.push(a.host);
   meta.textContent = parts.join(" · ");
@@ -256,9 +309,8 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
     err.textContent = a.last_error;
     id.appendChild(err);
   }
-  li.appendChild(id);
+  top.appendChild(id);
 
-  // Action column: Manage link (opens forge in new tab) + Sign out.
   const actions = document.createElement("div");
   actions.className = "forge-account-actions";
 
@@ -282,8 +334,168 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   out.addEventListener("click", () => { void onSignOut(a); });
   actions.appendChild(out);
 
+  top.appendChild(actions);
+  li.appendChild(top);
+
+  // Collapsible repos footer. Defaults closed; freshly-added accounts
+  // open automatically (via expandOnNextPaint set populated on
+  // successful add).
+  if (a.connected) {
+    const reposEl = renderAccountRepos(a);
+    if (reposEl !== null) li.appendChild(reposEl);
+  }
+
+  return li;
+}
+
+/** Render the per-account collapsible list of repos accessible to
+ *  this forge. Summary line: "X repos, Y cloned locally". Each repo
+ *  row carries Clone / Trash / Open ↗ actions depending on its
+ *  cloned state. Returns null if we have no repo data yet (still
+ *  loading) so the row stays compact. */
+function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
+  const repos = lastReposByForge[a.id];
+  if (repos === undefined) return null;
+  const cloned = repos.filter((r) => lastLocalNames.has(r.name)).length;
+
+  const details = document.createElement("details");
+  details.className = "forge-account-repos";
+  if (expandOnNextPaint.has(a.id)) {
+    details.open = true;
+    expandOnNextPaint.delete(a.id);
+  }
+
+  const summary = document.createElement("summary");
+  summary.className = "forge-account-repos-summary";
+  const total = repos.length;
+  summary.innerHTML = `
+    <span class="forge-account-repos-chevron" aria-hidden="true">▸</span>
+    <span class="forge-account-repos-label">${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally</span>
+  `;
+  details.appendChild(summary);
+
+  if (repos.length === 0) {
+    const none = document.createElement("div");
+    none.className = "forge-account-repos-empty";
+    none.textContent = "No repositories accessible to this account.";
+    details.appendChild(none);
+    return details;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "forge-account-repos-list";
+  // Sort: cloned first, then alpha by full_name.
+  const sorted = [...repos].sort((x, y) => {
+    const xc = lastLocalNames.has(x.name);
+    const yc = lastLocalNames.has(y.name);
+    if (xc !== yc) return xc ? -1 : 1;
+    return x.full_name.localeCompare(y.full_name);
+  });
+  for (const r of sorted) list.appendChild(renderRepoRow(r));
+  details.appendChild(list);
+
+  return details;
+}
+
+/** One row inside an account's collapsible repo list. */
+function renderRepoRow(repo: Repo): HTMLElement {
+  const li = document.createElement("li");
+  li.className = "forge-account-repo-row";
+  const cloned = lastLocalNames.has(repo.name);
+
+  // State indicator: pulsing green dot if cloned, globe if remote-only.
+  const state = document.createElement("span");
+  state.className = "forge-account-repo-state";
+  if (cloned) {
+    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" title="Cloned and tracked"></span>`;
+  } else {
+    state.innerHTML = ICON_GLOBE;
+    state.title = "Remote, not cloned";
+    state.setAttribute("aria-label", "Remote, not cloned");
+  }
+  li.appendChild(state);
+
+  // Identity
+  const idEl = document.createElement("div");
+  idEl.className = "forge-account-repo-identity";
+  const name = document.createElement("span");
+  name.className = "forge-account-repo-name";
+  name.textContent = repo.full_name;
+  idEl.appendChild(name);
+  const tags: string[] = [];
+  if (repo.private === true) tags.push("private");
+  if (repo.archived === true) tags.push("archived");
+  if (repo.fork === true) tags.push("fork");
+  if (repo.default_branch !== undefined && repo.default_branch !== "") tags.push(repo.default_branch);
+  if (tags.length > 0) {
+    const tagSpan = document.createElement("span");
+    tagSpan.className = "forge-account-repo-tags";
+    tagSpan.textContent = tags.join(" · ");
+    idEl.appendChild(tagSpan);
+  }
+  li.appendChild(idEl);
+
+  // Actions
+  const actions = document.createElement("span");
+  actions.className = "forge-account-repo-actions";
+
+  if (repo.url !== undefined && repo.url !== "") {
+    const open = document.createElement("a");
+    open.href = repo.url;
+    open.target = "_blank";
+    open.rel = "noreferrer";
+    open.className = "icon-btn";
+    open.innerHTML = ICON_EXTERNAL;
+    open.title = "Open on forge";
+    open.setAttribute("aria-label", "Open on forge");
+    actions.appendChild(open);
+  }
+
+  if (cloned) {
+    const trash = document.createElement("button");
+    trash.type = "button";
+    trash.className = "icon-btn danger";
+    trash.innerHTML = ICON_TRASH;
+    trash.title = "Remove local copy";
+    trash.setAttribute("aria-label", "Remove local copy");
+    trash.addEventListener("click", () => {
+      void withAsyncFeedback(trash, () => removeLocalRepo(repo));
+    });
+    actions.appendChild(trash);
+  } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
+    const clone = document.createElement("button");
+    clone.type = "button";
+    clone.className = "btn-small btn-primary";
+    clone.textContent = "Clone";
+    clone.addEventListener("click", () => {
+      void withAsyncFeedback(clone, () => cloneRepo(repo.clone_url ?? ""));
+    });
+    actions.appendChild(clone);
+  }
+
   li.appendChild(actions);
   return li;
+}
+
+async function cloneRepo(url: string): Promise<void> {
+  if (url === "") throw new Error("no clone URL");
+  const res = await apiPost<{ output?: string; error?: string }>(`/api/git/clone`, { url });
+  await renderForgesPanel({ revalidate: false });
+  if (res === null) throw new Error("network error");
+  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+}
+
+async function removeLocalRepo(repo: Repo): Promise<void> {
+  const ok = await confirmDialog(
+    `Delete the local copy of ${repo.name}? The remote stays intact; you can re-clone later.`,
+    "Delete",
+    "destructive",
+  );
+  if (!ok) return;
+  const res = await apiPost<{ status?: string; error?: string }>(`/api/git/remove`, { repo: repo.name });
+  if (res === null) throw new Error("network error");
+  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+  await renderForgesPanel({ revalidate: false });
 }
 
 // --- Add-account flow dispatch ---
@@ -410,6 +622,10 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
     }
     if (res.status === "complete") {
       if (statusEl !== null) statusEl.textContent = "Connected.";
+      // OAuth device flow is github-only today and always lands on
+      // github.com — mark that forge for auto-expand on the next
+      // paint so the user sees their new account's repos.
+      expandOnNextPaint.add("github:github.com");
       void renderForgesPanel();
       return;
     }
@@ -490,9 +706,12 @@ function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): v
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    void doPATConnect(kind, hostInput.value.trim(), tokenInput.value, status, () => {
+    const host = hostInput.value.trim();
+    void doPATConnect(kind, host, tokenInput.value, status, () => {
       tokenInput.value = "";
       closeSlot(slot);
+      // Auto-expand the freshly-added account on the next paint.
+      expandOnNextPaint.add(`${kind}:${host}`);
       void renderForgesPanel();
     });
   });
