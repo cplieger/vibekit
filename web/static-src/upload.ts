@@ -19,12 +19,27 @@ export interface UploadOptions {
   signal?: AbortSignal;
 }
 
+// NOTE: Only one upload at a time is supported. The progress bar is a
+// singleton DOM element shared across browser upload and chat drop.
+// Concurrent uploads would corrupt the progress display. Callers should
+// disable their upload trigger while an upload is in flight.
+let uploadInFlight = false;
+
+/** Returns true if an upload is currently in progress. */
+export function isUploadInFlight(): boolean { return uploadInFlight; }
+
 export function uploadFiles(opts: UploadOptions): void {
   // If already cancelled, bail out before showing any progress UI.
   if (opts.signal?.aborted) {
     opts.onError?.("Upload cancelled");
     return;
   }
+
+  if (uploadInFlight) {
+    opts.onError?.("Another upload is already in progress");
+    return;
+  }
+  uploadInFlight = true;
 
   const form = new FormData();
   form.append("dir", opts.targetDir);
@@ -64,14 +79,30 @@ export function uploadFiles(opts: UploadOptions): void {
     }
   });
   xhr.addEventListener("load", () => {
+    uploadInFlight = false;
     teardownCancelUI();
     if (xhr.status >= 200 && xhr.status < 300) {
       fill.style.width = "100%";
       label.textContent = "Upload complete";
       setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
-      const paths: string[] = [];
-      const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
-      for (const f of opts.files) paths.push(sep + f.name);
+      // Use server-returned filenames (sanitized via filepath.Base) when available.
+      let paths: string[];
+      try {
+        const body = JSON.parse(xhr.responseText) as { uploaded?: string[] };
+        if (Array.isArray(body.uploaded) && body.uploaded.length > 0) {
+          const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
+          paths = body.uploaded.map((name: string) => sep + name);
+        } else {
+          // Fallback to client names if server doesn't return the array.
+          const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
+          paths = [];
+          for (const f of opts.files) paths.push(sep + f.name);
+        }
+      } catch {
+        const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
+        paths = [];
+        for (const f of opts.files) paths.push(sep + f.name);
+      }
       opts.onComplete?.(paths);
     } else {
       let msg = `Upload failed (${String(xhr.status)})`;
@@ -85,18 +116,21 @@ export function uploadFiles(opts: UploadOptions): void {
     }
   });
   xhr.addEventListener("error", () => {
+    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload failed";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload failed");
   });
   xhr.addEventListener("timeout", () => {
+    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload timed out";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload timed out");
   });
   xhr.addEventListener("abort", () => {
+    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload cancelled";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);

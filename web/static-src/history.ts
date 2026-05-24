@@ -147,6 +147,8 @@ class HistoryController {
     this.archivedController = new AbortController();
     const { signal } = this.archivedController;
 
+    // Intentional: uses raw apiGet instead of an action because this is a
+    // sidebar background fetch — no toast desired on failure (POLICY: LOG ONLY).
     const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
     if (signal.aborted) return;
     const chats = d?.chats ?? [];

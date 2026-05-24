@@ -4,7 +4,6 @@
 import { defineAction, ActionError } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
 import { urlBase64ToUint8Array } from "../push-util.js";
-import { $ } from "../dom.js";
 
 /**
  * notify.register_push — wraps the full push registration flow:
@@ -41,7 +40,9 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
   },
   rollback: () => {
     // Uncheck the toggle so the visual state reflects the failed registration.
-    $.notifyToggle.checked = false;
+    const el = document.getElementById("notify-toggle") as HTMLInputElement | null;
+    if (el === null) return;
+    el.checked = false;
   },
   error: "Couldn't enable push notifications",
 });

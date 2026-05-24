@@ -31,6 +31,8 @@ import { initNotificationToggles } from "./settings-notifications.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
 
+let kiroSettingGen = 0;
+
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
@@ -233,12 +235,13 @@ function initExperimentalToggles(): void {
     if (input === null) continue;
     input.addEventListener("change", () => {
       showSaving();
+      const gen = ++kiroSettingGen;
       void setKiroSettingAction.dispatch({
         key: flag.key,
         value: input.checked ? "true" : "false",
         input,
       }, { silent: true })
-        .then((r) => { if (r === null) showError(); else showSaved(); });
+        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
     });
   }
   initCompactionSettings();
@@ -303,14 +306,16 @@ function initCompactionSettings(): void {
         value = input.value;
       }
       const previousValue = s.isBool ? undefined : snapshots.get(input);
+      if (!s.isBool) snapshots.set(input, input.value);
       showSaving();
+      const gen = ++kiroSettingGen;
       void setKiroSettingAction.dispatch({
         key: s.key,
         value,
         input,
         ...(previousValue !== undefined ? { previousValue } : {}),
       }, { silent: true })
-        .then((r) => { if (r === null) showError(); else showSaved(); });
+        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
     });
   }
 }

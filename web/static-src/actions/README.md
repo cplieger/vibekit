@@ -93,8 +93,12 @@ The lifecycle:
 3. On success — the optimistic mutation stays.
 4. On failure — `rollback(args, op, err)` runs to undo. The error
    is then toasted.
-5. On cancellation — `rollback` runs (with `err.code === "cancelled"`)
-   but no toast fires.
+5. On cancellation — `rollback` runs (with `err.code === "cancelled"`
+   and `err.message === "cancelled"`) but no toast fires. Both the
+   success-path race (signal aborted after run resolved) and the
+   error-path (run rejected while signal aborted) pass the same
+   synthetic `{ message: "cancelled", code: "cancelled" }` shape to
+   rollback for consistency.
 
 ```ts
 export const renameChat = apiAction<{ id: string; name: string }, void>({

@@ -26,6 +26,7 @@ export interface AppSettings {
    *  the agent makes stages for user review before hitting disk.
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
+  shell_policy?: "no_commands" | "safe_commands" | "all_commands";
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;

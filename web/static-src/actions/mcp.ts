@@ -1,7 +1,7 @@
 // MCP actions: user-initiated mutations for the MCP integrations UI.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./api.js";
+import { apiAction } from "./index.js";
 import { type Server } from "../mcp-state.js";
 
 // --- mcp.toggle_server ---
@@ -22,10 +22,8 @@ export const toggleServer = apiAction<ToggleArgs, void>({
     path: `/api/mcp/${encodeURIComponent(id)}`,
     body: { enabled },
   }),
-  optimistic: ({ input, enabled }) => {
-    input.checked = enabled;
-    return undefined;
-  },
+  // No optimistic needed — the browser already flipped the checkbox
+  // before the change event fires. Rollback restores on failure.
   rollback: ({ input, previousEnabled }) => {
     input.checked = previousEnabled;
   },
@@ -47,12 +45,10 @@ export const deleteServer = apiAction<DeleteArgs, void>({
   }),
   optimistic: ({ row }) => {
     row.classList.add("exiting");
-    return { row };
+    return undefined;
   },
-  rollback: (_args, op) => {
-    if (op !== undefined && typeof op === "object" && op !== null && "row" in op) {
-      (op.row as HTMLDivElement).classList.remove("exiting");
-    }
+  rollback: (args) => {
+    args.row.classList.remove("exiting");
   },
   error: "Couldn't remove integration",
 });
@@ -66,4 +62,22 @@ export const openEdit = apiAction<string, Server>({
     path: `/api/mcp/${encodeURIComponent(id)}`,
   }),
   error: "Couldn't load integration details",
+});
+
+// --- mcp.save_server ---
+
+export interface SaveArgs {
+  /** Empty string for create, non-empty for update. */
+  id: string;
+  body: Partial<Server>;
+}
+
+export const saveServer = apiAction<SaveArgs, Server>({
+  name: "mcp.save_server",
+  request: ({ id, body }) => ({
+    method: id === "" ? "POST" : "PUT",
+    path: id === "" ? "/api/mcp" : `/api/mcp/${encodeURIComponent(id)}`,
+    body,
+  }),
+  error: false,
 });

@@ -73,14 +73,15 @@ class TooltipController {
     if (this.state.kind === "visible" && this.state.anchor !== target) return;
     if (this.state.kind === "idle" || this.state.kind === "fading") return;
 
-    const pe = e as PointerEvent;
-    const related = pe.relatedTarget;
+    const pe = e as Event & { relatedTarget?: EventTarget | null };
+    const related = pe.relatedTarget ?? null;
     if (related instanceof Node && target.contains(related)) return;
 
     this.hide();
   }
 
   private show(anchor: HTMLElement, text: string): void {
+    if (!anchor.isConnected) { this.state = { kind: "idle" }; return; }
     this.teardown();
 
     const tip = document.createElement("div");
@@ -108,6 +109,8 @@ class TooltipController {
     tip.style.top = `${String(top)}px`;
 
     this.state = { kind: "visible", anchor, tip };
+    // Warm window covers DELAY_COLD so hovering a sibling anchor shows instantly
+    // (cross-anchor transition). The hide() assignments reset to true COOLDOWN.
     this.warmUntil = Date.now() + COOLDOWN + DELAY_COLD;
   }
 

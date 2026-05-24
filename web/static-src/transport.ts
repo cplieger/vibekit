@@ -299,7 +299,14 @@ class TransportController {
       return { ok: false, status: r.status, error: errMsg };
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
-      const msg = err?.name === "AbortError" ? "Request timed out" : (err?.message ?? "Network error");
+      let msg: string;
+      if (err?.name === "TimeoutError") {
+        msg = "Request timed out";
+      } else if (err?.name === "AbortError") {
+        msg = "Request cancelled";
+      } else {
+        msg = err?.message ?? "Network error";
+      }
       const reportSendState = opts?.reportSendState ?? true;
       if (reportSendState) setLastError(msg);
       return { ok: false, status: 0, error: msg };

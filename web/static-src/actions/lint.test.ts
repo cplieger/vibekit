@@ -9,6 +9,9 @@
 //   - No new `void apiPost(`, `void apiPut(`, `void apiPatch(`,
 //     `void apiDelete(`, or `void transport.send(` calls appear
 //     outside the explicit allowlist below.
+//   - Also catches aliased transport imports: `await transportSend(`
+//     and `void transportSend(` (common when destructuring or
+//     renaming the import).
 //   - The allowlist consists of:
 //       * actions/*.ts (the framework + per-area action files)
 //       * api-client.ts and transport.ts (the underlying transports)
@@ -68,6 +71,8 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*\(/g },
   { name: "void transport.send", re: /\bvoid\s+transport\.send\s*\(/g },
   { name: "await transport.send", re: /\bawait\s+transport\.send\s*\(/g },
+  { name: "void transportSend", re: /\bvoid\s+transportSend\s*\(/g },
+  { name: "await transportSend", re: /\bawait\s+transportSend\s*\(/g },
   { name: "await apiPost", re: /\bawait\s+apiPost\s*\(/g },
   { name: "await apiPut", re: /\bawait\s+apiPut\s*\(/g },
   { name: "await apiPatch", re: /\bawait\s+apiPatch\s*\(/g },

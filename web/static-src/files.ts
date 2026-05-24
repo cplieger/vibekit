@@ -18,10 +18,14 @@ import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import {
   FileEntry, fetchDir, formatSize, formatDate, joinPath, parentPath, displayPath, errorRow,
-  sortEntries, initEditablePath,
+  sortEntries, initEditablePath, FetchDirOpts,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction } from "./actions/files.js";
+import { error as toastError } from "./toast.js";
+
+/** Per-browser abort holder — prevents picker from aborting browser fetches. */
+const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 export class FileBrowserState {
   currentPath = ".";
   history: string[] = ["."];
@@ -158,8 +162,9 @@ function initPathInput(): void {
 // --- Dir load ---
 
 function loadDir(): void {
-  void fetchDir(state.currentPath).then((d) => {
+  void fetchDir(state.currentPath, browserFetchHolder).then((d) => {
     if (d.error !== undefined) {
+      if (d.error === "stale") return;
       state.entries = [];
       state.entryMap.clear();
       state.dirWritable = false;
@@ -176,7 +181,7 @@ function loadDir(): void {
 }
 
 function loadDirAsync(): Promise<void> {
-  return fetchDir(state.currentPath).then((d) => {
+  return fetchDir(state.currentPath, browserFetchHolder).then((d) => {
     if (d.error !== undefined) return;
     state.entries = d.files;
     state.entryMap.clear();
@@ -441,25 +446,10 @@ function startInlineRename(targetName: string): void {
         span.textContent = original;
         return;
       }
-      const parentRow = span.closest(".fb-row") as HTMLDivElement | null;
-      if (parentRow !== null) {
-        parentRow.dataset["name"] = newName;
-        const iconEl = parentRow.querySelector(".fb-icon");
-        if (iconEl !== null) {
-          const entry = state.entryMap.get(original);
-          iconEl.innerHTML = fileIcon(newName, entry?.isDir ?? false);
-        }
-      }
-      const entry = state.entryMap.get(original);
-      if (entry !== undefined) {
-        entry.name = newName;
-        state.entryMap.delete(original);
-        state.entryMap.set(newName, entry);
-      }
-      const idx = state.sortedNames.indexOf(original);
-      if (idx !== -1) state.sortedNames[idx] = newName;
+      // Reload the directory to rebuild rows with click handlers and
+      // correct sort order (fixes stale handler + sort-after-rename).
       state.deselectAll();
-      updateActionButtons();
+      loadDir();
     });
   };
 
@@ -484,7 +474,12 @@ function deleteSelected(): void {
     const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
     if (!ok) return;
     void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then((r) => {
-      if (r === null) return;
+      if (r === null) {
+        // Partial failure: some files may have been deleted server-side.
+        // Re-sync from server to avoid ghost entries.
+        loadDir();
+        return;
+      }
       state.deselectAll();
       setTimeout(loadDir, 200);
     });
@@ -507,12 +502,19 @@ function downloadSelected(): void {
   }
   // Multiple items or includes a directory: POST for zip.
   const paths = names.map((n) => joinPath(state.currentPath, n));
+  const zipController = new AbortController();
+  const zipTimeout = setTimeout(() => zipController.abort(), 60_000);
   void fetch("/api/files/download", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paths }),
+    signal: zipController.signal,
   }).then(async (res) => {
-    if (!res.ok) return;
+    clearTimeout(zipTimeout);
+    if (!res.ok) {
+      toastError("Download failed");
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -522,6 +524,9 @@ function downloadSelected(): void {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }).catch(() => {
+    clearTimeout(zipTimeout);
+    toastError("Download failed");
   });
 }
 

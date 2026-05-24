@@ -15,7 +15,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
   error: "Couldn't save tool config",
 });
 
-export const seedMcp = apiAction<{ name: string; install: string }, unknown>({
+export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   name: "tools.seed_mcp",
   request: ({ name }) => ({
     method: "POST",

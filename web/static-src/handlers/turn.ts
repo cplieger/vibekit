@@ -19,6 +19,10 @@ import { setSubagentPendingApproval } from "../crew-card.js";
 import { permissionResponseAction, restoreCheckpointAction } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
 
+/** Track last notification time per chat to avoid duplicate notifications
+ *  on SSE reconnect replay (events arrive within milliseconds). */
+const _lastNotifyMs = new Map<string, number>();
+
 onSSE("working_label", (chatID, p) => {
   setWorkingLabel(chatID, p.label);
 });
@@ -33,10 +37,18 @@ onSSE("turn_ended", (chatID, p) => {
 
   const stopReason = p.stop_reason;
   if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
-    const s = get(chatID);
-    const name = s?.name ?? "Chat";
-    notifyIfHidden("Vibekit", `${name}: Agent finished`);
-    if (document.visibilityState === "hidden") setBadge(1);
+    // Dedup: skip notification if we already notified for this chat
+    // within the last 2s (SSE reconnect replay fires duplicates in
+    // rapid succession).
+    const now = Date.now();
+    const last = _lastNotifyMs.get(chatID) ?? 0;
+    if (now - last > 2000) {
+      _lastNotifyMs.set(chatID, now);
+      const s = get(chatID);
+      const name = s?.name ?? "Chat";
+      notifyIfHidden("Vibekit", `${name}: Agent finished`);
+      if (document.visibilityState === "hidden") setBadge(1);
+    }
   }
 
   // --- DOM rendering: only for the active chat ---

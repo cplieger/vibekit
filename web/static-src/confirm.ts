@@ -10,6 +10,8 @@
 import { trapFocus } from "./focus-trap.js";
 
 let dialogEl: HTMLDialogElement | null = null;
+let prevResolve: ((v: boolean) => void) | null = null;
+let prevAC: AbortController | null = null;
 
 function ensureDialog(): HTMLDialogElement {
   if (dialogEl !== null) return dialogEl;
@@ -57,16 +59,24 @@ export function confirm(
       ? "vk-confirm-ok btn-small confirm-danger"
       : "vk-confirm-ok btn-small confirm-allow";
 
+    // Preempt any prior confirmation — treat as cancelled.
+    if (prevResolve) { prevResolve(false); prevResolve = null; }
+    if (prevAC) { prevAC.abort(); prevAC = null; }
+
     if (d.open) d.close();
     d.showModal();
     const release = trapFocus(d);
     const ac = new AbortController();
     const { signal } = ac;
+    prevResolve = resolve;
+    prevAC = ac;
 
     function close(result: boolean): void {
       ac.abort();
       release();
       d.close();
+      prevResolve = null;
+      prevAC = null;
       resolve(result);
     }
 

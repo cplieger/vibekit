@@ -76,12 +76,14 @@ function makeCopyButton(text: string): HTMLButtonElement {
   btn.className = "code-act-btn";
   btn.setAttribute("data-tooltip", "Copy");
   btn.replaceChildren(iconEl(ICON_COPY));
+  let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
     void import("./actions/messages.js").then(({ copyClipboard }) =>
       copyClipboard.dispatch(text, { silent: true }).then((r) => {
         if (r === null) return;
         btn.textContent = "✓";
-        setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+        clearTimeout(timer);
+        timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
       }),
     );
   });

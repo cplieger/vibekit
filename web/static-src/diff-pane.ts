@@ -299,7 +299,7 @@ function buildWhitespaceToggle(
           container.appendChild(node);
           node = next;
         }
-      }).catch(() => {});
+      }).catch((e: unknown) => { console.error("[diff-pane] whitespace re-render failed", e); });
     }
   });
   return wrap;

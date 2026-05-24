@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { openEditorView } from "./tabs.js";
+import { openEditorView, closeTab } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -258,6 +258,7 @@ export function closeEditorFile(path: string): void {
   if (state !== undefined && state.mode.kind === "conflict") abortSuggestion();
   fileStates.delete(path);
   pendingLines.delete(path);
+  closeTab(`editor:${path}`);
   const activeFilePath = getActiveFilePathInternal();
   if (activeFilePath === path) setActiveFilePath("");
   persistOpenFiles();

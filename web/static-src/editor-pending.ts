@@ -19,11 +19,17 @@ export async function resolveActivePending(action: "accept" | "reject"): Promise
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  const result = await resolvePendingChangeAction.dispatch(
-    { chatID, toolCallID, action },
-    { errorPrefix: "Couldn't resolve change" },
-  );
-  if (result !== null) closeFile(path);
+  $.editorPendingAcceptBtn.disabled = true;
+  $.editorPendingRejectBtn.disabled = true;
+  try {
+    const result = await resolvePendingChangeAction.dispatch(
+      { chatID, toolCallID, action },
+    );
+    if (result !== null) closeFile(path);
+  } finally {
+    $.editorPendingAcceptBtn.disabled = false;
+    $.editorPendingRejectBtn.disabled = false;
+  }
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */

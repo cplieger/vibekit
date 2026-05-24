@@ -125,6 +125,11 @@ class NotifyController {
       return;
     }
     if (Notification.permission === "denied") return;
+    // NOTE: requestPermission() without a user gesture is silently
+    // ignored in modern browsers (Chrome 62+, Firefox 72+, Safari 12.1+).
+    // We keep the call as a best-effort fallback for older environments;
+    // the primary permission prompt is triggered by the explicit toggle
+    // click path in requestPermission() above.
     Notification.requestPermission().then((result) => {
       if (result === "granted") void this.registerPushViaAction(true);
     }).catch(() => {});

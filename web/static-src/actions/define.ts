@@ -141,7 +141,10 @@ export function defineAction<TArgs, TResult>(
         // Rollback the optimistic mutation regardless of cancel/error.
         if (def.rollback !== undefined) {
           try {
-            def.rollback(args, optOp, err);
+            const rollbackErr = cancelled
+              ? { message: "cancelled", code: "cancelled" }
+              : err;
+            def.rollback(args, optOp, rollbackErr);
           } catch (rollbackErr) {
             console.error(`[actions] rollback for ${def.name} threw`, rollbackErr);
           }

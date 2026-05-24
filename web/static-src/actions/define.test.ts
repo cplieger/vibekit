@@ -8,12 +8,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock toast.ts so we can assert on the toast calls without rendering
 // real DOM toasts. Must be at the top before defineAction imports.
-vi.mock("./toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
 vi.mock("../toast.js", () => ({
   info: vi.fn(),
   success: vi.fn(),

@@ -19,7 +19,6 @@ import {
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
-import { renderSwitch } from "../renderer.js";
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -96,6 +95,7 @@ onSSE("compaction_started", () => {
 // stays current without waiting for the next chat_updated rebuild.
 onSSE("mode_changed", (chatID, p) => {
   if (chatID === "") return;
+  if (typeof p.mode_id !== "string" || p.mode_id === "") return;
   setCurrentMode(chatID, p.mode_id);
 });
 
@@ -134,10 +134,11 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     s.messages = [];
     s.has_more = false;
     clearMsgIndex(chatID);
-    void loadMessages(chatID).then(() => {
-      const fresh = get(chatID);
-      if (fresh) renderSwitch(fresh);
-    });
+    // Rely on the version-effect's renderUpdates (triggered by
+    // loadMessages bumping version) rather than an explicit
+    // renderSwitch here — avoids a redundant intermediate render
+    // that flashes empty state before messages arrive.
+    void loadMessages(chatID);
   } else {
     // Background chat: just invalidate the cache so the next switch
     // refetches from scratch.

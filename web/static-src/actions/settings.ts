@@ -132,13 +132,6 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     for (const { el, prevChecked, prevValue } of o.inputs) {
       if (el.type === "checkbox") {
         el.checked = prevChecked;
-      } else if (el.type === "radio") {
-        // Restoring a radio: simply re-checking the previous one
-        // requires knowing the group's prior state. Best-effort:
-        // un-check this one if it was just newly checked. The caller
-        // should pass ALL radios in the group via `inputs` for
-        // proper restoration.
-        el.checked = prevChecked;
       } else {
         el.value = prevValue;
       }

@@ -118,7 +118,7 @@ function createTab(termId: string, command: string, args?: string[]): void {
       const t = terms.get(evictId);
       if (t !== undefined) {
         t.tab.remove();
-        const oldPane = container.querySelector(`[data-term-id="${evictId}"]`);
+        const oldPane = container.querySelector(`[data-term-id="${CSS.escape(evictId)}"]`);
         if (oldPane !== null) oldPane.remove();
         terms.delete(evictId);
       }

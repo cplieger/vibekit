@@ -80,6 +80,7 @@ export class ShellWS {
   private isActive = false;
   private openWaiters: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
   private reconnectAttempt = 0;
+  private connectGen = 0;
 
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
@@ -95,11 +96,13 @@ export class ShellWS {
   async connect(): Promise<void> {
     if (this.state.kind === "connected" || this.state.kind === "connecting") return;
     this.state = { kind: "connecting" };
+    const gen = ++this.connectGen;
 
     let sock: WebSocket;
     try {
       sock = await openSocket();
     } catch {
+      if (this.connectGen !== gen) return;
       this.state = { kind: "idle" };
       if (this.isActive) {
         this.callbacks?.onReconnecting();
@@ -108,9 +111,9 @@ export class ShellWS {
       return;
     }
 
-    // Bug 5: if disconnect() fired while openSocket was in-flight,
-    // state is now 'closed'. Close the newly opened socket and bail.
-    if ((this.state as ShellWSState).kind === "closed") {
+    // If a newer connect() or disconnect() fired while openSocket was
+    // in-flight, close the newly opened socket and bail.
+    if (this.connectGen !== gen || (this.state as ShellWSState).kind === "closed") {
       sock.close();
       return;
     }

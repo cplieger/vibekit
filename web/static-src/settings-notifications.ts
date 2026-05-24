@@ -81,6 +81,7 @@ export function initNotificationToggles(): void {
           setNotificationsEnabled(true);
           setAgentFinishedEnabled(true);
           setPermissionNeededEnabled(true);
+          updateSub();
         }
       });
       const hint = requestPermission();
@@ -94,11 +95,11 @@ export function initNotificationToggles(): void {
           // Rollback: keep enabled
         } else {
           setNotificationsEnabled(false);
+          unregisterPush();
+          updateSub();
         }
       });
-      unregisterPush();
     }
-    updateSub();
   });
 
   const onSubChange = (): void => {
@@ -128,10 +129,10 @@ export function initNotificationToggles(): void {
         if (bothOff) {
           setNotificationsEnabled(false);
           unregisterPush();
+          updateSub();
         }
       }
     });
-    if (bothOff) updateSub();
   };
   finishedToggle.addEventListener("change", onSubChange);
   permissionToggle.addEventListener("change", onSubChange);

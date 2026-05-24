@@ -145,7 +145,7 @@ class PromptInputController {
         this.exitCycling();
       }
 
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
         form.dispatchEvent(new Event("submit"));
         return;

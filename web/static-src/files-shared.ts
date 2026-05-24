@@ -18,17 +18,23 @@ export interface DirListing {
   error?: string;
 }
 
-/** AbortController for fetchDir — aborted on each new call to cancel
- *  stale in-flight requests. */
-let fetchDirController: AbortController | null = null;
+/** Per-caller abort state for fetchDir. Each caller (browser, picker) should
+ *  pass its own holder so they don't abort each other's requests. */
+export interface FetchDirOpts {
+  controllerHolder?: { current: AbortController | null };
+}
+
+/** Default holder for callers that don't pass one (backwards compat). */
+const defaultHolder: { current: AbortController | null } = { current: null };
 
 /** Fetch a directory listing from the server. Returns an empty listing
  *  with `error` set on failure. Stale requests are cancelled via
- *  AbortController. */
-export async function fetchDir(path: string): Promise<DirListing> {
-  fetchDirController?.abort();
-  fetchDirController = new AbortController();
-  const { signal } = fetchDirController;
+ *  AbortController scoped to the caller's controllerHolder. */
+export async function fetchDir(path: string, opts?: FetchDirOpts): Promise<DirListing> {
+  const holder = opts?.controllerHolder ?? defaultHolder;
+  holder.current?.abort();
+  holder.current = new AbortController();
+  const { signal } = holder.current;
   try {
     const d = await apiGet<{ files?: FileEntry[]; writable?: boolean; error?: string }>(
       `/api/files?path=${encodeURIComponent(path)}`, signal,

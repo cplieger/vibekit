@@ -77,8 +77,12 @@ export function remember(chatID: string, c: Conflict): void {
   const prior = tm.entries.get(c.path);
   if (prior !== undefined && prior.ts >= c.ts) return;
   tm.entries.set(c.path, c);
-  // Update oldest tracking on insert.
-  if (c.ts < tm.oldestTs) {
+  // If we replaced the entry that was tracked as oldest, rescan to
+  // find the true oldest before the cap check (the replacement may
+  // have a newer ts, making a different entry the actual oldest).
+  if (c.path === tm.oldestPath) {
+    rescanOldest(tm);
+  } else if (c.ts < tm.oldestTs) {
     tm.oldestPath = c.path;
     tm.oldestTs = c.ts;
   }

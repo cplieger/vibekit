@@ -10,7 +10,7 @@
 
 import { closeModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
-import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath } from "./files-shared.js";
+import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, FetchDirOpts } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { uploadAction } from "./actions/files.js";
@@ -18,6 +18,9 @@ import { uploadAction } from "./actions/files.js";
 let currentPath = ".";
 const selected = new Set<string>();
 let onUploadComplete: (() => void) | null = null;
+
+/** Per-picker abort holder — prevents browser from aborting picker fetches. */
+const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 
 export interface FileEntry {
   name: string;
@@ -108,7 +111,7 @@ function loadDir(): void {
   pathEl.readOnly = true;
   list.replaceChildren();
 
-  void fetchDir(currentPath).then((d) => {
+  void fetchDir(currentPath, pickerFetchHolder).then((d) => {
     if (d.error !== undefined) {
       list.appendChild(errorRow(d.error));
       return;

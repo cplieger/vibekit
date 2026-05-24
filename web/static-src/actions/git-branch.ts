@@ -1,4 +1,5 @@
 import { defineAction, ActionError } from "./index.js";
+import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 interface CheckoutArgs {
   repo: string;
@@ -13,10 +14,15 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(args),
-      signal,
+      signal: withTimeout(signal, API_TIMEOUT_MS),
     });
     if (!r.ok) {
-      throw new ActionError(`HTTP ${String(r.status)}`, { status: r.status });
+      let msg = `HTTP ${String(r.status)}`;
+      try {
+        const body = (await r.json()) as { error?: string };
+        if (body.error) msg = body.error;
+      } catch { /* use default msg */ }
+      throw new ActionError(msg, { status: r.status });
     }
     const body = (await r.json()) as { error?: string };
     if (body.error !== undefined && body.error !== "") {

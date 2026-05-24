@@ -724,8 +724,9 @@ function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void 
   host.innerHTML = "";
   const container = document.createElement("div");
   container.className = "forge-device-prompt";
+  const safeLink = /^https?:\/\//i.test(start.verification_uri);
   container.innerHTML =
-    `<p>Open <a class="forge-device-link" target="_blank" rel="noreferrer" href="${escapeAttr(start.verification_uri)}">${escapeHTML(start.verification_uri)}</a> and enter:</p>` +
+    `<p>Open ${safeLink ? `<a class="forge-device-link" target="_blank" rel="noreferrer" href="${escapeAttr(start.verification_uri)}">` : ""}${escapeHTML(start.verification_uri)}${safeLink ? "</a>" : ""} and enter:</p>` +
     `<div class="forge-device-code-row"><code class="forge-device-code">${escapeHTML(start.user_code)}</code><button type="button" class="btn-small forge-copy-btn" data-copy="${escapeAttr(start.user_code)}">Copy</button></div>` +
     `<div class="forge-device-status">Waiting for approval…</div>`;
   host.appendChild(container);
@@ -773,8 +774,8 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
  *  is needed by the Cancel button so it can close the entire add
  *  pane (not just the form). Used by the unified add pane on every
  *  kind, including GitHub where it sits below the OAuth section. */
-function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): void {
-  host.innerHTML = "";
+function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement): void {
+  hostEl.innerHTML = "";
 
   const helpLink = PAT_HELP_LINKS[kind];
   if (helpLink !== null) {
@@ -786,7 +787,7 @@ function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): v
     a.rel = "noreferrer";
     a.textContent = helpLink.label;
     help.appendChild(a);
-    host.appendChild(help);
+    hostEl.appendChild(help);
   }
 
   const form = document.createElement("form");
@@ -831,17 +832,18 @@ function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): v
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const host = hostInput.value.trim();
-    void doPATConnect(kind, host, tokenInput.value.trim(), status, () => {
+    const hostVal = hostInput.value.trim();
+    submit.disabled = true;
+    void doPATConnect(kind, hostVal, tokenInput.value.trim(), status, () => {
       tokenInput.value = "";
       closeSlot(slot);
       // Auto-expand the freshly-added account on the next paint.
-      expandOnNextPaint.add(`${kind}:${host}`);
+      expandOnNextPaint.add(`${kind}:${hostVal}`);
       void renderForgesPanel();
-    });
+    }).finally(() => { submit.disabled = false; });
   });
 
-  host.appendChild(form);
+  hostEl.appendChild(form);
 }
 
 async function doPATConnect(
@@ -859,7 +861,7 @@ async function doPATConnect(
   status.textContent = "Validating…";
   status.className = "forge-card-status";
   const res = await connectPAT.dispatch({ kind, host, token });
-  if (res === null) {
+  if (res == null) {
     status.textContent = "Network error.";
     status.className = "forge-card-status err";
     return;

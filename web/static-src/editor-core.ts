@@ -203,6 +203,11 @@ async function sendActivePlan(): Promise<void> {
   if (state === undefined) return;
   const chatID = planDraftChatID(state.path);
   if (chatID === "") return;
-  const result = await sendPlanAction.dispatch({ chatID, content: state.current });
-  if (result !== null) state.original = state.current;
+  $.editorSendPlanBtn.disabled = true;
+  try {
+    const result = await sendPlanAction.dispatch({ chatID, content: state.current });
+    if (result !== null) state.original = state.current;
+  } finally {
+    $.editorSendPlanBtn.disabled = false;
+  }
 }

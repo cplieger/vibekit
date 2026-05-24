@@ -88,7 +88,7 @@ class PermissionsUIController {
   }
 
   initShellPolicy(initial: AppSettings): void {
-    this.currentShellPolicy = (initial as Record<string, unknown>)["shell_policy"] as ShellPolicy ?? "safe_commands";
+    this.currentShellPolicy = initial.shell_policy ?? "safe_commands";
 
     for (const p of ["no_commands", "safe_commands", "all_commands"] as ShellPolicy[]) {
       const id = `shell-policy-${p}`;
@@ -98,7 +98,7 @@ class PermissionsUIController {
       radio.addEventListener("change", () => {
         if (!radio.checked) return;
         this.currentShellPolicy = p;
-        void patchSettings({ shell_policy: p } as Record<string, unknown>);
+        void patchSettings({ shell_policy: p });
       });
     }
 
@@ -229,6 +229,7 @@ class PermissionsUIController {
         chipClass: `chip mono chip-rule-${entry.mode}`,
         onRemove: () => { void this.removeRule(entry.pattern); },
       });
+      chip.dataset["pattern"] = entry.pattern;
       // Click the mode label to flip allow↔deny in place.
       const modeEl = chip.querySelector(".chip-mode") as HTMLElement;
       modeEl.addEventListener("click", (e) => {
@@ -269,7 +270,7 @@ class PermissionsUIController {
     const container = document.getElementById("command-rules-chips");
     const chips = container?.querySelectorAll<HTMLElement>(".chip") ?? [];
     for (const chip of chips) {
-      if (chip.textContent?.includes(clean)) {
+      if (chip.dataset["pattern"] === clean) {
         chip.classList.add("chip-saving");
         break;
       }

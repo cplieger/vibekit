@@ -24,6 +24,9 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
     return await resp.text();
   } catch (e) {
     if (e instanceof ActionError) throw e;
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new ActionError("Request timed out", { code: "timeout", cause: e });
+    }
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
     throw new ActionError("network error", { cause: e });
   }

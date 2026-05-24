@@ -85,12 +85,14 @@ class CommandsMenuController {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
+          e.stopImmediatePropagation();
           if (items.length === 0) return;
           this.selectedIndex = (this.selectedIndex + 1) % items.length;
           this.renderSelection();
           break;
         case "ArrowUp":
           e.preventDefault();
+          e.stopImmediatePropagation();
           if (items.length === 0) return;
           this.selectedIndex = (this.selectedIndex - 1 + items.length) % items.length;
           this.renderSelection();

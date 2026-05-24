@@ -23,14 +23,14 @@ import {
 
 // --- Helpers for withAsyncFeedback ---
 
-/** Throw if an action dispatch returned null (failure already toasted). */
+/** Throw if an action dispatch returned null or undefined (failure already toasted). */
 function assertOk<T>(result: T): asserts result is NonNullable<T> {
-  if (result === null) throw new Error("action failed");
+  if (result === null || result === undefined) throw new Error("action failed");
 }
 
-/** Sentinel thrown when user cancels a confirm dialog. Makes
- *  withAsyncFeedback show ✗ without triggering a toast (the action
- *  framework already suppresses toasts for user-initiated cancels). */
+/** Sentinel thrown when user cancels a confirm dialog. withAsyncFeedback
+ *  treats it like any error (shows ✗); no toast fires because no action
+ *  was dispatched. */
 class CancelledError extends Error {
   constructor() { super("cancelled"); }
 }
@@ -62,6 +62,7 @@ interface StatusAllResponse {
 
 // --- State ---
 
+let inited = false;
 let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
@@ -77,6 +78,8 @@ const RECENTLY_PUSHED_TTL_MS = 60_000;
 /** Initialise the Changes tab. Wires the filter input, the global
  *  refresh button, and the SSE forge-changed event. Idempotent. */
 export function initChangesTab(): void {
+  if (inited) return;
+  inited = true;
   const filterEl = document.getElementById("git-changes-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
     filterText = filterEl.value.trim().toLowerCase();
@@ -98,8 +101,14 @@ export function initChangesTab(): void {
   // Refetch when the agent emits anything that touches files (it
   // emits this after every turn that wrote something), and when forge
   // accounts change (clones / removes ripple into the repo list).
-  onSSE("turn_ended", () => { void refreshChanges(); });
-  onSSE("forges_changed", () => { void refreshChanges(); });
+  // Debounced so SSE bursts coalesce into a single refresh.
+  let sseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRefresh = (): void => {
+    clearTimeout(sseRefreshTimer);
+    sseRefreshTimer = setTimeout(() => { void refreshChanges(); }, 300);
+  };
+  onSSE("turn_ended", debouncedRefresh);
+  onSSE("forges_changed", debouncedRefresh);
 
   // Initial paint.
   void refreshChanges();
@@ -633,7 +642,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
       assertOk(msg);
-      ta.value = (msg as { message?: string }).message ?? "";
+      ta.value = msg.message ?? "";
     });
   });
   row.appendChild(ai);

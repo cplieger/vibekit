@@ -4,11 +4,12 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { apiGet, apiPostOrError, apiPutOrError } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { closeModal } from "./modals.js";
 import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
+import { saveServer } from "./actions/mcp.js";
 
 // --- Add / edit modal ---
 
@@ -110,17 +111,15 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
     saveBtn.classList.add("btn-loading");
   }
 
-  const r = session.editing.id === ""
-    ? await apiPostOrError<Server>("/api/mcp", body)
-    : await apiPutOrError<Server>(`/api/mcp/${encodeURIComponent(session.editing.id)}`, body);
+  const r = await saveServer.dispatch({ id: session.editing.id, body });
 
   if (saveBtn !== null && saveBtn !== undefined) {
     saveBtn.disabled = false;
     saveBtn.classList.remove("btn-loading");
   }
 
-  if (!r.ok) {
-    errEl.textContent = r.error === "" ? "Save failed." : r.error;
+  if (r === null) {
+    errEl.textContent = "Save failed.";
     errEl.classList.remove("hidden");
     return false;
   }
@@ -439,6 +438,7 @@ export function rawEditShape(s: Server): Record<string, unknown> {
     command: s.command ?? "",
     args: s.args ?? [],
     env,
+    prewarm: s.prewarm ?? false,
   };
 }
 
@@ -456,7 +456,8 @@ export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server>
     }
   }
   const transport: Transport = PANEL_MODES.raw.transport!;
-  return { transport, name, command, args, env };
+  const prewarm = parsed["prewarm"] === true;
+  return { transport, name, command, args, env, prewarm };
 }
 
 // --- Disabled tools chip list ---
@@ -475,14 +476,15 @@ function initDisabledToolsSection(server: Server | null): void {
 
   section.classList.remove("hidden");
   session.disabledToolsList = [...(server.disabled_tools ?? [])];
-  renderDisabledChips(chips);
+  const knownTools = server.known_tools ?? [];
+  renderDisabledChips(chips, section, knownTools);
 
   const add = (): void => {
     const name = input.value.trim();
     if (name === "" || session.disabledToolsList.includes(name)) return;
     session.disabledToolsList.push(name);
     input.value = "";
-    renderDisabledChips(chips);
+    renderDisabledChips(chips, section, knownTools);
   };
 
   addBtn.onclick = add;
@@ -524,7 +526,7 @@ function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], ch
   section.appendChild(suggestionsEl);
 }
 
-function renderDisabledChips(container: HTMLDivElement): void {
+function renderDisabledChips(container: HTMLDivElement, section?: HTMLDivElement, knownTools?: string[]): void {
   container.replaceChildren();
   for (const name of session.disabledToolsList) {
     container.appendChild(buildChip({
@@ -534,7 +536,10 @@ function renderDisabledChips(container: HTMLDivElement): void {
       removeTitle: "Unblock",
       onRemove: () => {
         session.disabledToolsList = session.disabledToolsList.filter((n) => n !== name);
-        renderDisabledChips(container);
+        renderDisabledChips(container, section, knownTools);
+        if (section !== undefined && knownTools !== undefined) {
+          renderToolSuggestions(section, knownTools, container);
+        }
       },
     }));
   }

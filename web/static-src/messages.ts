@@ -53,6 +53,10 @@ export { setShellRunCallback } from "./code-blocks.js";
 const messagesEl = $.messages;
 const toolEls = new Map<string, HTMLDivElement>();
 
+/** Tracks active "copied" animation timers per button so rapid clicks
+ *  don't stack timeouts. */
+const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
 // --- Avatars ---
 
 const KIRO_AVATAR = '<svg class="avatar-icon" width="17" height="20" viewBox="-2 -2 44 52" fill="none"><path d="M7.58762 37.203C2.62272 48.1978 13.1975 50.9578 20.9974 44.5229C23.2923 51.7378 31.8872 46.3529 34.9771 40.758C41.772 28.4282 39.027 15.8585 38.322 13.2635C33.4921 -4.42116 9.34259 -4.45116 5.18767 13.3535C4.21269 16.4734 4.19769 20.0134 3.6577 23.6883C3.3877 25.5483 3.17771 26.7332 2.47272 28.6832C2.05273 29.8082 1.49774 30.7982 0.597756 32.4781C-0.782218 35.0881 -0.197229 40.113 6.94263 37.503L7.61762 37.203H7.58762Z" fill="white" stroke="#9046FF" stroke-width="1.5"/><path d="M21.9284 20.928C19.9484 20.928 19.6484 18.5581 19.6484 17.1481C19.6484 15.8731 19.8734 14.8681 20.3084 14.2231C20.6834 13.6532 21.2384 13.3682 21.9284 13.3682C22.6184 13.3682 23.2184 13.6532 23.6384 14.2381C24.1184 14.8981 24.3733 15.9031 24.3733 17.1481C24.3733 19.518 23.4584 20.928 21.9434 20.928H21.9284Z" fill="#1e1e2e"/><path d="M30.0729 20.928C28.093 20.928 27.793 18.5581 27.793 17.1481C27.793 15.8731 28.018 14.8681 28.453 14.2231C28.8279 13.6532 29.3829 13.3682 30.0729 13.3682C30.7629 13.3682 31.3629 13.6532 31.7829 14.2381C32.2629 14.8981 32.5179 15.9031 32.5179 17.1481C32.5179 19.518 31.6029 20.928 30.0879 20.928H30.0729Z" fill="#1e1e2e"/></svg>';
@@ -291,7 +295,9 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
     void copyClipboard.dispatch(text, { silent: true }).then((r) => {
       if (r !== null) {
         btn.classList.add("copied");
-        setTimeout(() => btn.classList.remove("copied"), 1500);
+        const prev = copyTimers.get(btn);
+        if (prev !== undefined) clearTimeout(prev);
+        copyTimers.set(btn, setTimeout(() => btn.classList.remove("copied"), 1500));
       }
     });
   };

@@ -184,6 +184,15 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   cardState.set(el, sig);
   const body = el.querySelector(".crew-body") as HTMLDivElement;
   const count = el.querySelector(".crew-count") as HTMLSpanElement;
+
+  // Capture draft input values before destroying rows.
+  const drafts = new Map<string, string>();
+  for (const input of body.querySelectorAll<HTMLInputElement>(".crew-msg-field")) {
+    const row = input.closest<HTMLDivElement>(".crew-row");
+    const sid = row?.dataset["sessionId"];
+    if (sid !== undefined && input.value !== "") drafts.set(sid, input.value);
+  }
+
   body.replaceChildren();
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
@@ -207,6 +216,13 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   }
   for (const ps of crew.pending_stages ?? []) {
     body.appendChild(buildPendingRow(ps));
+  }
+
+  // Restore draft input values.
+  for (const [sid, val] of drafts) {
+    const row = body.querySelector<HTMLDivElement>(`.crew-row[data-session-id="${CSS.escape(sid)}"]`);
+    const input = row?.querySelector<HTMLInputElement>(".crew-msg-field");
+    if (input !== undefined && input !== null) input.value = val;
   }
 }
 

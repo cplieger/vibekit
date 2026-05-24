@@ -9,7 +9,7 @@
 import {
   getActiveId, getActive, get, getSessions, setActive,
   loadList, loadMessages, upsertHeader, dequeuePrompt,
-  contextSizeFor, defaultUsage, version,
+  contextSizeFor, defaultUsage, version, removeChat,
 } from "./store.js";
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
@@ -84,8 +84,16 @@ export function openChatTab(id: string, name: string, agent: string): void {
 }
 
 /** Archive a chat (move to archive dir). Used on tab close instead of
- *  delete so the chat appears in History for the retention window. */
+ *  delete so the chat appears in History for the retention window.
+ *  Zero-message chats (freshly created, never used) are removed locally
+ *  without hitting the server — the server has no persisted session to
+ *  archive and would 500. */
 function archiveChat(id: string): void {
+  const s = get(id);
+  if (s !== undefined && s.message_count === 0) {
+    removeChat(id);
+    return;
+  }
   void archiveChatAction.dispatch(id);
   // Store is updated when the server broadcasts chat_deleted (archive
   // triggers the same SSE event so the sidebar removes the tab).
@@ -177,7 +185,13 @@ export function sendPrompt(text: string): void {
 }
 
 /** Drain the single-slot queued prompt for `chatID` if any. Called from
- *  the turn_ended handler. Safe to call when the queue is empty. */
+ *  the turn_ended handler. Safe to call when the queue is empty.
+ *
+ *  Invariant: only one prompt may be in-flight per chat at a time (the
+ *  server enforces this via 409). When a prompt is queued (because the
+ *  user typed while a turn was active), we drain exactly one here so
+ *  the next turn starts. If the server 409s again, sendPromptTo will
+ *  re-queue and the cycle repeats on the next turn_ended. */
 export function drainQueuedPrompt(chatID: string): void {
   const text = dequeuePrompt(chatID);
   if (text === undefined) return;

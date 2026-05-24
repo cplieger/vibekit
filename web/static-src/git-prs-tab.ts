@@ -371,7 +371,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
-        await refreshPRs();
+        await refreshPRs().catch(() => {});
       });
     })();
   });
@@ -390,7 +390,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
-        await refreshPRs();
+        await refreshPRs().catch(() => {});
       });
     })();
   });
