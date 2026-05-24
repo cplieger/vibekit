@@ -47,29 +47,30 @@ describe("forge-auth: 4-section layout", () => {
     expect(kinds).toEqual(["github", "gitlab", "codeberg", "gitea"]);
   });
 
-  it("each section renders an empty state and an Add account button when no accounts", async () => {
+  it("each section renders an Add account button (no empty-state filler)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
     for (const s of panel().querySelectorAll<HTMLElement>(".forge-kind-section")) {
-      expect(s.querySelector(".forge-account-empty")).not.toBeNull();
+      // Empty sections render NO "no accounts connected" filler;
+      // the section is just header + the + button.
+      expect(s.querySelector(".forge-account-empty")).toBeNull();
       expect(s.querySelector("[data-forge-add]")).not.toBeNull();
     }
   });
 
-  it("only the GitHub section gets the 'Add a PAT' button", async () => {
+  it("clicking the + button opens a unified add pane (no separate Add-a-PAT button)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    const ghPat = panel().querySelector(".forge-kind-section[data-kind='github'] [data-forge-add-pat]");
-    expect(ghPat).not.toBeNull();
-    for (const k of ["gitlab", "codeberg", "gitea"]) {
+    // No section should expose a separate Add-a-PAT trigger any more.
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const pat = panel().querySelector(`.forge-kind-section[data-kind='${k}'] [data-forge-add-pat]`);
-      expect(pat).toBeNull();
+      expect(pat, `${k} should not have a separate Add-a-PAT button`).toBeNull();
     }
   });
 
@@ -153,10 +154,9 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    // Open every PAT form: github via "Add a PAT", others via "Add account".
-    const ghPat = panel().querySelector<HTMLButtonElement>(".forge-kind-section[data-kind='github'] [data-forge-add-pat]");
-    ghPat!.click();
-    for (const k of ["gitlab", "codeberg", "gitea"]) {
+    // Open the unified add pane on every section via the single
+    // "+" button. The pane includes a PAT form for every kind.
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const add = panel().querySelector<HTMLButtonElement>(`.forge-kind-section[data-kind='${k}'] [data-forge-add]`);
       add!.click();
     }
@@ -216,23 +216,6 @@ describe("forge-auth: 4-section layout", () => {
     expect(slot.dataset["mode"]).toBe("add");
     btn.click();
     expect(slot.querySelector("form.forge-pat-form"), "second click closes").toBeNull();
-    expect(slot.dataset["mode"]).toBeUndefined();
-  });
-
-  it("clicking 'Add a PAT' twice toggles the GitHub PAT form open then closed", async () => {
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
-    await renderForgesPanel();
-    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github']")!;
-    const btn = section.querySelector<HTMLButtonElement>("[data-forge-add-pat]")!;
-    const slot = section.querySelector<HTMLElement>("[data-forge-slot]")!;
-    btn.click();
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
-    expect(slot.dataset["mode"]).toBe("pat");
-    btn.click();
-    expect(slot.querySelector("form.forge-pat-form")).toBeNull();
     expect(slot.dataset["mode"]).toBeUndefined();
   });
 

@@ -117,6 +117,17 @@
   display: flex; align-items: center; gap: var(--sp-2);
 }
 
+/* The "+" add-account button sits at the right edge of the header
+ * row, vertically centered. */
+.forge-kind-add-btn {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.forge-kind-add-btn svg { width: 14px; height: 14px; }
+
 /* Two-letter kind badge (SVG glyph) — mirrors .repo-picker-badge
  * for visual consistency between the picker and the forges page. */
 .forge-kind-badge {
@@ -212,18 +223,47 @@
   text-decoration: none;
 }
 
-/* Action row below the account list: + Add an account, + Add a PAT. */
-.forge-kind-actions {
-  display: flex; gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-
-/* Inline mount point: PAT form, OAuth device prompt, or status text. */
+/* Inline mount point: add-pane (OAuth + PAT), or status text. */
 .forge-kind-slot:empty { display: none; }
 .forge-kind-slot {
   margin-block-start: var(--sp-2);
   padding-block-start: var(--sp-2);
   border-block-start: 1px dashed var(--c-border);
+}
+
+/* Unified add-account pane: OAuth device flow on top + horizontal
+ * divider + PAT form below. For non-GitHub kinds the OAuth section
+ * isn't rendered so the pane is just the PAT form. */
+.forge-add-pane {
+  display: flex; flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.forge-add-pane-intro {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  line-height: 1.5;
+}
+
+.forge-add-pane-section {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.forge-add-pane-heading {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-tertiary);
+}
+
+.forge-add-pane-divider {
+  border: 0;
+  border-block-start: 1px solid var(--c-border);
+  margin: 0;
 }
 
 /* GitHub OAuth device-flow code display (used inside .forge-kind-slot). */

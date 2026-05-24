@@ -26,7 +26,7 @@
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EXTERNAL } from "./icons.js";
+import { ICON_EXTERNAL, ICON_PLUS_16 } from "./icons.js";
 import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
 
 interface ForgesListResponse {
@@ -179,6 +179,9 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
   section.className = "forge-kind-section";
   section.dataset["kind"] = kind;
 
+  // Header row: badge + title on the left, "+" button on the right
+  // (vertically centered). The "+" opens a unified pane offering
+  // both OAuth (when supported) and PAT — see onAddAccount.
   const header = document.createElement("header");
   header.className = "forge-kind-header";
   const badge = document.createElement("span");
@@ -189,45 +192,31 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
   title.className = "forge-kind-title";
   title.textContent = forgeKindLabel(kind);
   header.appendChild(title);
-  section.appendChild(header);
-
-  const list = document.createElement("ul");
-  list.className = "forge-account-list";
-  if (accounts.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "forge-account-empty";
-    empty.textContent = "No accounts connected.";
-    list.appendChild(empty);
-  } else {
-    for (const a of accounts) list.appendChild(renderAccountRow(a));
-  }
-  section.appendChild(list);
-
-  // Action row: Add account, plus Add PAT for GitHub.
-  const actions = document.createElement("div");
-  actions.className = "forge-kind-actions";
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.className = "btn-small btn-primary";
+  addBtn.className = "icon-btn forge-kind-add-btn";
   addBtn.dataset["forgeAdd"] = kind;
-  addBtn.textContent = "+ Add an account";
-  addBtn.addEventListener("click", () => { void onAddAccount(kind, section); });
-  actions.appendChild(addBtn);
+  addBtn.setAttribute("aria-label", "Add an account");
+  addBtn.title = "Add an account";
+  addBtn.innerHTML = ICON_PLUS_16;
+  addBtn.addEventListener("click", () => { onAddAccount(kind, section); });
+  header.appendChild(addBtn);
 
-  if (kind === "github") {
-    const patBtn = document.createElement("button");
-    patBtn.type = "button";
-    patBtn.className = "btn-small";
-    patBtn.dataset["forgeAddPat"] = kind;
-    patBtn.textContent = "+ Add a PAT";
-    patBtn.addEventListener("click", () => { onAddPAT(kind, section); });
-    actions.appendChild(patBtn);
+  section.appendChild(header);
+
+  // Account list: only render when there are accounts. An empty list
+  // shows nothing (no "No accounts connected" filler) — the section
+  // header alone with the + button is enough invitation.
+  if (accounts.length > 0) {
+    const list = document.createElement("ul");
+    list.className = "forge-account-list";
+    for (const a of accounts) list.appendChild(renderAccountRow(a));
+    section.appendChild(list);
   }
 
-  section.appendChild(actions);
-
-  // Inline mount point for OAuth-flow / PAT-form / status messages.
+  // Inline mount point for the add-account pane (OAuth + PAT) and
+  // status messages.
   const slot = document.createElement("div");
   slot.className = "forge-kind-slot";
   slot.dataset["forgeSlot"] = kind;
@@ -299,10 +288,12 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
 
 // --- Add-account flow dispatch ---
 
-/** Toggle behavior: clicking the same trigger twice closes the slot.
- *  Clicking the other trigger (e.g. switching from "Add account" OAuth
- *  to "Add a PAT" on the GitHub section) replaces the content. The
- *  current mode is stored on slot.dataset["mode"]: "add" or "pat". */
+/** Toggle the add-account pane on a forge section. The pane offers
+ *  every supported method side-by-side (or stacked) so the user
+ *  picks one without flipping between buttons. For GitHub that's
+ *  OAuth device flow + PAT paste; for GitLab/Codeberg/Gitea it's
+ *  PAT paste only (no OAuth supported yet by those CLIs). Clicking
+ *  the same `+` button twice closes the pane. */
 function onAddAccount(kind: ForgeKind, section: HTMLElement): void {
   const slot = slotOf(section);
   if (slot.dataset["mode"] === "add") {
@@ -310,22 +301,57 @@ function onAddAccount(kind: ForgeKind, section: HTMLElement): void {
     return;
   }
   slot.dataset["mode"] = "add";
-  if (kind === "github") {
-    void startGitHubDeviceFlow(slot);
-    return;
-  }
-  // GitLab / Codeberg / Gitea: PAT is the primary path today.
-  showPATForm(section, kind);
+  showAddPane(section, kind);
 }
 
-function onAddPAT(kind: ForgeKind, section: HTMLElement): void {
+function showAddPane(section: HTMLElement, kind: ForgeKind): void {
   const slot = slotOf(section);
-  if (slot.dataset["mode"] === "pat") {
-    closeSlot(slot);
-    return;
+  slot.innerHTML = "";
+
+  const pane = document.createElement("div");
+  pane.className = "forge-add-pane";
+
+  // Lead-in text. Phrasing depends on whether OAuth is offered.
+  const intro = document.createElement("p");
+  intro.className = "forge-add-pane-intro";
+  intro.textContent = kind === "github"
+    ? "Sign in with the one-time browser flow, or paste a personal access token. Either path produces a token the CLI uses for git + API operations."
+    : "Paste a personal access token. The CLI uses it for git + API operations.";
+  pane.appendChild(intro);
+
+  // For GitHub: OAuth section on top, divider, PAT below.
+  if (kind === "github") {
+    const oauth = document.createElement("div");
+    oauth.className = "forge-add-pane-section";
+    const oauthHeading = document.createElement("h4");
+    oauthHeading.className = "forge-add-pane-heading";
+    oauthHeading.textContent = "Browser-based sign-in";
+    oauth.appendChild(oauthHeading);
+    const oauthBody = document.createElement("div");
+    oauthBody.className = "forge-add-pane-body";
+    oauth.appendChild(oauthBody);
+    pane.appendChild(oauth);
+    void startGitHubDeviceFlow(oauthBody);
+
+    const divider = document.createElement("hr");
+    divider.className = "forge-add-pane-divider";
+    pane.appendChild(divider);
   }
-  slot.dataset["mode"] = "pat";
-  showPATForm(section, kind);
+
+  // PAT form (works for every kind via the kind-agnostic backend).
+  const patSection = document.createElement("div");
+  patSection.className = "forge-add-pane-section";
+  const patHeading = document.createElement("h4");
+  patHeading.className = "forge-add-pane-heading";
+  patHeading.textContent = "Personal access token";
+  patSection.appendChild(patHeading);
+  const patBody = document.createElement("div");
+  patBody.className = "forge-add-pane-body";
+  patSection.appendChild(patBody);
+  pane.appendChild(patSection);
+
+  slot.appendChild(pane);
+  renderPATForm(patBody, kind, slot);
 }
 
 function closeSlot(slot: HTMLElement): void {
@@ -402,11 +428,12 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
 
 // --- PAT paste form (works for ALL kinds; backend is kind-agnostic) ---
 
-function showPATForm(section: HTMLElement, kind: ForgeKind): void {
-  const slot = slotOf(section);
-  slot.innerHTML = "";
-  const body = document.createElement("div");
-  body.className = "forge-pat-body";
+/** Render a PAT entry form into a host element. The slot reference
+ *  is needed by the Cancel button so it can close the entire add
+ *  pane (not just the form). Used by the unified add pane on every
+ *  kind, including GitHub where it sits below the OAuth section. */
+function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): void {
+  host.innerHTML = "";
 
   const helpLink = PAT_HELP_LINKS[kind];
   if (helpLink !== null) {
@@ -418,7 +445,7 @@ function showPATForm(section: HTMLElement, kind: ForgeKind): void {
     a.rel = "noreferrer";
     a.textContent = helpLink.label;
     help.appendChild(a);
-    body.appendChild(help);
+    host.appendChild(help);
   }
 
   const form = document.createElement("form");
@@ -470,8 +497,7 @@ function showPATForm(section: HTMLElement, kind: ForgeKind): void {
     });
   });
 
-  body.appendChild(form);
-  slot.appendChild(body);
+  host.appendChild(form);
 }
 
 async function doPATConnect(
