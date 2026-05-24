@@ -19,7 +19,8 @@ import { onSSE } from "./bus.js";
 import { relativeTime } from "./files-shared.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { RepoEntry, ForgeKind } from "./forge-types.js";
-import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, ICON_SPINNER, iconEl } from "./icons.js";
+import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, ICON_SPINNER, ICON_TRASH, iconEl } from "./icons.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { setBanner, clearBanner } from "./git-status-banner.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -594,6 +595,26 @@ function buildRow(e: RepoEntry): HTMLElement {
     });
     right.appendChild(cloneBtn);
   }
+
+  // Trash affordance for cloned entries: removes the local copy from
+  // the workspace via /api/git/remove. The remote (if any) stays
+  // intact and the entry will re-render as remote-only after the
+  // refetch. For local-only entries (no forge credential) the entry
+  // disappears entirely — the confirm copy spells that out.
+  if (e.is_local === true && e.local_path !== undefined && e.local_path !== "") {
+    const trashBtn = document.createElement("button");
+    trashBtn.type = "button";
+    trashBtn.className = "icon-btn repo-picker-row-trash-btn";
+    trashBtn.dataset["repoPickerTrashBtn"] = e.id;
+    trashBtn.setAttribute("aria-label", "Remove local copy");
+    trashBtn.setAttribute("title", "Remove local copy");
+    trashBtn.innerHTML = ICON_TRASH;
+    trashBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void withAsyncFeedback(trashBtn, () => removeLocalCopy(e, row), { keepLabel: true });
+    });
+    right.appendChild(trashBtn);
+  }
   row.appendChild(right);
 
   row.addEventListener("click", () => {
@@ -729,10 +750,50 @@ function markRowCloneFailed(row: HTMLElement, msg: string): void {
  *  cloned no longer carry one — for those the row already shows the
  *  synced glyph and we don't need to touch it). */
 function findRowById(id: string): HTMLElement | null {
-  const btn = document.querySelector<HTMLElement>(
-    `[data-repo-picker-clone-btn="${cssEscape(id)}"]`,
-  );
+  // Try the clone-button data attr first (remote-only rows), then
+  // fall back to the trash-button data attr (cloned rows).
+  const btn =
+    document.querySelector<HTMLElement>(`[data-repo-picker-clone-btn="${cssEscape(id)}"]`) ??
+    document.querySelector<HTMLElement>(`[data-repo-picker-trash-btn="${cssEscape(id)}"]`);
   return btn?.closest<HTMLElement>(".repo-picker-row") ?? null;
+}
+
+/** Confirm + remove the local copy of a cloned entry. Calls
+ *  /api/git/remove which `os.RemoveAll`s the directory under
+ *  workDir; the remote stays intact. After refetch:
+ *    - was synced (local + remote)  → entry stays as remote-only
+ *    - was local-only (no forge)    → entry disappears entirely
+ *  Confirm copy reflects the difference so the user knows whether
+ *  the action is recoverable.
+ *
+ *  Throws on error so per-row Trash buttons wired through
+ *  withAsyncFeedback flip into their error glyph. */
+async function removeLocalCopy(e: RepoEntry, _row: HTMLElement): Promise<void> {
+  const target = e.local_path !== undefined && e.local_path !== "" ? e.local_path : e.name;
+  if (target === "" || target === ".") {
+    // Defensive: the backend will reject these too, but no point
+    // even firing the confirm dialog if we know it'd fail.
+    return;
+  }
+  const remoteHint = e.is_remote === true
+    ? "The remote copy stays intact; you can re-clone it later."
+    : "This is a local-only repository — deletion is permanent.";
+  const ok = await confirmDialog(
+    `Delete the local copy of ${target}? ${remoteHint}`,
+    "Delete",
+    "destructive",
+  );
+  if (!ok) return;
+  const res = await apiPost<{ status?: string; error?: string }>(
+    `/api/git/remove`,
+    { repo: target },
+  );
+  // Refetch even on apparent error — the local removal is the source
+  // of truth; if the directory is gone, refetch will reflect it.
+  await refetch();
+  if (res === null || (res.error !== undefined && res.error !== "")) {
+    throw new Error(res?.error ?? "remove failed");
+  }
 }
 
 function pick(e: RepoEntry): void {

@@ -15,6 +15,13 @@ vi.mock("./api-client.js", () => ({
   apiDelete: vi.fn(() => Promise.resolve(null)),
 }));
 
+// Mock confirm.js so the trash-button click handler doesn't try to
+// open a real <dialog> via showModal() in happy-dom (which has only
+// partial dialog support).
+vi.mock("./confirm.js", () => ({
+  confirm: vi.fn(() => Promise.resolve(false)),
+}));
+
 import {
   hasForgeCredential,
   filtered,
@@ -251,6 +258,97 @@ describe("buildRow Clone button (remote-only entries)", () => {
     // implementation-side bubble handler that would re-trigger
     // cloneAndSelect is the one we want suppressed; we verified that
     // by ensuring stopPropagation in the click handler.
+    expect(rowClickCount).toBe(1);
+  });
+});
+
+// --- per-row Trash button (delete local copy) ---
+
+describe("buildRow Trash button (local entries)", () => {
+  function makeEntry(over: Partial<RepoEntry>): RepoEntry {
+    return {
+      id: "github.com:o/r",
+      kind: "github",
+      host: "github.com",
+      owner: "o",
+      name: "r",
+      full_name: "o/r",
+      ...over,
+    };
+  }
+
+  it("renders a Trash button on synced (local + remote) rows", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow(makeEntry({
+      is_local: true,
+      is_remote: true,
+      local_path: "r",
+      clone_url: "https://github.com/o/r.git",
+    }));
+    const trashBtn = row.querySelector<HTMLButtonElement>("[data-repo-picker-trash-btn]");
+    expect(trashBtn).not.toBeNull();
+    expect(trashBtn?.getAttribute("aria-label")).toBe("Remove local copy");
+    // The trash icon is inline SVG, not a Unicode glyph.
+    expect(trashBtn?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("renders a Trash button on local-only rows (no forge credential)", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow({
+      id: "local:r",
+      host: "",
+      owner: "",
+      name: "r",
+      full_name: "r",
+      is_local: true,
+      local_path: "r",
+    } as RepoEntry);
+    expect(row.querySelector("[data-repo-picker-trash-btn]")).not.toBeNull();
+  });
+
+  it("does NOT render a Trash button on remote-only rows", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow(makeEntry({
+      is_remote: true,
+      clone_url: "https://github.com/o/r.git",
+    }));
+    expect(row.querySelector("[data-repo-picker-trash-btn]")).toBeNull();
+  });
+
+  it("does NOT render a Trash button when local_path is missing", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow(makeEntry({
+      is_local: true,
+      // no local_path
+    }));
+    expect(row.querySelector("[data-repo-picker-trash-btn]")).toBeNull();
+  });
+
+  it("does NOT render a Trash button when local_path is an empty string", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow(makeEntry({
+      is_local: true,
+      local_path: "",
+    }));
+    expect(row.querySelector("[data-repo-picker-trash-btn]")).toBeNull();
+  });
+
+  it("clicking the Trash button does not also fire the row body click", async () => {
+    const { __testBuildRow } = await import("./repo-picker.js");
+    const row = __testBuildRow(makeEntry({
+      is_local: true,
+      is_remote: true,
+      local_path: "r",
+      clone_url: "https://github.com/o/r.git",
+    }));
+    const trashBtn = row.querySelector<HTMLButtonElement>("[data-repo-picker-trash-btn]")!;
+    let rowClickCount = 0;
+    row.addEventListener("click", () => { rowClickCount++; }, true);
+    trashBtn.click();
+    await Promise.resolve();
+    // Capture-phase listener fires once (proving click landed on the
+    // button). The picker's own bubble-phase row click that would
+    // try to pick the entry is suppressed by stopPropagation.
     expect(rowClickCount).toBe(1);
   });
 });
