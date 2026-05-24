@@ -15,7 +15,7 @@ export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { uploadAction } from "./actions/files.js";
-import { registerCleanup } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 let currentPath = ".";
 const selected = new Set<string>();
@@ -62,6 +62,8 @@ export function initFilePicker(): void {
     });
     input.click();
   });
+
+  bindLoadingState("files.upload", el<HTMLButtonElement>("filepicker-upload"), { preserveDisabled: true });
 
   // "Attach" button: attach all selected paths to the chat.
   el("filepicker-attach").addEventListener("click", () => {

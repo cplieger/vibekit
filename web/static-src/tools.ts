@@ -10,8 +10,7 @@ import { closeModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
-import { apiGet } from "./api-client.js";
-import { installTools, saveTools, seedMcp } from "./actions/tools.js";
+import { installTools, saveTools, seedMcp, loadToolsListAction } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
 
@@ -77,12 +76,9 @@ const f = {
 class ToolsManager {
   private toolsData: Record<string, Record<string, Record<string, unknown>>> = {};
   private editingTool: { cat: string; name: string } | null = null;
-  private toolsController: AbortController | null = null;
-
-  /** Public hook for global cleanup: aborts in-flight tool fetch. */
+  /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
-    this.toolsController?.abort();
-    this.toolsController = null;
+    loadToolsListAction.cancel();
   }
 
   init(): void {
@@ -93,18 +89,14 @@ class ToolsManager {
     bindLoadingState("tools.install", $.toolUpdateBtn);
 
     $.autoUpdateToggle.addEventListener("change", () => {
-      patchSettings({ auto_update: $.autoUpdateToggle.checked });
+      patchSettings({ auto_update: $.autoUpdateToggle.checked }, $.autoUpdateToggle);
     });
 
     f.save.addEventListener("click", () => this.saveToolFromModal());
   }
 
   loadToolsList(): void {
-    if (this.toolsController !== null) this.toolsController.abort();
-    this.toolsController = new AbortController();
-    const { signal } = this.toolsController;
-    void apiGet<typeof this.toolsData>("/api/tools", signal).then((d) => {
-      if (signal.aborted) return;
+    void loadToolsListAction.dispatch(undefined).then((d) => {
       if (d === null) {
         $.toolsList.innerHTML = '<div class="list-empty">Failed to load tools</div>';
         return;

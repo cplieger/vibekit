@@ -15,6 +15,18 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
   error: "Couldn't save tool config",
 });
 
+export const runDiagnostics = apiAction<void, { report?: string; error?: string }>({
+  name: "tools.diagnostics",
+  request: () => ({ method: "POST", path: "/api/diagnostics", body: {} }),
+  error: false,
+});
+
+export const loadToolsListAction = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
+  name: "tools.load_list",
+  request: () => ({ method: "GET", path: "/api/tools" }),
+  error: false,
+});
+
 export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   name: "tools.seed_mcp",
   request: ({ name, install }) => ({

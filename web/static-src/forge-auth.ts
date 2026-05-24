@@ -69,6 +69,10 @@ const expandOnNextPaint: Set<string> = new Set();
 /** OAuth availability per kind, populated from the forges list response. */
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
+/** Per-render cleanup: unbind functions from bindLoadingState on sign-out
+ *  buttons. Drained at the top of each paintForgesData call. */
+let signOutUnbinds: Array<() => void> = [];
+
 // --- In-flight handles for cancel-on-navigate -------------------------
 
 /** Stop flag for the OAuth device-flow polling chain. tick() exits
@@ -225,6 +229,10 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
 
 /** Paint the data into the root element. Pure rendering — no API calls. */
 function paintForgesData(root: HTMLElement, data: ForgesListResponse): void {
+  // Drain per-render cleanup from previous paint.
+  for (const fn of signOutUnbinds) fn();
+  signOutUnbinds = [];
+
   // Cache OAuth availability for use in add-account pane.
   oauthByKind = data.oauth ?? {};
 
@@ -362,6 +370,7 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   out.className = "btn-small btn-danger";
   out.textContent = "Sign out";
   out.addEventListener("click", () => { void onSignOut(a); });
+  signOutUnbinds.push(bindLoadingState("forge.sign_out", out));
   actions.appendChild(out);
 
   top.appendChild(actions);

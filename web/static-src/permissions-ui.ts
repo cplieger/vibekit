@@ -255,8 +255,7 @@ class PermissionsUIController {
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    const result = await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
-    if (result !== null) await this.loadRules();
+    await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
   }
 
   // --- Private: agent ignore files ---

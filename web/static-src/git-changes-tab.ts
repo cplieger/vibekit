@@ -68,7 +68,9 @@ let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
+let diffAbort: AbortController | null = null;
 void registerCleanup(() => { refreshAbort?.abort(); });
+registerCleanup(() => diffAbort?.abort());
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -171,6 +173,10 @@ function paintInner(): void {
   // Tear down previous bindLoadingState subscriptions before re-render.
   for (const fn of bindingCleanups) fn();
   bindingCleanups = [];
+
+  // Abort any in-flight diff fetches from the previous paint.
+  diffAbort?.abort();
+  diffAbort = new AbortController();
 
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
@@ -578,9 +584,12 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const loadDiff = (): void => {
     loadedDiff = true;
     diffDrawer.textContent = "Loading diff…";
+    const signal = diffAbort?.signal;
     void apiGet<{ diff?: string }>(
       `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
+      signal,
     ).then((data) => {
+      if (signal?.aborted) return;
       if (data === null) {
         diffDrawer.textContent = "Failed to load diff.";
         return;

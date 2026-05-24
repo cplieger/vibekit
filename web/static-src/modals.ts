@@ -6,6 +6,7 @@ import { $, el } from "./dom.js";
 import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
 import { isSafeUrl } from "./utils-url.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 
 export function closeModal(modal: HTMLDivElement): void {
@@ -189,6 +190,7 @@ function doLogin(
       const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
       const ctrl = new AbortController();
       loginPollAbort = ctrl;
+      registerCleanup(() => loginPollAbort?.abort());
       const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000)]);
       void (async () => {
         while (!signal.aborted) {

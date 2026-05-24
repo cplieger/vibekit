@@ -21,17 +21,13 @@ import {
   sortEntries, initEditablePath, FetchDirOpts,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction } from "./actions/files.js";
+import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction, downloadFiles } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { error as toastError } from "./toast.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 registerCleanup(() => browserFetchHolder.controllerHolder?.current?.abort());
 
-/** Module-scope so beforeunload can abort an in-flight zip stream. */
-let zipController: AbortController | null = null;
-registerCleanup(() => zipController?.abort());
 export class FileBrowserState {
   currentPath = ".";
   history: string[] = ["."];
@@ -122,6 +118,9 @@ export function initFileBrowser(): void {
   bindLoadingState("files.upload", $.fbUpload, { preserveDisabled: true });
   bindLoadingState("files.create_file", $.fbNewFile, { preserveDisabled: true });
   bindLoadingState("files.create_folder", $.fbNewFolder, { preserveDisabled: true });
+  bindLoadingState("files.download", $.fbDownload, { preserveDisabled: true });
+  bindLoadingState("files.rename", $.fbRename, { preserveDisabled: true });
+  bindLoadingState("files.delete", $.fbDelete, { preserveDisabled: true });
 
   // Escape deselects all.
   onBus(BUS_KEYS_ESCAPE, () => {
@@ -517,33 +516,7 @@ function downloadSelected(): void {
   }
   // Multiple items or includes a directory: POST for zip.
   const paths = names.map((n) => joinPath(state.currentPath, n));
-  zipController = new AbortController();
-  const zipTimeout = setTimeout(() => zipController?.abort(), 60_000);
-  void fetch("/api/files/download", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paths }),
-    signal: zipController.signal,
-  }).then(async (res) => {
-    if (!res.ok) {
-      clearTimeout(zipTimeout);
-      toastError("Download failed");
-      return;
-    }
-    const blob = await res.blob();
-    clearTimeout(zipTimeout);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "download.zip";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }).catch(() => {
-    clearTimeout(zipTimeout);
-    toastError("Download failed");
-  });
+  void downloadFiles.dispatch({ paths });
 }
 
 function uploadViaDialog(): void {

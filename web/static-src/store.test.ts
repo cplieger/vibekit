@@ -7,6 +7,7 @@ import {
   appendMessage, upsertMessage, upsertHeader, removeChat,
   addPendingChange, setThinking, setWorkingLabel,
   enqueuePrompt, dequeuePrompt, setQueuedPrompt, queuedPrompt,
+  setName,
 } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -350,5 +351,20 @@ describe("Store queue operations (property-based)", () => {
       ),
       { numRuns: 100 },
     );
+  });
+});
+
+describe("Store setName", () => {
+  it("updates session name", () => {
+    resetStore("chat-1");
+    expect(get("chat-1")!.name).toBe("test");
+    setName("chat-1", "Renamed");
+    expect(get("chat-1")!.name).toBe("Renamed");
+  });
+
+  it("no-ops on unknown chat", () => {
+    resetStore("chat-1");
+    setName("nonexistent", "X");
+    expect(get("chat-1")!.name).toBe("test");
   });
 });

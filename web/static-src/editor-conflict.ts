@@ -4,21 +4,17 @@
 
 import { $ } from "./dom.js";
 import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type Resolution } from "./conflict.js";
-import { apiPost } from "./api-client.js";
+import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/cleanup.js";
 
-let suggestionController: AbortController | null = null;
-registerCleanup(() => suggestionController?.abort());
+registerCleanup(() => suggestResolution.cancel());
 
 /** Abort any in-flight suggestion request (called on tab close). */
 export function abortSuggestion(): void {
-  if (suggestionController !== null) {
-    suggestionController.abort();
-    suggestionController = null;
-  }
+  suggestResolution.cancel();
 }
 
 export function renderConflictModeUI(state: FileState): void {
@@ -124,9 +120,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (hunk === undefined) return;
   const existing = state.suggestions.get(hunk.startLine);
   if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
-  if (suggestionController !== null) suggestionController.abort();
-  suggestionController = new AbortController();
-  const signal = suggestionController.signal;
+  suggestResolution.cancel();
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
   const context = buildHunkContext(state.mode.conflict, hunk);
@@ -135,8 +129,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     theirs: hunk.theirsLines.join("\n"),
     context,
   };
-  const resp = await apiPost<{ output?: string; error?: string }>("/api/utility/resolve-conflict", body, signal);
-  if (signal.aborted) return;
+  const resp = await suggestResolution.dispatch(body);
   if (state.mode.kind !== "conflict") return;
   if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];

@@ -2,8 +2,10 @@
 // ---------------------------------------------------------------------------
 
 import { defineAction } from "./define.js";
+import { apiAction } from "./api.js";
 import { ActionError } from "./error.js";
 import { withTimeout } from "../api-client.js";
+import type { Conflict } from "../conflicts.js";
 
 interface OpenDiffArgs {
   chatID: string;
@@ -37,6 +39,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
  *  "Could not load file content for conflict diff". */
 export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   name: "conflicts.open_diff",
+  retryable: "network",
   run: async (args, signal) => {
     const [expected, actual] = await Promise.all([
       fetchBlob(args.chatID, args.expectedSha, signal),
@@ -52,4 +55,13 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
     });
   },
   error: "Could not load file content for conflict diff",
+});
+
+/** Fetch past conflicts for a chat. Background best-effort — fails
+ *  silently so a network hiccup doesn't surface an error toast. */
+export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>({
+  name: "conflicts.load",
+  retryable: false,
+  request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
+  error: false,
 });

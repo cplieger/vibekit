@@ -10,6 +10,7 @@ import { $ } from "./dom.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { setAutoApproveCrewAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { Session } from "./types.js";
 
 /** Client-side cache augmentation — avoids O(n) scan on every render. */
@@ -28,6 +29,7 @@ export function initAutoApprove(): void {
 
   const btn = $.autoApproveCrewBtn;
   btn.addEventListener("click", toggle);
+  bindLoadingState("chat.set_auto_approve_crew", $.autoApproveCrewBtn);
 
   // Re-render on every store change (active chat switch, flag change).
   effect(() => { version.value; render(); });

@@ -132,6 +132,33 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   error: (_args, err) => err.message,
 });
 
+// --- files.download ---
+
+export const downloadFiles = defineAction<{ paths: string[] }, void>({
+  name: "files.download",
+  retryable: false, // zip downloads aren't great for retry semantics
+  run: async (args, signal) => {
+    const r = await fetch("/api/files/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: args.paths }),
+      signal: withTimeout(signal, 60_000),
+    });
+    if (!r.ok) throw new ActionError("Download failed", { status: r.status });
+    const blob = await r.blob();
+    // Trigger browser download via objectURL anchor
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "download.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+  error: "Download failed",
+});
+
 // --- files.upload ---
 
 export interface UploadArgs {

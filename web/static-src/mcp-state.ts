@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet, apiGetTyped, CancellableSlot } from "./api-client.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import {
   asObject, decodeArray, optStr, reqStr, type Decoder,
 } from "./validators.js";
@@ -95,6 +96,8 @@ class MCPStateController {
 
   get status(): ReadonlyMap<string, RuntimeStatus> { return this._status; }
 
+  abort(): void { this.serversSlot.abort(); this.statusSlot.abort(); }
+
   setRenderCallback(cb: () => void): void { this.renderCb = cb; }
 
   setStatus(name: string, rs: RuntimeStatus): void { this._status.set(name, rs); }
@@ -140,6 +143,7 @@ class MCPStateController {
 // --- Singleton + delegate exports (preserves public API) ---
 
 const instance = new MCPStateController();
+registerCleanup(() => { instance.abort(); });
 
 // `configured` remains a module-level let (live binding for consumers).
 // `status` is a readonly reference to the controller's internal Map.

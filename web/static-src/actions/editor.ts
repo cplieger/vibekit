@@ -45,6 +45,24 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
   error: "Couldn't apply partial change",
 });
 
+/** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
+export const suggestResolution = apiAction<{ ours: string; theirs: string; context: string }, { output?: string; error?: string }>({
+  name: "editor.suggest_resolution",
+  request: (body) => ({ method: "POST", path: "/api/utility/resolve-conflict", body }),
+  error: false,
+});
+
+/** Fetch agent-modified line ranges for gutter highlighting. Retry on network failure. */
+export const fetchAgentLinesAction = apiAction<{ chatID: string; path: string }, { changes: Array<{ start_line: number; end_line: number }> }>({
+  name: "editor.fetch_agent_lines",
+  request: ({ chatID, path }) => ({
+    method: "GET",
+    path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
+  }),
+  retryable: "network",
+  error: false,
+});
+
 /** Fetch git diff sources for the editor diff view. Toast on failure. */
 export const loadDiff = defineAction<{ path: string; repo: string; ref: string }, { oldContent: string; newContent: string; error: string }>({
   name: "editor.load_diff",

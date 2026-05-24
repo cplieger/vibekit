@@ -10,7 +10,7 @@ import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer } from "./actions/mcp.js";
-import { subscribeToActions } from "./actions/index.js";
+import { subscribeToActions, bindLoadingState } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import { registerCleanup } from "./actions/cleanup.js";
 
@@ -110,10 +110,9 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
   }
 
   const saveBtn = errEl.parentElement?.querySelector<HTMLButtonElement>("[id$='-save']");
-  if (saveBtn !== null && saveBtn !== undefined) {
-    saveBtn.disabled = true;
-    saveBtn.classList.add("btn-loading");
-  }
+  const unbind = saveBtn != null
+    ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
+    : undefined;
 
   let capturedError: ActionErrorLike | undefined;
   const unsub = subscribeToActions((inst) => {
@@ -125,11 +124,7 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
   const r = await saveServer.dispatch({ id: session.editing.id, body });
 
   unsub();
-
-  if (saveBtn !== null && saveBtn !== undefined) {
-    saveBtn.disabled = false;
-    saveBtn.classList.remove("btn-loading");
-  }
+  unbind?.();
 
   if (r === null) {
     errEl.textContent = capturedError?.message ?? "Save failed.";

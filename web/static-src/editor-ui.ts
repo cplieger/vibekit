@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
-import { apiGet } from "./api-client.js";
+import { fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
 import {
@@ -35,15 +35,11 @@ function getAgentLines(path: string): Set<number> {
   return lines;
 }
 
-export async function fetchAgentLines(path: string, signal?: AbortSignal): Promise<void> {
+export async function fetchAgentLines(path: string, _signal?: AbortSignal): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") return;
-  const data = await apiGet<{ changes: LineRange[] }>(
-    `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
-    signal,
-  );
+  const data = await fetchAgentLinesAction.dispatch({ chatID, path });
   if (data === null) return;
-  if (signal?.aborted === true) return;
   if (getActiveFilePath() !== path) return;
   agentLineCache.set(path, data.changes ?? []);
   agentLineSetCache.delete(path);

@@ -24,12 +24,14 @@ import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
+import { runDiagnostics } from "./actions/tools.js";
+import { bindLoadingState } from "./actions/index.js";
 
 // Shared generation counter for kiro-setting saves. Last-write-wins:
 // if two settings change in rapid succession, only the final save
@@ -154,25 +156,18 @@ async function loadAbout(): Promise<void> {
 /** Wires the "Run diagnostics" button. Shows a spinner while kiro-cli
  *  collects its report, then copies the output to the clipboard and
  *  prints a summary below the button. Failures are surfaced as an
- *  error status so the user can manually re-run.
- *
- *  NOT MIGRATED to bindLoadingState: no tools.diagnostics action exists
- *  in the registry. The endpoint is a one-off apiPost call that doesn't
- *  go through the action framework. Create a tools.diagnostics action
- *  first, then wire bindLoadingState here. */
+ *  error status so the user can manually re-run. */
 function initDiagnostics(): void {
   const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
   if (btn === null || status === null) return;
 
+  bindLoadingState("tools.diagnostics", btn, { pendingClass: "btn-loading" });
+
   btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.classList.add("btn-loading");
     status.hidden = false;
     status.textContent = "Collecting diagnostics\u2026";
-    const out = await apiPost<{ report?: string; error?: string }>("/api/diagnostics", {});
-    btn.disabled = false;
-    btn.classList.remove("btn-loading");
+    const out = await runDiagnostics.dispatch(undefined);
     if (out === null || out.error !== undefined) {
       status.textContent = out?.error ?? "Diagnostics failed. Check server logs.";
       return;

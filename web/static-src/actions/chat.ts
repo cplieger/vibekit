@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel, setName } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -106,6 +106,31 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
   },
   retryable: "network",
   error: "Couldn't update supervised mode",
+});
+
+// --- chat.rename ---
+
+export const renameChatAction = transportAction<{ chatID: string; name: string }>({
+  name: "chat.rename",
+  retryable: "network",
+  command: ({ chatID, name }) => ({
+    type: "rename_chat",
+    chat_id: chatID,
+    payload: { name },
+  }),
+  optimistic: ({ chatID, name }) => {
+    const session = get(chatID);
+    if (!session) return undefined;
+    const prev = session.name;
+    setName(chatID, name);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op && typeof op === "object" && "prev" in op) {
+      setName(chatID, (op as { prev: string }).prev);
+    }
+  },
+  error: "Couldn't rename chat",
 });
 
 // --- chat.resolve_all_pending ---
@@ -341,6 +366,7 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
 
 export const permissionResponseAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
   name: "chat.permission_response",
+  retryable: "network",
   command: ({ chatID, requestID, optionID }) => ({
     type: "permission_response",
     chat_id: chatID,

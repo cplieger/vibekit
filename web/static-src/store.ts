@@ -413,6 +413,14 @@ export function setModel(chatID: string, model: string): void {
   emit();
 }
 
+/** Set session name and notify subscribers. Used by renameChatAction. */
+export function setName(chatID: string, name: string): void {
+  const s = get(chatID);
+  if (s === undefined) return;
+  s.name = name;
+  emit();
+}
+
 /** Return the current index of a session in the list, or -1. */
 export function indexOfSession(id: string): number {
   return _sessions.findIndex((s) => s.id === id);
