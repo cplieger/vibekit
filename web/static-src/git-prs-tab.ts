@@ -18,6 +18,7 @@ import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
@@ -65,6 +66,17 @@ export function initPRsTab(): void {
     filterText = filterEl.value.trim().toLowerCase();
     paint();
   });
+
+  // Manual refresh button next to the filter — mirrors the
+  // pattern on the Changes tab. Spinner replaces the icon while
+  // the parallel PR fetch is in flight.
+  const refreshBtn = document.getElementById("git-refresh-prs-btn") as HTMLButtonElement | null;
+  if (refreshBtn !== null) {
+    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.addEventListener("click", () => {
+      void withAsyncFeedback(refreshBtn, () => refreshPRs());
+    });
+  }
 
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
