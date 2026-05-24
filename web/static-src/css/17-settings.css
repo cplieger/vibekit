@@ -914,8 +914,15 @@
 
 /* --- Source Control empty state --- */
 
+/* Fills the available vertical space below the page title + banner so
+ * the card sits at the true center of the viewport. The parent
+ * .page-content is already a flex column with flex: 1 + min-height: 0,
+ * so flex: 1 here grows into all remaining height. Once a repo is
+ * selected, .hidden flips display to none and this container
+ * disappears — the toolbar + repo panel reclaim the space. */
 .git-empty-state {
-  margin-block: var(--sp-6);
+  flex: 1;
+  min-height: 0;
   display: flex; align-items: center; justify-content: center;
 }
 
