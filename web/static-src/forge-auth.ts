@@ -35,6 +35,7 @@ import {
   signOut,
   cloneRepo as cloneRepoAction,
   deleteLocal as deleteLocalAction,
+  connectPAT,
 } from "./actions/forge.js";
 
 interface ForgesListResponse {
@@ -740,16 +741,15 @@ function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void 
 function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: number): void {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
   const tick = async (): Promise<void> => {
+    if (!host.isConnected) return;
     const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", { device_code: deviceCode });
     if (res === null) {
       if (statusEl !== null) statusEl.textContent = "Network error. Retrying…";
+      setTimeout(() => void tick(), intervalSec * 1000);
       return;
     }
     if (res.status === "complete") {
       if (statusEl !== null) statusEl.textContent = "Connected.";
-      // OAuth device flow is github-only today and always lands on
-      // github.com — mark that forge for auto-expand on the next
-      // paint so the user sees their new account's repos.
       expandOnNextPaint.add("github:github.com");
       void renderForgesPanel();
       return;
@@ -832,7 +832,7 @@ function renderPATForm(host: HTMLElement, kind: ForgeKind, slot: HTMLElement): v
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const host = hostInput.value.trim();
-    void doPATConnect(kind, host, tokenInput.value, status, () => {
+    void doPATConnect(kind, host, tokenInput.value.trim(), status, () => {
       tokenInput.value = "";
       closeSlot(slot);
       // Auto-expand the freshly-added account on the next paint.
@@ -858,10 +858,7 @@ async function doPATConnect(
   }
   status.textContent = "Validating…";
   status.className = "forge-card-status";
-  const id = `${kind}:${host}`;
-  const res = await apiPost<{ status?: string; error?: string }>(`/api/forges/${encodeURIComponent(id)}/login/pat`, {
-    token,
-  });
+  const res = await connectPAT.dispatch({ kind, host, token });
   if (res === null) {
     status.textContent = "Network error.";
     status.className = "forge-card-status err";
@@ -900,7 +897,7 @@ function escapeHTML(s: string): string {
 }
 
 function escapeAttr(s: string): string {
-  return s.replace(/["']/g, (c) => (c === '"' ? "&quot;" : "&#39;"));
+  return escapeHTML(s);
 }
 
 function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {

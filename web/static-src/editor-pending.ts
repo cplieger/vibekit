@@ -5,7 +5,8 @@
 import { $ } from "./dom.js";
 import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
-import { resolvePending, resolvePendingPartial } from "./actions/editor.js";
+import { resolvePendingChangeAction } from "./actions/chat.js";
+import { resolvePendingPartial } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { fileStates, getActiveFilePathInternal, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -18,7 +19,10 @@ export async function resolveActivePending(action: "accept" | "reject"): Promise
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  const result = await resolvePending.dispatch({ chatID, toolCallID, action });
+  const result = await resolvePendingChangeAction.dispatch(
+    { chatID, toolCallID, action },
+    { errorPrefix: "Couldn't resolve change" },
+  );
   if (result !== null) closeFile(path);
 }
 

@@ -32,7 +32,6 @@ import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
-import { setLastError } from "./send-state.js";
 import { error as toastError } from "./toast.js";
 import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
 
@@ -62,12 +61,12 @@ export function openChatTab(id: string, name: string, agent: string): void {
       // / other devices clean up via handlers/chat.ts.
       const s = get(id);
       if (s?.is_tangent === true) {
-        // Bug 2 fix: if discard fails, the parent chat stays frozen.
-        // Since onClose is void (can't prevent close), surface the error
-        // so the user knows the parent is stuck and can retry manually.
+        // If discard fails, the parent chat stays frozen. Surface via
+        // toast so the user knows the parent is stuck and can retry.
+        // We do NOT call setLastError here — that's global and would
+        // block the send button on whatever chat is currently active.
         void discardTangentAction.dispatch(id).then((r) => {
           if (r === null) {
-            setLastError("Tangent discard failed — parent chat may be frozen");
             toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
           }
         });
@@ -194,6 +193,8 @@ export function createSession(initialPrompt?: string): void {
   const id = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
   const model = getLastModel();
   const agent = getCurrentAgent();
+  // Template for upsertHeader + initial render; only the header fields
+  // matter — the rest are defaults satisfying the Session type.
   const session: Session = {
     id, name: "New conversation", agent, model,
     acp_session_id: "",

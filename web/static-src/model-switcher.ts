@@ -20,7 +20,7 @@ import { makeExpandable, collapseAll } from "./pill-expand.js";
 
 type QueueState =
   | { status: "idle" }
-  | { status: "queued"; modelID: string }
+  | { status: "queued"; modelID: string; chatID: string }
   | { status: "switching"; modelID: string };
 
 class ModelSwitchController {
@@ -40,7 +40,7 @@ class ModelSwitchController {
         this.renderCondensedList();
       },
     });
-    onBus(BUS_TURN_IDLE, () => this.drainQueue());
+    onBus(BUS_TURN_IDLE, (chatID: string) => this.drainQueue(chatID));
   }
 
   private openRichPicker(): void {
@@ -122,19 +122,21 @@ class ModelSwitchController {
   }
 
   private enqueue(modelID: string): void {
-    this.queueState = { status: "queued", modelID };
+    const chatID = getActiveId();
+    this.queueState = { status: "queued", modelID, chatID };
     $.switchModelBtn.classList.add("pending");
     $.switchModelBtn.setAttribute("data-tooltip", `Switch to ${humanName(modelID)} after current turn`);
   }
 
-  private drainQueue(): void {
+  private drainQueue(idleChatID: string): void {
     if (this.queueState.status !== "queued") return;
-    const modelID = this.queueState.modelID;
+    if (this.queueState.chatID !== idleChatID) return;
+    const { modelID, chatID } = this.queueState;
     this.queueState = { status: "idle" };
     $.switchModelBtn.classList.remove("pending");
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
-    if (getActiveId() === "") return;
-    void this.fire(getActiveId(), modelID);
+    if (chatID === "") return;
+    void this.fire(chatID, modelID);
   }
 }
 

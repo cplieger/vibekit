@@ -275,7 +275,7 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
   row.appendChild(rightSlot);
 
   const makeBtn = (
-    svgMarkup: string, ariaLabel: string, onClick: () => void,
+    svgMarkup: string, ariaLabel: string, onClick: (btn: HTMLButtonElement) => void,
   ): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -283,23 +283,28 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
     btn.appendChild(svgTemplate(svgMarkup)());
     btn.setAttribute("aria-label", ariaLabel);
     btn.setAttribute("data-tooltip", ariaLabel);
-    btn.addEventListener("click", () => {
-      onClick();
-      btn.classList.add("copied");
-      setTimeout(() => btn.classList.remove("copied"), 1500);
-    });
+    btn.addEventListener("click", () => { onClick(btn); });
     return btn;
   };
 
-  rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", () => {
-    void copyClipboard.dispatch(el.textContent ?? "");
+  const copyAndAnimate = (btn: HTMLButtonElement, text: string): void => {
+    void copyClipboard.dispatch(text, { silent: true }).then((r) => {
+      if (r !== null) {
+        btn.classList.add("copied");
+        setTimeout(() => btn.classList.remove("copied"), 1500);
+      }
+    });
+  };
+
+  rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", (btn) => {
+    copyAndAnimate(btn, el.textContent ?? "");
   }));
-  rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", () => {
-    void copyClipboard.dispatch(raw);
+  rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
+    copyAndAnimate(btn, raw);
   }));
   if (chatID !== "") {
-    rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", () => {
-      void copyClipboard.dispatch(chatID);
+    rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+      copyAndAnimate(btn, chatID);
     }));
     rightSlot.appendChild(makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
       const a = document.createElement("a");

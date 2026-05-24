@@ -67,9 +67,10 @@ async function deletePlanDraft(chatID: string): Promise<void> {
  *  tangent landed between the Edit and Send clicks), the draft stays
  *  on disk so the user's work survives the failure and they can retry
  *  from the editor. */
-export async function runPlan(chatID: string, content: string): Promise<void> {
-  if (chatID === "" || content.trim() === "") return;
+export async function runPlan(chatID: string, content: string): Promise<boolean> {
+  if (chatID === "" || content.trim() === "") return false;
   const result = await runPlanAction.dispatch({ chatID, content });
-  if (result === null) return;
+  if (result === null) return false;
   await deletePlanDraft(chatID);
+  return true;
 }

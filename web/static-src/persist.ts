@@ -31,31 +31,40 @@ export interface AppSettings {
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
+let patchGen = 0;
+let patchResolvers: Array<(r: unknown | null) => void> = [];
 
-export function patchSettings(patch: Partial<AppSettings>, input?: HTMLInputElement): void {
+export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<unknown | null> {
   Object.assign(patchQueue, patch);
-  // Collect all inputs that contributed to this patch so the rollback
-  // can flip every toggle back on failure (multi-key patches like
-  // notifications_enabled + notify_agent_finished + notify_permission).
-  if (input !== undefined && !patchInputs.includes(input)) {
-    patchInputs.push(input);
+  for (const input of inputs) {
+    if (!patchInputs.includes(input)) patchInputs.push(input);
   }
-  if (patchTimer !== undefined) return;
+  const p = new Promise<unknown | null>((resolve) => { patchResolvers.push(resolve); });
+  if (patchTimer !== undefined) return p;
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     const body = patchQueue;
-    const inputs = patchInputs;
+    const allInputs = patchInputs;
+    const resolvers = patchResolvers;
     patchQueue = {};
     patchInputs = [];
-    showSaving();  // moved into the dispatch tick so it doesn't orphan
+    patchResolvers = [];
+    showSaving();
+    const gen = ++patchGen;
     void patchAppSettingsAction.dispatch(
       {
         body: body as Record<string, unknown>,
-        ...(inputs.length > 0 ? { inputs } : {}),
+        ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
       },
       { silent: true },
-    ).then((r) => { if (r === null) showError(); else showSaved(); });
+    ).then((r) => {
+      if (gen === patchGen) {
+        if (r === null) showError(); else showSaved();
+      }
+      for (const resolve of resolvers) resolve(r);
+    });
   }, 300);
+  return p;
 }
 
 export async function loadSettings(): Promise<AppSettings> {

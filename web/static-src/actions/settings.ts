@@ -58,9 +58,10 @@ interface KiroSettingArgs {
   key: string;
   value: string;
   input: HTMLInputElement;
-  /** Captured during optimistic() so rollback can restore the exact
-   *  previous value rather than guessing. Set by the framework via
-   *  the OptimisticOp pipeline. Not part of the public dispatch args. */
+  /** For non-checkbox inputs, the value captured BEFORE the change event
+   *  fired (via a focus-time snapshot). This ensures rollback restores
+   *  the true previous value, not the rejected one. */
+  previousValue?: string;
 }
 
 interface KiroSettingOp {
@@ -75,11 +76,12 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  optimistic: ({ input }): KiroSettingOp => {
+  optimistic: ({ input, previousValue }): KiroSettingOp => {
     if (input.type === "checkbox") {
       return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
     }
-    return { prevValue: input.value };
+    // Use the focus-time snapshot if available; otherwise fall back to current value
+    return { prevValue: previousValue ?? input.value };
   },
   rollback: ({ input }, op) => {
     const o = op as KiroSettingOp | undefined;

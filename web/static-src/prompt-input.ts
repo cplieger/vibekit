@@ -44,6 +44,8 @@ const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   blocked: "Cannot send right now",
 };
 
+let initialized = false;
+
 class PromptInputController {
   // History cycling state
   private idx = -1;
@@ -112,6 +114,9 @@ class PromptInputController {
   }
 
   init(onSubmit: Submit, onCancel: Cancel): void {
+    if (initialized) return;
+    initialized = true;
+
     const form = $.promptForm;
     const input = $.promptInput;
 

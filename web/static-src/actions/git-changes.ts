@@ -12,7 +12,6 @@ import { apiAction } from "./index.js";
 interface GitRepoArgs {
   repo: string;
   files?: string[];
-  [key: string]: unknown;
 }
 
 // --- Actions ---

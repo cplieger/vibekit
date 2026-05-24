@@ -72,3 +72,23 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
   }),
   error: false,
 });
+
+// --- PAT connect ---
+
+export interface ConnectPATArgs {
+  kind: string;
+  host: string;
+  token: string;
+}
+
+/** Connect a forge account via PAT. Error toast suppressed — the
+ *  form renders inline error status. */
+export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
+  name: "forge.connect_pat",
+  request: ({ kind, host, token }) => ({
+    method: "POST",
+    path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,
+    body: { token },
+  }),
+  error: false,
+});

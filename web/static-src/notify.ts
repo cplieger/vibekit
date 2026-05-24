@@ -4,9 +4,10 @@
 // Each device auto-prompts for browser permission when enabled globally.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { registerPushAction } from "./actions/notify.js";
+export { urlBase64ToUint8Array } from "./push-util.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.
@@ -120,57 +121,28 @@ class NotifyController {
     if (this.pushState.kind === "registered" || this.pushState.kind === "failed" || this.pushState.kind === "registering") return;
     if (!("Notification" in window)) return;
     if (Notification.permission === "granted") {
-      void this.registerPush();
+      void this.registerPushViaAction(true);
       return;
     }
     if (Notification.permission === "denied") return;
     Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPush();
+      if (result === "granted") void this.registerPushViaAction(true);
     }).catch(() => {});
   }
 
-  private async registerPushViaAction(): Promise<void> {
+  private async registerPushViaAction(silent = false): Promise<void> {
     if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
     this.pushController?.abort();
     const ctrl = new AbortController();
     this.pushController = ctrl;
     this.pushState = { kind: "registering" };
-    const reg = await registerPushAction.dispatch(undefined);
+    const reg = await registerPushAction.dispatch(undefined, silent ? { silent: true } : undefined);
     if (ctrl !== this.pushController) return;
     if (reg !== null) {
       this.swRegistration = reg;
       this.pushState = { kind: "registered", registration: reg };
     } else {
       this.pushState = { kind: "failed", error: "action failed" };
-    }
-  }
-
-  private async registerPush(): Promise<void> {
-    if (this.pushState.kind === "registered" || this.pushState.kind === "registering" || !("serviceWorker" in navigator)) return;
-    this.pushController?.abort();
-    const ctrl = new AbortController();
-    this.pushController = ctrl;
-    this.pushState = { kind: "registering" };
-    try {
-      this.swRegistration = await navigator.serviceWorker.register("/sw.js");
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      const keyData = await apiGet<{ publicKey: string }>("/api/push/vapid-key", ctrl.signal);
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      if (keyData === null) { this.pushState = { kind: "failed", error: "no VAPID key" }; return; }
-      const appServerKey = urlBase64ToUint8Array(keyData.publicKey);
-      const sub = await this.swRegistration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: appServerKey.buffer as ArrayBuffer,
-      });
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      await apiPost("/api/push/subscribe", sub.toJSON());
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      this.pushState = { kind: "registered", registration: this.swRegistration };
-    } catch (e: unknown) {
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      const msg = e instanceof Error ? e.message : "unknown";
-      this.pushState = { kind: "failed", error: msg };
-      console.warn("push registration failed:", msg);
     }
   }
 
@@ -197,19 +169,6 @@ class NotifyController {
     const base = "Vibekit for Kiro";
     document.title = count > 0 ? `(${String(count)}) ${base}` : base;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Utility (stateless)
-// ---------------------------------------------------------------------------
-
-export function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(base64);
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
 }
 
 // ---------------------------------------------------------------------------

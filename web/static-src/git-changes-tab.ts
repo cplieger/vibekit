@@ -12,7 +12,7 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH, ICON_SPINNER } from "./icons.js";
+import { ICON_REFRESH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
@@ -24,7 +24,7 @@ import {
 // --- Helpers for withAsyncFeedback ---
 
 /** Throw if an action dispatch returned null (failure already toasted). */
-function assertOk(result: unknown): void {
+function assertOk<T>(result: T): asserts result is NonNullable<T> {
   if (result === null) throw new Error("action failed");
 }
 
@@ -64,6 +64,7 @@ interface StatusAllResponse {
 
 let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
+let refreshGeneration = 0;
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -104,9 +105,13 @@ export function initChangesTab(): void {
   void refreshChanges();
 }
 
-/** Force a full /api/git/status-all refresh and repaint. */
+/** Force a full /api/git/status-all refresh and repaint. Concurrent
+ *  calls are safe: a generation counter ensures stale responses are
+ *  discarded. */
 export async function refreshChanges(): Promise<void> {
+  const gen = ++refreshGeneration;
   const data = await apiGet<StatusAllResponse>("/api/git/status-all");
+  if (gen < refreshGeneration) return; // stale — a newer call supersedes
   if (data === null) {
     paintError("Failed to load git status.");
     return;
@@ -332,20 +337,27 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   bar.appendChild(stageAllBtn);
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
+  let discardPending = false;
   discardAllBtn.addEventListener("click", () => {
+    if (discardPending) return;
+    discardPending = true;
     void (async () => {
-      const ok = await confirmDialog(
-        `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
-        "Discard",
-        "destructive",
-      );
-      if (!ok) return;
-      const files = r.files.map((f) => f.path);
-      if (files.length === 0) return;
-      await withAsyncFeedback(discardAllBtn, async () => {
-        assertOk(await discard.dispatch({ repo: r.repo, files }));
-        await refreshChanges();
-      });
+      try {
+        const ok = await confirmDialog(
+          `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
+          "Discard",
+          "destructive",
+        );
+        if (!ok) return;
+        const files = r.files.map((f) => f.path);
+        if (files.length === 0) return;
+        await withAsyncFeedback(discardAllBtn, async () => {
+          assertOk(await discard.dispatch({ repo: r.repo, files }));
+          await refreshChanges();
+        });
+      } finally {
+        discardPending = false;
+      }
     })();
   });
   bar.appendChild(discardAllBtn);
@@ -713,8 +725,3 @@ function escapeHTML(s: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }
-
-// Stub used to silence unused-import warning when ICON_SPINNER ends
-// up unused in some build paths. Keep the import live so a future
-// inline-spinner addition has no extra import churn.
-void ICON_SPINNER;

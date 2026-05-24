@@ -1,12 +1,12 @@
 // Actions for chat lifecycle: delete, archive, restore, discard tangent,
-// load history, delete archived, cancel, switch model, resolve pending
-// change, resolve all pending, permission response, restore checkpoint,
-// fork, merge tangent, set supervised, set auto-approve crew, trust
-// pending, clear pending trust.
+// load history, delete archived, cancel, switch model, send prompt, resolve
+// pending change, resolve all pending, permission response, restore
+// checkpoint, fork, merge tangent, set supervised, set auto-approve crew,
+// trust pending, clear pending trust.
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking, setSupervisedMode, version } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -27,9 +27,8 @@ export const archiveChatAction = apiAction<string, unknown>({
     method: "POST",
     path: `/api/chats/${encodeURIComponent(id)}/archive`,
   }),
-  // Silent: auto-triggered on tab close, not user-initiated feedback.
   success: false,
-  error: false,
+  error: "Couldn't archive chat",
 });
 
 // --- chat.discard_tangent ---
@@ -37,7 +36,8 @@ export const archiveChatAction = apiAction<string, unknown>({
 export const discardTangentAction = transportAction<string>({
   name: "chat.discard_tangent",
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
-  error: "Couldn't discard tangent",
+  // Caller (chat.ts onClose) fires a richer manual toast on failure.
+  error: false,
 });
 
 // --- chat.set_supervised ---
@@ -125,16 +125,12 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     const session = get(chatID);
     if (session === undefined) return undefined;
     const prev = session.auto_approve_crew;
-    session.auto_approve_crew = enabled;
-    version.value = version.peek() + 1;
+    setAutoApproveCrew(chatID, enabled);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const session = get(chatID);
-    if (session === undefined) return;
     if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
-      session.auto_approve_crew = (op as { prev: boolean }).prev;
-      version.value = version.peek() + 1;
+      setAutoApproveCrew(chatID, (op as { prev: boolean }).prev);
     }
   },
   error: "Couldn't update auto-approve",
@@ -258,7 +254,6 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
       // The queue drains via SSE turn_ended. enqueuePrompt runs in
       // run() (not optimistic) because it should only happen if the
       // server actually 409'd, not on cancel.
-      const { enqueuePrompt } = await import("../store.js");
       enqueuePrompt(chatID, text);
       return "queued";
     }

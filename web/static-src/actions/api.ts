@@ -74,7 +74,7 @@ export function apiAction<TArgs, TResult = unknown>(
  *  exceptions to drive the error branch. */
 async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promise<T> {
   const init: RequestInit = { method: spec.method };
-  if (spec.body !== undefined && spec.method !== "GET") {
+  if (spec.method !== "GET" && spec.body !== undefined) {
     init.headers = JSON_HEADERS;
     init.body = JSON.stringify(spec.body);
   }
@@ -114,13 +114,16 @@ async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promis
   }
   // 204 No Content: no body to parse, regardless of method.
   if (r.status === 204) {
+    // SAFETY: Callers that declare TResult as non-void must not issue
+    // requests that return 204. The cast is unavoidable without a
+    // runtime type guard; callers accept this by choosing TResult.
     return undefined as T;
   }
   // Parse JSON body. DELETE responses with bodies (e.g. confirmation
   // payload, remaining count) ARE parsed — only 204 short-circuits.
   // Empty body returns undefined.
   const text = await r.text();
-  if (text === "") return undefined as T;
+  if (text === "") return undefined as T; // same SAFETY note as above
   try {
     return JSON.parse(text) as T;
   } catch (e) {

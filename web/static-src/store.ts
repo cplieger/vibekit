@@ -135,6 +135,8 @@ const decodeChatGetResponseLocal: Decoder<{
 };
 
 // --- Index helpers ---
+export function clearMsgIndex(sessionID: string): void { msgIndex.delete(sessionID); }
+
 function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
   for (let i = 0; i < messages.length; i++) idx.set(messages[i]!.id, i);
@@ -337,6 +339,13 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
   const s = get(chatID);
   if (s === undefined || s.supervised_mode === enabled) return;
   s.supervised_mode = enabled;
+  emit();
+}
+
+export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
+  const s = get(chatID);
+  if (s === undefined || s.auto_approve_crew === enabled) return;
+  s.auto_approve_crew = enabled;
   emit();
 }
 

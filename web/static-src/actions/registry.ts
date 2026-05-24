@@ -33,8 +33,7 @@ export function record(instance: ActionInstance): void {
     log.push(instance);
     idMap.set(instance.id, log.length - 1);
     if (log.length > MAX_LOG_SIZE) {
-      const dropped = log.shift();
-      if (dropped !== undefined) idMap.delete(dropped.id);
+      log.shift();
       // Indices shifted by one — reindex.
       idMap.clear();
       for (let i = 0; i < log.length; i++) {

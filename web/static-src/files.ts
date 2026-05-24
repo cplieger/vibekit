@@ -456,6 +456,8 @@ function startInlineRename(targetName: string): void {
         state.entryMap.delete(original);
         state.entryMap.set(newName, entry);
       }
+      const idx = state.sortedNames.indexOf(original);
+      if (idx !== -1) state.sortedNames[idx] = newName;
       state.deselectAll();
       updateActionButtons();
     });

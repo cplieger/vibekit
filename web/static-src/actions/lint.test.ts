@@ -30,7 +30,12 @@ import { join, relative } from "node:path";
 const ROOT = join(import.meta.dirname, "..");
 
 /** Files where `void apiX(` or `void transport.send(` is permitted
- *  because they're documented background paths or cleanup. */
+ *  because they're documented background paths or cleanup.
+ *
+ *  NOTE: Matching is by basename only (the last path segment). This
+ *  means entries must be unique filenames across the source tree. If
+ *  two files share a basename and only one should be allowlisted,
+ *  switch to relative-path matching for that entry. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
   // Background reads on view-open. Errors render as inline empty/error
   // state in the panel; not user-initiated mutations.
@@ -63,6 +68,12 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*\(/g },
   { name: "void transport.send", re: /\bvoid\s+transport\.send\s*\(/g },
   { name: "await transport.send", re: /\bawait\s+transport\.send\s*\(/g },
+  { name: "await apiPost", re: /\bawait\s+apiPost\s*\(/g },
+  { name: "await apiPut", re: /\bawait\s+apiPut\s*\(/g },
+  { name: "await apiPatch", re: /\bawait\s+apiPatch\s*\(/g },
+  { name: "await apiDelete", re: /\bawait\s+apiDelete\s*\(/g },
+  { name: "await apiPostOrError", re: /\bawait\s+apiPostOrError\s*\(/g },
+  { name: "await apiPutOrError", re: /\bawait\s+apiPutOrError\s*\(/g },
 ];
 
 function listTSFiles(dir: string, out: string[] = []): string[] {
@@ -91,13 +102,11 @@ describe("action framework — regression guard", () => {
       if (base === "api-client.ts" || base === "transport.ts") continue;
       const src = readFileSync(file, "utf8");
       for (const { name, re } of PATTERNS) {
-        const matches = src.match(re);
-        if (matches !== null) {
-          for (const m of matches) {
-            // Find line number for clarity.
-            const lineIdx = src.slice(0, src.indexOf(m)).split("\n").length;
-            violations.push(`${rel}:${String(lineIdx)}: ${name} (${m.trim()})`);
-          }
+        // Reset lastIndex for global regex reuse across files.
+        re.lastIndex = 0;
+        for (const m of src.matchAll(re)) {
+          const lineIdx = src.slice(0, m.index).split("\n").length;
+          violations.push(`${rel}:${String(lineIdx)}: ${name} (${m[0].trim()})`);
         }
       }
     }

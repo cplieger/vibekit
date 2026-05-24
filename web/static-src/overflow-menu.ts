@@ -89,12 +89,13 @@ export function openOverflowMenu(
   // Defer outside-click attach to next tick so the click that opened
   // the menu doesn't immediately close it (the click still bubbles
   // up to document).
-  setTimeout(() => {
+  const deferTimer = setTimeout(() => {
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onKey);
   }, 0);
 
   const cleanup = (): void => {
+    clearTimeout(deferTimer);
     document.removeEventListener("click", onDocumentClick);
     document.removeEventListener("keydown", onKey);
     root.remove();

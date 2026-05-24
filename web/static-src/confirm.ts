@@ -43,6 +43,7 @@ export function confirm(
       ? "vk-confirm-ok btn-small confirm-danger"
       : "vk-confirm-ok btn-small confirm-allow";
 
+    if (d.open) d.close();
     d.showModal();
     const release = trapFocus(d);
     const ac = new AbortController();

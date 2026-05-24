@@ -62,11 +62,11 @@ export interface Command {
 // The wire format is unchanged (JSON.stringify produces the same output).
 
 export type TypedCommand =
-  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string } }
+  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: string[] } }
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
-  | { type: "fork_chat"; chat_id: string; payload?: { message_id?: string } }
+  | { type: "fork_chat"; chat_id: string; payload?: { tangent_id?: string } }
   | { type: "merge_tangent"; chat_id: string }
   | { type: "discard_tangent"; chat_id: string }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }

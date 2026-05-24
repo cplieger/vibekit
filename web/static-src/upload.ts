@@ -20,6 +20,12 @@ export interface UploadOptions {
 }
 
 export function uploadFiles(opts: UploadOptions): void {
+  // If already cancelled, bail out before showing any progress UI.
+  if (opts.signal?.aborted) {
+    opts.onError?.("Upload cancelled");
+    return;
+  }
+
   const form = new FormData();
   form.append("dir", opts.targetDir);
   for (const f of opts.files) form.append("files", f);
@@ -94,9 +100,9 @@ export function uploadFiles(opts: UploadOptions): void {
     teardownCancelUI();
     label.textContent = "Upload cancelled";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
+    opts.onError?.("Upload cancelled");
   });
   if (opts.signal) {
-    if (opts.signal.aborted) { xhr.abort(); return; }
     opts.signal.addEventListener("abort", onSignalAbort, { once: true });
   }
   xhr.send(form);

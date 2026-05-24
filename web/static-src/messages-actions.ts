@@ -7,7 +7,8 @@ import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X, iconEl } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
-import { undoEdit, resolvePending } from "./actions/messages.js";
+import { undoEdit } from "./actions/messages.js";
+import { resolvePendingChangeAction } from "./actions/chat.js";
 
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
 export function addEditActions(el: HTMLDivElement): void {
@@ -28,7 +29,8 @@ export function addEditActions(el: HTMLDivElement): void {
     const chatID = getActiveId();
     if (chatID === "") return;
     let tag = "";
-    let sibling: Element | null = el.previousElementSibling;
+    const group = el.closest(".tool-group");
+    let sibling: Element | null = (group ?? el).previousElementSibling;
     while (sibling !== null) {
       const btn = sibling.querySelector(".checkpoint-restore") as HTMLButtonElement | null;
       if (btn !== null) {
@@ -120,7 +122,10 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
-  void resolvePending.dispatch({ chatID, toolCallID, action });
+  void resolvePendingChangeAction.dispatch(
+    { chatID, toolCallID, action },
+    { errorPrefix: `Failed to ${action} change` },
+  );
 }
 
 /** Locate the tool card whose data-file-path matches `path`. */
@@ -144,8 +149,10 @@ function removePendingActions(el: HTMLDivElement, finalStatus: "completed" | "fa
   }
 }
 
-function cssEscape(s: string): string {
-  return s.replace(/"/g, '\\"');
+function findPendingRow(toolCallID: string): HTMLDivElement | null {
+  return document.querySelector<HTMLDivElement>(
+    `.tool-pending-actions[data-tool-call-id="${CSS.escape(toolCallID)}"]`,
+  );
 }
 
 // --- Bus subscriptions ---
@@ -158,9 +165,7 @@ export function initMessageActions(): void {
   });
 
   onBus(BUS_PENDING_RESOLVED, (payload) => {
-    const row = document.querySelector<HTMLDivElement>(
-      `.tool-pending-actions[data-tool-call-id="${cssEscape(payload.toolCallID)}"]`,
-    );
+    const row = findPendingRow(payload.toolCallID);
     if (row === null) return;
     const card = row.closest<HTMLDivElement>(".tool-call");
     if (card === null) return;

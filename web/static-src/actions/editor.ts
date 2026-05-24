@@ -26,20 +26,12 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
     if (!(await writePlanDraft(chatID, content))) {
       throw new ActionError("Could not save plan draft", { code: "draft_failed" });
     }
-    await runPlan(chatID, content.trim());
+    const sent = await runPlan(chatID, content.trim());
+    if (!sent) {
+      throw new ActionError("Plan send failed", { code: "run_plan_failed" });
+    }
   },
   error: false,
-});
-
-/** Resolve a pending change (accept/reject) via transport. */
-export const resolvePending = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
-  name: "editor.resolve_pending",
-  command: ({ chatID, toolCallID, action }) => ({
-    type: "resolve_pending_change",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, action },
-  }),
-  error: "Couldn't resolve change",
 });
 
 /** Apply partial (per-hunk) pending change via transport. */

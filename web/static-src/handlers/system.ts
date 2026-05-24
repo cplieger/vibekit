@@ -14,11 +14,12 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands, version,
+  setAvailableCommands, version, clearMsgIndex,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
+import { renderSwitch } from "../renderer.js";
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -123,12 +124,17 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
   if (getActiveId() === chatID) {
     s.messages = [];
     s.has_more = false;
-    void loadMessages(chatID);
+    clearMsgIndex(chatID);
+    void loadMessages(chatID).then(() => {
+      const fresh = get(chatID);
+      if (fresh) renderSwitch(fresh);
+    });
   } else {
     // Background chat: just invalidate the cache so the next switch
     // refetches from scratch.
     s.messages = [];
     s.has_more = false;
+    clearMsgIndex(chatID);
     version.value = version.peek() + 1;
   }
 });

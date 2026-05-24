@@ -24,20 +24,25 @@ onSSE("working_label", (chatID, p) => {
 });
 
 onSSE("turn_ended", (chatID, p) => {
+  // --- Side-effects: fire unconditionally regardless of active chat or dedup ---
   setThinking(chatID, false);
   clearLastError();
   onTurnEnded(chatID);
-
-  // Refresh the git badge so file changes the agent made during the
-  // turn surface immediately. Uses the &quick=1 status endpoint to
-  // avoid a full ahead/behind network round-trip.
   refreshGitBadge();
+  drainQueuedPrompt(chatID);
 
-  // Render turn summary (credits + elapsed time) into the existing
-  // turn-actions row's left slot if the assistant message already got
-  // its copy/export buttons. Otherwise append a standalone summary
-  // below the last assistant message. This keeps a single row of
-  // chrome under every finalized turn instead of stacking two.
+  const stopReason = p.stop_reason;
+  if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
+    const s = get(chatID);
+    const name = s?.name ?? "Chat";
+    notifyIfHidden("Vibekit", `${name}: Agent finished`);
+    if (document.visibilityState === "hidden") setBadge(1);
+  }
+
+  // --- DOM rendering: only for the active chat ---
+  if (chatID !== getActiveId()) return;
+
+  // Render turn summary (credits + elapsed time).
   const credits = p.credits_delta;
   const elapsed = p.elapsed_ms;
   if ((credits !== undefined && credits > 0) || (elapsed !== undefined && elapsed > 0)) {
@@ -56,10 +61,6 @@ onSSE("turn_ended", (chatID, p) => {
     }
     const summaryText = parts.join(" · ");
 
-    // Prefer the existing turn-actions row (thin line below the
-    // bubble, same style as checkpoint-line). messages.ts renders
-    // this row on every `message_updated` that finalises the
-    // assistant message.
     const container = document.getElementById("messages");
     const msgs = container !== null
       ? container.querySelectorAll(".message.assistant")
@@ -72,21 +73,19 @@ onSSE("turn_ended", (chatID, p) => {
       const leftSlot = actionsRow.querySelector(".turn-actions-summary");
       if (leftSlot !== null) leftSlot.textContent = summaryText;
     } else if (lastMsg !== undefined) {
-      // Dedup: skip if a turn-summary already follows this message
+      // Dedup: skip DOM insertion only (side-effects already fired above)
       const nextEl = lastMsg.nextElementSibling;
-      if (nextEl !== null && nextEl.classList.contains("turn-summary")) return;
-      // Fallback (pre-rename path or turn with no rendered actions).
-      const summary = document.createElement("div");
-      summary.className = "turn-summary";
-      summary.setAttribute("role", "note");
-      summary.setAttribute("aria-label", "Turn summary");
-      summary.setAttribute("data-chat-entry", "");
-      summary.textContent = summaryText;
-      lastMsg.insertAdjacentElement("afterend", summary);
+      if (!(nextEl !== null && nextEl.classList.contains("turn-summary"))) {
+        const summary = document.createElement("div");
+        summary.className = "turn-summary";
+        summary.setAttribute("role", "note");
+        summary.setAttribute("aria-label", "Turn summary");
+        summary.setAttribute("data-chat-entry", "");
+        summary.textContent = summaryText;
+        lastMsg.insertAdjacentElement("afterend", summary);
+      }
     }
   }
-
-  const stopReason = p.stop_reason;
 
   // Render file-change summary banner if files were modified.
   const changedFiles = p.changed_files;
@@ -106,26 +105,18 @@ onSSE("turn_ended", (chatID, p) => {
     banner.setAttribute("role", "note");
     banner.setAttribute("data-chat-entry", "");
     banner.textContent = parts.join(" · ");
-    // Insert after the turn summary (or after the last assistant message).
-    const msgs = document.getElementById("messages");
-    if (msgs !== null) {
+    const msgsEl = document.getElementById("messages");
+    if (msgsEl !== null) {
       // Dedup: skip if a turn-file-changes already exists as the last entry
-      const existing = msgs.lastElementChild;
-      if (existing !== null && existing.classList.contains("turn-file-changes")) return;
-      const lastChild = msgs.lastElementChild;
-      if (lastChild !== null) {
-        lastChild.insertAdjacentElement("afterend", banner);
+      const existing = msgsEl.lastElementChild;
+      if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
+        const lastChild = msgsEl.lastElementChild;
+        if (lastChild !== null) {
+          lastChild.insertAdjacentElement("afterend", banner);
+        }
       }
     }
   }
-
-  if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
-    const s = get(chatID);
-    const name = s?.name ?? "Chat";
-    notifyIfHidden("Vibekit", `${name}: Agent finished`);
-    if (document.visibilityState === "hidden") setBadge(1);
-  }
-  drainQueuedPrompt(chatID);
 });
 
 onSSE("permission_needed", (chatID, p) => {
@@ -149,14 +140,15 @@ onSSE("permission_needed", (chatID, p) => {
     toolCallInput,
     p.options,
     (optionID: string) => {
-      // Clear the pending-approval indicator on the crew row.
-      if (subSid !== undefined && subSid !== "") {
-        setSubagentPendingApproval(subSid, false);
-      }
+      // Clear the pending-approval indicator only after successful dispatch.
       void permissionResponseAction.dispatch({
         chatID,
         requestID: p.request_id,
         optionID,
+      }).then((result) => {
+        if (result !== null && subSid !== undefined && subSid !== "") {
+          setSubagentPendingApproval(subSid, false);
+        }
       });
     },
     p.sub_session_id,

@@ -20,6 +20,7 @@ export type {
   ActionErrorLike,
   DispatchOptions,
   OptimisticOp,
+  RegistryListener,
   RequestSpec,
   ToastSpec,
 } from "./types.js";

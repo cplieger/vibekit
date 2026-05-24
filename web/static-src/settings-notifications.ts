@@ -10,6 +10,7 @@ import {
   setNotifyUICallback,
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
+import type { AppSettings } from "./persist.js";
 import { $ } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
 
@@ -52,51 +53,85 @@ export function initNotificationToggles(): void {
   });
 
   notifyToggle.addEventListener("change", () => {
-    setNotificationsEnabled(notifyToggle.checked);
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked) {
-      finishedToggle.checked = true;
-      permissionToggle.checked = true;
-      setAgentFinishedEnabled(true);
-      setPermissionNeededEnabled(true);
-      // Pass all 3 toggles as inputs so a failed PATCH rolls all of
-      // them back together (the multi-key rollback fix).
+      // Capture which sub-toggles actually changed so we only register
+      // them for rollback if they were mutated (Bug 2 fix).
+      const mutatedInputs: HTMLInputElement[] = [notifyToggle];
+      if (!finishedToggle.checked) {
+        finishedToggle.checked = true;
+        mutatedInputs.push(finishedToggle);
+      }
+      if (!permissionToggle.checked) {
+        permissionToggle.checked = true;
+        mutatedInputs.push(permissionToggle);
+      }
+      // Defer in-memory state updates until PATCH succeeds (Bug 3 fix).
       void patchSettings({
         notifications_enabled: true,
         notify_agent_finished: true,
         notify_permission: true,
-      }, notifyToggle);
-      // Remaining toggles get registered too via subsequent calls
-      // (patchSettings dedups inputs across the debounce window).
-      void patchSettings({}, finishedToggle);
-      void patchSettings({}, permissionToggle);
+      }, ...mutatedInputs).then((r) => {
+        if (r === null) {
+          // Rollback in-memory state on failure
+          setNotificationsEnabled(false);
+          setAgentFinishedEnabled(false);
+          setPermissionNeededEnabled(false);
+        } else {
+          setNotificationsEnabled(true);
+          setAgentFinishedEnabled(true);
+          setPermissionNeededEnabled(true);
+        }
+      });
       const hint = requestPermission();
       if (hint !== null) {
         notifyHint.textContent = hint;
         notifyHint.classList.remove("hidden");
       }
     } else {
-      void patchSettings({ notifications_enabled: false }, notifyToggle);
+      void patchSettings({ notifications_enabled: false }, notifyToggle).then((r) => {
+        if (r === null) {
+          // Rollback: keep enabled
+        } else {
+          setNotificationsEnabled(false);
+        }
+      });
       unregisterPush();
     }
     updateSub();
   });
 
   const onSubChange = (): void => {
-    setAgentFinishedEnabled(finishedToggle.checked);
-    setPermissionNeededEnabled(permissionToggle.checked);
-    void patchSettings({
+    // Only register inputs that actually changed for rollback (Bug 2 fix).
+    const mutatedInputs: HTMLInputElement[] = [];
+    if (finishedToggle.checked !== isAgentFinishedEnabled()) mutatedInputs.push(finishedToggle);
+    if (permissionToggle.checked !== isPermissionNeededEnabled()) mutatedInputs.push(permissionToggle);
+
+    const patch: Partial<AppSettings> = {
       notify_agent_finished: finishedToggle.checked,
       notify_permission: permissionToggle.checked,
-    }, finishedToggle);
-    void patchSettings({}, permissionToggle);
-    if (!finishedToggle.checked && !permissionToggle.checked) {
+    };
+
+    const bothOff = !finishedToggle.checked && !permissionToggle.checked;
+    if (bothOff) {
       notifyToggle.checked = false;
-      setNotificationsEnabled(false);
-      void patchSettings({ notifications_enabled: false }, notifyToggle);
-      unregisterPush();
-      updateSub();
+      mutatedInputs.push(notifyToggle);
+      patch.notifications_enabled = false;
     }
+
+    void patchSettings(patch, ...mutatedInputs).then((r) => {
+      if (r === null) {
+        // Rollback: don't update in-memory state
+      } else {
+        setAgentFinishedEnabled(finishedToggle.checked);
+        setPermissionNeededEnabled(permissionToggle.checked);
+        if (bothOff) {
+          setNotificationsEnabled(false);
+          unregisterPush();
+        }
+      }
+    });
+    if (bothOff) updateSub();
   };
   finishedToggle.addEventListener("change", onSubChange);
   permissionToggle.addEventListener("change", onSubChange);

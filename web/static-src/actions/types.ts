@@ -109,11 +109,9 @@ export interface DispatchOptions {
  *  shape so apiAction can pipe straight into apiPostOrError. GET is
  *  included for read actions that want toast/cancellation semantics
  *  without writing a custom defineAction. */
-export interface RequestSpec {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly path: string;
-  readonly body?: unknown;
-}
+export type RequestSpec =
+  | { readonly method: "GET"; readonly path: string }
+  | { readonly method: "POST" | "PUT" | "PATCH" | "DELETE"; readonly path: string; readonly body?: unknown };
 
 // (TransportSpec was an unused parallel descriptor — transportAction
 // uses TypedCommand | Command from transport.ts directly. Removed.)

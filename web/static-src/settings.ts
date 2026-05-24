@@ -97,6 +97,7 @@ export function initUI(): void {
 function initSteeringEditor(): void {
   const textarea = $.steeringInput;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let saveGen = 0;
 
   void apiGet<{ content?: string }>("/api/steering").then((d) => {
     if (d?.content !== undefined) textarea.value = d.content;
@@ -106,8 +107,12 @@ function initSteeringEditor(): void {
     clearTimeout(timer);
     showSaving();
     timer = setTimeout(() => {
+      const gen = ++saveGen;
       void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true })
-        .then((r) => { if (r === null) showError(); else showSaved(); });
+        .then((r) => {
+          if (gen !== saveGen) return; // newer save pending, skip indicator update
+          if (r === null) showError(); else showSaved();
+        });
     }, 600);
   });
 }
@@ -260,6 +265,15 @@ function initCompactionSettings(): void {
   const inputs = compactionSettings.map(
     (s) => document.getElementById(s.inputID) as HTMLInputElement | null,
   );
+  // Snapshot values on focus so we can pass the true previous value
+  // to the action (before the change event updates the input).
+  const snapshots = new Map<HTMLInputElement, string>();
+  for (let i = 0; i < compactionSettings.length; i++) {
+    const s = compactionSettings[i]!;
+    const input = inputs[i] ?? null;
+    if (input === null || s.isBool) continue;
+    input.addEventListener("focus", () => { snapshots.set(input, input.value); });
+  }
   void Promise.all(
     compactionSettings.map((s) =>
       apiGet<KiroSettingPayload>(`/api/kiro-settings?key=${encodeURIComponent(s.key)}`),
@@ -288,11 +302,13 @@ function initCompactionSettings(): void {
       } else {
         value = input.value;
       }
+      const previousValue = s.isBool ? undefined : snapshots.get(input);
       showSaving();
       void setKiroSettingAction.dispatch({
         key: s.key,
         value,
         input,
+        ...(previousValue !== undefined ? { previousValue } : {}),
       }, { silent: true })
         .then((r) => { if (r === null) showError(); else showSaved(); });
     });

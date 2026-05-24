@@ -14,6 +14,7 @@ type ShortcutDef = {
 };
 
 const shortcuts: ShortcutDef[] = [];
+let initialized = false;
 
 function register(def: ShortcutDef): void {
   shortcuts.push(def);
@@ -27,6 +28,9 @@ export function initKeyboardShortcuts(actions: {
   toggleSettings: () => void;
   sendMessage: () => void;
 }): void {
+  if (initialized) return;
+  initialized = true;
+
   register({ key: "k", ctrl: true, action: actions.newChat, description: "New conversation" });
   register({ key: "n", ctrl: true, action: actions.newChat, description: "New conversation" });
   register({ key: "/", ctrl: true, action: actions.toggleShell, description: "Toggle shell" });
@@ -57,8 +61,7 @@ export function initKeyboardShortcuts(actions: {
     if (!mod) return;
 
     for (const s of shortcuts) {
-      if (s.key !== e.key) continue;
-      if (s.ctrl === true && !mod) continue;
+      if (s.key.toLowerCase() !== e.key.toLowerCase()) continue;
       if (s.shift === true && !e.shiftKey) continue;
       if (s.shift !== true && e.shiftKey) continue;
 
@@ -86,5 +89,3 @@ export function initKeyboardShortcuts(actions: {
     }
   });
 }
-
-/** Get shortcut hint text for a given description. */

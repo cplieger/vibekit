@@ -116,7 +116,7 @@ export function defineAction<TArgs, TResult>(
             startedAt, completedAt: Date.now(),
           });
           inFlight.delete(id);
-          emitCancelled(id, def, args, optOp, startedAt);
+          emitCancelled(def, args, optOp);
           return null;
         }
         record({
@@ -190,11 +190,9 @@ export function defineAction<TArgs, TResult>(
   }
 
   function emitCancelled(
-    _id: string,
     d: ActionDefinition<TArgs, TResult>,
     args: TArgs,
     optOp: OptimisticOp | undefined,
-    _startedAt: number,
   ): void {
     if (d.rollback !== undefined) {
       try {

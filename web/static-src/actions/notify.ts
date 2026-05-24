@@ -3,7 +3,7 @@
 
 import { defineAction, ActionError } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
-import { urlBase64ToUint8Array } from "../notify.js";
+import { urlBase64ToUint8Array } from "../push-util.js";
 import { $ } from "../dom.js";
 
 /**

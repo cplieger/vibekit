@@ -41,17 +41,6 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   error: "Undo failed — the checkpoint may have expired",
 });
 
-/** Accept or reject a pending supervised change. */
-export const resolvePending = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
-  name: "messages.resolve_pending",
-  command: ({ chatID, toolCallID, action }) => ({
-    type: "resolve_pending_change",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, action },
-  }),
-  error: (args, err) => `Failed to ${args.action} change: ${err.message}`,
-});
-
 /** Hand a plan to the running agent as a prompt. */
 export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",

@@ -79,6 +79,7 @@ export class ShellWS {
   private callbacks: ShellWSCallbacks | null = null;
   private isActive = false;
   private openWaiters: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  private reconnectAttempt = 0;
 
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
@@ -115,6 +116,7 @@ export class ShellWS {
     }
 
     this.state = { kind: "connected", ws: sock };
+    this.reconnectAttempt = 0;
     this.cancelReconnect();
     this.callbacks?.onOpen();
     this.notifySocketOpen();
@@ -149,6 +151,7 @@ export class ShellWS {
   /** Close the WebSocket and cancel any pending reconnect. */
   disconnect(): void {
     this.cancelReconnect();
+    this.reconnectAttempt = 0;
     this.rejectSocketWaiters("shell closed");
     const prevWs = this.state.kind === "connected" ? this.state.ws : null;
     this.state = { kind: "closed", intentional: true };
@@ -207,9 +210,10 @@ export class ShellWS {
 
   private scheduleReconnect(): void {
     this.cancelReconnect();
-    const attempt = this.state.kind === "reconnecting" ? this.state.attempt : 0;
+    const attempt = this.reconnectAttempt;
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
-    this.state = { kind: "reconnecting", attempt: attempt + 1 };
+    this.reconnectAttempt = attempt + 1;
+    this.state = { kind: "reconnecting", attempt };
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.isActive) void this.connect();
