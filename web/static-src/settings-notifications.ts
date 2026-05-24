@@ -59,18 +59,24 @@ export function initNotificationToggles(): void {
       permissionToggle.checked = true;
       setAgentFinishedEnabled(true);
       setPermissionNeededEnabled(true);
+      // Pass all 3 toggles as inputs so a failed PATCH rolls all of
+      // them back together (the multi-key rollback fix).
       void patchSettings({
         notifications_enabled: true,
         notify_agent_finished: true,
         notify_permission: true,
-      });
+      }, notifyToggle);
+      // Remaining toggles get registered too via subsequent calls
+      // (patchSettings dedups inputs across the debounce window).
+      void patchSettings({}, finishedToggle);
+      void patchSettings({}, permissionToggle);
       const hint = requestPermission();
       if (hint !== null) {
         notifyHint.textContent = hint;
         notifyHint.classList.remove("hidden");
       }
     } else {
-      void patchSettings({ notifications_enabled: false });
+      void patchSettings({ notifications_enabled: false }, notifyToggle);
       unregisterPush();
     }
     updateSub();
@@ -82,11 +88,12 @@ export function initNotificationToggles(): void {
     void patchSettings({
       notify_agent_finished: finishedToggle.checked,
       notify_permission: permissionToggle.checked,
-    });
+    }, finishedToggle);
+    void patchSettings({}, permissionToggle);
     if (!finishedToggle.checked && !permissionToggle.checked) {
       notifyToggle.checked = false;
       setNotificationsEnabled(false);
-      void patchSettings({ notifications_enabled: false });
+      void patchSettings({ notifications_enabled: false }, notifyToggle);
       unregisterPush();
       updateSub();
     }

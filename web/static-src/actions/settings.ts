@@ -1,9 +1,15 @@
 // ---------------------------------------------------------------------------
 // Settings actions: user-initiated mutations on the settings page.
+//
+// Note on save-indicator wiring: this module does NOT call showSaved()/
+// showError() from the action's `success`/`error` fields, because every
+// callsite dispatches with { silent: true } (the indicator IS the
+// feedback, not a toast) and the action framework's success-toast
+// branch short-circuits on silent. Callsites pair showSaving() before
+// dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
-import { showSaved } from "../save-indicator.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -15,7 +21,6 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
     path: "/api/steering",
     body: { content },
   }),
-  success: () => { showSaved(); return ""; },
   error: "Couldn't save steering",
 });
 
@@ -34,7 +39,7 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
     if (!r.ok) {
       const body = await r.text().catch(() => "");
       let msg = `HTTP ${String(r.status)}`;
-      try { const j = JSON.parse(body) as { error?: string }; if (j.error) msg = j.error; } catch { /* */ }
+      try { const j = JSON.parse(body) as { error?: string }; if (j.error !== undefined && j.error !== "") msg = j.error; } catch { /* */ }
       throw new ActionError(msg, { status: r.status });
     }
     return {};
@@ -53,43 +58,89 @@ interface KiroSettingArgs {
   key: string;
   value: string;
   input: HTMLInputElement;
-  isBool: boolean;
+  /** Captured during optimistic() so rollback can restore the exact
+   *  previous value rather than guessing. Set by the framework via
+   *  the OptimisticOp pipeline. Not part of the public dispatch args. */
+}
+
+interface KiroSettingOp {
+  prevChecked?: boolean;
+  prevValue?: string;
 }
 
 export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
-  name: "settings.toggle_flag",
+  name: "settings.set_kiro_setting",
   request: ({ key, value }) => ({
     method: "PUT",
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  optimistic: () => undefined,
-  rollback: ({ input, isBool, value }) => {
-    // Flip the toggle back to its previous state
-    if (isBool || input.type === "checkbox") {
-      input.checked = !input.checked;
-    } else {
-      // For text/number inputs, revert to opposite of what was sent
-      input.value = value === "true" ? "false" : value === "false" ? "true" : "";
+  optimistic: ({ input }): KiroSettingOp => {
+    if (input.type === "checkbox") {
+      return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
+    }
+    return { prevValue: input.value };
+  },
+  rollback: ({ input }, op) => {
+    const o = op as KiroSettingOp | undefined;
+    if (o === undefined) return;
+    if (o.prevChecked !== undefined) {
+      input.checked = o.prevChecked;
+    } else if (o.prevValue !== undefined) {
+      input.value = o.prevValue;
     }
   },
-  success: () => { showSaved(); return ""; },
   error: "Couldn't save setting",
 });
 
 // --- Patch app settings (debug_logs, etc.) ---
 
-export const patchAppSettingsAction = apiAction<{ body: Record<string, unknown>; input?: HTMLInputElement }, unknown>({
+interface PatchAppArgs {
+  body: Record<string, unknown>;
+  /** Optional input(s) for rollback. Multi-key patches can pass an
+   *  array of inputs all of whose checked-state should flip back on
+   *  failure. */
+  inputs?: readonly HTMLInputElement[];
+}
+
+interface PatchAppOp {
+  inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
+}
+
+export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
   name: "settings.patch",
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",
     body,
   }),
-  optimistic: () => undefined,
-  rollback: ({ input }) => {
-    if (input !== undefined) input.checked = !input.checked;
+  optimistic: ({ inputs }): PatchAppOp => {
+    const list = inputs ?? [];
+    return {
+      inputs: list.map((el) => ({
+        el,
+        prevChecked: !el.checked, // user just changed, so prev is opposite of current
+        prevValue: el.value,
+      })),
+    };
   },
-  success: () => { showSaved(); return ""; },
+  rollback: (_args, op) => {
+    const o = op as PatchAppOp | undefined;
+    if (o === undefined) return;
+    for (const { el, prevChecked, prevValue } of o.inputs) {
+      if (el.type === "checkbox") {
+        el.checked = prevChecked;
+      } else if (el.type === "radio") {
+        // Restoring a radio: simply re-checking the previous one
+        // requires knowing the group's prior state. Best-effort:
+        // un-check this one if it was just newly checked. The caller
+        // should pass ALL radios in the group via `inputs` for
+        // proper restoration.
+        el.checked = prevChecked;
+      } else {
+        el.value = prevValue;
+      }
+    }
+  },
   error: "Couldn't save setting",
 });

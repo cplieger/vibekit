@@ -28,7 +28,7 @@ import { apiGet, apiPost } from "./api-client.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving } from "./save-indicator.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
 
 export type { AppSettings } from "./persist.js";
@@ -106,7 +106,8 @@ function initSteeringEditor(): void {
     clearTimeout(timer);
     showSaving();
     timer = setTimeout(() => {
-      void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true });
+      void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true })
+        .then((r) => { if (r === null) showError(); else showSaved(); });
     }, 600);
   });
 }
@@ -231,8 +232,8 @@ function initExperimentalToggles(): void {
         key: flag.key,
         value: input.checked ? "true" : "false",
         input,
-        isBool: true,
-      }, { silent: true });
+      }, { silent: true })
+        .then((r) => { if (r === null) showError(); else showSaved(); });
     });
   }
   initCompactionSettings();
@@ -292,8 +293,8 @@ function initCompactionSettings(): void {
         key: s.key,
         value,
         input,
-        isBool: s.isBool,
-      }, { silent: true });
+      }, { silent: true })
+        .then((r) => { if (r === null) showError(); else showSaved(); });
     });
   }
 }

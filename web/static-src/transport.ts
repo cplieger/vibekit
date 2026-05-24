@@ -95,6 +95,12 @@ export interface SendOptions {
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */
   timeoutMs?: number;
+  /** When true (default), failures call setLastError() so the prompt
+   *  send button shows a blocked state with the error tooltip. The
+   *  action framework adapter (transportAction) passes false because
+   *  it owns the error surface via toast — letting both fire produces
+   *  duplicate user feedback for one failure. */
+  reportSendState?: boolean;
 }
 
 /** Generate a client-side request id (also used as a message id). */
@@ -284,12 +290,18 @@ class TransportController {
         const d = (await r.json()) as { error?: string };
         if (d.error !== undefined) errMsg = d.error;
       } catch { /* non-JSON */ }
-      if (r.status !== 409) setLastError(errMsg);
+      // 409 is a queue signal — never reported via setLastError.
+      // Otherwise honour the caller's reportSendState preference
+      // (defaults to true for legacy direct callers; transportAction
+      // sets it false to avoid double-feedback with its toast).
+      const reportSendState = opts?.reportSendState ?? true;
+      if (r.status !== 409 && reportSendState) setLastError(errMsg);
       return { ok: false, status: r.status, error: errMsg };
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
       const msg = err?.name === "AbortError" ? "Request timed out" : (err?.message ?? "Network error");
-      setLastError(msg);
+      const reportSendState = opts?.reportSendState ?? true;
+      if (reportSendState) setLastError(msg);
       return { ok: false, status: 0, error: msg };
     } finally {
       this.inflight.delete(ctrl);

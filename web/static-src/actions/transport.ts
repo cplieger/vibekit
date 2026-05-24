@@ -48,7 +48,11 @@ export function transportAction<TArgs>(
     ...def,
     run: async (args, signal) => {
       const cmd = def.command(args);
-      const r = await transportSend(cmd, { signal });
+      // reportSendState: false — the action framework owns the error
+      // surface via toast. Letting transport.send also call
+      // setLastError would block the prompt send button for actions
+      // unrelated to prompt sending (e.g. permission_response).
+      const r = await transportSend(cmd, { signal, reportSendState: false });
       if (!r.ok) {
         if (signal.aborted) {
           throw new ActionError("cancelled", { code: "cancelled" });

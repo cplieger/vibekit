@@ -11,6 +11,7 @@ import { $ } from "./dom.js";
 import { iconEl } from "./icons.js";
 
 const ICON_CHECK_GREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const ICON_X_RED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -19,21 +20,43 @@ function spinnerNode(): HTMLDivElement {
 }
 
 let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearTimers(): void {
+  if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+  if (hideTimer !== undefined) clearTimeout(hideTimer);
+  fadeTimer = undefined;
+  hideTimer = undefined;
+}
 
 export function showSaving(): void {
-  clearTimeout(fadeTimer);
+  clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(spinnerNode());
   el.classList.remove("hidden", "fade-out");
 }
 
 export function showSaved(): void {
-  clearTimeout(fadeTimer);
+  clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(iconEl(ICON_CHECK_GREEN));
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");
-    setTimeout(() => el.classList.add("hidden"), 400);
+    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
   }, 1200);
+}
+
+/** Show a red ✗ in the save indicator. Used by failed settings writes
+ *  so the spinner doesn't stay forever; the toast already carries the
+ *  detailed message, this is just the inline visual signal. */
+export function showError(): void {
+  clearTimers();
+  const el = $.settingsSaveStatus;
+  el.replaceChildren(iconEl(ICON_X_RED));
+  el.classList.remove("hidden", "fade-out");
+  fadeTimer = setTimeout(() => {
+    el.classList.add("fade-out");
+    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
+  }, 2400);  // longer than success — error deserves more eye time
 }

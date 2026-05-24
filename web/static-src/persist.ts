@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
-import { showSaving } from "./save-indicator.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettingsAction } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
@@ -30,20 +30,31 @@ export interface AppSettings {
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
-let patchInput: HTMLInputElement | null = null;
+let patchInputs: HTMLInputElement[] = [];
 
 export function patchSettings(patch: Partial<AppSettings>, input?: HTMLInputElement): void {
   Object.assign(patchQueue, patch);
-  if (input !== undefined) patchInput = input;
+  // Collect all inputs that contributed to this patch so the rollback
+  // can flip every toggle back on failure (multi-key patches like
+  // notifications_enabled + notify_agent_finished + notify_permission).
+  if (input !== undefined && !patchInputs.includes(input)) {
+    patchInputs.push(input);
+  }
   if (patchTimer !== undefined) return;
-  showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     const body = patchQueue;
-    const inp = patchInput;
+    const inputs = patchInputs;
     patchQueue = {};
-    patchInput = null;
-    void patchAppSettingsAction.dispatch({ body: body as Record<string, unknown>, ...(inp !== null ? { input: inp } : {}) }, { silent: true });
+    patchInputs = [];
+    showSaving();  // moved into the dispatch tick so it doesn't orphan
+    void patchAppSettingsAction.dispatch(
+      {
+        body: body as Record<string, unknown>,
+        ...(inputs.length > 0 ? { inputs } : {}),
+      },
+      { silent: true },
+    ).then((r) => { if (r === null) showError(); else showSaved(); });
   }, 300);
 }
 
