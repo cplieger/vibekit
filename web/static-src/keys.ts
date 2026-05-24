@@ -7,7 +7,6 @@ import { closeTopModal } from "./modals.js";
 
 type ShortcutDef = {
   key: string;
-  ctrl?: boolean;
   shift?: boolean;
   action: () => void;
   description: string;
@@ -31,13 +30,13 @@ export function initKeyboardShortcuts(actions: {
   if (initialized) return;
   initialized = true;
 
-  register({ key: "k", ctrl: true, action: actions.newChat, description: "New conversation" });
-  register({ key: "n", ctrl: true, action: actions.newChat, description: "New conversation" });
-  register({ key: "/", ctrl: true, action: actions.toggleShell, description: "Toggle shell" });
-  register({ key: "f", ctrl: true, shift: true, action: actions.toggleFiles, description: "Toggle file browser" });
-  register({ key: "g", ctrl: true, shift: true, action: actions.toggleGit, description: "Toggle git panel" });
-  register({ key: ",", ctrl: true, action: actions.toggleSettings, description: "Toggle settings" });
-  register({ key: "Enter", ctrl: true, action: actions.sendMessage, description: "Send message" });
+  register({ key: "k", action: actions.newChat, description: "New conversation" });
+  register({ key: "n", action: actions.newChat, description: "New conversation" });
+  register({ key: "/", action: actions.toggleShell, description: "Toggle shell" });
+  register({ key: "f", shift: true, action: actions.toggleFiles, description: "Toggle file browser" });
+  register({ key: "g", shift: true, action: actions.toggleGit, description: "Toggle git panel" });
+  register({ key: ",", action: actions.toggleSettings, description: "Toggle settings" });
+  register({ key: "Enter", action: actions.sendMessage, description: "Send message" });
 
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     // Don't intercept when typing in inputs (except for Escape and Ctrl combos)

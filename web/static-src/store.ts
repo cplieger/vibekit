@@ -139,7 +139,7 @@ export function clearMsgIndex(sessionID: string): void { msgIndex.delete(session
 
 /** Invalidate a background session's cache so the next switch refetches. */
 export function invalidateSession(chatID: string): void {
-  const s = sessionIndex.get(chatID);
+  const s = get(chatID);
   if (s === undefined) return;
   s.messages = [];
   s.has_more = false;
@@ -174,7 +174,10 @@ export async function loadList(): Promise<boolean> {
   const next: Session[] = [];
   for (const h of d.chats) {
     const existing = get(h.id);
-    next.push({
+    const frozen = h.frozen ?? existing?.frozen;
+    const is_tangent = h.is_tangent ?? existing?.is_tangent;
+    const parent_chat_id = h.parent_chat_id ?? existing?.parent_chat_id;
+    const session: Session = {
       id: h.id,
       name: h.name,
       agent: h.agent ?? "",
@@ -194,7 +197,15 @@ export async function loadList(): Promise<boolean> {
       has_more: existing?.has_more ?? (h.message_count > (existing?.messages.length ?? 0)),
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
-    });
+      ...(frozen !== undefined && { frozen }),
+      ...(is_tangent !== undefined && { is_tangent }),
+      ...(parent_chat_id !== undefined && { parent_chat_id }),
+      ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
+      ...(existing?.trusted_this_turn !== undefined && { trusted_this_turn: existing.trusted_this_turn }),
+      ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
+      ...(h.oldest_checkpoint_tag !== undefined && { oldest_checkpoint_tag: h.oldest_checkpoint_tag }),
+    };
+    next.push(session);
   }
   setSessions(next);
   emit();
@@ -247,6 +258,9 @@ export function upsertHeader(h: ChatHeader): void {
     else delete existing.compaction_watermark;
     if (h.oldest_checkpoint_tag !== undefined) existing.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
     else delete existing.oldest_checkpoint_tag;
+    if (h.frozen !== undefined) existing.frozen = h.frozen; else delete existing.frozen;
+    if (h.is_tangent !== undefined) existing.is_tangent = h.is_tangent; else delete existing.is_tangent;
+    if (h.parent_chat_id !== undefined) existing.parent_chat_id = h.parent_chat_id; else delete existing.parent_chat_id;
   } else {
     const s: Session = {
       id: h.id, name: h.name, agent: h.agent ?? "", model: h.model ?? "",
@@ -256,6 +270,9 @@ export function upsertHeader(h: ChatHeader): void {
       auto_approve_crew: h.auto_approve_crew ?? false, supervised_mode: h.supervised_mode ?? false,
       pending_changes: [], usage: h.usage, message_count: h.message_count,
       messages: [], has_more: h.message_count > 0, thinking: false, working_label: "Thinking",
+      ...(h.frozen !== undefined && { frozen: h.frozen }),
+      ...(h.is_tangent !== undefined && { is_tangent: h.is_tangent }),
+      ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
     };
     if (h.compaction_watermark !== undefined) s.compaction_watermark = h.compaction_watermark;
     if (h.oldest_checkpoint_tag !== undefined) s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;

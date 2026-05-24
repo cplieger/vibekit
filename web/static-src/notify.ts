@@ -14,7 +14,6 @@ import { registerPushAction } from "./actions/notify.js";
 
 type PushState =
   | { kind: "idle" }
-  | { kind: "permission_granted" }
   | { kind: "registering" }
   | { kind: "registered"; registration: ServiceWorkerRegistration }
   | { kind: "failed"; error: string };

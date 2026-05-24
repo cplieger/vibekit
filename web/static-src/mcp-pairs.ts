@@ -16,6 +16,9 @@ export function renderKeyPairList(host: HTMLDivElement, pairs: KeyPair[], kind: 
   for (const kv of pairs) appendKeyPair(host, kv, kind);
 }
 
+// Tracks secret inputs the user actively typed into (via input event).
+const touchedInputs = new WeakSet<HTMLInputElement>();
+
 export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind): void {
   const row = document.createElement("div");
   row.className = "mcp-pair-row";
@@ -33,6 +36,8 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
   valIn.value = kv.value;
   if (kv.value === SECRET_MASK) valIn.dataset["secret"] = "true";
 
+  valIn.addEventListener("input", () => { touchedInputs.add(valIn); });
+
   valIn.addEventListener("focus", () => {
     if (valIn.dataset["secret"] === "true" && valIn.value === SECRET_MASK) {
       valIn.type = "text";
@@ -42,11 +47,12 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
   });
 
   valIn.addEventListener("blur", () => {
-    if (valIn.value === "" && !("secret" in valIn.dataset)) {
+    if (valIn.value === "" && !("secret" in valIn.dataset) && !touchedInputs.has(valIn)) {
       valIn.value = SECRET_MASK;
       valIn.type = "password";
       valIn.dataset["secret"] = "true";
     }
+    touchedInputs.delete(valIn);
   });
 
   const del = document.createElement("button");

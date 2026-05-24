@@ -30,6 +30,7 @@ import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
 import type { ConfiguredForge, DeviceFlowResponse, ForgeKind, PollResult, Repo } from "./wire/types.gen.js";
+import { HOST_LOCKED_KINDS, DEFAULT_HOST, forgeKindLabel } from "./forge-types.js";
 import {
   startDeviceFlow,
   signOut,
@@ -69,13 +70,6 @@ let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
 const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
-/** Forge kinds where the host is the only sensible value (e.g. github.com,
- *  codeberg.org) and showing a host input would just be noise. The PAT
- *  form omits the host field for these and locks it to DEFAULT_HOST.
- *  GitLab and Gitea routinely have self-hosted instances, so the field
- *  remains visible there. */
-const HOST_LOCKED_KINDS: readonly ForgeKind[] = ["github", "codeberg"];
-
 /** Brand SVG glyphs from Simple Icons (CC0). 24x24 viewBox; CSS sizes
  *  them down to fit the 22-px kind badge. */
 const KIND_ICONS: Record<ForgeKind, string> = {
@@ -96,13 +90,6 @@ const PAT_HELP_LINKS: Record<ForgeKind, { url: string; label: string } | null> =
   gitea:    null,
 };
 
-const DEFAULT_HOST: Record<ForgeKind, string> = {
-  github:   "github.com",
-  gitlab:   "gitlab.com",
-  codeberg: "codeberg.org",
-  gitea:    "",
-};
-
 /** Manage-account URL on the forge itself, parameterized by host. */
 function manageAccountURL(kind: ForgeKind, host: string): string {
   switch (kind) {
@@ -110,15 +97,6 @@ function manageAccountURL(kind: ForgeKind, host: string): string {
     case "gitlab":   return `https://${host}/-/profile`;
     case "codeberg": return `https://${host}/user/settings`;
     case "gitea":    return host === "" ? "" : `https://${host}/user/settings`;
-  }
-}
-
-function forgeKindLabel(kind: ForgeKind): string {
-  switch (kind) {
-    case "github":   return "GitHub";
-    case "gitlab":   return "GitLab";
-    case "codeberg": return "Codeberg";
-    case "gitea":    return "Gitea / Forgejo";
   }
 }
 

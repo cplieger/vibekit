@@ -79,7 +79,6 @@ export function openChatTab(id: string, name: string, agent: string): void {
       if (isRetentionEnabled()) {
         archiveChat(id);
       } else {
-        const s = get(id);
         if (s !== undefined && s.message_count === 0) {
           removeChat(id);
         } else {

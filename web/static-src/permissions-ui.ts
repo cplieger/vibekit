@@ -75,9 +75,9 @@ class PermissionsUIController {
       });
     }
 
-    el("trust-list-add").addEventListener("click", () => this.toggleMenu());
-
     const adder = el("trust-list-add");
+    adder.addEventListener("click", () => this.toggleMenu());
+
     const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
       const t = e.target as Node;
@@ -260,6 +260,7 @@ class PermissionsUIController {
     // Optimistic: show the chip immediately with a 'saving' visual.
     const pending: CommandRule = { pattern: clean, mode, priority, created_at: Date.now() };
     const existingIdx = this.commandRules.findIndex((e) => e.pattern === clean);
+    const original = existingIdx >= 0 ? this.commandRules[existingIdx]! : null;
     if (existingIdx >= 0) {
       this.commandRules[existingIdx] = pending;
     } else {
@@ -277,8 +278,9 @@ class PermissionsUIController {
     }
     const result = await addRuleAction.dispatch({ pattern: clean, mode, priority });
     if (result === null) {
-      // Failed — remove the optimistic chip.
+      // Failed — restore original or remove the optimistic chip.
       this.commandRules = this.commandRules.filter((e) => e.pattern !== clean || e.created_at !== pending.created_at);
+      if (original !== null) this.commandRules.push(original);
       this.renderRuleChips();
       return;
     }

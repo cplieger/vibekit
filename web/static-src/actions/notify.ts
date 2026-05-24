@@ -28,7 +28,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     const appServerKey = urlBase64ToUint8Array(keyData.publicKey);
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: appServerKey as unknown as BufferSource,
+      applicationServerKey: appServerKey as BufferSource,
     });
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
 

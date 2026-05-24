@@ -180,6 +180,7 @@ class PromptInputController {
 
       if (e.key === "Escape" && this.idx !== -1) {
         e.preventDefault();
+        e.stopPropagation();
         const d = this.draft;
         this.exitCycling();
         this.setInputValue(input, d);
