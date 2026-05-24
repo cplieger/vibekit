@@ -176,6 +176,7 @@
  * optional collapsible repos footer. Width spans the full section. */
 .forge-account-row {
   display: flex; flex-direction: column;
+  align-items: stretch;
   padding: 0;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
