@@ -1,0 +1,125 @@
+// apiAction: factory for HTTP-backed actions. Wraps apiPostOrError /
+// apiPutOrError / DELETE so the run() implementation is just the
+// request descriptor. Surface errors are normalised into ActionError
+// with HTTP status + parsed server message.
+//
+// The 90% case for user-initiated mutations:
+//
+//   const deleteFile = apiAction({
+//     name: "files.delete",
+//     request: (path: string) => ({ method: "DELETE", path: `/api/files?path=${encodeURIComponent(path)}` }),
+//     error: "Couldn't delete",
+//   });
+//   await deleteFile.dispatch(somePath);
+//
+// For HTTP actions that also take an optimistic UI step:
+//
+//   const renameChat = apiAction({
+//     name: "chat.rename",
+//     request: ({ id, name }) => ({
+//       method: "POST",
+//       path: `/api/chats/${id}/rename`,
+//       body: { name },
+//     }),
+//     optimistic: ({ id, name }) => {
+//       const before = store.getChatName(id);
+//       store.setChatName(id, name);
+//       return { before };
+//     },
+//     rollback: ({ id }, op) => {
+//       if (op?.before) store.setChatName(id, op.before);
+//     },
+//     error: "Couldn't rename chat",
+//   });
+// ---------------------------------------------------------------------------
+
+import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
+import { defineAction } from "./define.js";
+import { ActionError } from "./error.js";
+import type {
+  Action,
+  ActionDefinition,
+  RequestSpec,
+} from "./types.js";
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+/** Caller-facing shape of an apiAction definition. Differs from the
+ *  raw ActionDefinition in that `request` replaces `run`. */
+export interface ApiActionDefinition<TArgs, TResult>
+  extends Omit<ActionDefinition<TArgs, TResult>, "run"> {
+  /** HTTP request descriptor. Re-evaluated for each dispatch with the
+   *  current args (so paths can interpolate args). */
+  request: (args: TArgs) => RequestSpec;
+}
+
+/** Build an Action from an HTTP request descriptor. The run()
+ *  implementation handles fetch + non-ok status + JSON decode and
+ *  throws ActionError on failure. */
+export function apiAction<TArgs, TResult = unknown>(
+  def: ApiActionDefinition<TArgs, TResult>,
+): Action<TArgs, TResult> {
+  return defineAction<TArgs, TResult>({
+    ...def,
+    run: async (args, signal) => {
+      const spec = def.request(args);
+      return executeRequest<TResult>(spec, signal);
+    },
+  });
+}
+
+/** Internal: execute an HTTP request and parse the result. Mirrors
+ *  api-client.ts's request() shape but throws ActionError on failure
+ *  rather than returning ApiResult, since the dispatcher expects
+ *  exceptions to drive the error branch. */
+async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promise<T> {
+  const init: RequestInit = { method: spec.method };
+  if (spec.body !== undefined) {
+    init.headers = JSON_HEADERS;
+    init.body = JSON.stringify(spec.body);
+  }
+  init.signal = withTimeout(signal, API_TIMEOUT_MS);
+  let r: Response;
+  try {
+    r = await fetch(spec.path, init);
+  } catch (e) {
+    // Network error or aborted — distinguish via signal.
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled", cause: e });
+    }
+    throw new ActionError(
+      e instanceof Error ? e.message : "network error",
+      { cause: e },
+    );
+  }
+  if (!r.ok) {
+    // Try to parse a JSON error body for a server-supplied message.
+    let serverError = "";
+    try {
+      const body = (await r.json()) as { error?: unknown };
+      if (typeof body.error === "string") serverError = body.error;
+    } catch {
+      // Body wasn't JSON or parse failed — leave serverError empty.
+    }
+    throw new ActionError(
+      serverError !== "" ? serverError : `HTTP ${String(r.status)}`,
+      { status: r.status },
+    );
+  }
+  // 204 No Content / explicit DELETE: there's no body to parse.
+  if (spec.method === "DELETE" || r.status === 204) {
+    return undefined as T;
+  }
+  // Parse JSON body. If the action declares TResult = void or unknown
+  // and the body is empty, return undefined.
+  const text = await r.text();
+  if (text === "") return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    throw new ActionError(
+      `response not JSON: ${e instanceof Error ? e.message : String(e)}`,
+      { status: r.status, cause: e },
+    );
+  }
+}
