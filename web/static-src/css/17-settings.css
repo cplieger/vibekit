@@ -224,6 +224,18 @@
 
 .forge-account-repos-icon svg { width: 16px; height: 16px; }
 
+/* Right-aligned Clone all button on the summary line. The label
+ * pushes itself to the left via flex: 1 so the button sits at the
+ * far edge with vertical centering inherited from the summary. */
+.forge-account-repos-label {
+  flex: 1; min-width: 0;
+}
+
+.forge-account-repos-clone-all {
+  flex-shrink: 0;
+  margin-inline-start: var(--sp-2);
+}
+
 .forge-account-repos-summary::-webkit-details-marker { display: none; }
 
 .forge-account-repos-summary:hover {

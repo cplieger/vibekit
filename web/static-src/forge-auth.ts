@@ -373,6 +373,27 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
     <span class="forge-account-repos-icon" aria-hidden="true">${ICON_REPO}</span>
     <span class="forge-account-repos-label">${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally</span>
   `;
+
+  // Right-aligned "Clone all" inside the summary. Only when there
+  // are uncloned repos with a clone_url. Click stops propagation so
+  // it doesn't toggle the <details>.
+  const cloneable = repos.filter((r) =>
+    !lastLocalNames.has(r.name) &&
+    typeof r.clone_url === "string" && r.clone_url !== "");
+  if (cloneable.length > 0) {
+    const cloneAllBtn = document.createElement("button");
+    cloneAllBtn.type = "button";
+    cloneAllBtn.className = "btn-small forge-account-repos-clone-all";
+    cloneAllBtn.textContent = `Clone all (${cloneable.length})`;
+    cloneAllBtn.title = `Clone every uncloned repo on this account`;
+    cloneAllBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      void withAsyncFeedback(cloneAllBtn, () => cloneAllForAccount(cloneable, cloneAllBtn));
+    });
+    summary.appendChild(cloneAllBtn);
+  }
+
   details.appendChild(summary);
 
   if (repos.length === 0) {
@@ -486,6 +507,37 @@ async function cloneRepo(url: string): Promise<void> {
   await renderForgesPanel({ revalidate: false });
   if (res === null) throw new Error("network error");
   if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+}
+
+/** Clone every uncloned remote repo accessible to one account.
+ *  Iterates sequentially (avoids hammering the workspace's git-clone
+ *  capacity and keeps failures attributable to a single repo).
+ *  Visible feedback rides on the button label "Cloning N/total…".
+ *  Per-repo failures don't abort the batch — partial success > none.
+ *  After the batch we trigger a single renderForgesPanel so each
+ *  repo row redraws with its new state. */
+async function cloneAllForAccount(
+  candidates: Repo[],
+  btn: HTMLButtonElement,
+): Promise<void> {
+  if (candidates.length === 0) return;
+  const originalLabel = btn.textContent ?? "Clone all";
+  let done = 0;
+  for (const repo of candidates) {
+    btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
+    try {
+      const url = repo.clone_url ?? "";
+      if (url !== "") {
+        await apiPost<{ output?: string; error?: string }>(`/api/git/clone`, { url });
+      }
+    } catch {
+      // Swallow per-repo errors; the post-batch refresh will show
+      // which ones still appear as remote-only.
+    }
+    done++;
+  }
+  btn.textContent = originalLabel;
+  await renderForgesPanel({ revalidate: false });
 }
 
 async function removeLocalRepo(repo: Repo): Promise<void> {
