@@ -449,17 +449,26 @@
 }
 
 .action-bar {
-  display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  flex-wrap: nowrap;
 }
 
 .action-bar-spread { justify-content: space-between; }
 
-/* When local + sync action bars sit back-to-back under a single
- * section header (Changes), drop the bottom padding of the first
- * and the top padding of the second so they read as one logical
- * cluster split into two semantic groups. */
-.action-bar-local + .action-bar-sync { padding-block-start: 0; }
-.action-bar-local { padding-block-end: var(--sp-1); }
+/* Vertical hairline used inside .action-bar-changes between the
+ * local-changes group (Stage all / Discard all) and the sync group
+ * (Pull / Stash / Pop stash). Replaces the older two-row layout
+ * (.action-bar-local + .action-bar-sync) so the entire Changes
+ * action cluster sits on one row. */
+.action-bar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--c-border);
+  margin-inline: var(--sp-1);
+  flex-shrink: 0;
+}
 
 /* Shared button base for action-pill, btn, btn-save, btn-small */
 .action-pill, .btn, .btn-save, .btn-small {

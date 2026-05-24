@@ -351,28 +351,11 @@
   font-style: italic;
 }
 
-.repo-picker-trigger-stack {
-  display: flex; flex-direction: column;
-  gap: 1px;
-  flex: 1;
-  min-width: 0;
-  text-align: start;
-}
-
 .repo-picker-trigger-name {
   font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.repo-picker-trigger-meta {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.repo-picker-chevron {
-  display: inline-flex;
-  color: var(--c-text-tertiary);
+  min-width: 0; flex: 1;
+  text-align: start;
 }
 
 /* Forge badge glyph (GH/GL/CB/GT) next to the repo name. */
@@ -604,11 +587,6 @@
   display: flex; flex-direction: column;
   gap: var(--sp-2);
   margin-block-start: var(--sp-3);
-}
-
-.git-pr-section-header {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-3);
 }
 
 .git-pr-placeholder {

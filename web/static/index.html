@@ -565,7 +565,6 @@
           <div id="git-repo-bar" class="git-repo-bar" data-repo-picker>
             <button type="button" id="git-repo-trigger" class="repo-picker-trigger" data-repo-picker-trigger aria-haspopup="dialog" aria-label="Choose a repository">
               <span class="repo-picker-trigger-empty">Choose a repository</span>
-              <span class="repo-picker-chevron" aria-hidden="true"></span>
             </button>
             <button type="button" id="git-branch-btn" class="git-branch-btn" data-tooltip="Switch branch" aria-label="Switch branch"></button>
             <button type="button" id="git-overflow-btn" class="git-action-btn" data-tooltip="More repo actions" aria-label="More repo actions" aria-haspopup="menu">
@@ -613,15 +612,14 @@
               <div class="git-section-header">
               <h3 class="section-title">Changes</h3>
             </div>
-            <div class="action-bar action-bar-local" aria-label="Local changes actions">
+            <div class="action-bar action-bar-changes" aria-label="Changes actions">
               <button type="button" id="git-stage-all-btn" class="action-pill" data-tooltip="Stage all" aria-label="Stage all">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               </button>
               <button type="button" id="git-discard-all-btn" class="action-pill git-discard-btn" data-tooltip="Discard all" aria-label="Discard all">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
               </button>
-            </div>
-            <div class="action-bar action-bar-sync" aria-label="Sync actions">
+              <span class="action-bar-sep" aria-hidden="true"></span>
               <button type="button" id="git-pull-btn" class="action-pill" data-tooltip="Pull" aria-label="Pull" disabled>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
               </button>
@@ -637,8 +635,10 @@
                  When the active repo has no forge credential, a small
                  placeholder takes over inside the same section. -->
             <div id="git-pr-section" class="git-pr-section hidden">
-              <div class="git-section-header git-pr-section-header">
+              <div class="git-section-header">
                 <h3 class="section-title">Pull requests</h3>
+              </div>
+              <div class="action-bar action-bar-pr" aria-label="Pull request actions">
                 <button type="button" id="git-pr-new-btn" class="btn-small btn-primary">New pull request</button>
               </div>
               <div id="git-pr-placeholder" class="git-pr-placeholder hidden">

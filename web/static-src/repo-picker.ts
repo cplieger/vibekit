@@ -19,7 +19,7 @@ import { onSSE } from "./bus.js";
 import { relativeTime } from "./files-shared.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { RepoEntry, ForgeKind } from "./forge-types.js";
-import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, iconEl } from "./icons.js";
+import { ICON_GLOBE, ICON_REFRESH } from "./icons.js";
 import { setBanner, clearBanner } from "./git-status-banner.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -317,29 +317,25 @@ function renderTrigger(): void {
 
   if (ctrl.selected === null) {
     trigger.appendChild(textSpan("repo-picker-trigger-empty", "Choose a repository"));
-    trigger.appendChild(chevronIcon());
     return;
   }
 
+  // Forge badge already conveys the host (GitHub octocat → github.com,
+  // GitLab tanuki → gitlab.com, etc.), so we don't repeat the host on
+  // the trigger. The chevron is also dropped because the trigger
+  // opens a modal dialog, not a dropdown — the down-arrow affordance
+  // suggests the wrong interaction. Result is a single-line button
+  // whose height matches the sibling branch + action buttons.
   const badge = forgeBadge(ctrl.selected.kind);
   if (badge !== null) trigger.appendChild(badge);
 
-  const stack = document.createElement("span");
-  stack.className = "repo-picker-trigger-stack";
-  stack.appendChild(textSpan("repo-picker-trigger-name", ctrl.selected.full_name || ctrl.selected.name));
-  const secondary = triggerSecondary(ctrl.selected);
-  if (secondary !== "") stack.appendChild(textSpan("repo-picker-trigger-meta", secondary));
-  trigger.appendChild(stack);
+  trigger.appendChild(textSpan(
+    "repo-picker-trigger-name",
+    ctrl.selected.full_name || ctrl.selected.name,
+  ));
 
   const glyph = stateGlyph(ctrl.selected);
   if (glyph !== null) trigger.appendChild(glyph);
-  trigger.appendChild(chevronIcon());
-}
-
-function triggerSecondary(e: RepoEntry): string {
-  const parts: string[] = [];
-  if (e.host !== "") parts.push(e.host);
-  return parts.join(" · ");
 }
 
 // --- Dialog ---
@@ -697,13 +693,7 @@ function iconSpan(cls: string, glyph: string, title: string): HTMLSpanElement {
   return s;
 }
 
-function chevronIcon(): HTMLSpanElement {
-  const s = document.createElement("span");
-  s.className = "repo-picker-chevron";
-  s.appendChild(iconEl(ICON_CHEVRON_DOWN_SM));
-  s.setAttribute("aria-hidden", "true");
-  return s;
-}
+
 
 // --- Test helpers (used by repo-picker.test.ts) ---
 
