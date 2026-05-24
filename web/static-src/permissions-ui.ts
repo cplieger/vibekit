@@ -16,8 +16,9 @@
 import { patchSettings } from "./persist.js";
 import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
-import { apiGet, apiDelete, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
+import { addRuleAction, removeRuleAction } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -240,16 +241,20 @@ class PermissionsUIController {
   }
 
   private async removeRule(pattern: string): Promise<void> {
-    const ok = await apiDelete(`/api/permissions/commands?pattern=${encodeURIComponent(pattern)}`);
-    if (!ok) return;
+    const removed = this.commandRules.find((e) => e.pattern === pattern);
     this.commandRules = this.commandRules.filter((e) => e.pattern !== pattern);
     this.renderRuleChips();
+    const ok = await removeRuleAction.dispatch(pattern);
+    if (ok === null && removed !== undefined) {
+      this.commandRules.push(removed);
+      this.renderRuleChips();
+    }
   }
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    const result = await apiPost("/api/permissions/commands", { pattern: clean, mode, priority });
+    const result = await addRuleAction.dispatch({ pattern: clean, mode, priority });
     if (result === null) return;
     await this.loadRules();
   }

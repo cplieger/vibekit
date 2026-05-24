@@ -8,7 +8,7 @@
 
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
-import * as transport from "./transport.js";
+import { forkChatAction, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";
 
@@ -54,12 +54,8 @@ export function forkCurrentChat(chatID: string): void {
   if (session === undefined) return;
   if (session.frozen === true) return;
   const tangentID = `tangent-${Date.now().toString(36)}`;
-  void transport.send({
-    type: "fork_chat",
-    chat_id: session.id,
-    payload: { tangent_id: tangentID },
-  }).then((result) => {
-    if (!result.ok) return;
+  void forkChatAction.dispatch({ chatID: session.id, tangentID }).then((result) => {
+    if (result === null) return;
     void loadList().then(() => {
       openChatTab(tangentID, `Tangent: ${session.name}`, session.agent);
       activateChatView(tangentID);
@@ -71,12 +67,8 @@ export function forkCurrentChat(chatID: string): void {
 export function mergeTangent(): void {
   const session = getActive();
   if (session === undefined || session.is_tangent !== true) return;
-  void transport.send({
-    type: "merge_tangent",
-    chat_id: session.id,
-  }).then((result) => {
-    if (!result.ok) return;
-    // Switch to the parent chat.
+  void mergeTangentAction.dispatch(session.id).then((result) => {
+    if (result === null) return;
     if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
       void loadList().then(() => {
         activateChatView(session.parent_chat_id!);
@@ -91,11 +83,8 @@ export async function discardTangent(): Promise<void> {
   if (session === undefined || session.is_tangent !== true) return;
   const ok = await confirm("Discard this tangent? Changes won't be merged back.", "Discard", "destructive");
   if (!ok) return;
-  void transport.send({
-    type: "discard_tangent",
-    chat_id: session.id,
-  }).then((result) => {
-    if (!result.ok) return;
+  void discardTangentAction.dispatch(session.id).then((result) => {
+    if (result === null) return;
     if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
       void loadList().then(() => {
         activateChatView(session.parent_chat_id!);

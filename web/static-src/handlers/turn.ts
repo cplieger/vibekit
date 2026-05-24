@@ -4,7 +4,6 @@
 
 import { onSSE } from "../bus.js";
 import { setThinking, setWorkingLabel, get, getActiveId } from "../store.js";
-import * as transport from "../transport.js";
 import { apiGet } from "../api-client.js";
 import {
   notifyIfHidden, setBadge, isAgentFinishedEnabled, isPermissionNeededEnabled,
@@ -17,6 +16,7 @@ import {
   showBanner, onTurnEnded,
 } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
+import { permissionResponseAction, restoreCheckpointAction } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
 
 onSSE("working_label", (chatID, p) => {
@@ -147,10 +147,10 @@ onSSE("permission_needed", (chatID, p) => {
       if (subSid !== undefined && subSid !== "") {
         setSubagentPendingApproval(subSid, false);
       }
-      void transport.send({
-        type: "permission_response",
-        chat_id: chatID,
-        payload: { request_id: p.request_id, option_id: optionID },
+      void permissionResponseAction.dispatch({
+        chatID,
+        requestID: p.request_id,
+        optionID,
       });
     },
     p.sub_session_id,
@@ -245,11 +245,7 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
   } else if (!(await confirmRestore())) {
     return;
   }
-  void transport.send({
-    type: "restore_checkpoint",
-    chat_id: chatID,
-    payload: { tag },
-  });
+  void restoreCheckpointAction.dispatch({ chatID, tag });
 }
 
 async function fetchRestorePreview(chatID: string, tag: string): Promise<string[]> {

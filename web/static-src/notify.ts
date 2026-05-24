@@ -6,6 +6,7 @@
 
 import { apiGet, apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
+import { registerPushAction } from "./actions/notify.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.
@@ -87,14 +88,14 @@ class NotifyController {
       return "Notifications are not supported in this browser.";
     }
     if (Notification.permission === "granted") {
-      void this.registerPush();
+      void this.registerPushViaAction();
       return null;
     }
     if (Notification.permission === "denied") {
       return "Notifications were blocked. Allow them in your browser settings.";
     }
     Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPush();
+      if (result === "granted") void this.registerPushViaAction();
     }).catch(() => {});
     return null;
   }
@@ -126,6 +127,22 @@ class NotifyController {
     Notification.requestPermission().then((result) => {
       if (result === "granted") void this.registerPush();
     }).catch(() => {});
+  }
+
+  private async registerPushViaAction(): Promise<void> {
+    if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
+    this.pushController?.abort();
+    const ctrl = new AbortController();
+    this.pushController = ctrl;
+    this.pushState = { kind: "registering" };
+    const reg = await registerPushAction.dispatch(undefined);
+    if (ctrl !== this.pushController) return;
+    if (reg !== null) {
+      this.swRegistration = reg;
+      this.pushState = { kind: "registered", registration: reg };
+    } else {
+      this.pushState = { kind: "failed", error: "action failed" };
+    }
   }
 
   private async registerPush(): Promise<void> {

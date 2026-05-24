@@ -69,6 +69,7 @@ import "./handlers/chat.js";
 import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
+import { cancelTurnAction } from "./actions/chat.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -323,7 +324,7 @@ function setupInput(): void {
     // Cancel the active chat's in-flight turn. No-op if nothing running.
     if (getActiveId() === "") return;
     if (!isThinking(getActiveId())) return;
-    void transport.send({ type: "cancel", chat_id: getActiveId() });
+    void cancelTurnAction.dispatch(getActiveId());
   });
 
   const doCreate = guardAction(() => {

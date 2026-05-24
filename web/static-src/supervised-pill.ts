@@ -21,8 +21,8 @@
 import { getActive, setSupervisedMode, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
-import * as transport from "./transport.js";
 import { openPendingDiff } from "./editor-openers.js";
+import { setSupervisedAction, resolveAllPendingAction, trustPendingAction, clearPendingTrustAction } from "./actions/chat.js";
 import type { PendingChange } from "./types.js";
 import { resolvePendingChange } from "./chat-commands.js";
 
@@ -126,11 +126,7 @@ class SupervisedPillController {
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
       setSupervisedMode(this.currentChatID(), enabled);
-      void transport.send({
-        type: "set_supervised_mode",
-        chat_id: this.currentChatID(),
-        payload: { enabled },
-      });
+      void setSupervisedAction.dispatch({ chatID: this.currentChatID(), enabled });
       this.render();
     });
 
@@ -265,29 +261,19 @@ class SupervisedPillController {
   }
 
   private bulkResolve(action: "accept" | "reject"): void {
-    void transport.send({
-      type: "resolve_all_pending_changes",
-      chat_id: this.currentChatID(),
-      payload: { action },
-    });
+    void resolveAllPendingAction.dispatch({ chatID: this.currentChatID(), action });
   }
 
   /** Post trust_pending_changes. The server sets perTurnTrust,
    *  accepts every staged op immediately, and broadcasts
    *  pending_trust_enabled so the pill flips. */
   private trustRemaining(): void {
-    void transport.send({
-      type: "trust_pending_changes",
-      chat_id: this.currentChatID(),
-    });
+    void trustPendingAction.dispatch(this.currentChatID());
   }
 
   /** Post clear_pending_trust. Mirror of trustRemaining. */
   private stopTrusting(): void {
-    void transport.send({
-      type: "clear_pending_trust",
-      chat_id: this.currentChatID(),
-    });
+    void clearPendingTrustAction.dispatch(this.currentChatID());
   }
 
   private currentChatID(): string {

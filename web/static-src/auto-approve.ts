@@ -9,7 +9,7 @@
 import { $ } from "./dom.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
-import * as transport from "./transport.js";
+import { setAutoApproveCrewAction } from "./actions/chat.js";
 import type { Session } from "./types.js";
 
 /** Client-side cache augmentation — avoids O(n) scan on every render. */
@@ -59,9 +59,5 @@ function toggle(): void {
   // Optimistic update so the pill flips immediately.
   session.auto_approve_crew = newValue;
   render();
-  void transport.send({
-    type: "set_auto_approve_crew",
-    chat_id: session.id,
-    payload: { enabled: newValue },
-  });
+  void setAutoApproveCrewAction.dispatch({ chatID: session.id, enabled: newValue });
 }

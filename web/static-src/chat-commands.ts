@@ -36,6 +36,7 @@ import * as transport from "./transport.js";
 import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import { takeAttachments } from "./attachments.js";
+import { switchModelAction, resolvePendingChangeAction } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
 export interface SendPromptOpts {
@@ -95,15 +96,8 @@ export async function sendPromptTo(
  *  UI state. */
 export async function switchModel(chatID: string, model: string): Promise<boolean> {
   if (chatID === "") return false;
-  setThinking(chatID, true);
-  const result = await transport.send({
-    type: "switch_model", chat_id: chatID,
-    payload: { model },
-  });
-  if (result.status !== 409) {
-    setThinking(chatID, false);
-  }
-  return result.ok || result.status === 409;
+  const result = await switchModelAction.dispatch({ chatID, model });
+  return result !== null && result;
 }
 
 /** Resolve a single pending change (accept or reject). Shared by
@@ -111,9 +105,5 @@ export async function switchModel(chatID: string, model: string): Promise<boolea
 export function resolvePendingChange(
   chatID: string, toolCallID: string, action: "accept" | "reject",
 ): void {
-  void transport.send({
-    type: "resolve_pending_change",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, action },
-  });
+  void resolvePendingChangeAction.dispatch({ chatID, toolCallID, action });
 }
