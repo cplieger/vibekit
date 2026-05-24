@@ -246,6 +246,7 @@
   padding: var(--sp-1) var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-sm);
+  color: var(--c-text-primary);
 }
 
 .forge-account-repo-row:first-child { border-block-start: 0; }
@@ -265,10 +266,18 @@
   gap: 1px;
 }
 
+/* Repo title stays in the default text color regardless of the
+ * repo's cloned state. The cloned state is communicated by the
+ * green dot to the left, not by tinting the title. */
 .forge-account-repo-name {
   font-weight: 500;
   color: var(--c-text-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-repo-row.cloned .forge-account-repo-name,
+.forge-account-repo-row .forge-account-repo-name {
+  color: var(--c-text-primary);
 }
 
 .forge-account-repo-tags {

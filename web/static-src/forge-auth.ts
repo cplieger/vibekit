@@ -26,7 +26,7 @@
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_TRASH } from "./icons.js";
+import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_TRASH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 
@@ -465,8 +465,10 @@ function renderRepoRow(repo: Repo): HTMLElement {
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
     const clone = document.createElement("button");
     clone.type = "button";
-    clone.className = "btn-small btn-primary";
-    clone.textContent = "Clone";
+    clone.className = "icon-btn";
+    clone.innerHTML = ICON_DOWNLOAD;
+    clone.title = "Clone into workspace";
+    clone.setAttribute("aria-label", "Clone into workspace");
     clone.addEventListener("click", () => {
       void withAsyncFeedback(clone, () => cloneRepo(repo.clone_url ?? ""));
     });
