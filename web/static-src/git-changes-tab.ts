@@ -15,6 +15,7 @@ import { onSSE } from "./bus.js";
 import { ICON_REFRESH, ICON_SPINNER } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { preserveGitScroll } from "./git-scroll.js";
 
 // --- Wire types ---
 
@@ -95,6 +96,10 @@ export async function refreshChanges(): Promise<void> {
 // --- Render ---
 
 function paint(): void {
+  preserveGitScroll(paintInner);
+}
+
+function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
 

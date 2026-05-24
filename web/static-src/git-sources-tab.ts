@@ -20,6 +20,7 @@ import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_GLOBE, ICON_TRASH, ICON_EXTERNAL } from "./icons.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
+import { preserveGitScroll } from "./git-scroll.js";
 import type { ForgeKind } from "./forge-types.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
@@ -68,6 +69,10 @@ export async function refreshSources(): Promise<void> {
 // --- Render ---
 
 function paint(): void {
+  preserveGitScroll(paintInner);
+}
+
+function paintInner(): void {
   const root = document.getElementById("git-sources-mount");
   if (root === null) return;
 

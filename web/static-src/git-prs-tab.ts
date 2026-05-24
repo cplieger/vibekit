@@ -18,6 +18,7 @@ import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
 // --- Types ---
@@ -133,6 +134,10 @@ export async function refreshPRs(): Promise<void> {
 // --- Render ---
 
 function paint(): void {
+  preserveGitScroll(paintInner);
+}
+
+function paintInner(): void {
   const root = document.getElementById("git-prs-mount");
   if (root === null) return;
 
