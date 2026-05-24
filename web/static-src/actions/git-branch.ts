@@ -32,7 +32,7 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
     if (text === "") return;
     const body = JSON.parse(text) as { error?: string };
     if (body.error !== undefined && body.error !== "") {
-      throw new ActionError(body.error);
+      throw new ActionError(body.error, { status: r.status });
     }
   },
   optimistic: (args) => {

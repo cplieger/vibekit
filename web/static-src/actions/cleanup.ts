@@ -2,6 +2,11 @@
 // cleanup hooks. Wired to window.beforeunload so navigation away
 // from the page (or tab close) aborts everything cleanly.
 //
+// Cleanup hooks must be idempotent. cancelAllPending is allowed to fire
+// multiple times (e.g., cancelled navigation followed by confirmed
+// navigation). Aborting an already-aborted controller is a no-op by spec;
+// ensure your hook has equivalent semantics.
+//
 // Two surfaces:
 //
 //   1. Actions registered via defineAction are auto-tracked. Their
@@ -47,7 +52,7 @@ export function registerCleanup(fn: () => void): () => void {
  *  individual hooks are caught + logged; one bad hook does not stop
  *  the rest from running. */
 export function cancelAllPending(): void {
-  for (const action of trackedActions) {
+  for (const action of [...trackedActions]) {
     try {
       action.cancel();
     } catch (e) {

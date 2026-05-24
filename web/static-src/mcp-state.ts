@@ -178,10 +178,13 @@ export function removeConfiguredEntry(id: string): [Server, number] | undefined 
   return [entry, idx];
 }
 
-/** Re-insert a previously removed entry at its original index. */
-export function insertConfiguredEntry(entry: Server, atIndex: number): void {
+/** Re-insert a previously removed entry using id-based ordering. */
+export function insertConfiguredEntry(entry: Server, _atIndex?: number): void {
   const arr = [...configured] as Server[];
-  arr.splice(atIndex, 0, entry);
+  // Find correct position by id ordering; fall back to end if no suitable spot.
+  let pos = arr.findIndex((s) => s.id > entry.id);
+  if (pos === -1) pos = arr.length;
+  arr.splice(pos, 0, entry);
   configured = arr;
   instance.renderCb?.();
 }

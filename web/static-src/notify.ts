@@ -107,6 +107,7 @@ class NotifyController {
   }
 
   unregisterPush(): void {
+    registerPushAction.cancel();
     this.pushController?.abort();
     this.pushController = null;
     this.pushState = { kind: "idle" };

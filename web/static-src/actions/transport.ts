@@ -58,8 +58,11 @@ export function transportAction<TArgs>(
         if (signal.aborted) {
           throw new ActionError("cancelled", { code: "cancelled" });
         }
+        const isTimeout = r.status === 0 && (r.error?.includes("timed out") ?? false);
+        const isNetwork = r.status === 0 && !isTimeout;
         throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
           status: r.status,
+          ...(isTimeout ? { code: "timeout" } : isNetwork ? { code: "network" } : {}),
         });
       }
       return undefined;

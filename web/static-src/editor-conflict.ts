@@ -6,6 +6,7 @@ import { $ } from "./dom.js";
 import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type Resolution } from "./conflict.js";
 import { apiPost } from "./api-client.js";
 import type { FileState } from "./editor-types.js";
+import { getActiveFilePath } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/cleanup.js";
 
@@ -137,6 +138,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   const resp = await apiPost<{ output?: string; error?: string }>("/api/utility/resolve-conflict", body, signal);
   if (signal.aborted) return;
   if (state.mode.kind !== "conflict") return;
+  if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];
   if (current?.startLine !== hunk.startLine) return;
   if (resp === null || typeof resp.output !== "string") {

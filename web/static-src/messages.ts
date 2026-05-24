@@ -38,7 +38,7 @@ import { openPlanDraftPath } from "./editor-openers.js";
 import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
 import { bindLoadingState } from "./actions/index.js";
 import {
-  addEditActions, initMessageActions,
+  addEditActions, initMessageActions, clearActionBindings,
 } from "./messages-actions.js";
 import {
   addCrew as addCrewInternal, updateCrew as updateCrewInternal,
@@ -54,6 +54,15 @@ export { setShellRunCallback } from "./code-blocks.js";
 
 const messagesEl = $.messages;
 const toolEls = new Map<string, HTMLDivElement>();
+
+/** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
+const bindUnbinds: Array<() => void> = [];
+
+/** Unsubscribe all bindLoadingState listeners for the current chat. */
+function clearMessagesBindings(): void {
+  for (const fn of bindUnbinds) fn();
+  bindUnbinds.length = 0;
+}
 
 /** Tracks active "copied" animation timers per button so rapid clicks
  *  don't stack timeouts. */
@@ -442,7 +451,7 @@ function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDuratio
         btn.type = "button";
         btn.className = "tool-explain-btn";
         btn.textContent = "Explain this error";
-        bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" });
+        bindUnbinds.push(bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }));
         btn.addEventListener("click", () => {
           void explainError(output, el.dataset["title"] ?? "").then((explanation) => {
             if (explanation !== "") {
@@ -662,6 +671,8 @@ initMessageActions();
 
 export function clearMessages(): void {
   streamingPipeline.dispose();
+  clearMessagesBindings();
+  clearActionBindings();
   messagesEl.replaceChildren();
   toolEls.clear();
   clearCrews();

@@ -91,12 +91,14 @@ async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promis
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled", cause: e });
     }
-    if (e instanceof DOMException && e.name === "AbortError") {
-      throw new ActionError("Request timed out", { code: "timeout", cause: e });
+    if (e instanceof DOMException) {
+      if (e.name === "TimeoutError") throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      if (e.name === "AbortError" && !signal.aborted) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      // Otherwise rethrow as cancellation — the framework handles signal.aborted separately.
     }
     throw new ActionError(
       e instanceof Error ? e.message : "network error",
-      { cause: e },
+      { code: "network", cause: e },
     );
   }
   if (!r.ok) {

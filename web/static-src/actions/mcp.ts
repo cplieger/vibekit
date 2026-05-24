@@ -9,10 +9,6 @@ import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfig
 export interface ToggleArgs {
   id: string;
   enabled: boolean;
-  /** The checkbox input element — used for optimistic flip + rollback. */
-  input: HTMLInputElement;
-  /** Previous checked state, captured BEFORE the change event fires. */
-  previousEnabled: boolean;
 }
 
 export const toggleServer = apiAction<ToggleArgs, void>({
@@ -26,8 +22,7 @@ export const toggleServer = apiAction<ToggleArgs, void>({
   optimistic: ({ id, enabled }) => {
     return updateConfiguredEntry(id, { enabled });
   },
-  rollback: ({ input, previousEnabled }, op) => {
-    input.checked = previousEnabled;
+  rollback: (_args, op) => {
     if (op !== undefined) {
       const prev = op as Server;
       updateConfiguredEntry(prev.id, { enabled: prev.enabled });
@@ -54,8 +49,8 @@ export const deleteServer = apiAction<DeleteArgs, void>({
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
-      const [entry, idx] = op as [Server, number];
-      insertConfiguredEntry(entry, idx);
+      const [entry] = op as [Server, number];
+      insertConfiguredEntry(entry);
     }
   },
   error: "Couldn't remove integration",

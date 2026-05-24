@@ -34,7 +34,7 @@
 import { newMessageID } from "./transport.js";
 import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
-import { takeAttachments } from "./attachments.js";
+import { takeAttachments, addAttachment } from "./attachments.js";
 import { switchModelAction, resolvePendingChangeAction, sendPromptAction } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
@@ -52,6 +52,7 @@ export interface SendPromptOpts {
 export async function sendPromptTo(
   chatID: string, text: string, opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
+  const attachments = takeAttachments();
   const result = await sendPromptAction.dispatch({
     chatID, text,
     messageID: newMessageID(),
@@ -59,9 +60,13 @@ export async function sendPromptTo(
     model: opts.model ?? getCurrentModel(),
     activeFile: getActiveFilePath(),
     openFiles: getOpenFilePaths(),
-    attachments: takeAttachments(),
+    attachments,
   });
-  if (result === null) return "failed";  // rollback already cleared thinking
+  if (result === null) {
+    // Restore attachments on failure so the user doesn't lose them.
+    for (const a of attachments) addAttachment(a.path);
+    return "failed";
+  }
   return result;
 }
 

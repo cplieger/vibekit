@@ -33,13 +33,21 @@ export function record(instance: ActionInstance): void {
     log.push(instance);
     idMap.set(instance.id, log.length - 1);
     if (log.length > MAX_LOG_SIZE) {
-      log.shift();
-      // Indices shifted by one — reindex.
-      // O(n) cost is acceptable at MAX_LOG_SIZE=200; ring buffer is the upgrade path.
-      idMap.clear();
+      // Evict the first NON-pending entry so pendingFor() never loses
+      // track of long-running actions. If all entries are pending
+      // (extreme case), skip eviction this round and let the log grow.
+      let evictIdx = -1;
       for (let i = 0; i < log.length; i++) {
-        const entry = log[i];
-        if (entry !== undefined) idMap.set(entry.id, i);
+        if (log[i]!.status !== "pending") { evictIdx = i; break; }
+      }
+      if (evictIdx !== -1) {
+        log.splice(evictIdx, 1);
+        // Reindex after removal.
+        idMap.clear();
+        for (let i = 0; i < log.length; i++) {
+          const entry = log[i];
+          if (entry !== undefined) idMap.set(entry.id, i);
+        }
       }
     }
   }

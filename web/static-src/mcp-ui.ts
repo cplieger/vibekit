@@ -167,7 +167,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   input.addEventListener("change", () => {
     // input.checked is already the NEW value (browser flipped it).
     // Pass the previous state explicitly so rollback restores correctly.
-    void toggleServer.dispatch({ id: s.id, enabled: input.checked, input, previousEnabled: !input.checked }).then((r) => {
+    void toggleServer.dispatch({ id: s.id, enabled: input.checked }).then((r) => {
       if (r !== null) void refetchServers();
     });
   });

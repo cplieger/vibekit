@@ -9,7 +9,7 @@
 
 import { $ } from "./dom.js";
 import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
-import { subscribe, pendingFor } from "./actions/registry.js";
+import { subscribeToActions, pendingFor } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -67,9 +67,12 @@ export function showError(): void {
 // safety net so the spinner also shows if a settings.patch is dispatched
 // from a path that doesn't call showSaving() explicitly.
 // ---------------------------------------------------------------------------
-subscribe((instance) => {
+subscribeToActions((instance) => {
   if (instance.name !== "settings.patch") return;
   if (instance.status === "pending" && pendingFor("settings.patch").length > 0) {
     showSaving();
+  } else if (pendingFor("settings.patch").length === 0) {
+    if (instance.status === "success") showSaved();
+    else if (instance.status === "error") showError();
   }
 });

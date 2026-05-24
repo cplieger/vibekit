@@ -25,25 +25,23 @@ export interface RemoveRuleArgs {
 
 export const addRuleAction = apiAction<AddRuleArgs, unknown>({
   name: "permissions.add_rule",
-  retryable: "network",
   request: ({ pattern, mode, priority }) => ({
     method: "POST",
     path: "/api/permissions/commands",
     body: { pattern, mode, priority },
   }),
   optimistic: ({ pattern, mode, priority, rules, setRules }) => {
-    const prev = [...rules];
     const pending: CommandRule = { pattern, mode, priority, created_at: Date.now() };
     const idx = rules.findIndex((e) => e.pattern === pattern);
     const next = [...rules];
     if (idx >= 0) next[idx] = pending; else next.push(pending);
     setRules(next);
-    return prev;
+    return { pattern };
   },
-  rollback: (_args, op) => {
-    if (op !== undefined) {
-      const prev = op as CommandRule[];
-      _args.setRules(prev);
+  rollback: ({ rules, setRules }, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "pattern" in op) {
+      const { pattern } = op as { pattern: string };
+      setRules(rules.filter((e) => e.pattern !== pattern));
     }
   },
   error: "Couldn't add rule",
@@ -51,20 +49,23 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
 
 export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
   name: "permissions.remove_rule",
-  retryable: "network",
   request: ({ pattern }) => ({
     method: "DELETE",
     path: `/api/permissions/commands?pattern=${encodeURIComponent(pattern)}`,
   }),
   optimistic: ({ pattern, rules, setRules }) => {
-    const prev = [...rules];
+    const idx = rules.findIndex((e) => e.pattern === pattern);
+    const removed = idx >= 0 ? rules[idx] : undefined;
     setRules(rules.filter((e) => e.pattern !== pattern));
-    return prev;
+    return { removed, idx };
   },
-  rollback: (_args, op) => {
-    if (op !== undefined) {
-      const prev = op as CommandRule[];
-      _args.setRules(prev);
+  rollback: ({ rules, setRules }, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "removed" in op) {
+      const { removed, idx } = op as { removed: CommandRule | undefined; idx: number };
+      if (removed === undefined) return;
+      const next = [...rules];
+      next.splice(idx, 0, removed);
+      setRules(next);
     }
   },
   error: "Couldn't remove rule",

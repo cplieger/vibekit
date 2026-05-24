@@ -67,30 +67,32 @@ registerCleanup(() => refreshController?.abort());
 // --- Accessors for optimistic mutations (used by git-prs actions) ---
 
 export interface PRRemoveResult {
-  groupIndex: number;
-  prIndex: number;
+  group: RepoGroup;
   pr: PR;
 }
 
 /** Remove a PR from lastGroups by identity and repaint. Returns info needed to rollback. */
 export function removePRFromGroups(forgeId: string, owner: string, name: string, prNumber: number): PRRemoveResult | undefined {
-  for (let gi = 0; gi < lastGroups.length; gi++) {
-    const g = lastGroups[gi]!;
+  for (const g of lastGroups) {
     if (g.forge_id !== forgeId || g.owner !== owner || g.name !== name) continue;
     const pi = g.prs.findIndex((p) => p.number === prNumber);
     if (pi === -1) continue;
     const pr = g.prs.splice(pi, 1)[0]!;
     paint();
-    return { groupIndex: gi, prIndex: pi, pr };
+    return { group: g, pr };
   }
   return undefined;
 }
 
-/** Re-insert a previously removed PR (rollback). */
+/** Re-insert a previously removed PR (rollback). Uses PR.number ordering. */
 export function reinsertPRInGroups(result: PRRemoveResult): void {
-  const g = lastGroups[result.groupIndex];
-  if (g === undefined) return;
-  g.prs.splice(result.prIndex, 0, result.pr);
+  // Group must still be in lastGroups; if not, no-op.
+  if (!lastGroups.includes(result.group)) return;
+  const prs = result.group.prs;
+  // Find correct insert position by PR number (descending — higher numbers first).
+  let idx = prs.findIndex((p) => p.number < result.pr.number);
+  if (idx === -1) idx = prs.length;
+  prs.splice(idx, 0, result.pr);
   paint();
 }
 
@@ -122,14 +124,19 @@ export function initPRsTab(): void {
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
  *  repos). Safe to call multiple times — only the latest result wins. */
-export async function refreshPRs(): Promise<void> {
+export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   const myGen = ++refreshGen;
   refreshController?.abort();
   refreshController = new AbortController();
   const { signal } = refreshController;
+  // Honour external signal (e.g. from action framework).
+  if (externalSignal) externalSignal.addEventListener("abort", () => refreshController?.abort(), { once: true });
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
-  if (forgesRes === null) throw new Error("Failed to load forges");
+  if (forgesRes === null) {
+    if (signal.aborted) return; // superseded — don't surface as error
+    throw new Error("Failed to load forges");
+  }
   const forges = forgesRes.forges.filter((f) => f.connected);
 
   // Build a flat (forge, owner/name) list to fetch.
@@ -137,6 +144,7 @@ export async function refreshPRs(): Promise<void> {
   for (const forge of forges) {
     const reposRes = await apiGet<RepoListResponse>(
       `/api/forges/${encodeURIComponent(forge.id)}/repos`,
+      signal,
     );
     if (reposRes === null) continue;
     for (const repo of reposRes.repos) {
@@ -149,6 +157,7 @@ export async function refreshPRs(): Promise<void> {
       try {
         const res = await apiGet<PRListResponse>(
           `/api/forges/${encodeURIComponent(forge.id)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/prs?state=open`,
+          signal,
         );
         return {
           forge_id: forge.id,
@@ -415,7 +424,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
-        await refreshPRs().catch(() => {});
+        // Skip refreshPRs — optimistic remove already shows correct state.
       });
     })();
   });
@@ -434,7 +443,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
-        await refreshPRs().catch(() => {});
+        // Skip refreshPRs — optimistic remove already shows correct state.
       });
     })();
   });

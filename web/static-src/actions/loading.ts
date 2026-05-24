@@ -45,24 +45,36 @@ export function bindLoadingState(
   opts: BindLoadingOptions = {},
 ): () => void {
   const { ariaBusy = true, pendingClass, preserveDisabled = false } = opts;
-  // Snapshot the element's pre-bind disabled state so preserveDisabled
-  // can OR it with the pending state. Without this, a re-evaluation
-  // after a successful action would re-enable an element that was
-  // originally disabled for another reason.
-  const originalDisabled = el.disabled;
+  // Track pending transitions to snapshot disabled state lazily —
+  // avoids stale bind-time capture when external code mutates disabled.
+  let wasPending = false;
+  let baseDisabled = el.disabled;
 
   const apply = (): void => {
     const isPending = pendingFor(actionName).length > 0;
-    el.disabled = preserveDisabled ? (originalDisabled || isPending) : isPending;
-    if (ariaBusy) {
-      if (isPending) {
-        el.setAttribute("aria-busy", "true");
-      } else {
-        el.removeAttribute("aria-busy");
-      }
+    // Snapshot the live disabled state on the pending edge (before we
+    // clobber it) so we can restore it when the action completes.
+    if (isPending && !wasPending) baseDisabled = el.disabled;
+    if (isPending) {
+      el.disabled = true;
+      if (ariaBusy) el.setAttribute("aria-busy", "true");
+      if (pendingClass) el.classList.add(pendingClass);
+    } else if (wasPending) {
+      // Transition pending→idle: restore element state.
+      el.disabled = preserveDisabled ? baseDisabled : false;
+      if (ariaBusy) el.removeAttribute("aria-busy");
+      if (pendingClass) el.classList.remove(pendingClass);
     }
-    if (pendingClass !== undefined && pendingClass !== "") {
-      el.classList.toggle(pendingClass, isPending);
+    wasPending = isPending;
+  };
+
+  /** Restore element state as if the action completed. */
+  const restore = (): void => {
+    if (wasPending) {
+      el.disabled = preserveDisabled ? baseDisabled : false;
+      if (ariaBusy) el.removeAttribute("aria-busy");
+      if (pendingClass) el.classList.remove(pendingClass);
+      wasPending = false;
     }
   };
 
@@ -72,7 +84,10 @@ export function bindLoadingState(
   // Re-evaluate on every transition for the named action. Other action
   // transitions are ignored to avoid wasted work for fan-out cases
   // where many actions are in flight simultaneously.
-  return subscribe((instance) => {
+  const unsubscribe = subscribe((instance) => {
     if (instance.name === actionName) apply();
   });
+
+  // Unsubscribe restores element state if still mid-pending (B2).
+  return () => { restore(); unsubscribe(); };
 }

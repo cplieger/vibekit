@@ -146,6 +146,7 @@ export async function fetchGitDiffSources(state: FileState, repo: string, ref: s
 
 export function activateFile(path: string): void {
   saveCurrentState();
+  abortSuggestion(); // cancel any in-flight suggestion for the old file
   activeLoadController?.abort();
   activeLoadController = new AbortController();
   setActiveFilePath(path);

@@ -405,6 +405,14 @@ export function setFrozen(chatID: string, frozen: boolean): void {
   emit();
 }
 
+/** Set session model and notify subscribers. Used by switchModelAction. */
+export function setModel(chatID: string, model: string): void {
+  const s = get(chatID);
+  if (s === undefined) return;
+  s.model = model;
+  emit();
+}
+
 /** Return the current index of a session in the list, or -1. */
 export function indexOfSession(id: string): number {
   return _sessions.findIndex((s) => s.id === id);

@@ -186,10 +186,11 @@ function saveFile(): void {
       return;
     }
     state.original = content;
-    state.current = content;
-    // Content now matches original — disable Save until user edits again.
-    // bindLoadingState's preserveDisabled OR's this with its own state.
-    $.editorSaveBtn.disabled = true;
+    // Don't overwrite state.current — user may have edited during save.
+    // Re-derive button state from live values; guard against file switch.
+    if (getActiveFilePath() === state.path) {
+      $.editorSaveBtn.disabled = state.current === state.original;
+    }
     $.editorError.classList.add("hidden");
     if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
       state.mode = { kind: "edit", editing: false };
@@ -215,6 +216,7 @@ async function sendActivePlan(): Promise<void> {
   if (state === undefined) return;
   const chatID = planDraftChatID(state.path);
   if (chatID === "") return;
-  const result = await sendPlanAction.dispatch({ chatID, content: state.current });
-  if (result !== null) state.original = state.current;
+  const content = state.current; // capture before await
+  const result = await sendPlanAction.dispatch({ chatID, content });
+  if (result !== null) state.original = content;
 }

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./store.js", () => ({
   get: vi.fn(() => ({ model: "claude" })),
   setThinking: vi.fn(),
+  setModel: vi.fn(),
   enqueuePrompt: vi.fn(),
 }));
 
@@ -20,7 +21,7 @@ vi.mock("./editor-types.js", () => ({
   getActiveFilePath: () => "src/main.ts",
   getOpenFilePaths: () => ["src/main.ts"],
 }));
-vi.mock("./attachments.js", () => ({ takeAttachments: () => [] }));
+vi.mock("./attachments.js", () => ({ takeAttachments: () => [], addAttachment: vi.fn() }));
 
 import { sendPromptTo, switchModel } from "./chat-commands.js";
 import * as store from "./store.js";

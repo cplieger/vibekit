@@ -37,6 +37,11 @@ export function toActionError(e: unknown): ActionErrorLike {
       ...(e.cause !== undefined ? { cause: e.cause } : {}),
     };
   }
+  // DOMExceptions carry a meaningful name ('AbortError', 'TimeoutError')
+  // that downstream classifiers rely on as a code.
+  if (e instanceof DOMException) {
+    return { message: e.message, code: e.name.toLowerCase(), cause: e };
+  }
   if (e instanceof Error) {
     return { message: e.message, cause: e };
   }

@@ -161,6 +161,13 @@ function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
 
+  // Bug 1: Skip re-render entirely if a commit textarea is focused
+  // to avoid destroying user input mid-typing.
+  const focused = document.activeElement;
+  if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
+    return;
+  }
+
   // Tear down previous bindLoadingState subscriptions before re-render.
   for (const fn of bindingCleanups) fn();
   bindingCleanups = [];
@@ -173,13 +180,6 @@ function paintInner(): void {
   for (const k of expandedDiffPaths) {
     const repo = k.slice(0, k.indexOf("\0"));
     if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
-  }
-
-  // Bug 1: Skip re-render entirely if a commit textarea is focused
-  // to avoid destroying user input mid-typing.
-  const focused = document.activeElement;
-  if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
-    return;
   }
 
   // Bug 1: Capture current commit messages before destroying DOM.

@@ -325,6 +325,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "fb-row";
   row.dataset["name"] = entry.name;
+  row.dataset["isDir"] = String(entry.isDir);
 
   const check = document.createElement("input");
   check.type = "checkbox";
@@ -399,15 +400,10 @@ function createEntry(action: "touch" | "mkdir", name: string): void {
   void actionFn.dispatch({
     dir: state.currentPath,
     name,
-    listEl: $.fbList,
-    entries: state.entries,
-    renderRow: entryRow,
   }).then(async (r) => {
     if (r === null) return;
-    // Placeholder row is already in DOM — start inline rename immediately.
-    startInlineRename(name);
-    // Refresh from server to get real metadata.
     await loadDirAsync();
+    startInlineRename(name);
   });
 }
 

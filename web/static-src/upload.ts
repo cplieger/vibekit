@@ -32,7 +32,10 @@ export function uploadFiles(opts: UploadOptions): void {
     return;
   }
 
-  if (pendingFor("files.upload").length > 0) {
+  // > 1 because the current dispatch is already recorded as pending by the
+  // framework before run() executes; we only reject if a *different* upload
+  // is also in flight.
+  if (pendingFor("files.upload").length > 1) {
     opts.onError?.("Another upload is already in progress");
     return;
   }

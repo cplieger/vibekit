@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -235,15 +235,12 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     const session = get(chatID);
     if (session === undefined) return undefined;
     const prev = session.model;
-    session.model = model;
+    setModel(chatID, model);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
     if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
-      const session = get(chatID);
-      if (session !== undefined) {
-        session.model = (op as { prev: string }).prev;
-      }
+      setModel(chatID, (op as { prev: string }).prev);
     }
   },
   run: async ({ chatID, model }, signal) => {

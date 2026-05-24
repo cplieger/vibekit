@@ -3,7 +3,6 @@
 
 import { apiAction, defineAction, ActionError } from "./index.js";
 import { joinPath } from "../files-shared.js";
-import type { FileEntry } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
@@ -12,10 +11,6 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 export interface CreateArgs {
   dir: string;
   name: string;
-  /** DOM list element + state for optimistic insert. */
-  listEl?: HTMLElement;
-  entries?: FileEntry[];
-  renderRow?: (entry: FileEntry) => HTMLDivElement;
 }
 
 // --- files.create_file ---
@@ -36,8 +31,6 @@ export const createFile = defineAction<CreateArgs, unknown>({
     }
     return undefined;
   },
-  optimistic: (args) => insertPlaceholder(args, false),
-  rollback: (args, op) => removePlaceholder(args, op as string | undefined),
   retryable: "network",
   error: "Couldn't create file",
 });
@@ -60,51 +53,9 @@ export const createFolder = defineAction<CreateArgs, unknown>({
     }
     return undefined;
   },
-  optimistic: (args) => insertPlaceholder(args, true),
-  rollback: (args, op) => removePlaceholder(args, op as string | undefined),
   retryable: "network",
   error: "Couldn't create folder",
 });
-
-/** Insert a placeholder FileEntry into state.entries and render a row. */
-function insertPlaceholder(args: CreateArgs, isDir: boolean): string | undefined {
-  if (!args.listEl || !args.entries || !args.renderRow) return undefined;
-  const entry: FileEntry = {
-    name: args.name,
-    isDir,
-    size: 0,
-    mode: isDir ? "drwxr-xr-x" : "-rw-r--r--",
-    modTime: Date.now(),
-  };
-  args.entries.push(entry);
-  const row = args.renderRow(entry);
-  row.dataset["newPlaceholder"] = "true";
-  // Insert at sorted position in DOM (dirs first, then alpha).
-  const children = [...args.listEl.children] as HTMLDivElement[];
-  let inserted = false;
-  for (const child of children) {
-    const childName = child.dataset["name"];
-    if (childName === undefined) continue; // skip ".." row
-    const childIsDir = child.querySelector(".fb-icon")?.innerHTML.includes("folder") ?? false;
-    if (isDir && !childIsDir) { args.listEl.insertBefore(row, child); inserted = true; break; }
-    if (isDir === childIsDir && args.name.localeCompare(childName) < 0) {
-      args.listEl.insertBefore(row, child); inserted = true; break;
-    }
-  }
-  if (!inserted) args.listEl.appendChild(row);
-  return args.name;
-}
-
-/** Remove the placeholder row + entry on rollback. */
-function removePlaceholder(args: CreateArgs, name: string | undefined): void {
-  if (!name || !args.listEl || !args.entries) return;
-  const idx = args.entries.findIndex((e) => e.name === name);
-  if (idx !== -1) args.entries.splice(idx, 1);
-  const row = [...args.listEl.children].find(
-    (el) => (el as HTMLDivElement).dataset["name"] === name && (el as HTMLDivElement).dataset["newPlaceholder"] === "true",
-  );
-  row?.remove();
-}
 
 // --- files.rename ---
 
@@ -129,11 +80,11 @@ export interface DeleteArgs {
 
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
-  // CAUTION: retry re-attempts the entire batch. Acceptable for network
-  // failures (server never received the request) but not for partial
-  // server-side failures. "network" mode only retries on status 0 /
-  // timeout, which implies the server didn't process anything.
-  retryable: "network",
+  // Batch delete must NOT retry: a timeout/network error may mean some
+  // items were already deleted server-side. Retrying would re-attempt
+  // those deletions, causing 404s or deleting newly-created files with
+  // the same name. Caller handles partial failure via loadDir() refresh.
+  retryable: false,
   run: async (args, signal) => {
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(

@@ -152,4 +152,47 @@ describe("bindLoadingState", () => {
     resolveRun!();
     await p;
   });
+
+  it("preserveDisabled: post-bind external mutation is respected on restore", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind9",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    // Initially enabled.
+    bindLoadingState("test.bind9", btn, { preserveDisabled: true });
+    expect(btn.disabled).toBe(false);
+    // External code disables the button AFTER bind (e.g. validation).
+    btn.disabled = true;
+    // Now an action starts — should snapshot the live disabled=true.
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // After action completes, restores to the pre-pending value (true).
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("unsubscribe mid-pending restores element state", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind10",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    btn.classList.add("other");
+    const unbind = bindLoadingState("test.bind10", btn, { pendingClass: "btn-loading" });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.classList.contains("btn-loading")).toBe(true);
+    // Unsubscribe while still pending — should restore.
+    unbind();
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    expect(btn.classList.contains("btn-loading")).toBe(false);
+    resolveRun!();
+    await p;
+  });
 });

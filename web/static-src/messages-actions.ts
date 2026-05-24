@@ -11,6 +11,15 @@ import { undoEdit } from "./actions/messages.js";
 import { resolvePendingChangeAction } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 
+/** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
+const actionBindUnbinds: Array<() => void> = [];
+
+/** Unsubscribe all bindLoadingState listeners owned by this module. */
+export function clearActionBindings(): void {
+  for (const fn of actionBindUnbinds) fn();
+  actionBindUnbinds.length = 0;
+}
+
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
 export function addEditActions(el: HTMLDivElement): void {
   if (el.querySelector(".tool-edit-actions") !== null) return;
@@ -26,7 +35,7 @@ export function addEditActions(el: HTMLDivElement): void {
   undoBtn.replaceChildren(iconEl(ICON_UNDO));
   undoBtn.setAttribute("data-tooltip", "Undo this edit");
   undoBtn.setAttribute("aria-label", "Undo this edit");
-  bindLoadingState("messages.undo_edit", undoBtn);
+  actionBindUnbinds.push(bindLoadingState("messages.undo_edit", undoBtn));
   undoBtn.addEventListener("click", () => {
     const chatID = getActiveId();
     if (chatID === "") return;
@@ -65,7 +74,7 @@ export function addEditActions(el: HTMLDivElement): void {
   void import("./conflicts.js").then((m) => {
     const chatID = getActiveId();
     if (chatID !== "") m.renderConflictChip(row, chatID, filePath);
-  });
+  }).catch(() => {});
 }
 
 /** Re-decorate any tool-edit action rows pointing at `path` with a
@@ -159,6 +168,7 @@ function findPendingRow(toolCallID: string): HTMLDivElement | null {
 
 export function initMessageActions(): void {
   onBus(BUS_PENDING_ADDED, (payload) => {
+    if (payload.chatID !== getActiveId()) return;
     const card = findToolCardForPath(payload.change.path);
     if (card === null) return;
     addPendingActions(card, payload.change.tool_call_id, payload.chatID, payload.change.path);

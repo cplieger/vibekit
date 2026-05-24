@@ -145,7 +145,7 @@ function hostPlaceholder(kind: ForgeKind): string {
  *  silently revoked or expire; this catches that on page open. The
  *  initial paint shows last-known state immediately; the panel
  *  re-renders once when all probes have settled. */
-export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Promise<void> {
+export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?: boolean } = {}): Promise<void> {
   const root = document.getElementById("forges-panel");
   if (root === null) return;
 
@@ -157,10 +157,16 @@ export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Pr
 
   // Refresh repo + local-clone caches in parallel with the forges
   // list. The per-account collapsible footer renders from these.
-  await Promise.all([
-    refreshLocalNames(),
-    refreshReposByForge(data.forges),
-  ]);
+  // When skipRepos is true (optimistic updates), skip the local-repos
+  // fetch so the caller's in-memory mutation isn't overwritten.
+  if (opts.skipRepos !== true) {
+    await Promise.all([
+      refreshLocalNames(),
+      refreshReposByForge(data.forges),
+    ]);
+  } else {
+    await refreshReposByForge(data.forges);
+  }
 
   paintForgesData(root, data);
 
@@ -172,21 +178,24 @@ export async function renderForgesPanel(opts: { revalidate?: boolean } = {}): Pr
   }
 }
 
-async function refreshLocalNames(): Promise<void> {
-  const r = await apiGet<LocalReposResponse>("/api/git/repos");
+async function refreshLocalNames(signal?: AbortSignal): Promise<void> {
+  const r = await apiGet<LocalReposResponse>("/api/git/repos", signal);
+  if (signal?.aborted) return;
   lastLocalNames = new Set((r?.repos ?? []).filter((n) => n !== "."));
 }
 
-async function refreshReposByForge(forges: ConfiguredForge[]): Promise<void> {
+async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSignal): Promise<void> {
   const map: Record<string, Repo[]> = {};
   await Promise.all(
     forges.filter((f) => f.connected).map(async (f) => {
       const r = await apiGet<RepoListResponse>(
         `/api/forges/${encodeURIComponent(f.id)}/repos`,
+        signal,
       );
       map[f.id] = r?.repos ?? [];
     }),
   );
+  if (signal?.aborted) return;
   lastReposByForge = map;
 }
 
@@ -206,8 +215,8 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
   if (signal.aborted) return;
   if (data != null && document.body.contains(root)) {
     await Promise.all([
-      refreshLocalNames(),
-      refreshReposByForge(data.forges),
+      refreshLocalNames(signal),
+      refreshReposByForge(data.forges, signal),
     ]);
     if (signal.aborted) return;
     paintForgesData(root, data);
@@ -625,18 +634,21 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
   if (!ok) return;
 
   // Optimistic: flip clone state to not-cloned and re-render.
+  // skipRepos prevents refreshLocalNames from overwriting our mutation.
   lastLocalNames.delete(repo.name);
-  await renderForgesPanel({ revalidate: false });
+  await renderForgesPanel({ revalidate: false, skipRepos: true });
 
   const res = await deleteLocalAction.dispatch({ repoName: repo.name });
   if (res === null || (res.error !== undefined && res.error !== "")) {
-    // Rollback: restore clone state and re-render.
+    // Rollback: restore clone state and re-render (full sync).
     lastLocalNames.add(repo.name);
     await renderForgesPanel({ revalidate: false });
     const msg = res?.error ?? "Couldn't remove local repo";
     toastError(msg);
     throw new Error(msg);
   }
+  // Success: full re-render to sync from server truth.
+  await renderForgesPanel({ revalidate: false });
 }
 
 // --- Add-account flow dispatch ---
@@ -860,13 +872,17 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
   cancel.type = "button";
   cancel.className = "btn-small";
   cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => { closeSlot(slot); });
+
+  // B3: track unbind so the subscription is cleaned up on close.
+  const unbindLoading = bindLoadingState("forge.connect_pat", submit);
+  cancel.addEventListener("click", () => { unbindLoading(); closeSlot(slot); });
   form.appendChild(cancel);
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const hostVal = hostInput.value.trim();
     void doPATConnect(kind, hostVal, tokenInput.value.trim(), status, () => {
+      unbindLoading();
       tokenInput.value = "";
       closeSlot(slot);
       // Auto-expand the freshly-added account on the next paint.
@@ -874,8 +890,6 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
       void renderForgesPanel();
     });
   });
-
-  bindLoadingState("forge.connect_pat", submit);
 
   hostEl.appendChild(form);
 }
@@ -927,8 +941,11 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
 
   const res = await signOut.dispatch({ forgeId: f.id });
   if (res === null) {
-    // Rollback: show the row again.
-    if (row !== null) row.hidden = false;
+    // Rollback: re-query the DOM since revalidateInBackground may have
+    // replaced the original row while the dispatch was in-flight.
+    const freshRow = document.querySelector<HTMLElement>(`.forge-account-row[data-id="${CSS.escape(f.id)}"]`);
+    if (freshRow !== null) freshRow.hidden = false;
+    else void renderForgesPanel({ revalidate: false });
     return;
   }
   void renderForgesPanel();

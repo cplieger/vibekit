@@ -135,7 +135,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   // traverses [data-filename] nodes; we import it lazily so this
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
-  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!));
+  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!)).catch(() => {});
 });
 
 /** Fetch every past conflict for a chat and populate the registry.

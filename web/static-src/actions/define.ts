@@ -183,8 +183,10 @@ export function defineAction<TArgs, TResult>(
     // the callsite forgot to pass it.
     const spec = def.error;
     if (spec === false) return;
+    const fallbackMsg = `${defaultErrorPrefix(def.name)}: ${err.message}`;
+    // Compute retry once so both happy and fallback paths include it.
+    const retry = computeRetry(args, err);
     try {
-      const fallback = `${defaultErrorPrefix(def.name)}: ${err.message}`;
       let msg: string;
       if (opts.errorPrefix !== undefined) {
         msg = `${opts.errorPrefix}: ${err.message}`;
@@ -193,29 +195,28 @@ export function defineAction<TArgs, TResult>(
       } else if (typeof spec === "function") {
         msg = spec(args, err);
       } else {
-        msg = fallback;
+        msg = fallbackMsg;
       }
-      // Build retry config when the action opts in. "network" only
-      // shows retry for transport-class failures (status 0, timeout)
-      // since 4xx/5xx typically indicate a permanent rejection that
-      // re-dispatching won't fix. "always" shows it unconditionally
-      // for fully-idempotent actions.
-      const retry = computeRetry(args, err);
       toastError(msg, retry);
     } catch (e) {
       console.error(`[actions] emitErrorToast for ${def.name} threw`, e);
-      toastError(`${defaultErrorPrefix(def.name)}: ${err.message}`);
+      toastError(fallbackMsg, retry);
     }
   }
 
   function computeRetry(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
     const mode = def.retryable;
     if (mode === undefined || mode === false) return undefined;
+    // Only transport-class failures: explicit code or status 0.
+    // Don't match undefined status (programming errors like TypeError).
     const isNetworkClass =
-      err.status === undefined || err.status === 0 || err.code === "timeout";
+      err.status === 0 || err.code === "network" || err.code === "timeout";
     if (mode === "network" && !isNetworkClass) return undefined;
+    // Snapshot args so mutations after dispatch don't corrupt retry.
+    let frozenArgs: TArgs;
+    try { frozenArgs = structuredClone(args); } catch { frozenArgs = args; }
     return {
-      onClick: () => { void dispatch(args); },
+      onClick: () => { void dispatch(frozenArgs); },
     };
   }
 
