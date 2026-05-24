@@ -22,7 +22,8 @@ import {
   sortEntries, initEditablePath,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { apiPost } from "./api-client.js";
+import { apiPostOrError } from "./api-client.js";
+import { showToast } from "./toast.js";
 export class FileBrowserState {
   currentPath = ".";
   history: string[] = ["."];
@@ -380,10 +381,15 @@ function newFile(): void { createEntry("touch", "new file"); }
 function newFolder(): void { createEntry("mkdir", "new folder"); }
 
 function createEntry(action: "touch" | "mkdir", name: string): void {
-  void apiPost<{ error?: string }>("/api/files/action", {
+  void apiPostOrError<{ error?: string }>("/api/files/action", {
     action, path: joinPath(state.currentPath, name),
-  }).then(async (d) => {
-    if (d === null || d.error !== undefined) return;
+  }).then(async (r) => {
+    if (!r.ok) {
+      const detail = r.error !== "" ? r.error : `HTTP ${String(r.status)}`;
+      const verb = action === "mkdir" ? "create folder" : "create file";
+      showToast(`Couldn't ${verb}: ${detail}`, "error");
+      return;
+    }
     await loadDirAsync();
     startInlineRename(name);
   });
@@ -438,10 +444,15 @@ function startInlineRename(targetName: string): void {
     const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) return;
 
-    void apiPost<{ error?: string }>("/api/files/action", {
+    void apiPostOrError<{ error?: string }>("/api/files/action", {
       action: "rename", path: joinPath(state.currentPath, original), name: newName,
-    }).then((d) => {
-      if (d === null || d.error !== undefined) { span.textContent = original; return; }
+    }).then((r) => {
+      if (!r.ok) {
+        const detail = r.error !== "" ? r.error : `HTTP ${String(r.status)}`;
+        showToast(`Couldn't rename: ${detail}`, "error");
+        span.textContent = original;
+        return;
+      }
       const parentRow = span.closest(".fb-row") as HTMLDivElement | null;
       if (parentRow !== null) {
         parentRow.dataset["name"] = newName;
@@ -481,11 +492,24 @@ function deleteSelected(): void {
       if (names.includes(el.dataset["name"] ?? "")) el.classList.add("fb-row-exiting");
     }
     const promises = names.map((name) =>
-      apiPost("/api/files/action", {
+      apiPostOrError<{ error?: string }>("/api/files/action", {
         action: "delete", path: joinPath(state.currentPath, name),
       }),
     );
-    void Promise.all(promises).then(() => {
+    void Promise.all(promises).then((results) => {
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length > 0) {
+        // Surface the first error message so the user sees why the
+        // delete didn't take. Restore the rows that were optimistically
+        // marked exiting so they don't appear deleted-then-restored.
+        const first = failed[0]!;
+        const detail = first.error !== "" ? first.error : `HTTP ${String(first.status)}`;
+        const word = failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
+        showToast(`${word}: ${detail}`, "error");
+        for (const row of [...$.fbList.children]) {
+          (row as HTMLDivElement).classList.remove("fb-row-exiting");
+        }
+      }
       state.deselectAll();
       setTimeout(loadDir, 200);
     });

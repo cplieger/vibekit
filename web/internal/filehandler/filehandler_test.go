@@ -610,6 +610,19 @@ func TestAction_SecurityRejections(t *testing.T) {
 			pathSuffix: "workspace",
 		},
 		{
+			// Symmetric with delete/top_level_segment: refuse mkdir of
+			// `/foo` so the UI can't create entries it can't undo.
+			name:       "mkdir/top_level_segment",
+			action:     "mkdir",
+			pathSuffix: "newdir",
+		},
+		{
+			// Same symmetry guard for touch.
+			name:       "touch/top_level_segment",
+			action:     "touch",
+			pathSuffix: "new.txt",
+		},
+		{
 			name:             "delete/protected_dir",
 			action:           "delete",
 			pathSuffix:       "config/chats",
