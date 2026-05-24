@@ -284,7 +284,7 @@ function renderHeaderHTML(r: RepoStatus): string {
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
     <span class="git-repo-section-meta">
-      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" title="Switch branch">${branch}</span>${ahead}${behind}${stashes}
+      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" data-tooltip="Switch branch">${branch}</span>${ahead}${behind}${stashes}
     </span>
   `;
 }
@@ -298,7 +298,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     b.type = "button";
     b.className = `btn-small${danger ? " btn-danger" : ""}`;
     b.textContent = label;
-    b.title = title;
+    b.setAttribute("data-tooltip", title);
     return b;
   };
 
@@ -395,13 +395,13 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const status = document.createElement("span");
   status.className = "git-file-status";
   status.textContent = f.display || statusLetter(f.status);
-  status.title = describeStatus(f.status);
+  status.setAttribute("data-tooltip", describeStatus(f.status));
   top.appendChild(status);
 
   const path = document.createElement("span");
   path.className = "git-file-path";
   path.textContent = f.path;
-  path.title = f.path;
+  path.setAttribute("data-tooltip", f.path);
   top.appendChild(path);
 
   const actions = document.createElement("span");
@@ -412,7 +412,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
     b.type = "button";
     b.className = `btn-small${danger ? " btn-danger" : ""}`;
     b.textContent = label;
-    b.title = title;
+    b.setAttribute("data-tooltip", title);
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       void withAsyncFeedback(b, fn);
@@ -574,7 +574,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ai.type = "button";
   ai.className = "btn-small";
   ai.textContent = "✨ AI message";
-  ai.title = "Generate commit message from staged changes";
+  ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
       const res = await apiPost<{ message?: string; error?: string }>(

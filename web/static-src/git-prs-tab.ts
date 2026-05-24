@@ -312,7 +312,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   meta.appendChild(num);
 
   const title = linkOrSpan("git-pr-row-title", pr.title);
-  title.title = pr.title;
+  title.setAttribute("data-tooltip", pr.title);
   meta.appendChild(title);
 
   if (pr.draft === true) {
@@ -345,9 +345,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   merge.textContent = "Merge";
   const mergeReason = computeMergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
-  merge.title = mergeReason !== ""
+  merge.setAttribute("data-tooltip", mergeReason !== ""
     ? `Cannot merge: ${mergeReason}`
-    : "Merge this pull request";
+    : "Merge this pull request");
   merge.addEventListener("click", () => {
     void withAsyncFeedback(merge, async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");

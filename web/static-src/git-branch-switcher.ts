@@ -65,7 +65,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
         row.type = "button";
         row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
         row.textContent = b.name;
-        if (b.current) row.title = "Current branch";
+        if (b.current) row.setAttribute("data-tooltip", "Current branch");
         row.addEventListener("click", () => {
           void doCheckout(repo, b.name, false).finally(() => closePopover());
         });

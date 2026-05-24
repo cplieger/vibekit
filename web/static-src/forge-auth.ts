@@ -248,7 +248,7 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
   addBtn.className = "btn-small forge-kind-add-btn";
   addBtn.dataset["forgeAdd"] = kind;
   addBtn.setAttribute("aria-label", "Add an account");
-  addBtn.title = "Add an account";
+  addBtn.setAttribute("data-tooltip", "Add an account");
   addBtn.innerHTML = ICON_PLUS_16;
   addBtn.addEventListener("click", () => { onAddAccount(kind, section); });
   header.appendChild(addBtn);
@@ -332,7 +332,7 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
     manage.rel = "noreferrer";
     manage.className = "btn-small forge-account-manage";
     manage.innerHTML = `<span>Manage</span>${ICON_EXTERNAL}`;
-    manage.title = "Manage account on forge";
+    manage.setAttribute("data-tooltip", "Manage account on forge");
     manage.setAttribute("aria-label", "Manage account on forge");
     actions.appendChild(manage);
   }
@@ -396,7 +396,7 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
     cloneAllBtn.type = "button";
     cloneAllBtn.className = "btn-small forge-account-repos-clone-all";
     cloneAllBtn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
-    cloneAllBtn.title = `Clone every uncloned repo on this account (${cloneable.length})`;
+    cloneAllBtn.setAttribute("data-tooltip", `Clone every uncloned repo on this account (${cloneable.length})`);
     cloneAllBtn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
     cloneAllBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -411,7 +411,7 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
     deleteAllBtn.type = "button";
     deleteAllBtn.className = "btn-small btn-danger forge-account-repos-delete-all";
     deleteAllBtn.innerHTML = `${ICON_TRASH}<span>${cloned_repos.length}</span>`;
-    deleteAllBtn.title = `Remove every locally-cloned repo on this account (${cloned_repos.length})`;
+    deleteAllBtn.setAttribute("data-tooltip", `Remove every locally-cloned repo on this account (${cloned_repos.length})`);
     deleteAllBtn.setAttribute("aria-label", `Delete ${cloned_repos.length} local clones`);
     deleteAllBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -456,10 +456,10 @@ function renderRepoRow(repo: Repo): HTMLElement {
   const state = document.createElement("span");
   state.className = "forge-account-repo-state";
   if (cloned) {
-    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" title="Cloned and tracked"></span>`;
+    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" data-tooltip="Cloned and tracked"></span>`;
   } else {
     state.innerHTML = ICON_GLOBE;
-    state.title = "Remote, not cloned";
+    state.setAttribute("data-tooltip", "Remote, not cloned");
     state.setAttribute("aria-label", "Remote, not cloned");
   }
   li.appendChild(state);
@@ -495,7 +495,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
     open.rel = "noreferrer";
     open.className = "btn-small icon-only";
     open.innerHTML = ICON_EXTERNAL;
-    open.title = "Open on forge";
+    open.setAttribute("data-tooltip", "Open on forge");
     open.setAttribute("aria-label", "Open on forge");
     actions.appendChild(open);
   }
@@ -505,7 +505,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
     trash.type = "button";
     trash.className = "btn-small btn-danger icon-only";
     trash.innerHTML = ICON_TRASH;
-    trash.title = "Remove local copy";
+    trash.setAttribute("data-tooltip", "Remove local copy");
     trash.setAttribute("aria-label", "Remove local copy");
     trash.addEventListener("click", () => {
       void withAsyncFeedback(trash, () => removeLocalRepo(repo));
@@ -516,7 +516,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
     clone.type = "button";
     clone.className = "btn-small icon-only";
     clone.innerHTML = ICON_DOWNLOAD;
-    clone.title = "Clone into workspace";
+    clone.setAttribute("data-tooltip", "Clone into workspace");
     clone.setAttribute("aria-label", "Clone into workspace");
     clone.addEventListener("click", () => {
       void withAsyncFeedback(clone, () => cloneRepo(repo.clone_url ?? ""));
