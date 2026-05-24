@@ -245,7 +245,7 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.className = "icon-btn forge-kind-add-btn";
+  addBtn.className = "btn-small forge-kind-add-btn";
   addBtn.dataset["forgeAdd"] = kind;
   addBtn.setAttribute("aria-label", "Add an account");
   addBtn.title = "Add an account";

@@ -118,12 +118,13 @@
 }
 
 /* The "+" add-account button sits at the right edge of the header
- * row, vertically centered. */
+ * row, vertically centered. Square shape (overrides btn-small's
+ * wider horizontal padding) so the icon doesn't stretch the button. */
 .forge-kind-add-btn {
   margin-inline-start: auto;
   flex-shrink: 0;
-  width: 24px; height: 24px;
-  display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--sp-1);
+  min-width: var(--btn-h);
 }
 
 .forge-kind-add-btn svg { width: 14px; height: 14px; }
