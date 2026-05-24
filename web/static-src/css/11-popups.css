@@ -33,19 +33,19 @@
 
 .vk-toast-stack {
   position: fixed;
-  inset-block-end: var(--sp-4);
-  inset-inline-end: var(--sp-4);
-  display: flex; flex-direction: column-reverse;
+  inset-block-end: max(var(--sp-4), env(safe-area-inset-bottom, 0));
+  inset-inline-end: max(var(--sp-4), env(safe-area-inset-right, 0));
+  display: flex; flex-direction: column-reverse;  /* newest at bottom */
   gap: var(--sp-2);
   z-index: 1000;
   pointer-events: none;
-  /* Sit above the iOS home-indicator safe area on mobile. */
-  padding-block-end: env(safe-area-inset-bottom, 0);
   max-width: min(24rem, calc(100vw - 2 * var(--sp-4)));
 }
 
 .vk-toast {
   pointer-events: auto;
+  position: relative;
+  overflow: hidden;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -54,14 +54,18 @@
   color: var(--c-text-primary);
   box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, black 25%, transparent);
   cursor: pointer;
+  word-wrap: break-word;
   /* Enter animation: slide up + fade in. */
   opacity: 0;
   transform: translateY(0.5rem);
   transition:
     opacity   var(--dur-standard) var(--ease-enter),
     transform var(--dur-standard) var(--ease-enter);
-  /* Wrap long error messages instead of clipping. */
-  word-wrap: break-word;
+}
+
+.vk-toast:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 
 .vk-toast-shown {
@@ -71,15 +75,66 @@
 
 .vk-toast-leaving {
   opacity: 0;
-  transform: translateY(0.5rem);
+  transform: translateX(0.5rem);
 }
 
+/* Solid-color variants for high-attention states. Errors and success
+ * messages need to be visually distinct from regular UI; outlined
+ * variants (used in inline form errors) blend in too much for an
+ * ephemeral notification. */
 .vk-toast-error {
-  border-color: var(--c-red);
-  color: var(--c-red);
+  background: var(--c-red);
+  color: white;
+  border-color: transparent;
 }
 
 .vk-toast-success {
-  border-color: var(--c-green);
-  color: var(--c-green);
+  background: var(--c-green);
+  color: white;
+  border-color: transparent;
+}
+
+.vk-toast-msg {
+  /* Sit above the progress bar so text is never clipped. */
+  position: relative;
+  z-index: 1;
+}
+
+/* Progress bar: visual countdown of remaining auto-dismiss time. The
+ * width transitions from 100% -> 0% over the toast's duration; on
+ * hover/focus the timer pauses and we freeze the width via JS. */
+.vk-toast-progress {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: 0;
+  width: 100%;
+  height: 2px;
+  background: color-mix(in srgb, white 50%, transparent);
+  transition: width linear;  /* duration set inline */
+  pointer-events: none;
+}
+
+/* Default / info variant: progress bar uses text color since the
+ * background isn't a solid accent color. */
+.vk-toast:not(.vk-toast-error, .vk-toast-success) .vk-toast-progress {
+  background: color-mix(in srgb, var(--c-text-primary) 30%, transparent);
+}
+
+/* Respect prefers-reduced-motion. WCAG SC 2.3.3 + general respect for
+ * vestibular sensitivity: skip the slide+scale animation, keep just
+ * a quick opacity fade. The progress bar would also be a moving
+ * element, so hide it when reduced-motion is preferred — the timer
+ * still fires, just without visual countdown. */
+@media (prefers-reduced-motion: reduce) {
+  .vk-toast {
+    transition: opacity var(--dur-micro);
+    transform: none;
+  }
+  .vk-toast-shown,
+  .vk-toast-leaving {
+    transform: none;
+  }
+  .vk-toast-progress {
+    display: none;
+  }
 }
