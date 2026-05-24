@@ -394,9 +394,10 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
   if (cloneable.length > 0) {
     const cloneAllBtn = document.createElement("button");
     cloneAllBtn.type = "button";
-    cloneAllBtn.className = "btn-small forge-account-repos-clone-all";
-    cloneAllBtn.textContent = `Clone all (${cloneable.length})`;
-    cloneAllBtn.title = `Clone every uncloned repo on this account`;
+    cloneAllBtn.className = "btn-small btn-primary forge-account-repos-clone-all";
+    cloneAllBtn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
+    cloneAllBtn.title = `Clone every uncloned repo on this account (${cloneable.length})`;
+    cloneAllBtn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
     cloneAllBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
@@ -409,8 +410,9 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
     const deleteAllBtn = document.createElement("button");
     deleteAllBtn.type = "button";
     deleteAllBtn.className = "btn-small btn-danger forge-account-repos-delete-all";
-    deleteAllBtn.textContent = `Delete all (${cloned_repos.length})`;
-    deleteAllBtn.title = `Remove every locally-cloned repo on this account`;
+    deleteAllBtn.innerHTML = `${ICON_TRASH}<span>${cloned_repos.length}</span>`;
+    deleteAllBtn.title = `Remove every locally-cloned repo on this account (${cloned_repos.length})`;
+    deleteAllBtn.setAttribute("aria-label", `Delete ${cloned_repos.length} local clones`);
     deleteAllBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
@@ -546,7 +548,7 @@ async function cloneAllForAccount(
   btn: HTMLButtonElement,
 ): Promise<void> {
   if (candidates.length === 0) return;
-  const originalLabel = btn.textContent ?? "Clone all";
+  const originalHTML = btn.innerHTML;
   let done = 0;
   for (const repo of candidates) {
     btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
@@ -561,7 +563,7 @@ async function cloneAllForAccount(
     }
     done++;
   }
-  btn.textContent = originalLabel;
+  btn.innerHTML = originalHTML;
   await renderForgesPanel({ revalidate: false });
 }
 
@@ -581,7 +583,7 @@ async function deleteAllForAccount(
   );
   if (!ok) return;
 
-  const originalLabel = btn.textContent ?? "Delete all";
+  const originalHTML = btn.innerHTML;
   let done = 0;
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
@@ -592,7 +594,7 @@ async function deleteAllForAccount(
     }
     done++;
   }
-  btn.textContent = originalLabel;
+  btn.innerHTML = originalHTML;
   await renderForgesPanel({ revalidate: false });
 }
 
