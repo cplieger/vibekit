@@ -110,17 +110,43 @@ function renderRepoListForKind(kind: ForgeKind, forges: ConfiguredForge[]): HTML
   section.className = "git-sources-repos";
   section.dataset["kind"] = kind;
 
+  // Heading row: title on the left + "Clone all" affordance on the
+  // right. Clone all is disabled when there are no uncloned repos
+  // in this section.
+  const headingRow = document.createElement("div");
+  headingRow.className = "git-sources-repos-heading-row";
   const heading = document.createElement("h3");
   heading.className = "git-sources-repos-heading";
   heading.textContent = `${kindTitle(kind)} repositories`;
-  section.appendChild(heading);
-
-  const list = document.createElement("ul");
-  list.className = "git-sources-repo-list";
+  headingRow.appendChild(heading);
 
   const allRepos = forges.flatMap((f) =>
     (lastReposByForge[f.id] ?? []).map((r) => ({ forge: f, repo: r })),
   );
+  const cloneable = allRepos.filter(
+    ({ repo }) =>
+      !lastLocalNames.has(repo.name) &&
+      typeof repo.clone_url === "string" &&
+      repo.clone_url !== "",
+  );
+
+  const cloneAllBtn = document.createElement("button");
+  cloneAllBtn.type = "button";
+  cloneAllBtn.className = "btn-small";
+  cloneAllBtn.textContent = "Clone all";
+  cloneAllBtn.disabled = cloneable.length === 0;
+  cloneAllBtn.title = cloneable.length === 0
+    ? "No remote-only repos to clone"
+    : `Clone ${cloneable.length} repo${cloneable.length === 1 ? "" : "s"}`;
+  cloneAllBtn.addEventListener("click", () => {
+    void withAsyncFeedback(cloneAllBtn, () => cloneAllForKind(kind, cloneable, cloneAllBtn));
+  });
+  headingRow.appendChild(cloneAllBtn);
+  section.appendChild(headingRow);
+
+  const list = document.createElement("ul");
+  list.className = "git-sources-repo-list";
+
   if (allRepos.length === 0) {
     const empty = document.createElement("li");
     empty.className = "git-sources-repo-empty";
@@ -234,6 +260,49 @@ async function cloneRepo(url: string): Promise<void> {
   await refreshSources();
   if (res === null) throw new Error("network error");
   if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+}
+
+/** Clone every uncloned remote-only repo under this forge kind,
+ *  sequentially. Visible feedback is on the Clone all button itself
+ *  (disabled + count label). Per-repo failures don't abort the
+ *  batch — partial success beats none. After the loop, a single
+ *  refresh redraws the section in its new cloned state, so failed
+ *  rows still show as remote-only with their Clone button. */
+async function cloneAllForKind(
+  kind: ForgeKind,
+  candidates: Array<{ forge: ConfiguredForge; repo: Repo }>,
+  btn: HTMLButtonElement,
+): Promise<void> {
+  if (candidates.length === 0) return;
+  void kind; // Reserved for future per-kind hooks (e.g. logging).
+  const originalLabel = btn.textContent ?? "Clone all";
+  let done = 0;
+  let failed = 0;
+  for (const { repo } of candidates) {
+    btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
+    try {
+      const url = repo.clone_url ?? "";
+      if (url === "") {
+        failed++;
+        continue;
+      }
+      const res = await apiPost<{ output?: string; error?: string }>(
+        `/api/git/clone`,
+        { url },
+      );
+      if (res === null || (res.error !== undefined && res.error !== "")) {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+    done++;
+  }
+  btn.textContent = originalLabel;
+  await refreshSources();
+  if (failed > 0) {
+    btn.title = `Cloned ${candidates.length - failed}, ${failed} failed`;
+  }
 }
 
 async function removeLocal(repo: Repo, hasRemote: boolean): Promise<void> {

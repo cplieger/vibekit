@@ -531,6 +531,11 @@ a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
   border-block-start: 1px dashed var(--c-border);
 }
 
+.git-sources-repos-heading-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+}
+
 .git-sources-repos-heading {
   margin: 0;
   font-size: var(--fs-sm);
