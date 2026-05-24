@@ -70,7 +70,7 @@ import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurnAction } from "./actions/chat.js";
-import { initErrorTail } from "./actions/index.js";
+import { initActionConsoleLog } from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -167,10 +167,10 @@ function init(): void {
     sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
   });
 
-  // Action-framework global features. Subscribes to the registry to
-  // persist the last 20 errors (metadata only) to localStorage for a
-  // future bug-report flow.
-  initErrorTail();
+  // Action-framework global: live-log every action error to the
+  // browser console so failures are visible in DevTools regardless of
+  // toast policy (suppressed-toast actions still get logged).
+  initActionConsoleLog();
 
   void checkAuthAndStart();
 }
