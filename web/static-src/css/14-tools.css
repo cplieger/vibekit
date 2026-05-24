@@ -482,14 +482,42 @@
 /* Primary variant for .btn-small: used by the editor's Accept button
  * for staged Supervised-mode writes. Picks up the accent colour to
  * typing the primary action more legibly than the default ghost. */
-.btn-small.primary {
+.btn-small.primary,
+.btn-small.btn-primary {
   background: var(--c-accent);
   color: #fff;
   border-color: var(--c-accent);
 }
 
-.btn-small.primary:hover {
+.btn-small.primary:hover,
+.btn-small.btn-primary:hover {
   filter: brightness(1.08);
+}
+
+/* Destructive variant for .btn-small: outlined red. Same family as
+ * .icon-btn.danger but with chrome (border + padding) so it sits at
+ * the same visual weight as other btn-small buttons in the row.
+ * Used by Sign out, Discard, Close PR, and the per-repo Trash button. */
+.btn-small.btn-danger {
+  color: var(--c-red);
+  border-color: var(--c-red);
+}
+
+.btn-small.btn-danger:hover {
+  background: color-mix(in srgb, var(--c-red) 15%, transparent);
+  color: var(--c-red);
+}
+
+.btn-small.btn-danger:disabled,
+.btn-small.btn-danger:disabled:hover {
+  background: transparent;
+}
+
+/* Icon-only modifier: square padding so an inline SVG sits centered
+ * without horizontal stretch from the default --sp-3 horizontal pad. */
+.btn-small.icon-only {
+  padding: var(--sp-1);
+  min-width: var(--btn-h);
 }
 
 /* Loading button: spinner before label, pointer-events disabled */

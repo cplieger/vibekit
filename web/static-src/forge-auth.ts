@@ -384,12 +384,13 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
     <span class="forge-account-repos-label">${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally</span>
   `;
 
-  // Right-aligned "Clone all" inside the summary. Only when there
-  // are uncloned repos with a clone_url. Click stops propagation so
-  // it doesn't toggle the <details>.
+  // Right-aligned actions inside the summary. Click stops
+  // propagation so they don't toggle the <details>.
   const cloneable = repos.filter((r) =>
     !lastLocalNames.has(r.name) &&
     typeof r.clone_url === "string" && r.clone_url !== "");
+  const cloned_repos = repos.filter((r) => lastLocalNames.has(r.name));
+
   if (cloneable.length > 0) {
     const cloneAllBtn = document.createElement("button");
     cloneAllBtn.type = "button";
@@ -402,6 +403,20 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
       void withAsyncFeedback(cloneAllBtn, () => cloneAllForAccount(cloneable, cloneAllBtn));
     });
     summary.appendChild(cloneAllBtn);
+  }
+
+  if (cloned_repos.length > 0) {
+    const deleteAllBtn = document.createElement("button");
+    deleteAllBtn.type = "button";
+    deleteAllBtn.className = "btn-small btn-danger forge-account-repos-delete-all";
+    deleteAllBtn.textContent = `Delete all (${cloned_repos.length})`;
+    deleteAllBtn.title = `Remove every locally-cloned repo on this account`;
+    deleteAllBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      void withAsyncFeedback(deleteAllBtn, () => deleteAllForAccount(cloned_repos, deleteAllBtn));
+    });
+    summary.appendChild(deleteAllBtn);
   }
 
   details.appendChild(summary);
@@ -476,7 +491,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
     open.href = repo.url;
     open.target = "_blank";
     open.rel = "noreferrer";
-    open.className = "icon-btn";
+    open.className = "btn-small icon-only";
     open.innerHTML = ICON_EXTERNAL;
     open.title = "Open on forge";
     open.setAttribute("aria-label", "Open on forge");
@@ -486,7 +501,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
   if (cloned) {
     const trash = document.createElement("button");
     trash.type = "button";
-    trash.className = "icon-btn danger";
+    trash.className = "btn-small btn-danger icon-only";
     trash.innerHTML = ICON_TRASH;
     trash.title = "Remove local copy";
     trash.setAttribute("aria-label", "Remove local copy");
@@ -497,7 +512,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
     const clone = document.createElement("button");
     clone.type = "button";
-    clone.className = "icon-btn";
+    clone.className = "btn-small btn-primary icon-only";
     clone.innerHTML = ICON_DOWNLOAD;
     clone.title = "Clone into workspace";
     clone.setAttribute("aria-label", "Clone into workspace");
@@ -543,6 +558,37 @@ async function cloneAllForAccount(
     } catch {
       // Swallow per-repo errors; the post-batch refresh will show
       // which ones still appear as remote-only.
+    }
+    done++;
+  }
+  btn.textContent = originalLabel;
+  await renderForgesPanel({ revalidate: false });
+}
+
+/** Remove the local copy of every cloned repo accessible to one
+ *  account. One bulk confirm up-front (this is destructive); then
+ *  sequential per-repo /api/git/remove. Same partial-success
+ *  semantics as cloneAllForAccount. */
+async function deleteAllForAccount(
+  candidates: Repo[],
+  btn: HTMLButtonElement,
+): Promise<void> {
+  if (candidates.length === 0) return;
+  const ok = await confirmDialog(
+    `Delete the local copy of ${candidates.length} repo${candidates.length === 1 ? "" : "s"}? The remotes stay intact; you can re-clone any of them later.`,
+    "Delete all",
+    "destructive",
+  );
+  if (!ok) return;
+
+  const originalLabel = btn.textContent ?? "Delete all";
+  let done = 0;
+  for (const repo of candidates) {
+    btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
+    try {
+      await apiPost<{ output?: string; error?: string }>(`/api/git/remove`, { repo: repo.name });
+    } catch {
+      // Swallow per-repo errors; post-batch refresh shows truth.
     }
     done++;
   }
