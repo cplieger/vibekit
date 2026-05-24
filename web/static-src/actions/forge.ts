@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import type { DeviceFlowResponse } from "../wire/types.gen.js";
 
 // --- Types local to this slice ---
 
@@ -22,18 +23,11 @@ export interface SignOutArgs {
 
 export interface StartDeviceFlowArgs {}
 
-interface DeviceFlowResponse {
-  user_code: string;
-  verification_uri: string;
-  device_code: string;
-  interval: number;
-  expires_in: number;
-}
-
 // --- Actions ---
 
 /** Start the GitHub OAuth device flow. Returns the device flow
- *  response on success or null on failure (toast fires). */
+ *  response on success or null on failure. Error toast suppressed —
+ *  the callsite renders inline status instead. */
 export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   request: () => ({
@@ -41,11 +35,11 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
     path: "/api/forges/oauth/github/start",
     body: {},
   }),
-  error: "Couldn't start device flow",
+  error: false,
 });
 
 /** Sign out of a forge account (delete the token). */
-export const signOut = apiAction<SignOutArgs, unknown>({
+export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
   request: ({ forgeId }) => ({
     method: "DELETE",

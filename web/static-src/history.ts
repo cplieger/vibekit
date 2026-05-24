@@ -62,7 +62,9 @@ class HistoryController {
 
     const d = await loadHistoryAction.dispatch(undefined);
     if (signal.aborted) return;
-    const chats = d?.chats ?? [];
+    // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
+    if (d === null) return;
+    const chats = d.chats ?? [];
     if (chats.length === 0) {
       const empty = document.createElement("div");
       empty.className = "list-empty";
@@ -108,6 +110,8 @@ class HistoryController {
       container.appendChild(row);
     }
 
+    // Bug 1: Use signal-bound listener so it's automatically removed on next
+    // loadHistoryTable call (which aborts historyController).
     container.addEventListener("click", (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
       if (target === null) return;
@@ -116,20 +120,21 @@ class HistoryController {
       const chatId = row.getAttribute("data-chat-id")!;
       const action = target.getAttribute("data-action");
       if (action === "restore") {
+        // Bug 4: optimistic-remove the row to prevent double-click dispatches.
+        row.remove();
         restoreArchivedChat(chatId);
       } else if (action === "delete") {
-        void deleteArchivedChatAction.dispatch(chatId).then((result) => {
-          if (result === null) return; // toast already fired
-          row.remove();
-          if (container.children.length === 0) {
-            const empty = document.createElement("div");
-            empty.className = "list-empty";
-            empty.textContent = "No archived chats.";
-            container.appendChild(empty);
-          }
-        });
+        // Bug 4: optimistic-remove the row on click.
+        row.remove();
+        if (container.children.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "list-empty";
+          empty.textContent = "No archived chats.";
+          container.appendChild(empty);
+        }
+        void deleteArchivedChatAction.dispatch(chatId);
       }
-    });
+    }, { signal });
   }
 
   async loadArchived(): Promise<void> {
@@ -187,6 +192,7 @@ class HistoryController {
       list.appendChild(row);
     }
 
+    // Bug 1: Use signal-bound listener so it's removed on next loadArchived call.
     list.addEventListener("click", (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
       if (target === null) return;
@@ -194,10 +200,11 @@ class HistoryController {
       if (row === null) return;
       const chatId = row.getAttribute("data-chat-id")!;
       if (target.getAttribute("data-action") === "restore") {
-        restoreArchivedChat(chatId);
+        // Bug 4: optimistic-remove row to prevent double-click.
         row.remove();
+        restoreArchivedChat(chatId);
       }
-    });
+    }, { signal });
   }
 
   refreshVisibility(): void {

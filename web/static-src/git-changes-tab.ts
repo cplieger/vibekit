@@ -17,9 +17,23 @@ import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import {
-  stageAll, discardAll, pull, push, stash, stashPop,
-  stageFile, unstageFile, discardFile, commit as commitAction, generateCommitMessage,
+  stage, discard, pull, push, stash, stashPop,
+  unstage, commit as commitAction, generateCommitMessage,
 } from "./actions/git-changes.js";
+
+// --- Helpers for withAsyncFeedback ---
+
+/** Throw if an action dispatch returned null (failure already toasted). */
+function assertOk(result: unknown): void {
+  if (result === null) throw new Error("action failed");
+}
+
+/** Sentinel thrown when user cancels a confirm dialog. Makes
+ *  withAsyncFeedback show ✗ without triggering a toast (the action
+ *  framework already suppresses toasts for user-initiated cancels). */
+class CancelledError extends Error {
+  constructor() { super("cancelled"); }
+}
 
 // --- Wire types ---
 
@@ -311,8 +325,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     const files = r.files.filter((f) => !f.staged).map((f) => f.path);
     if (files.length === 0) return;
     void withAsyncFeedback(stageAllBtn, async () => {
-      const ok = await stageAll.dispatch({ repo: r.repo, files });
-      if (ok === null) throw new Error("failed");
+      assertOk(await stage.dispatch({ repo: r.repo, files }));
       await refreshChanges();
     });
   });
@@ -320,7 +333,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
   discardAllBtn.addEventListener("click", () => {
-    void withAsyncFeedback(discardAllBtn, async () => {
+    void (async () => {
       const ok = await confirmDialog(
         `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
         "Discard",
@@ -329,10 +342,11 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       if (!ok) return;
       const files = r.files.map((f) => f.path);
       if (files.length === 0) return;
-      const res = await discardAll.dispatch({ repo: r.repo, files });
-      if (res === null) throw new Error("failed");
-      await refreshChanges();
-    });
+      await withAsyncFeedback(discardAllBtn, async () => {
+        assertOk(await discard.dispatch({ repo: r.repo, files }));
+        await refreshChanges();
+      });
+    })();
   });
   bar.appendChild(discardAllBtn);
 
@@ -344,8 +358,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   const pullBtn = btn("Pull", "git pull");
   pullBtn.addEventListener("click", () => {
     void withAsyncFeedback(pullBtn, async () => {
-      const ok = await pull.dispatch({ repo: r.repo });
-      if (ok === null) throw new Error("failed");
+      assertOk(await pull.dispatch({ repo: r.repo }));
       await refreshChanges();
     });
   });
@@ -356,8 +369,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     pushBtn.classList.add("btn-primary");
     pushBtn.addEventListener("click", () => {
       void withAsyncFeedback(pushBtn, async () => {
-        const ok = await push.dispatch({ repo: r.repo });
-        if (ok === null) throw new Error("failed");
+        assertOk(await push.dispatch({ repo: r.repo }));
         // Mark for "Open PR" hint surfacing on next renders.
         recentlyPushed.add(r.repo);
         setTimeout(() => {
@@ -373,8 +385,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   const stashBtn = btn("Stash", "Stash uncommitted changes");
   stashBtn.addEventListener("click", () => {
     void withAsyncFeedback(stashBtn, async () => {
-      const ok = await stash.dispatch({ repo: r.repo });
-      if (ok === null) throw new Error("failed");
+      assertOk(await stash.dispatch({ repo: r.repo }));
       await refreshChanges();
     });
   });
@@ -384,8 +395,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     const pop = btn("Pop", "Pop the most recent stash");
     pop.addEventListener("click", () => {
       void withAsyncFeedback(pop, async () => {
-        const ok = await stashPop.dispatch({ repo: r.repo });
-        if (ok === null) throw new Error("failed");
+        assertOk(await stashPop.dispatch({ repo: r.repo }));
         await refreshChanges();
       });
     });
@@ -447,23 +457,20 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   if (f.staged) {
     actions.appendChild(action("Unstage", "Move out of staged area",
       async () => {
-        const ok = await unstageFile.dispatch({ repo: r.repo, files: [f.path] });
-        if (ok === null) throw new Error("failed");
+        assertOk(await unstage.dispatch({ repo: r.repo, files: [f.path] }));
         await refreshChanges();
       }));
   } else {
     actions.appendChild(action("Stage", "Add to staged area",
       async () => {
-        const ok = await stageFile.dispatch({ repo: r.repo, files: [f.path] });
-        if (ok === null) throw new Error("failed");
+        assertOk(await stage.dispatch({ repo: r.repo, files: [f.path] }));
         await refreshChanges();
       }));
     actions.appendChild(action("Discard", "Throw away this change",
       async () => {
         const ok = await confirmDialog(`Discard changes to ${f.path}? This cannot be undone.`, "Discard", "destructive");
-        if (!ok) return;
-        const res = await discardFile.dispatch({ repo: r.repo, files: [f.path] });
-        if (res === null) throw new Error("failed");
+        if (!ok) throw new CancelledError();
+        assertOk(await discard.dispatch({ repo: r.repo, files: [f.path] }));
         await refreshChanges();
       }, true));
   }
@@ -613,8 +620,8 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
-      if (msg === null) throw new Error("failed");
-      ta.value = msg;
+      assertOk(msg);
+      ta.value = (msg as { message?: string }).message ?? "";
     });
   });
   row.appendChild(ai);
@@ -629,8 +636,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
       if (message === "") {
         throw new Error("Commit message required");
       }
-      const ok = await commitAction.dispatch({ repo: r.repo, message });
-      if (ok === null) throw new Error("failed");
+      assertOk(await commitAction.dispatch({ repo: r.repo, message }));
       ta.value = "";
       await refreshChanges();
     });

@@ -147,20 +147,7 @@ function init(): void {
   };
   onRetentionChange(syncHistoryBtn);
   syncHistoryBtn();
-  // Fork pill (in-chat, per-conversation). Hidden until store has an
-  // active chat; shown alongside the other per-conversation pills.
-  const forkPill = document.getElementById("fork-pill") as HTMLButtonElement | null;
-  const syncForkPillVisibility = (): void => {
-    if (forkPill === null) return;
-    forkPill.classList.toggle("hidden", getActiveId() === "");
-  };
-  effect(() => { version.value; syncForkPillVisibility(); });
-  syncForkPillVisibility();
-  forkPill?.addEventListener("click", () => {
-    const id = getActiveId();
-    if (id === "") return;
-    void import("./tangent.js").then((m) => { m.forkCurrentChat(id); });
-  });
+  // Fork pill visibility + click is owned by tangent.ts (initTangent).
   initAwaySummary();
   initAgentTerminals();
   initTooltips();

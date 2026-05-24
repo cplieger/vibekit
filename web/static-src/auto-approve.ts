@@ -56,8 +56,5 @@ function toggle(): void {
   const session = getActive();
   if (session === undefined) return;
   const newValue = !session.auto_approve_crew;
-  // Optimistic update so the pill flips immediately.
-  session.auto_approve_crew = newValue;
-  render();
   void setAutoApproveCrewAction.dispatch({ chatID: session.id, enabled: newValue });
 }

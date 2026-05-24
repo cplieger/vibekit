@@ -18,7 +18,7 @@
 // .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
-import { getActive, setSupervisedMode, version } from "./store.js";
+import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
@@ -125,9 +125,7 @@ class SupervisedPillController {
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
-      setSupervisedMode(this.currentChatID(), enabled);
       void setSupervisedAction.dispatch({ chatID: this.currentChatID(), enabled });
-      this.render();
     });
 
     // Trusted-this-turn short-circuit.

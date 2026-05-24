@@ -336,8 +336,11 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
     if (text === "") return;
     const chatID = getActiveId();
     if (chatID === "") return;
-    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text });
+    const saved = input.value;
     input.value = "";
+    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }).then((result) => {
+      if (result === null) input.value = saved;
+    });
   };
   sendBtn.addEventListener("click", doSend);
   input.addEventListener("keydown", (e) => {

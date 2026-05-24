@@ -14,7 +14,7 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands,
+  setAvailableCommands, version,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -95,11 +95,14 @@ onSSE("steering_loaded", (chatID, payload) => {
   if (chatID === "" || getActiveId() !== chatID) return;
   const docs = payload.documents;
   if (docs.length === 0) return;
+  const msgs = document.getElementById("messages");
+  if (msgs === null) return;
+  // Dedup: skip if a steering-badge already exists for this chat
+  if (msgs.querySelector(".steering-badge") !== null) return;
   const badge = document.createElement("div");
   badge.className = "steering-badge";
   badge.textContent = `Context loaded: ${docs.join(", ")}`;
-  const msgs = document.getElementById("messages");
-  if (msgs !== null) msgs.appendChild(badge);
+  msgs.appendChild(badge);
 });
 
 // checkpoint_restored arrives after the server rolls the workspace back
@@ -126,5 +129,6 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     // refetches from scratch.
     s.messages = [];
     s.has_more = false;
+    version.value = version.peek() + 1;
   }
 });

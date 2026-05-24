@@ -26,6 +26,9 @@ const X_HTML =
   'stroke="currentColor" stroke-width="3" stroke-linecap="round" ' +
   'aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
 
+/** WeakMap to track pending reset timers per button. */
+const resetTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+
 export interface AsyncFeedbackOptions {
   /** Override the post-completion glyph hold (ms). Default 1200. */
   resetMs?: number;
@@ -44,7 +47,15 @@ export async function withAsyncFeedback(
   fn: () => Promise<unknown>,
   opts: AsyncFeedbackOptions = {},
 ): Promise<void> {
-  if (btn.dataset["asyncStatus"] === "pending") return;
+  // Bug 3: reject on any active status (pending, success, error display)
+  if (btn.dataset["asyncStatus"] !== undefined) return;
+
+  // Bug 4: cancel any pending reset timer from a prior cycle
+  const prevTimer = resetTimers.get(btn);
+  if (prevTimer !== undefined) {
+    clearTimeout(prevTimer);
+    resetTimers.delete(btn);
+  }
 
   const origHTML = btn.innerHTML;
   const origDisabled = btn.disabled;
@@ -76,7 +87,8 @@ export async function withAsyncFeedback(
   btn.innerHTML = ok ? CHECK_HTML : X_HTML;
 
   const reset = opts.resetMs ?? RESET_MS;
-  setTimeout(() => {
+  const timerId = setTimeout(() => {
+    resetTimers.delete(btn);
     if (!btn.isConnected) return;
     btn.innerHTML = origHTML;
     btn.disabled = origDisabled;
@@ -84,4 +96,5 @@ export async function withAsyncFeedback(
     else btn.setAttribute("aria-busy", origAriaBusy);
     delete btn.dataset["asyncStatus"];
   }, reset);
+  resetTimers.set(btn, timerId);
 }

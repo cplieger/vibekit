@@ -12,14 +12,14 @@ import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 
 /** Resolve the active pending-change tab. Works for both Accept and
  *  Reject; the server handles the rest. Closes the tab on success. */
-export function resolveActivePending(action: "accept" | "reject"): void {
+export async function resolveActivePending(action: "accept" | "reject"): Promise<void> {
   const state = fileStates.get(getActiveFilePathInternal());
   if (state === undefined) return;
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  closeFile(path);
-  void resolvePending.dispatch({ chatID, toolCallID, action });
+  const result = await resolvePending.dispatch({ chatID, toolCallID, action });
+  if (result !== null) closeFile(path);
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */
@@ -66,8 +66,8 @@ export async function applyActivePendingPartial(): Promise<void> {
     return;
   }
   const path = state.path;
-  closeFile(path);
-  await resolvePendingPartial.dispatch({ chatID, toolCallID, mergedText: merged });
+  const result = await resolvePendingPartial.dispatch({ chatID, toolCallID, mergedText: merged });
+  if (result !== null) closeFile(path);
 }
 
 /** @internal Exported for testing. */

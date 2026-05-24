@@ -72,6 +72,9 @@ onSSE("turn_ended", (chatID, p) => {
       const leftSlot = actionsRow.querySelector(".turn-actions-summary");
       if (leftSlot !== null) leftSlot.textContent = summaryText;
     } else if (lastMsg !== undefined) {
+      // Dedup: skip if a turn-summary already follows this message
+      const nextEl = lastMsg.nextElementSibling;
+      if (nextEl !== null && nextEl.classList.contains("turn-summary")) return;
       // Fallback (pre-rename path or turn with no rendered actions).
       const summary = document.createElement("div");
       summary.className = "turn-summary";
@@ -106,6 +109,9 @@ onSSE("turn_ended", (chatID, p) => {
     // Insert after the turn summary (or after the last assistant message).
     const msgs = document.getElementById("messages");
     if (msgs !== null) {
+      // Dedup: skip if a turn-file-changes already exists as the last entry
+      const existing = msgs.lastElementChild;
+      if (existing !== null && existing.classList.contains("turn-file-changes")) return;
       const lastChild = msgs.lastElementChild;
       if (lastChild !== null) {
         lastChild.insertAdjacentElement("afterend", banner);

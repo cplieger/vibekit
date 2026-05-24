@@ -107,6 +107,13 @@ export class ShellWS {
       return;
     }
 
+    // Bug 5: if disconnect() fired while openSocket was in-flight,
+    // state is now 'closed'. Close the newly opened socket and bail.
+    if ((this.state as ShellWSState).kind === "closed") {
+      sock.close();
+      return;
+    }
+
     this.state = { kind: "connected", ws: sock };
     this.cancelReconnect();
     this.callbacks?.onOpen();

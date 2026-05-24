@@ -1,10 +1,12 @@
 // Actions for chat lifecycle: delete, archive, restore, discard tangent,
 // load history, delete archived, cancel, switch model, resolve pending
-// change, permission response, restore checkpoint.
+// change, resolve all pending, permission response, restore checkpoint,
+// fork, merge tangent, set supervised, set auto-approve crew, trust
+// pending, clear pending trust.
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking } from "../store.js";
+import { get, setThinking, setSupervisedMode, version } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -12,17 +14,8 @@ import { send as transportSend } from "../transport.js";
 export const deleteChatAction = transportAction<string>({
   name: "chat.delete",
   command: (id) => ({ type: "delete_chat", chat_id: id }),
-  optimistic: (id) => {
-    const session = get(id);
-    return session !== undefined ? { ...session } : undefined;
-  },
-  rollback: (_id, op) => {
-    // Rollback not feasible without re-inserting into store; the SSE
-    // chat_deleted handler is the canonical removal path. Since
-    // transport failures are rare and the server echoes back, we
-    // accept the race. A full rollback would require re-adding to
-    // _sessions which isn't exposed. Log only.
-  },
+  // No optimistic: SSE chat_deleted is the canonical removal path.
+  // A rollback would require re-inserting into _sessions which isn't exposed.
   error: "Couldn't delete chat",
 });
 
@@ -56,6 +49,18 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
     chat_id: chatID,
     payload: { enabled },
   }),
+  optimistic: ({ chatID, enabled }) => {
+    const session = get(chatID);
+    if (session === undefined) return undefined;
+    const prev = session.supervised_mode;
+    setSupervisedMode(chatID, enabled);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
+      setSupervisedMode(chatID, (op as { prev: boolean }).prev);
+    }
+  },
   error: "Couldn't update supervised mode",
 });
 
@@ -116,6 +121,22 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     chat_id: chatID,
     payload: { enabled },
   }),
+  optimistic: ({ chatID, enabled }) => {
+    const session = get(chatID);
+    if (session === undefined) return undefined;
+    const prev = session.auto_approve_crew;
+    session.auto_approve_crew = enabled;
+    version.value = version.peek() + 1;
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    const session = get(chatID);
+    if (session === undefined) return;
+    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
+      session.auto_approve_crew = (op as { prev: boolean }).prev;
+      version.value = version.peek() + 1;
+    }
+  },
   error: "Couldn't update auto-approve",
 });
 
@@ -144,20 +165,9 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 
 // --- chat.load_history ---
 
-export const loadHistoryAction = defineAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
+export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
-  run: async (_args, signal) => {
-    const r = await fetch("/api/chats/archived", { signal });
-    if (!r.ok) {
-      let serverError = "";
-      try {
-        const body = (await r.json()) as { error?: string };
-        if (typeof body.error === "string") serverError = body.error;
-      } catch { /* ignore */ }
-      throw new ActionError(serverError || `HTTP ${String(r.status)}`, { status: r.status });
-    }
-    return (await r.json()) as { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> };
-  },
+  request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
 });
 
@@ -170,18 +180,26 @@ export const cancelTurnAction = transportAction<string>({
 });
 
 // --- chat.switch_model ---
+// Uses defineAction because: (1) caller needs boolean return, (2) setThinking
+// is a loading indicator (set on start, cleared on completion), not an optimistic
+// mutation. transportAction's optimistic/rollback pattern doesn't fit this lifecycle.
 
 export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
   name: "chat.switch_model",
   run: async ({ chatID, model }, signal) => {
-    if (chatID === "") return false;
     setThinking(chatID, true);
-    const r = await transportSend({ type: "switch_model", chat_id: chatID, payload: { model } }, { signal });
-    if (r.status !== 409) setThinking(chatID, false);
-    if (!r.ok && r.status !== 409) {
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
+    try {
+      const r = await transportSend(
+        { type: "switch_model", chat_id: chatID, payload: { model } },
+        { signal, reportSendState: false },
+      );
+      if (!r.ok) {
+        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
+      }
+      return true;
+    } finally {
+      setThinking(chatID, false);
     }
-    return true;
   },
   error: "Couldn't switch model",
 });

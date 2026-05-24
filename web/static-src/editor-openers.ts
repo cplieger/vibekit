@@ -112,8 +112,13 @@ function open(path: string, opts: OpenOpts): void {
 }
 
 export async function fetchGitDiffSources(state: FileState, repo: string, ref: string): Promise<void> {
-  const result = await loadDiffAction.dispatch({ state, repo, ref });
-  if (result === null) return;
+  const result = await loadDiffAction.dispatch({ path: state.path, repo, ref });
+  if (result === null) {
+    state.loaded = true;
+    state.error = "Failed to load diff";
+    if (getActiveFilePathInternal() === state.path) restoreUI(state);
+    return;
+  }
   if (state.mode.kind !== "diff") return;
   if (!fileStates.has(state.path)) return;
   const { oldContent, newContent, error } = result;

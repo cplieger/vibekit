@@ -29,7 +29,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
-import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
+import type { ConfiguredForge, DeviceFlowResponse, ForgeKind, Repo } from "./wire/types.gen.js";
 import {
   startDeviceFlow,
   signOut,
@@ -45,14 +45,6 @@ interface ForgesListResponse {
 
 interface RepoListResponse { repos: Repo[] }
 interface LocalReposResponse { repos: string[] }
-
-interface DeviceFlowResponse {
-  user_code: string;
-  verification_uri: string;
-  device_code: string;
-  interval: number;
-  expires_in: number;
-}
 
 interface PollResult {
   status: "pending" | "complete" | "expired" | "error";
@@ -561,7 +553,6 @@ async function cloneAllForAccount(
   btn: HTMLButtonElement,
 ): Promise<void> {
   if (candidates.length === 0) return;
-  const originalHTML = btn.innerHTML;
   let done = 0;
   let failed = 0;
   for (const repo of candidates) {
@@ -570,12 +561,12 @@ async function cloneAllForAccount(
     if (url !== "") {
       const res = await cloneRepoAction.dispatch({ url });
       if (res === null) { failed++; }
+      else if (res.error !== undefined && res.error !== "") { failed++; }
     } else {
       failed++;
     }
     done++;
   }
-  btn.innerHTML = originalHTML;
   if (failed > 0) {
     toastError(`Clone failed for ${String(failed)} of ${String(candidates.length)} repos`);
   }
@@ -598,16 +589,15 @@ async function deleteAllForAccount(
   );
   if (!ok) return;
 
-  const originalHTML = btn.innerHTML;
   let done = 0;
   let failed = 0;
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
     const res = await deleteLocalAction.dispatch({ repoName: repo.name });
     if (res === null) { failed++; }
+    else if (res.error !== undefined && res.error !== "") { failed++; }
     done++;
   }
-  btn.innerHTML = originalHTML;
   if (failed > 0) {
     toastError(`Delete failed for ${String(failed)} of ${String(candidates.length)} repos`);
   }

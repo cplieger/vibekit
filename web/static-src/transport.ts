@@ -71,7 +71,7 @@ export type TypedCommand =
   | { type: "discard_tangent"; chat_id: string }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | { type: "resolve_pending_change"; chat_id: string; payload: { tool_call_id: string; action: string } }
-  | { type: "resolve_pending_change_partial"; chat_id: string; payload: { tool_call_id: string; new_text: string } }
+  | { type: "resolve_pending_change_partial"; chat_id: string; payload: { tool_call_id: string; merged_text: string } }
   | { type: "resolve_all_pending_changes"; chat_id: string; payload: { action: string } }
   | { type: "trust_pending_changes"; chat_id: string }
   | { type: "clear_pending_trust"; chat_id: string }

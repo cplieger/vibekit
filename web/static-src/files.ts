@@ -451,7 +451,11 @@ function startInlineRename(targetName: string): void {
         }
       }
       const entry = state.entryMap.get(original);
-      if (entry !== undefined) entry.name = newName;
+      if (entry !== undefined) {
+        entry.name = newName;
+        state.entryMap.delete(original);
+        state.entryMap.set(newName, entry);
+      }
       state.deselectAll();
       updateActionButtons();
     });
@@ -477,7 +481,8 @@ function deleteSelected(): void {
   void (async () => {
     const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
     if (!ok) return;
-    void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then(() => {
+    void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then((r) => {
+      if (r === null) return;
       state.deselectAll();
       setTimeout(loadDir, 200);
     });

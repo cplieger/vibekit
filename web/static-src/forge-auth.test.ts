@@ -5,7 +5,6 @@ vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(() => Promise.resolve(null)),
   apiPut: vi.fn(() => Promise.resolve(null)),
-  apiDelete: vi.fn(() => Promise.resolve(null)),
   withTimeout: vi.fn((signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000)),
   API_TIMEOUT_MS: 30000,
 }));

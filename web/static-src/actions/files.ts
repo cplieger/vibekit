@@ -4,6 +4,7 @@
 import { apiAction, defineAction, ActionError } from "./index.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
+import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- files.create_file ---
 
@@ -52,13 +53,14 @@ export interface DeleteArgs {
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   run: async (args, signal) => {
+    const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(
       args.names.map((name) => {
         const init: RequestInit = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", path: joinPath(args.dir, name) }),
-          signal,
+          signal: timedSignal,
         };
         return fetch("/api/files/action", init).then(async (r) => {
           if (!r.ok) {
@@ -67,19 +69,23 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
               const body = (await r.json()) as { error?: string };
               if (typeof body.error === "string") serverError = body.error;
             } catch { /* ignore */ }
-            return { ok: false as const, error: serverError || `HTTP ${String(r.status)}`, status: r.status };
+            return { ok: false as const, name, error: serverError || `HTTP ${String(r.status)}`, status: r.status };
           }
-          return { ok: true as const };
+          return { ok: true as const, name };
         });
       }),
     );
-    const failed = results.filter((r) => !r.ok);
+    const failed = results.filter((r) => !r.ok) as { ok: false; name: string; error: string; status: number }[];
     if (failed.length > 0) {
-      const first = failed[0]!;
+      const names = failed.map((f) => f.name).join(", ");
       const word = failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
-      throw new ActionError(`${word}: ${first.error}`, { status: first.status });
+      throw new ActionError(`${word} (${names}): ${failed[0]!.error}`, { status: failed[0]!.status });
     }
   },
+  // NOTE: optimistic/rollback threads a live DOM element (args.listEl) because
+  // the file browser list is not backed by a reactive store — the only way to
+  // mark rows as "exiting" is direct DOM manipulation. This is acceptable as
+  // long as the action is only dispatched from the file browser UI.
   optimistic: (args) => {
     // Mark rows as exiting.
     for (const row of [...args.listEl.children]) {
@@ -108,11 +114,12 @@ export interface UploadArgs {
 
 export const uploadAction = defineAction<UploadArgs, string[]>({
   name: "files.upload",
-  run: (args) => {
+  run: (args, signal) => {
     return new Promise<string[]>((resolve, reject) => {
       uploadFiles({
         files: args.files,
         targetDir: args.targetDir,
+        signal,
         onComplete: (paths) => resolve(paths),
         onError: (msg) => reject(new ActionError(msg)),
       });

@@ -32,6 +32,8 @@ import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
+import { setLastError } from "./send-state.js";
+import { error as toastError } from "./toast.js";
 import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
@@ -60,7 +62,15 @@ export function openChatTab(id: string, name: string, agent: string): void {
       // / other devices clean up via handlers/chat.ts.
       const s = get(id);
       if (s?.is_tangent === true) {
-        void discardTangentAction.dispatch(id);
+        // Bug 2 fix: if discard fails, the parent chat stays frozen.
+        // Since onClose is void (can't prevent close), surface the error
+        // so the user knows the parent is stuck and can retry manually.
+        void discardTangentAction.dispatch(id).then((r) => {
+          if (r === null) {
+            setLastError("Tangent discard failed — parent chat may be frozen");
+            toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
+          }
+        });
         return;
       }
       // Retention > 0: archive so the chat appears in History.

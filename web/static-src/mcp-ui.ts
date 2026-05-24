@@ -165,7 +165,9 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   input.checked = s.enabled;
   input.ariaLabel = `${s.enabled ? "Disable" : "Enable"} ${s.name}`;
   input.addEventListener("change", () => {
-    void toggleServer.dispatch({ id: s.id, enabled: input.checked, input }).then((r) => {
+    // input.checked is already the NEW value (browser flipped it).
+    // Pass the previous state explicitly so rollback restores correctly.
+    void toggleServer.dispatch({ id: s.id, enabled: input.checked, input, previousEnabled: !input.checked }).then((r) => {
       if (r !== null) void refetchServers();
     });
   });
@@ -225,7 +227,8 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
       );
       if (!ok) return;
       const row = btn.closest<HTMLDivElement>(".mcp-row");
-      void deleteServer.dispatch({ id: s.id, row: row! }).then((r) => {
+      if (row === null) return;
+      void deleteServer.dispatch({ id: s.id, row }).then((r) => {
         if (r !== null) void refetchServers();
       });
     })();
@@ -300,11 +303,15 @@ export function initMCP(): void {
 
 /** Show/hide a prewarm status badge on the server row matching the package name. */
 function updatePrewarmStatus(pkg: string, state: string): void {
-  // Find the server row whose name or command contains the package.
-  const rows = document.querySelectorAll<HTMLElement>(".mcp-server-row");
+  // Find the server row whose configured command contains the package.
+  const rows = document.querySelectorAll<HTMLElement>(".mcp-row");
   for (const row of rows) {
-    const name = row.dataset["serverName"] ?? "";
-    const cmd = row.dataset["serverCmd"] ?? "";
+    const serverId = row.dataset["serverId"] ?? "";
+    // Look up the server by id from the configured array to get name/command.
+    const server = configured.find((s) => s.id === serverId);
+    if (server === undefined) continue;
+    const cmd = server.command ?? "";
+    const name = server.name;
     if (!cmd.includes(pkg) && !name.includes(pkg)) continue;
 
     let badge = row.querySelector(".prewarm-badge") as HTMLElement | null;
@@ -315,7 +322,7 @@ function updatePrewarmStatus(pkg: string, state: string): void {
     if (badge === null) {
       badge = document.createElement("span");
       badge.className = "prewarm-badge";
-      const nameEl = row.querySelector(".mcp-server-name");
+      const nameEl = row.querySelector(".mcp-row-name");
       if (nameEl !== null) nameEl.after(badge);
       else row.prepend(badge);
     }

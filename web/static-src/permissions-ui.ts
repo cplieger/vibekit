@@ -241,12 +241,14 @@ class PermissionsUIController {
   }
 
   private async removeRule(pattern: string): Promise<void> {
-    const removed = this.commandRules.find((e) => e.pattern === pattern);
+    const index = this.commandRules.findIndex((e) => e.pattern === pattern);
+    if (index === -1) return;
+    const removed = this.commandRules[index];
     this.commandRules = this.commandRules.filter((e) => e.pattern !== pattern);
     this.renderRuleChips();
     const ok = await removeRuleAction.dispatch(pattern);
     if (ok === null && removed !== undefined) {
-      this.commandRules.push(removed);
+      this.commandRules.splice(index, 0, removed);
       this.renderRuleChips();
     }
   }
@@ -254,8 +256,31 @@ class PermissionsUIController {
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
+    // Optimistic: show the chip immediately with a 'saving' visual.
+    const pending: CommandRule = { pattern: clean, mode, priority, created_at: Date.now() };
+    const existingIdx = this.commandRules.findIndex((e) => e.pattern === clean);
+    if (existingIdx >= 0) {
+      this.commandRules[existingIdx] = pending;
+    } else {
+      this.commandRules.push(pending);
+    }
+    this.renderRuleChips();
+    // Mark the new chip as saving.
+    const container = document.getElementById("command-rules-chips");
+    const chips = container?.querySelectorAll<HTMLElement>(".chip") ?? [];
+    for (const chip of chips) {
+      if (chip.textContent?.includes(clean)) {
+        chip.classList.add("chip-saving");
+        break;
+      }
+    }
     const result = await addRuleAction.dispatch({ pattern: clean, mode, priority });
-    if (result === null) return;
+    if (result === null) {
+      // Failed — remove the optimistic chip.
+      this.commandRules = this.commandRules.filter((e) => e.pattern !== clean || e.created_at !== pending.created_at);
+      this.renderRuleChips();
+      return;
+    }
     await this.loadRules();
   }
 

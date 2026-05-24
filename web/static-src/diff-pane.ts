@@ -57,7 +57,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     r.textContent = opts.newLabel ?? "";
     header.appendChild(l); header.appendChild(r);
     if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
-      header.appendChild(buildWhitespaceToggle(container, lines, opts));
+      header.appendChild(buildWhitespaceToggle(container, opts));
     }
     container.appendChild(header);
   } else if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
@@ -65,7 +65,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     // header that only carries it.
     const header = document.createElement("div");
     header.className = "diff-pane-header diff-pane-header-toolbar";
-    header.appendChild(buildWhitespaceToggle(container, lines, opts));
+    header.appendChild(buildWhitespaceToggle(container, opts));
     container.appendChild(header);
   }
 
@@ -255,7 +255,6 @@ function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
  *  self-contained for the common case. */
 function buildWhitespaceToggle(
   container: HTMLDivElement,
-  currentLines: DiffLineLocal[],
   opts: DiffPaneOpts,
 ): HTMLLabelElement {
   const wrap = document.createElement("label");
@@ -300,13 +299,9 @@ function buildWhitespaceToggle(
           container.appendChild(node);
           node = next;
         }
-        void currentLines;
       }).catch(() => {});
     }
   });
   return wrap;
 }
 
-// Local alias so the helper above can reference DiffLine without
-// re-importing (avoids confusing ordering in the module).
-type DiffLineLocal = Parameters<typeof renderDiffPane>[0] extends (infer T)[] ? T : never;

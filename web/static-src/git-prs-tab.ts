@@ -21,7 +21,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
+import { mergePRAction, closePRAction } from "./actions/git-prs.js";
 
 // --- Types ---
 
@@ -75,7 +75,7 @@ export function initPRsTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void withAsyncFeedback(refreshBtn, () => refreshPRsAction.dispatch(() => refreshPRs()));
+      void withAsyncFeedback(refreshBtn, () => refreshPRs());
     });
   }
 
@@ -363,15 +363,17 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     ? `Cannot merge: ${mergeReason}`
     : "Merge this pull request");
   merge.addEventListener("click", () => {
-    void withAsyncFeedback(merge, async () => {
+    void (async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
       if (!ok) return;
-      const res = await mergePRAction.dispatch({
-        forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+      await withAsyncFeedback(merge, async () => {
+        const res = await mergePRAction.dispatch({
+          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+        });
+        if (res === null) throw new Error("failed");
+        await refreshPRs();
       });
-      if (res === null) return;
-      await refreshPRs();
-    });
+    })();
   });
   actions.appendChild(merge);
 
@@ -380,15 +382,17 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   close.className = "btn-small btn-danger";
   close.textContent = "Close";
   close.addEventListener("click", () => {
-    void withAsyncFeedback(close, async () => {
+    void (async () => {
       const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
       if (!ok) return;
-      const res = await closePRAction.dispatch({
-        forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+      await withAsyncFeedback(close, async () => {
+        const res = await closePRAction.dispatch({
+          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+        });
+        if (res === null) throw new Error("failed");
+        await refreshPRs();
       });
-      if (res === null) return;
-      await refreshPRs();
-    });
+    })();
   });
   actions.appendChild(close);
 
@@ -425,8 +429,6 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
 async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
   if (dlg === null) {
-    // Fallback (shouldn't happen — the dialog is in index.html).
-    alert("PR dialog not available");
     return;
   }
 

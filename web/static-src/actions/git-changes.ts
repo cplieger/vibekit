@@ -1,158 +1,75 @@
 // Actions for the Git Changes tab. Each user-initiated mutation gets
 // its own action with typed args and a descriptive error prefix.
 // All actions POST to /api/git/<op> with { repo, ...body } and expect
-// { output?, error? } back. Server-side errors in the `error` field
-// are surfaced as ActionError so the framework toasts them.
+// { ok: true } or { error: "..." } back. Server-side errors in the
+// `error` field are surfaced as ActionError so the framework toasts them.
 // ---------------------------------------------------------------------------
 
-import { defineAction, ActionError } from "./index.js";
+import { apiAction } from "./index.js";
 
 // --- Wire types ---
 
-interface GitMutationResult {
-  output?: string;
-  error?: string;
-}
-
-interface CommitMessageResult {
-  message?: string;
-  error?: string;
-}
-
-// --- Helper: build a git repo action that POSTs and checks .error ---
-
 interface GitRepoArgs {
   repo: string;
+  files?: string[];
   [key: string]: unknown;
-}
-
-function gitRepoAction<TArgs extends GitRepoArgs>(opts: {
-  name: string;
-  path: string;
-  error: string;
-}) {
-  return defineAction<TArgs, void>({
-    name: opts.name,
-    run: async (args, signal) => {
-      const res = await doPost<GitMutationResult>(opts.path, args, signal);
-      if (res.error !== undefined && res.error !== "") {
-        throw new ActionError(res.error);
-      }
-    },
-    error: opts.error,
-  });
-}
-
-/** Low-level POST with signal + JSON parse + non-ok handling. */
-async function doPost<T>(path: string, body: unknown, signal: AbortSignal): Promise<T> {
-  let r: Response;
-  try {
-    r = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (e) {
-    if (signal.aborted) {
-      throw new ActionError("cancelled", { code: "cancelled", cause: e });
-    }
-    throw new ActionError(
-      e instanceof Error ? e.message : "network error",
-      { cause: e },
-    );
-  }
-  if (!r.ok) {
-    let serverMsg = "";
-    try {
-      const b = (await r.json()) as { error?: unknown };
-      if (typeof b.error === "string") serverMsg = b.error;
-    } catch { /* ignore */ }
-    throw new ActionError(serverMsg || `HTTP ${String(r.status)}`, { status: r.status });
-  }
-  const text = await r.text();
-  if (text === "") return {} as T;
-  return JSON.parse(text) as T;
 }
 
 // --- Actions ---
 
-export const stageAll = gitRepoAction<{ repo: string; files: string[] }>({
-  name: "git.stage_all",
-  path: "/api/git/stage",
-  error: "Couldn't stage files",
+/** Stage files (used for both "stage all" and single-file stage). */
+export const stage = apiAction<GitRepoArgs, unknown>({
+  name: "git.stage",
+  request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
+  error: "Couldn't stage",
 });
 
-export const discardAll = gitRepoAction<{ repo: string; files: string[] }>({
-  name: "git.discard_all",
-  path: "/api/git/discard",
-  error: "Couldn't discard changes",
+/** Discard files (used for both "discard all" and single-file discard). */
+export const discard = apiAction<GitRepoArgs, unknown>({
+  name: "git.discard",
+  request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
+  error: "Couldn't discard",
 });
 
-export const pull = gitRepoAction<{ repo: string }>({
+/** Unstage a file. */
+export const unstage = apiAction<GitRepoArgs, unknown>({
+  name: "git.unstage",
+  request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
+  error: "Couldn't unstage",
+});
+
+export const pull = apiAction<{ repo: string }, unknown>({
   name: "git.pull",
-  path: "/api/git/pull",
+  request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   error: "Pull failed",
 });
 
-export const push = gitRepoAction<{ repo: string }>({
+export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
-  path: "/api/git/push",
+  request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
   error: "Push failed",
 });
 
-export const stash = gitRepoAction<{ repo: string }>({
+export const stash = apiAction<{ repo: string }, unknown>({
   name: "git.stash",
-  path: "/api/git/stash",
+  request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   error: "Stash failed",
 });
 
-export const stashPop = gitRepoAction<{ repo: string }>({
+export const stashPop = apiAction<{ repo: string }, unknown>({
   name: "git.stash_pop",
-  path: "/api/git/stash-pop",
+  request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   error: "Stash pop failed",
 });
 
-export const stageFile = gitRepoAction<{ repo: string; files: string[] }>({
-  name: "git.stage_file",
-  path: "/api/git/stage",
-  error: "Couldn't stage file",
-});
-
-export const unstageFile = gitRepoAction<{ repo: string; files: string[] }>({
-  name: "git.unstage",
-  path: "/api/git/unstage",
-  error: "Couldn't unstage file",
-});
-
-export const discardFile = gitRepoAction<{ repo: string; files: string[] }>({
-  name: "git.discard_file",
-  path: "/api/git/discard",
-  error: "Couldn't discard file",
-});
-
-export const commit = defineAction<{ repo: string; message: string }, void>({
+export const commit = apiAction<{ repo: string; message: string }, unknown>({
   name: "git.commit",
-  run: async (args, signal) => {
-    const res = await doPost<GitMutationResult>("/api/git/commit", args, signal);
-    if (res.error !== undefined && res.error !== "") {
-      throw new ActionError(res.error);
-    }
-  },
+  request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
   error: "Commit failed",
 });
 
-export const generateCommitMessage = defineAction<{ repo: string }, string>({
+export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
   name: "git.generate_message",
-  run: async (args, signal) => {
-    const res = await doPost<CommitMessageResult>("/api/git/commit-message", args, signal);
-    if (res.error !== undefined && res.error !== "") {
-      throw new ActionError(res.error);
-    }
-    if (res.message === undefined || res.message === "") {
-      throw new ActionError("No message generated");
-    }
-    return res.message;
-  },
+  request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
 });
