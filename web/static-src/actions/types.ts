@@ -106,9 +106,11 @@ export interface DispatchOptions {
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client
- *  shape so apiAction can pipe straight into apiPostOrError. */
+ *  shape so apiAction can pipe straight into apiPostOrError. GET is
+ *  included for read actions that want toast/cancellation semantics
+ *  without writing a custom defineAction. */
 export interface RequestSpec {
-  readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
 }

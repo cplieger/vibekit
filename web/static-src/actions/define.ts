@@ -55,13 +55,16 @@ function resolveToast<TArgs, TPayload>(
 }
 
 /** Build a default error toast prefix from the action name. Converts
- *  "chat.delete" -> "Chat delete failed", "files.create" -> "Files
- *  create failed". Callers usually override via the `error` field. */
+ *  "chat.delete" -> "Delete failed", "mcp.add_server" -> "Add server
+ *  failed", "files.create_file" -> "Create file failed". Callers
+ *  usually override via the `error` field. */
 function defaultErrorPrefix(name: string): string {
   const parts = name.split(".");
   const tail = parts[parts.length - 1] ?? name;
-  // Capitalise first char only — keep the rest as-authored.
-  return tail.charAt(0).toUpperCase() + tail.slice(1) + " failed";
+  // Convert underscores/hyphens to spaces for readability, then
+  // capitalise the first character only.
+  const readable = tail.replace(/[_-]/g, " ");
+  return readable.charAt(0).toUpperCase() + readable.slice(1) + " failed";
 }
 
 export function defineAction<TArgs, TResult>(
@@ -108,6 +111,10 @@ export function defineAction<TArgs, TResult>(
         // treat as cancelled even if run() resolved. Most adapters
         // throw on abort, but be defensive.
         if (ac.signal.aborted) {
+          record({
+            id, name: def.name, status: "cancelled", args,
+            startedAt, completedAt: Date.now(),
+          });
           inFlight.delete(id);
           emitCancelled(id, def, args, optOp, startedAt);
           return null;
@@ -139,7 +146,7 @@ export function defineAction<TArgs, TResult>(
             console.error(`[actions] rollback for ${def.name} threw`, rollbackErr);
           }
         }
-        if (!cancelled) emitErrorToast(args, err, opts, def);
+        if (!cancelled) emitErrorToast(args, err, opts);
         return null;
       },
     );
@@ -160,11 +167,13 @@ export function defineAction<TArgs, TResult>(
     args: TArgs,
     err: ActionErrorLike,
     opts: DispatchOptions,
-    d?: ActionDefinition<TArgs, TResult>,
   ): void {
     // Errors are user-facing by default; only `error: false` in the
-    // definition suppresses, never the silent flag.
-    const spec = d?.error;
+    // definition suppresses, never the silent flag. The `def` is in
+    // closure scope — pulling it as a parameter previously caused the
+    // optimistic-throw path to silently bypass `error: false` because
+    // the callsite forgot to pass it.
+    const spec = def.error;
     if (spec === false) return;
     const fallback = `${defaultErrorPrefix(def.name)}: ${err.message}`;
     let msg: string | null;

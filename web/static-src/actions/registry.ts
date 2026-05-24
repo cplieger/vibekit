@@ -14,7 +14,11 @@ const MAX_LOG_SIZE = 200;
 
 // Module-level state. The registry is intentionally a singleton — at
 // most one log per page; subscribers are tab-scoped.
+//
+// log:    ordered ring of recent instances (newest at end).
+// idMap:  id -> log index for O(1) state-transition updates.
 const log: ActionInstance[] = [];
+const idMap = new Map<string, number>();
 const listeners = new Set<RegistryListener>();
 
 /** Record a state transition. Called by define.ts at every status
@@ -22,14 +26,29 @@ const listeners = new Set<RegistryListener>();
 export function record(instance: ActionInstance): void {
   // De-duplicate by id: replace any existing entry with the same id
   // (state transitions on the same instance overwrite, not append).
-  const existing = log.findIndex((i) => i.id === instance.id);
-  if (existing !== -1) {
+  const existing = idMap.get(instance.id);
+  if (existing !== undefined) {
     log[existing] = instance;
   } else {
     log.push(instance);
-    if (log.length > MAX_LOG_SIZE) log.shift();
+    idMap.set(instance.id, log.length - 1);
+    if (log.length > MAX_LOG_SIZE) {
+      const dropped = log.shift();
+      if (dropped !== undefined) idMap.delete(dropped.id);
+      // Indices shifted by one — reindex.
+      idMap.clear();
+      for (let i = 0; i < log.length; i++) {
+        const entry = log[i];
+        if (entry !== undefined) idMap.set(entry.id, i);
+      }
+    }
   }
-  for (const fn of listeners) {
+  // Snapshot listeners so a subscriber added during dispatch (or
+  // removed) doesn't see this event mid-iteration. Principle of
+  // least surprise: a listener added in response to event N first
+  // sees event N+1.
+  const snapshot = [...listeners];
+  for (const fn of snapshot) {
     try {
       fn(instance);
     } catch (e) {
@@ -60,5 +79,6 @@ export function pendingFor(name: string): readonly ActionInstance[] {
 /** Test-only: clear log + listeners. */
 export function _resetForTest(): void {
   log.length = 0;
+  idMap.clear();
   listeners.clear();
 }

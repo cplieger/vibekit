@@ -74,7 +74,7 @@ export function apiAction<TArgs, TResult = unknown>(
  *  exceptions to drive the error branch. */
 async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promise<T> {
   const init: RequestInit = { method: spec.method };
-  if (spec.body !== undefined) {
+  if (spec.body !== undefined && spec.method !== "GET") {
     init.headers = JSON_HEADERS;
     init.body = JSON.stringify(spec.body);
   }
@@ -83,9 +83,15 @@ async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promis
   try {
     r = await fetch(spec.path, init);
   } catch (e) {
-    // Network error or aborted — distinguish via signal.
+    // Distinguish: user cancellation vs request timeout vs network.
+    // The original `signal` is the caller's; `init.signal` is the
+    // composed signal from withTimeout. If only the composed signal
+    // aborted, the timeout fired — surface that as a typed error.
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled", cause: e });
+    }
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ActionError("Request timed out", { code: "timeout", cause: e });
     }
     throw new ActionError(
       e instanceof Error ? e.message : "network error",
@@ -106,12 +112,13 @@ async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promis
       { status: r.status },
     );
   }
-  // 204 No Content / explicit DELETE: there's no body to parse.
-  if (spec.method === "DELETE" || r.status === 204) {
+  // 204 No Content: no body to parse, regardless of method.
+  if (r.status === 204) {
     return undefined as T;
   }
-  // Parse JSON body. If the action declares TResult = void or unknown
-  // and the body is empty, return undefined.
+  // Parse JSON body. DELETE responses with bodies (e.g. confirmation
+  // payload, remaining count) ARE parsed — only 204 short-circuits.
+  // Empty body returns undefined.
   const text = await r.text();
   if (text === "") return undefined as T;
   try {
