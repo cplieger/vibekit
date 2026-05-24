@@ -506,18 +506,25 @@ func TestWriteCmdResult_ScrubsAuthInErrorOutput(t *testing.T) {
 
 // --- gitExec env hardening regression pin ---
 
-// TestGitExec_ScrubsInheritedEnv pins the env block in gitExec that
-// defends against credential-prompt hijacking, global/system config
-// injection, GIT_CONFIG_COUNT/KEY/VALUE injection, and the sibling
-// GIT_CONFIG_PARAMETERS runtime-injection mechanism. Each entry is
-// load-bearing; dropping any of them re-opens a CVE-class exposure
-// (CVE-2017-1000117 and kin). Asserting the final cmd.Env (not
-// cmd.Environ()) catches both "var deleted" and "var changed to
-// something weaker" regressions.
+// TestGitExec_ScrubsInheritedEnv pins the env block + cmdline -c
+// hardening in gitExec that defends against credential-prompt
+// hijacking, runtime gitconfig injection (GIT_CONFIG_COUNT/KEY/VALUE
+// + GIT_CONFIG_PARAMETERS), and ext:: transport re-enabling. Each
+// guarantee is load-bearing; dropping any of them re-opens a
+// CVE-class exposure (CVE-2017-1000117 and kin).
+//
+// Note on shape: an earlier version of this code pinned
+// GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_SYSTEM=/dev/null. That
+// also disabled the credential.helper line `gh auth setup-git`
+// writes to ~/.gitconfig, which broke HTTPS clones of private repos.
+// The fix moved the ext:: hardening to a command-line `-c
+// protocol.ext.allow=never` flag (which always wins over gitconfig)
+// and let gitconfig files load again.
 func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	// Simulate a compromised parent env attempting every known
 	// runtime-injection path. The scrub must win via os/exec's
-	// last-wins duplicate-key semantics.
+	// last-wins duplicate-key semantics, OR the cmdline -c flag
+	// must override (whichever applies).
 	t.Setenv("GIT_TERMINAL_PROMPT", "1")
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "protocol.ext.allow")
@@ -530,8 +537,6 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		"SSH_ASKPASS":            "",
 		"GIT_PROTOCOL_FROM_USER": "0",
 		"GIT_CONFIG_COUNT":       "",
-		"GIT_CONFIG_GLOBAL":      "/dev/null",
-		"GIT_CONFIG_SYSTEM":      "/dev/null",
 		"GIT_CONFIG_PARAMETERS":  "",
 	}
 	cmd := gitExec(context.Background(), t.TempDir(), "status")
@@ -557,18 +562,52 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		}
 	}
 
-	// Belt-and-braces: args must pass through verbatim with "git" as
-	// the binary — no shell expansion, no env-var interpolation.
-	// Catches a regression that swapped exec.CommandContext for a
-	// shell invocation.
+	// gitconfig FILES must remain loadable so credential helpers
+	// (gh auth git-credential, glab, etc.) work for HTTPS clones of
+	// private repos. Pinning them to /dev/null was the previous
+	// behavior and broke private clones — guard against the
+	// regression returning.
+	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("gitExec env %q = %q must not be set; pinning it disables credential helpers from gitconfig", k, v)
+		}
+	}
+
+	// Args must contain the cmdline -c hardening that takes
+	// priority over gitconfig. This is what blocks ext:: even when
+	// user gitconfig (or env-injected GIT_CONFIG_*) tries to enable
+	// it. Drop this and CVE-2017-1000117 class issues come back.
+	wantArgPair := []string{"-c", "protocol.ext.allow=never"}
+	foundExt := false
+	for i := 0; i < len(cmd.Args)-1; i++ {
+		if cmd.Args[i] == wantArgPair[0] && cmd.Args[i+1] == wantArgPair[1] {
+			foundExt = true
+			break
+		}
+	}
+	if !foundExt {
+		t.Errorf("gitExec args missing `-c protocol.ext.allow=never` (security regression: ext:: transport may be re-enabled by gitconfig); got %v", cmd.Args)
+	}
+
+	// Belt-and-braces: args[0] must be "git" (or end in "git" if
+	// the runner uses absolute path), and the requested subcommand
+	// must appear after the hardening prefix.
 	if len(cmd.Args) < 2 || cmd.Args[0] == "" {
-		t.Fatalf("gitExec args = %v, want [git, status, ...]", cmd.Args)
+		t.Fatalf("gitExec args = %v, want [git, -c, ..., status, ...]", cmd.Args)
 	}
 	if !strings.HasSuffix(cmd.Args[0], "git") {
 		t.Errorf("gitExec arg[0] = %q, want binary ending in 'git'", cmd.Args[0])
 	}
-	if cmd.Args[1] != "status" {
-		t.Errorf("gitExec arg[1] = %q, want 'status'", cmd.Args[1])
+	// "status" must appear somewhere after the prefix.
+	foundStatus := false
+	for _, a := range cmd.Args[1:] {
+		if a == "status" {
+			foundStatus = true
+			break
+		}
+	}
+	if !foundStatus {
+		t.Errorf("gitExec args missing 'status' subcommand: %v", cmd.Args)
 	}
 }
 
