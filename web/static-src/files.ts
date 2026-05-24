@@ -12,7 +12,6 @@ import { toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { showConfirm } from "./modals.js";
 import * as uiState from "./ui-state.js";
-import { uploadFiles } from "./upload.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
@@ -22,8 +21,7 @@ import {
   sortEntries, initEditablePath,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { apiPostOrError } from "./api-client.js";
-import { showToast } from "./toast.js";
+import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction } from "./actions/files.js";
 export class FileBrowserState {
   currentPath = ".";
   history: string[] = ["."];
@@ -381,15 +379,9 @@ function newFile(): void { createEntry("touch", "new file"); }
 function newFolder(): void { createEntry("mkdir", "new folder"); }
 
 function createEntry(action: "touch" | "mkdir", name: string): void {
-  void apiPostOrError<{ error?: string }>("/api/files/action", {
-    action, path: joinPath(state.currentPath, name),
-  }).then(async (r) => {
-    if (!r.ok) {
-      const detail = r.error !== "" ? r.error : `HTTP ${String(r.status)}`;
-      const verb = action === "mkdir" ? "create folder" : "create file";
-      showToast(`Couldn't ${verb}: ${detail}`, "error");
-      return;
-    }
+  const actionFn = action === "mkdir" ? createFolder : createFile;
+  void actionFn.dispatch({ dir: state.currentPath, name }).then(async (r) => {
+    if (r === null) return;
     await loadDirAsync();
     startInlineRename(name);
   });
@@ -444,12 +436,8 @@ function startInlineRename(targetName: string): void {
     const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) return;
 
-    void apiPostOrError<{ error?: string }>("/api/files/action", {
-      action: "rename", path: joinPath(state.currentPath, original), name: newName,
-    }).then((r) => {
-      if (!r.ok) {
-        const detail = r.error !== "" ? r.error : `HTTP ${String(r.status)}`;
-        showToast(`Couldn't rename: ${detail}`, "error");
+    void renameFile.dispatch({ dir: state.currentPath, original, newName }).then((r) => {
+      if (r === null) {
         span.textContent = original;
         return;
       }
@@ -487,29 +475,7 @@ function deleteSelected(): void {
   const names = [...state.selected];
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`;
   showConfirm(`Delete ${label}? This cannot be undone.`, () => {
-    for (const row of [...$.fbList.children]) {
-      const el = row as HTMLDivElement;
-      if (names.includes(el.dataset["name"] ?? "")) el.classList.add("fb-row-exiting");
-    }
-    const promises = names.map((name) =>
-      apiPostOrError<{ error?: string }>("/api/files/action", {
-        action: "delete", path: joinPath(state.currentPath, name),
-      }),
-    );
-    void Promise.all(promises).then((results) => {
-      const failed = results.filter((r) => !r.ok);
-      if (failed.length > 0) {
-        // Surface the first error message so the user sees why the
-        // delete didn't take. Restore the rows that were optimistically
-        // marked exiting so they don't appear deleted-then-restored.
-        const first = failed[0]!;
-        const detail = first.error !== "" ? first.error : `HTTP ${String(first.status)}`;
-        const word = failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
-        showToast(`${word}: ${detail}`, "error");
-        for (const row of [...$.fbList.children]) {
-          (row as HTMLDivElement).classList.remove("fb-row-exiting");
-        }
-      }
+    void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then(() => {
       state.deselectAll();
       setTimeout(loadDir, 200);
     });
@@ -556,13 +522,10 @@ function uploadViaDialog(): void {
   input.multiple = true;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
-      uploadFiles({
-        files: input.files,
-        targetDir: state.currentPath,
-        onComplete: (paths) => {
-          loadDir();
-          for (const p of paths) attachPathToActiveChat(p);
-        },
+      void uploadAction.dispatch({ files: input.files, targetDir: state.currentPath }).then((paths) => {
+        if (paths === null) return;
+        loadDir();
+        for (const p of paths) attachPathToActiveChat(p);
       });
     }
   });

@@ -8,8 +8,7 @@ import { $ } from "./dom.js";
 import { showConfirm } from "./modals.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
-import { runPlan, writePlanDraft } from "./plan-actions.js";
-import { apiPut } from "./api-client.js";
+import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
 import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import {
   resolveActivePending, applyActivePendingPartial, openDiscussPromptForActive,
@@ -26,7 +25,7 @@ import {
 import {
   fileStates, getActiveFilePathInternal,
   freshState, isPendingPath, parsePendingPath,
-  planDraftChatID, routeForPath, unsavedDiffSource, gitDiffSource,
+  planDraftChatID, unsavedDiffSource, gitDiffSource,
 } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
 
@@ -166,9 +165,7 @@ function saveFile(): void {
   if (state === undefined) return;
   const content = $.editorContent.value;
   $.editorSaveBtn.disabled = true;
-  void apiPut<{ ok?: boolean; error?: string }>(
-    routeForPath(state.path).writeURL, { content },
-  ).then((d) => {
+  void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
     if (d === null || d.error !== undefined) {
       $.editorError.textContent = d?.error ?? "Save failed";
       $.editorError.classList.remove("hidden");
@@ -203,7 +200,6 @@ async function sendActivePlan(): Promise<void> {
   if (state === undefined) return;
   const chatID = planDraftChatID(state.path);
   if (chatID === "") return;
-  if (!(await writePlanDraft(chatID, state.current))) return;
   state.original = state.current;
-  await runPlan(chatID, state.current.trim());
+  await sendPlanAction.dispatch({ chatID, content: state.current });
 }

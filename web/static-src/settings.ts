@@ -24,11 +24,12 @@ import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet, apiPut, apiPost } from "./api-client.js";
+import { apiGet, apiPost } from "./api-client.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving, showSaved } from "./save-indicator.js";
+import { showSaving } from "./save-indicator.js";
+import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
 
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
@@ -105,10 +106,7 @@ function initSteeringEditor(): void {
     clearTimeout(timer);
     showSaving();
     timer = setTimeout(() => {
-      void apiPut("/api/steering", { content: textarea.value }).then((d) => {
-        if (d === null) return;
-        showSaved();
-      });
+      void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true });
     }, 600);
   });
 }
@@ -117,9 +115,7 @@ function initSteeringEditor(): void {
 
 function initLogoutButton(): void {
   $.logoutBtn.addEventListener("click", () => {
-    void apiPost("/api/logout").then(() => {
-      setUserEmail("");
-    });
+    void logoutAction.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
   });
 }
 
@@ -231,10 +227,12 @@ function initExperimentalToggles(): void {
     if (input === null) continue;
     input.addEventListener("change", () => {
       showSaving();
-      void apiPut("/api/kiro-settings", {
+      void setKiroSettingAction.dispatch({
         key: flag.key,
         value: input.checked ? "true" : "false",
-      }).then(() => showSaved());
+        input,
+        isBool: true,
+      }, { silent: true });
     });
   }
   initCompactionSettings();
@@ -290,7 +288,12 @@ function initCompactionSettings(): void {
         value = input.value;
       }
       showSaving();
-      void apiPut("/api/kiro-settings", { key: s.key, value }).then(() => showSaved());
+      void setKiroSettingAction.dispatch({
+        key: s.key,
+        value,
+        input,
+        isBool: s.isBool,
+      }, { silent: true });
     });
   }
 }
@@ -316,6 +319,6 @@ function initDebugLogsToggle(initial: AppSettings): void {
   if (input === null) return;
   input.checked = initial.debug_logs === true;
   input.addEventListener("change", () => {
-    patchSettings({ debug_logs: input.checked });
+    patchSettings({ debug_logs: input.checked }, input);
   });
 }

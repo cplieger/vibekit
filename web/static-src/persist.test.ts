@@ -4,23 +4,32 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
   apiPatch: vi.fn(() => Promise.resolve(undefined)),
+  withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
+  API_TIMEOUT_MS: 30000,
 }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
   showSaved: vi.fn(),
 }));
+vi.mock("./toast.js", () => ({
+  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+}));
 
 import { patchSettings } from "./persist.js";
-import { apiPatch } from "./api-client.js";
 
 describe("patchSettings debounce coalescing", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("coalesces multiple rapid calls into a single PATCH with merged body", async () => {
@@ -31,8 +40,11 @@ describe("patchSettings debounce coalescing", () => {
     // Advance past debounce.
     await vi.advanceTimersByTimeAsync(350);
 
-    expect(apiPatch).toHaveBeenCalledTimes(1);
-    expect(apiPatch).toHaveBeenCalledWith("/api/settings", {
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe("/api/settings");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({
       auto_update: true,
       debug_logs: true,
       last_model: "claude",
@@ -46,20 +58,17 @@ describe("patchSettings debounce coalescing", () => {
 
     await vi.advanceTimersByTimeAsync(350);
 
-    expect(apiPatch).toHaveBeenCalledTimes(1);
-    expect(apiPatch).toHaveBeenCalledWith("/api/settings", {
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(init.body as string)).toEqual({
       last_model: "gemini",
     });
   });
 
   it("property: N rapid calls produce merged result matching Object.assign", async () => {
-    // This test verifies the coalescing invariant for a single batch.
-    // Each iteration is independent: we flush the timer to complete
-    // the previous batch before starting the next.
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
-      vi.clearAllMocks();
-      // Generate random patches.
+      fetchSpy.mockClear();
       const keys = ["auto_update", "debug_logs", "last_model"] as const;
       const patches: Record<string, unknown>[] = [];
       const count = 1 + Math.floor(Math.random() * 5);
@@ -86,9 +95,10 @@ describe("patchSettings debounce coalescing", () => {
         Object.assign(expected, patch);
       }
 
-      const calls = vi.mocked(apiPatch).mock.calls;
+      const calls = fetchSpy.mock.calls;
       expect(calls.length).toBe(1);
-      expect(calls[0]![1]).toEqual(expected);
+      const [, init] = calls[0]!;
+      expect(JSON.parse(init.body as string)).toEqual(expected);
     }
   });
 });

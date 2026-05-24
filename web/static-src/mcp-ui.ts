@@ -4,7 +4,6 @@
 
 import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { apiGet, apiPatch, apiDelete } from "./api-client.js";
 import { closeModal, showConfirm } from "./modals.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
@@ -13,6 +12,7 @@ import {
   setStatus, deleteStatus,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
+import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
 
 // --- Section scaffold ---
 
@@ -164,8 +164,8 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   input.checked = s.enabled;
   input.ariaLabel = `${s.enabled ? "Disable" : "Enable"} ${s.name}`;
   input.addEventListener("change", () => {
-    void apiPatch(`/api/mcp/${encodeURIComponent(s.id)}`, { enabled: input.checked }).then(() => {
-      void refetchServers();
+    void toggleServer.dispatch({ id: s.id, enabled: input.checked, input }).then((r) => {
+      if (r !== null) void refetchServers();
     });
   });
   const slider = document.createElement("span");
@@ -219,8 +219,9 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
     showConfirm(
       `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
       () => {
-        void apiDelete(`/api/mcp/${encodeURIComponent(s.id)}`).then(() => {
-          void refetchServers();
+        const row = btn.closest<HTMLDivElement>(".mcp-row");
+        void deleteServer.dispatch({ id: s.id, row: row! }).then((r) => {
+          if (r !== null) void refetchServers();
         });
       },
       "Remove",
@@ -238,7 +239,7 @@ function openAddModal(): void {
 }
 
 async function openEditModal(id: string): Promise<void> {
-  const s = await apiGet<Server>(`/api/mcp/${encodeURIComponent(id)}`);
+  const s = await openEdit.dispatch(id);
   if (s === null) return;
   setEditing({ id });
   const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";

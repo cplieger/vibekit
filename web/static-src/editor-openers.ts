@@ -9,6 +9,7 @@ import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion } from "./editor-conflict.js";
 import { apiGet } from "./api-client.js";
+import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
   fileStates, getActiveFilePathInternal, setActiveFilePath,
@@ -111,31 +112,27 @@ function open(path: string, opts: OpenOpts): void {
 }
 
 export async function fetchGitDiffSources(state: FileState, repo: string, ref: string): Promise<void> {
-  const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
-  const [oldD, newD] = await Promise.all([
-    apiGet<{ content?: string }>(
-      `/api/git/show?path=${encodeURIComponent(state.path)}&ref=${encodeURIComponent(ref)}${repoParam}`),
-    apiGet<{ content?: string; error?: string }>(
-      `/api/file?path=${encodeURIComponent(state.path)}`),
-  ]);
+  const result = await loadDiffAction.dispatch({ state, repo, ref });
+  if (result === null) return;
   if (state.mode.kind !== "diff") return;
   if (!fileStates.has(state.path)) return;
+  const { oldContent, newContent, error } = result;
   state.mode = {
     kind: "diff",
     diffSource: {
       ...state.mode.diffSource,
-      oldContent: oldD?.content ?? "",
-      newContent: newD?.content ?? "",
+      oldContent,
+      newContent,
     },
   };
   state.pendingHunkCount = null;
   state.cachedDiff = null;
   if (!state.loaded) {
-    state.original = state.mode.diffSource.newContent;
-    state.current = state.mode.diffSource.newContent;
+    state.original = newContent;
+    state.current = newContent;
   }
   state.loaded = true;
-  state.error = newD?.error ?? "";
+  state.error = error;
   if (getActiveFilePathInternal() === state.path) restoreUI(state);
 }
 

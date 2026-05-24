@@ -24,11 +24,18 @@
 // hosts works (e.g. github.com + ghe.example.com).
 // ---------------------------------------------------------------------------
 
-import { apiDelete, apiGet, apiPost } from "./api-client.js";
+import { apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
+import { error as toastError } from "./toast.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
+import {
+  startDeviceFlow,
+  signOut,
+  cloneRepo as cloneRepoAction,
+  deleteLocal as deleteLocalAction,
+} from "./actions/forge.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -530,10 +537,16 @@ function renderRepoRow(repo: Repo): HTMLElement {
 
 async function cloneRepo(url: string): Promise<void> {
   if (url === "") throw new Error("no clone URL");
-  const res = await apiPost<{ output?: string; error?: string }>(`/api/git/clone`, { url });
+  const res = await cloneRepoAction.dispatch({ url });
+  if (res === null) {
+    toastError("Couldn't clone repo");
+    throw new Error("clone failed");
+  }
+  if (res.error !== undefined && res.error !== "") {
+    toastError(`Couldn't clone repo: ${res.error}`);
+    throw new Error(res.error);
+  }
   await renderForgesPanel({ revalidate: false });
-  if (res === null) throw new Error("network error");
-  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
 }
 
 /** Clone every uncloned remote repo accessible to one account.
@@ -550,20 +563,22 @@ async function cloneAllForAccount(
   if (candidates.length === 0) return;
   const originalHTML = btn.innerHTML;
   let done = 0;
+  let failed = 0;
   for (const repo of candidates) {
     btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
-    try {
-      const url = repo.clone_url ?? "";
-      if (url !== "") {
-        await apiPost<{ output?: string; error?: string }>(`/api/git/clone`, { url });
-      }
-    } catch {
-      // Swallow per-repo errors; the post-batch refresh will show
-      // which ones still appear as remote-only.
+    const url = repo.clone_url ?? "";
+    if (url !== "") {
+      const res = await cloneRepoAction.dispatch({ url });
+      if (res === null) { failed++; }
+    } else {
+      failed++;
     }
     done++;
   }
   btn.innerHTML = originalHTML;
+  if (failed > 0) {
+    toastError(`Clone failed for ${String(failed)} of ${String(candidates.length)} repos`);
+  }
   await renderForgesPanel({ revalidate: false });
 }
 
@@ -585,16 +600,17 @@ async function deleteAllForAccount(
 
   const originalHTML = btn.innerHTML;
   let done = 0;
+  let failed = 0;
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
-    try {
-      await apiPost<{ output?: string; error?: string }>(`/api/git/remove`, { repo: repo.name });
-    } catch {
-      // Swallow per-repo errors; post-batch refresh shows truth.
-    }
+    const res = await deleteLocalAction.dispatch({ repoName: repo.name });
+    if (res === null) { failed++; }
     done++;
   }
   btn.innerHTML = originalHTML;
+  if (failed > 0) {
+    toastError(`Delete failed for ${String(failed)} of ${String(candidates.length)} repos`);
+  }
   await renderForgesPanel({ revalidate: false });
 }
 
@@ -605,9 +621,15 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
     "destructive",
   );
   if (!ok) return;
-  const res = await apiPost<{ status?: string; error?: string }>(`/api/git/remove`, { repo: repo.name });
-  if (res === null) throw new Error("network error");
-  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+  const res = await deleteLocalAction.dispatch({ repoName: repo.name });
+  if (res === null) {
+    toastError("Couldn't remove local repo");
+    throw new Error("delete failed");
+  }
+  if (res.error !== undefined && res.error !== "") {
+    toastError(`Couldn't remove local repo: ${res.error}`);
+    throw new Error(res.error);
+  }
   await renderForgesPanel({ revalidate: false });
 }
 
@@ -698,7 +720,7 @@ function slotOf(section: HTMLElement): HTMLElement {
 
 async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
   setStatus(host, "Contacting GitHub…");
-  const start = await apiPost<DeviceFlowResponse>("/api/forges/oauth/github/start", {});
+  const start = await startDeviceFlow.dispatch({});
   if (start === null) {
     setStatus(host, "Failed to start device flow.", "err");
     return;
@@ -875,7 +897,8 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
     "destructive",
   );
   if (!ok) return;
-  await apiDelete(`/api/forges/${encodeURIComponent(f.id)}`);
+  const res = await signOut.dispatch({ forgeId: f.id });
+  if (res === null) return; // toast already fired
   void renderForgesPanel();
 }
 

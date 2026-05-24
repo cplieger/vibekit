@@ -18,8 +18,8 @@ import { scroll, trimOldMessages } from "./scroll.js";
 import { breakToolGroup } from "./tool-group.js";
 import { buildToolCard } from "./tool-card.js";
 import { isToolActive } from "./tool-schema.js";
-import * as transport from "./transport.js";
 import { getActiveId } from "./store.js";
+import { sendMessage } from "./actions/crew.js";
 import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
 
 const cards = new Map<string, HTMLDivElement>();
@@ -336,11 +336,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
     if (text === "") return;
     const chatID = getActiveId();
     if (chatID === "") return;
-    void transport.send({
-      type: "message_subagent",
-      chat_id: chatID,
-      payload: { sub_session_id: sub.session_id, text },
-    });
+    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text });
     input.value = "";
   };
   sendBtn.addEventListener("click", doSend);

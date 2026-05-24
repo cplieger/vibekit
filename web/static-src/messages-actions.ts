@@ -6,9 +6,8 @@
 import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X, iconEl } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
-import * as transport from "./transport.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
-import { resolvePendingChange } from "./chat-commands.js";
+import { undoEdit, resolvePending } from "./actions/messages.js";
 
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
 export function addEditActions(el: HTMLDivElement): void {
@@ -40,12 +39,8 @@ export function addEditActions(el: HTMLDivElement): void {
     }
     if (tag === "") return;
     undoBtn.disabled = true;
-    void transport.send({
-      type: "undo_edit",
-      chat_id: chatID,
-      payload: { tag, file_path: filePath },
-    }).then((r) => {
-      if (r.ok) {
+    void undoEdit.dispatch({ chatID, tag, filePath }).then((r) => {
+      if (r !== null) {
         undoBtn.classList.add("copied");
         setTimeout(() => undoBtn.classList.remove("copied"), 1500);
       }
@@ -125,7 +120,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
-  resolvePendingChange(chatID, toolCallID, action);
+  void resolvePending.dispatch({ chatID, toolCallID, action });
 }
 
 /** Locate the tool card whose data-file-path matches `path`. */

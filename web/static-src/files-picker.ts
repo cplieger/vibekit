@@ -9,11 +9,11 @@
 // ---------------------------------------------------------------------------
 
 import { closeModal } from "./modals.js";
-import { uploadFiles } from "./upload.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
+import { uploadAction } from "./actions/files.js";
 
 let currentPath = ".";
 const selected = new Set<string>();
@@ -85,13 +85,11 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  uploadFiles({
-    files, targetDir: currentPath,
-    onComplete: (paths) => {
-      onUploadComplete?.();
-      for (const p of paths) attachPathToActiveChat(p);
-      closeModal(modal);
-    },
+  void uploadAction.dispatch({ files, targetDir: currentPath }).then((paths) => {
+    if (paths === null) return;
+    onUploadComplete?.();
+    for (const p of paths) attachPathToActiveChat(p);
+    closeModal(modal);
   });
 }
 

@@ -5,8 +5,9 @@
 // Fetch calls go through api-client.ts for consistent error handling.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPatch } from "./api-client.js";
-import { showSaving, showSaved } from "./save-indicator.js";
+import { apiGet } from "./api-client.js";
+import { showSaving } from "./save-indicator.js";
+import { patchAppSettingsAction } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -29,16 +30,20 @@ export interface AppSettings {
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
+let patchInput: HTMLInputElement | null = null;
 
-export function patchSettings(patch: Partial<AppSettings>): void {
+export function patchSettings(patch: Partial<AppSettings>, input?: HTMLInputElement): void {
   Object.assign(patchQueue, patch);
+  if (input !== undefined) patchInput = input;
   if (patchTimer !== undefined) return;
   showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     const body = patchQueue;
+    const inp = patchInput;
     patchQueue = {};
-    void apiPatch("/api/settings", body).then(() => showSaved());
+    patchInput = null;
+    void patchAppSettingsAction.dispatch({ body: body as Record<string, unknown>, ...(inp !== null ? { input: inp } : {}) }, { silent: true });
   }, 300);
 }
 

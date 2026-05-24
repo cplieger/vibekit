@@ -5,10 +5,9 @@
 import { $ } from "./dom.js";
 import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
-import * as transport from "./transport.js";
+import { resolvePending, resolvePendingPartial } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { fileStates, getActiveFilePathInternal, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
-import { resolvePendingChange } from "./chat-commands.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 
 /** Resolve the active pending-change tab. Works for both Accept and
@@ -20,7 +19,7 @@ export function resolveActivePending(action: "accept" | "reject"): void {
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
   closeFile(path);
-  resolvePendingChange(chatID, toolCallID, action);
+  void resolvePending.dispatch({ chatID, toolCallID, action });
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */
@@ -68,11 +67,7 @@ export async function applyActivePendingPartial(): Promise<void> {
   }
   const path = state.path;
   closeFile(path);
-  await transport.send({
-    type: "resolve_pending_change_partial",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, merged_text: merged },
-  });
+  await resolvePendingPartial.dispatch({ chatID, toolCallID, mergedText: merged });
 }
 
 /** @internal Exported for testing. */

@@ -33,9 +33,9 @@ import {
 import { linkifyPaths } from "./linkify.js";
 import { isToolDone } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview } from "./tool-card.js";
-import { apiPost } from "./api-client.js";
 import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
 import { openPlanDraftPath } from "./editor-openers.js";
+import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
 import {
   addEditActions, initMessageActions,
 } from "./messages-actions.js";
@@ -292,14 +292,14 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
   };
 
   rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", () => {
-    void navigator.clipboard.writeText(el.textContent ?? "");
+    void copyClipboard.dispatch(el.textContent ?? "");
   }));
   rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", () => {
-    void navigator.clipboard.writeText(raw);
+    void copyClipboard.dispatch(raw);
   }));
   if (chatID !== "") {
     rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", () => {
-      void navigator.clipboard.writeText(chatID);
+      void copyClipboard.dispatch(chatID);
     }));
     rightSlot.appendChild(makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
       const a = document.createElement("a");
@@ -781,9 +781,6 @@ function buildEventReplay(m: Message): HTMLElement {
 
 /** Ask the utility bridge to explain a tool error in plain language. */
 async function explainError(errorText: string, toolTitle: string): Promise<string> {
-  const d = await apiPost<{ output?: string }>("/api/utility/explain-error", {
-    error: errorText.slice(0, 2000),
-    context: toolTitle,
-  });
+  const d = await explainErrorAction.dispatch({ errorText, context: toolTitle });
   return d?.output ?? "";
 }

@@ -10,12 +10,16 @@
 // triggers: filter input, after a successful action, on tab activate.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { ICON_REFRESH, ICON_SPINNER } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
+import {
+  stageAll, discardAll, pull, push, stash, stashPop,
+  stageFile, unstageFile, discardFile, commit as commitAction, generateCommitMessage,
+} from "./actions/git-changes.js";
 
 // --- Wire types ---
 
@@ -302,17 +306,21 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     return b;
   };
 
-  const stageAll = btn("Stage all", "Stage every unstaged change");
-  stageAll.addEventListener("click", () => {
+  const stageAllBtn = btn("Stage all", "Stage every unstaged change");
+  stageAllBtn.addEventListener("click", () => {
     const files = r.files.filter((f) => !f.staged).map((f) => f.path);
     if (files.length === 0) return;
-    void withAsyncFeedback(stageAll, () => mutateRepo("/api/git/stage", r.repo, { files }));
+    void withAsyncFeedback(stageAllBtn, async () => {
+      const ok = await stageAll.dispatch({ repo: r.repo, files });
+      if (ok === null) throw new Error("failed");
+      await refreshChanges();
+    });
   });
-  bar.appendChild(stageAll);
+  bar.appendChild(stageAllBtn);
 
-  const discardAll = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
-  discardAll.addEventListener("click", () => {
-    void withAsyncFeedback(discardAll, async () => {
+  const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
+  discardAllBtn.addEventListener("click", () => {
+    void withAsyncFeedback(discardAllBtn, async () => {
       const ok = await confirmDialog(
         `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
         "Discard",
@@ -321,49 +329,65 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       if (!ok) return;
       const files = r.files.map((f) => f.path);
       if (files.length === 0) return;
-      await mutateRepo("/api/git/discard", r.repo, { files });
+      const res = await discardAll.dispatch({ repo: r.repo, files });
+      if (res === null) throw new Error("failed");
+      await refreshChanges();
     });
   });
-  bar.appendChild(discardAll);
+  bar.appendChild(discardAllBtn);
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";
   sep.setAttribute("aria-hidden", "true");
   bar.appendChild(sep);
 
-  const pull = btn("Pull", "git pull");
-  pull.addEventListener("click", () => {
-    void withAsyncFeedback(pull, () => mutateRepo("/api/git/pull", r.repo, {}));
+  const pullBtn = btn("Pull", "git pull");
+  pullBtn.addEventListener("click", () => {
+    void withAsyncFeedback(pullBtn, async () => {
+      const ok = await pull.dispatch({ repo: r.repo });
+      if (ok === null) throw new Error("failed");
+      await refreshChanges();
+    });
   });
-  bar.appendChild(pull);
+  bar.appendChild(pullBtn);
 
   if (r.ahead > 0) {
-    const push = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
-    push.classList.add("btn-primary");
-    push.addEventListener("click", () => {
-      void withAsyncFeedback(push, async () => {
-        await mutateRepo("/api/git/push", r.repo, {});
+    const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
+    pushBtn.classList.add("btn-primary");
+    pushBtn.addEventListener("click", () => {
+      void withAsyncFeedback(pushBtn, async () => {
+        const ok = await push.dispatch({ repo: r.repo });
+        if (ok === null) throw new Error("failed");
         // Mark for "Open PR" hint surfacing on next renders.
         recentlyPushed.add(r.repo);
         setTimeout(() => {
           recentlyPushed.delete(r.repo);
           paint();
         }, RECENTLY_PUSHED_TTL_MS);
+        await refreshChanges();
       });
     });
-    bar.appendChild(push);
+    bar.appendChild(pushBtn);
   }
 
-  const stash = btn("Stash", "Stash uncommitted changes");
-  stash.addEventListener("click", () => {
-    void withAsyncFeedback(stash, () => mutateRepo("/api/git/stash", r.repo, {}));
+  const stashBtn = btn("Stash", "Stash uncommitted changes");
+  stashBtn.addEventListener("click", () => {
+    void withAsyncFeedback(stashBtn, async () => {
+      const ok = await stash.dispatch({ repo: r.repo });
+      if (ok === null) throw new Error("failed");
+      await refreshChanges();
+    });
   });
-  bar.appendChild(stash);
+  bar.appendChild(stashBtn);
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
     pop.addEventListener("click", () => {
-      void withAsyncFeedback(pop, () => mutateRepo("/api/git/stash-pop", r.repo, {}));
+      void withAsyncFeedback(pop, async () => {
+        const ok = await stashPop.dispatch({ repo: r.repo });
+        if (ok === null) throw new Error("failed");
+        await refreshChanges();
+      });
     });
     bar.appendChild(pop);
   }
@@ -422,14 +446,25 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
 
   if (f.staged) {
     actions.appendChild(action("Unstage", "Move out of staged area",
-      () => mutateRepo("/api/git/unstage", r.repo, { files: [f.path] })));
+      async () => {
+        const ok = await unstageFile.dispatch({ repo: r.repo, files: [f.path] });
+        if (ok === null) throw new Error("failed");
+        await refreshChanges();
+      }));
   } else {
     actions.appendChild(action("Stage", "Add to staged area",
-      () => mutateRepo("/api/git/stage", r.repo, { files: [f.path] })));
+      async () => {
+        const ok = await stageFile.dispatch({ repo: r.repo, files: [f.path] });
+        if (ok === null) throw new Error("failed");
+        await refreshChanges();
+      }));
     actions.appendChild(action("Discard", "Throw away this change",
       async () => {
         const ok = await confirmDialog(`Discard changes to ${f.path}? This cannot be undone.`, "Discard", "destructive");
-        if (ok) await mutateRepo("/api/git/discard", r.repo, { files: [f.path] });
+        if (!ok) return;
+        const res = await discardFile.dispatch({ repo: r.repo, files: [f.path] });
+        if (res === null) throw new Error("failed");
+        await refreshChanges();
       }, true));
   }
   top.appendChild(actions);
@@ -577,15 +612,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
-      const res = await apiPost<{ message?: string; error?: string }>(
-        `/api/git/commit-message`,
-        { repo: r.repo },
-      );
-      if (res !== null && res.message !== undefined && res.message !== "") {
-        ta.value = res.message;
-      } else if (res !== null && res.error !== undefined && res.error !== "") {
-        throw new Error(res.error);
-      }
+      const msg = await generateCommitMessage.dispatch({ repo: r.repo });
+      if (msg === null) throw new Error("failed");
+      ta.value = msg;
     });
   });
   row.appendChild(ai);
@@ -600,23 +629,16 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
       if (message === "") {
         throw new Error("Commit message required");
       }
-      await mutateRepo("/api/git/commit", r.repo, { message });
+      const ok = await commitAction.dispatch({ repo: r.repo, message });
+      if (ok === null) throw new Error("failed");
       ta.value = "";
+      await refreshChanges();
     });
   });
   row.appendChild(commit);
 
   wrap.appendChild(row);
   return wrap;
-}
-
-// --- API helper ---
-
-async function mutateRepo(path: string, repo: string, body: Record<string, unknown>): Promise<void> {
-  const res = await apiPost<{ output?: string; error?: string }>(path, { repo, ...body });
-  if (res === null) throw new Error("Network error");
-  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
-  await refreshChanges();
 }
 
 // --- Helpers ---

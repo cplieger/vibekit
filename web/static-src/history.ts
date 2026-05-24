@@ -8,11 +8,12 @@
 // retention (cleanup.periodDays) prunes the archive after N days.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiDelete } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { escText } from "./strings.js";
 import { ICON_TRASH } from "./icons.js";
+import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
 
 interface ArchivedHeader {
   id: string;
@@ -42,6 +43,7 @@ class HistoryController {
   }
 
   teardown(): void {
+    loadHistoryAction.cancel();
     this.historyController?.abort();
     this.historyController = null;
     this.archivedController?.abort();
@@ -53,11 +55,12 @@ class HistoryController {
     if (container === null) return;
     container.replaceChildren();
 
+    loadHistoryAction.cancel();
     this.historyController?.abort();
     this.historyController = new AbortController();
     const { signal } = this.historyController;
 
-    const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
+    const d = await loadHistoryAction.dispatch(undefined);
     if (signal.aborted) return;
     const chats = d?.chats ?? [];
     if (chats.length === 0) {
@@ -115,8 +118,9 @@ class HistoryController {
       if (action === "restore") {
         restoreArchivedChat(chatId);
       } else if (action === "delete") {
-        void apiDelete(`/api/chats/archived/${encodeURIComponent(chatId)}`).then((ok) => {
-          if (ok) row.remove();
+        void deleteArchivedChatAction.dispatch(chatId).then((result) => {
+          if (result === null) return; // toast already fired
+          row.remove();
           if (container.children.length === 0) {
             const empty = document.createElement("div");
             empty.className = "list-empty";

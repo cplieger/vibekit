@@ -9,7 +9,8 @@
 import { closeModal, showConfirm, RollingOutput } from "./modals.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE, ICON_REFRESH } from "./icons.js";
-import { apiGet, apiPost, apiPut } from "./api-client.js";
+import { apiGet } from "./api-client.js";
+import { installTools, saveTools, seedMcp } from "./actions/tools.js";
 import { $, el } from "./dom.js";
 
 const SPINNER_ICON = '<div class="spinner-sm"></div>';
@@ -111,7 +112,7 @@ class ToolsManager {
     $.toolUpdateBtn.innerHTML = SPINNER_ICON;
     toolOutput.clear();
     toolOutput.append("Running setup-tools.sh...");
-    const d = await apiPost<{ output?: string; error?: string }>("/api/tools/install");
+    const d = await installTools.dispatch(undefined);
     toolOutput.clear();
     if (d === null) {
       toolOutput.append("Install request failed");
@@ -261,21 +262,13 @@ class ToolsManager {
   }
 
   private saveToolsData(): void {
-    void apiPut("/api/tools", this.toolsData);
+    void saveTools.dispatch(this.toolsData);
   }
 }
 
 /** Seed an MCP config entry the user can fill in later. */
-async function seedUnconfiguredMCP(name: string, _installCommand: string): Promise<void> {
-  await apiPost("/api/mcp", {
-    name,
-    transport: "stdio",
-    enabled: false,
-    prewarm: false,
-    command: name,
-    args: [],
-    env: [],
-  });
+async function seedUnconfiguredMCP(name: string, install: string): Promise<void> {
+  await seedMcp.dispatch({ name, install });
 }
 
 function toggleLabel(id: string, show: boolean): void {

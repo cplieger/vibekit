@@ -9,7 +9,8 @@
 // singleton (only one open at a time); reopening swaps the anchor.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
+import { checkoutBranch } from "./actions/git-branch.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
@@ -131,19 +132,8 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
-  const res = await apiPost<{ output?: string; error?: string }>(
-    `/api/git/checkout`,
-    { repo, branch, create },
-  );
-  if (res === null) {
-    alert("Network error during checkout");
-    return;
-  }
-  if (res.error !== undefined && res.error !== "") {
-    alert(`Checkout failed: ${res.error}`);
-    return;
-  }
-  // Refresh changes tab so the new branch shows up.
+  const res = await checkoutBranch.dispatch({ repo, branch, create });
+  if (res === null) return; // toast already fired
   const { refreshChanges } = await import("./git-changes-tab.js");
   void refreshChanges();
 }

@@ -77,10 +77,13 @@ function makeCopyButton(text: string): HTMLButtonElement {
   btn.setAttribute("data-tooltip", "Copy");
   btn.replaceChildren(iconEl(ICON_COPY));
   btn.addEventListener("click", () => {
-    navigator.clipboard.writeText(text).then(() => {
-      btn.textContent = "✓";
-      setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
-    }).catch(() => {});
+    void import("./actions/messages.js").then(({ copyClipboard }) =>
+      copyClipboard.dispatch(text, { silent: true }).then((r) => {
+        if (r === null) return;
+        btn.textContent = "✓";
+        setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+      }),
+    );
   });
   return btn;
 }

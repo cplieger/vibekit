@@ -6,6 +6,15 @@ vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(() => Promise.resolve(null)),
   apiPut: vi.fn(() => Promise.resolve(null)),
   apiDelete: vi.fn(() => Promise.resolve(null)),
+  withTimeout: vi.fn((signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000)),
+  API_TIMEOUT_MS: 30000,
+}));
+
+vi.mock("./toast.js", () => ({
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("./confirm.js", () => ({
@@ -13,12 +22,11 @@ vi.mock("./confirm.js", () => ({
 }));
 
 import { renderForgesPanel } from "./forge-auth.js";
-import { apiGet, apiPost, apiDelete } from "./api-client.js";
+import { apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 
 const mockedApiGet = vi.mocked(apiGet);
 const mockedApiPost = vi.mocked(apiPost);
-const mockedApiDelete = vi.mocked(apiDelete);
 const mockedConfirm = vi.mocked(confirmDialog);
 
 function setupDOM(): void {
@@ -272,6 +280,9 @@ describe("forge-auth: 4-section layout", () => {
     // Empty re-fetch after delete.
     mockedApiGet.mockResolvedValue({ forges: [], kinds: ["github", "gitlab", "codeberg", "gitea"] });
     mockedConfirm.mockResolvedValueOnce(true);
+    // Mock fetch for the action framework's DELETE call.
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
     const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
@@ -285,7 +296,10 @@ describe("forge-auth: 4-section layout", () => {
     expect(msg).toContain("Sign out of a@x.io");
     expect(label).toBe("Sign out");
     expect(variant).toBe("destructive");
-    expect(mockedApiDelete).toHaveBeenCalledWith("/api/forges/github%3Agithub.com");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/forges/github%3Agithub.com",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 
   it("sign-out cancellation does not delete", async () => {
@@ -296,15 +310,17 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     mockedConfirm.mockResolvedValueOnce(false);
-    mockedApiDelete.mockClear();
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
+    fetchSpy.mockClear(); // clear any fetch calls from render
     const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
       .find((b) => b.textContent === "Sign out")!;
     signOutBtn.click();
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
 
     expect(mockedConfirm).toHaveBeenCalled();
-    expect(mockedApiDelete).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -21,6 +21,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
+import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
 
 // --- Types ---
 
@@ -74,20 +75,21 @@ export function initPRsTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void withAsyncFeedback(refreshBtn, () => refreshPRs());
+      void withAsyncFeedback(refreshBtn, () => refreshPRsAction.dispatch(() => refreshPRs()));
     });
   }
 
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
-  onSSE("forges_changed", () => { void refreshPRs(); });
+  onSSE("forges_changed", () => { void refreshPRs().catch(() => {}); });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
  *  repos). Safe to call multiple times — only the latest result wins. */
 export async function refreshPRs(): Promise<void> {
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges");
-  const forges = (forgesRes?.forges ?? []).filter((f) => f.connected);
+  if (forgesRes === null) throw new Error("Failed to load forges");
+  const forges = forgesRes.forges.filter((f) => f.connected);
 
   // Build a flat (forge, owner/name) list to fetch.
   const tasks: Array<{ forge: ConfiguredForge; repo: Repo }> = [];
@@ -364,13 +366,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     void withAsyncFeedback(merge, async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
       if (!ok) return;
-      const res = await apiPost<{ status?: string; error?: string }>(
-        `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs/${pr.number}/merge`,
-        {},
-      );
-      if (res === null || (res.error !== undefined && res.error !== "")) {
-        throw new Error(res?.error ?? "merge failed");
-      }
+      const res = await mergePRAction.dispatch({
+        forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+      });
+      if (res === null) return;
       await refreshPRs();
     });
   });
@@ -384,13 +383,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     void withAsyncFeedback(close, async () => {
       const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
       if (!ok) return;
-      const res = await apiPost<{ status?: string; error?: string }>(
-        `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs/${pr.number}/close`,
-        {},
-      );
-      if (res === null || (res.error !== undefined && res.error !== "")) {
-        throw new Error(res?.error ?? "close failed");
-      }
+      const res = await closePRAction.dispatch({
+        forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+      });
+      if (res === null) return;
       await refreshPRs();
     });
   });

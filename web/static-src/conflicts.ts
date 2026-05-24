@@ -22,10 +22,11 @@
 // a pathological runaway.
 
 import { onSSE } from "./bus.js";
-import { apiGet, withTimeout, CancellableSlot } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
+import { openConflictDiff as openConflictDiffAction } from "./actions/tools.js";
 
 /** One conflict record. Shape matches the server-side
  *  `ConflictPayload` Go struct 1:1. */
@@ -180,45 +181,19 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
 // Register with messages-shared so it can render chips without importing conflicts.ts.
 registerConflictChipRenderer(renderConflictChip);
 
-/** Controller for the currently open conflict diff fetch. Cancelled
- *  when a new diff is opened or the panel is abandoned, preventing
- *  orphaned fetches from consuming bandwidth after navigation. */
-const activeDiffSlot = new CancellableSlot();
-
 /** Open the editor in diff mode comparing the blob the other chat
- *  left against the blob this chat saw. Both blobs come from the
- *  server's content-addressed store via /api/checkpoints/{chatID}/blob/{sha}.
- *  Client-side fetch failures fall back to a console warning —
- *  this is an advisory feature, not a critical path. */
+ *  left against the blob this chat saw. Dispatches through the action
+ *  framework which handles error toasting. */
 async function openConflictDiff(chatID: string, path: string): Promise<void> {
   const c = getConflict(chatID, path);
   if (c === null) return;
-  const signal = activeDiffSlot.start();
-  const [expected, actual] = await Promise.all([
-    fetchBlob(chatID, c.expected_sha, signal),
-    fetchBlob(chatID, c.actual_sha, signal),
-  ]);
-  const { openFileDiff } = await import("./editor-openers.js");
-  openFileDiff(path, expected, actual, {
-    oldLabel: `chat ${c.other_chat} left`,
-    newLabel: "this chat saw",
+  await openConflictDiffAction.dispatch({
+    chatID,
+    path,
+    expectedSha: c.expected_sha,
+    actualSha: c.actual_sha,
+    otherChat: c.other_chat,
   });
-}
-
-async function fetchBlob(chatID: string, sha: string, parentSignal?: AbortSignal): Promise<string> {
-  if (sha === "") return "";
-  // Compose caller-provided signal with a 15s timeout so the fetch
-  // is bounded AND cancellable when the user navigates away.
-  try {
-    const resp = await fetch(
-      `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`,
-      { signal: withTimeout(parentSignal, 15_000) },
-    );
-    if (!resp.ok) return "";
-    return await resp.text();
-  } catch {
-    return "";
-  }
 }
 
 // Suppress the unused-import warning when this file is tree-shaken

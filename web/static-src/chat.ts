@@ -14,7 +14,6 @@ import {
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";
-import * as transport from "./transport.js";
 import { sendPromptTo } from "./chat-commands.js";
 import {
   openTab, activateTab, hasTab, getActiveTabId, renameTab, setTabStatus, TAB_VIEWS,
@@ -31,9 +30,9 @@ import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
 import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
-import { apiPost } from "./api-client.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
+import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -61,7 +60,7 @@ export function openChatTab(id: string, name: string, agent: string): void {
       // / other devices clean up via handlers/chat.ts.
       const s = get(id);
       if (s?.is_tangent === true) {
-        void transport.send({ type: "discard_tangent", chat_id: id });
+        void discardTangentAction.dispatch(id);
         return;
       }
       // Retention > 0: archive so the chat appears in History.
@@ -78,7 +77,7 @@ export function openChatTab(id: string, name: string, agent: string): void {
 /** Archive a chat (move to archive dir). Used on tab close instead of
  *  delete so the chat appears in History for the retention window. */
 function archiveChat(id: string): void {
-  void apiPost(`/api/chats/${encodeURIComponent(id)}/archive`);
+  void archiveChatAction.dispatch(id);
   // Store is updated when the server broadcasts chat_deleted (archive
   // triggers the same SSE event so the sidebar removes the tab).
 }
@@ -245,7 +244,7 @@ export function attachPathToActiveChat(path: string): void {
 
 /** User-triggered chat deletion. */
 export function deleteChat(id: string): void {
-  void transport.send({ type: "delete_chat", chat_id: id });
+  void deleteChatAction.dispatch(id);
   // Store is updated when chat_deleted SSE echoes back.
 }
 
@@ -274,8 +273,8 @@ export function exportChat(id: string): void {
  *  on the conversation they just resurrected instead of having to
  *  find it in the sidebar. */
 export function restoreArchivedChat(id: string): void {
-  void apiPost<{ ok: boolean }>("/api/chats/archived", { id }).then((d) => {
-    if (d?.ok !== true) return;
+  void restoreChatAction.dispatch(id).then((d) => {
+    if (d === null || d.ok !== true) return;
     void loadList().then(() => {
       const s = get(id);
       if (s === undefined) return;
