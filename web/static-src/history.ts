@@ -12,7 +12,7 @@ import { apiGet, apiDelete } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { escText } from "./strings.js";
-import { ICON_CLOSE } from "./icons.js";
+import { ICON_TRASH } from "./icons.js";
 
 interface ArchivedHeader {
   id: string;
@@ -95,11 +95,11 @@ class HistoryController {
 
       const delBtn = document.createElement("button");
       delBtn.type = "button";
-      delBtn.className = "list-row-btn";
+      delBtn.className = "btn-small btn-danger icon-only";
       delBtn.setAttribute("data-tooltip", "Delete permanently");
       delBtn.setAttribute("aria-label", `Delete ${escText(chat.name)}`);
       delBtn.setAttribute("data-action", "delete");
-      delBtn.innerHTML = ICON_CLOSE;
+      delBtn.innerHTML = ICON_TRASH;
 
       row.append(nameWrap, date, delBtn);
       container.appendChild(row);

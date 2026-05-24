@@ -27,6 +27,12 @@ h3.section-title { padding-block-start: var(--sp-4); }
 
 .section-hint { font-size: var(--fs-xs); color: var(--c-text-tertiary); margin: 0; }
 
+/* When a section-hint sits directly above a list-container (e.g. on
+ * the History page intro) give the table a breathing gap so the
+ * intro text doesn't butt up against the first row. */
+.section-hint + .list-container,
+.section-hint + .list-container-header { margin-block-start: var(--sp-3); }
+
 .page-textarea {
   background: var(--c-bg-secondary); color: var(--c-text-primary);
   border: 1px solid var(--c-border); border-radius: var(--r);
