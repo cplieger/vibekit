@@ -162,3 +162,96 @@
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------
+ * Devtools overlay (Ctrl+Shift+A)
+ * Bottom-right floating panel showing recent action lifecycle
+ * events. Visible only when toggled — has a high z-index so it
+ * floats above modals + toasts. Compact monospace rows, color-
+ * coded by status.
+ * --------------------------------------------------------------- */
+.vk-devtools-overlay {
+  position: fixed;
+  inset-block-end: var(--sp-3);
+  inset-inline-end: var(--sp-3);
+  z-index: 9999;  /* above toasts (which sit at z-index lower) */
+  width: min(520px, 90vw);
+  max-height: 60vh;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-xs);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.vk-devtools-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-bg-tertiary);
+}
+
+.vk-devtools-title {
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
+}
+
+.vk-devtools-close {
+  background: transparent;
+  border: none;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  padding: 0 var(--sp-1);
+  line-height: 1;
+}
+.vk-devtools-close:hover { color: var(--c-text-primary); }
+
+.vk-devtools-list {
+  overflow-y: auto;
+  padding: var(--sp-1) 0;
+}
+
+.vk-devtools-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: var(--sp-1) var(--sp-3);
+  border-bottom: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
+}
+.vk-devtools-row:last-child { border-bottom: none; }
+.vk-devtools-row-pending { opacity: 0.65; }
+
+.vk-devtools-glyph { font-weight: var(--fw-bold); }
+
+.vk-devtools-name {
+  color: var(--c-text-primary);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.vk-devtools-duration {
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  min-width: 4ch;
+}
+
+.vk-devtools-detail {
+  color: var(--c-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  grid-column: 1 / -1;  /* full width on its own row */
+  padding-inline-start: var(--sp-4);
+  padding-block-end: var(--sp-1);
+  font-size: 0.92em;
+}
+.vk-devtools-detail:empty { display: none; }

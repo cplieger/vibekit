@@ -20,6 +20,24 @@ export type { BindLoadingOptions } from "./loading.js";
 // register raw (non-action) cleanup for fetch controllers / timers.
 export { registerCleanup, cancelAllPending } from "./cleanup.js";
 
+// Devtools overlay — Ctrl+Shift+A toggles a floating panel showing
+// recent action lifecycle events. Wire once at app startup.
+export { initDevtoolsOverlay, toggle as toggleDevtools } from "./devtools.js";
+
+// Telemetry adapter — opt-in subscriber that emits action lifecycle
+// metadata (no args / no result) to a configurable sink.
+export { initTelemetry } from "./telemetry.js";
+export type { TelemetryEvent, TelemetryOptions } from "./telemetry.js";
+
+// Persisted error tail — last N action errors saved to localStorage
+// for inclusion in a future bug-report flow.
+export {
+  initErrorTail,
+  getRecentErrors,
+  clearRecentErrors,
+} from "./error-tail.js";
+export type { PersistedError } from "./error-tail.js";
+
 // Types — re-exported for external typing of action definitions.
 export type {
   Action,

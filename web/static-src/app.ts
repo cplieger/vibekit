@@ -70,6 +70,11 @@ import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurnAction } from "./actions/chat.js";
+import {
+  initDevtoolsOverlay,
+  initTelemetry,
+  initErrorTail,
+} from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -165,6 +170,19 @@ function init(): void {
     toggleSettings: () => $.settingsBtn.click(),
     sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
   });
+
+  // Action-framework global features. All three subscribe to the
+  // registry; each is independent and idempotent.
+  //   - Devtools overlay: Ctrl+Shift+A toggles a panel showing recent
+  //     action lifecycle events. Always wired (the keystroke is the
+  //     gate; no UI cost when not toggled).
+  //   - Telemetry: opt-in via localStorage["vk.telemetry"]="1".
+  //     Default-off keeps the codepath dormant.
+  //   - Error tail: persists last 20 errors to localStorage for a
+  //     future "report a bug" flow. Always on; cheap.
+  initDevtoolsOverlay();
+  initTelemetry();
+  initErrorTail();
 
   void checkAuthAndStart();
 }
