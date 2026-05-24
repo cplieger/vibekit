@@ -31,12 +31,11 @@
 //     the server executes the set_mode call on the user's behalf.
 // ---------------------------------------------------------------------------
 
-import { setThinking, enqueuePrompt } from "./store.js";
-import * as transport from "./transport.js";
+import { newMessageID } from "./transport.js";
 import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import { takeAttachments } from "./attachments.js";
-import { switchModelAction, resolvePendingChangeAction } from "./actions/chat.js";
+import { switchModelAction, resolvePendingChangeAction, sendPromptAction } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
 export interface SendPromptOpts {
@@ -53,31 +52,17 @@ export interface SendPromptOpts {
 export async function sendPromptTo(
   chatID: string, text: string, opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
-  setThinking(chatID, true);
-
-  const messageID = transport.newMessageID();
-  const attachments = takeAttachments();
-  const result = await transport.send({
-    type: "prompt", chat_id: chatID,
-    payload: {
-      text, message_id: messageID,
-      agent: opts.agent ?? getCurrentAgent(),
-      model: opts.model ?? getCurrentModel(),
-      active_file: getActiveFilePath(),
-      open_files: getOpenFilePaths(),
-      attachments: attachments.length > 0 ? attachments : undefined,
-    },
+  const result = await sendPromptAction.dispatch({
+    chatID, text,
+    messageID: newMessageID(),
+    agent: opts.agent ?? getCurrentAgent(),
+    model: opts.model ?? getCurrentModel(),
+    activeFile: getActiveFilePath(),
+    openFiles: getOpenFilePaths(),
+    attachments: takeAttachments(),
   });
-
-  if (result.ok) return "sent";
-
-  if (result.status === 409) {
-    enqueuePrompt(chatID, text);
-    return "queued";
-  }
-
-  setThinking(chatID, false);
-  return "failed";
+  if (result === null) return "failed";  // rollback already cleared thinking
+  return result;
 }
 
 /** Send a standalone switch_model command. Used by the model picker

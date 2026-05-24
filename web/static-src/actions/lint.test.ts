@@ -49,12 +49,6 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
 
   // Fire-and-forget cleanup after successful plan send.
   "plan-actions.ts",    // await apiDelete plan-draft
-
-  // TODO(actions): migrate sendPromptTo to a transportAction. The
-  // direct transport.send call exists because the prompt path has a
-  // bespoke 409-queue lifecycle that doesn't map cleanly onto the
-  // framework yet. Tracked as a follow-up; do not extend allowlist.
-  "chat-commands.ts",
 ]);
 
 /** Regex for forbidden patterns. Each match is a regression candidate.

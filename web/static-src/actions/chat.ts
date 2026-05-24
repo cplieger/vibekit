@@ -204,6 +204,69 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
   error: "Couldn't switch model",
 });
 
+// --- chat.send_prompt ---
+//
+// The most-used user mutation in the app. Posts a prompt to a chat
+// with the shared thinking + 409-queue lifecycle. Returns "sent" on
+// 2xx, "queued" on 409 (the prompt drains when the in-flight turn
+// ends), or null (= caller's "failed") on any other error.
+//
+// `error: false`: the send-state.ts blocked-button is the canonical
+// error surface for prompt sends specifically. transport.send
+// reportSendState defaults to true here so setLastError fires; we
+// don't want a toast on top.
+
+export interface SendPromptArgs {
+  chatID: string;
+  text: string;
+  messageID: string;
+  agent: string;
+  model: string;
+  activeFile: string;
+  openFiles: readonly string[];
+  attachments?: readonly unknown[];
+}
+
+export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">({
+  name: "chat.send_prompt",
+  optimistic: ({ chatID }) => {
+    setThinking(chatID, true);
+    return { chatID };
+  },
+  rollback: (_args, op) => {
+    const o = op as { chatID: string } | undefined;
+    if (o !== undefined) setThinking(o.chatID, false);
+  },
+  run: async (args, signal) => {
+    const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
+    const r = await transportSend(
+      {
+        type: "prompt", chat_id: chatID,
+        payload: {
+          text, message_id: messageID, agent, model,
+          active_file: activeFile,
+          open_files: openFiles as string[],
+          attachments: (attachments !== undefined && attachments.length > 0)
+            ? (attachments as unknown[]) : undefined,
+        },
+      },
+      { signal, reportSendState: true },  // send-state IS the error surface
+    );
+    if (r.ok) return "sent";
+    if (r.status === 409) {
+      // Server says "in-flight turn"; queue the text and report queued.
+      // The queue drains via SSE turn_ended. enqueuePrompt runs in
+      // run() (not optimistic) because it should only happen if the
+      // server actually 409'd, not on cancel.
+      const { enqueuePrompt } = await import("../store.js");
+      enqueuePrompt(chatID, text);
+      return "queued";
+    }
+    throw new ActionError(r.error ?? "send failed", { status: r.status });
+  },
+  error: false,  // send-state.ts (blocked send button) is the surface
+});
+
 // --- chat.resolve_pending_change ---
 
 export const resolvePendingChangeAction = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
