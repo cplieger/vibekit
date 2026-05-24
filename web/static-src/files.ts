@@ -183,7 +183,9 @@ function loadDirAsync(): Promise<void> {
     state.entryMap.clear();
     for (const e of state.entries) state.entryMap.set(e.name, e);
     state.dirWritable = d.writable;
-    renderList();
+    // transition:false so the DOM is updated synchronously — callers
+    // chain inline rename on the freshly-created row immediately.
+    renderList({ transition: false });
   });
 }
 
@@ -249,7 +251,7 @@ function updateWriteButtons(): void {
 
 // --- Render ---
 
-function renderList(): void {
+function renderList(opts: { transition?: boolean } = {}): void {
   updateNavButtons();
 
   const swap = (): void => {
@@ -269,7 +271,16 @@ function renderList(): void {
   // Wrap the content swap in a view transition for a subtle crossfade
   // when navigating between directories. Falls back to instant swap
   // on browsers without the API.
-  maybeViewTransition(swap);
+  //
+  // Callers that need synchronous DOM updates (e.g. createEntry, which
+  // immediately starts inline rename on the freshly-created row) pass
+  // transition: false so renderList() returns with the new DOM in
+  // place rather than scheduling the swap inside a microtask.
+  if (opts.transition === false) {
+    swap();
+  } else {
+    maybeViewTransition(swap);
+  }
 }
 
 function parentRow(): HTMLDivElement {

@@ -122,7 +122,7 @@
 
 .fb-row {
   display: flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
   min-height: var(--btn-h);
   border-block-end: 1px solid var(--c-border);
   font-size: var(--fs-sm);
