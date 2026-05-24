@@ -70,6 +70,9 @@ class FollowController {
         activateTab(chatID);
       }
     });
+    onSSE("chat_deleted", (chatID) => {
+      this.hasToolCall.delete(chatID);
+    });
     effect(() => { version.value; this.syncEnabled(); });
     this.syncEnabled();
   }

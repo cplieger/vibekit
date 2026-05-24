@@ -34,7 +34,9 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
     stAuthEl.textContent = "not signed in";
     return prev;
   },
-  run: async (_args, signal) => {
+  // run() intentionally ignores args — DOM refs are only for optimistic/rollback.
+  // The framework passes the full args object; we destructure to nothing.
+  run: async (_, signal) => {
     const r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
     if (!r.ok) {
       const body = await r.text().catch(() => "");

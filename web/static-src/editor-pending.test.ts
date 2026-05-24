@@ -14,6 +14,7 @@ function makeState(diff: DiffLine[]): FileState {
     mode: { kind: "edit", editing: false },
     suggestions: new Map(),
     returnToGitDiff: null,
+    repo: "",
     pendingHunkDecisions: new Map(),
     pendingHunkCount: null,
     cachedDiff: diff,

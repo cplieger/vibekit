@@ -27,10 +27,9 @@ vi.mock("./messages.js", () => ({
 }));
 
 import { filterEntries } from "./files-picker.js";
-import type { FileEntry } from "./files-picker.js";
 
 describe("filterEntries", () => {
-  const entries: FileEntry[] = [
+  const entries = [
     { name: "README.md", isDir: false },
     { name: "package.json", isDir: false },
     { name: "src", isDir: true },

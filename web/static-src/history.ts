@@ -1,17 +1,16 @@
 // ---------------------------------------------------------------------------
-// Chat history: sidebar popover with archived chats, plus a dedicated
-// full-page History view opened from the chat toolbar (#history-btn).
-// Restoring a chat spawns a new tab and loads its messages.
+// Chat history: sidebar popover listing archived chats, plus a full-page
+// History table opened from the toolbar (#history-btn). Restoring a chat
+// loads its messages into a new tab. Deletion is permanent (server-side).
 //
-// Auto-archive on tab-close: beforeunload posts archive for every chat
-// the user has open so they're not lost on page refresh. Server-side
-// retention (cleanup.periodDays) prunes the archive after N days.
+// Uses loadHistoryAction / deleteArchivedChatAction from actions/chat.ts
+// for the table view, and raw apiGet for the lightweight sidebar fetch
+// (no toast on failure — sidebar is background UI).
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { escText } from "./strings.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
 
@@ -102,7 +101,7 @@ class HistoryController {
       delBtn.type = "button";
       delBtn.className = "btn-small btn-danger icon-only";
       delBtn.setAttribute("data-tooltip", "Delete permanently");
-      delBtn.setAttribute("aria-label", `Delete ${escText(chat.name)}`);
+      delBtn.setAttribute("aria-label", `Delete ${chat.name}`);
       delBtn.setAttribute("data-action", "delete");
       delBtn.innerHTML = ICON_TRASH;
 

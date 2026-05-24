@@ -103,6 +103,7 @@ onSSE("mode_changed", (chatID, p) => {
 // in the message list when kiro-cli reports which steering docs were loaded.
 onSSE("steering_loaded", (chatID, payload) => {
   if (chatID === "" || getActiveId() !== chatID) return;
+  if (!Array.isArray(payload?.documents)) return;
   const docs = payload.documents;
   if (docs.length === 0) return;
   const msgs = document.getElementById("messages");

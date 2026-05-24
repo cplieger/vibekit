@@ -9,29 +9,32 @@ import { apiAction } from "./index.js";
 
 // --- Wire types ---
 
-interface GitRepoArgs {
+export interface GitRepoArgs {
   repo: string;
-  files?: string[];
+}
+
+export interface GitRepoFilesArgs extends GitRepoArgs {
+  files: string[];
 }
 
 // --- Actions ---
 
 /** Stage files (used for both "stage all" and single-file stage). */
-export const stage = apiAction<GitRepoArgs, unknown>({
+export const stage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.stage",
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   error: "Couldn't stage",
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
-export const discard = apiAction<GitRepoArgs, unknown>({
+export const discard = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.discard",
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   error: "Couldn't discard",
 });
 
 /** Unstage a file. */
-export const unstage = apiAction<GitRepoArgs, unknown>({
+export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.unstage",
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   error: "Couldn't unstage",

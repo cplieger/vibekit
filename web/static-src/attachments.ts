@@ -55,7 +55,6 @@ export function takeAttachments(): AttachedFile[] {
   return out;
 }
 
-/** Returns true if there are attachments pending. */
 /** Clear all attachments without returning them. */
 export function clearAttachments(): void {
   attached.length = 0;

@@ -17,7 +17,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
 
 export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   name: "tools.seed_mcp",
-  request: ({ name }) => ({
+  request: ({ name, install }) => ({
     method: "POST",
     path: "/api/mcp",
     body: {
@@ -28,6 +28,7 @@ export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
       command: name,
       args: [],
       env: [],
+      ...(install !== undefined ? { install } : {}),
     },
   }),
   error: "Couldn't create MCP entry",

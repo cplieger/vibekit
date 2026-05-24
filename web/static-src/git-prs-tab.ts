@@ -58,6 +58,7 @@ interface PRListResponse { prs: PR[] }
 
 let lastGroups: RepoGroup[] = [];
 let filterText = "";
+let refreshGen = 0;
 
 // --- Public API ---
 
@@ -87,6 +88,7 @@ export function initPRsTab(): void {
 /** Force a full PR refresh (parallel fan-out across all credentialled
  *  repos). Safe to call multiple times — only the latest result wins. */
 export async function refreshPRs(): Promise<void> {
+  const myGen = ++refreshGen;
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges");
   if (forgesRes === null) throw new Error("Failed to load forges");
   const forges = forgesRes.forges.filter((f) => f.connected);
@@ -140,6 +142,9 @@ export async function refreshPRs(): Promise<void> {
     }
     return a.full_name.localeCompare(b.full_name);
   });
+
+  // Bail if a newer refresh was started while we were fetching.
+  if (myGen !== refreshGen) return;
 
   lastGroups = groups;
   paint();
@@ -432,14 +437,19 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     return;
   }
 
-  const baseInput = document.getElementById("pr-base") as HTMLInputElement;
-  const headInput = document.getElementById("pr-head") as HTMLInputElement;
-  const titleInput = document.getElementById("pr-title") as HTMLInputElement;
-  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement;
-  const draftInput = document.getElementById("pr-draft") as HTMLInputElement;
+  const baseInput = document.getElementById("pr-base") as HTMLInputElement | null;
+  const headInput = document.getElementById("pr-head") as HTMLInputElement | null;
+  const titleInput = document.getElementById("pr-title") as HTMLInputElement | null;
+  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement | null;
+  const draftInput = document.getElementById("pr-draft") as HTMLInputElement | null;
   const status = document.getElementById("pr-dialog-status");
-  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement;
-  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement;
+  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement | null;
+  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement | null;
+
+  if (!baseInput || !headInput || !titleInput || !bodyInput || !draftInput || !submitBtn || !generateBtn) {
+    console.error("PR dialog missing required elements");
+    return;
+  }
 
   // Stage 1: edit. Pre-fill base/head, generate title+body via AI.
   baseInput.value = "main";
@@ -508,7 +518,7 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
       return;
     }
     dlg.close();
-    await refreshPRs();
+    await refreshPRs().catch(() => {});
   });
 
   dlg.showModal();

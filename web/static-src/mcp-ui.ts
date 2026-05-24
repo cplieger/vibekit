@@ -264,12 +264,10 @@ export function initMCP(): void {
 
   onSSE("mcp_config_changed", () => { void refetchServers(); });
   onSSE("mcp_connected", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, { name: p.server, state: "connected" });
     renderSection();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, {
       name: p.server,
       state: "needs_auth",
@@ -278,7 +276,6 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_failed", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, {
       name: p.server,
       state: "failed",
@@ -287,16 +284,15 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_disconnected", (_chat, p) => {
-    if (p === undefined) return;
     deleteStatus(p.server);
     renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
-    if (p === undefined) return;
     updatePrewarmStatus(p.package, p.state);
   });
 
-  void Promise.all([refetchServers(), refetchStatus()]);
+  refetchServers();
+  refetchStatus();
 }
 
 // --- Prewarm progress indicator ---

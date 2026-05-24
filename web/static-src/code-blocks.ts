@@ -93,8 +93,13 @@ function makeCopyButton(text: string): HTMLButtonElement {
 function makeRunButton(text: string): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "code-act-btn";
-  btn.setAttribute("data-tooltip", "Run in shell");
   btn.replaceChildren(iconEl(ICON_PLAY));
-  btn.addEventListener("click", () => { shellRunCb?.(text.trim()); });
+  if (shellRunCb === null) {
+    btn.setAttribute("data-tooltip", "Shell not available");
+    btn.disabled = true;
+  } else {
+    btn.setAttribute("data-tooltip", "Run in shell");
+    btn.addEventListener("click", () => { shellRunCb?.(text.trim()); });
+  }
   return btn;
 }

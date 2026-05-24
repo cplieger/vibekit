@@ -249,7 +249,7 @@ class PermissionsUIController {
     this.renderRuleChips();
     const ok = await removeRuleAction.dispatch(pattern);
     if (ok === null && removed !== undefined) {
-      this.commandRules.splice(index, 0, removed);
+      this.commandRules.push(removed);
       this.renderRuleChips();
     }
   }

@@ -73,26 +73,30 @@ export function initNotificationToggles(): void {
         notify_permission: true,
       }, ...mutatedInputs).then((r) => {
         if (r === null) {
-          // Rollback in-memory state on failure
+          // Action framework handles input rollback; tear down any push
+          // subscription that requestPermission may have started.
           setNotificationsEnabled(false);
           setAgentFinishedEnabled(false);
           setPermissionNeededEnabled(false);
+          unregisterPush();
+          updateSub();
         } else {
           setNotificationsEnabled(true);
           setAgentFinishedEnabled(true);
           setPermissionNeededEnabled(true);
           updateSub();
+          // Only prompt for browser permission after server confirms enable.
+          const hint = requestPermission();
+          if (hint !== null) {
+            notifyHint.textContent = hint;
+            notifyHint.classList.remove("hidden");
+          }
         }
       });
-      const hint = requestPermission();
-      if (hint !== null) {
-        notifyHint.textContent = hint;
-        notifyHint.classList.remove("hidden");
-      }
     } else {
       void patchSettings({ notifications_enabled: false }, notifyToggle).then((r) => {
         if (r === null) {
-          // Rollback: keep enabled
+          // Action framework rolls back the toggle input; no extra work needed.
         } else {
           setNotificationsEnabled(false);
           unregisterPush();
@@ -122,7 +126,7 @@ export function initNotificationToggles(): void {
 
     void patchSettings(patch, ...mutatedInputs).then((r) => {
       if (r === null) {
-        // Rollback: don't update in-memory state
+        // Action framework rolls back the toggle inputs; no extra work needed.
       } else {
         setAgentFinishedEnabled(finishedToggle.checked);
         setPermissionNeededEnabled(permissionToggle.checked);

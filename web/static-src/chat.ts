@@ -90,7 +90,8 @@ export function openChatTab(id: string, name: string, agent: string): void {
  *  archive and would 500. */
 function archiveChat(id: string): void {
   const s = get(id);
-  if (s !== undefined && s.message_count === 0) {
+  if (s === undefined) return;
+  if (s.message_count === 0) {
     removeChat(id);
     return;
   }
@@ -161,6 +162,10 @@ function setupLoadMore(chatID: string): void {
     session.has_more ? (): void => {
       const oldest = session.messages[0];
       if (oldest === undefined) return;
+      // prevCount is captured before the async loadMessages call. If another
+      // source appends messages concurrently, `added` may be slightly off.
+      // This is acceptable: the worst case is a harmless extra prepend of
+      // already-rendered messages, and setupLoadMore re-runs immediately after.
       const prevCount = session.messages.length;
       void loadMessages(chatID, oldest.ts).then(() => {
         if (getActiveId() !== chatID) return;

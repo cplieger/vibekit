@@ -63,7 +63,7 @@ export function initGitPanel(): void {
     onGitTabChange((tab) => {
       switch (tab) {
         case "changes": void refreshChanges(); break;
-        case "prs":     void refreshPRs(); break;
+        case "prs":     void refreshPRs().catch(() => {}); break;
         case "sources": void refreshSources(); break;
       }
     });
@@ -73,7 +73,7 @@ export function initGitPanel(): void {
     // ended a turn, etc.) sees fresh state.
     switch (getGitTab()) {
       case "changes": void refreshChanges(); break;
-      case "prs":     void refreshPRs(); break;
+      case "prs":     void refreshPRs().catch(() => {}); break;
       case "sources": void refreshSources(); break;
     }
   }

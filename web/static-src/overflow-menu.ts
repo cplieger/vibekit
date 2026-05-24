@@ -3,6 +3,8 @@
 // overflow "⋯" trigger. No new dependencies — pure DOM and a single
 // outside-click + Escape handler.
 //
+// TODO: Wire into git toolbar — currently only imported by its own test.
+//
 // Items are passed in declaratively so different surfaces can share
 // the component (today: git toolbar; future: repo-picker row menu,
 // PR-row menu).
@@ -85,6 +87,7 @@ export function openOverflowMenu(
       closeOverflowMenu();
     }
   };
+  const onScrollOrResize = (): void => { closeOverflowMenu(); };
 
   // Defer outside-click attach to next tick so the click that opened
   // the menu doesn't immediately close it (the click still bubbles
@@ -94,10 +97,17 @@ export function openOverflowMenu(
     document.addEventListener("keydown", onKey);
   }, 0);
 
+  document.addEventListener("scroll", onScrollOrResize, true);
+  window.addEventListener("resize", onScrollOrResize);
+  trigger.setAttribute("aria-expanded", "true");
+
   const cleanup = (): void => {
     clearTimeout(deferTimer);
     document.removeEventListener("click", onDocumentClick);
     document.removeEventListener("keydown", onKey);
+    document.removeEventListener("scroll", onScrollOrResize, true);
+    window.removeEventListener("resize", onScrollOrResize);
+    trigger.setAttribute("aria-expanded", "false");
     root.remove();
   };
 

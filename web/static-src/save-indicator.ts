@@ -8,10 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { iconEl } from "./icons.js";
-
-const ICON_CHECK_GREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-const ICON_X_RED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -39,7 +36,7 @@ export function showSaving(): void {
 export function showSaved(): void {
   clearTimers();
   const el = $.settingsSaveStatus;
-  el.replaceChildren(iconEl(ICON_CHECK_GREEN));
+  el.replaceChildren(iconEl(ICON_SAVE_OK));
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");
@@ -53,7 +50,7 @@ export function showSaved(): void {
 export function showError(): void {
   clearTimers();
   const el = $.settingsSaveStatus;
-  el.replaceChildren(iconEl(ICON_X_RED));
+  el.replaceChildren(iconEl(ICON_SAVE_FAIL));
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");

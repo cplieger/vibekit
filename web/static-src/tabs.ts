@@ -128,12 +128,14 @@ export function activateTab(id: string): void {
   callbacks.onActivate?.(id);
 }
 
-/** Close a tab. Activates the neighbor or fires onEmpty if none remain. */
-export function closeTab(id: string): void {
+/** Close a tab. Activates the neighbor or fires onEmpty if none remain.
+ *  Pass `{ skipOnClose: true }` when the chat is already deleted remotely
+ *  to avoid re-dispatching archive/delete actions against a stale session. */
+export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const tab = state.tabs[idx]!;
-  tab.onClose?.();
+  if (!opts?.skipOnClose) tab.onClose?.();
   state.tabs.splice(idx, 1);
 
   if (state.active === id) {

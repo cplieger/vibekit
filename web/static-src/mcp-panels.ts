@@ -517,7 +517,7 @@ function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], ch
     pill.addEventListener("click", () => {
       if (!session.disabledToolsList.includes(name)) {
         session.disabledToolsList.push(name);
-        renderDisabledChips(chips);
+        renderDisabledChips(chips, section, knownTools);
         renderToolSuggestions(section, knownTools, chips);
       }
     });

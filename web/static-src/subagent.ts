@@ -162,6 +162,7 @@ export function updateSubAgentCard(
 }
 
 export function resetSubAgents(): void {
+  $.subagentModal.classList.add("hidden");
   els.clear();
   transcripts.clear();
   activeId = "";

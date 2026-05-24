@@ -10,6 +10,7 @@ vi.mock("./api-client.js", () => ({
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
   showSaved: vi.fn(),
+  showError: vi.fn(),
 }));
 vi.mock("./toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),

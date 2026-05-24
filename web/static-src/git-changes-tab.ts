@@ -73,6 +73,19 @@ let refreshGeneration = 0;
 const recentlyPushed = new Set<string>();
 const RECENTLY_PUSHED_TTL_MS = 60_000;
 
+// Bug 1: Preserve commit message textarea values across re-renders.
+const commitMessages = new Map<string, string>();
+
+// Bug 2: Module-level discard-all guard to prevent concurrent discards.
+const discardPendingRepos = new Set<string>();
+
+// Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
+const userCollapsedRepos = new Set<string>();
+const userExpandedRepos = new Set<string>();
+
+// Bug 4: Track expanded inline diff paths across re-renders.
+const expandedDiffPaths = new Set<string>();
+
 // --- Public API ---
 
 /** Initialise the Changes tab. Wires the filter input, the global
@@ -138,6 +151,19 @@ function paint(): void {
 function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
+
+  // Bug 1: Skip re-render entirely if a commit textarea is focused
+  // to avoid destroying user input mid-typing.
+  const focused = document.activeElement;
+  if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
+    return;
+  }
+
+  // Bug 1: Capture current commit messages before destroying DOM.
+  for (const ta of root.querySelectorAll<HTMLTextAreaElement>(".git-commit-input[data-repo]")) {
+    const repo = ta.dataset["repo"];
+    if (repo) commitMessages.set(repo, ta.value);
+  }
 
   if (lastStatusAll.length === 0) {
     root.innerHTML = renderEmptyState({
@@ -222,7 +248,12 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   }
   // Hide clean repos by default unless filter is active or repo
   // matched the filter explicitly.
-  const expandedDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
+  const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
+  // Bug 3: User-toggled state overrides data-driven default.
+  let expandedDefault: boolean;
+  if (userCollapsedRepos.has(r.repo)) expandedDefault = false;
+  else if (userExpandedRepos.has(r.repo)) expandedDefault = true;
+  else expandedDefault = dataDefault;
 
   const section = document.createElement("section");
   section.className = "git-repo-section";
@@ -251,6 +282,14 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     }
     const open = section.classList.toggle("expanded");
     header.setAttribute("aria-expanded", open ? "true" : "false");
+    // Bug 3: Record user's explicit toggle so re-renders respect it.
+    if (open) {
+      userExpandedRepos.add(r.repo);
+      userCollapsedRepos.delete(r.repo);
+    } else {
+      userCollapsedRepos.add(r.repo);
+      userExpandedRepos.delete(r.repo);
+    }
   });
   section.appendChild(header);
 
@@ -346,10 +385,10 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   bar.appendChild(stageAllBtn);
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
-  let discardPending = false;
   discardAllBtn.addEventListener("click", () => {
-    if (discardPending) return;
-    discardPending = true;
+    // Bug 2: Module-level guard prevents concurrent discard-all per repo.
+    if (discardPendingRepos.has(r.repo)) return;
+    discardPendingRepos.add(r.repo);
     void (async () => {
       try {
         const ok = await confirmDialog(
@@ -365,7 +404,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
           await refreshChanges();
         });
       } finally {
-        discardPending = false;
+        discardPendingRepos.delete(r.repo);
       }
     })();
   });
@@ -503,31 +542,51 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   diffDrawer.className = "git-file-diff hidden";
   li.appendChild(diffDrawer);
 
+  // Bug 4: Unique key for tracking expanded state across re-renders.
+  const diffKey = `${r.repo}\0${f.path}`;
   let loadedDiff = false;
+
+  const loadDiff = (): void => {
+    loadedDiff = true;
+    diffDrawer.textContent = "Loading diff…";
+    void apiGet<{ diff?: string }>(
+      `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
+    ).then((data) => {
+      if (data === null) {
+        diffDrawer.textContent = "Failed to load diff.";
+        return;
+      }
+      const diff = data.diff ?? "";
+      if (diff.trim() === "") {
+        diffDrawer.textContent = "(no diff available — file may be binary or empty)";
+        return;
+      }
+      diffDrawer.replaceChildren();
+      const pre = document.createElement("pre");
+      pre.className = "git-file-diff-pre";
+      pre.appendChild(renderDiffWithColors(diff));
+      diffDrawer.appendChild(pre);
+    });
+  };
+
+  // Bug 4: Restore expanded state from previous render.
+  if (expandedDiffPaths.has(diffKey)) {
+    diffDrawer.classList.remove("hidden");
+    li.classList.add("expanded");
+    loadDiff();
+  }
+
   top.addEventListener("click", () => {
     const opening = diffDrawer.classList.toggle("hidden") === false;
     li.classList.toggle("expanded", opening);
+    // Bug 4: Persist toggle state.
+    if (opening) {
+      expandedDiffPaths.add(diffKey);
+    } else {
+      expandedDiffPaths.delete(diffKey);
+    }
     if (opening && !loadedDiff) {
-      loadedDiff = true;
-      diffDrawer.textContent = "Loading diff…";
-      void apiGet<{ diff?: string }>(
-        `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
-      ).then((data) => {
-        if (data === null) {
-          diffDrawer.textContent = "Failed to load diff.";
-          return;
-        }
-        const diff = data.diff ?? "";
-        if (diff.trim() === "") {
-          diffDrawer.textContent = "(no diff available — file may be binary or empty)";
-          return;
-        }
-        diffDrawer.replaceChildren();
-        const pre = document.createElement("pre");
-        pre.className = "git-file-diff-pre";
-        pre.appendChild(renderDiffWithColors(diff));
-        diffDrawer.appendChild(pre);
-      });
+      loadDiff();
     }
   });
 
@@ -628,6 +687,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ta.placeholder = "Commit message…";
   ta.rows = 2;
   ta.dataset["repo"] = r.repo;
+  // Bug 1: Restore previously typed commit message.
+  const saved = commitMessages.get(r.repo);
+  if (saved) ta.value = saved;
   wrap.appendChild(ta);
 
   const row = document.createElement("div");
@@ -659,6 +721,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
       }
       assertOk(await commitAction.dispatch({ repo: r.repo, message }));
       ta.value = "";
+      commitMessages.delete(r.repo);
       await refreshChanges();
     });
   });

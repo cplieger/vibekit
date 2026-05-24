@@ -19,9 +19,9 @@ export async function refreshConflictBadges(chatID: string, path: string): Promi
   if (renderChipFn === null) return;
   const rows = document.querySelectorAll<HTMLElement>(".tool-edit-actions");
   for (const row of rows) {
-    const card = row.closest<HTMLElement>(".tool-card");
+    const card = row.closest<HTMLElement>(".tool-call");
     if (card === null) continue;
-    if (card.dataset["filename"] !== path) continue;
+    if (card.dataset["filePath"] !== path) continue;
     renderChipFn(row, chatID, path);
   }
 }

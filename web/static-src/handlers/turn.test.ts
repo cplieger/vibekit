@@ -34,7 +34,6 @@ describe("ERROR_ROUTES", () => {
     ["agent_not_found",         { surface: "banner",     level: "error",   dismissible: true }],
     ["agent_config_error",      { surface: "banner",     level: "error",   dismissible: false }],
     ["model_not_found",         { surface: "banner",     level: "warning", dismissible: true }],
-    ["mcp_server_init_failure", { surface: "banner",     level: "warning", dismissible: true }],
     ["rate_limit",              { surface: "banner",     level: "warning", dismissible: true }],
     ["compaction_failed",       { surface: "banner",     level: "error",   dismissible: true }],
     ["switch_failed",           { surface: "send-error", level: "error",   dismissible: false }],
@@ -53,8 +52,8 @@ describe("ERROR_ROUTES", () => {
     },
   );
 
-  it("has exactly 9 entries", () => {
-    expect(Object.keys(ERROR_ROUTES)).toHaveLength(9);
+  it("has exactly 8 entries", () => {
+    expect(Object.keys(ERROR_ROUTES)).toHaveLength(8);
   });
 
   it("unknown codes fall through (not in table)", () => {

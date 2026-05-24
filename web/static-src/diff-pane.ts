@@ -267,7 +267,7 @@ function buildWhitespaceToggle(
   wrap.appendChild(span);
   input.addEventListener("change", () => {
     const ignore = input.checked;
-    if (opts.onToggleWhitespace !== undefined) {
+    if (opts.source === undefined && opts.onToggleWhitespace !== undefined) {
       opts.onToggleWhitespace(ignore);
     }
     if (opts.source !== undefined) {

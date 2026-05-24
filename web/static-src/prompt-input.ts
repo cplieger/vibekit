@@ -179,8 +179,6 @@ class PromptInputController {
         this.setInputValue(input, d);
         return;
       }
-
-      if (this.idx !== -1 && !e.metaKey && !e.ctrlKey && !e.altKey) this.exitCycling();
     });
 
     input.addEventListener("input", () => { if (this.idx !== -1) this.exitCycling(); });

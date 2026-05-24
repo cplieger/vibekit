@@ -289,9 +289,9 @@ export function appendMessage(chatID: string, msg: Message): void {
   const mi = getMsgIndex(chatID, s.messages);
   if (mi.has(msg.id)) return;
   const newIdx = s.messages.length;
-  s.messages.push(msg);
-  s.message_count = s.messages.length;
   mi.set(msg.id, newIdx);
+  s.messages.push(msg);
+  s.message_count = Math.max(s.message_count, s.messages.length);
   emit();
 }
 
@@ -303,7 +303,7 @@ export function upsertMessage(chatID: string, msg: Message): void {
   if (idx === -1) {
     const newIdx = s.messages.length;
     s.messages.push(msg);
-    s.message_count = s.messages.length;
+    s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(msg.id, newIdx);
   } else {
     s.messages[idx] = msg;
@@ -368,7 +368,7 @@ export function appendChunk(chatID: string, messageID: string, delta: string): v
     msg = { id: messageID, role: "assistant", ts: Date.now(), content: "" };
     const newIdx = s.messages.length;
     s.messages.push(msg);
-    s.message_count = s.messages.length;
+    s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
   }
   msg.content = (msg.content ?? "") + delta;
@@ -385,7 +385,7 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
     msg = { id: messageID, role: "assistant", ts: Date.now(), content: "", tool_calls: [call] };
     const newIdx = s.messages.length;
     s.messages.push(msg);
-    s.message_count = s.messages.length;
+    s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
     emit();
     return;

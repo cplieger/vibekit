@@ -49,10 +49,12 @@ export function renderDiffModeUI(state: FileState): void {
   // showDiffMode inline
   showDiffMode();
 
-  $.editorDiffBtn.classList.remove("hidden");
-  $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
-  $.editorEditBtn.classList.remove("hidden");
-  $.editorEditBtn.disabled = false;
+  if (!isPendingPath(state.path)) {
+    $.editorDiffBtn.classList.remove("hidden");
+    $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
+    $.editorEditBtn.classList.remove("hidden");
+    $.editorEditBtn.disabled = false;
+  }
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
   if (pending) void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state));

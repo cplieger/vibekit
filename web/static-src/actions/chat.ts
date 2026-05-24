@@ -230,8 +230,9 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
     return { chatID };
   },
   rollback: (_args, op) => {
-    const o = op as { chatID: string };
-    setThinking(o.chatID, false);
+    if (op !== undefined && op !== null && typeof op === "object" && "chatID" in op) {
+      setThinking((op as { chatID: string }).chatID, false);
+    }
   },
   run: async (args, signal) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;

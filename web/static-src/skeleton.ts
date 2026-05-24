@@ -6,6 +6,7 @@
 export function chatSkeleton(): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "skeleton-msg-group";
+  wrap.setAttribute("aria-hidden", "true");
   // Simulate: user message, tool calls, assistant reply.
   const patterns: Array<{ side: "left" | "right"; widths: string[]; isTool?: boolean }> = [
     { side: "right", widths: ["60%"] },
@@ -47,6 +48,7 @@ export function chatSkeleton(): HTMLDivElement {
 export function gitSkeleton(): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "skeleton-git-group";
+  wrap.setAttribute("aria-hidden", "true");
   const bar = document.createElement("div");
   bar.className = "skeleton skeleton-git-row";
   bar.style.width = "60%";
@@ -65,6 +67,7 @@ export function gitSkeleton(): HTMLDivElement {
 export function loadMoreSkeleton(): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "skeleton-msg-group";
+  wrap.setAttribute("aria-hidden", "true");
   wrap.style.paddingBlock = "var(--sp-2)";
   for (let i = 0; i < 3; i++) {
     const row = document.createElement("div");

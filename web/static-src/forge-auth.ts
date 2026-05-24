@@ -29,7 +29,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
-import type { ConfiguredForge, DeviceFlowResponse, ForgeKind, Repo } from "./wire/types.gen.js";
+import type { ConfiguredForge, DeviceFlowResponse, ForgeKind, PollResult, Repo } from "./wire/types.gen.js";
 import {
   startDeviceFlow,
   signOut,
@@ -47,11 +47,6 @@ interface ForgesListResponse {
 interface RepoListResponse { repos: Repo[] }
 interface LocalReposResponse { repos: string[] }
 
-interface PollResult {
-  status: "pending" | "complete" | "expired" | "error";
-  error?: string;
-}
-
 // --- Module state -----------------------------------------------------
 
 /** Cached repo list keyed by forge ID. Populated on every render so
@@ -68,6 +63,9 @@ let lastLocalNames: Set<string> = new Set();
  *  (PAT submit or OAuth complete) so the user lands on the freshly-
  *  added account with its repos visible. Cleared after one paint. */
 const expandOnNextPaint: Set<string> = new Set();
+
+/** OAuth availability per kind, populated from the forges list response. */
+let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
 const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
@@ -95,7 +93,7 @@ const PAT_HELP_LINKS: Record<ForgeKind, { url: string; label: string } | null> =
   github:   { url: "https://github.com/settings/tokens?type=beta", label: "Create a GitHub fine-grained token" },
   gitlab:   { url: "https://gitlab.com/-/profile/personal_access_tokens?scopes=api,read_repository,write_repository", label: "Create a GitLab token" },
   codeberg: { url: "https://codeberg.org/user/settings/applications", label: "Create a Codeberg token" },
-  gitea:    { url: "/user/settings/applications", label: "Create a token at /user/settings/applications on your Gitea or Forgejo host" },
+  gitea:    null,
 };
 
 const DEFAULT_HOST: Record<ForgeKind, string> = {
@@ -208,6 +206,9 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
 
 /** Paint the data into the root element. Pure rendering — no API calls. */
 function paintForgesData(root: HTMLElement, data: ForgesListResponse): void {
+  // Cache OAuth availability for use in add-account pane.
+  oauthByKind = data.oauth ?? {};
+
   // Bucket accounts by kind.
   const byKind = new Map<ForgeKind, ConfiguredForge[]>();
   for (const k of ALL_KINDS) byKind.set(k, []);
@@ -652,13 +653,14 @@ function showAddPane(section: HTMLElement, kind: ForgeKind): void {
   // Lead-in text. Phrasing depends on whether OAuth is offered.
   const intro = document.createElement("p");
   intro.className = "forge-add-pane-intro";
-  intro.textContent = kind === "github"
+  const hasOAuth = oauthByKind[kind] === true;
+  intro.textContent = hasOAuth
     ? "Sign in with the one-time browser flow, or paste a personal access token. Either path produces a token the CLI uses for git + API operations."
     : "Paste a personal access token. The CLI uses it for git + API operations.";
   pane.appendChild(intro);
 
-  // For GitHub: OAuth section on top, divider, PAT below.
-  if (kind === "github") {
+  // For kinds with OAuth: OAuth section on top, divider, PAT below.
+  if (hasOAuth) {
     const oauth = document.createElement("div");
     oauth.className = "forge-add-pane-section";
     const oauthHeading = document.createElement("h4");
@@ -741,14 +743,25 @@ function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void 
 
 function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: number): void {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
+  let attempts = 0;
+  let backoff = intervalSec;
+  const MAX_ATTEMPTS = 60;
   const tick = async (): Promise<void> => {
     if (!host.isConnected) return;
+    attempts++;
+    if (attempts > MAX_ATTEMPTS) {
+      if (statusEl !== null) statusEl.textContent = "Timed out waiting for approval. Try again.";
+      return;
+    }
     const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", { device_code: deviceCode });
     if (res === null) {
       if (statusEl !== null) statusEl.textContent = "Network error. Retrying…";
-      setTimeout(() => void tick(), intervalSec * 1000);
+      backoff = Math.min(backoff * 2, 60);
+      setTimeout(() => void tick(), backoff * 1000);
       return;
     }
+    // Reset backoff on successful network response.
+    backoff = intervalSec;
     if (res.status === "complete") {
       if (statusEl !== null) statusEl.textContent = "Connected.";
       expandOnNextPaint.add("github:github.com");
@@ -787,6 +800,11 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
     a.rel = "noreferrer";
     a.textContent = helpLink.label;
     help.appendChild(a);
+    hostEl.appendChild(help);
+  } else if (kind === "gitea") {
+    const help = document.createElement("p");
+    help.className = "forge-help";
+    help.textContent = "Create a token at /user/settings/applications on your Gitea or Forgejo host.";
     hostEl.appendChild(help);
   }
 

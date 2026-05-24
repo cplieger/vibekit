@@ -53,7 +53,7 @@ export function forkCurrentChat(chatID: string): void {
   const session = get(chatID);
   if (session === undefined) return;
   if (session.frozen === true) return;
-  const tangentID = `tangent-${Date.now().toString(36)}`;
+  const tangentID = `tangent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   void forkChatAction.dispatch({ chatID: session.id, tangentID }).then((result) => {
     if (result === null) {
       // Server may have accepted the fork but the response was lost.

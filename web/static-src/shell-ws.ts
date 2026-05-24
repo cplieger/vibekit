@@ -24,7 +24,7 @@ export interface ShellWSCallbacks {
   onReconnecting(): void;
 }
 
-const encoder = new TextEncoder();
+export const encoder = new TextEncoder();
 
 // ---------------------------------------------------------------------------
 // Discriminated union for connection state — eliminates invalid
@@ -113,6 +113,8 @@ export class ShellWS {
 
     // If a newer connect() or disconnect() fired while openSocket was
     // in-flight, close the newly opened socket and bail.
+    // Note: cast needed because tsgo narrows this.state to "connecting"
+    // from the pre-await assignment, but after await it may have changed.
     if (this.connectGen !== gen || (this.state as ShellWSState).kind === "closed") {
       sock.close();
       return;

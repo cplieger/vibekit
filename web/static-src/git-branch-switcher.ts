@@ -121,12 +121,16 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
   pop.style.top = `${rect.bottom + 4}px`;
   pop.style.left = `${rect.left}px`;
   pop.style.minWidth = `${Math.max(rect.width, 220)}px`;
-  // After paint, clamp into viewport if it overflows the right edge.
+  // After paint, clamp into viewport if it overflows.
   requestAnimationFrame(() => {
     const popRect = pop.getBoundingClientRect();
     const overflowX = popRect.right - window.innerWidth + 8;
     if (overflowX > 0) {
       pop.style.left = `${rect.left - overflowX}px`;
+    }
+    // Vertical: flip above anchor if popover overflows bottom.
+    if (popRect.bottom > window.innerHeight - 8) {
+      pop.style.top = `${rect.top - popRect.height - 4}px`;
     }
   });
 }

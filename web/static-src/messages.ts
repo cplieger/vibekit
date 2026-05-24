@@ -475,7 +475,7 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   if (box !== null) {
     const pre = box.querySelector("pre");
     if (pre !== null) {
-      pre.innerHTML += ansiToHtml(output);
+      pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
     } else {
       const newPre = document.createElement("pre");
       newPre.innerHTML = ansiToHtml(output);

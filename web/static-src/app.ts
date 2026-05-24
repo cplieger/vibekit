@@ -121,7 +121,7 @@ function init(): void {
     version.value;
     const active = getActive();
     if (active === undefined) return;
-    const sig = active.id + ":" + String(active.available_models.length);
+    const sig = active.id + ":" + active.available_models.map(m => m.id).join(",");
     if (sig !== lastModelSig) {
       lastModelSig = sig;
       void fetchModelsFromSession();
@@ -207,14 +207,14 @@ async function checkAuthAndStart(): Promise<void> {
   wireCheckpointRestore($.messages);
 
   suppressPush(true);
+  // If share-target intends to create a session (e.g. ?agent=planner),
+  // skip the default empty-state createSession so we don't end up with
+  // an unused "New conversation" tab next to the planner.
+  const wantsAgent = new URLSearchParams(location.search).get("agent");
+  const shareWillCreate = wantsAgent === "planner";
   try {
     const ok = await loadList();
     skel.remove();
-    // If share-target intends to create a session (e.g. ?agent=planner),
-    // skip the default empty-state createSession so we don't end up with
-    // an unused "New conversation" tab next to the planner.
-    const wantsAgent = new URLSearchParams(location.search).get("agent");
-    const shareWillCreate = wantsAgent === "planner";
     if (!ok || getSessions().length === 0) {
       if (!shareWillCreate) createSession();
     } else {
@@ -228,8 +228,7 @@ async function checkAuthAndStart(): Promise<void> {
     }
   } catch {
     skel.remove();
-    const wantsAgent = new URLSearchParams(location.search).get("agent");
-    if (wantsAgent !== "planner") createSession();
+    if (!shareWillCreate) createSession();
   }
   suppressPush(false);
 

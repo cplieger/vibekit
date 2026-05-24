@@ -35,6 +35,7 @@ export function record(instance: ActionInstance): void {
     if (log.length > MAX_LOG_SIZE) {
       log.shift();
       // Indices shifted by one — reindex.
+      // O(n) cost is acceptable at MAX_LOG_SIZE=200; ring buffer is the upgrade path.
       idMap.clear();
       for (let i = 0; i < log.length; i++) {
         const entry = log[i];

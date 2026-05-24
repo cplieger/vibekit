@@ -50,7 +50,9 @@ class CommandsMenuController {
   private initialized = false;
 
   init(): void {
-    this.popover = this.buildPopover();
+    if (this.popover === null || !document.body.contains(this.popover)) {
+      this.popover = this.buildPopover();
+    }
 
     if (this.initialized) return;
     this.initialized = true;
@@ -110,7 +112,7 @@ class CommandsMenuController {
           break;
         case "Escape":
           e.preventDefault();
-          e.stopPropagation();
+          e.stopImmediatePropagation();
           this.closePopover();
           this.cancelOptions();
           break;
@@ -160,6 +162,7 @@ class CommandsMenuController {
       + `&command=${encodeURIComponent(command)}`
       + `&partial=${encodeURIComponent(partial)}`;
     const d = await apiGet<{ options: OptionEntry[] }>(url, signal);
+    if (chatID !== getActiveId()) return;
     if (d === null || !Array.isArray(d.options) || d.options.length === 0) {
       this.closePopover();
       return;

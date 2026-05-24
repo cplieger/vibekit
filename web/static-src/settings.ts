@@ -31,6 +31,10 @@ import { initNotificationToggles } from "./settings-notifications.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
 
+// Shared generation counter for kiro-setting saves. Last-write-wins:
+// if two settings change in rapid succession, only the final save
+// updates the indicator. This is acceptable because the indicator is
+// purely cosmetic (each save is independent on the server).
 let kiroSettingGen = 0;
 
 export type { AppSettings } from "./persist.js";

@@ -179,7 +179,7 @@ export function defineAction<TArgs, TResult>(
     const spec = def.error;
     if (spec === false) return;
     const fallback = `${defaultErrorPrefix(def.name)}: ${err.message}`;
-    let msg: string | null;
+    let msg: string;
     if (opts.errorPrefix !== undefined) {
       msg = `${opts.errorPrefix}: ${err.message}`;
     } else if (typeof spec === "string") {
@@ -189,7 +189,7 @@ export function defineAction<TArgs, TResult>(
     } else {
       msg = fallback;
     }
-    if (msg !== null) toastError(msg);
+    toastError(msg);
   }
 
   function emitCancelled(

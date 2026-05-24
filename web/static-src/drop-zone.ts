@@ -54,9 +54,9 @@ export function installDropZone(opts: DropZoneOptions): void {
     e.preventDefault();
     dragCounter = 0;
     opts.overlay.classList.add("hidden");
-    opts.onDragLeave?.();
     if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       opts.onDrop(e.dataTransfer.files);
     }
+    opts.onDragLeave?.();
   });
 }

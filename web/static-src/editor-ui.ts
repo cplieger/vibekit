@@ -9,7 +9,7 @@ import { apiGet } from "./api-client.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
 import {
-  getActiveFilePathInternal, isPlanDraftPath,
+  getActiveFilePathInternal, isPlanDraftPath, fileStates,
 } from "./editor-types.js";
 
 // --- Pending line jump state (shared with openers) ---
@@ -47,6 +47,11 @@ export async function fetchAgentLines(path: string, signal?: AbortSignal): Promi
   if (getActiveFilePathInternal() !== path) return;
   agentLineCache.set(path, data.changes ?? []);
   agentLineSetCache.delete(path);
+  // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
+  const state = fileStates.get(path);
+  if (state !== undefined && state.loaded && state.mode.kind === "edit" && !state.mode.editing) {
+    rebuildGutter(state.current);
+  }
 }
 
 // --- Show/hide mode helpers ---

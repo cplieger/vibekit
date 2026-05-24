@@ -22,8 +22,16 @@ import type { BannerLevel } from "../types.js";
 /** Track last notification time per chat to avoid duplicate notifications
  *  on SSE reconnect replay (events arrive within milliseconds). */
 const _lastNotifyMs = new Map<string, number>();
+const _NOTIFY_STALE_MS = 10_000;
+
+function _pruneNotifyMap(now: number): void {
+  for (const [k, v] of _lastNotifyMs) {
+    if (now - v > _NOTIFY_STALE_MS) _lastNotifyMs.delete(k);
+  }
+}
 
 onSSE("working_label", (chatID, p) => {
+  if (typeof p?.label !== "string") return;
   setWorkingLabel(chatID, p.label);
 });
 
@@ -44,6 +52,7 @@ onSSE("turn_ended", (chatID, p) => {
     const last = _lastNotifyMs.get(chatID) ?? 0;
     if (now - last > 2000) {
       _lastNotifyMs.set(chatID, now);
+      _pruneNotifyMap(now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
       notifyIfHidden("Vibekit", `${name}: Agent finished`);
@@ -132,7 +141,6 @@ onSSE("turn_ended", (chatID, p) => {
 });
 
 onSSE("permission_needed", (chatID, p) => {
-  if (p === undefined) return;
   if (isPermissionNeededEnabled()) {
     notifyIfHidden("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
     if (document.visibilityState === "hidden") setBadge(1);
@@ -195,7 +203,6 @@ export const ERROR_ROUTES: Readonly<Record<string, ErrorRoute>> = {
   agent_not_found:         { surface: "banner", level: "error",   dismissible: true },
   agent_config_error:      { surface: "banner", level: "error",   dismissible: false },
   model_not_found:         { surface: "banner", level: "warning", dismissible: true },
-  mcp_server_init_failure: { surface: "banner", level: "warning", dismissible: true },
   rate_limit:              { surface: "banner", level: "warning", dismissible: true },
   compaction_failed:       { surface: "banner", level: "error",   dismissible: true },
   switch_failed:           { surface: "send-error", level: "error", dismissible: false },

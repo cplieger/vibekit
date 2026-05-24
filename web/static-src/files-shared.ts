@@ -57,13 +57,8 @@ export function sortEntries<T extends { name: string; isDir: boolean }>(entries:
   });
 }
 
-/** URL safety predicate: blocks javascript:, vbscript:, data:, file: schemes.
- *  Strips internal whitespace before checking to prevent bypass via embedded
- *  tabs/newlines (e.g. "java\tscript:alert(1)"). */
-export function isSafeUrl(url: string): boolean {
-  const lower = url.trim().replace(/[\t\n\r\x00]/g, "").toLowerCase();
-  return !(lower.startsWith("javascript:") || lower.startsWith("vbscript:") || lower.startsWith("data:") || lower.startsWith("file:"));
-}
+// Re-exported from utils-url.ts for backwards compatibility.
+export { isSafeUrl } from "./utils-url.js";
 
 /** Wire an editable path input with click-to-edit, Enter/Escape/blur handling.
  *  `onNavigate` is called with the cleaned path on Enter. `getDisplayPath`
@@ -138,13 +133,5 @@ export function errorRow(msg: string): HTMLDivElement {
   return row;
 }
 
-/** Human-friendly relative time string from a millisecond timestamp. */
-export function relativeTime(ms: number): string {
-  const seconds = (Date.now() - ms) / 1000;
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 365 * 86400) return `${Math.floor(seconds / (30 * 86400))}mo ago`;
-  return `${Math.floor(seconds / (365 * 86400))}y ago`;
-}
+// Re-exported from utils-format.ts for backwards compatibility.
+export { relativeTime } from "./utils-format.js";

@@ -24,7 +24,11 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
       } catch { /* use default msg */ }
       throw new ActionError(msg, { status: r.status });
     }
-    const body = (await r.json()) as { error?: string };
+    // Handle empty 200 body (no Content-Length guarantee) — use text()
+    // first to avoid SyntaxError from json() on empty response.
+    const text = await r.text();
+    if (text === "") return;
+    const body = JSON.parse(text) as { error?: string };
     if (body.error !== undefined && body.error !== "") {
       throw new ActionError(body.error);
     }

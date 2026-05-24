@@ -165,6 +165,10 @@ class TooltipController {
 
 const instance = new TooltipController();
 
+let initialized = false;
+
 export function initTooltips(): void {
+  if (initialized) return;
+  initialized = true;
   instance.init();
 }

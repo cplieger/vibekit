@@ -107,8 +107,6 @@ describe("action framework — regression guard", () => {
       if (base === "api-client.ts" || base === "transport.ts") continue;
       const src = readFileSync(file, "utf8");
       for (const { name, re } of PATTERNS) {
-        // Reset lastIndex for global regex reuse across files.
-        re.lastIndex = 0;
         for (const m of src.matchAll(re)) {
           const lineIdx = src.slice(0, m.index).split("\n").length;
           violations.push(`${rel}:${String(lineIdx)}: ${name} (${m[0].trim()})`);

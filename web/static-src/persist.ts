@@ -33,14 +33,14 @@ let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchGen = 0;
-let patchResolvers: Array<(r: unknown | null) => void> = [];
+let patchResolvers: Array<(r: {} | null) => void> = [];
 
-export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<unknown | null> {
+export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<{} | null> {
   Object.assign(patchQueue, patch);
   for (const input of inputs) {
     if (!patchInputs.includes(input)) patchInputs.push(input);
   }
-  const p = new Promise<unknown | null>((resolve) => { patchResolvers.push(resolve); });
+  const p = new Promise<{} | null>((resolve) => { patchResolvers.push(resolve); });
   if (patchTimer !== undefined) return p;
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
@@ -62,7 +62,7 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
       if (gen === patchGen) {
         if (r === null) showError(); else showSaved();
       }
-      for (const resolve of resolvers) resolve(r);
+      for (const resolve of resolvers) resolve(r as {} | null);
     });
   }, 300);
   return p;

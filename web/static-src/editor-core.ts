@@ -113,7 +113,7 @@ function startEditing(): void {
   if (state === undefined) return;
   if (state.mode.kind === "diff") {
     state.returnToGitDiff = state.mode.diffSource.fromGit === true
-      ? { ref: state.mode.diffSource.oldLabel } : null;
+      ? { ref: state.mode.diffSource.oldLabel, repo: state.repo } : null;
     state.pendingHunkCount = null;
   }
   state.mode = { kind: "edit", editing: true };
@@ -144,14 +144,14 @@ function stopEditing(state: FileState): void {
   state.current = state.original;
   $.editorConflictOverlay.classList.add("hidden");
   if (state.returnToGitDiff !== null) {
-    const { ref } = state.returnToGitDiff;
+    const { ref, repo } = state.returnToGitDiff;
     state.returnToGitDiff = null;
     state.mode = {
       kind: "diff",
       diffSource: gitDiffSource(ref, "", state.current),
     };
     state.pendingHunkCount = null;
-    void fetchGitDiffSources(state, "", ref);
+    void fetchGitDiffSources(state, repo, ref);
     return;
   }
   state.mode = { kind: "edit", editing: false };
@@ -184,14 +184,14 @@ function saveFile(): void {
       renderEditModeUI(state);
     }
     if (state.returnToGitDiff !== null) {
-      const { ref } = state.returnToGitDiff;
+      const { ref, repo } = state.returnToGitDiff;
       state.returnToGitDiff = null;
       state.mode = {
         kind: "diff",
         diffSource: gitDiffSource(ref, "", content),
       };
       state.pendingHunkCount = null;
-      void fetchGitDiffSources(state, "", ref);
+      void fetchGitDiffSources(state, repo, ref);
     }
   });
 }

@@ -8,7 +8,7 @@ import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion } from "./editor-conflict.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, withTimeout, API_TIMEOUT_MS } from "./api-client.js";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
@@ -99,6 +99,7 @@ function open(path: string, opts: OpenOpts): void {
   state.mode = opts.mode;
   state.pendingHunkCount = null;
   state.cachedDiff = null;
+  if (opts.repo !== undefined) state.repo = opts.repo;
   if (opts.line !== undefined && opts.line > 0) pendingLines.set(path, opts.line);
   openEditorView(path, () => activateFile(path), () => closeEditorFile(path));
   const line = opts.line;
@@ -213,13 +214,40 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
 }
 
 async function loadPendingDiff(state: FileState, signal?: AbortSignal): Promise<void> {
+  interface PendingData { path?: string; kind?: string; old_text?: string; new_text?: string; truncated?: boolean }
   const url = routeForPath(state.path).readURL;
-  const d = await apiGet<{
-    path?: string; kind?: string;
-    old_text?: string; new_text?: string; truncated?: boolean;
-  }>(url, signal);
+  let d: PendingData | null = null;
+  let is404 = false;
+  try {
+    const r = await fetch(url, { signal: withTimeout(signal, API_TIMEOUT_MS) });
+    if (r.status === 404) { is404 = true; }
+    else if (!r.ok) {
+      state.error = "Network error \u2014 try again";
+      state.loaded = true;
+      state.original = "";
+      state.current = "";
+      state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
+      state.pendingHunkCount = null;
+      state.cachedDiff = null;
+      restoreUI(state);
+      return;
+    } else {
+      d = (await r.json()) as PendingData;
+    }
+  } catch {
+    if (signal?.aborted === true) return;
+    state.error = "Network error \u2014 try again";
+    state.loaded = true;
+    state.original = "";
+    state.current = "";
+    state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
+    state.pendingHunkCount = null;
+    state.cachedDiff = null;
+    restoreUI(state);
+    return;
+  }
   if (signal?.aborted === true) return;
-  if (d === null) {
+  if (is404 || d === null) {
     state.error = "Change already resolved";
     state.loaded = true;
     state.original = "";

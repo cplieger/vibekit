@@ -32,8 +32,8 @@ export function initAllModals(): void {
   for (const overlay of document.querySelectorAll(".modal-overlay")) {
     const modal = overlay as HTMLDivElement;
     setupOverlayClose(modal);
-    // Wire close buttons: any button inside .modal-header-row that has title="Close".
-    for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[title="Close"]')) {
+    // Wire close buttons: any button inside .modal-header-row that has aria-label="Close".
+    for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
       btn.addEventListener("click", () => closeModal(modal));
     }
   }
@@ -149,6 +149,9 @@ function doLogin(
   status: HTMLDivElement,
   onLoggedIn: () => void,
 ): void {
+  loginPollAbort?.abort();
+  loginPollAbort = null;
+
   const btns = document.querySelectorAll("#login-modal .modal-btn");
   for (const b of btns) (b as HTMLButtonElement).disabled = true;
 

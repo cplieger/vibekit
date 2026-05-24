@@ -13,7 +13,7 @@ import { resolvePendingChangeAction } from "./actions/chat.js";
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
 export function addEditActions(el: HTMLDivElement): void {
   if (el.querySelector(".tool-edit-actions") !== null) return;
-  const filePath = el.dataset["filename"] ?? "";
+  const filePath = el.dataset["filePath"] ?? "";
   if (filePath === "") return;
 
   const row = document.createElement("div");
@@ -98,7 +98,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   diffBtn.replaceChildren(iconEl(ICON_DIFF));
   diffBtn.setAttribute("data-tooltip", "View diff");
   diffBtn.setAttribute("aria-label", "View diff");
-  diffBtn.addEventListener("click", () => { openPendingDiff(chatID, toolCallID); });
+  diffBtn.addEventListener("click", () => { openPendingDiff(chatID, row.dataset["toolCallId"] ?? toolCallID); });
 
   const rejectBtn = document.createElement("button");
   rejectBtn.type = "button";
@@ -106,7 +106,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   rejectBtn.replaceChildren(iconEl(ICON_X));
   rejectBtn.setAttribute("data-tooltip", "Reject");
   rejectBtn.setAttribute("aria-label", "Reject change");
-  rejectBtn.addEventListener("click", () => { resolveOne(chatID, toolCallID, "reject"); });
+  rejectBtn.addEventListener("click", () => { resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "reject"); });
 
   const acceptBtn = document.createElement("button");
   acceptBtn.type = "button";
@@ -114,7 +114,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   acceptBtn.replaceChildren(iconEl(ICON_CHECK));
   acceptBtn.setAttribute("data-tooltip", "Accept");
   acceptBtn.setAttribute("aria-label", "Accept change");
-  acceptBtn.addEventListener("click", () => { resolveOne(chatID, toolCallID, "accept"); });
+  acceptBtn.addEventListener("click", () => { resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "accept"); });
 
   row.append(diffBtn, rejectBtn, acceptBtn);
   row.dataset["path"] = path;
