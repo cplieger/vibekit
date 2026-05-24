@@ -58,6 +58,37 @@ describe("badgeGlyph", () => {
   }
 });
 
+// --- remoteOnlyClonable (Clone all candidate set) ---
+
+describe("remoteOnlyClonable", () => {
+  it("returns only remote-only entries that have a clone_url", async () => {
+    const { __testSetEntries: set, __testRemoteOnlyClonable } = await import("./repo-picker.js");
+    set([
+      // remote-only with clone_url → INCLUDED
+      { id: "a", host: "github.com", owner: "o", name: "a", full_name: "o/a", is_remote: true, clone_url: "https://github.com/o/a.git" } as RepoEntry,
+      // remote-only without clone_url → EXCLUDED
+      { id: "b", host: "github.com", owner: "o", name: "b", full_name: "o/b", is_remote: true } as RepoEntry,
+      // remote-only with empty clone_url → EXCLUDED
+      { id: "c", host: "github.com", owner: "o", name: "c", full_name: "o/c", is_remote: true, clone_url: "" } as RepoEntry,
+      // local clone (synced) → EXCLUDED
+      { id: "d", host: "github.com", owner: "o", name: "d", full_name: "o/d", is_local: true, is_remote: true, clone_url: "https://github.com/o/d.git" } as RepoEntry,
+      // local-only → EXCLUDED
+      { id: "e", host: "", owner: "", name: "e", full_name: "e", is_local: true } as RepoEntry,
+    ]);
+    const result = __testRemoteOnlyClonable();
+    expect(result.map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("returns empty when every entry is already a local clone", async () => {
+    const { __testSetEntries: set, __testRemoteOnlyClonable } = await import("./repo-picker.js");
+    set([
+      { id: "1", host: "github.com", owner: "o", name: "a", full_name: "o/a", is_local: true, is_remote: true, clone_url: "x" } as RepoEntry,
+      { id: "2", host: "", owner: "", name: "b", full_name: "b", is_local: true } as RepoEntry,
+    ]);
+    expect(__testRemoteOnlyClonable()).toHaveLength(0);
+  });
+});
+
 // --- stateGlyph ---
 
 describe("stateGlyph", () => {
@@ -75,11 +106,15 @@ describe("stateGlyph", () => {
     expect(el!.getAttribute("aria-label")).toBe("Local only");
   });
 
-  it("returns remote glyph for remote-only", () => {
+  it("returns globe SVG (not cloud emoji) for remote-only", () => {
     const el = stateGlyph({ is_local: false, is_remote: true } as RepoEntry);
     expect(el).not.toBeNull();
-    expect(el!.textContent).toBe("☁");
     expect(el!.getAttribute("aria-label")).toBe("Remote, not cloned");
+    // SVG inline, not a Unicode glyph.
+    const svg = el!.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg!.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(el!.textContent ?? "").not.toContain("☁");
   });
 
   it("returns null when neither local nor remote", () => {
