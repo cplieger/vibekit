@@ -330,7 +330,7 @@ func readGitOrigin(repoDir string) string {
 		return ""
 	}
 	inOrigin := false
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
 			inOrigin = trimmed == `[remote "origin"]`
@@ -358,8 +358,8 @@ func readGitBranch(repoDir string) string {
 	}
 	s := strings.TrimSpace(string(data))
 	const refsPrefix = "ref: refs/heads/"
-	if strings.HasPrefix(s, refsPrefix) {
-		return strings.TrimPrefix(s, refsPrefix)
+	if branch, ok := strings.CutPrefix(s, refsPrefix); ok {
+		return branch
 	}
 	return ""
 }

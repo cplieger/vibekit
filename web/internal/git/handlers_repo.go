@@ -85,7 +85,6 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
 	for i, e := range repos {
-		i, e := i, e
 		g.Go(func() error {
 			st := collectStatus(gctx, e.dir, h.timeouts, &h.fetchFlight, false)
 			results[i] = allRepoStatus{Repo: e.name, gitStatusResp: st}
