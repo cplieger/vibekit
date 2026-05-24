@@ -9,6 +9,7 @@ import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import { undoEdit } from "./actions/messages.js";
 import { resolvePendingChangeAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
 export function addEditActions(el: HTMLDivElement): void {
@@ -25,6 +26,7 @@ export function addEditActions(el: HTMLDivElement): void {
   undoBtn.replaceChildren(iconEl(ICON_UNDO));
   undoBtn.setAttribute("data-tooltip", "Undo this edit");
   undoBtn.setAttribute("aria-label", "Undo this edit");
+  bindLoadingState("messages.undo_edit", undoBtn);
   undoBtn.addEventListener("click", () => {
     const chatID = getActiveId();
     if (chatID === "") return;
@@ -40,13 +42,11 @@ export function addEditActions(el: HTMLDivElement): void {
       sibling = sibling.previousElementSibling;
     }
     if (tag === "") return;
-    undoBtn.disabled = true;
     void undoEdit.dispatch({ chatID, tag, filePath }).then((r) => {
       if (r !== null) {
         undoBtn.classList.add("copied");
         setTimeout(() => undoBtn.classList.remove("copied"), 1500);
       }
-      undoBtn.disabled = false;
     });
   });
 

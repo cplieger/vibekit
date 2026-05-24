@@ -226,9 +226,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
         "destructive",
       );
       if (!ok) return;
-      const row = btn.closest<HTMLDivElement>(".mcp-row");
-      if (row === null) return;
-      void deleteServer.dispatch({ id: s.id, row }).then((r) => {
+      void deleteServer.dispatch({ id: s.id }).then((r) => {
         if (r !== null) void refetchServers();
       });
     })();

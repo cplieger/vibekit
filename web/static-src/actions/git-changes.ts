@@ -44,34 +44,40 @@ export const pull = apiAction<{ repo: string }, unknown>({
   name: "git.pull",
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   error: "Pull failed",
+  retryable: "network",
 });
 
 export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
   error: "Push failed",
+  retryable: "network",
 });
 
 export const stash = apiAction<{ repo: string }, unknown>({
   name: "git.stash",
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   error: "Stash failed",
+  retryable: "network",
 });
 
 export const stashPop = apiAction<{ repo: string }, unknown>({
   name: "git.stash_pop",
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   error: "Stash pop failed",
+  retryable: "network",
 });
 
 export const commit = apiAction<{ repo: string; message: string }, unknown>({
   name: "git.commit",
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
   error: "Commit failed",
+  retryable: "network",
 });
 
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
   name: "git.generate_message",
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
+  retryable: "network",
 });

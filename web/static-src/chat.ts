@@ -102,8 +102,8 @@ function archiveChat(id: string): void {
     return;
   }
   void archiveChatAction.dispatch(id);
-  // Store is updated when the server broadcasts chat_deleted (archive
-  // triggers the same SSE event so the sidebar removes the tab).
+  // Optimistic: store is updated immediately by the action's optimistic().
+  // SSE chat_deleted will fire later but removeChat is a no-op (already gone).
 }
 
 export function activateChatView(id: string): void {
@@ -278,10 +278,10 @@ export function attachPathToActiveChat(path: string): void {
   $.promptInput.focus();
 }
 
-/** User-triggered chat deletion. */
+/** User-triggered chat deletion. Optimistic: store is updated
+ *  immediately; SSE chat_deleted is a no-op (already removed). */
 export function deleteChat(id: string): void {
   void deleteChatAction.dispatch(id);
-  // Store is updated when chat_deleted SSE echoes back.
 }
 
 /** Export a chat as a downloadable JSON file. Caller must guarantee

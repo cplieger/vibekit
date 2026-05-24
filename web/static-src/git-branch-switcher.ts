@@ -139,7 +139,10 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
-  const res = await checkoutBranch.dispatch({ repo, branch, create });
+  const anchor = activeAnchor;
+  const res = await checkoutBranch.dispatch(
+    anchor ? { repo, branch, create, anchorEl: anchor } : { repo, branch, create },
+  );
   if (res === null) return; // toast already fired
   const { refreshChanges } = await import("./git-changes-tab.js");
   void refreshChanges();

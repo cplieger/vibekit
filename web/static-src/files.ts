@@ -22,6 +22,7 @@ import {
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction } from "./actions/files.js";
+import { bindLoadingState } from "./actions/index.js";
 import { error as toastError } from "./toast.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
@@ -111,6 +112,11 @@ export function initFileBrowser(): void {
     getEntryMap: () => state.entryMap,
     reload: loadDir,
   });
+
+  // Auto-disable buttons while their respective actions are in flight.
+  bindLoadingState("files.upload", $.fbUpload, { preserveDisabled: true });
+  bindLoadingState("files.create_file", $.fbNewFile, { preserveDisabled: true });
+  bindLoadingState("files.create_folder", $.fbNewFolder, { preserveDisabled: true });
 
   // Escape deselects all.
   onBus(BUS_KEYS_ESCAPE, () => {
@@ -385,10 +391,18 @@ function newFolder(): void { createEntry("mkdir", "new folder"); }
 
 function createEntry(action: "touch" | "mkdir", name: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
-  void actionFn.dispatch({ dir: state.currentPath, name }).then(async (r) => {
+  void actionFn.dispatch({
+    dir: state.currentPath,
+    name,
+    listEl: $.fbList,
+    entries: state.entries,
+    renderRow: entryRow,
+  }).then(async (r) => {
     if (r === null) return;
-    await loadDirAsync();
+    // Placeholder row is already in DOM — start inline rename immediately.
     startInlineRename(name);
+    // Refresh from server to get real metadata.
+    await loadDirAsync();
   });
 }
 

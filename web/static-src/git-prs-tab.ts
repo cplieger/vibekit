@@ -21,7 +21,9 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePRAction, closePRAction } from "./actions/git-prs.js";
+import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
+import { registerCleanup } from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
 
 // --- Types ---
 
@@ -59,6 +61,38 @@ interface PRListResponse { prs: PR[] }
 let lastGroups: RepoGroup[] = [];
 let filterText = "";
 let refreshGen = 0;
+let refreshController: AbortController | null = null;
+registerCleanup(() => refreshController?.abort());
+
+// --- Accessors for optimistic mutations (used by git-prs actions) ---
+
+export interface PRRemoveResult {
+  groupIndex: number;
+  prIndex: number;
+  pr: PR;
+}
+
+/** Remove a PR from lastGroups by identity and repaint. Returns info needed to rollback. */
+export function removePRFromGroups(forgeId: string, owner: string, name: string, prNumber: number): PRRemoveResult | undefined {
+  for (let gi = 0; gi < lastGroups.length; gi++) {
+    const g = lastGroups[gi]!;
+    if (g.forge_id !== forgeId || g.owner !== owner || g.name !== name) continue;
+    const pi = g.prs.findIndex((p) => p.number === prNumber);
+    if (pi === -1) continue;
+    const pr = g.prs.splice(pi, 1)[0]!;
+    paint();
+    return { groupIndex: gi, prIndex: pi, pr };
+  }
+  return undefined;
+}
+
+/** Re-insert a previously removed PR (rollback). */
+export function reinsertPRInGroups(result: PRRemoveResult): void {
+  const g = lastGroups[result.groupIndex];
+  if (g === undefined) return;
+  g.prs.splice(result.prIndex, 0, result.pr);
+  paint();
+}
 
 // --- Public API ---
 
@@ -76,8 +110,9 @@ export function initPRsTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void withAsyncFeedback(refreshBtn, () => refreshPRs());
+      void refreshPRsAction.dispatch(undefined);
     });
+    bindLoadingState("git.refresh_prs", refreshBtn);
   }
 
   // Refetch on forge credential changes; PRs list depends on which
@@ -89,7 +124,11 @@ export function initPRsTab(): void {
  *  repos). Safe to call multiple times — only the latest result wins. */
 export async function refreshPRs(): Promise<void> {
   const myGen = ++refreshGen;
-  const forgesRes = await apiGet<ForgesListResponse>("/api/forges");
+  refreshController?.abort();
+  refreshController = new AbortController();
+  const { signal } = refreshController;
+  const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
+  if (signal.aborted) return;
   if (forgesRes === null) throw new Error("Failed to load forges");
   const forges = forgesRes.forges.filter((f) => f.connected);
 

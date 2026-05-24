@@ -36,6 +36,7 @@ import { buildToolCard, insertDiffPreview } from "./tool-card.js";
 import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
 import { openPlanDraftPath } from "./editor-openers.js";
 import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
+import { bindLoadingState } from "./actions/index.js";
 import {
   addEditActions, initMessageActions,
 } from "./messages-actions.js";
@@ -441,16 +442,12 @@ function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDuratio
         btn.type = "button";
         btn.className = "tool-explain-btn";
         btn.textContent = "Explain this error";
+        bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" });
         btn.addEventListener("click", () => {
-          btn.disabled = true;
-          btn.classList.add("btn-loading");
           void explainError(output, el.dataset["title"] ?? "").then((explanation) => {
-            btn.classList.remove("btn-loading");
             if (explanation !== "") {
               btn.textContent = explanation;
               btn.className = "tool-explain-result";
-            } else {
-              btn.disabled = false;
             }
           });
         });

@@ -87,7 +87,7 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
 
 class MCPStateController {
   private readonly _status = new Map<string, RuntimeStatus>();
-  private renderCb: (() => void) | null = null;
+  renderCb: (() => void) | null = null;
   private readonly serversSlot = new CancellableSlot();
   private readonly statusSlot = new CancellableSlot();
   private serversFetchPending = false;
@@ -151,3 +151,37 @@ export function setStatus(name: string, rs: RuntimeStatus): void { instance.setS
 export function deleteStatus(name: string): void { instance.deleteStatus(name); }
 export function refetchServers(): void { instance.refetchServers(); }
 export function refetchStatus(): void { instance.refetchStatus(); }
+
+// --- Optimistic mutation helpers ---
+
+/** Patch a configured entry in-place and re-render. Returns the previous entry for rollback. */
+export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
+  const arr = configured as Server[];
+  const idx = arr.findIndex((s) => s.id === id);
+  if (idx === -1) return undefined;
+  const prev = { ...arr[idx] } as Server;
+  arr[idx] = Object.assign({}, arr[idx], patch) as Server;
+  configured = [...arr];
+  instance.renderCb?.();
+  return prev;
+}
+
+/** Remove a configured entry by id. Returns [entry, index] for rollback. */
+export function removeConfiguredEntry(id: string): [Server, number] | undefined {
+  const arr = [...configured] as Server[];
+  const idx = arr.findIndex((s) => s.id === id);
+  if (idx === -1) return undefined;
+  const entry = arr[idx]!;
+  arr.splice(idx, 1);
+  configured = arr;
+  instance.renderCb?.();
+  return [entry, idx];
+}
+
+/** Re-insert a previously removed entry at its original index. */
+export function insertConfiguredEntry(entry: Server, atIndex: number): void {
+  const arr = [...configured] as Server[];
+  arr.splice(atIndex, 0, entry);
+  configured = arr;
+  instance.renderCb?.();
+}

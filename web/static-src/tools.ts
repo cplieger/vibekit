@@ -9,12 +9,11 @@
 import { closeModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
-import { ICON_EDIT, ICON_CLOSE, ICON_REFRESH } from "./icons.js";
+import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
 import { apiGet } from "./api-client.js";
 import { installTools, saveTools, seedMcp } from "./actions/tools.js";
+import { bindLoadingState } from "./actions/index.js";
 import { $, el } from "./dom.js";
-
-const SPINNER_ICON = '<div class="spinner-sm"></div>';
 
 type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
 
@@ -85,6 +84,7 @@ class ToolsManager {
 
     const toolOutput = new RollingOutput($.toolUpdateOutput, "git-output-modal");
     $.toolUpdateBtn.addEventListener("click", () => void this.runToolsInstall(toolOutput));
+    bindLoadingState("tools.install", $.toolUpdateBtn);
 
     $.autoUpdateToggle.addEventListener("change", () => {
       patchSettings({ auto_update: $.autoUpdateToggle.checked });
@@ -109,8 +109,6 @@ class ToolsManager {
   }
 
   private async runToolsInstall(toolOutput: RollingOutput): Promise<void> {
-    $.toolUpdateBtn.disabled = true;
-    $.toolUpdateBtn.innerHTML = SPINNER_ICON;
     toolOutput.clear();
     toolOutput.append("Running setup-tools.sh...");
     const d = await installTools.dispatch(undefined);
@@ -122,8 +120,6 @@ class ToolsManager {
       if (d.error !== undefined) toolOutput.append(`Error: ${d.error}`);
     }
     this.loadToolsList();
-    $.toolUpdateBtn.disabled = false;
-    $.toolUpdateBtn.innerHTML = ICON_REFRESH;
   }
 
   private renderToolsList(): void {

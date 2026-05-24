@@ -18,7 +18,7 @@ import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
-import { addRuleAction, removeRuleAction } from "./actions/permissions.js";
+import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -36,13 +36,6 @@ const SUGGESTED_TOOLS = [
 
 type ShellPolicy = "no_commands" | "safe_commands" | "all_commands";
 type RuleMode = "allow" | "deny";
-
-interface CommandRule {
-  pattern: string;
-  mode: RuleMode;
-  priority: number;
-  created_at: number;
-}
 
 class PermissionsUIController {
   private currentMode: PermissionMode = "trust-all";
@@ -241,50 +234,21 @@ class PermissionsUIController {
     }
   }
 
-  private async removeRule(pattern: string): Promise<void> {
-    const index = this.commandRules.findIndex((e) => e.pattern === pattern);
-    if (index === -1) return;
-    const removed = this.commandRules[index];
-    this.commandRules = this.commandRules.filter((e) => e.pattern !== pattern);
+  private setRules = (rules: CommandRule[]): void => {
+    this.commandRules = rules;
     this.renderRuleChips();
-    const ok = await removeRuleAction.dispatch(pattern);
-    if (ok === null && removed !== undefined) {
-      this.commandRules.push(removed);
-      this.renderRuleChips();
-    }
+  };
+
+  private async removeRule(pattern: string): Promise<void> {
+    if (!this.commandRules.some((e) => e.pattern === pattern)) return;
+    await removeRuleAction.dispatch({ pattern, rules: this.commandRules, setRules: this.setRules });
   }
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    // Optimistic: show the chip immediately with a 'saving' visual.
-    const pending: CommandRule = { pattern: clean, mode, priority, created_at: Date.now() };
-    const existingIdx = this.commandRules.findIndex((e) => e.pattern === clean);
-    const original = existingIdx >= 0 ? this.commandRules[existingIdx]! : null;
-    if (existingIdx >= 0) {
-      this.commandRules[existingIdx] = pending;
-    } else {
-      this.commandRules.push(pending);
-    }
-    this.renderRuleChips();
-    // Mark the new chip as saving.
-    const container = document.getElementById("command-rules-chips");
-    const chips = container?.querySelectorAll<HTMLElement>(".chip") ?? [];
-    for (const chip of chips) {
-      if (chip.dataset["pattern"] === clean) {
-        chip.classList.add("chip-saving");
-        break;
-      }
-    }
-    const result = await addRuleAction.dispatch({ pattern: clean, mode, priority });
-    if (result === null) {
-      // Failed — restore original or remove the optimistic chip.
-      this.commandRules = this.commandRules.filter((e) => e.pattern !== clean || e.created_at !== pending.created_at);
-      if (original !== null) this.commandRules.push(original);
-      this.renderRuleChips();
-      return;
-    }
-    await this.loadRules();
+    const result = await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
+    if (result !== null) await this.loadRules();
   }
 
   // --- Private: agent ignore files ---

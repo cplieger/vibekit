@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./store.js", () => ({
+  get: vi.fn(() => ({ model: "claude" })),
   setThinking: vi.fn(),
   enqueuePrompt: vi.fn(),
 }));

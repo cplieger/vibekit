@@ -389,6 +389,18 @@ export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
   emit();
 }
 
+export function setFrozen(chatID: string, frozen: boolean): void {
+  const s = get(chatID);
+  if (s === undefined) return;
+  if (frozen) { s.frozen = true; } else { delete s.frozen; }
+  emit();
+}
+
+/** Return the current index of a session in the list, or -1. */
+export function indexOfSession(id: string): number {
+  return _sessions.findIndex((s) => s.id === id);
+}
+
 export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
   const s = get(chatID);
   if (s === undefined) return;

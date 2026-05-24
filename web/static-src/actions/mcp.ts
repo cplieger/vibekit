@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
-import { type Server } from "../mcp-state.js";
+import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
 
 // --- mcp.toggle_server ---
 
@@ -17,15 +17,21 @@ export interface ToggleArgs {
 
 export const toggleServer = apiAction<ToggleArgs, void>({
   name: "mcp.toggle_server",
+  retryable: "network",
   request: ({ id, enabled }) => ({
     method: "PATCH",
     path: `/api/mcp/${encodeURIComponent(id)}`,
     body: { enabled },
   }),
-  // No optimistic needed — the browser already flipped the checkbox
-  // before the change event fires. Rollback restores on failure.
-  rollback: ({ input, previousEnabled }) => {
+  optimistic: ({ id, enabled }) => {
+    return updateConfiguredEntry(id, { enabled });
+  },
+  rollback: ({ input, previousEnabled }, op) => {
     input.checked = previousEnabled;
+    if (op !== undefined) {
+      const prev = op as Server;
+      updateConfiguredEntry(prev.id, { enabled: prev.enabled });
+    }
   },
   error: "Couldn't toggle integration",
 });
@@ -34,21 +40,23 @@ export const toggleServer = apiAction<ToggleArgs, void>({
 
 export interface DeleteArgs {
   id: string;
-  row: HTMLDivElement;
 }
 
 export const deleteServer = apiAction<DeleteArgs, void>({
   name: "mcp.delete_server",
+  retryable: "network",
   request: ({ id }) => ({
     method: "DELETE",
     path: `/api/mcp/${encodeURIComponent(id)}`,
   }),
-  optimistic: ({ row }) => {
-    row.classList.add("exiting");
-    return undefined;
+  optimistic: ({ id }) => {
+    return removeConfiguredEntry(id);
   },
-  rollback: (args) => {
-    args.row.classList.remove("exiting");
+  rollback: (_args, op) => {
+    if (op !== undefined) {
+      const [entry, idx] = op as [Server, number];
+      insertConfiguredEntry(entry, idx);
+    }
   },
   error: "Couldn't remove integration",
 });

@@ -20,6 +20,7 @@ import {
   stage, discard, pull, push, stash, stashPop,
   unstage, commit as commitAction, generateCommitMessage,
 } from "./actions/git-changes.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -66,6 +67,8 @@ let inited = false;
 let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
+let refreshAbort: AbortController | null = null;
+void registerCleanup(() => { refreshAbort?.abort(); });
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -85,6 +88,9 @@ const userExpandedRepos = new Set<string>();
 
 // Bug 4: Track expanded inline diff paths across re-renders.
 const expandedDiffPaths = new Set<string>();
+
+// Per-paint cleanup: unbind functions from bindLoadingState calls.
+let bindingCleanups: Array<() => void> = [];
 
 // --- Public API ---
 
@@ -131,11 +137,14 @@ export function initChangesTab(): void {
  *  calls are safe: a generation counter ensures stale responses are
  *  discarded. */
 export async function refreshChanges(): Promise<void> {
+  refreshAbort?.abort();
+  const ctrl = new AbortController();
+  refreshAbort = ctrl;
   const gen = ++refreshGeneration;
-  const data = await apiGet<StatusAllResponse>("/api/git/status-all");
+  const data = await apiGet<StatusAllResponse>("/api/git/status-all", ctrl.signal);
   if (gen < refreshGeneration) return; // stale — a newer call supersedes
   if (data === null) {
-    paintError("Failed to load git status.");
+    if (!ctrl.signal.aborted) paintError("Failed to load git status.");
     return;
   }
   lastStatusAll = data.repos;
@@ -151,6 +160,10 @@ function paint(): void {
 function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
+
+  // Tear down previous bindLoadingState subscriptions before re-render.
+  for (const fn of bindingCleanups) fn();
+  bindingCleanups = [];
 
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
@@ -393,6 +406,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stageAllBtn);
+  bindingCleanups.push(bindLoadingState("git.stage", stageAllBtn));
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
   discardAllBtn.addEventListener("click", () => {
@@ -419,6 +433,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     })();
   });
   bar.appendChild(discardAllBtn);
+  bindingCleanups.push(bindLoadingState("git.discard", discardAllBtn));
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";
@@ -433,6 +448,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(pullBtn);
+  bindingCleanups.push(bindLoadingState("git.pull", pullBtn));
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
@@ -450,6 +466,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pushBtn);
+    bindingCleanups.push(bindLoadingState("git.push", pushBtn));
   }
 
   const stashBtn = btn("Stash", "Stash uncommitted changes");
@@ -460,6 +477,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stashBtn);
+  bindingCleanups.push(bindLoadingState("git.stash", stashBtn));
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
@@ -470,6 +488,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pop);
+    bindingCleanups.push(bindLoadingState("git.stash_pop", pop));
   }
 
   return bar;
@@ -719,6 +738,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
     });
   });
   row.appendChild(ai);
+  bindingCleanups.push(bindLoadingState("git.generate_message", ai));
 
   const commit = document.createElement("button");
   commit.type = "button";
@@ -737,6 +757,7 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
     });
   });
   row.appendChild(commit);
+  bindingCleanups.push(bindLoadingState("git.commit", commit));
 
   wrap.appendChild(row);
   return wrap;

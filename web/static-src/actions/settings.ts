@@ -16,6 +16,7 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 export const saveSteeringAction = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
+  retryable: "network",
   request: ({ content }) => ({
     method: "PUT",
     path: "/api/steering",
@@ -73,6 +74,7 @@ interface KiroSettingOp {
 
 export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
   name: "settings.set_kiro_setting",
+  retryable: "network",
   request: ({ key, value }) => ({
     method: "PUT",
     path: "/api/kiro-settings",
@@ -113,6 +115,7 @@ interface PatchAppOp {
 
 export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
   name: "settings.patch",
+  retryable: "network",
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",

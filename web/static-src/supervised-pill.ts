@@ -23,12 +23,14 @@ import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import { setSupervisedAction, resolveAllPendingAction, resolvePendingChangeAction, trustPendingAction, clearPendingTrustAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
 class SupervisedPillController {
   private wired = false;
   private pill: HTMLElement | null = null;
   private content: HTMLDivElement | null = null;
+  private unbinds: Array<() => void> = [];
 
   /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
    *  element exists. No-op on a second call. */
@@ -58,6 +60,8 @@ class SupervisedPillController {
    *  stays tiny for realistic turns. */
   private render(): void {
     if (this.pill === null || this.content === null) return;
+    for (const u of this.unbinds) u();
+    this.unbinds = [];
     const s = getActive();
     if (s === undefined) {
       this.pill.classList.add("hidden");
@@ -91,6 +95,16 @@ class SupervisedPillController {
         : "Supervised mode off (file changes apply immediately)";
 
     this.content.replaceChildren(this.buildPopoverBody(supervised, pending, trusted));
+
+    // Bind loading state to bulk-action buttons.
+    const acceptAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="accept-all"]');
+    const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
+    const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
+    const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
+    if (acceptAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptAllBtn));
+    if (rejectAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectAllBtn));
+    if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
+    if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
   }
 
   private buildPopoverBody(supervised: boolean, pending: PendingChange[], trusted: boolean): DocumentFragment {
@@ -140,6 +154,7 @@ class SupervisedPillController {
       const stopBtn = document.createElement("button");
       stopBtn.type = "button";
       stopBtn.className = "pill-button";
+      stopBtn.dataset["action"] = "stop-trusting";
       stopBtn.textContent = "Stop trusting";
       stopBtn.addEventListener("click", () => this.stopTrusting());
       actions.appendChild(stopBtn);

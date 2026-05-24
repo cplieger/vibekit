@@ -46,6 +46,7 @@ export const signOut = apiAction<SignOutArgs, void>({
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
   }),
   error: "Couldn't sign out",
+  retryable: "network",
 });
 
 /** Clone a single repo into the workspace. Error toast suppressed —
@@ -71,6 +72,7 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
     body: { repo: repoName },
   }),
   error: false,
+  retryable: "network",
 });
 
 // --- PAT connect ---

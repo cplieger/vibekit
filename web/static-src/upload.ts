@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { pendingFor } from "./actions/index.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -22,11 +23,7 @@ export interface UploadOptions {
 // NOTE: Only one upload at a time is supported. The progress bar is a
 // singleton DOM element shared across browser upload and chat drop.
 // Concurrent uploads would corrupt the progress display. Callers should
-// disable their upload trigger while an upload is in flight.
-let uploadInFlight = false;
-
-/** Returns true if an upload is currently in progress. */
-export function isUploadInFlight(): boolean { return uploadInFlight; }
+// check pendingFor('files.upload').length > 0 before dispatching.
 
 export function uploadFiles(opts: UploadOptions): void {
   // If already cancelled, bail out before showing any progress UI.
@@ -35,11 +32,10 @@ export function uploadFiles(opts: UploadOptions): void {
     return;
   }
 
-  if (uploadInFlight) {
+  if (pendingFor("files.upload").length > 0) {
     opts.onError?.("Another upload is already in progress");
     return;
   }
-  uploadInFlight = true;
 
   const form = new FormData();
   form.append("dir", opts.targetDir);
@@ -79,7 +75,6 @@ export function uploadFiles(opts: UploadOptions): void {
     }
   });
   xhr.addEventListener("load", () => {
-    uploadInFlight = false;
     teardownCancelUI();
     if (xhr.status >= 200 && xhr.status < 300) {
       fill.style.width = "100%";
@@ -114,21 +109,18 @@ export function uploadFiles(opts: UploadOptions): void {
     }
   });
   xhr.addEventListener("error", () => {
-    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload failed";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload failed");
   });
   xhr.addEventListener("timeout", () => {
-    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload timed out";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
     opts.onError?.("Upload timed out");
   });
   xhr.addEventListener("abort", () => {
-    uploadInFlight = false;
     teardownCancelUI();
     label.textContent = "Upload cancelled";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);

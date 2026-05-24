@@ -5,6 +5,8 @@ interface CheckoutArgs {
   repo: string;
   branch: string;
   create: boolean;
+  /** The branch chip element to optimistically update. */
+  anchorEl?: HTMLElement;
 }
 
 export const checkoutBranch = defineAction<CheckoutArgs, void>({
@@ -13,7 +15,7 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
     const r = await fetch("/api/git/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(args),
+      body: JSON.stringify({ repo: args.repo, branch: args.branch, create: args.create }),
       signal: withTimeout(signal, API_TIMEOUT_MS),
     });
     if (!r.ok) {
@@ -33,5 +35,17 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
       throw new ActionError(body.error);
     }
   },
+  optimistic: (args) => {
+    if (!args.anchorEl) return undefined;
+    const prev = args.anchorEl.textContent ?? "";
+    args.anchorEl.textContent = args.branch;
+    return prev;
+  },
+  rollback: (args, op) => {
+    if (args.anchorEl && typeof op === "string") {
+      args.anchorEl.textContent = op;
+    }
+  },
+  retryable: "network",
   error: "Branch checkout failed",
 });

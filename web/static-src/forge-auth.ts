@@ -38,6 +38,7 @@ import {
   deleteLocal as deleteLocalAction,
   connectPAT,
 } from "./actions/forge.js";
+import { bindLoadingState } from "./actions/index.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -591,16 +592,20 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
     "destructive",
   );
   if (!ok) return;
-  const res = await deleteLocalAction.dispatch({ repoName: repo.name });
-  if (res === null) {
-    toastError("Couldn't remove local repo");
-    throw new Error("delete failed");
-  }
-  if (res.error !== undefined && res.error !== "") {
-    toastError(`Couldn't remove local repo: ${res.error}`);
-    throw new Error(res.error);
-  }
+
+  // Optimistic: flip clone state to not-cloned and re-render.
+  lastLocalNames.delete(repo.name);
   await renderForgesPanel({ revalidate: false });
+
+  const res = await deleteLocalAction.dispatch({ repoName: repo.name });
+  if (res === null || (res.error !== undefined && res.error !== "")) {
+    // Rollback: restore clone state and re-render.
+    lastLocalNames.add(repo.name);
+    await renderForgesPanel({ revalidate: false });
+    const msg = res?.error ?? "Couldn't remove local repo";
+    toastError(msg);
+    throw new Error(msg);
+  }
 }
 
 // --- Add-account flow dispatch ---
@@ -829,15 +834,16 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const hostVal = hostInput.value.trim();
-    submit.disabled = true;
     void doPATConnect(kind, hostVal, tokenInput.value.trim(), status, () => {
       tokenInput.value = "";
       closeSlot(slot);
       // Auto-expand the freshly-added account on the next paint.
       expandOnNextPaint.add(`${kind}:${hostVal}`);
       void renderForgesPanel();
-    }).finally(() => { submit.disabled = false; });
+    });
   });
+
+  bindLoadingState("forge.connect_pat", submit);
 
   hostEl.appendChild(form);
 }
@@ -882,8 +888,17 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
     "destructive",
   );
   if (!ok) return;
+
+  // Optimistic: hide the account row immediately.
+  const row = document.querySelector<HTMLElement>(`.forge-account-row[data-id="${CSS.escape(f.id)}"]`);
+  if (row !== null) row.hidden = true;
+
   const res = await signOut.dispatch({ forgeId: f.id });
-  if (res === null) return; // toast already fired
+  if (res === null) {
+    // Rollback: show the row again.
+    if (row !== null) row.hidden = false;
+    return;
+  }
   void renderForgesPanel();
 }
 

@@ -154,7 +154,12 @@ async function loadAbout(): Promise<void> {
 /** Wires the "Run diagnostics" button. Shows a spinner while kiro-cli
  *  collects its report, then copies the output to the clipboard and
  *  prints a summary below the button. Failures are surfaced as an
- *  error status so the user can manually re-run. */
+ *  error status so the user can manually re-run.
+ *
+ *  NOT MIGRATED to bindLoadingState: no tools.diagnostics action exists
+ *  in the registry. The endpoint is a one-off apiPost call that doesn't
+ *  go through the action framework. Create a tools.diagnostics action
+ *  first, then wire bindLoadingState here. */
 function initDiagnostics(): void {
   const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;

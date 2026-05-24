@@ -7,6 +7,7 @@ import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
 import { resolvePendingChangeAction } from "./actions/chat.js";
 import { resolvePendingPartial } from "./actions/editor.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { FileState } from "./editor-types.js";
 import { fileStates, getActiveFilePath, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -19,16 +20,16 @@ export async function resolveActivePending(action: "accept" | "reject"): Promise
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  $.editorPendingAcceptBtn.disabled = true;
-  $.editorPendingRejectBtn.disabled = true;
+  const unbindAccept = bindLoadingState("chat.resolve_pending_change", $.editorPendingAcceptBtn);
+  const unbindReject = bindLoadingState("chat.resolve_pending_change", $.editorPendingRejectBtn);
   try {
     const result = await resolvePendingChangeAction.dispatch(
       { chatID, toolCallID, action },
     );
     if (result !== null) closeFile(path);
   } finally {
-    $.editorPendingAcceptBtn.disabled = false;
-    $.editorPendingRejectBtn.disabled = false;
+    unbindAccept();
+    unbindReject();
   }
 }
 

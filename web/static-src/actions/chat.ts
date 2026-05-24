@@ -6,16 +6,28 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
 
 export const deleteChatAction = transportAction<string>({
   name: "chat.delete",
+  retryable: false,
   command: (id) => ({ type: "delete_chat", chat_id: id }),
-  // No optimistic: SSE chat_deleted is the canonical removal path.
-  // A rollback would require re-inserting into _sessions which isn't exposed.
+  optimistic: (id) => {
+    const session = get(id);
+    if (session === undefined) return undefined;
+    const atIndex = indexOfSession(id);
+    removeChat(id);
+    return { session, atIndex };
+  },
+  rollback: (_id, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
+      const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
+      reinsertSession(session, atIndex);
+    }
+  },
   error: "Couldn't delete chat",
 });
 
@@ -23,10 +35,24 @@ export const deleteChatAction = transportAction<string>({
 
 export const archiveChatAction = apiAction<string, unknown>({
   name: "chat.archive",
+  retryable: "network",
   request: (id) => ({
     method: "POST",
     path: `/api/chats/${encodeURIComponent(id)}/archive`,
   }),
+  optimistic: (id) => {
+    const session = get(id);
+    if (session === undefined) return undefined;
+    const atIndex = indexOfSession(id);
+    removeChat(id);
+    return { session, atIndex };
+  },
+  rollback: (_id, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
+      const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
+      reinsertSession(session, atIndex);
+    }
+  },
   success: false,
   error: "Couldn't archive chat",
 });
@@ -35,7 +61,24 @@ export const archiveChatAction = apiAction<string, unknown>({
 
 export const discardTangentAction = transportAction<string>({
   name: "chat.discard_tangent",
+  retryable: false,
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
+  optimistic: (id) => {
+    const session = get(id);
+    if (session === undefined) return undefined;
+    const atIndex = indexOfSession(id);
+    const parentID = session.parent_chat_id;
+    removeChat(id);
+    if (parentID !== undefined) setFrozen(parentID, false);
+    return { session, atIndex, parentID };
+  },
+  rollback: (_id, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
+      const { session, atIndex, parentID } = op as { session: import("../types.js").Session; atIndex: number; parentID?: string };
+      reinsertSession(session, atIndex);
+      if (parentID !== undefined) setFrozen(parentID, true);
+    }
+  },
   // Caller (chat.ts onClose) fires a richer manual toast on failure.
   error: false,
 });
@@ -61,6 +104,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
       setSupervisedMode(chatID, (op as { prev: boolean }).prev);
     }
   },
+  retryable: "network",
   error: "Couldn't update supervised mode",
 });
 
@@ -73,6 +117,7 @@ export const resolveAllPendingAction = transportAction<{ chatID: string; action:
     chat_id: chatID,
     payload: { action },
   }),
+  retryable: "network",
   error: "Couldn't resolve pending changes",
 });
 
@@ -81,6 +126,7 @@ export const resolveAllPendingAction = transportAction<{ chatID: string; action:
 export const trustPendingAction = transportAction<string>({
   name: "chat.trust_pending",
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
+  retryable: "network",
   error: "Couldn't trust pending changes",
 });
 
@@ -89,6 +135,7 @@ export const trustPendingAction = transportAction<string>({
 export const clearPendingTrustAction = transportAction<string>({
   name: "chat.clear_pending_trust",
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
+  retryable: "network",
   error: "Couldn't clear pending trust",
 });
 
@@ -133,6 +180,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
       setAutoApproveCrew(chatID, (op as { prev: boolean }).prev);
     }
   },
+  retryable: "network",
   error: "Couldn't update auto-approve",
 });
 
@@ -182,6 +230,22 @@ export const cancelTurnAction = transportAction<string>({
 
 export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
   name: "chat.switch_model",
+  retryable: "network",
+  optimistic: ({ chatID, model }) => {
+    const session = get(chatID);
+    if (session === undefined) return undefined;
+    const prev = session.model;
+    session.model = model;
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
+      const session = get(chatID);
+      if (session !== undefined) {
+        session.model = (op as { prev: string }).prev;
+      }
+    }
+  },
   run: async ({ chatID, model }, signal) => {
     setThinking(chatID, true);
     try {
@@ -272,6 +336,7 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
     chat_id: chatID,
     payload: { tool_call_id: toolCallID, action },
   }),
+  retryable: "network",
   error: "Couldn't resolve change",
 });
 

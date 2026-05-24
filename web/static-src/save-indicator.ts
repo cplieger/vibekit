@@ -9,6 +9,7 @@
 
 import { $ } from "./dom.js";
 import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
+import { subscribe, pendingFor } from "./actions/registry.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -57,3 +58,18 @@ export function showError(): void {
     hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
   }, 2400);  // longer than success — error deserves more eye time
 }
+
+// ---------------------------------------------------------------------------
+// Hybrid registry subscription: if any pendingFor('settings.patch') is
+// in flight, ensure the spinner is visible. The imperative showSaving/
+// showSaved/showError API remains canonical (it handles the debounce
+// timer + generation counter in persist.ts). This subscription is a
+// safety net so the spinner also shows if a settings.patch is dispatched
+// from a path that doesn't call showSaving() explicitly.
+// ---------------------------------------------------------------------------
+subscribe((instance) => {
+  if (instance.name !== "settings.patch") return;
+  if (instance.status === "pending" && pendingFor("settings.patch").length > 0) {
+    showSaving();
+  }
+});
