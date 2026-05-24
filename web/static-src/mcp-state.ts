@@ -7,13 +7,6 @@ import {
   asObject, decodeArray, optStr, reqStr, type Decoder,
 } from "./validators.js";
 
-const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = (v) => {
-  const o = asObject(v, "$.mcp_status");
-  return {
-    servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
-  };
-};
-
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
   const out: WireRuntimeStatus = {
@@ -25,6 +18,13 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const err = optStr(s, "error", "$.mcp_status.server");
   if (err !== undefined) out.error = err;
   return out;
+};
+
+const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = (v) => {
+  const o = asObject(v, "$.mcp_status");
+  return {
+    servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
+  };
 };
 
 // --- Wire types (match internal/mcp + internal/hub/mcp_registry) ---

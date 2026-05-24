@@ -163,7 +163,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = s.enabled;
-  input.ariaLabel = `${s.enabled ? "Disable" : "Enable"} ${s.name}`;
+  input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
   input.addEventListener("change", () => {
     // input.checked is already the NEW value (browser flipped it).
     // Pass the previous state explicitly so rollback restores correctly.

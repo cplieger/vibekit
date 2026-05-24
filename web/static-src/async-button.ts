@@ -80,11 +80,16 @@ export async function withAsyncFeedback(
   // clone). Skip the success/error visual in that case — the new
   // DOM already reflects the result.
   if (!btn.isConnected) {
+    if (origAriaBusy === null) btn.removeAttribute("aria-busy");
+    else btn.setAttribute("aria-busy", origAriaBusy);
+    delete btn.dataset["asyncStatus"];
     return;
   }
 
   btn.dataset["asyncStatus"] = ok ? "success" : "error";
   btn.innerHTML = ok ? CHECK_HTML : X_HTML;
+  if (origAriaBusy === null) btn.removeAttribute("aria-busy");
+  else btn.setAttribute("aria-busy", origAriaBusy);
 
   const reset = opts.resetMs ?? RESET_MS;
   const timerId = setTimeout(() => {
@@ -92,8 +97,6 @@ export async function withAsyncFeedback(
     if (!btn.isConnected) return;
     btn.innerHTML = origHTML;
     btn.disabled = origDisabled;
-    if (origAriaBusy === null) btn.removeAttribute("aria-busy");
-    else btn.setAttribute("aria-busy", origAriaBusy);
     delete btn.dataset["asyncStatus"];
   }, reset);
   resetTimers.set(btn, timerId);

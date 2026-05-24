@@ -173,7 +173,7 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
     ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {})),
   );
   const data = await apiGet<ForgesListResponse>("/api/forges");
-  if (data !== null && data !== undefined && document.body.contains(root)) {
+  if (data != null && document.body.contains(root)) {
     await Promise.all([
       refreshLocalNames(),
       refreshReposByForge(data.forges),
@@ -857,7 +857,7 @@ async function doPATConnect(
   status.textContent = "Validating…";
   status.className = "forge-card-status";
   const res = await connectPAT.dispatch({ kind, host, token });
-  if (res == null) {
+  if (res === null) {
     status.textContent = "Network error.";
     status.className = "forge-card-status err";
     return;
