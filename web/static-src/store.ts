@@ -310,6 +310,19 @@ export function removeChat(id: string): void {
   emit();
 }
 
+/** Re-insert a previously-removed session at a specific index (or at
+ *  the head if no index given). Used by optimistic action rollbacks
+ *  that captured the session before removeChat() and need to put it
+ *  back on failure. Idempotent: if a session with the same id already
+ *  exists, the existing entry is preserved. */
+export function reinsertSession(session: Session, atIndex?: number): void {
+  if (sessionIndex.has(session.id)) return;
+  const target = atIndex !== undefined ? Math.max(0, Math.min(atIndex, _sessions.length)) : 0;
+  _sessions.splice(target, 0, session);
+  sessionIndex.set(session.id, session);
+  emit();
+}
+
 export function appendMessage(chatID: string, msg: Message): void {
   const s = get(chatID);
   if (s === undefined) return;

@@ -23,6 +23,7 @@
 import { error as toastError, success as toastSuccess } from "../toast.js";
 import { toActionError } from "./error.js";
 import { record } from "./registry.js";
+import { _registerAction } from "./cleanup.js";
 import type {
   Action,
   ActionDefinition,
@@ -194,11 +195,28 @@ export function defineAction<TArgs, TResult>(
       } else {
         msg = fallback;
       }
-      toastError(msg);
+      // Build retry config when the action opts in. "network" only
+      // shows retry for transport-class failures (status 0, timeout)
+      // since 4xx/5xx typically indicate a permanent rejection that
+      // re-dispatching won't fix. "always" shows it unconditionally
+      // for fully-idempotent actions.
+      const retry = computeRetry(args, err);
+      toastError(msg, retry);
     } catch (e) {
       console.error(`[actions] emitErrorToast for ${def.name} threw`, e);
       toastError(`${defaultErrorPrefix(def.name)}: ${err.message}`);
     }
+  }
+
+  function computeRetry(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
+    const mode = def.retryable;
+    if (mode === undefined || mode === false) return undefined;
+    const isNetworkClass =
+      err.status === undefined || err.status === 0 || err.code === "timeout";
+    if (mode === "network" && !isNetworkClass) return undefined;
+    return {
+      onClick: () => { void dispatch(args); },
+    };
   }
 
   function emitCancelled(
@@ -226,11 +244,17 @@ export function defineAction<TArgs, TResult>(
     // remove entries as run() rejects.
   }
 
-  return {
+  const action: Action<TArgs, TResult> = {
     name: def.name,
     dispatch,
     cancel,
   };
+
+  // Register with the global cleanup tracker so beforeunload/teardown
+  // can cancel all in-flight instances of this action.
+  _registerAction(action);
+
+  return action;
 }
 
 /** Test-only: reset the instance counter for deterministic IDs. */

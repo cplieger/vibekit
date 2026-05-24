@@ -11,6 +11,15 @@ export { ActionError, toActionError } from "./error.js";
 // Registry surface — for devtools, loading-state queries, telemetry.
 export { recentLog, subscribe as subscribeToActions, pendingFor } from "./registry.js";
 
+// Loading-state helper: bind a button/input's disabled + aria-busy
+// state to a named action's pending count. Returns an unsubscribe.
+export { bindLoadingState } from "./loading.js";
+export type { BindLoadingOptions } from "./loading.js";
+
+// Cleanup hooks: cancel all in-flight actions on page unload, and
+// register raw (non-action) cleanup for fetch controllers / timers.
+export { registerCleanup, cancelAllPending } from "./cleanup.js";
+
 // Types — re-exported for external typing of action definitions.
 export type {
   Action,
@@ -20,9 +29,9 @@ export type {
   ActionErrorLike,
   DispatchOptions,
   OptimisticOp,
-  RegistryListener,
   RequestSpec,
   ToastSpec,
+  RegistryListener,
 } from "./types.js";
 
 export type { ApiActionDefinition } from "./api.js";

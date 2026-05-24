@@ -268,3 +268,65 @@ describe("toast — accessibility attributes", () => {
     expect(bar?.getAttribute("aria-hidden")).toBe("true");
   });
 });
+
+
+describe("toast — retry button", () => {
+  it("error() with retry renders a button + attaches handler", async () => {
+    const { error } = await loadToast();
+    const onClick = vi.fn();
+    error("Failed", { onClick });
+    flushRaf();
+    const btn = document.querySelector(".vk-toast-retry");
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toBe("Retry");
+  });
+
+  it("custom retry label is rendered", async () => {
+    const { error } = await loadToast();
+    error("Failed", { label: "Try again", onClick: vi.fn() });
+    flushRaf();
+    expect(document.querySelector(".vk-toast-retry")?.textContent).toBe("Try again");
+  });
+
+  it("clicking retry invokes onClick and dismisses the toast", async () => {
+    const { error } = await loadToast();
+    const onClick = vi.fn();
+    error("Failed", { onClick });
+    flushRaf();
+    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
+    btn.click();
+    expect(onClick).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(500);
+    expect(toasts().length).toBe(0);
+  });
+
+  it("retry click does not also trigger toast click-to-dismiss handler", async () => {
+    const { error } = await loadToast();
+    const onClick = vi.fn();
+    error("Failed", { onClick });
+    flushRaf();
+    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
+    // The button click stops propagation so the toast's own click
+    // handler doesn't fire (which would be a double-dismiss).
+    btn.click();
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("error without retry config does not render the button", async () => {
+    const { error } = await loadToast();
+    error("No retry");
+    flushRaf();
+    expect(document.querySelector(".vk-toast-retry")).toBeNull();
+  });
+
+  it("a throwing onClick handler is logged but does not crash", async () => {
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { error } = await loadToast();
+    error("Failed", { onClick: () => { throw new Error("oops"); } });
+    flushRaf();
+    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
+    btn.click();
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
+  });
+});

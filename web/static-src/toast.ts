@@ -52,10 +52,21 @@ interface ToastEntry {
   dismissed: boolean;
 }
 
+/** Retry button config for ephemeral error toasts. The button label
+ *  defaults to "Retry"; onClick is invoked before the toast is
+ *  dismissed and may return a Promise (rejections are logged but
+ *  not surfaced — the caller is responsible for showing a fresh
+ *  toast on a re-failure). */
+export interface ToastRetry {
+  readonly label?: string;
+  readonly onClick: () => void | Promise<void>;
+}
+
 interface QueuedToast {
   message: string;
   level: ToastLevel;
   duration: number;
+  retry?: ToastRetry;
   resolve: (dismissFn: () => void) => void;
 }
 
@@ -167,12 +178,12 @@ function promoteFromQueue(): void {
   while (visible.length < MAX_VISIBLE) {
     const next = queue.shift();
     if (next === undefined) return;
-    const dismissFn = mount(next.message, next.level, next.duration);
+    const dismissFn = mount(next.message, next.level, next.duration, next.retry);
     next.resolve(dismissFn);
   }
 }
 
-function mount(message: string, level: ToastLevel, duration: number): () => void {
+function mount(message: string, level: ToastLevel, duration: number, retry?: ToastRetry): () => void {
   const stack = ensureContainer();
 
   const el = document.createElement("div");
@@ -194,6 +205,33 @@ function mount(message: string, level: ToastLevel, duration: number): () => void
   msgEl.className = "vk-toast-msg";
   msgEl.textContent = message;
   el.appendChild(msgEl);
+
+  // Optional retry button. Click invokes the caller's handler then
+  // dismisses the toast. The button is keyboard-focusable + the click
+  // listener stops propagation so it doesn't trigger the surrounding
+  // toast's click-to-dismiss handler.
+  let retryBtn: HTMLButtonElement | null = null;
+  if (retry !== undefined) {
+    retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "vk-toast-retry";
+    retryBtn.textContent = retry.label ?? "Retry";
+    retryBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Capture before dismissing in case onClick throws.
+      const handler = retry.onClick;
+      dismiss(t);
+      try {
+        const r = handler();
+        if (r instanceof Promise) {
+          r.catch((err) => console.error("[toast] retry handler rejected", err));
+        }
+      } catch (err) {
+        console.error("[toast] retry handler threw", err);
+      }
+    });
+    el.appendChild(retryBtn);
+  }
 
   let progressEl: HTMLSpanElement | null = null;
   if (duration > 0) {
@@ -232,7 +270,7 @@ function mount(message: string, level: ToastLevel, duration: number): () => void
   return () => dismiss(t);
 }
 
-function show(message: string, level: ToastLevel, duration: number): () => void {
+function show(message: string, level: ToastLevel, duration: number, retry?: ToastRetry): () => void {
   if (visible.length >= MAX_VISIBLE) {
     // Queue. The dismiss-fn returned from the queued path proxies to
     // the eventual mounted toast; if dismissed before mount we just
@@ -253,6 +291,7 @@ function show(message: string, level: ToastLevel, duration: number): () => void 
     };
     queueEntry = {
       message, level, duration,
+      ...(retry !== undefined ? { retry } : {}),
       resolve: (fn) => {
         if (dismissedBeforeMount) {
           fn();
@@ -264,7 +303,7 @@ function show(message: string, level: ToastLevel, duration: number): () => void 
     queue.push(queueEntry);
     return ret;
   }
-  return mount(message, level, duration);
+  return mount(message, level, duration, retry);
 }
 
 /** Show an info-level toast. Auto-dismisses after 4s (paused on hover). */
@@ -279,9 +318,10 @@ export function success(message: string): () => void {
 
 /** Show an error-level toast. Sticky by default — users typically
  *  need time to read errors and may need to act on them. Click or
- *  press Escape to dismiss. */
-export function error(message: string): () => void {
-  return show(message, "error", DURATION_ERROR_MS);
+ *  press Escape to dismiss. Optionally accepts a retry config; the
+ *  toast renders a button that invokes onClick + dismisses. */
+export function error(message: string, retry?: ToastRetry): () => void {
+  return show(message, "error", DURATION_ERROR_MS, retry);
 }
 
 /** Show a toast with explicit level + duration. Use durationMs=0

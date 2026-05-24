@@ -76,6 +76,20 @@ export interface ActionDefinition<TArgs, TResult> {
    *  for full control, or false to suppress (rare; only for actions
    *  that surface errors via banner or inline). */
   error?: ToastSpec<TArgs, ActionErrorLike>;
+
+  /** When set, the error toast renders a "Retry" button that re-dispatches
+   *  the action with the same args.
+   *
+   *    "network": only show retry for network/timeout failures
+   *               (status === 0 or code === "timeout") — safest default
+   *               since 4xx/5xx may indicate a permanent rejection
+   *               that re-dispatching won't fix.
+   *    "always":  always show retry on error (use only for fully
+   *               idempotent actions).
+   *    false / undefined (default): no retry button.
+   *
+   *  Suppressed when `error: false` (no toast renders at all). */
+  retryable?: "network" | "always" | false;
 }
 
 /** A registered action, returned by defineAction(). Can be dispatched
