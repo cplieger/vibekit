@@ -42,6 +42,9 @@ export const ICON_HOURGLASS = svg(16, '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 0
 export const ICON_ALERT = svg(16, '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg(16, '<path d="M12 5v14M5 12l7 7 7-7"/>');
 export const ICON_REFRESH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+// Globe with meridian + equator stripes — used by the repo-picker for
+// "remote, not cloned" entries.
+export const ICON_GLOBE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 export const ICON_WARN_12 = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
 
 // --- Crew status icons (14px, used by crew-card.ts) ---

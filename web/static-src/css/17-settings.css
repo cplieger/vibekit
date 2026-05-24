@@ -388,7 +388,7 @@
   flex-shrink: 0;
 }
 
-.repo-picker-badge-github   { background: color-mix(in srgb, #2da44e 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2da44e 40%, var(--c-border)); }
+.repo-picker-badge-github   { background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary)); border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border)); color: var(--c-text-primary); }
 .repo-picker-badge-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
 .repo-picker-badge-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
 .repo-picker-badge-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
@@ -403,7 +403,18 @@
 .repo-picker-state-local  { color: var(--c-text-tertiary); }
 .repo-picker-state-remote { color: var(--c-text-tertiary); }
 
-/* Dialog shell. Uses <dialog> so we get focus trap + Escape for free. */
+/* Dialog shell. Uses <dialog> so we get focus trap + Escape for free.
+ *
+ * Open/close animation uses the now-standard pattern:
+ *   - Default state (no [open]): hidden, opacity 0, slightly scaled down.
+ *   - [open] state: visible, opacity 1, full scale.
+ *   - @starting-style on [open]: defines the initial frame so the
+ *     transition runs when the dialog goes from closed → open.
+ *   - transition-behavior: allow-discrete on `display` and `overlay`
+ *     keeps the animation alive across the discrete display change.
+ *
+ * This same triple gives us a clean exit too (open → closed) since the
+ * default state is the "out" frame. */
 .repo-picker-dialog {
   padding: 0;
   border: 1px solid var(--c-border);
@@ -413,12 +424,39 @@
   width: min(640px, 90vw);
   max-height: min(80vh, 720px);
   flex-direction: column;
+  opacity: 0;
+  transform: scale(0.97);
+  transition:
+    opacity   var(--dur-enter),
+    transform var(--dur-enter),
+    display   var(--dur-enter) allow-discrete,
+    overlay   var(--dur-enter) allow-discrete;
 }
 
-.repo-picker-dialog[open] { display: flex; }
+.repo-picker-dialog[open] {
+  display: flex;
+  opacity: 1;
+  transform: scale(1);
+
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
 
 .repo-picker-dialog::backdrop {
   background: color-mix(in srgb, #000 40%, transparent);
+  opacity: 0;
+  transition:
+    opacity var(--dur-enter),
+    display var(--dur-enter) allow-discrete,
+    overlay var(--dur-enter) allow-discrete;
+}
+
+.repo-picker-dialog[open]::backdrop {
+  opacity: 1;
+
+  @starting-style { opacity: 0; }
 }
 
 .repo-picker-header {
@@ -439,6 +477,26 @@
 
 .repo-picker-search-row {
   padding: var(--sp-3) var(--sp-4) 0;
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+
+.repo-picker-search-row .tool-form-input {
+  flex: 1; min-width: 0;
+}
+
+.repo-picker-search-actions {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+/* Refresh icon-btn: SVG inside, sized to fit the search input height. */
+.repo-picker-search-actions .icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+}
+
+.repo-picker-search-actions .icon-btn svg {
+  width: 14px; height: 14px;
 }
 
 .repo-picker-chips {

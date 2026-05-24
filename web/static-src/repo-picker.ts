@@ -19,7 +19,7 @@ import { onSSE } from "./bus.js";
 import { relativeTime } from "./files-shared.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { RepoEntry, ForgeKind } from "./forge-types.js";
-import { ICON_CHEVRON_DOWN_SM, iconEl } from "./icons.js";
+import { ICON_CHEVRON_DOWN_SM, ICON_GLOBE, ICON_REFRESH, iconEl } from "./icons.js";
 import { setBanner, clearBanner } from "./git-status-banner.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -377,12 +377,87 @@ function wireDialog(): void {
   const closeBtn = dlg.querySelector<HTMLButtonElement>("[data-repo-picker-close]");
   closeBtn?.addEventListener("click", () => dlg.close());
   // Refresh button — forces a server-side refresh, useful when a
-  // freshly-created repo on the forge hasn't shown up yet.
+  // freshly-created repo on the forge hasn't shown up yet. Renders
+  // ICON_REFRESH; the HTML element is empty until we paint it here so
+  // the icon-btn class can size it.
   const refreshBtn = dlg.querySelector<HTMLButtonElement>("[data-repo-picker-refresh]");
-  refreshBtn?.addEventListener("click", () => {
-    refreshBtn.disabled = true;
-    void refreshRepos().finally(() => { refreshBtn.disabled = false; });
+  if (refreshBtn !== null) {
+    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.disabled = true;
+      void refreshRepos().finally(() => { refreshBtn.disabled = false; });
+    });
+  }
+
+  // Clone all button — clone every remote-only entry that has a
+  // clone_url, sequentially to avoid overwhelming the workspace's
+  // git clone capacity and to keep failures attributable. Disabled
+  // when there are no clonable entries (toggled in renderList()).
+  const cloneAllBtn = dlg.querySelector<HTMLButtonElement>("[data-repo-picker-clone-all]");
+  cloneAllBtn?.addEventListener("click", () => {
+    void cloneAllRemoteOnly(cloneAllBtn);
   });
+  refreshCloneAllState();
+}
+
+/** Enable/disable the Clone all button based on whether there are
+ *  any remote-only entries left to clone. Called from renderList()
+ *  so the button state stays in sync with the list. */
+function refreshCloneAllState(): void {
+  const btn = document.querySelector<HTMLButtonElement>("[data-repo-picker-clone-all]");
+  if (btn === null) return;
+  const candidates = remoteOnlyClonable();
+  btn.disabled = candidates.length === 0;
+  btn.title = candidates.length === 0
+    ? "No remote-only repos to clone"
+    : `Clone ${candidates.length} repo${candidates.length === 1 ? "" : "s"}`;
+}
+
+/** All remote-only entries with a clone_url — the universe Clone all
+ *  operates on. */
+function remoteOnlyClonable(): RepoEntry[] {
+  return ctrl.entries.filter(
+    (e) => e.is_local !== true && typeof e.clone_url === "string" && e.clone_url !== "",
+  );
+}
+
+/** Clone every remote-only entry sequentially. Visible feedback is on
+ *  the Clone all button itself (disabled + label). Per-repo failures
+ *  surface as a row-state update on each row but do not abort the
+ *  batch — partial success beats none. */
+async function cloneAllRemoteOnly(btn: HTMLButtonElement): Promise<void> {
+  const candidates = remoteOnlyClonable();
+  if (candidates.length === 0) return;
+  const originalLabel = btn.textContent ?? "Clone all";
+  btn.disabled = true;
+  let done = 0;
+  let failed = 0;
+  for (const entry of candidates) {
+    btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
+    const row = document.querySelector<HTMLElement>(
+      `.repo-picker-row [data-repo-picker-clone-btn="${cssEscape(entry.id)}"]`,
+    )?.closest<HTMLElement>(".repo-picker-row") ?? null;
+    try {
+      await cloneAndSelect(entry, row ?? document.createElement("div"), { skipPick: true });
+      done++;
+    } catch {
+      failed++;
+    }
+  }
+  btn.textContent = originalLabel;
+  refreshCloneAllState();
+  // Final refetch to ensure rows re-render in their new cloned state.
+  await refetch();
+  if (failed > 0) {
+    btn.title = `Cloned ${done}, ${failed} failed`;
+  }
+}
+
+/** Tiny CSS.escape polyfill — we only use it to safely build a
+ *  selector around a RepoEntry id, which has limited charset. Not
+ *  exhaustive; just covers the chars our IDs may contain. */
+function cssEscape(s: string): string {
+  return s.replace(/[\s"'\\#.>+~*[\]:=]/g, "\\$&");
 }
 
 function renderChips(): void {
@@ -426,9 +501,11 @@ function renderList(): void {
       ? "No repositories yet. Add a forge credential in Settings → Git, or clone a repo into the workspace."
       : "No repositories match your filters.";
     list.appendChild(empty);
+    refreshCloneAllState();
     return;
   }
   for (const e of rows) list.appendChild(buildRow(e));
+  refreshCloneAllState();
 }
 
 /** @internal Exported for unit testing. */
@@ -519,7 +596,11 @@ function rowSecondary(e: RepoEntry): string {
   return parts.join(" · ");
 }
 
-async function cloneAndSelect(e: RepoEntry, row: HTMLElement): Promise<void> {
+async function cloneAndSelect(
+  e: RepoEntry,
+  row: HTMLElement,
+  opts: { skipPick?: boolean } = {},
+): Promise<void> {
   if (e.clone_url === undefined || e.clone_url === "") {
     return;
   }
@@ -548,6 +629,7 @@ async function cloneAndSelect(e: RepoEntry, row: HTMLElement): Promise<void> {
     // error glyph on the button that triggered this.
     throw new Error(res?.error ?? "clone failed");
   }
+  if (opts.skipPick === true) return;
   // Refetch so the entry is re-rendered as cloned, then select it.
   await refetch();
   const fresh = ctrl.entries.find((x) => x.id === e.id);
@@ -592,7 +674,16 @@ export function stateGlyph(e: RepoEntry): HTMLSpanElement | null {
     return iconSpan("repo-picker-state repo-picker-state-local", "📁", "Local only");
   }
   if (e.is_remote === true) {
-    return iconSpan("repo-picker-state repo-picker-state-remote", "☁", "Remote, not cloned");
+    // Striped globe — "remote, not cloned" should read as
+    // "lives on the web, hasn't landed locally yet". The previous
+    // cloud glyph was a font emoji that rendered inconsistently
+    // across platforms.
+    const span = document.createElement("span");
+    span.className = "repo-picker-state repo-picker-state-remote";
+    span.innerHTML = ICON_GLOBE;
+    span.setAttribute("aria-label", "Remote, not cloned");
+    span.setAttribute("title", "Remote, not cloned");
+    return span;
   }
   return null;
 }
@@ -624,3 +715,5 @@ export function __testSetSearch(s: string): void { ctrl.search = s; }
 export function __testSetOrgFilter(f: string): void { ctrl.orgFilter = f; }
 /** @internal Build a single row for testing the Clone button affordance. */
 export function __testBuildRow(e: RepoEntry): HTMLElement { return buildRow(e); }
+/** @internal Expose remoteOnlyClonable() to tests. */
+export function __testRemoteOnlyClonable(): RepoEntry[] { return remoteOnlyClonable(); }
