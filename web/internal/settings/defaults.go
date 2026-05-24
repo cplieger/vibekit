@@ -43,7 +43,6 @@ var KnownKeys = map[string]struct{}{
 	"agent_ignore_files":    {},
 	"auto_update":           {},
 	"debug_logs":            {},
-	"git_repo":              {},
 	"last_model":            {},
 	"notifications_enabled": {},
 	"notify_agent_finished": {},

@@ -1046,6 +1046,61 @@ func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	}
 }
 
+func TestHandleStatusAll_EmptyWorkspaceReturnsEmptyArray(t *testing.T) {
+	workDir := t.TempDir()
+	h := NewHandler(workDir)
+	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all", nil)
+	rec := httptest.NewRecorder()
+	h.handleStatusAll(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Repos []allRepoStatus `json:"repos"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Repos) != 0 {
+		t.Errorf("Repos = %d entries, want 0 for empty workspace", len(resp.Repos))
+	}
+}
+
+func TestHandleStatusAll_CleanRepoListedOnce(t *testing.T) {
+	workDir := t.TempDir()
+	repoDir := filepath.Join(workDir, "myrepo")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	initFixtureRepo(t, repoDir)
+	h := NewHandler(workDir)
+	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all", nil)
+	rec := httptest.NewRecorder()
+	h.handleStatusAll(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	var resp struct {
+		Repos []allRepoStatus `json:"repos"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Repos) != 1 {
+		t.Fatalf("Repos = %d entries, want 1 (the myrepo subdir)", len(resp.Repos))
+	}
+	got := resp.Repos[0]
+	if got.Repo != "myrepo" {
+		t.Errorf("Repo = %q, want \"myrepo\"", got.Repo)
+	}
+	if !got.IsRepo {
+		t.Errorf("IsRepo = false, want true")
+	}
+	if got.HasDirty {
+		t.Errorf("HasDirty = true, want false for clean fixture")
+	}
+}
+
 func TestHandleStatus_CleanRepoReportsBranchAndNoFiles(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)

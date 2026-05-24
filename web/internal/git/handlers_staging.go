@@ -12,6 +12,7 @@ import (
 	"vibekit/internal/api"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -21,6 +22,19 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, gitStatusResp{IsRepo: false})
 		return
 	}
+	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
+	api.WriteJSON(w, st)
+}
+
+// collectStatus runs the same shape of git queries handleStatus uses,
+// returning a fully-populated gitStatusResp. Extracted so handleStatusAll
+// can fan-out the same logic across every cloned repo. `doFetch=false`
+// skips the network fetch (useful for the multi-repo dashboard where
+// fetching N repos in parallel would be costly + noisy).
+func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
+	if !api.IsGitRepo(dir) {
+		return gitStatusResp{IsRepo: false}
+	}
 	st := gitStatusResp{IsRepo: true}
 	if b, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil {
 		st.Branch = b
@@ -28,17 +42,15 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if rem, err := gitCmd(ctx, dir, "remote", "get-url", "origin"); err == nil {
 		st.Remote = gitexec.ScrubAuth(rem)
 	}
-	if r.URL.Query().Get("quick") == "" {
-		func() {
-			fetchCtx, cancel := context.WithTimeout(ctx, h.timeouts.Fetch)
-			defer cancel()
-			_, _, _ = h.fetchFlight.Do(dir, func() (any, error) {
-				if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
-					slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(out))
-				}
-				return nil, nil
-			})
-		}()
+	if doFetch {
+		fetchCtx, cancel := context.WithTimeout(ctx, timeouts.Fetch)
+		defer cancel()
+		_, _, _ = fetchFlight.Do(dir, func() (any, error) {
+			if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
+				slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(out))
+			}
+			return nil, nil
+		})
 	}
 
 	// Post-fetch queries are independent — run them concurrently.
@@ -82,7 +94,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		st.HasGH = true
 	}
 	st.HasDirty = len(st.Files) > 0
-	api.WriteJSON(w, st)
+	return st
 }
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {

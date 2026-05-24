@@ -47,6 +47,7 @@ type ForgeProvider struct {
 	Kind  string   // "github", "gitlab", etc.
 	Host  string   // "github.com", "gitlab.company.com"
 	User  string   // authenticated username
+	Email string   // authenticated email (best-effort, may be "")
 	Repos []string // top repo names (capped for brevity)
 }
 
@@ -268,17 +269,38 @@ func writeWorkspace(b *strings.Builder, workDir string) {
 		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
 		b.WriteString("File paths like `myrepo/src/main.go` work with readFile/readCode.\n\n")
 		for _, r := range repos {
-			desc := readFirstLine(filepath.Join(workDir, r, "README.md"))
+			repoDir := filepath.Join(workDir, r)
+			origin := readGitOrigin(repoDir)
+			branch := readGitBranch(repoDir)
+			desc := readFirstLine(filepath.Join(repoDir, "README.md"))
+			fmt.Fprintf(b, "- `%s/`", r)
+			if branch != "" {
+				fmt.Fprintf(b, " on `%s`", branch)
+			}
+			if origin != "" {
+				host := hostFromGitURL(origin)
+				cli := forgeCLI(kindFromHost(host))
+				if cli != "" {
+					fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
+				} else if host != "" {
+					fmt.Fprintf(b, " (%s)", host)
+				}
+			}
 			if desc != "" {
-				fmt.Fprintf(b, "- `%s/` — %s\n", r, desc)
-			} else {
-				fmt.Fprintf(b, "- `%s/`\n", r)
+				fmt.Fprintf(b, " — %s", desc)
+			}
+			b.WriteString("\n")
+			// Surface per-repo steering files so the agent knows
+			// where to look for repo-specific guidelines.
+			for _, sf := range findRepoSteeringFiles(repoDir) {
+				fmt.Fprintf(b, "  - steering: `%s/%s`\n", r, sf)
 			}
 		}
 		b.WriteString("\n")
-		b.WriteString("The Git panel in the UI has a repo selector dropdown. ")
-		b.WriteString("If the user asks about a different repo than the one selected, ")
-		b.WriteString("remind them to switch repos in the Git panel.\n\n")
+		b.WriteString("The Git panel in the UI presents these repositories as collapsible ")
+		b.WriteString("sections under the **Changes** tab (uncommitted work + commit + push), ")
+		b.WriteString("the **Pull requests** tab (open PRs per repo + create new), and the ")
+		b.WriteString("**Sources** tab (forge accounts + cloneable remote repos).\n\n")
 	}
 	if len(foundFiles) > 0 {
 		b.WriteString("### Notable files\n\n")
@@ -294,6 +316,129 @@ func writeWorkspace(b *strings.Builder, workDir string) {
 		}
 		b.WriteString("\n")
 	}
+}
+
+// readGitOrigin returns the origin URL of a git repo by reading its
+// `.git/config` directly. We avoid shelling out to `git remote get-url`
+// because steering generation runs synchronously on every event and
+// must not block on a wedged subprocess. The format is well-defined
+// (`[remote "origin"]` block with a `url = ...` line); a tiny line
+// scanner handles 99% of real-world configs without parsing INI fully.
+func readGitOrigin(repoDir string) string {
+	data, err := readCappedFile(filepath.Join(repoDir, ".git", "config"), 64*1024)
+	if err != nil {
+		return ""
+	}
+	inOrigin := false
+	for line := range strings.SplitSeq(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inOrigin = trimmed == `[remote "origin"]`
+			continue
+		}
+		if !inOrigin {
+			continue
+		}
+		if k, v, ok := strings.Cut(trimmed, "="); ok {
+			if strings.TrimSpace(k) == "url" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return ""
+}
+
+// readGitBranch returns the current branch name of a git repo by
+// reading `.git/HEAD`. Same rationale as readGitOrigin: no subprocess.
+// Detached-HEAD repos return "" (HEAD points at a sha, not a ref).
+func readGitBranch(repoDir string) string {
+	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(data))
+	const refsPrefix = "ref: refs/heads/"
+	if branch, ok := strings.CutPrefix(s, refsPrefix); ok {
+		return branch
+	}
+	return ""
+}
+
+// hostFromGitURL extracts the host from a git remote URL. Handles
+// both https:// and scp-style git@host:path forms. Returns "" for
+// shapes we don't recognise (file://, ext::, etc).
+func hostFromGitURL(url string) string {
+	url = strings.TrimSpace(url)
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+		rest := strings.SplitN(url, "://", 2)[1]
+		// Strip credentials if present (https://user:pwd@host/...).
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			if slash := strings.Index(rest, "/"); slash < 0 || at < slash {
+				rest = rest[at+1:]
+			}
+		}
+		if i := strings.Index(rest, "/"); i > 0 {
+			return rest[:i]
+		}
+		return rest
+	}
+	if i := strings.Index(url, "@"); i > 0 {
+		// scp-style: git@host:owner/repo
+		rest := url[i+1:]
+		if j := strings.Index(rest, ":"); j > 0 {
+			return rest[:j]
+		}
+	}
+	return ""
+}
+
+// kindFromHost maps a git host to its forge kind. Uses suffix
+// matching for self-hosted variants: gitlab.example.com → gitlab,
+// gitea.example.com → gitea. Returns "" for unrecognised hosts.
+func kindFromHost(host string) string {
+	host = strings.ToLower(host)
+	if host == "" {
+		return ""
+	}
+	if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasPrefix(host, "github.") {
+		return "github"
+	}
+	if host == "gitlab.com" || strings.HasSuffix(host, ".gitlab.com") || strings.Contains(host, "gitlab") {
+		return "gitlab"
+	}
+	if host == "codeberg.org" {
+		return "codeberg"
+	}
+	if strings.Contains(host, "gitea") || strings.Contains(host, "forgejo") {
+		return "gitea"
+	}
+	return ""
+}
+
+// findRepoSteeringFiles returns markdown files in a repo's
+// `.kiro/steering/` directory (paths relative to the workspace root,
+// not the repo). These per-repo guidelines override / supplement the
+// workspace environment.md.
+func findRepoSteeringFiles(repoDir string) []string {
+	dir := filepath.Join(repoDir, ".kiro", "steering")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		out = append(out, filepath.Join(".kiro", "steering", e.Name()))
+		if len(out) >= 10 {
+			break
+		}
+	}
+	return out
 }
 
 func classifyEntries(entries []os.DirEntry, workDir string) (repos, dirs []string) {
@@ -471,7 +616,11 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 			user = "(authenticated)"
 		}
 		fmt.Fprintf(w, "### %s (%s)\n\n", p.Kind, p.Host)
-		fmt.Fprintf(w, "- Authenticated as: %s\n", user)
+		if p.Email != "" {
+			fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, p.Email)
+		} else {
+			fmt.Fprintf(w, "- Authenticated as: %s\n", user)
+		}
 		cli := forgeCLI(p.Kind)
 		if cli != "" {
 			fmt.Fprintf(w, "- CLI: `%s`\n", cli)
