@@ -99,7 +99,11 @@ function paint(): void {
   if (root === null) return;
 
   if (lastStatusAll.length === 0) {
-    root.innerHTML = `<div class="git-multirepo-empty">No repositories cloned yet. Open the <strong>Sources</strong> tab to clone one.</div>`;
+    root.innerHTML = renderEmptyState({
+      icon: ICON_REPO_EMPTY,
+      title: "No repositories cloned",
+      hint: "Open the <strong>Sources</strong> tab to clone one.",
+    });
     return;
   }
 
@@ -113,15 +117,51 @@ function paint(): void {
 
   root.replaceChildren();
   if (sections.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-multirepo-empty";
-    empty.textContent = filterText !== ""
-      ? "No matching changes."
-      : "Nothing to commit. All repos clean.";
-    root.appendChild(empty);
+    if (filterText !== "") {
+      root.innerHTML = renderEmptyState({
+        icon: ICON_FILTER,
+        title: "No matching changes",
+        hint: "Adjust your filter to see more.",
+      });
+    } else {
+      root.innerHTML = renderEmptyState({
+        icon: ICON_CLEAN,
+        title: "All clean",
+        hint: "Nothing to commit across your repositories.",
+      });
+    }
     return;
   }
   for (const s of sections) root.appendChild(s);
+}
+
+// --- Empty-state markup helpers ---
+
+const ICON_REPO_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
+  '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
+  '</svg>';
+
+const ICON_CLEAN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
+  '<polyline points="22 4 12 14.01 9 11.01"/>' +
+  '</svg>';
+
+const ICON_FILTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
+  '</svg>';
+
+function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
+  return `
+    <div class="git-multirepo-empty">
+      <div class="git-multirepo-empty-icon">${opts.icon}</div>
+      <div class="git-multirepo-empty-title">${opts.title}</div>
+      <div class="git-multirepo-empty-hint">${opts.hint}</div>
+    </div>
+  `;
 }
 
 function paintError(msg: string): void {

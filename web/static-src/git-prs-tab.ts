@@ -14,7 +14,7 @@
 import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { relativeTime } from "./files-shared.js";
-import { kindTitle } from "./forge-types.js";
+import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -137,7 +137,11 @@ function paint(): void {
   if (root === null) return;
 
   if (lastGroups.length === 0) {
-    root.innerHTML = `<div class="git-multirepo-empty">No repositories on connected forges. Open the <strong>Sources</strong> tab to add a forge.</div>`;
+    root.innerHTML = renderEmptyState({
+      icon: ICON_PR_EMPTY,
+      title: "No connected forges",
+      hint: "Open the <strong>Sources</strong> tab to add a forge account.",
+    });
     return;
   }
 
@@ -149,16 +153,55 @@ function paint(): void {
     if (matchesFilter) visible.push(g);
   }
 
+  // Aggregate: any open PRs at all? If not, show a centered empty
+  // state instead of N collapsed sections.
+  const totalOpen = visible.reduce((acc, g) => acc + g.prs.length, 0);
+  if (totalOpen === 0 && filterText === "") {
+    root.innerHTML = renderEmptyState({
+      icon: ICON_PR_EMPTY,
+      title: "All caught up",
+      hint: "No open pull requests across your connected forges.",
+    });
+    return;
+  }
+
   root.replaceChildren();
   if (visible.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-multirepo-empty";
-    empty.textContent = "No matching pull requests.";
-    root.appendChild(empty);
+    root.innerHTML = renderEmptyState({
+      icon: ICON_FILTER,
+      title: "No matching pull requests",
+      hint: "Adjust your filter to see more.",
+    });
     return;
   }
 
   for (const g of visible) root.appendChild(renderGroup(g));
+}
+
+// --- Empty-state markup helpers ---
+
+const ICON_PR_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="6" cy="6" r="3"/>' +
+  '<circle cx="6" cy="18" r="3"/>' +
+  '<line x1="6" y1="9" x2="6" y2="15"/>' +
+  '<circle cx="18" cy="18" r="3"/>' +
+  '<path d="M18 9a9 9 0 00-9-9"/>' +
+  '</svg>';
+
+const ICON_FILTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
+  '</svg>';
+
+function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
+  return `
+    <div class="git-multirepo-empty">
+      <div class="git-multirepo-empty-icon">${opts.icon}</div>
+      <div class="git-multirepo-empty-title">${opts.title}</div>
+      <div class="git-multirepo-empty-hint">${opts.hint}</div>
+    </div>
+  `;
 }
 
 function renderGroup(g: RepoGroup): HTMLElement {
@@ -169,38 +212,45 @@ function renderGroup(g: RepoGroup): HTMLElement {
   section.dataset["repo"] = g.full_name;
   if (expandedDefault) section.classList.add("expanded");
 
-  const header = document.createElement("button");
-  header.type = "button";
-  header.className = "git-repo-section-header";
-  header.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
+  // Header is a flex container that hosts: chevron + forge icon +
+  // name + count (left side, click-to-toggle), and a right-aligned
+  // [+ New PR] button. The button's stopPropagation keeps the
+  // toggle from firing when the user clicks New PR.
+  const header = document.createElement("div");
+  header.className = "git-repo-section-header git-repo-section-header-row";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "git-repo-section-header-toggle";
+  toggle.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
-  header.innerHTML = `
+  toggle.innerHTML = `
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
+    <span class="git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}" aria-hidden="true">${FORGE_META[g.forge_kind].icon}</span>
     <span class="git-repo-section-name">${escapeHTML(g.full_name)}</span>
-    <span class="git-repo-section-meta">${escapeHTML(g.forge_host)} · ${escapeHTML(countText)}</span>
+    <span class="git-repo-section-meta">${escapeHTML(countText)}</span>
   `;
-  header.addEventListener("click", () => {
+  toggle.addEventListener("click", () => {
     const open = section.classList.toggle("expanded");
-    header.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
   });
+  header.appendChild(toggle);
+
+  const newBtn = document.createElement("button");
+  newBtn.type = "button";
+  newBtn.className = "btn-small btn-primary";
+  newBtn.textContent = "+ New PR";
+  newBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void openNewPRDialog(g);
+  });
+  header.appendChild(newBtn);
+
   section.appendChild(header);
 
   const body = document.createElement("div");
   body.className = "git-repo-section-body";
-
-  // Action bar: + New PR button
-  const bar = document.createElement("div");
-  bar.className = "git-repo-action-bar";
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.className = "btn-small btn-primary";
-  newBtn.textContent = "+ New pull request";
-  newBtn.addEventListener("click", () => {
-    void openNewPRDialog(g);
-  });
-  bar.appendChild(newBtn);
-  body.appendChild(bar);
 
   if (g.error !== undefined && g.error !== "") {
     const err = document.createElement("div");

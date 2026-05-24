@@ -26,20 +26,54 @@
 .git-multirepo-mount {
   display: flex; flex-direction: column; gap: var(--sp-2);
   padding-block-end: var(--sp-3);
+  flex: 1; min-height: 0;
 }
 
-.git-multirepo-empty,
-.git-multirepo-error {
-  padding: var(--sp-4);
+/* Centered empty state: fills the available vertical space below the
+ * tab toolbar so the icon + message sit at the visual center of the
+ * tab body, not stuck at the top. */
+.git-multirepo-empty {
+  flex: 1;
+  min-height: 30vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4);
   text-align: center;
   color: var(--c-text-tertiary);
   border: 1px dashed var(--c-border);
   border-radius: var(--r);
-  font-size: var(--fs-sm);
 }
 
+.git-multirepo-empty-icon {
+  display: inline-flex;
+  color: var(--c-text-tertiary);
+  opacity: 0.7;
+}
+
+.git-multirepo-empty-icon svg {
+  width: 48px; height: 48px;
+}
+
+.git-multirepo-empty-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-secondary);
+}
+
+.git-multirepo-empty-hint {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.git-multirepo-empty-hint strong { color: var(--c-text-secondary); }
+
 .git-multirepo-error {
-  border-color: color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  padding: var(--sp-4);
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
   color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
 }
 
@@ -64,8 +98,59 @@
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
+/* Variant used in the PRs tab: the header is a flex row containing
+ * a click-to-toggle button on the left and a right-aligned action
+ * button (e.g. + New PR) that doesn't toggle. The header element
+ * itself is a div in that case (not a button), since we can't nest
+ * buttons. */
+.git-repo-section-header-row {
+  cursor: default;
+  padding: 0;
+}
+
+.git-repo-section-header-row:hover { background: transparent; }
+
+.git-repo-section-header-toggle {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: transparent;
+  border: 0;
+  font: inherit; color: inherit;
+  cursor: pointer;
+  text-align: start;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.git-repo-section-header-toggle:hover { background: var(--c-bg-secondary); }
+
+.git-repo-section-header-row > .btn-small {
+  margin-inline-end: var(--sp-3);
+  flex-shrink: 0;
+}
+
+/* Forge icon (GH octocat / GL tanuki / etc.) inside the section
+ * header. Replaces the host text ("github.com · ...") so the row
+ * reads visually instead of textually. */
+.git-repo-section-forge-icon {
+  display: inline-flex; align-items: center;
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+}
+
+.git-repo-section-forge-icon svg { width: 14px; height: 14px; }
+
+.git-repo-section-forge-github   svg { fill: var(--c-text-primary); }
+.git-repo-section-forge-gitlab   svg { fill: #fc6d26; }
+.git-repo-section-forge-codeberg svg { fill: #2185d0; }
+.git-repo-section-forge-gitea    svg { fill: #609926; }
+
 .git-repo-section.expanded > .git-repo-section-header {
   border-bottom-color: var(--c-border);
+}
+
+.git-repo-section.expanded > .git-repo-section-header-row {
+  border-bottom: 1px solid var(--c-border);
 }
 
 .git-repo-section-header:hover { background: var(--c-bg-secondary); }
@@ -76,7 +161,7 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
-.git-repo-section.expanded > .git-repo-section-header > .git-repo-section-chevron {
+.git-repo-section.expanded .git-repo-section-chevron {
   transform: rotate(90deg);
 }
 
