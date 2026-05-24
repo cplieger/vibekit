@@ -84,8 +84,10 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     if (input.type === "checkbox") {
       return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
     }
-    // Use the focus-time snapshot if available; otherwise fall back to current value
-    return { prevValue: previousValue ?? input.value };
+    // Use the focus-time snapshot if available; otherwise fall back to
+    // defaultValue (the original HTML attribute value) — input.value would
+    // be the NEW value since the change event already updated it.
+    return { prevValue: previousValue ?? input.defaultValue };
   },
   rollback: ({ input }, op) => {
     const o = op as KiroSettingOp | undefined;

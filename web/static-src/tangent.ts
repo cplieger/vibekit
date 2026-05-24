@@ -11,6 +11,7 @@ import { effect } from "./signals.js";
 import { forkChatAction, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";
+import { error as toastError } from "./toast.js";
 
 /** Wire the fork pill in the chat prompt row. The pill lives in the
  *  per-conversation pill cluster alongside Attach / Follow / Autopilot
@@ -90,7 +91,10 @@ export async function discardTangent(): Promise<void> {
   const ok = await confirm("Discard this tangent? Changes won't be merged back.", "Discard", "destructive");
   if (!ok) return;
   void discardTangentAction.dispatch(session.id).then((result) => {
-    if (result === null) return;
+    if (result === null) {
+      toastError("Couldn't discard tangent");
+      return;
+    }
     if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
       void loadList().then(() => {
         activateChatView(session.parent_chat_id!);

@@ -32,9 +32,21 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     });
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
 
-    const posted = await apiPost("/api/push/subscribe", sub.toJSON(), signal);
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
-    if (posted === null) throw new ActionError("Server rejected subscription");
+    let posted: unknown;
+    try {
+      posted = await apiPost("/api/push/subscribe", sub.toJSON(), signal);
+    } catch (e) {
+      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      throw e;
+    }
+    if (signal.aborted) {
+      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
+    if (posted === null) {
+      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      throw new ActionError("Server rejected subscription");
+    }
 
     return reg;
   },

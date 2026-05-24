@@ -194,6 +194,8 @@ function initSearchPanel(): void {
 }
 
 async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
+  // Cancels any in-flight fetch from a previous runSearch (e.g., Enter pressed
+  // while debounced search is mid-fetch).
   session.searchController?.abort();
   session.searchController = new AbortController();
   if (q === "") { results.replaceChildren(); return; }

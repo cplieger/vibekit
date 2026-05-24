@@ -23,6 +23,11 @@ export interface RemoveRuleArgs {
   setRules: (rules: CommandRule[]) => void;
 }
 
+// Both addRule and removeRule are pure-optimistic: they update local state
+// immediately without server confirmation (no loadRules() after dispatch).
+// Any mismatch between local and server state is corrected on the next page
+// load when loadRules() is called during initShellPolicy().
+
 export const addRuleAction = apiAction<AddRuleArgs, unknown>({
   name: "permissions.add_rule",
   request: ({ pattern, mode, priority }) => ({

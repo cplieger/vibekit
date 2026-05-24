@@ -29,6 +29,9 @@ type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectEleme
 export interface BindLoadingOptions {
   /** When true (default), set `aria-busy="true"` while pending. */
   ariaBusy?: boolean;
+  /** When true, don't manage aria-busy at all — lets external code own
+   *  the attribute. Overrides `ariaBusy`. Default: false. */
+  preserveAriaBusy?: boolean;
   /** CSS class to add while pending (in addition to the disabled prop). */
   pendingClass?: string;
   /** When true, also OR the element's existing disabled state with the
@@ -44,7 +47,8 @@ export function bindLoadingState(
   el: DisableableElement,
   opts: BindLoadingOptions = {},
 ): () => void {
-  const { ariaBusy = true, pendingClass, preserveDisabled = false } = opts;
+  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false } = opts;
+  const manageAriaBusy = ariaBusy && !preserveAriaBusy;
   // Track pending transitions to snapshot disabled state lazily —
   // avoids stale bind-time capture when external code mutates disabled.
   let wasPending = false;
@@ -57,12 +61,12 @@ export function bindLoadingState(
     if (isPending && !wasPending) baseDisabled = el.disabled;
     if (isPending) {
       el.disabled = true;
-      if (ariaBusy) el.setAttribute("aria-busy", "true");
+      if (manageAriaBusy) el.setAttribute("aria-busy", "true");
       if (pendingClass) el.classList.add(pendingClass);
     } else if (wasPending) {
       // Transition pending→idle: restore element state.
       el.disabled = preserveDisabled ? baseDisabled : false;
-      if (ariaBusy) el.removeAttribute("aria-busy");
+      if (manageAriaBusy) el.removeAttribute("aria-busy");
       if (pendingClass) el.classList.remove(pendingClass);
     }
     wasPending = isPending;
@@ -72,7 +76,7 @@ export function bindLoadingState(
   const restore = (): void => {
     if (wasPending) {
       el.disabled = preserveDisabled ? baseDisabled : false;
-      if (ariaBusy) el.removeAttribute("aria-busy");
+      if (manageAriaBusy) el.removeAttribute("aria-busy");
       if (pendingClass) el.classList.remove(pendingClass);
       wasPending = false;
     }

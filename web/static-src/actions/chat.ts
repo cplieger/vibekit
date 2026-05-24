@@ -22,6 +22,10 @@ export const deleteChatAction = transportAction<string>({
     removeChat(id);
     return { session, atIndex };
   },
+  // Trade-off: if the server actually deleted but the HTTP response timed out,
+  // rollback reinserts a ghost session. A subsequent SSE chat_deleted event will
+  // remove it, causing a brief flicker. Full correctness would require server-side
+  // dedup + ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
     if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
       const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
@@ -47,6 +51,10 @@ export const archiveChatAction = apiAction<string, unknown>({
     removeChat(id);
     return { session, atIndex };
   },
+  // Trade-off: if the server actually archived but the HTTP response timed out,
+  // rollback reinserts a ghost session. A subsequent SSE event will remove it,
+  // causing a brief flicker. Full correctness would require server-side dedup +
+  // ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
     if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
       const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
@@ -252,6 +260,12 @@ export const cancelTurnAction = transportAction<string>({
 // Uses defineAction because: (1) caller needs boolean return, (2) setThinking
 // is a loading indicator (set on start, cleared on completion), not an optimistic
 // mutation. transportAction's optimistic/rollback pattern doesn't fit this lifecycle.
+//
+// Race note: on failure the finally block calls setThinking(chatID, false) first,
+// then rollback restores the previous model — two separate emits / re-renders.
+// The visual end-state is correct (rolled-back model, not thinking). Batching
+// would eliminate the intermediate render but the cost is negligible (microtask-
+// fast) and not user-visible, so we accept the double emit.
 
 export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
   name: "chat.switch_model",

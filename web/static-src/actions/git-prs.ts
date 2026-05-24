@@ -4,8 +4,8 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction } from "./index.js";
-import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-tab.js";
-import type { PRRemoveResult } from "../git-prs-tab.js";
+import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
+import type { PRRemoveResult } from "../git-prs-state.js";
 
 // --- Types ---
 

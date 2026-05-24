@@ -177,6 +177,7 @@ export async function loadList(): Promise<boolean> {
   listController?.abort();
   const controller = new AbortController();
   listController = controller;
+  const knownBefore = new Set(sessionIndex.keys());
   const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, controller.signal);
   if (controller.signal.aborted) return false;
   if (d === null || d.chats === undefined) return false;
@@ -215,6 +216,11 @@ export async function loadList(): Promise<boolean> {
       ...(h.oldest_checkpoint_tag !== undefined && { oldest_checkpoint_tag: h.oldest_checkpoint_tag }),
     };
     next.push(session);
+  }
+  // Preserve sessions added by SSE (upsertHeader) during the await.
+  const nextIds = new Set(next.map((s) => s.id));
+  for (const [id, s] of sessionIndex) {
+    if (!knownBefore.has(id) && !nextIds.has(id)) next.push(s);
   }
   setSessions(next);
   emit();

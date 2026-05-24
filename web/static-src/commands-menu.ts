@@ -162,11 +162,13 @@ class CommandsMenuController {
     const chatID = getActiveId();
     if (chatID === "") return;
     this.optionsAbort = new AbortController();
-    const signal = AbortSignal.any([this.optionsAbort.signal, AbortSignal.timeout(5000)]);
+    const myCtrl = this.optionsAbort;
+    const signal = AbortSignal.any([myCtrl.signal, AbortSignal.timeout(5000)]);
     const url = `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
       + `&command=${encodeURIComponent(command)}`
       + `&partial=${encodeURIComponent(partial)}`;
     const d = await apiGet<{ options: OptionEntry[] }>(url, signal);
+    if (myCtrl !== this.optionsAbort) return; // stale
     if (chatID !== getActiveId()) return;
     if (d === null || !Array.isArray(d.options) || d.options.length === 0) {
       this.closePopover();

@@ -24,6 +24,7 @@ import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
+import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
 
 // --- Types ---
 
@@ -64,41 +65,17 @@ let refreshGen = 0;
 let refreshController: AbortController | null = null;
 registerCleanup(() => refreshController?.abort());
 
-// --- Accessors for optimistic mutations (used by git-prs actions) ---
-
-export interface PRRemoveResult {
-  group: RepoGroup;
-  pr: PR;
-}
-
-/** Remove a PR from lastGroups by identity and repaint. Returns info needed to rollback. */
-export function removePRFromGroups(forgeId: string, owner: string, name: string, prNumber: number): PRRemoveResult | undefined {
-  for (const g of lastGroups) {
-    if (g.forge_id !== forgeId || g.owner !== owner || g.name !== name) continue;
-    const pi = g.prs.findIndex((p) => p.number === prNumber);
-    if (pi === -1) continue;
-    const pr = g.prs.splice(pi, 1)[0]!;
-    paint();
-    return { group: g, pr };
-  }
-  return undefined;
-}
-
-/** Re-insert a previously removed PR (rollback). Uses PR.number ordering. */
-export function reinsertPRInGroups(result: PRRemoveResult): void {
-  // Group must still be in lastGroups; if not, no-op.
-  if (!lastGroups.includes(result.group)) return;
-  const prs = result.group.prs;
-  // Find correct insert position by PR number (descending — higher numbers first).
-  let idx = prs.findIndex((p) => p.number < result.pr.number);
-  if (idx === -1) idx = prs.length;
-  prs.splice(idx, 0, result.pr);
-  paint();
-}
+// --- Accessors for optimistic mutations (wired via git-prs-state) ---
+// removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
+// to break the circular dependency with actions/git-prs.ts.
+// Re-export the type for any downstream consumers.
+export type { PRRemoveResult } from "./git-prs-state.js";
 
 // --- Public API ---
 
 export function initPRsTab(): void {
+  bindPRState({ groups: lastGroups, paint });
+
   const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
     filterText = filterEl.value.trim().toLowerCase();
@@ -195,6 +172,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   if (myGen !== refreshGen) return;
 
   lastGroups = groups;
+  updateGroupsRef(lastGroups);
   paint();
 }
 

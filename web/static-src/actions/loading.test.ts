@@ -195,4 +195,25 @@ describe("bindLoadingState", () => {
     resolveRun!();
     await p;
   });
+
+  it("preserveAriaBusy: true does not manage aria-busy", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind11",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    // External code sets aria-busy before bind.
+    btn.setAttribute("aria-busy", "true");
+    bindLoadingState("test.bind11", btn, { preserveAriaBusy: true });
+    const p = action.dispatch({});
+    // aria-busy should remain untouched (external code owns it).
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // After completion, aria-busy is still the external value.
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.disabled).toBe(false);
+  });
 });

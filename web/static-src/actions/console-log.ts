@@ -20,15 +20,16 @@ let unsubscribe: (() => void) | null = null;
  *  subscription. Returns a teardown fn. */
 export function initActionConsoleLog(): () => void {
   unsubscribe?.();
-  unsubscribe = subscribe((inst) => {
+  const unsub = subscribe((inst) => {
     if (inst.status !== "error") return;
     if (inst.error === undefined) return;
-    const completedAt = inst.completedAt ?? inst.startedAt;
-    const durationMs = completedAt - inst.startedAt;
+    const duration = inst.completedAt !== undefined
+      ? `${String(inst.completedAt - inst.startedAt)}ms`
+      : "?ms";
     // Format: one line, then the full error object expanded by the
     // browser console. Status / code are surfaced inline so a quick
     // scan in DevTools reveals classification without expanding.
-    const meta: string[] = [`${String(durationMs)}ms`];
+    const meta: string[] = [duration];
     if (inst.error.status !== undefined) meta.push(`HTTP ${String(inst.error.status)}`);
     if (inst.error.code !== undefined) meta.push(inst.error.code);
     console.error(
@@ -36,7 +37,13 @@ export function initActionConsoleLog(): () => void {
       inst.error,
     );
   });
-  return teardown;
+  unsubscribe = unsub;
+  return () => {
+    if (unsubscribe === unsub) {
+      unsub();
+      unsubscribe = null;
+    }
+  };
 }
 
 function teardown(): void {

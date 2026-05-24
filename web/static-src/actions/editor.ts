@@ -21,11 +21,12 @@ export const saveFile = apiAction<{ path: string; content: string }, { ok?: bool
  *  framework toast suppressed. */
 export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "editor.send_plan",
-  run: async ({ chatID, content }) => {
+  run: async ({ chatID, content }, signal) => {
     const { writePlanDraft, runPlan } = await import("../plan-actions.js");
     if (!(await writePlanDraft(chatID, content))) {
       throw new ActionError("Could not save plan draft", { code: "draft_failed" });
     }
+    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const sent = await runPlan(chatID, content.trim());
     if (!sent) {
       throw new ActionError("Plan send failed", { code: "run_plan_failed" });

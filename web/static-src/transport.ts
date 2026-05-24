@@ -174,6 +174,7 @@ class TransportController {
       } else {
         if (this.hiddenSince !== null && Date.now() - this.hiddenSince >= HIDDEN_ABORT_MS) {
           for (const ctrl of this.inflight) ctrl.abort();
+          this.inflight.clear();
         }
         this.hiddenSince = null;
       }

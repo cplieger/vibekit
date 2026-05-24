@@ -73,7 +73,7 @@ export function subscribe(fn: RegistryListener): () => void {
   return () => listeners.delete(fn);
 }
 
-/** Snapshot of recent action instances (newest at end). */
+/** @internal Test-only public surface. */
 export function recentLog(): readonly ActionInstance[] {
   return log.slice();
 }

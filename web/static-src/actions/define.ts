@@ -167,6 +167,8 @@ export function defineAction<TArgs, TResult>(
       const msg = opts.successMessage ?? resolveToast(d.success, args, result);
       if (msg !== null) toastSuccess(msg);
     } catch (e) {
+      // Throwing in a success toast spec is silently dropped by design —
+      // success toasts are non-critical and must never disrupt the caller.
       console.error(`[actions] emitSuccessToast for ${d.name} threw`, e);
     }
   }

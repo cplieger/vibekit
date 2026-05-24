@@ -160,12 +160,12 @@ export function refetchStatus(): void { instance.refetchStatus(); }
 
 /** Patch a configured entry in-place and re-render. Returns the previous entry for rollback. */
 export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
-  const arr = configured as Server[];
-  const idx = arr.findIndex((s) => s.id === id);
+  const idx = configured.findIndex((s) => s.id === id);
   if (idx === -1) return undefined;
-  const prev = { ...arr[idx] } as Server;
-  arr[idx] = Object.assign({}, arr[idx], patch) as Server;
-  configured = [...arr];
+  const prev = { ...configured[idx] } as Server;
+  const arr = [...configured] as Server[];
+  arr[idx] = { ...arr[idx], ...patch } as Server;
+  configured = arr;
   instance.renderCb?.();
   return prev;
 }

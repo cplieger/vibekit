@@ -120,13 +120,21 @@ async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promis
     // SAFETY: Callers that declare TResult as non-void must not issue
     // requests that return 204. The cast is unavoidable without a
     // runtime type guard; callers accept this by choosing TResult.
+    if (spec.method !== "DELETE") {
+      console.warn(`[actions] ${spec.method} ${spec.path} returned 204 (empty response) — callers expecting data will receive undefined`);
+    }
     return undefined as T;
   }
   // Parse JSON body. DELETE responses with bodies (e.g. confirmation
   // payload, remaining count) ARE parsed — only 204 short-circuits.
   // Empty body returns undefined.
   const text = await r.text();
-  if (text === "") return undefined as T; // same SAFETY note as above
+  if (text === "") {
+    if (spec.method !== "DELETE") {
+      console.warn(`[actions] ${spec.method} ${spec.path} returned empty body — callers expecting data will receive undefined`);
+    }
+    return undefined as T; // same SAFETY note as above
+  }
   try {
     return JSON.parse(text) as T;
   } catch (e) {
