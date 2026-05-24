@@ -26,7 +26,7 @@
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_TRASH } from "./icons.js";
+import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 
@@ -370,6 +370,7 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
   const total = repos.length;
   summary.innerHTML = `
     <span class="forge-account-repos-chevron" aria-hidden="true">▸</span>
+    <span class="forge-account-repos-icon" aria-hidden="true">${ICON_REPO}</span>
     <span class="forge-account-repos-label">${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally</span>
   `;
   details.appendChild(summary);

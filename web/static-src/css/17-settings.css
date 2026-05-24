@@ -205,11 +205,23 @@
   display: flex; align-items: center; gap: var(--sp-2);
   list-style: none;
   cursor: pointer;
-  padding: var(--sp-1) var(--sp-3);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
+  /* Touch-friendly tap target: ~44px minimum height on mobile.
+   * Spacious horizontal padding so the chevron + icon + label
+   * line reads at body size. */
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
   user-select: none;
 }
+
+.forge-account-repos-icon {
+  display: inline-flex; align-items: center;
+  color: var(--c-text-tertiary);
+  flex-shrink: 0;
+}
+
+.forge-account-repos-icon svg { width: 16px; height: 16px; }
 
 .forge-account-repos-summary::-webkit-details-marker { display: none; }
 
