@@ -76,9 +76,10 @@ export interface ConfiguredForge {
   kind: ForgeKind;
   host: string;
   username?: string;
-  connected: boolean;
-  last_probed?: number;
+  email?: string;
   last_error?: string;
+  last_probed?: number;
+  connected: boolean;
 }
 
 export interface ConnectedPayload {
@@ -131,13 +132,13 @@ export interface FileChange {
 }
 
 export interface Issue {
-  number: number;
   title: string;
   body?: string;
   state: string;
   author?: string;
   url?: string;
   labels?: string[];
+  number: number;
   created_at?: number;
   updated_at?: number;
 }
@@ -190,7 +191,6 @@ export interface MeteringItem {
 }
 
 export interface PR {
-  number: number;
   title: string;
   body?: string;
   state: string;
@@ -198,6 +198,7 @@ export interface PR {
   source_branch: string;
   target_branch: string;
   url?: string;
+  number: number;
   created_at?: number;
   updated_at?: number;
   mergeable?: boolean;
@@ -259,10 +260,10 @@ export interface Release {
   tag_name: string;
   name?: string;
   body?: string;
-  draft?: boolean;
-  prerelease?: boolean;
   url?: string;
   published_at?: number;
+  draft?: boolean;
+  prerelease?: boolean;
 }
 
 export interface Repo {

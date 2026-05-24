@@ -101,30 +101,172 @@
 
 /* --- Settings → Git & forges --- */
 
-/* Card layout for the forges connection panel rendered by
- * forge-auth.ts → renderForgesPanel(). The panel mounts on
- * <div id="forges-panel"> in the Git & forges settings tab. */
-.forge-card {
+/* Per-kind section: one of these per supported forge kind (github,
+ * gitlab, codeberg, gitea). Always visible, even with zero accounts. */
+.forge-kind-section {
   border: 1px solid var(--c-border);
-  border-left: 3px solid var(--c-text-tertiary);
   border-radius: var(--r);
   padding: var(--sp-3) var(--sp-4);
   background: var(--c-bg-primary);
   display: flex; flex-direction: column;
   gap: var(--sp-2);
+  margin-block-end: var(--sp-3);
 }
 
-.forge-card-header {
+.forge-kind-header {
   display: flex; align-items: center; gap: var(--sp-2);
 }
 
-.forge-row {
+/* Two-letter kind badge (GH/GL/CB/GT) — mirrors .repo-picker-badge
+ * for visual consistency between the picker and the forges page. */
+.forge-kind-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  font-size: 10px; font-weight: 700;
+  font-family: var(--font-mono);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-secondary);
+  flex-shrink: 0;
+}
+
+.forge-kind-github   { background: color-mix(in srgb, #2da44e 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2da44e 40%, var(--c-border)); }
+.forge-kind-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
+.forge-kind-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
+.forge-kind-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
+
+.forge-kind-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+}
+
+.forge-account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex; flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* Slim single-line row per connected account. Identity on the left,
+ * actions on the right. */
+.forge-account-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--c-bg-primary);
+  background: var(--c-bg-secondary);
+}
+
+.forge-account-row-error {
+  border-color: color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  background: color-mix(in srgb, var(--c-danger, #e66666) 5%, var(--c-bg-secondary));
+}
+
+.forge-account-empty {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  font-style: italic;
+}
+
+.forge-account-identity {
+  flex: 1; min-width: 0;
   display: flex; flex-direction: column;
-  gap: var(--sp-3);
+  gap: 1px;
+}
+
+.forge-account-primary {
+  font-weight: 500;
+  color: var(--c-text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-error {
+  font-size: var(--fs-xs);
+  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
+}
+
+.forge-account-actions {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.forge-account-manage {
+  text-decoration: none;
+}
+
+/* Action row below the account list: + Add an account, + Add a PAT. */
+.forge-kind-actions {
+  display: flex; gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+/* Inline mount point: PAT form, OAuth device prompt, or status text. */
+.forge-kind-slot:empty { display: none; }
+.forge-kind-slot {
+  margin-block-start: var(--sp-2);
+  padding-block-start: var(--sp-2);
+  border-block-start: 1px dashed var(--c-border);
+}
+
+/* GitHub OAuth device-flow code display (used inside .forge-kind-slot). */
+.forge-device-prompt {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+.forge-device-code-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+
+.forge-device-link { color: var(--c-accent); }
+
+/* PAT form layout (used inside .forge-kind-slot). */
+.forge-pat-body {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.forge-pat-form {
+  display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: center;
+}
+
+.forge-pat-form .tool-form-input { flex: 1 1 12rem; }
+
+.forge-help {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.forge-help a { color: var(--c-accent); }
+
+.forge-card-status {
+  font-size: var(--fs-xs);
+  flex-basis: 100%;
+}
+
+.forge-card-status.ok  { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary)); }
+.forge-card-status.err { color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary)); }
+
+.forge-error {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  background: color-mix(in srgb, var(--c-danger, #e66666) 5%, transparent);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
 }
 
 /* Form field labels in the PR creation dialog (unrelated to forges,

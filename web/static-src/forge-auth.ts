@@ -1,15 +1,27 @@
 // ---------------------------------------------------------------------------
 // Forge authentication UI.
 //
-// Two paths per forge kind:
-//   - GitHub: OAuth device flow (vibekit handles the full flow + token
-//     injection into ~/.config/gh/hosts.yml)
-//   - GitLab/Gitea/Codeberg: PAT paste (UI prompts for a token, vibekit
-//     writes it into the corresponding CLI config file)
+// Layout: four always-visible sections (one per supported forge kind:
+// GitHub, GitLab, Codeberg, Gitea). Each section shows:
 //
-// On success the CLI tools are auto-installed via tools.json and
-// `<cli> auth setup-git` runs so all git operations are credential-
-// helper authenticated.
+//   - Section header: kind name.
+//   - Account list: zero or more slim rows. Each row has the email or
+//     username, the host, a "Manage" link to the forge's account page,
+//     and a "Sign out" button.
+//   - Action buttons:
+//       [+ Add account]   triggers OAuth (GitHub) or PAT inline form
+//                         (GitLab/Gitea/Codeberg).
+//       [+ Add a PAT]     extra button on the GitHub section: lets the
+//                         user paste a PAT instead of going through the
+//                         OAuth device flow. The backend `LoginWithPAT`
+//                         is kind-agnostic, so this works without
+//                         server changes.
+//
+// Multi-account note: the data model and UI render a list of N
+// accounts per kind, but the underlying CLIs (gh, glab) store one
+// user per host in their config files. Today, adding a second account
+// on the same host replaces the first via the CLI. Across-different-
+// hosts works (e.g. github.com + ghe.example.com).
 // ---------------------------------------------------------------------------
 
 import { apiDelete, apiGet, apiPost } from "./api-client.js";
@@ -18,6 +30,7 @@ import type { ConfiguredForge, ForgeKind } from "./wire/types.gen.js";
 interface ForgesListResponse {
   forges: ConfiguredForge[];
   kinds: ForgeKind[];
+  oauth?: Partial<Record<ForgeKind, boolean>>;
 }
 
 interface DeviceFlowResponse {
@@ -33,29 +46,43 @@ interface PollResult {
   error?: string;
 }
 
-interface ProbeResponse {
-  connected: boolean;
-  error?: string;
-  forge?: ConfiguredForge;
-}
+const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
-const PAT_HELP_LINKS: Partial<Record<ForgeKind, { url: string; label: string }>> = {
+const PAT_HELP_LINKS: Record<ForgeKind, { url: string; label: string } | null> = {
+  github:   { url: "https://github.com/settings/tokens?type=beta", label: "Create a GitHub fine-grained token" },
   gitlab:   { url: "https://gitlab.com/-/profile/personal_access_tokens?scopes=api,read_repository,write_repository", label: "Create a GitLab token" },
-  codeberg: { url: "https://codeberg.org/user/settings/applications",                                                  label: "Create a Codeberg token" },
-  gitea:    { url: "/user/settings/applications",                                                                       label: "Create a Gitea token (your-host/user/settings/applications)" },
+  codeberg: { url: "https://codeberg.org/user/settings/applications", label: "Create a Codeberg token" },
+  gitea:    { url: "/user/settings/applications", label: "Create a Gitea token (your-host/user/settings/applications)" },
 };
 
-function patHelpLink(kind: ForgeKind): { url: string; label: string } | undefined {
+const DEFAULT_HOST: Record<ForgeKind, string> = {
+  github:   "github.com",
+  gitlab:   "gitlab.com",
+  codeberg: "codeberg.org",
+  gitea:    "",
+};
+
+/** Manage-account URL on the forge itself, parameterized by host. */
+function manageAccountURL(kind: ForgeKind, host: string): string {
   switch (kind) {
-    case "gitlab":   return PAT_HELP_LINKS.gitlab;
-    case "codeberg": return PAT_HELP_LINKS.codeberg;
-    case "gitea":    return PAT_HELP_LINKS.gitea;
+    case "github":   return `https://${host}/settings/profile`;
+    case "gitlab":   return `https://${host}/-/profile`;
+    case "codeberg": return `https://${host}/user/settings`;
+    case "gitea":    return host === "" ? "" : `https://${host}/user/settings`;
   }
-  return undefined;
 }
 
-/** Render the connected-forges list and connect-buttons. Idempotent;
- *  call after every list mutation to refresh. */
+function forgeKindLabel(kind: ForgeKind): string {
+  switch (kind) {
+    case "github":   return "GitHub";
+    case "gitlab":   return "GitLab";
+    case "codeberg": return "Codeberg";
+    case "gitea":    return "Gitea";
+  }
+}
+
+/** Render the full forges panel. Idempotent; call after every list
+ *  mutation to refresh. */
 export async function renderForgesPanel(): Promise<void> {
   const root = document.getElementById("forges-panel");
   if (root === null) return;
@@ -66,122 +93,156 @@ export async function renderForgesPanel(): Promise<void> {
     return;
   }
 
-  root.innerHTML = "";
-  root.appendChild(renderConnectedSection(data.forges));
-  root.appendChild(renderConnectSection(data.kinds));
+  // Bucket accounts by kind.
+  const byKind = new Map<ForgeKind, ConfiguredForge[]>();
+  for (const k of ALL_KINDS) byKind.set(k, []);
+  for (const f of data.forges) {
+    const list = byKind.get(f.kind);
+    if (list !== undefined) list.push(f);
+  }
+
+  root.replaceChildren();
+  for (const kind of ALL_KINDS) {
+    if (!data.kinds.includes(kind)) continue;
+    root.appendChild(renderKindSection(kind, byKind.get(kind) ?? []));
+  }
 }
 
-/** Render the list of currently-connected forges. */
-function renderConnectedSection(forges: ConfiguredForge[]): HTMLElement {
+/** One section per supported forge kind. */
+function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLElement {
   const section = document.createElement("section");
-  section.className = "forge-connected";
-  const header = document.createElement("h3");
-  header.className = "section-title";
-  header.textContent = "Connected forges";
+  section.className = "forge-kind-section";
+  section.dataset["kind"] = kind;
+
+  const header = document.createElement("header");
+  header.className = "forge-kind-header";
+  header.innerHTML =
+    `<span class="forge-kind-badge forge-kind-${kind}">${kindBadge(kind)}</span>` +
+    `<h3 class="forge-kind-title">${forgeKindLabel(kind)}</h3>`;
   section.appendChild(header);
 
-  if (forges.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "forge-empty";
-    empty.textContent = "No forges connected. Connect one below to enable PRs, issues, and CI.";
-    section.appendChild(empty);
-    return section;
-  }
-
   const list = document.createElement("ul");
-  list.className = "forge-list";
-  for (const f of forges) {
-    list.appendChild(renderConnectedRow(f));
+  list.className = "forge-account-list";
+  if (accounts.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "forge-account-empty";
+    empty.textContent = "No accounts connected.";
+    list.appendChild(empty);
+  } else {
+    for (const a of accounts) list.appendChild(renderAccountRow(a));
   }
   section.appendChild(list);
+
+  // Action row: Add account, plus Add PAT for GitHub.
+  const actions = document.createElement("div");
+  actions.className = "forge-kind-actions";
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "btn-small btn-primary";
+  addBtn.dataset["forgeAdd"] = kind;
+  addBtn.textContent = "+ Add an account";
+  addBtn.addEventListener("click", () => { void onAddAccount(kind, section); });
+  actions.appendChild(addBtn);
+
+  if (kind === "github") {
+    const patBtn = document.createElement("button");
+    patBtn.type = "button";
+    patBtn.className = "btn-small";
+    patBtn.dataset["forgeAddPat"] = kind;
+    patBtn.textContent = "+ Add a PAT";
+    patBtn.addEventListener("click", () => { showPATForm(section, kind); });
+    actions.appendChild(patBtn);
+  }
+
+  section.appendChild(actions);
+
+  // Inline mount point for OAuth-flow / PAT-form / status messages.
+  const slot = document.createElement("div");
+  slot.className = "forge-kind-slot";
+  slot.dataset["forgeSlot"] = kind;
+  section.appendChild(slot);
+
   return section;
 }
 
-function renderConnectedRow(f: ConfiguredForge): HTMLElement {
+/** Slim row for one connected account. */
+function renderAccountRow(a: ConfiguredForge): HTMLElement {
   const li = document.createElement("li");
-  li.className = "forge-row";
-  li.dataset["id"] = f.id;
+  li.className = "forge-account-row";
+  li.dataset["id"] = a.id;
+  if (!a.connected) li.classList.add("forge-account-row-error");
 
-  const info = document.createElement("div");
-  info.className = "forge-row-info";
-  info.innerHTML =
-    `<span class="forge-kind-badge forge-kind-${f.kind}">${forgeKindLabel(f.kind)}</span>` +
-    `<span class="forge-host">${escapeHTML(f.host)}</span>` +
-    (f.username !== undefined && f.username !== "" ? `<span class="forge-user">@${escapeHTML(f.username)}</span>` : "") +
-    `<span class="forge-status ${f.connected ? "ok" : "err"}">${f.connected ? "Connected" : "Auth failed"}</span>`;
-  if (f.last_error !== undefined && f.last_error !== "") {
-    info.innerHTML += `<span class="forge-error-msg">${escapeHTML(f.last_error)}</span>`;
+  // Identity column: prefer email, fallback to username; always show host.
+  const id = document.createElement("div");
+  id.className = "forge-account-identity";
+  const primary = document.createElement("span");
+  primary.className = "forge-account-primary";
+  primary.textContent = a.email ?? a.username ?? a.host;
+  id.appendChild(primary);
+  const meta = document.createElement("span");
+  meta.className = "forge-account-meta";
+  const parts: string[] = [];
+  if (a.username !== undefined && a.username !== "") parts.push("@" + a.username);
+  if (a.host !== "" && a.host !== a.email) parts.push(a.host);
+  meta.textContent = parts.join(" · ");
+  id.appendChild(meta);
+  if (!a.connected && a.last_error !== undefined && a.last_error !== "") {
+    const err = document.createElement("span");
+    err.className = "forge-account-error";
+    err.textContent = a.last_error;
+    id.appendChild(err);
   }
-  li.appendChild(info);
+  li.appendChild(id);
 
+  // Action column: Manage link (opens forge in new tab) + Sign out.
   const actions = document.createElement("div");
-  actions.className = "forge-row-actions";
+  actions.className = "forge-account-actions";
 
-  const probeBtn = document.createElement("button");
-  probeBtn.type = "button";
-  probeBtn.className = "btn-small";
-  probeBtn.textContent = "Verify";
-  probeBtn.addEventListener("click", () => void probeForge(f.id));
-  actions.appendChild(probeBtn);
+  const manageURL = manageAccountURL(a.kind, a.host);
+  if (manageURL !== "") {
+    const manage = document.createElement("a");
+    manage.href = manageURL;
+    manage.target = "_blank";
+    manage.rel = "noreferrer";
+    manage.className = "btn-small forge-account-manage";
+    manage.textContent = "Manage ↗";
+    actions.appendChild(manage);
+  }
 
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.className = "btn-small btn-danger";
-  removeBtn.textContent = "Disconnect";
-  removeBtn.addEventListener("click", () => void disconnectForge(f.id));
-  actions.appendChild(removeBtn);
+  const out = document.createElement("button");
+  out.type = "button";
+  out.className = "btn-small btn-danger";
+  out.textContent = "Sign out";
+  out.addEventListener("click", () => { void onSignOut(a); });
+  actions.appendChild(out);
 
   li.appendChild(actions);
   return li;
 }
 
-/** Render the "connect a new forge" controls. */
-function renderConnectSection(kinds: ForgeKind[]): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "forge-connect";
-  const header = document.createElement("h3");
-  header.className = "section-title";
-  header.textContent = "Connect a forge";
-  section.appendChild(header);
+// --- Add-account flow dispatch ---
 
-  for (const kind of kinds) {
-    section.appendChild(renderConnectCard(kind));
-  }
-  return section;
-}
-
-function renderConnectCard(kind: ForgeKind): HTMLElement {
-  const card = document.createElement("div");
-  card.className = "forge-card";
-  card.dataset["kind"] = kind;
-
-  const header = document.createElement("div");
-  header.className = "forge-card-header";
-  header.innerHTML =
-    `<span class="forge-kind-badge forge-kind-${kind}">${forgeKindLabel(kind)}</span>` +
-    `<span class="forge-card-title">${forgeKindLabel(kind)}</span>`;
-  card.appendChild(header);
-
+function onAddAccount(kind: ForgeKind, section: HTMLElement): void {
   if (kind === "github") {
-    card.appendChild(renderGitHubConnect());
-  } else {
-    card.appendChild(renderPATConnect(kind));
+    void startGitHubDeviceFlow(slotOf(section));
+    return;
   }
-  return card;
+  // GitLab / Codeberg / Gitea: PAT is the primary path today.
+  showPATForm(section, kind);
 }
 
-/** GitHub: OAuth device-flow button. */
-function renderGitHubConnect(): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "forge-card-body";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small btn-primary";
-  btn.textContent = "Sign in with GitHub";
-  btn.addEventListener("click", () => void startGitHubDeviceFlow(wrap));
-  wrap.appendChild(btn);
-  return wrap;
+function slotOf(section: HTMLElement): HTMLElement {
+  const slot = section.querySelector<HTMLElement>("[data-forge-slot]");
+  if (slot === null) {
+    const div = document.createElement("div");
+    section.appendChild(div);
+    return div;
+  }
+  return slot;
 }
+
+// --- GitHub OAuth device flow ---
 
 async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
   setStatus(host, "Contacting GitHub…");
@@ -200,7 +261,7 @@ function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void 
   container.className = "forge-device-prompt";
   container.innerHTML =
     `<p>Open <a class="forge-device-link" target="_blank" rel="noreferrer" href="${escapeAttr(start.verification_uri)}">${escapeHTML(start.verification_uri)}</a> and enter:</p>` +
-    `<div class="forge-device-code"><code>${escapeHTML(start.user_code)}</code><button type="button" class="btn-small forge-copy-btn" data-copy="${escapeAttr(start.user_code)}">Copy</button></div>` +
+    `<div class="forge-device-code-row"><code class="forge-device-code">${escapeHTML(start.user_code)}</code><button type="button" class="btn-small forge-copy-btn" data-copy="${escapeAttr(start.user_code)}">Copy</button></div>` +
     `<div class="forge-device-status">Waiting for approval…</div>`;
   host.appendChild(container);
   const copyBtn = container.querySelector<HTMLButtonElement>(".forge-copy-btn");
@@ -238,13 +299,16 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
   setTimeout(() => void tick(), intervalSec * 1000);
 }
 
-/** GitLab/Codeberg/Gitea: PAT paste form. */
-function renderPATConnect(kind: ForgeKind): HTMLElement {
-  const body = document.createElement("div");
-  body.className = "forge-card-body";
+// --- PAT paste form (works for ALL kinds; backend is kind-agnostic) ---
 
-  const helpLink = patHelpLink(kind);
-  if (helpLink !== undefined) {
+function showPATForm(section: HTMLElement, kind: ForgeKind): void {
+  const slot = slotOf(section);
+  slot.innerHTML = "";
+  const body = document.createElement("div");
+  body.className = "forge-pat-body";
+
+  const helpLink = PAT_HELP_LINKS[kind];
+  if (helpLink !== null) {
     const help = document.createElement("p");
     help.className = "forge-help";
     const a = document.createElement("a");
@@ -259,14 +323,11 @@ function renderPATConnect(kind: ForgeKind): HTMLElement {
   const form = document.createElement("form");
   form.className = "forge-pat-form";
 
-  // Host input — required for self-hosted Gitea, defaulted otherwise.
   const hostInput = document.createElement("input");
   hostInput.type = "text";
-  hostInput.placeholder = "host (e.g. gitlab.com)";
+  hostInput.placeholder = `host (e.g. ${DEFAULT_HOST[kind] === "" ? "your-gitea.example.com" : DEFAULT_HOST[kind]})`;
   hostInput.className = "tool-form-input";
-  if (kind === "gitlab") hostInput.value = "gitlab.com";
-  else if (kind === "codeberg") hostInput.value = "codeberg.org";
-  else hostInput.value = "";
+  hostInput.value = DEFAULT_HOST[kind];
   hostInput.required = true;
   form.appendChild(hostInput);
 
@@ -287,16 +348,24 @@ function renderPATConnect(kind: ForgeKind): HTMLElement {
   submit.textContent = "Connect";
   form.appendChild(submit);
 
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn-small";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => { slot.replaceChildren(); });
+  form.appendChild(cancel);
+
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     void doPATConnect(kind, hostInput.value.trim(), tokenInput.value, status, () => {
       tokenInput.value = "";
+      slot.replaceChildren();
       void renderForgesPanel();
     });
   });
 
   body.appendChild(form);
-  return body;
+  slot.appendChild(body);
 }
 
 async function doPATConnect(
@@ -332,26 +401,23 @@ async function doPATConnect(
   onSuccess();
 }
 
-async function probeForge(id: string): Promise<void> {
-  const res = await apiPost<ProbeResponse>(`/api/forges/${encodeURIComponent(id)}/probe`, {});
-  if (res === null) return;
+// --- Sign out ---
+
+async function onSignOut(f: ConfiguredForge): Promise<void> {
+  const label = f.email ?? f.username ?? f.host;
+  if (!confirm(`Sign out of ${label}? The token will be removed from the CLI config.`)) return;
+  await apiDelete(`/api/forges/${encodeURIComponent(f.id)}`);
   void renderForgesPanel();
 }
 
-async function disconnectForge(id: string): Promise<void> {
-  if (!confirm("Disconnect this forge? Tokens will be removed from the CLI config.")) return;
-  await apiDelete(`/api/forges/${encodeURIComponent(id)}`);
-  void renderForgesPanel();
-}
+// --- helpers ---
 
-// --- helpers --------------------------------------------------------
-
-function forgeKindLabel(kind: ForgeKind): string {
+function kindBadge(kind: ForgeKind): string {
   switch (kind) {
-    case "github":   return "GitHub";
-    case "gitlab":   return "GitLab";
-    case "codeberg": return "Codeberg";
-    case "gitea":    return "Gitea";
+    case "github":   return "GH";
+    case "gitlab":   return "GL";
+    case "codeberg": return "CB";
+    case "gitea":    return "GT";
   }
 }
 

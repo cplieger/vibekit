@@ -105,10 +105,12 @@ export const decodeConfiguredForge: Decoder<ConfiguredForge> = (v) => {
   };
   const username = optStr(o, "username", "$.configured_forge");
   if (username !== undefined) out.username = username;
-  const lastProbed = optNum(o, "last_probed", "$.configured_forge");
-  if (lastProbed !== undefined) out.last_probed = lastProbed;
+  const email = optStr(o, "email", "$.configured_forge");
+  if (email !== undefined) out.email = email;
   const lastError = optStr(o, "last_error", "$.configured_forge");
   if (lastError !== undefined) out.last_error = lastError;
+  const lastProbed = optNum(o, "last_probed", "$.configured_forge");
+  if (lastProbed !== undefined) out.last_probed = lastProbed;
   return out;
 };
 
@@ -196,9 +198,9 @@ export const decodeFileChange: Decoder<FileChange> = (v) => {
 export const decodeIssue: Decoder<Issue> = (v) => {
   const o = asObject(v, "$.issue");
   const out: Issue = {
-    number: reqNum(o, "number", "$.issue"),
     title: reqStr(o, "title", "$.issue"),
     state: reqStr(o, "state", "$.issue"),
+    number: reqNum(o, "number", "$.issue"),
   };
   const body = optStr(o, "body", "$.issue");
   if (body !== undefined) out.body = body;
@@ -300,11 +302,11 @@ export const decodeMeteringItem: Decoder<MeteringItem> = (v) => {
 export const decodePR: Decoder<PR> = (v) => {
   const o = asObject(v, "$.pr");
   const out: PR = {
-    number: reqNum(o, "number", "$.pr"),
     title: reqStr(o, "title", "$.pr"),
     state: reqStr(o, "state", "$.pr"),
     source_branch: reqStr(o, "source_branch", "$.pr"),
     target_branch: reqStr(o, "target_branch", "$.pr"),
+    number: reqNum(o, "number", "$.pr"),
   };
   const body = optStr(o, "body", "$.pr");
   if (body !== undefined) out.body = body;
@@ -423,14 +425,14 @@ export const decodeRelease: Decoder<Release> = (v) => {
   if (name !== undefined) out.name = name;
   const body = optStr(o, "body", "$.release");
   if (body !== undefined) out.body = body;
-  const draft = optBool(o, "draft", "$.release");
-  if (draft !== undefined) out.draft = draft;
-  const prerelease = optBool(o, "prerelease", "$.release");
-  if (prerelease !== undefined) out.prerelease = prerelease;
   const url = optStr(o, "url", "$.release");
   if (url !== undefined) out.url = url;
   const publishedAt = optNum(o, "published_at", "$.release");
   if (publishedAt !== undefined) out.published_at = publishedAt;
+  const draft = optBool(o, "draft", "$.release");
+  if (draft !== undefined) out.draft = draft;
+  const prerelease = optBool(o, "prerelease", "$.release");
+  if (prerelease !== undefined) out.prerelease = prerelease;
   return out;
 };
 
