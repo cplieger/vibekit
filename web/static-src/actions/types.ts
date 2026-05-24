@@ -115,11 +115,8 @@ export interface RequestSpec {
   readonly body?: unknown;
 }
 
-/** A transport.send descriptor used by transportAction(). */
-export interface TransportSpec {
-  readonly intent: string;
-  readonly payload?: Record<string, unknown>;
-}
+// (TransportSpec was an unused parallel descriptor — transportAction
+// uses TypedCommand | Command from transport.ts directly. Removed.)
 
 /** Subscriber callback for the registry. Fires once per state
  *  transition (pending -> success/error/cancelled). */

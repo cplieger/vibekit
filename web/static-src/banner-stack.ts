@@ -103,6 +103,32 @@ export function clearBannerCodes(chatID: string, codes: string[]): void {
   for (const code of codes) removeBanner(chatID, code);
 }
 
+/** Drop every banner (and its dismissed-state persistence) for a
+ *  chat that no longer exists. Called from the chat_deleted bus
+ *  handler so orphan BannerEntry objects + localStorage entries
+ *  don't accumulate over a long session.
+ *
+ *  We iterate the Map keys defensively (a delete inside the loop
+ *  would invalidate a forward iterator on some engines) and also
+ *  prune the dismissed_banners localStorage entries for that chat. */
+export function clearBannersForChat(chatID: string): void {
+  const prefix = `${chatID}:`;
+  // 1. Detach DOM + drop in-memory entries.
+  for (const key of [...banners.keys()]) {
+    if (key.startsWith(prefix)) {
+      const entry = banners.get(key);
+      if (entry !== undefined) entry.el.remove();
+      banners.delete(key);
+    }
+  }
+  // 2. Prune persisted dismissals so localStorage doesn't grow forever.
+  const state = load();
+  const filtered = state.dismissed_banners.filter((k) => !k.startsWith(prefix));
+  if (filtered.length !== state.dismissed_banners.length) {
+    save({ dismissed_banners: filtered });
+  }
+}
+
 /** Re-render: show only banners for the active chat. */
 export function renderStack(): void {
   const container = $.bannerStack;

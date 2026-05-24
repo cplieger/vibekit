@@ -21,7 +21,6 @@ export type {
   DispatchOptions,
   OptimisticOp,
   RequestSpec,
-  TransportSpec,
   ToastSpec,
 } from "./types.js";
 

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { defineAction, apiAction, transportAction, ActionError } from "./index.js";
+import { sendPromptTo } from "../chat-commands.js";
 
 /** Copy text to clipboard with success/error toast. */
 export const copyClipboard = defineAction<string, void>({
@@ -55,8 +56,6 @@ export const resolvePending = transportAction<{ chatID: string; toolCallID: stri
 export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
   run: async ({ chatID, content }) => {
-    // Dynamic import to avoid circular dependency with chat-commands.
-    const { sendPromptTo } = await import("../chat-commands.js");
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
       throw new ActionError("prompt rejected");

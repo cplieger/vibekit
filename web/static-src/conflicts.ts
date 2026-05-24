@@ -26,7 +26,7 @@ import { apiGet } from "./api-client.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
-import { openConflictDiff as openConflictDiffAction } from "./actions/tools.js";
+import { openConflictDiff as openConflictDiffAction } from "./actions/conflicts.js";
 
 /** One conflict record. Shape matches the server-side
  *  `ConflictPayload` Go struct 1:1. */
