@@ -112,6 +112,7 @@ class CommandsMenuController {
           break;
         case "Escape":
           e.preventDefault();
+          e.stopPropagation();
           e.stopImmediatePropagation();
           this.closePopover();
           this.cancelOptions();

@@ -10,7 +10,8 @@ import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer } from "./actions/mcp.js";
-import { recentLog } from "./actions/index.js";
+import { subscribeToActions } from "./actions/index.js";
+import type { ActionErrorLike } from "./actions/index.js";
 
 // --- Add / edit modal ---
 
@@ -112,7 +113,16 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
     saveBtn.classList.add("btn-loading");
   }
 
+  let capturedError: ActionErrorLike | undefined;
+  const unsub = subscribeToActions((inst) => {
+    if (inst.name === "mcp.save_server" && inst.status === "error") {
+      capturedError = inst.error;
+    }
+  });
+
   const r = await saveServer.dispatch({ id: session.editing.id, body });
+
+  unsub();
 
   if (saveBtn !== null && saveBtn !== undefined) {
     saveBtn.disabled = false;
@@ -120,9 +130,7 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
   }
 
   if (r === null) {
-    // The action has error:false so no toast fired; surface the server message inline.
-    const last = recentLog().findLast((i) => i.name === "mcp.save_server" && i.status === "error");
-    errEl.textContent = last?.error?.message ?? "Save failed.";
+    errEl.textContent = capturedError?.message ?? "Save failed.";
     errEl.classList.remove("hidden");
     return false;
   }

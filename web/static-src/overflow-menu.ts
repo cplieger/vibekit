@@ -85,6 +85,14 @@ export function openOverflowMenu(
     if (e.key === "Escape") {
       e.stopPropagation();
       closeOverflowMenu();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = root.querySelectorAll<HTMLButtonElement>(".overflow-menu-item:not([aria-disabled='true'])");
+      if (items.length === 0) return;
+      const current = root.querySelector<HTMLButtonElement>(".overflow-menu-item:focus");
+      let idx = current !== null ? Array.from(items).indexOf(current) : -1;
+      idx = e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      items[idx]!.focus();
     }
   };
   const onScrollOrResize = (): void => { closeOverflowMenu(); };

@@ -15,6 +15,11 @@ import type { Session } from "./types.js";
 /** Client-side cache augmentation — avoids O(n) scan on every render. */
 interface SessionWithCrewCache extends Session { _hasCrew?: boolean; }
 
+/** Clear the crew cache for a session (e.g. after checkpoint restore). */
+export function clearCrewCache(s: Session): void {
+  delete (s as SessionWithCrewCache)._hasCrew;
+}
+
 let wired = false;
 
 export function initAutoApprove(): void {

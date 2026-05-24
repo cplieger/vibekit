@@ -113,7 +113,12 @@ function createTab(termId: string, command: string, args?: string[]): void {
 
   // Evict oldest completed terminal if cap is reached.
   if (terms.size > MAX_TERMINALS) {
-    let evictId = exitedQueue.shift();
+    let evictId: string | undefined;
+    // Find the first exited entry that still exists in terms.
+    while (exitedQueue.length > 0) {
+      const candidate = exitedQueue.shift()!;
+      if (terms.has(candidate)) { evictId = candidate; break; }
+    }
     // Fallback: if no exited terminals, evict the oldest running terminal.
     if (evictId === undefined) {
       evictId = terms.keys().next().value;

@@ -34,7 +34,10 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
   valIn.className = "tool-form-input mcp-pair-value";
   valIn.placeholder = kind === "env" ? "value" : "value";
   valIn.value = kv.value;
-  if (kv.value === SECRET_MASK) valIn.dataset["secret"] = "true";
+  if (kv.value === SECRET_MASK) {
+    valIn.dataset["secret"] = "true";
+    valIn.dataset["wasSecret"] = "true";
+  }
 
   valIn.addEventListener("input", () => { touchedInputs.add(valIn); });
 
@@ -47,7 +50,7 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
   });
 
   valIn.addEventListener("blur", () => {
-    if (valIn.value === "" && !("secret" in valIn.dataset) && !touchedInputs.has(valIn)) {
+    if (valIn.value === "" && valIn.dataset["wasSecret"] === "true" && !touchedInputs.has(valIn)) {
       valIn.value = SECRET_MASK;
       valIn.type = "password";
       valIn.dataset["secret"] = "true";

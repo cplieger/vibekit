@@ -19,6 +19,7 @@ import {
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
+import { clearCrewCache } from "../auto-approve.js";
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -133,7 +134,7 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
   // flow etc. don't restore checkpoints, but defence in depth).
   // Clear the auto-approve crew cache — checkpoint restore may have
   // rolled back past the crew event that set it.
-  delete (s as unknown as Record<string, unknown>)["_hasCrew"];
+  clearCrewCache(s);
 
   if (getActiveId() === chatID) {
     s.messages = [];
