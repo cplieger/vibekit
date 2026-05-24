@@ -272,7 +272,19 @@ h3.section-title { padding-block-start: var(--sp-4); }
   &:hover { background: var(--c-bg-tertiary); }
 }
 
-.list-row-name { font-family: var(--font-mono); color: var(--c-text-primary); flex: 1; }
+.list-row-name {
+  font-family: var(--font-mono);
+  color: var(--c-text-primary);
+  flex: 1;
+  min-width: 0;
+  /* Native ellipsis only fires when the name actually overflows the
+   * available column width — i.e. on narrow viewports or with very
+   * long titles. On desktop with plenty of horizontal room the full
+   * title stays visible. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .list-row-meta { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--c-text-tertiary); }
 

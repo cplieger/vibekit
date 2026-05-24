@@ -63,7 +63,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		}
 		c.Messages = append(c.Messages, userMsg)
 		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
-			name := TruncateRunes(p.Text, 40)
+			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
 				name += ellipsis
 			}
