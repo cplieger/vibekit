@@ -5,7 +5,7 @@
 //   POST   /api/forges/refresh                  — re-read CLI configs
 //   POST   /api/forges/oauth/github/start       — start GH device flow
 //   POST   /api/forges/oauth/github/poll        — poll GH device flow
-//   POST   /api/forges/{id}/login/pat           — login via PAT (gitlab/gitea/codeberg)
+//   POST   /api/forges/{id}/login/pat           — login via PAT (any kind: github/gitlab/gitea/codeberg)
 //   POST   /api/forges/{id}/probe               — verify auth still works
 //   DELETE /api/forges/{id}                     — disconnect (remove from CLI)
 //

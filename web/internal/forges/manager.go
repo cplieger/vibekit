@@ -20,6 +20,7 @@ type ConfiguredForge struct {
 	Kind       Kind   `json:"kind"`
 	Host       string `json:"host"`
 	Username   string `json:"username,omitempty"`
+	Email      string `json:"email,omitempty"`
 	LastError  string `json:"last_error,omitempty"`
 	LastProbed int64  `json:"last_probed,omitempty"`
 	Connected  bool   `json:"connected"`
@@ -150,6 +151,19 @@ func (m *Manager) Refresh(_ context.Context) error {
 	}
 
 	m.mu.Lock()
+	// Preserve Email + LastProbed across Refresh — they're populated
+	// only by Probe (from Whoami), not from the CLI config files. A
+	// raw replacement would lose them every 30s on the cache TTL.
+	for id, f := range out {
+		if prev, ok := m.forges[id]; ok {
+			if prev.Email != "" && f.Email == "" {
+				f.Email = prev.Email
+			}
+			if prev.LastProbed > f.LastProbed {
+				f.LastProbed = prev.LastProbed
+			}
+		}
+	}
 	m.forges = out
 	m.cacheAt = time.Now()
 	m.mu.Unlock()
@@ -195,6 +209,9 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 	f.LastProbed = now
 	if user.Login != "" {
 		f.Username = user.Login
+	}
+	if user.Email != "" {
+		f.Email = user.Email
 	}
 	return nil
 }
