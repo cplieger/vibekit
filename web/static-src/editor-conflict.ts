@@ -7,8 +7,10 @@ import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type
 import { apiPost } from "./api-client.js";
 import type { FileState } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 let suggestionController: AbortController | null = null;
+registerCleanup(() => suggestionController?.abort());
 
 /** Abort any in-flight suggestion request (called on tab close). */
 export function abortSuggestion(): void {

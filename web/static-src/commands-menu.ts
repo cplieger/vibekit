@@ -15,6 +15,7 @@ import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
 import { apiGet } from "./api-client.js";
 import type { AvailableCommand } from "./types.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface OptionEntry {
   label: string;
@@ -153,6 +154,9 @@ class CommandsMenuController {
       this.optionsAbort = undefined;
     }
   }
+
+  /** Public hook for global cleanup. */
+  cancelLoad(): void { this.cancelOptions(); }
 
   private async fetchOptions(command: string, partial: string): Promise<void> {
     const chatID = getActiveId();
@@ -329,6 +333,7 @@ function buildPopoverRow(opts: PopoverRowOpts): HTMLButtonElement {
 // ---------------------------------------------------------------------------
 
 const controller = new CommandsMenuController();
+registerCleanup(() => controller.cancelLoad());
 
 export function initCommandsMenu(): void {
   controller.init();

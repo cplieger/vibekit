@@ -7,6 +7,7 @@
 import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { registerPushAction } from "./actions/notify.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.
@@ -29,6 +30,12 @@ class NotifyController {
 
   private pushState: PushState = { kind: "idle" };
   private pushController: AbortController | null = null;
+
+  /** Public hook for global cleanup. */
+  cancelPush(): void {
+    this.pushController?.abort();
+    this.pushController = null;
+  }
 
   constructor() {
     document.addEventListener("visibilitychange", () => {
@@ -179,6 +186,7 @@ class NotifyController {
 // ---------------------------------------------------------------------------
 
 const instance = new NotifyController();
+registerCleanup(() => instance.cancelPush());
 
 export function areNotificationsEnabled(): boolean { return instance.areNotificationsEnabled(); }
 export function isAgentFinishedEnabled(): boolean { return instance.isAgentFinishedEnabled(); }

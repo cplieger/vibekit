@@ -38,7 +38,7 @@ import {
   deleteLocal as deleteLocalAction,
   connectPAT,
 } from "./actions/forge.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -68,6 +68,29 @@ const expandOnNextPaint: Set<string> = new Set();
 
 /** OAuth availability per kind, populated from the forges list response. */
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
+
+// --- In-flight handles for cancel-on-navigate -------------------------
+
+/** Stop flag for the OAuth device-flow polling chain. tick() exits
+ *  early when this becomes true so a setTimeout chain mid-cycle won't
+ *  keep firing after the user navigates away. */
+let pollStopped = false;
+
+/** Most recent setTimeout handle from the polling chain. Cleared on
+ *  cleanup so the next tick never runs. */
+let pollTimerId: ReturnType<typeof setTimeout> | null = null;
+
+/** AbortController for the background revalidation probes. */
+let revalidateController: AbortController | null = null;
+
+registerCleanup(() => {
+  pollStopped = true;
+  if (pollTimerId !== null) {
+    clearTimeout(pollTimerId);
+    pollTimerId = null;
+  }
+  revalidateController?.abort();
+});
 
 const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
@@ -170,15 +193,23 @@ async function refreshReposByForge(forges: ConfiguredForge[]): Promise<void> {
 /** Re-probe every connected account in parallel; on completion, re-fetch
  *  /api/forges and re-paint with the post-probe state. */
 async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise<void> {
+  // Cancel any prior in-flight revalidation; we always want the most
+  // recent paint's state to win.
+  revalidateController?.abort();
+  revalidateController = new AbortController();
+  const signal = revalidateController.signal;
   await Promise.allSettled(
-    ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {})),
+    ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {}, signal)),
   );
-  const data = await apiGet<ForgesListResponse>("/api/forges");
+  if (signal.aborted) return;
+  const data = await apiGet<ForgesListResponse>("/api/forges", signal);
+  if (signal.aborted) return;
   if (data != null && document.body.contains(root)) {
     await Promise.all([
       refreshLocalNames(),
       refreshReposByForge(data.forges),
     ]);
+    if (signal.aborted) return;
     paintForgesData(root, data);
   }
 }
@@ -730,17 +761,18 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
   let backoff = intervalSec;
   const MAX_ATTEMPTS = 60;
   const tick = async (): Promise<void> => {
-    if (!host.isConnected) return;
+    if (pollStopped || !host.isConnected) return;
     attempts++;
     if (attempts > MAX_ATTEMPTS) {
       if (statusEl !== null) statusEl.textContent = "Timed out waiting for approval. Try again.";
       return;
     }
     const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", { device_code: deviceCode });
+    if (pollStopped) return;
     if (res === null) {
       if (statusEl !== null) statusEl.textContent = "Network error. Retrying…";
       backoff = Math.min(backoff * 2, 60);
-      setTimeout(() => void tick(), backoff * 1000);
+      pollTimerId = setTimeout(() => void tick(), backoff * 1000);
       return;
     }
     // Reset backoff on successful network response.
@@ -759,9 +791,9 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
       if (statusEl !== null) statusEl.textContent = `Error: ${res.error ?? "unknown"}`;
       return;
     }
-    setTimeout(() => void tick(), intervalSec * 1000);
+    pollTimerId = setTimeout(() => void tick(), intervalSec * 1000);
   };
-  setTimeout(() => void tick(), intervalSec * 1000);
+  pollTimerId = setTimeout(() => void tick(), intervalSec * 1000);
 }
 
 // --- PAT paste form (works for ALL kinds; backend is kind-agnostic) ---

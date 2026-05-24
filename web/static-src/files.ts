@@ -22,11 +22,16 @@ import {
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction } from "./actions/files.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { error as toastError } from "./toast.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
+registerCleanup(() => browserFetchHolder.controllerHolder?.current?.abort());
+
+/** Module-scope so beforeunload can abort an in-flight zip stream. */
+let zipController: AbortController | null = null;
+registerCleanup(() => zipController?.abort());
 export class FileBrowserState {
   currentPath = ".";
   history: string[] = ["."];
@@ -516,8 +521,8 @@ function downloadSelected(): void {
   }
   // Multiple items or includes a directory: POST for zip.
   const paths = names.map((n) => joinPath(state.currentPath, n));
-  const zipController = new AbortController();
-  const zipTimeout = setTimeout(() => zipController.abort(), 60_000);
+  zipController = new AbortController();
+  const zipTimeout = setTimeout(() => zipController?.abort(), 60_000);
   void fetch("/api/files/download", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -13,6 +13,7 @@ import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface ArchivedHeader {
   id: string;
@@ -210,6 +211,7 @@ class HistoryController {
 }
 
 const historyCtrl = new HistoryController();
+registerCleanup(() => historyCtrl.teardown());
 
 export function initHistory(): void { historyCtrl.init(); }
 export function showHistoryView(): void { historyCtrl.showView(); }

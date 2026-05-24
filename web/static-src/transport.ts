@@ -26,6 +26,7 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -149,6 +150,14 @@ class TransportController {
   private hiddenSince: number | null = null;
 
   private readonly inflight = new Set<AbortController>();
+
+  /** Abort every in-flight HTTP request started via this transport.
+   *  Used by the global beforeunload cleanup so navigation away
+   *  doesn't leak request handles. */
+  cancelInflight(): void {
+    for (const ctrl of this.inflight) ctrl.abort();
+    this.inflight.clear();
+  }
 
   init(msg: MsgHandler, status: StatusHandler): void {
     this.onMsg = msg;
@@ -333,6 +342,7 @@ export function computeBackoff(prevBackoffMs: number): { delay: number; backoffM
 // ---------------------------------------------------------------------------
 
 const instance = new TransportController();
+registerCleanup(() => instance.cancelInflight());
 
 export function init(msg: MsgHandler, status: StatusHandler): void {
   instance.init(msg, status);

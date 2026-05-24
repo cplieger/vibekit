@@ -20,11 +20,13 @@ import {
   showReadMode, applyPendingLine, fetchAgentLines, pendingLines,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Active-load cancellation ---
 
 /** Aborted on every activateFile call to cancel stale in-flight loads. */
 let activeLoadController: AbortController | null = null;
+registerCleanup(() => activeLoadController?.abort());
 
 // --- Public openers ---
 

@@ -11,12 +11,15 @@
 
 import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
 
 let openPopover: HTMLDivElement | null = null;
 let activeAnchor: HTMLElement | null = null;
+let branchController: AbortController | null = null;
+registerCleanup(() => branchController?.abort());
 
 /** Open the branch switcher anchored to anchorEl for repo. Idempotent
  *  on the same anchor (re-clicks toggle close); on a different anchor
@@ -49,7 +52,12 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   const createInput = createForm.querySelector<HTMLInputElement>(".git-branch-popover-create-input")!;
 
   // Load branches.
-  void apiGet<BranchesResponse>(`/api/git/branches?repo=${encodeURIComponent(repo)}`).then((data) => {
+  branchController?.abort();
+  branchController = new AbortController();
+  void apiGet<BranchesResponse>(
+    `/api/git/branches?repo=${encodeURIComponent(repo)}`,
+    branchController.signal,
+  ).then((data) => {
     if (data === null) {
       list.textContent = "Failed to load branches.";
       return;

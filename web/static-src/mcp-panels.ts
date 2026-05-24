@@ -12,6 +12,7 @@ import { buildChip } from "./ui-primitives.js";
 import { saveServer } from "./actions/mcp.js";
 import { subscribeToActions } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Add / edit modal ---
 
@@ -48,6 +49,7 @@ class EditSession {
 }
 
 let session = new EditSession();
+registerCleanup(() => session.abortSearch());
 
 /** Abort any in-flight search when the modal is dismissed. */
 export function cleanupModal(): void {

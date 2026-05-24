@@ -14,6 +14,7 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { signal, batch } from "./signals.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Reactive version counter: effects that read this re-run on mutation ---
 export const version = signal(0);
@@ -40,6 +41,14 @@ let sessionIndex = new Map<string, Session>();
 const msgIndex = new Map<string, Map<string, number>>();
 let listController: AbortController | null = null;
 const msgControllers = new Map<string, AbortController>();
+
+// Abort any in-flight chat-list / message fetches when the page unloads.
+// One sweep aborts the active list fetch + every per-chat message stream.
+registerCleanup(() => listController?.abort());
+registerCleanup(() => {
+  for (const c of msgControllers.values()) c.abort();
+  msgControllers.clear();
+});
 
 // --- Accessors ---
 export function getSessions(): Session[] { return _sessions; }

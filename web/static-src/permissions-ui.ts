@@ -18,6 +18,7 @@ import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
@@ -188,6 +189,13 @@ class PermissionsUIController {
 
   // --- Private: command rules ---
 
+  /** Public: aborts any in-flight rules load. Wired to global cleanup
+   *  so beforeunload doesn't leak the fetch handle. */
+  cancelRulesLoad(): void {
+    this.rulesController?.abort();
+    this.rulesController = null;
+  }
+
   private async loadRules(): Promise<void> {
     this.rulesController?.abort();
     this.rulesController = new AbortController();
@@ -306,6 +314,7 @@ class PermissionsUIController {
 
 // Singleton instance — internal to the module.
 const controller = new PermissionsUIController();
+registerCleanup(() => controller.cancelRulesLoad());
 
 // Public delegate functions preserving the existing module API.
 export function initPermissionsUI(initial: AppSettings): void { controller.initPermissions(initial); }

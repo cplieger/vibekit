@@ -26,6 +26,7 @@ import { apiGet } from "./api-client.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import { openConflictDiff as openConflictDiffAction } from "./actions/conflicts.js";
 
 /** One conflict record. Shape matches the server-side
@@ -143,12 +144,20 @@ onSSE("conflict_detected", (chatID, payload) => {
  *  ring can wrap). Best-effort — a failed fetch just means the
  *  user doesn't see stale badges, not an error path. */
 export async function loadConflictsFor(chatID: string): Promise<void> {
+  conflictsController?.abort();
+  conflictsController = new AbortController();
+  const signal = conflictsController.signal;
   const resp = await apiGet<{ conflicts?: Conflict[] }>(
     `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts`,
+    signal,
   );
+  if (signal.aborted) return;
   const list = resp?.conflicts ?? [];
   for (const c of list) remember(chatID, c);
 }
+
+let conflictsController: AbortController | null = null;
+registerCleanup(() => conflictsController?.abort());
 
 /** Render an inline conflict chip into the given tool-edit actions
  *  row. Idempotent: repeated calls refresh the chip's label, tooltip,

@@ -9,6 +9,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
+import { bindLoadingState } from "./actions/index.js";
 import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import {
   resolveActivePending, applyActivePendingPartial, openDiscussPromptForActive,
@@ -49,6 +50,13 @@ export function initEditor(): void {
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
   $.editorSendPlanBtn.addEventListener("click", () => { void sendActivePlan(); });
+
+  // Registry-driven loading state: button auto-disables while the
+  // dispatch is in flight. preserveDisabled keeps the
+  // content-unchanged disable from the input listener intact, since
+  // bindLoadingState OR's the original disabled value.
+  bindLoadingState("editor.save_file", $.editorSaveBtn, { preserveDisabled: true });
+  bindLoadingState("editor.send_plan", $.editorSendPlanBtn);
   $.editorPendingAcceptBtn.addEventListener("click", () => { void resolveActivePending("accept"); });
   $.editorPendingRejectBtn.addEventListener("click", () => { void resolveActivePending("reject"); });
   $.editorPendingApplyPartialBtn.addEventListener("click", () => { void applyActivePendingPartial(); });
@@ -171,16 +179,16 @@ function saveFile(): void {
   const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const content = $.editorContent.value;
-  $.editorSaveBtn.disabled = true;
   void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
     if (d === null || d.error !== undefined) {
       $.editorError.textContent = d?.error ?? "Save failed";
       $.editorError.classList.remove("hidden");
-      $.editorSaveBtn.disabled = false;
       return;
     }
     state.original = content;
     state.current = content;
+    // Content now matches original — disable Save until user edits again.
+    // bindLoadingState's preserveDisabled OR's this with its own state.
     $.editorSaveBtn.disabled = true;
     $.editorError.classList.add("hidden");
     if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
@@ -207,11 +215,6 @@ async function sendActivePlan(): Promise<void> {
   if (state === undefined) return;
   const chatID = planDraftChatID(state.path);
   if (chatID === "") return;
-  $.editorSendPlanBtn.disabled = true;
-  try {
-    const result = await sendPlanAction.dispatch({ chatID, content: state.current });
-    if (result !== null) state.original = state.current;
-  } finally {
-    $.editorSendPlanBtn.disabled = false;
-  }
+  const result = await sendPlanAction.dispatch({ chatID, content: state.current });
+  if (result !== null) state.original = state.current;
 }

@@ -15,6 +15,7 @@ export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { uploadAction } from "./actions/files.js";
+import { registerCleanup } from "./actions/index.js";
 
 let currentPath = ".";
 const selected = new Set<string>();
@@ -22,6 +23,7 @@ let onUploadComplete: (() => void) | null = null;
 
 /** Per-picker abort holder — prevents browser from aborting picker fetches. */
 const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
+registerCleanup(() => pickerFetchHolder.controllerHolder?.current?.abort());
 
 /** Filter file entries by a case-insensitive search query.
  *  TODO: Not yet used in production — retained for planned search feature in picker. */

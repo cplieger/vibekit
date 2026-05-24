@@ -23,6 +23,7 @@ import { getActiveId, version } from "./store.js";
 import { effect } from "./signals.js";
 import { profileFor } from "./tool-schema.js";
 import type { ToolLocation } from "./types.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 export const TAB_ID = "__follow__";
 
@@ -75,6 +76,12 @@ class FollowController {
     });
     effect(() => { version.value; this.syncEnabled(); });
     this.syncEnabled();
+  }
+
+  /** Abort any in-flight follow-along file load. Wired to global cleanup. */
+  cancelLoad(): void {
+    this.loadController?.abort();
+    this.loadController = null;
   }
 
   showFollowView(): void {
@@ -485,6 +492,7 @@ function scrollToLine(line: number): void {
 // ---------------------------------------------------------------------------
 
 const instance = new FollowController();
+registerCleanup(() => instance.cancelLoad());
 
 export function initFollowAlong(): void {
   instance.init();

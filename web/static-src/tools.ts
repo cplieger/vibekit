@@ -12,7 +12,7 @@ import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
 import { apiGet } from "./api-client.js";
 import { installTools, saveTools, seedMcp } from "./actions/tools.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
 
 type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
@@ -78,6 +78,12 @@ class ToolsManager {
   private toolsData: Record<string, Record<string, Record<string, unknown>>> = {};
   private editingTool: { cat: string; name: string } | null = null;
   private toolsController: AbortController | null = null;
+
+  /** Public hook for global cleanup: aborts in-flight tool fetch. */
+  cancelLoad(): void {
+    this.toolsController?.abort();
+    this.toolsController = null;
+  }
 
   init(): void {
     $.toolAddBtn.addEventListener("click", () => this.openToolModal(null, null));
@@ -280,6 +286,7 @@ function setHintText(id: string, text: string): void {
 
 // Singleton instance — internal to the module.
 const manager = new ToolsManager();
+registerCleanup(() => manager.cancelLoad());
 
 // Public delegate functions preserving the existing module API.
 export function initTools(): void { manager.init(); }
