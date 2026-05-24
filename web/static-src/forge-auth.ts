@@ -394,7 +394,7 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
   if (cloneable.length > 0) {
     const cloneAllBtn = document.createElement("button");
     cloneAllBtn.type = "button";
-    cloneAllBtn.className = "btn-small btn-primary forge-account-repos-clone-all";
+    cloneAllBtn.className = "btn-small forge-account-repos-clone-all";
     cloneAllBtn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
     cloneAllBtn.title = `Clone every uncloned repo on this account (${cloneable.length})`;
     cloneAllBtn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
