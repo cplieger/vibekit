@@ -580,6 +580,26 @@ a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
 .git-sources-repo-state svg { width: 14px; height: 14px; }
 .repo-picker-state-synced { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); font-weight: 600; }
 
+/* Cloned indicator: tiny green circle with the same vk-ping ripple
+ * the sidebar status-dot uses when connected. The ::after layer
+ * pings every 4s on top of the static dot. */
+.git-sources-cloned-dot {
+  position: relative;
+  display: inline-block;
+  width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: var(--c-green);
+  flex-shrink: 0;
+}
+
+.git-sources-cloned-dot::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: var(--c-green);
+  animation: vk-ping 4s ease-out infinite;
+}
+
 .git-sources-repo-identity {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;

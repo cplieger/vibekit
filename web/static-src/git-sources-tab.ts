@@ -178,7 +178,9 @@ function renderRepoRow(forge: ConfiguredForge, repo: Repo): HTMLElement {
   const state = document.createElement("span");
   state.className = "git-sources-repo-state";
   if (cloned) {
-    state.innerHTML = `<span class="repo-picker-state-synced" aria-label="Cloned" title="Cloned and tracked">●</span>`;
+    // Tiny pulsing dot — same look + animation pattern as the
+    // sidebar status-dot.connected (vk-ping ripple every 4s).
+    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" title="Cloned and tracked"></span>`;
   } else {
     state.innerHTML = ICON_GLOBE;
     state.title = "Remote, not cloned";
