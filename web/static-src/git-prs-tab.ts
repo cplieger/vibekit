@@ -18,7 +18,6 @@ import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EXTERNAL } from "./icons.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 
 // --- Types ---
@@ -284,19 +283,30 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const meta = document.createElement("div");
   meta.className = "git-pr-row-meta";
 
-  const num = document.createElement("a");
-  num.className = "git-pr-row-number";
-  if (pr.url !== undefined && pr.url !== "") {
-    num.href = pr.url;
-    num.target = "_blank";
-    num.rel = "noreferrer";
-  }
-  num.textContent = `#${pr.number}`;
+  // Title + number share one click target — opens the PR on the
+  // forge in a new tab. Keeps the row reading like a link without
+  // a redundant "Open" button on the right.
+  const hasURL = pr.url !== undefined && pr.url !== "";
+  const linkOrSpan = (cls: string, text: string): HTMLElement => {
+    if (hasURL) {
+      const a = document.createElement("a");
+      a.className = cls;
+      a.href = pr.url!;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.textContent = text;
+      return a;
+    }
+    const s = document.createElement("span");
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  };
+
+  const num = linkOrSpan("git-pr-row-number", `#${pr.number}`);
   meta.appendChild(num);
 
-  const title = document.createElement("span");
-  title.className = "git-pr-row-title";
-  title.textContent = pr.title;
+  const title = linkOrSpan("git-pr-row-title", pr.title);
   title.title = pr.title;
   meta.appendChild(title);
 
@@ -323,18 +333,6 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   // Actions
   const actions = document.createElement("div");
   actions.className = "git-pr-row-actions";
-
-  if (pr.url !== undefined && pr.url !== "") {
-    const open = document.createElement("a");
-    open.href = pr.url;
-    open.target = "_blank";
-    open.rel = "noreferrer";
-    open.className = "btn-small git-pr-row-open";
-    open.innerHTML = `${ICON_EXTERNAL}<span>Open</span>`;
-    open.title = "Open on forge";
-    open.setAttribute("aria-label", "Open on forge");
-    actions.appendChild(open);
-  }
 
   const merge = document.createElement("button");
   merge.type = "button";

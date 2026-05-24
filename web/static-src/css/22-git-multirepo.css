@@ -486,11 +486,17 @@
   text-decoration: none;
 }
 
+.git-pr-row-number:hover { text-decoration: underline; }
+
 .git-pr-row-title {
   font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1; min-width: 0;
+  color: var(--c-text-primary);
+  text-decoration: none;
 }
+
+a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
 
 .git-pr-row-tag {
   font-size: var(--fs-xs);
