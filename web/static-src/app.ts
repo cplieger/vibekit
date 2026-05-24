@@ -124,7 +124,7 @@ function init(): void {
     const sig = active.id + ":" + active.available_models.map(m => m.id).join(",");
     if (sig !== lastModelSig) {
       lastModelSig = sig;
-      void fetchModelsFromSession();
+      fetchModelsFromSession();
     }
   });
 
@@ -261,7 +261,7 @@ async function fetchModelsFromREST(): Promise<void> {
   populatePickerModels(d.models, "");
 }
 
-async function fetchModelsFromSession(): Promise<void> {
+function fetchModelsFromSession(): void {
   // Live per-chat catalog: kiro-cli's session/new response carries
   // modes.availableModels which the bridge applies onto api.Chat.
   // Whenever that list changes on the active session we push the
@@ -274,7 +274,6 @@ async function fetchModelsFromSession(): Promise<void> {
     model_name: m.name,
     ...(m.description === "" ? {} : { description: m.description }),
     rate_multiplier: m.rate_multiplier ?? 1,
-    context_window_tokens: 0,
   }));
   populatePickerModels(mapped, active.model);
   if (active.usage.context_size === 0 && active.model !== "") {

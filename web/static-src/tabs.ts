@@ -262,9 +262,12 @@ function viewTransition(fn: () => void): void {
   if (!document.startViewTransition) { fn(); return; }
   const run = (): void => {
     const t = document.startViewTransition(fn);
-    internal.vtPending = t.finished.then(() => { internal.vtPending = null; });
+    // Chain catch on the stored promise so its rejection is handled
+    // even if `t.finished` rejects (browsers can skip transitions).
+    internal.vtPending = t.finished
+      .then(() => { internal.vtPending = null; })
+      .catch(() => { internal.vtPending = null; });
     t.ready.catch(() => {});
-    t.finished.catch(() => { internal.vtPending = null; });
   };
   if (internal.vtPending !== null) void internal.vtPending.then(run);
   else run();

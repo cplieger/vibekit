@@ -50,50 +50,7 @@ export const FORGE_META: Record<ForgeKind, {
   gitea:    { title: "Gitea / Forgejo", icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C4.13 1 1 4.13 1 8s3.13 7 7 7 7-3.13 7-7-3.13-7-7-7zm3.5 5.5c0 .28-.22.5-.5.5h-1v3c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1V7H5c-.28 0-.5-.22-.5-.5s.22-.5.5-.5h1V5c0-.55.45-1 1-1h2c.55 0 1 .45 1 1v1h1c.28 0 .5.22.5.5z"/></svg>' },
 };
 
-/** One row in the unified local + remote repo registry. Built client-
- *  side by merging /api/git/repos (local) and /api/forges/{id}/repos
- *  (remote). Same repo seen on both sides shares an ID and gets
- *  is_local=true && is_remote=true. */
-export interface RepoEntry {
-  /** "<host>:<owner>/<name>" lowercased. Stable across local + remote views. */
-  id: string;
-  /** Forge kind if known (remote entries always have it; pure-local
-   *  entries may not). */
-  kind?: ForgeKind;
-  /** Host (github.com, gitlab.com, ...). For local-only entries this
-   *  is "" until enriched from remote data. */
-  host: string;
-  /** Owner / org / namespace. */
-  owner: string;
-  /** Repo name (basename). */
-  name: string;
-  /** "<owner>/<name>". */
-  full_name: string;
-  /** Default branch on the forge, when known. */
-  default_branch?: string;
-  /** Web URL (forge UI). */
-  url?: string;
-  /** HTTPS clone URL. */
-  clone_url?: string;
-  /** Description. */
-  description?: string;
-  /** True if private. */
-  private?: boolean;
-  /** True if archived. */
-  archived?: boolean;
-  /** True if a fork. */
-  fork?: boolean;
-  /** Last-activity timestamp (unix millis), if known. */
-  updated_at?: number;
-  /** True if the repo is cloned in the workspace. */
-  is_local?: boolean;
-  /** Local clone path basename (relative to workDir). Empty if not local. */
-  local_path?: string;
-  /** Currently checked-out branch in the local clone (best-effort). */
-  local_branch?: string;
-  /** True if the repo is reachable through a configured forge. */
-  is_remote?: boolean;
-  /** ID of the configured forge (kind:host) the entry belongs to.
-   *  Empty for pure-local entries. */
-  forge_id?: string;
-}
+// (RepoEntry interface was removed — was exported but no consumers.
+//  If a unified local+remote registry is needed in the future, the
+//  shape can be reconstructed from /api/git/repos + /api/forges/.../repos
+//  responses or imported from wire/types.gen.ts.)

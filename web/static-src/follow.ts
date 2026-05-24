@@ -190,7 +190,10 @@ class FollowController {
     this.currentLine = line;
 
     if (!hasTab(TAB_ID)) this.openFollowTab();
-    if (getActiveTabId() === TAB_ID) activateTab(TAB_ID);
+    // Note: no need to activate the tab here — activateTab() returns
+    // early when the tab is already active, and we only want to
+    // surface the follow tab if it isn't already shown (handled by
+    // openFollowTab).
 
     this.updateTabName(basename(this.currentPath));
 
