@@ -514,7 +514,7 @@ function renderRepoRow(repo: Repo): HTMLElement {
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
     const clone = document.createElement("button");
     clone.type = "button";
-    clone.className = "btn-small btn-primary icon-only";
+    clone.className = "btn-small icon-only";
     clone.innerHTML = ICON_DOWNLOAD;
     clone.title = "Clone into workspace";
     clone.setAttribute("aria-label", "Clone into workspace");
