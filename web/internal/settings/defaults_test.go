@@ -82,7 +82,6 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 	frontendKeys := []string{
 		"auto_update",
 		"last_model",
-		"git_repo",
 		"notifications_enabled",
 		"notify_agent_finished",
 		"notify_permission",

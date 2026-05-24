@@ -7,8 +7,7 @@
 import { initAllModals } from "./modals.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
-import { initGitPanel, loadGitRepos, syncGitRepo } from "./git.js";
-import { initPRPanel } from "./pr-panel.js";
+import { initGitPanel, loadGitRepos } from "./git.js";
 import { restoreFileBrowser } from "./files.js";
 import { restoreEditorTabs } from "./editor-core.js";
 import { restoreShell } from "./shell.js";
@@ -20,10 +19,11 @@ import { loadSettings, patchSettings } from "./persist.js";
 import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
 import { applyTheme, getSystemTheme, initThemeToggle } from "./theme.js";
-import { initSettingsTabs, onTabChange as onSettingsTabChange } from "./settings-tabs.js";
+import { initSettingsTabs } from "./settings-tabs.js";
 import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
-import { initForgeAuth } from "./forge-auth.js";
+// (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
+// import needed since the "Git & forges" Settings tab was retired.)
 import { apiGet, apiPut, apiPost } from "./api-client.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
@@ -35,7 +35,6 @@ export { loadSettings } from "./persist.js";
 
 export async function syncSettings(): Promise<AppSettings> {
   const s = await loadSettings();
-  if (s.git_repo !== undefined) syncGitRepo(s.git_repo);
   restoreNotifications(s);
   return s;
 }
@@ -81,19 +80,15 @@ export function initUI(): void {
   initMCP();
   initAllModals();
 
-  // Lazy-load the Git & forges panel: first entry does the fetch +
-  // DOM render, subsequent entries refetch so the view reflects any
-  // credentials added / deleted from another device.
-  onSettingsTabChange((tab) => {
-    if (tab === "git") {
-      void initForgeAuth();
-    }
-  });
+  // The "Git & forges" tab in Settings was retired with the multi-repo
+  // git-page rewrite — forge accounts now live on the Sources tab of
+  // the git view. So there's no longer a tab-change → load mapping
+  // here. (forge-auth.ts is still imported because it powers the
+  // accounts UI inside that Sources tab.)
 
   $.gitBtn.addEventListener("click", () =>
     toggleGitView(loadGitRepos));
   initGitPanel();
-  initPRPanel();
 }
 
 // --- Steering (auto-save with debounce) ---

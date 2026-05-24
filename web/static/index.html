@@ -213,7 +213,6 @@
               <button type="button" class="settings-tab" role="tab" data-settings-tab="tools">Tools</button>
               <button type="button" class="settings-tab" role="tab" data-settings-tab="permissions">Permissions</button>
               <button type="button" class="settings-tab" role="tab" data-settings-tab="instructions">Custom instructions</button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="git">Git &amp; forges</button>
             </nav>
             <label class="settings-tab-select-wrap" aria-label="Settings tabs">
               <select id="settings-tab-select" class="settings-tab-select">
@@ -221,7 +220,6 @@
                 <option value="tools">Tools</option>
                 <option value="permissions">Permissions</option>
                 <option value="instructions">Custom instructions</option>
-                <option value="git">Git &amp; forges</option>
               </select>
             </label>
           </header>
@@ -533,127 +531,56 @@
             </div>
           </div>
 
-          <!-- Git & forges: per-forge credentials + unified repo registry -->
-          <div class="settings-panel hidden" data-settings-panel="git">
-            <p class="settings-panel-intro">Sign in to GitHub, GitLab, Codeberg, or a self-hosted Gitea/Forgejo instance. Your tokens unlock creating pull requests with AI-generated descriptions, listing PRs across every signed-in forge, merge/close actions, and CI status for the branches you're working on. Tokens are stored encrypted on this server; multiple accounts per forge are supported (e.g. personal + work GitHub).</p>
-
-            <!-- Mount point for the dynamic forges panel; populated by
-                 initForgeAuth() in forge-auth.ts on tab activation. -->
-            <div id="forges-panel"></div>
-          </div>
-
         </div>
       </div>
 
-      <!-- Git view -->
+      <!-- Git view: tabbed multi-repo dashboard.
+           Tab 1 (Changes): per-repo collapsible sections of pending file changes.
+           Tab 2 (Pull requests): per-repo collapsible PR lists.
+           Tab 3 (Sources): forge accounts + cloneable repos per forge. -->
       <div id="git-view" class="hidden" data-tab-view>
         <div class="page-content">
-          <h2 class="page-title">Source Control</h2>
+          <header class="git-page-header">
+            <h2 class="page-title">Source Control</h2>
+            <nav id="git-tab-bar" class="git-tab-bar" role="tablist" aria-label="Source control tabs">
+              <button type="button" class="git-tab active" role="tab" aria-selected="true" data-git-tab="changes">Changes</button>
+              <button type="button" class="git-tab" role="tab" aria-selected="false" data-git-tab="prs">Pull requests</button>
+              <button type="button" class="git-tab" role="tab" aria-selected="false" data-git-tab="sources">Sources</button>
+            </nav>
+          </header>
           <!-- Source-control status banner: at most one of forge-auth-failed,
                gh-cli-missing, forges-not-connected. Populated by
-               git-status-banner.ts; replaces the previous separate
-               #git-forges-banner static element, the dynamically-prepended
-               #forge-auth-banner from git.ts, and the gh button section. -->
+               git-status-banner.ts. -->
           <div id="git-status-banner" class="git-status-banner hidden" role="status" aria-live="polite"></div>
-          <!-- Empty-state mount: rendered by git-empty-state.ts when no
-               repo is selected. Two variants: forges-needed (no forge
-               connected) and pick-or-clone (forge connected, no repo
-               picked yet). When visible, the toolbar + git-repo-section
-               below stay hidden. -->
-          <div id="git-empty-state" class="git-empty-state hidden"></div>
-          <!-- Repo selector + repo-level actions -->
-          <div id="git-repo-bar" class="git-repo-bar" data-repo-picker>
-            <button type="button" id="git-repo-trigger" class="repo-picker-trigger" data-repo-picker-trigger aria-haspopup="dialog" aria-label="Choose a repository">
-              <span class="repo-picker-trigger-empty">Choose a repository</span>
-              <span class="repo-picker-chevron" aria-hidden="true"></span>
-            </button>
-            <button type="button" id="git-branch-btn" class="git-branch-btn" data-tooltip="Switch branch" aria-label="Switch branch"></button>
-            <button type="button" id="git-overflow-btn" class="git-action-btn" data-tooltip="More repo actions" aria-label="More repo actions" aria-haspopup="menu">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
-            </button>
-            <button type="button" id="git-refresh-btn" class="git-action-btn" data-tooltip="Refresh status" aria-label="Refresh status">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-            </button>
+
+          <!-- Changes tab -->
+          <div data-git-panel="changes" class="git-panel">
+            <div class="git-tab-toolbar">
+              <input type="search" id="git-changes-filter" class="tool-form-input"
+                placeholder="Filter by path…" autocomplete="off" spellcheck="false"
+                aria-label="Filter changes by path">
+              <button type="button" id="git-refresh-all-btn" class="icon-btn" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
+            </div>
+            <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
           </div>
+
+          <!-- Pull requests tab -->
+          <div data-git-panel="prs" class="git-panel hidden">
+            <div class="git-tab-toolbar">
+              <input type="search" id="git-prs-filter" class="tool-form-input"
+                placeholder="Filter pull requests…" autocomplete="off" spellcheck="false"
+                aria-label="Filter pull requests">
+            </div>
+            <div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>
+          </div>
+
+          <!-- Sources tab: forge accounts + per-forge cloneable repos -->
+          <div data-git-panel="sources" class="git-panel hidden">
+            <div id="git-sources-mount" class="git-sources-mount"></div>
+          </div>
+
           <!-- Git output (rolling last line, click for full) -->
           <div id="git-output-bar" class="git-output-bar hidden"></div>
-          <!-- Repo section -->
-          <div id="git-repo-section" class="hidden">
-            <!-- Staged section (hidden when empty) -->
-            <div id="git-staged-section" class="hidden">
-                  <div class="git-section-header">
-                <h3 class="section-title">Staged</h3>
-              </div>
-              <div class="action-bar">
-                <button type="button" id="git-push-btn" class="action-pill" data-tooltip="Push" aria-label="Push" disabled>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-                </button>
-                <button type="button" id="git-unstage-all-btn" class="action-pill" data-tooltip="Unstage all" aria-label="Unstage all">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
-                </button>
-              </div>
-              <div id="git-staged-list" class="git-file-list"></div>
-              <!-- Commit message (only when staged) -->
-              <div class="git-commit-area">
-                <h3 class="section-title">Commit message</h3>
-                <textarea id="git-commit-msg" class="git-commit-input" rows="2"
-                  aria-label="Commit message"
-                  placeholder="Describe your changes..."></textarea>
-                <div class="action-bar">
-                  <button type="button" id="git-ai-msg-btn" class="action-pill" data-tooltip="Generate message with AI" aria-label="Generate message with AI">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 13l.75 2.25L22 16l-2.25.75L19 19l-.75-2.25L16 16l2.25-.75L19 13z"/></svg>
-                  </button>
-                  <button type="button" id="git-commit-btn" class="action-pill" data-tooltip="Commit" aria-label="Commit" disabled>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <!-- Changes section -->
-              <div class="git-section-header">
-              <h3 class="section-title">Changes</h3>
-            </div>
-            <div class="action-bar action-bar-local" aria-label="Local changes actions">
-              <button type="button" id="git-stage-all-btn" class="action-pill" data-tooltip="Stage all" aria-label="Stage all">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-              <button type="button" id="git-discard-all-btn" class="action-pill git-discard-btn" data-tooltip="Discard all" aria-label="Discard all">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-              </button>
-            </div>
-            <div class="action-bar action-bar-sync" aria-label="Sync actions">
-              <button type="button" id="git-pull-btn" class="action-pill" data-tooltip="Pull" aria-label="Pull" disabled>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-              </button>
-              <button type="button" id="git-stash-btn" class="action-pill" data-tooltip="Stash" aria-label="Stash" disabled>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8V5a2 2 0 00-2-2H5a2 2 0 00-2 2v3"/><path d="M21 16v3a2 2 0 01-2 2H5a2 2 0 01-2-2v-3"/><path d="M4 12h16"/></svg>
-              </button>
-              <button type="button" id="git-stash-pop-btn" class="action-pill" data-tooltip="Pop stash" aria-label="Pop stash" disabled>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8V5a2 2 0 00-2-2H5a2 2 0 00-2 2v3"/><path d="M21 16v3a2 2 0 01-2 2H5a2 2 0 01-2-2v-3"/><path d="M12 8v8M8 12l4 4 4-4"/></svg>
-              </button>
-            </div>
-            <div id="git-changed-list" class="git-file-list"></div>
-            <!-- PR panel: list + create for the selected repo's forge.
-                 When the active repo has no forge credential, a small
-                 placeholder takes over inside the same section. -->
-            <div id="git-pr-section" class="git-pr-section hidden">
-              <div class="git-section-header git-pr-section-header">
-                <h3 class="section-title">Pull requests</h3>
-                <button type="button" id="git-pr-new-btn" class="btn-small btn-primary">New pull request</button>
-              </div>
-              <div id="git-pr-placeholder" class="git-pr-placeholder hidden">
-                <span>No forge connected for this repo. Connect one to create and review pull requests.</span>
-                <a href="/settings/git" class="git-pr-placeholder-link">Settings → Git</a>
-              </div>
-              <div id="git-pr-empty" class="git-empty git-pr-empty hidden">No open pull requests.</div>
-              <div id="git-pr-list" class="git-pr-list"></div>
-            </div>
-            <!-- Recent commits -->
-              <div class="git-section-header">
-              <h3 class="section-title">Recent commits</h3>
-            </div>
-            <div id="git-log-list" class="git-file-list"></div>
-          </div>
         </div>
       </div>
 
@@ -862,30 +789,6 @@
       <div id="modal-status" class="modal-status"></div>
     </div>
   </div>
-
-  <!-- Repo picker: unified list of local clones + remote repos across every configured forge credential. -->
-  <dialog id="repo-picker-dialog" class="repo-picker-dialog" aria-label="Choose a repository">
-    <header class="repo-picker-header">
-      <h3 class="repo-picker-title">Choose a repository</h3>
-      <div class="repo-picker-header-actions">
-        <button type="button" class="icon-btn" data-repo-picker-close data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-    </header>
-    <div class="repo-picker-search-row">
-      <input type="search" class="tool-form-input" data-repo-picker-search
-        placeholder="Search by owner, repo, account, or host..."
-        autocomplete="off" spellcheck="false"
-        aria-label="Search repositories">
-      <div class="repo-picker-search-actions">
-        <button type="button" class="icon-btn" data-repo-picker-refresh data-tooltip="Refresh from forges" aria-label="Refresh from forges"></button>
-        <button type="button" class="btn-small" data-repo-picker-clone-all data-tooltip="Clone every uncloned remote repo">Clone all</button>
-      </div>
-    </div>
-    <div class="repo-picker-chips" data-repo-picker-chips></div>
-    <div class="repo-picker-list" data-repo-picker-list></div>
-  </dialog>
 
   <!-- Tool edit/add modal -->
   <div id="tool-modal" class="modal-overlay hidden">

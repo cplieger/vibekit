@@ -18,6 +18,84 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// allRepoStatus mirrors gitStatusResp but adds the repo name so the
+// front-end multi-repo dashboard can group by source. Defined here
+// (next to the handler that produces a slice of these) rather than
+// in handlers.go so the data shape lives next to its first consumer.
+type allRepoStatus struct {
+	Repo string `json:"repo"`
+	gitStatusResp
+}
+
+// handleStatusAll fans out collectStatus across every cloned repo
+// under workDir (plus workDir itself if it's a repo) and returns a
+// merged array. This is what the Changes tab on the new git page
+// fetches once per refresh, instead of N round-trips for N repos.
+//
+// We deliberately skip the network fetch (`fetch --quiet`) inside
+// each per-repo collectStatus call: doing N fetches in parallel on
+// every page load is too aggressive for slow forges and wastes
+// network. The fetch still runs on per-repo refresh through the
+// single-repo /api/git/status endpoint.
+func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
+	const maxRepoEntries = 1024
+	ctx := r.Context()
+
+	type entry struct {
+		name string
+		dir  string
+	}
+	var repos []entry
+	if api.IsGitRepo(h.workDir) {
+		repos = append(repos, entry{name: ".", dir: h.workDir})
+	}
+	if entries, err := os.ReadDir(h.workDir); err == nil {
+		if len(entries) > maxRepoEntries {
+			slog.Warn("git status-all: workDir entry count exceeds cap",
+				"path", h.workDir, "count", len(entries), "cap", maxRepoEntries)
+			entries = entries[:maxRepoEntries]
+		}
+		var (
+			mu    sync.Mutex
+			found []entry
+		)
+		g, _ := errgroup.WithContext(ctx)
+		g.SetLimit(8)
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			name := e.Name()
+			dir := filepath.Join(h.workDir, name)
+			g.Go(func() error {
+				if api.IsGitRepo(dir) {
+					mu.Lock()
+					found = append(found, entry{name: name, dir: dir})
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+		_ = g.Wait()
+		sort.Slice(found, func(i, j int) bool { return found[i].name < found[j].name })
+		repos = append(repos, found...)
+	}
+
+	results := make([]allRepoStatus, len(repos))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for i, e := range repos {
+		i, e := i, e
+		g.Go(func() error {
+			st := collectStatus(gctx, e.dir, h.timeouts, &h.fetchFlight, false)
+			results[i] = allRepoStatus{Repo: e.name, gitStatusResp: st}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	api.WriteJSON(w, map[string]any{"repos": results})
+}
+
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	// Cap how many directory entries we inspect under workDir. A
 	// misconfigured or rogue-scripted clone producing tens of thousands

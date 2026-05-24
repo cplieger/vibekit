@@ -50,6 +50,7 @@ func NewHandler(workDir string, opts ...Option) *Handler {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/repos", h.handleRepos)
 	mux.HandleFunc("/api/git/status", h.handleStatus)
+	mux.HandleFunc("/api/git/status-all", h.handleStatusAll)
 	mux.HandleFunc("/api/git/stage", h.handleStage)
 	mux.HandleFunc("/api/git/unstage", h.handleUnstage)
 	mux.HandleFunc("/api/git/discard", h.handleDiscard)
