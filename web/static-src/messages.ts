@@ -493,12 +493,15 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   }
   const out = el.querySelector(".tool-output") as HTMLDivElement | null;
   if (out === null) return;
-  const pre = document.createElement("pre");
-  pre.innerHTML = ansiToHtml(output);
-  out.appendChild(pre);
+  const existingPre = out.querySelector("pre");
+  if (existingPre !== null) {
+    existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+  } else {
+    const pre = document.createElement("pre");
+    pre.innerHTML = ansiToHtml(output);
+    out.appendChild(pre);
+  }
 }
-
-export { formatToolActivity } from "./format-tool-activity.js";
 
 
 /** Insert an inline diff preview from ACP tool_call content.diff blocks.

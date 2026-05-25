@@ -13,6 +13,8 @@ export function closeModal(modal: HTMLDivElement): void {
   if (modal === $.loginModal) {
     loginPollAbort?.abort();
     loginPollAbort = null;
+    loginPollUnregister?.();
+    loginPollUnregister = null;
   }
   modal.classList.add("hidden");
 }

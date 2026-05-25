@@ -23,7 +23,7 @@ import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
 import { apiGet } from "./api-client.js";
 import {
   setOnEmpty, restoreTabState, getActiveTabId, activateTab,
-  toggleSettingsView, toggleGitView, toggleFilesView,
+  openTab, TAB_VIEWS,
 } from "./tabs.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
@@ -359,10 +359,26 @@ function applyRoute(route: Route): void {
       break;
     case "settings":
       forceSettingsTab(route.tab);
-      toggleSettingsView(route.tab, loadSettingsForTab(route.tab));
+      openTab({
+        id: "__settings__", name: "Settings", kind: "settings",
+        view: TAB_VIEWS.settings,
+        route: { kind: "settings", tab: route.tab },
+        onShow: loadSettingsForTab(route.tab),
+      });
       break;
-    case "git":      toggleGitView(loadGitRepos); break;
-    case "files":    restoreFileBrowser(route.path); toggleFilesView(loadFileBrowser); break;
+    case "git":
+      openTab({
+        id: "__git__", name: "Source Control", kind: "git",
+        view: TAB_VIEWS.git, route: { kind: "git" }, onShow: loadGitRepos,
+      });
+      break;
+    case "files":
+      restoreFileBrowser(route.path);
+      openTab({
+        id: "__files__", name: "Files", kind: "files",
+        view: TAB_VIEWS.files, route: { kind: "files", path: route.path }, onShow: loadFileBrowser,
+      });
+      break;
     case "file":     openFile(route.path, route.line); break;
     case "history":
       void import("./history.js").then(({ showHistoryView }) => showHistoryView());

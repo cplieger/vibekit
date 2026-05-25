@@ -37,7 +37,8 @@ export const mergePRAction = apiAction<PRArgs, unknown>({
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
   error: "Merge failed",
-  retryable: "network",
+  // Not retryable: a timed-out merge may have succeeded server-side.
+  retryable: false,
 });
 
 /** Close a pull request without merging. */

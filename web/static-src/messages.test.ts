@@ -59,7 +59,8 @@ vi.mock("./permission.js", () => ({
   hidePermission: vi.fn(),
 }));
 
-const { EVENT_BOUNDARY_META, formatToolActivity } = await import("./messages.js");
+const { EVENT_BOUNDARY_META } = await import("./messages.js");
+const { formatToolActivity } = await import("./format-tool-activity.js");
 
 describe("EVENT_BOUNDARY_META", () => {
   it("has entries for all expected event kinds", () => {

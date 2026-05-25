@@ -29,12 +29,10 @@ class NotifyController {
   private notifyUICallback: (() => void) | null = null;
 
   private pushState: PushState = { kind: "idle" };
-  private pushController: AbortController | null = null;
 
   /** Public hook for global cleanup. */
   cancelPush(): void {
-    this.pushController?.abort();
-    this.pushController = null;
+    registerPushAction.cancel();
   }
 
   constructor() {
@@ -108,8 +106,6 @@ class NotifyController {
 
   unregisterPush(): void {
     registerPushAction.cancel();
-    this.pushController?.abort();
-    this.pushController = null;
     this.pushState = { kind: "idle" };
     if (this.swRegistration === null) return;
     const reg = this.swRegistration;
@@ -130,25 +126,15 @@ class NotifyController {
       void this.registerPushViaAction(true);
       return;
     }
-    if (Notification.permission === "denied") return;
-    // NOTE: requestPermission() without a user gesture is silently
-    // ignored in modern browsers (Chrome 62+, Firefox 72+, Safari 12.1+).
-    // We keep the call as a best-effort fallback for older environments;
-    // the primary permission prompt is triggered by the explicit toggle
-    // click path in requestPermission() above.
-    Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPushViaAction(true);
-    }).catch(() => {});
+    // 'denied' or 'default': do nothing. We only auto-register push
+    // when permission is already granted. The explicit toggle click
+    // path in requestPermission() handles the user-gesture prompt.
   }
 
   private async registerPushViaAction(silent = false): Promise<void> {
     if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
-    this.pushController?.abort();
-    const ctrl = new AbortController();
-    this.pushController = ctrl;
     this.pushState = { kind: "registering" };
     const reg = await registerPushAction.dispatch(undefined, silent ? { silent: true } : undefined);
-    if (ctrl !== this.pushController) return;
     if (reg !== null) {
       this.swRegistration = reg;
       this.pushState = { kind: "registered", registration: reg };

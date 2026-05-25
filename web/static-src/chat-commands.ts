@@ -42,6 +42,7 @@ import { setLastQueuedAttachments } from "./store.js";
 export interface SendPromptOpts {
   agent?: string;
   model?: string;
+  attachments?: readonly unknown[];
 }
 
 /** Post a prompt to a chat with the shared thinking + 409-queue
@@ -53,7 +54,7 @@ export interface SendPromptOpts {
 export async function sendPromptTo(
   chatID: string, text: string, opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
-  const attachments = takeAttachments();
+  const attachments = opts.attachments !== undefined ? [...opts.attachments] as unknown[] : takeAttachments();
   const result = await sendPromptAction.dispatch({
     chatID, text,
     messageID: newMessageID(),
@@ -65,7 +66,9 @@ export async function sendPromptTo(
   });
   if (result === null) {
     // Restore attachments on failure so the user doesn't lose them.
-    for (const a of attachments) addAttachment(a.path);
+    if (opts.attachments === undefined) {
+      for (const a of attachments) addAttachment((a as { path: string }).path);
+    }
     return "failed";
   }
   if (result === "queued" && attachments.length > 0) {

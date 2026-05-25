@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { asOp } from "./op.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -29,6 +30,8 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
 
 export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown>({
   name: "settings.logout",
+  // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
+  // with dispatch, so DOM refs are guaranteed valid at call time.
   optimistic: ({ emailEl, stAuthEl }) => {
     const prev = emailEl.textContent ?? "";
     emailEl.textContent = "";
@@ -91,7 +94,7 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     return { prevValue: previousValue ?? input.defaultValue };
   },
   rollback: ({ input }, op) => {
-    const o = op as KiroSettingOp | undefined;
+    const o = asOp<KiroSettingOp>(op);
     if (o === undefined) return;
     if (o.prevChecked !== undefined) {
       input.checked = o.prevChecked;
@@ -136,7 +139,7 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     };
   },
   rollback: (_args, op) => {
-    const o = op as PatchAppOp | undefined;
+    const o = asOp<PatchAppOp>(op);
     if (o === undefined) return;
     for (const { el, prevChecked, prevValue } of o.inputs) {
       if (el.type === "checkbox") {

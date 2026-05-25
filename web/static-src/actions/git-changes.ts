@@ -51,7 +51,8 @@ export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
   error: "Push failed",
-  retryable: "network",
+  // Not retryable: a timed-out push may have succeeded server-side.
+  retryable: false,
 });
 
 export const stash = apiAction<{ repo: string }, unknown>({
@@ -65,7 +66,8 @@ export const stashPop = apiAction<{ repo: string }, unknown>({
   name: "git.stash_pop",
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   error: "Stash pop failed",
-  retryable: "network",
+  // Not retryable: a timed-out stash pop may have succeeded server-side.
+  retryable: false,
 });
 
 export const commit = apiAction<{ repo: string; message: string }, unknown>({

@@ -5,9 +5,7 @@
 // Cleanup hooks must be idempotent. cancelAllPending is allowed to fire
 // multiple times (e.g., cancelled navigation followed by confirmed
 // navigation). Aborting an already-aborted controller is a no-op by spec;
-// ensure your hook has equivalent semantics. This is a known limitation of
-// beforeunload-based cleanup. Cancelled navigation followed by confirmed
-// navigation will fire cancelAllPending twice; ensure your hooks tolerate this.
+// ensure your hook has equivalent semantics.
 //
 // Two surfaces:
 //

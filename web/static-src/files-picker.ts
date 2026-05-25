@@ -10,7 +10,7 @@
 
 import { closeModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
-import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FileEntry, type FetchDirOpts } from "./files-shared.js";
+import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FetchDirOpts } from "./files-shared.js";
 export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
@@ -24,14 +24,6 @@ let onUploadComplete: (() => void) | null = null;
 /** Per-picker abort holder — prevents browser from aborting picker fetches. */
 const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 registerCleanup(() => pickerFetchHolder.controllerHolder?.current?.abort());
-
-/** Filter file entries by a case-insensitive search query.
- *  TODO: Not yet used in production — retained for planned search feature in picker. */
-export function filterEntries<T extends Pick<FileEntry, "name">>(entries: T[], query: string): T[] {
-  if (query === "") return entries;
-  const lower = query.toLowerCase();
-  return entries.filter((e) => e.name.toLowerCase().includes(lower));
-}
 
 export function setOnUploadComplete(fn: () => void): void { onUploadComplete = fn; }
 

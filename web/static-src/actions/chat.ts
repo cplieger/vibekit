@@ -6,7 +6,8 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel, setName } from "../store.js";
+import { asOp } from "./op.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -27,10 +28,8 @@ export const deleteChatAction = transportAction<string>({
   // remove it, causing a brief flicker. Full correctness would require server-side
   // dedup + ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
-      const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
-      reinsertSession(session, atIndex);
-    }
+    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
+    if (o !== undefined) reinsertSession(o.session, o.atIndex);
   },
   error: "Couldn't delete chat",
 });
@@ -51,15 +50,9 @@ export const archiveChatAction = apiAction<string, unknown>({
     removeChat(id);
     return { session, atIndex };
   },
-  // Trade-off: if the server actually archived but the HTTP response timed out,
-  // rollback reinserts a ghost session. A subsequent SSE event will remove it,
-  // causing a brief flicker. Full correctness would require server-side dedup +
-  // ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
-      const { session, atIndex } = op as { session: import("../types.js").Session; atIndex: number };
-      reinsertSession(session, atIndex);
-    }
+    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
+    if (o !== undefined) reinsertSession(o.session, o.atIndex);
   },
   success: false,
   error: "Couldn't archive chat",
@@ -81,10 +74,10 @@ export const discardTangentAction = transportAction<string>({
     return { session, atIndex, parentID };
   },
   rollback: (_id, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "session" in op) {
-      const { session, atIndex, parentID } = op as { session: import("../types.js").Session; atIndex: number; parentID?: string };
-      reinsertSession(session, atIndex);
-      if (parentID !== undefined) setFrozen(parentID, true);
+    const o = asOp<{ session: import("../types.js").Session; atIndex: number; parentID?: string }>(op);
+    if (o !== undefined) {
+      reinsertSession(o.session, o.atIndex);
+      if (o.parentID !== undefined) setFrozen(o.parentID, true);
     }
   },
   // Caller (chat.ts onClose) fires a richer manual toast on failure.
@@ -108,39 +101,13 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
-      setSupervisedMode(chatID, (op as { prev: boolean }).prev);
-    }
+    const o = asOp<{ prev: boolean }>(op);
+    if (o !== undefined) setSupervisedMode(chatID, o.prev);
   },
   retryable: "network",
   error: "Couldn't update supervised mode",
 });
 
-// --- chat.rename ---
-
-export const renameChatAction = transportAction<{ chatID: string; name: string }>({
-  name: "chat.rename",
-  retryable: "network",
-  command: ({ chatID, name }) => ({
-    type: "rename_chat",
-    chat_id: chatID,
-    payload: { name },
-  }),
-  optimistic: ({ chatID, name }) => {
-    const session = get(chatID);
-    if (!session) return undefined;
-    const prev = session.name;
-    setName(chatID, name);
-    return { prev };
-  },
-  rollback: ({ chatID, name }, op) => {
-    if (get(chatID)?.name === name) return; // SSE already confirmed
-    if (op && typeof op === "object" && "prev" in op) {
-      setName(chatID, (op as { prev: string }).prev);
-    }
-  },
-  error: "Couldn't rename chat",
-});
 
 // --- chat.resolve_all_pending ---
 
@@ -183,10 +150,17 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
     payload: { tangent_id: tangentID },
   }),
   optimistic: ({ chatID }) => {
+    const session = get(chatID);
+    const wasFrozen = session?.frozen ?? false;
     setFrozen(chatID, true);
-    return { chatID };
+    return { chatID, wasFrozen };
   },
-  rollback: ({ chatID }) => { setFrozen(chatID, false); },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined && op !== null && typeof op === "object" && "wasFrozen" in op) {
+      const { wasFrozen } = op as { wasFrozen: boolean };
+      setFrozen(chatID, wasFrozen);
+    }
+  },
   retryable: "network",
   error: "Couldn't fork chat",
 });
@@ -216,9 +190,8 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
-      setAutoApproveCrew(chatID, (op as { prev: boolean }).prev);
-    }
+    const o = asOp<{ prev: boolean }>(op);
+    if (o !== undefined) setAutoApproveCrew(chatID, o.prev);
   },
   retryable: "network",
   error: "Couldn't update auto-approve",
@@ -270,11 +243,7 @@ export const cancelTurnAction = transportAction<string>({
 // is a loading indicator (set on start, cleared on completion), not an optimistic
 // mutation. transportAction's optimistic/rollback pattern doesn't fit this lifecycle.
 //
-// Race note: on failure the finally block calls setThinking(chatID, false) first,
-// then rollback restores the previous model — two separate emits / re-renders.
-// The visual end-state is correct (rolled-back model, not thinking). Batching
-// would eliminate the intermediate render but the cost is negligible (microtask-
-// fast) and not user-visible, so we accept the double emit.
+// On failure, rollback restores the previous model via setModel(). bindLoadingState handles the spinner.
 
 export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
   name: "chat.switch_model",
@@ -287,9 +256,8 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "prev" in op) {
-      setModel(chatID, (op as { prev: string }).prev);
-    }
+    const o = asOp<{ prev: string }>(op);
+    if (o !== undefined) setModel(chatID, o.prev);
   },
   run: async ({ chatID, model }, signal) => {
     // Don't touch thinking state — it's owned by sendPromptAction and
@@ -336,9 +304,8 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
     return { chatID };
   },
   rollback: (_args, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "chatID" in op) {
-      setThinking((op as { chatID: string }).chatID, false);
-    }
+    const o = asOp<{ chatID: string }>(op);
+    if (o !== undefined) setThinking(o.chatID, false);
   },
   run: async (args, signal) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
@@ -361,7 +328,12 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
       // The queue drains via SSE turn_ended. enqueuePrompt runs in
       // run() (not optimistic) because it should only happen if the
       // server actually 409'd, not on cancel.
-      enqueuePrompt(chatID, text);
+      //
+      // Limitation: if the SSE connection drops after queuing, the
+      // thinking state persists indefinitely. A staleness timer or
+      // SSE-reconnect hook that clears thinking after 60s of inactivity
+      // would fix this, but is not yet implemented.
+      enqueuePrompt(chatID, text, attachments);
       return "queued";
     }
     throw new ActionError(r.error ?? "send failed", { status: r.status });

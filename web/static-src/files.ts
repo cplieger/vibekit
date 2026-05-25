@@ -74,6 +74,9 @@ export class FileBrowserState {
     this.selected.clear();
     this.lastClickedName = "";
     this.entries = [];
+    this.entryMap.clear();
+    this.dirWritable = true;
+    this.sortedNames = [];
   }
 
   selectEntry(name: string): void {
@@ -220,6 +223,7 @@ function navigate(path: string): void {
 
 function goBack(): void {
   if (!state.goBack()) return;
+  uiState.save({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
   loadWithTransition();
@@ -227,6 +231,7 @@ function goBack(): void {
 
 function goForward(): void {
   if (!state.goForward()) return;
+  uiState.save({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
   loadWithTransition();
@@ -485,13 +490,12 @@ function deleteSelected(): void {
   if (state.selected.size === 0) return;
   const names = [...state.selected];
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`;
+  const capturedDir = state.currentPath;
   void (async () => {
     const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
     if (!ok) return;
-    void deleteFilesBatch.dispatch({ dir: state.currentPath, names, listEl: $.fbList }).then((r) => {
+    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }).then((r) => {
       if (r === null) {
-        // Partial failure: some files may have been deleted server-side.
-        // Re-sync from server to avoid ghost entries.
         loadDir();
         return;
       }
@@ -506,6 +510,9 @@ function downloadSelected(): void {
   if (state.selected.size === 0) return;
   const names = [...state.selected];
   // Single file (non-directory): use the simple GET endpoint.
+  // NOTE: No double-click guard here — the anchor-click approach is
+  // idempotent (browser deduplicates rapid same-URL downloads). If this
+  // ever becomes an issue, disable the button briefly via setTimeout.
   if (names.length === 1 && state.entryMap.get(names[0]!)?.isDir !== true) {
     const a = document.createElement("a");
     a.href = `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, names[0]!))}`;

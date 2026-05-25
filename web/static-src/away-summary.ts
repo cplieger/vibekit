@@ -52,6 +52,12 @@ class AwaySummaryController {
       return;
     }
 
+    // Detect compaction: message array shrank while away.
+    if (s.messages.length < this.lastMsgCount) {
+      this.snapshotState();
+      return;
+    }
+
     const contextGrowth = s.usage.context_pct - this.lastContextPct;
     const contextSize = s.usage.context_size;
     const tokensConsumed = contextSize > 0 ? (contextGrowth / 100) * contextSize : 0;
@@ -73,7 +79,7 @@ class AwaySummaryController {
             toolCalls++;
             if (tc.diffs !== undefined) {
               for (const d of tc.diffs) {
-                if (d.path !== undefined) changedPaths.add(d.path);
+                changedPaths.add(d.path);
               }
             }
           }

@@ -125,6 +125,9 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     return undefined;
   },
   rollback: (args) => {
+    // NOTE: This rollback is a no-op if loadDir() has already replaced
+    // the list's children (the exiting rows no longer exist in the DOM).
+    // That's fine — the fresh listing from the server is the source of truth.
     for (const row of [...args.listEl.children]) {
       (row as HTMLDivElement).classList.remove("fb-row-exiting");
     }

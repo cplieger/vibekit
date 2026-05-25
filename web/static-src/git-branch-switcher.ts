@@ -20,6 +20,7 @@ interface BranchesResponse { branches: BranchEntry[]; current: string; }
 let openPopover: HTMLDivElement | null = null;
 let activeAnchor: HTMLElement | null = null;
 let branchController: AbortController | null = null;
+let popoverBindingCleanups: Array<() => void> = [];
 registerCleanup(() => branchController?.abort());
 
 /** Open the branch switcher anchored to anchorEl for repo. Idempotent
@@ -81,7 +82,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           void doCheckout(repo, b.name, false).finally(() => closePopover());
         });
         list.appendChild(row);
-        bindLoadingState("git.checkout_branch", row);
+        popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", row));
       }
     };
     render("");
@@ -106,6 +107,8 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
 
 function closePopover(): void {
   if (openPopover === null) return;
+  for (const fn of popoverBindingCleanups) fn();
+  popoverBindingCleanups = [];
   branchController?.abort();
   branchController = null;
   openPopover.remove();

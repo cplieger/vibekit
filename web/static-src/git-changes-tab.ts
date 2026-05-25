@@ -69,7 +69,7 @@ let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
 let diffAbort: AbortController | null = null;
-void registerCleanup(() => { refreshAbort?.abort(); });
+registerCleanup(() => { refreshAbort?.abort(); });
 registerCleanup(() => diffAbort?.abort());
 
 /** Repos that recently received a successful push. Used to surface a
@@ -94,6 +94,9 @@ const expandedDiffPaths = new Set<string>();
 // Per-paint cleanup: unbind functions from bindLoadingState calls.
 let bindingCleanups: Array<() => void> = [];
 
+// Deferred paint: set when paint bails due to focused textarea.
+let paintDeferred = false;
+
 // --- Public API ---
 
 /** Initialise the Changes tab. Wires the filter input, the global
@@ -105,6 +108,13 @@ export function initChangesTab(): void {
   filterEl?.addEventListener("input", () => {
     filterText = filterEl.value.trim().toLowerCase();
     paint();
+  });
+
+  // Fire deferred paint when commit textarea loses focus.
+  document.addEventListener("focusout", (e) => {
+    if (paintDeferred && e.target instanceof HTMLTextAreaElement && e.target.classList.contains("git-commit-input")) {
+      paint();
+    }
   });
 
   const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
@@ -167,8 +177,10 @@ function paintInner(): void {
   // to avoid destroying user input mid-typing.
   const focused = document.activeElement;
   if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
+    paintDeferred = true;
     return;
   }
+  paintDeferred = false;
 
   // Tear down previous bindLoadingState subscriptions before re-render.
   for (const fn of bindingCleanups) fn();
@@ -184,7 +196,9 @@ function paintInner(): void {
   for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
   for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
   for (const k of expandedDiffPaths) {
-    const repo = k.slice(0, k.indexOf("\0"));
+    const nulIdx = k.indexOf("\0");
+    if (nulIdx === -1) { expandedDiffPaths.delete(k); continue; }
+    const repo = k.slice(0, nulIdx);
     if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
   }
 

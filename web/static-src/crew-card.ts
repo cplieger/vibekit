@@ -40,6 +40,8 @@ const crewToolEls = new Map<string, HTMLDivElement>();
 const activityEls = new Map<string, HTMLSpanElement>();
 // Per-subagent pending-approval state.
 const pendingApprovals = new Set<string>();
+// Track bindLoadingState unbind functions so they are drained on rebuild.
+const loadingUnbinds: Array<() => void> = [];
 
 /** Update the collapsed-row activity line for a subagent. Called when
  *  a tool call arrives, updates, or a permission is requested. */
@@ -184,6 +186,9 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   const sig = signature(crew);
   if (cardState.get(el) === sig) return;
   cardState.set(el, sig);
+  // Drain previous bindLoadingState unbinds before rebuilding.
+  for (const fn of loadingUnbinds) fn();
+  loadingUnbinds.length = 0;
   const body = el.querySelector(".crew-body") as HTMLDivElement;
   const count = el.querySelector(".crew-count") as HTMLSpanElement;
 
@@ -349,7 +354,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.className = "crew-msg-send";
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
-  bindLoadingState("crew.send_message", sendBtn);
+  loadingUnbinds.push(bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
     if (text === "") return;

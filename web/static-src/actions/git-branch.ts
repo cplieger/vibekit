@@ -30,7 +30,12 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
     // first to avoid SyntaxError from json() on empty response.
     const text = await r.text();
     if (text === "") return;
-    const body = JSON.parse(text) as { error?: string };
+    let body: { error?: string };
+    try {
+      body = JSON.parse(text) as { error?: string };
+    } catch {
+      throw new ActionError("Unexpected server response", { status: r.status });
+    }
     if (body.error !== undefined && body.error !== "") {
       throw new ActionError(body.error, { status: r.status });
     }
@@ -42,7 +47,10 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
     return prev;
   },
   rollback: (args, op) => {
-    if (args.anchorEl && typeof op === "string") {
+    // Guard: the anchor element may have been removed from the DOM
+    // (e.g. the git panel was closed during the request). Mutating a
+    // detached element is harmless but pointless; skip it.
+    if (args.anchorEl?.isConnected && typeof op === "string") {
       args.anchorEl.textContent = op;
     }
   },

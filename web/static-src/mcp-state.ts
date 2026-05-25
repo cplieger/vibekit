@@ -175,7 +175,7 @@ export function updateConfiguredEntry(id: string, patch: Partial<Server>): Serve
   return prev;
 }
 
-/** Remove a configured entry by id. Returns [entry, index] for rollback. */
+/** @internal Remove a configured entry by id. Returns [entry, index] for rollback. */
 export function removeConfiguredEntry(id: string): [Server, number] | undefined {
   const arr = [...configured] as Server[];
   const idx = arr.findIndex((s) => s.id === id);

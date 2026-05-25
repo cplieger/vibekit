@@ -28,6 +28,9 @@ import { registerConflictChipRenderer } from "./messages-shared.js";
 import { openConflictDiff as openConflictDiffAction, loadConflictsAction } from "./actions/conflicts.js";
 import { bindLoadingState } from "./actions/index.js";
 
+/** Cleanup functions for conflict chip loading-state bindings. */
+const chipUnbindMap = new WeakMap<HTMLElement, () => void>();
+
 /** One conflict record. Shape matches the server-side
  *  `ConflictPayload` Go struct 1:1. */
 export interface Conflict {
@@ -134,7 +137,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   // traverses [data-filename] nodes; we import it lazily so this
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
-  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!)).catch(() => {});
+  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!)).catch((e) => console.warn('[conflicts] badge refresh failed', e));
 });
 
 /** Fetch every past conflict for a chat and populate the registry.
@@ -157,7 +160,8 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   const existing = row.querySelector(".conflict-chip") as HTMLButtonElement | null;
   if (c === null) {
     if (existing !== null) {
-      if ((existing as any).__unbindLoading) (existing as any).__unbindLoading();
+      chipUnbindMap.get(existing)?.();
+      chipUnbindMap.delete(existing);
       existing.remove();
     }
     return;
@@ -172,7 +176,7 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
       void openConflictDiff(chatID, path);
     });
     row.appendChild(chip);
-    (chip as any).__unbindLoading = bindLoadingState("conflicts.open_diff", chip);
+    chipUnbindMap.set(chip, bindLoadingState("conflicts.open_diff", chip));
   }
   // Refresh visible state on every call so second-drift overwrites
   // stale label/tooltip captured at first render.
@@ -202,7 +206,3 @@ async function openConflictDiff(chatID: string, path: string): Promise<void> {
   });
 }
 
-// Suppress the unused-import warning when this file is tree-shaken
-// into a build that doesn't use store directly. The onSSE handler
-// receives chatID from the SSE infrastructure and doesn't need
-// store lookups.

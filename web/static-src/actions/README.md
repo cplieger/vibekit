@@ -1,7 +1,7 @@
 # actions/
 
 A declarative framework for user-initiated mutations. Wraps the
-imperative `apiPost` / `transport.send` pattern with a single
+imperative raw fetch with api-client helpers / `transport.send` pattern with a single
 contract: every action declares its name, request, optional
 optimistic UI, optional rollback, and toast wiring up front. The
 dispatcher handles the lifecycle.
@@ -11,8 +11,8 @@ dispatcher handles the lifecycle.
 - **Use an action** for any mutation triggered by the user
   (button click, form submit, keystroke). Saves, deletes, sends,
   uploads, toggles.
-- **Don't use an action** for background polls (use plain
-  `apiGet` / `apiGetTyped`), SSE bus handlers, or read-only fetches
+- **Don't use an action** for background polls (use raw fetch with
+  api-client helpers), SSE bus handlers, or read-only fetches
   that auto-recover.
 
 ## The three factories
@@ -164,8 +164,8 @@ optimistic mutation IS undone) but does NOT fire an error toast
 
 Set `retryable: 'network'` to surface a Retry button on error toasts
 for network/timeout failures (status 0, code `'timeout'`, code
-`'network'`). Use `'always'` only for fully idempotent actions; the
-lint test will warn. Default: no retry.
+`'network'`). Use `'always'` only for fully idempotent actions.
+Default: no retry.
 
 Idempotent reads (GET) should set `retryable: 'network'`. Mutations
 that aren't idempotent (POST creating resources) should NOT set

@@ -71,7 +71,8 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
     body: { repo: repoName },
   }),
   error: false,
-  retryable: "network",
+  // Not retryable: a timed-out delete may have succeeded server-side.
+  retryable: false,
 });
 
 // --- PAT connect ---

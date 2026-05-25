@@ -7,6 +7,7 @@ import { ICON_EDIT } from "./icons.js";
 import { openFile } from "./editor-openers.js";
 import { apiGet, CancellableSlot } from "./api-client.js";
 import { $ } from "./dom.js";
+import { registerCleanup } from "./actions/index.js";
 
 interface KiroConfigItem {
   name: string;
@@ -22,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const loadSlot = new CancellableSlot();
+registerCleanup(() => loadSlot.abort());
 
 export function loadKiroConfig(): void {
   const signal = loadSlot.start();

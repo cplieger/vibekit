@@ -93,6 +93,8 @@ class FollowController {
   }
 
   onFollowTabClosed(): void {
+    this.loadController?.abort();
+    this.loadController = null;
     this.enabled = false;
     this.paused = false;
     this.manualPause = false;
@@ -101,6 +103,9 @@ class FollowController {
     this.currentLine = 0;
     this.pendingPath = "";
     this.pendingLine = 0;
+    this.lines = [];
+    this.rowPool = [];
+    this.poolSize = 0;
   }
 
   // --- Internal ---
@@ -173,6 +178,9 @@ class FollowController {
     this.currentLine = 0;
     this.pendingPath = "";
     this.pendingLine = 0;
+    this.lines = [];
+    this.rowPool = [];
+    this.poolSize = 0;
   }
 
   private handleLocations(locations: ToolLocation[] | undefined, kind?: string): void {

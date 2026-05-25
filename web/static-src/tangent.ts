@@ -76,11 +76,12 @@ export function forkCurrentChat(chatID: string): void {
 export function mergeTangent(): void {
   const session = getActive();
   if (session === undefined || session.is_tangent !== true) return;
+  const parentID = session.parent_chat_id;
   void mergeTangentAction.dispatch(session.id).then((result) => {
     if (result === null) return;
-    if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
+    if (parentID !== undefined && parentID !== "") {
       void loadList().then(() => {
-        activateChatView(session.parent_chat_id!);
+        activateChatView(parentID);
       });
     }
   });

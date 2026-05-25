@@ -234,7 +234,7 @@ export async function loadList(): Promise<boolean> {
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
-      has_more: existing?.has_more ?? (h.message_count > (existing?.messages.length ?? 0)),
+      has_more: existing !== undefined ? (existing.has_more || h.message_count > existing.messages.length) : h.message_count > 0,
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(frozen !== undefined && { frozen }),
@@ -351,6 +351,7 @@ export function removeChat(id: string): void {
   _sessions.splice(idx, 1);
   sessionIndex.delete(id);
   msgIndex.delete(id);
+  _queuedAttachments.delete(id);
   if (_activeId === id) _activeId = _sessions[0]?.id ?? "";
   emit();
 }
@@ -449,7 +450,7 @@ export function setModel(chatID: string, model: string): void {
   emit();
 }
 
-/** Set session name and notify subscribers. Used by renameChatAction. */
+/** Set session name and notify subscribers. */
 export function setName(chatID: string, name: string): void {
   const s = get(chatID);
   if (s === undefined) return;

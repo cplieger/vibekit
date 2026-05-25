@@ -34,7 +34,9 @@ export function uploadFiles(opts: UploadOptions): void {
 
   // > 1 because the current dispatch is already recorded as pending by the
   // framework before run() executes; we only reject if a *different* upload
-  // is also in flight.
+  // is also in flight. This relies on the action framework incrementing the
+  // pending count synchronously before invoking run(), which is guaranteed
+  // by defineAction's dispatch implementation.
   if (pendingFor("files.upload").length > 1) {
     opts.onError?.("Another upload is already in progress");
     return;

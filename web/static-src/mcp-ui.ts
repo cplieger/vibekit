@@ -13,6 +13,7 @@ import {
   setStatus, deleteStatus,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
+import { extractNpxPackage } from "./mcp-panels.js";
 import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
 
 // --- Section scaffold ---
@@ -297,16 +298,14 @@ export function initMCP(): void {
 
 /** Show/hide a prewarm status badge on the server row matching the package name. */
 function updatePrewarmStatus(pkg: string, state: string): void {
-  // Find the server row whose configured command contains the package.
+  // Find the server row whose configured command's npx package matches exactly.
   const rows = document.querySelectorAll<HTMLElement>(".mcp-row");
   for (const row of rows) {
     const serverId = row.dataset["serverId"] ?? "";
-    // Look up the server by id from the configured array to get name/command.
     const server = configured.find((s) => s.id === serverId);
     if (server === undefined) continue;
-    const cmd = server.command ?? "";
-    const name = server.name;
-    if (!cmd.includes(pkg) && !name.includes(pkg)) continue;
+    const serverPkg = extractNpxPackage(server);
+    if (serverPkg !== pkg && server.name !== pkg) continue;
 
     let badge = row.querySelector(".prewarm-badge") as HTMLElement | null;
     if (state === "done") {

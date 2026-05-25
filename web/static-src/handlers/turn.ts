@@ -10,7 +10,6 @@ import {
 } from "../notify.js";
 import { showPermissionDialog } from "../messages.js";
 import { sendPromptTo } from "../chat-commands.js";
-import { addAttachment } from "../attachments.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import {
@@ -26,13 +25,12 @@ function drainQueuedPromptWithAttachments(chatID: string): void {
   const attachments = peekQueuedAttachments(chatID);
   const text = dequeuePrompt(chatID);
   if (text === undefined) return;
-  // Restore attachments so takeAttachments() inside sendPromptTo picks them up.
-  for (const a of attachments) {
-    if (a !== null && typeof a === "object" && "path" in a) {
-      addAttachment((a as { path: string }).path);
-    }
-  }
-  void sendPromptTo(chatID, text);
+  const session = get(chatID);
+  void sendPromptTo(chatID, text, {
+    ...(session?.agent !== undefined && session.agent !== "" && { agent: session.agent }),
+    ...(session?.model !== undefined && session.model !== "" && { model: session.model }),
+    ...(attachments.length > 0 && { attachments: attachments as unknown[] }),
+  });
 }
 
 /** Track last notification time per chat to avoid duplicate notifications
@@ -90,7 +88,7 @@ onSSE("turn_ended", (chatID, p) => {
     if (elapsed !== undefined && elapsed > 0) {
       if (elapsed >= 60000) {
         const m = Math.floor(elapsed / 60000);
-        const s = Math.round((elapsed % 60000) / 1000);
+        const s = Math.floor((elapsed % 60000) / 1000);
         parts.push(`${String(m)}m ${String(s)}s`);
       } else {
         parts.push(`${(elapsed / 1000).toFixed(1)}s`);
@@ -230,7 +228,6 @@ export const ERROR_ROUTES: Readonly<Record<string, ErrorRoute>> = {
 onSSE("error", (chatID, p) => {
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
-  if (p === undefined) return;
 
   const code = p.code ?? "";
   const msg = p.message ?? "";

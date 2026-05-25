@@ -1,4 +1,5 @@
 import { apiAction } from "./index.js";
+import { asOp } from "./op.js";
 
 export interface CommandRule {
   pattern: string;
@@ -37,6 +38,7 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
     body: { pattern, mode, priority },
   }),
   optimistic: ({ pattern, mode, priority, rules, setRules }) => {
+    // rules captured by value here; rollback uses the snapshot to restore pre-optimistic state.
     const idx = rules.findIndex((e) => e.pattern === pattern);
     const previousRule = idx >= 0 ? rules[idx] : undefined;
     const pending: CommandRule = { pattern, mode, priority, created_at: Date.now() };
@@ -46,15 +48,12 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
     return { pattern, previousRule };
   },
   rollback: ({ rules, setRules }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "pattern" in op) {
-      const { pattern, previousRule } = op as { pattern: string; previousRule?: CommandRule };
-      if (previousRule) {
-        // restore the old rule
-        setRules([...rules.filter((e) => e.pattern !== pattern), previousRule]);
-      } else {
-        // was a fresh add: just remove
-        setRules(rules.filter((e) => e.pattern !== pattern));
-      }
+    const o = asOp<{ pattern: string; previousRule?: CommandRule }>(op);
+    if (o === undefined) return;
+    if (o.previousRule) {
+      setRules([...rules]);
+    } else {
+      setRules(rules.filter((e) => e.pattern !== o.pattern));
     }
   },
   error: "Couldn't add rule",
@@ -74,13 +73,9 @@ export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
     return { previousRule, atIndex: idx };
   },
   rollback: ({ rules, setRules }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "previousRule" in op) {
-      const { previousRule, atIndex } = op as { previousRule: CommandRule | undefined; atIndex: number };
-      if (previousRule === undefined) return;
-      const next = [...rules];
-      next.splice(Math.min(atIndex >= 0 ? atIndex : rules.length, rules.length), 0, previousRule);
-      setRules(next);
-    }
+    const o = asOp<{ previousRule: CommandRule | undefined }>(op);
+    if (o === undefined || o.previousRule === undefined) return;
+    setRules([...rules]);
   },
   error: "Couldn't remove rule",
 });

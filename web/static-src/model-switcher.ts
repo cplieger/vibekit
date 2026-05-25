@@ -5,7 +5,7 @@
 // empty chat, idle, mid-turn queue).
 // ---------------------------------------------------------------------------
 
-import { getActive, getActiveId, isThinking, contextSizeFor } from "./store.js";
+import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./store.js";
 import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
@@ -151,7 +151,7 @@ export function applyLocalModel(modelID: string): void {
   setLastModel(modelID);
   const session = getActive();
   if (session !== undefined) {
-    session.model = modelID;
+    setModel(session.id, modelID);
     session.usage.context_size = contextSizeFor(modelID);
     refreshContextUI(session);
   }

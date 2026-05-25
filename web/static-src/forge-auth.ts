@@ -77,6 +77,12 @@ let signOutUnbinds: Array<() => void> = [];
  *  form submit buttons. Drained at the top of each paintForgesData call. */
 let patFormUnbinds: Array<() => void> = [];
 
+/** Deferred revalidation data: when a forge slot is open (user is
+ *  interacting with an add-account pane), we defer the re-paint to
+ *  avoid disrupting the form. Stored here and flushed when the slot
+ *  closes via closeSlot(). */
+let pendingRevalidate: { root: HTMLElement; data: ForgesListResponse } | null = null;
+
 /** Generation counter to prevent stale concurrent renderForgesPanel
  *  calls from overwriting a newer render. */
 let renderGen = 0;
@@ -156,7 +162,11 @@ function hostPlaceholder(kind: ForgeKind): string {
  *  re-probed in parallel after the initial paint. Tokens can be
  *  silently revoked or expire; this catches that on page open. The
  *  initial paint shows last-known state immediately; the panel
- *  re-renders once when all probes have settled. */
+ *  re-renders once when all probes have settled.
+ *
+ *  When `skipRepos` is true, the local-repos fetch is skipped so that
+ *  an optimistic in-memory mutation (e.g. removeLocalRepo) is not
+ *  overwritten by a stale server response before the action completes. */
 export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?: boolean } = {}): Promise<void> {
   const root = document.getElementById("forges-panel");
   if (root === null) return;
@@ -245,6 +255,11 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
       refreshReposByForge(data.forges, signal),
     ]);
     if (signal.aborted) return;
+    // Defer re-paint if a forge slot is open (user is mid-interaction).
+    if (root.querySelector("[data-forge-slot][data-mode]") !== null) {
+      pendingRevalidate = { root, data };
+      return;
+    }
     paintForgesData(root, data);
   }
 }
@@ -756,6 +771,12 @@ function showAddPane(section: HTMLElement, kind: ForgeKind): void {
 function closeSlot(slot: HTMLElement): void {
   slot.replaceChildren();
   delete slot.dataset["mode"];
+  // Flush deferred revalidation paint now that the slot is closed.
+  if (pendingRevalidate !== null) {
+    const { root, data } = pendingRevalidate;
+    pendingRevalidate = null;
+    paintForgesData(root, data);
+  }
 }
 
 function slotOf(section: HTMLElement): HTMLElement {
@@ -771,6 +792,11 @@ function slotOf(section: HTMLElement): HTMLElement {
 // --- GitHub OAuth device flow ---
 
 async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
+  // Cancel any prior polling chain before starting a new one.
+  if (pollTimerId !== null) {
+    clearTimeout(pollTimerId);
+    pollTimerId = null;
+  }
   pollStopped = false;
   setStatus(host, "Contacting GitHub…");
   const start = await startDeviceFlow.dispatch({});

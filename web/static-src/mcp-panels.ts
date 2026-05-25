@@ -101,7 +101,7 @@ function setMode(mode: AddMode, existing: Server | null): void {
 
 // --- Submit helpers ---
 
-async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<boolean> {
+async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: HTMLButtonElement | null): Promise<boolean> {
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
@@ -109,7 +109,6 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
     body.disabled_tools = session.disabledToolsList;
   }
 
-  const saveBtn = errEl.parentElement?.querySelector<HTMLButtonElement>("[id$='-save']");
   const unbind = saveBtn != null
     ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
     : undefined;
@@ -327,7 +326,7 @@ function initNpmPanel(existing: Server | null): void {
       env: collectKeyPairs(envList),
       prewarm: prewarm.checked,
       enabled: existing?.enabled ?? true,
-    }, errEl);
+    }, errEl, el<HTMLButtonElement>("mcp-npm-save"));
   };
 }
 
@@ -386,7 +385,7 @@ function initRemotePanel(existing: Server | null): void {
       url: url.value.trim(),
       headers: collectKeyPairs(headers),
       enabled: existing?.enabled ?? true,
-    }, errEl);
+    }, errEl, el<HTMLButtonElement>("mcp-remote-save"));
   };
 }
 
@@ -432,7 +431,7 @@ function initRawPanel(existing: Server | null): void {
       return;
     }
     body.enabled = existing?.enabled ?? true;
-    void submitServer(body, err);
+    void submitServer(body, err, el<HTMLButtonElement>("mcp-raw-save"));
   };
 }
 

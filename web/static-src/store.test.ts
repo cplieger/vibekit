@@ -7,7 +7,7 @@ import {
   appendMessage, upsertMessage, upsertHeader, removeChat,
   addPendingChange, setThinking, setWorkingLabel,
   enqueuePrompt, dequeuePrompt, setQueuedPrompt, queuedPrompt,
-  setName,
+  setName, peekQueuedAttachments, setLastQueuedAttachments,
 } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -366,5 +366,75 @@ describe("Store setName", () => {
     resetStore("chat-1");
     setName("nonexistent", "X");
     expect(get("chat-1")!.name).toBe("test");
+  });
+});
+
+describe("Store peekQueuedAttachments", () => {
+  it("returns empty array when no attachments queued", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    enqueuePrompt("chat-1", "hello");
+    expect(peekQueuedAttachments("chat-1")).toEqual([]);
+  });
+
+  it("returns the first queued attachment set without consuming it", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    const att = [{ path: "a.ts" }, { path: "b.ts" }];
+    enqueuePrompt("chat-1", "hello", att);
+    expect(peekQueuedAttachments("chat-1")).toEqual(att);
+    // Peek again — still there
+    expect(peekQueuedAttachments("chat-1")).toEqual(att);
+  });
+
+  it("returns empty array for unknown chat", () => {
+    resetStore("chat-1");
+    expect(peekQueuedAttachments("nonexistent")).toEqual([]);
+  });
+
+  it("advances after dequeue", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    enqueuePrompt("chat-1", "first", [{ path: "x.ts" }]);
+    enqueuePrompt("chat-1", "second", [{ path: "y.ts" }]);
+    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "x.ts" }]);
+    dequeuePrompt("chat-1");
+    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "y.ts" }]);
+  });
+});
+
+describe("Store setLastQueuedAttachments", () => {
+  it("replaces attachments on the last queued entry", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    enqueuePrompt("chat-1", "hello");
+    setLastQueuedAttachments("chat-1", [{ path: "new.ts" }]);
+    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "new.ts" }]);
+  });
+
+  it("replaces last entry when multiple queued", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    enqueuePrompt("chat-1", "first", [{ path: "a.ts" }]);
+    enqueuePrompt("chat-1", "second");
+    setLastQueuedAttachments("chat-1", [{ path: "z.ts" }]);
+    // First entry unchanged
+    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "a.ts" }]);
+    dequeuePrompt("chat-1");
+    // Second entry was replaced
+    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "z.ts" }]);
+  });
+
+  it("no-ops on unknown chat", () => {
+    resetStore("chat-1");
+    setLastQueuedAttachments("nonexistent", [{ path: "x.ts" }]);
+    expect(peekQueuedAttachments("nonexistent")).toEqual([]);
+  });
+
+  it("no-ops when queue is empty", () => {
+    resetStore("chat-1");
+    setQueuedPrompt("chat-1", undefined);
+    setLastQueuedAttachments("chat-1", [{ path: "x.ts" }]);
+    expect(peekQueuedAttachments("chat-1")).toEqual([]);
   });
 });

@@ -179,10 +179,8 @@ export function defineAction<TArgs, TResult>(
     opts: DispatchOptions,
   ): void {
     // Errors are user-facing by default; only `error: false` in the
-    // definition suppresses, never the silent flag. The `def` is in
-    // closure scope — pulling it as a parameter previously caused the
-    // optimistic-throw path to silently bypass `error: false` because
-    // the callsite forgot to pass it.
+    // definition suppresses, never the silent flag.
+    // Access def.error from closure scope (not param) so all error paths share the same spec lookup.
     const spec = def.error;
     if (spec === false) return;
     const fallbackMsg = `${defaultErrorPrefix(def.name)}: ${err.message}`;

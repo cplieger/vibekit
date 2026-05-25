@@ -78,7 +78,7 @@ export type TypedCommand =
   | { type: "clear_pending_trust"; chat_id: string }
   | { type: "permission_response"; chat_id: string; payload: { request_id: number; option_id: string } }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
-  | { type: "undo_edit"; chat_id: string; payload: { path: string } }
+  | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };

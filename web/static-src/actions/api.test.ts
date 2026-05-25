@@ -102,4 +102,47 @@ describe("apiAction", () => {
     expect(log?.error?.status).toBe(404);
     expect(log?.error?.message).toBe("Not found");
   });
+
+  it("POST sends JSON body with Content-Type header", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const action = apiAction<{ name: string }, unknown>({
+      name: "test.post",
+      request: ({ name }) => ({ method: "POST", path: "/api/items", body: { name } }),
+      error: "Failed",
+    });
+    await action.dispatch({ name: "foo" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/items");
+    expect(opts.method).toBe("POST");
+    expect(opts.headers).toEqual({ "Content-Type": "application/json" });
+    expect(opts.body).toBe(JSON.stringify({ name: "foo" }));
+  });
+
+  it("PUT sends JSON body with Content-Type header", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const action = apiAction<{ id: string; value: number }, unknown>({
+      name: "test.put",
+      request: ({ id, value }) => ({ method: "PUT", path: `/api/items/${id}`, body: { value } }),
+      error: "Failed",
+    });
+    await action.dispatch({ id: "1", value: 42 });
+    const [, opts] = mockFetch.mock.calls[0]!;
+    expect(opts.method).toBe("PUT");
+    expect(opts.headers).toEqual({ "Content-Type": "application/json" });
+    expect(opts.body).toBe(JSON.stringify({ value: 42 }));
+  });
+
+  it("PATCH sends JSON body with Content-Type header", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const action = apiAction<{ id: string; delta: string }, unknown>({
+      name: "test.patch",
+      request: ({ id, delta }) => ({ method: "PATCH", path: `/api/items/${id}`, body: { delta } }),
+      error: "Failed",
+    });
+    await action.dispatch({ id: "1", delta: "x" });
+    const [, opts] = mockFetch.mock.calls[0]!;
+    expect(opts.method).toBe("PATCH");
+    expect(opts.headers).toEqual({ "Content-Type": "application/json" });
+    expect(opts.body).toBe(JSON.stringify({ delta: "x" }));
+  });
 });

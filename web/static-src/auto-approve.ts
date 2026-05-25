@@ -29,7 +29,9 @@ export function initAutoApprove(): void {
 
   const btn = $.autoApproveCrewBtn;
   btn.addEventListener("click", toggle);
-  bindLoadingState("chat.set_auto_approve_crew", $.autoApproveCrewBtn);
+  // Capture unbind for parity with other pill controllers; not called
+  // because this pill lives for the lifetime of the page.
+  void bindLoadingState("chat.set_auto_approve_crew", $.autoApproveCrewBtn);
 
   // Re-render on every store change (active chat switch, flag change).
   effect(() => { version.value; render(); });

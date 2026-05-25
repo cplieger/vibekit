@@ -13,7 +13,7 @@
 
 import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { relativeTime } from "./files-shared.js";
+import { relativeTime } from "./utils-format.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
@@ -73,7 +73,11 @@ export type { PRRemoveResult } from "./git-prs-state.js";
 
 // --- Public API ---
 
+let prsInited = false;
+
 export function initPRsTab(): void {
+  if (prsInited) return;
+  prsInited = true;
   bindPRState({ groups: lastGroups, paint });
 
   const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
@@ -113,21 +117,22 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
   if (forgesRes === null) {
-    if (signal.aborted) return; // superseded — don't surface as error
     throw new Error("Failed to load forges");
   }
   const forges = forgesRes.forges.filter((f) => f.connected);
 
   // Build a flat (forge, owner/name) list to fetch.
   const tasks: Array<{ forge: ConfiguredForge; repo: Repo }> = [];
-  for (const forge of forges) {
-    const reposRes = await apiGet<RepoListResponse>(
+  const repoResults = await Promise.all(forges.map((forge) =>
+    apiGet<RepoListResponse>(
       `/api/forges/${encodeURIComponent(forge.id)}/repos`,
       signal,
-    );
-    if (reposRes === null) continue;
-    if (signal.aborted) return;
-    for (const repo of reposRes.repos) {
+    ).then((res) => ({ forge, res })),
+  ));
+  if (signal.aborted) return;
+  for (const { forge, res } of repoResults) {
+    if (res === null) continue;
+    for (const repo of res.repos) {
       tasks.push({ forge, repo });
     }
   }
@@ -318,7 +323,8 @@ function renderGroup(g: RepoGroup): HTMLElement {
   } else {
     const list = document.createElement("ul");
     list.className = "git-pr-list";
-    const filtered = filterText === ""
+    const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
+    const filtered = filterText === "" || groupMatchesFilter
       ? g.prs
       : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
     for (const pr of filtered) list.appendChild(renderPRRow(g, pr));
@@ -496,6 +502,7 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   // Drop any prior listeners by cloning the buttons.
   const newSubmit = submitBtn.cloneNode(true) as HTMLButtonElement;
   submitBtn.replaceWith(newSubmit);
+  newSubmit.disabled = false;
   const newGenerate = generateBtn.cloneNode(true) as HTMLButtonElement;
   generateBtn.replaceWith(newGenerate);
   // The static close buttons (data-pr-close) keep their close handler
@@ -506,13 +513,18 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     fresh.addEventListener("click", () => dlg.close());
   }
 
+  let generateAbort = new AbortController();
+  dlg.addEventListener("close", () => generateAbort.abort(), { once: true });
+
   const generate = async (): Promise<void> => {
     if (status !== null) status.textContent = "Generating description…";
     const res = await apiPost<{ title?: string; body?: string; error?: string }>(
       `/api/git/pr-description`,
       { repo: g.name, branch: baseInput.value.trim() || "main" },
+      generateAbort.signal,
     );
     if (res === null) {
+      if (generateAbort.signal.aborted) return;
       if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
       return;
     }
@@ -525,7 +537,11 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     if (status !== null) { status.textContent = "Description generated. Edit and submit."; status.className = "forge-status ok"; }
   };
 
-  newGenerate.addEventListener("click", () => { void generate(); });
+  newGenerate.addEventListener("click", () => {
+    generateAbort.abort();
+    generateAbort = new AbortController();
+    void generate();
+  });
 
   // Stage 2: review + submit.
   newSubmit.addEventListener("click", async () => {
@@ -582,7 +598,7 @@ function computeMergeBlockReason(pr: PR): string {
   if (pr.draft === true) {
     return "PR is a draft. Mark it as ready for review first.";
   }
-  if (pr.mergeable !== true) {
+  if (pr.mergeable === false) {
     return "this PR isn't mergeable — likely conflicts, failing required checks, or branch protection. Open it on the forge for details.";
   }
   return "";

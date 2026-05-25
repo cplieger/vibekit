@@ -2,6 +2,15 @@
 // Editor core: init, mode switches, plan handoff.
 // Types, state, and pure predicates live in editor-types.ts.
 // Openers live in editor-openers.ts; UI helpers in editor-ui.ts.
+//
+// Extracted modules:
+//   editor-types.ts    — shared types, state container, predicates
+//   editor-modes.ts    — restoreUI dispatcher
+//   editor-conflict.ts — conflict-mode rendering and AI merge suggestions
+//   editor-pending.ts  — supervised pending-change resolution
+//   editor-diff.ts     — diff source helpers
+//   editor-ui.ts       — rendering helpers (gutter, highlight, mode UI)
+//   editor-openers.ts  — file open, load, and fetch logic
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
@@ -154,6 +163,11 @@ function confirmStopEditing(): void {
 }
 
 function stopEditing(state: FileState): void {
+  // Guard: if user switched tabs during the confirm dialog, reset silently.
+  if (getActiveFilePath() !== state.path) {
+    state.current = state.original;
+    return;
+  }
   state.current = state.original;
   $.editorConflictOverlay.classList.add("hidden");
   if (state.returnToGitDiff !== null) {
@@ -183,8 +197,10 @@ function saveFile(): void {
   void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
     if (d === null) return; // cancelled (e.g. page unload) — bail silently
     if (d.error !== undefined) {
-      $.editorError.textContent = d.error;
-      $.editorError.classList.remove("hidden");
+      if (getActiveFilePath() === state.path) {
+        $.editorError.textContent = d.error;
+        $.editorError.classList.remove("hidden");
+      }
       return;
     }
     state.original = content;
@@ -194,19 +210,21 @@ function saveFile(): void {
       $.editorSaveBtn.disabled = state.current === state.original;
     }
     $.editorError.classList.add("hidden");
-    if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-      state.mode = { kind: "edit", editing: false };
-      renderEditModeUI(state);
-    }
-    if (state.returnToGitDiff !== null) {
-      const { ref, repo } = state.returnToGitDiff;
-      state.returnToGitDiff = null;
-      state.mode = {
-        kind: "diff",
-        diffSource: gitDiffSource(ref, "", content),
-      };
-      state.pendingHunkCount = null;
-      void fetchGitDiffSources(state, repo, ref);
+    if (getActiveFilePath() === state.path) {
+      if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
+        state.mode = { kind: "edit", editing: false };
+        renderEditModeUI(state);
+      }
+      if (state.returnToGitDiff !== null) {
+        const { ref, repo } = state.returnToGitDiff;
+        state.returnToGitDiff = null;
+        state.mode = {
+          kind: "diff",
+          diffSource: gitDiffSource(ref, "", content),
+        };
+        state.pendingHunkCount = null;
+        void fetchGitDiffSources(state, repo, ref);
+      }
     }
   });
 }

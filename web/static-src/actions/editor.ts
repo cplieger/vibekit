@@ -18,7 +18,9 @@ export const saveFile = apiAction<{ path: string; content: string }, { ok?: bool
 });
 
 /** Send the active plan to the agent. writePlanDraft shows its own banner;
- *  framework toast suppressed. */
+ *  framework toast suppressed.
+ *  Note: writePlanDraft is not cancellable — once started it will complete
+ *  regardless of signal state. Cancellation is checked between steps. */
 export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "editor.send_plan",
   run: async ({ chatID, content }, signal) => {
@@ -78,13 +80,13 @@ export const loadDiff = defineAction<{ path: string; repo: string; ref: string }
         `/api/file?path=${encodeURIComponent(path)}`, signal),
     ]);
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
-    if (oldD === null && newD === null) {
-      throw new ActionError("Could not load diff");
+    if (oldD === null || newD === null) {
+      throw new ActionError("Could not load base/new revision", { code: "network" });
     }
     return {
-      oldContent: oldD?.content ?? "",
-      newContent: newD?.content ?? "",
-      error: newD?.error ?? "",
+      oldContent: oldD.content ?? "",
+      newContent: newD.content ?? "",
+      error: newD.error ?? "",
     };
   },
   error: "Could not load diff",

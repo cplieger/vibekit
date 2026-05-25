@@ -26,10 +26,13 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
     return await resp.text();
   } catch (e) {
     if (e instanceof ActionError) throw e;
-    if (e instanceof DOMException && (e.name === "TimeoutError" || (e.name === "AbortError" && !signal.aborted))) {
+    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+    // Any DOMException (AbortError/TimeoutError) from the derived
+    // timeout signal means the 15 s budget expired — the caller's
+    // signal is still live so this is a timeout, not a user cancel.
+    if (e instanceof DOMException) {
       throw new ActionError("Request timed out", { code: "timeout", cause: e });
     }
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
     throw new ActionError("network error", { cause: e });
   }
 }

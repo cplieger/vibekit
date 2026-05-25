@@ -97,6 +97,10 @@ class SupervisedPillController {
     this.content.replaceChildren(this.buildPopoverBody(supervised, pending, trusted));
 
     // Bind loading state to bulk-action buttons.
+    // Trade-off: all accept/reject buttons share the same action name, so
+    // bindLoadingState disables ALL of them when any single resolve is in
+    // flight. This is acceptable because rapid-fire resolves would race on
+    // the server anyway; the brief bulk-disable prevents double-submits.
     const acceptAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="accept-all"]');
     const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
     const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');

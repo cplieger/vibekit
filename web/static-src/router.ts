@@ -194,7 +194,7 @@ window.addEventListener("popstate", () => {
       popstateHandler(cachedRoute);
       return;
     }
-    const route = parseRoute(location.pathname);
+    const route = parseRoute(location.pathname, location.hash);
     cachedKey = key;
     cachedRoute = route;
     popstateHandler(route);

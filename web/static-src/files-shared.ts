@@ -18,20 +18,17 @@ export interface DirListing {
   error?: string;
 }
 
-/** Per-caller abort state for fetchDir. Each caller (browser, picker) should
+/** Per-caller abort state for fetchDir. Each caller (browser, picker) must
  *  pass its own holder so they don't abort each other's requests. */
 export interface FetchDirOpts {
-  controllerHolder?: { current: AbortController | null };
+  controllerHolder: { current: AbortController | null };
 }
-
-/** Default holder for callers that don't pass one (backwards compat). */
-const defaultHolder: { current: AbortController | null } = { current: null };
 
 /** Fetch a directory listing from the server. Returns an empty listing
  *  with `error` set on failure. Stale requests are cancelled via
  *  AbortController scoped to the caller's controllerHolder. */
-export async function fetchDir(path: string, opts?: FetchDirOpts): Promise<DirListing> {
-  const holder = opts?.controllerHolder ?? defaultHolder;
+export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirListing> {
+  const holder = opts.controllerHolder;
   holder.current?.abort();
   holder.current = new AbortController();
   const { signal } = holder.current;
@@ -57,8 +54,7 @@ export function sortEntries<T extends { name: string; isDir: boolean }>(entries:
   });
 }
 
-// Re-exported from utils-url.ts for backwards compatibility.
-export { isSafeUrl } from "./utils-url.js";
+
 
 /** Wire an editable path input with click-to-edit, Enter/Escape/blur handling.
  *  `onNavigate` is called with the cleaned path on Enter. `getDisplayPath`
@@ -78,8 +74,8 @@ export function initEditablePath(input: HTMLInputElement, opts: {
       const raw = input.value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
       const target = raw === "" ? "." : raw;
       input.readOnly = true;
-      input.blur();
       opts.onNavigate(target);
+      input.blur();
     } else if (e.key === "Escape") {
       input.readOnly = true;
       input.value = opts.getDisplayPath();
@@ -141,5 +137,4 @@ export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
   return row;
 }
 
-// Re-exported from utils-format.ts for backwards compatibility.
-export { relativeTime } from "./utils-format.js";
+

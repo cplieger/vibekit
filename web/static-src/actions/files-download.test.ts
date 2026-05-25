@@ -6,7 +6,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog, pendingFor } from "./registry.js";
+import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { downloadFiles } from "./files.js";
 
 beforeEach(() => {

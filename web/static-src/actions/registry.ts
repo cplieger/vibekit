@@ -43,23 +43,23 @@ export function record(instance: ActionInstance): void {
         if (log[i]!.status !== "pending") { evictIdx = i; break; }
       }
       if (evictIdx !== -1) {
+        const evictedId = log[evictIdx]!.id;
         log.splice(evictIdx, 1);
-        // Reindex after removal.
-        idMap.clear();
-        for (let i = 0; i < log.length; i++) {
-          const entry = log[i];
-          if (entry !== undefined) idMap.set(entry.id, i);
+        idMap.delete(evictedId);
+        // Decrement indices above the eviction point.
+        for (const [id, idx] of idMap) {
+          if (idx > evictIdx) idMap.set(id, idx - 1);
         }
       }
     }
     // Hard cap: force-evict oldest entry regardless of pending status
     // to bound memory in extreme runaway scenarios (B5/B6).
     if (log.length > MAX_LOG_HARD) {
+      const evictedId = log[0]!.id;
       log.splice(0, 1);
-      idMap.clear();
-      for (let i = 0; i < log.length; i++) {
-        const entry = log[i];
-        if (entry !== undefined) idMap.set(entry.id, i);
+      idMap.delete(evictedId);
+      for (const [id, idx] of idMap) {
+        idMap.set(id, idx - 1);
       }
     }
   }

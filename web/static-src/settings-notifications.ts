@@ -97,6 +97,9 @@ export function initNotificationToggles(): void {
           if (hint !== null) {
             notifyHint.textContent = hint;
             notifyHint.classList.remove("hidden");
+          } else if ("Notification" in window && Notification.permission !== "granted") {
+            notifyHint.textContent = "Browser permission is pending. You may need to allow notifications when prompted.";
+            notifyHint.classList.remove("hidden");
           }
         }
       });
@@ -119,15 +122,21 @@ export function initNotificationToggles(): void {
     if (finishedToggle.checked !== isAgentFinishedEnabled()) mutatedInputs.push(finishedToggle);
     if (permissionToggle.checked !== isPermissionNeededEnabled()) mutatedInputs.push(permissionToggle);
 
+    const bothOff = !finishedToggle.checked && !permissionToggle.checked;
+    if (bothOff) {
+      notifyToggle.checked = false;
+      mutatedInputs.push(notifyToggle);
+    }
+
+    // Nothing actually changed — skip the server round-trip.
+    if (mutatedInputs.length === 0) return;
+
     const patch: Partial<AppSettings> = {
       notify_agent_finished: finishedToggle.checked,
       notify_permission: permissionToggle.checked,
     };
 
-    const bothOff = !finishedToggle.checked && !permissionToggle.checked;
     if (bothOff) {
-      notifyToggle.checked = false;
-      mutatedInputs.push(notifyToggle);
       patch.notifications_enabled = false;
     }
 

@@ -46,12 +46,8 @@ export function initActionConsoleLog(): () => void {
   };
 }
 
-function teardown(): void {
-  unsubscribe?.();
-  unsubscribe = null;
-}
-
 /** Test-only: reset internal state. */
 export function _resetForTest(): void {
-  teardown();
+  unsubscribe?.();
+  unsubscribe = null;
 }

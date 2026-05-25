@@ -41,10 +41,13 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   error: "Undo failed — the checkpoint may have expired",
 });
 
-/** Hand a plan to the running agent as a prompt. */
+/** Hand a plan to the running agent as a prompt.
+ *  Note: sendPromptTo doesn't accept a signal, so cancellation is
+ *  best-effort between calls (checked before sendPromptTo). */
 export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
-  run: async ({ chatID, content }) => {
+  run: async ({ chatID, content }, signal) => {
+    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
       throw new ActionError("prompt rejected");

@@ -52,7 +52,7 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const currentPath = ctx.getCurrentPath();
       const targetDir = dropTargetFolder !== ""
         ? joinPath(currentPath, dropTargetFolder) : currentPath;
-      clearDropTarget();
+      dropTargetFolder = "";
       void uploadAction.dispatch({ files, targetDir }).then((paths) => {
         if (paths === null) return;
         ctx.reload();

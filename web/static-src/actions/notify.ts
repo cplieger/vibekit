@@ -30,7 +30,10 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
       userVisibleOnly: true,
       applicationServerKey: appServerKey as BufferSource,
     });
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
 
     let posted: unknown;
     try {
@@ -41,6 +44,8 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     }
     if (signal.aborted) {
       try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      // Best-effort server-side cleanup after successful POST but cancelled action.
+      void apiPost("/api/push/unsubscribe", {});
       throw new ActionError("cancelled", { code: "cancelled" });
     }
     if (posted === null) {

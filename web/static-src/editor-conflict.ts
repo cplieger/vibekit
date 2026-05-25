@@ -6,7 +6,7 @@ import { $ } from "./dom.js";
 import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type Resolution } from "./conflict.js";
 import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
-import { getActiveFilePath } from "./editor-types.js";
+import { getActiveFilePath, fileStates } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/cleanup.js";
 
@@ -18,6 +18,13 @@ let suggestionGen = 0;
 
 /** Abort any in-flight suggestion request (called on tab close). */
 export function abortSuggestion(): void {
+  // Reset any entries with loading: true so the UI doesn't show stale spinners.
+  const state = fileStates.get(getActiveFilePath());
+  if (state !== undefined) {
+    for (const [key, entry] of state.suggestions) {
+      if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
+    }
+  }
   suggestResolution.cancel();
 }
 

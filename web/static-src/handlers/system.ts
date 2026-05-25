@@ -15,6 +15,7 @@ import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
   setAvailableCommands, setCurrentMode, clearMsgIndex, invalidateSession,
+  version,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -113,6 +114,7 @@ onSSE("steering_loaded", (chatID, payload) => {
   if (msgs.querySelector(".steering-badge") !== null) return;
   const badge = document.createElement("div");
   badge.className = "steering-badge";
+  badge.setAttribute("data-chat-entry", "");
   badge.textContent = `Context loaded: ${docs.join(", ")}`;
   msgs.appendChild(badge);
 });
@@ -140,6 +142,7 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     s.messages = [];
     s.has_more = false;
     clearMsgIndex(chatID);
+    version.value = version.peek() + 1;
     // Rely on the version-effect's renderUpdates (triggered by
     // loadMessages bumping version) rather than an explicit
     // renderSwitch here — avoids a redundant intermediate render

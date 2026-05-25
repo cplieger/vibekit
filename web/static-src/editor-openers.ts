@@ -104,6 +104,8 @@ function open(path: string, opts: OpenOpts): void {
   if (opts.repo !== undefined) state.repo = opts.repo;
   if (opts.line !== undefined && opts.line > 0) pendingLines.set(path, opts.line);
   openEditorView(path, () => activateFile(path), () => closeEditorFile(path));
+  // Always activate — openEditorView may skip the callback if the tab was already active.
+  activateFile(path);
   const line = opts.line;
   pushRoute(line !== undefined && line > 0
     ? { kind: "file", path, line }
@@ -156,7 +158,7 @@ export function activateFile(path: string): void {
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
 
-  void fetchAgentLines(path, activeLoadController.signal);
+  void fetchAgentLines(path);
 
   if (state.mode.kind === "diff" && state.mode.diffSource.fromGit === true && !state.loaded) {
     $.editorCode.textContent = "Loading diff...";
