@@ -267,7 +267,7 @@ export function attachPathToActiveChat(path: string): void {
 
 /** User-triggered chat deletion. Optimistic: store is updated
  *  immediately; SSE chat_deleted is a no-op (already removed). */
-export function deleteChat(id: string): void {
+function deleteChat(id: string): void {
   void deleteChatAction.dispatch(id);
 }
 

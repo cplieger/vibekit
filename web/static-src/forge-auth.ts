@@ -1037,9 +1037,4 @@ function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""
   host.appendChild(div);
 }
 
-/** Public entry point: initialize the forge connection panel.
- *  Alias for renderForgesPanel — kept under this name because
- *  settings.ts imports it that way at boot. */
-export function initForgeAuth(): Promise<void> {
-  return renderForgesPanel();
-}
+

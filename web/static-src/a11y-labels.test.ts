@@ -24,6 +24,12 @@ describe("a11y: missing labels", () => {
   });
 
   it("banner stack container has aria-label and aria-live", async () => {
+    vi.resetModules();
+    vi.doUnmock("./dom.js");
+    vi.doUnmock("./store.js");
+    vi.doUnmock("./actions/index.js");
+    vi.doUnmock("./api-client.js");
+    vi.doUnmock("./signals.js");
     // Setup minimal DOM for banner-stack
     const container = document.createElement("div");
     container.id = "banner-stack";
@@ -38,6 +44,12 @@ describe("a11y: missing labels", () => {
   });
 
   it("settings tab bar gets role=tablist and buttons get role=tab", async () => {
+    vi.resetModules();
+    vi.doUnmock("./dom.js");
+    vi.doUnmock("./store.js");
+    vi.doUnmock("./actions/index.js");
+    vi.doUnmock("./api-client.js");
+    vi.doUnmock("./signals.js");
     // Setup minimal DOM for settings-tabs
     const bar = document.createElement("div");
     bar.id = "settings-tab-bar";
@@ -121,6 +133,7 @@ describe("a11y: focus management", () => {
 describe("a11y: aria-expanded on popover triggers", () => {
   it("commands-menu sets aria-expanded on prompt input when popover opens/closes", async () => {
     vi.resetModules();
+    vi.doUnmock("./actions/index.js");
     const input = document.createElement("textarea");
     vi.doMock("./store.js", () => ({
       getActive: () => ({

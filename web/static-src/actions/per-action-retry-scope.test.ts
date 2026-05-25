@@ -45,6 +45,7 @@ vi.mock("../chat-commands.js", () => ({
   sendPromptTo: vi.fn(),
 }));
 
+import type { Session } from "../types.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
@@ -196,7 +197,7 @@ describe("forge.connect_pat — retry + idempotency", () => {
 describe("chat.set_supervised — retry + scope + rollback", () => {
   it("retries on network error via transport", async () => {
     const { get: storeGet } = await import("../store.js");
-    vi.mocked(storeGet).mockReturnValue({ id: "c1", supervised_mode: false } as any);
+    vi.mocked(storeGet).mockReturnValue({ id: "c1", supervised_mode: false } as unknown as Session);
     mockSend
       .mockResolvedValueOnce({ ok: false, status: 0, error: "net", code: "network" })
       .mockResolvedValueOnce({ ok: false, status: 0, error: "net", code: "network" })
@@ -212,7 +213,7 @@ describe("chat.set_supervised — retry + scope + rollback", () => {
 
   it("rolls back on final failure", async () => {
     const { get: storeGet, setSupervisedMode } = await import("../store.js");
-    vi.mocked(storeGet).mockReturnValue({ id: "c1", supervised_mode: false } as any);
+    vi.mocked(storeGet).mockReturnValue({ id: "c1", supervised_mode: false } as unknown as Session);
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "server error" });
     const { setSupervised } = await import("./chat.js");
     const p = setSupervised.dispatch({ chatID: "c1", enabled: true });
@@ -280,7 +281,7 @@ describe("chat.load_history — dedupe + retry", () => {
 describe("chat.switch_model — scope + rollback", () => {
   it("rolls back model on transport failure", async () => {
     const { get: storeGet, setModel } = await import("../store.js");
-    vi.mocked(storeGet).mockReturnValue({ id: "c1", model: "claude-3" } as any);
+    vi.mocked(storeGet).mockReturnValue({ id: "c1", model: "claude-3" } as unknown as Session);
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
     const { switchModel } = await import("./chat.js");
     const p = switchModel.dispatch({ chatID: "c1", model: "gpt-4" });

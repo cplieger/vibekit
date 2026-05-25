@@ -88,7 +88,7 @@ describe("tools.run_diagnostics", () => {
   });
 });
 
-describe("tools.load_list", () => {
+describe("tools.load", () => {
   it("GETs /api/tools and dedupes", async () => {
     mockFetch.mockImplementation(() =>
       new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),

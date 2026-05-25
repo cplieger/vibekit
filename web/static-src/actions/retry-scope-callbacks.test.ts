@@ -1,6 +1,7 @@
-// Tests for Cycle 11 improvements: isInflight primitive, toActionError
-// error quality (code preservation, plain-object handling), and retry
-// safety (abort guard at loop top).
+// Tests for retry-scope-callbacks interactions: isInflight, toActionError
+// quality, retry safety (abort guard), retryArgs, onRetryAttempt,
+// onRetryExhausted, transient HTTP status auto-retry, and scope+retry
+// callback ordering.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

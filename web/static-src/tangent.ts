@@ -8,11 +8,9 @@
 
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
-import { forkChat, mergeTangent as mergeTangentAction, discardTangent as discardTangentAction } from "./actions/chat.js";
+import { forkChat } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import { openChatTab, activateChatView } from "./chat.js";
-import { confirm } from "./confirm.js";
-import { error as toastError } from "./toast.js";
 
 /** Wire the fork pill in the chat prompt row. The pill lives in the
  *  per-conversation pill cluster alongside Attach / Follow / Autopilot
@@ -50,9 +48,8 @@ export function initTangent(): void {
   });
 }
 
-/** Imperative fork entry-point. Called by the fork pill click handler
- *  and by app.ts so both wire through the same code path. */
-export function forkCurrentChat(chatID: string): void {
+/** Imperative fork entry-point. Called by the fork pill click handler. */
+function forkCurrentChat(chatID: string): void {
   const session = get(chatID);
   if (session === undefined) return;
   if (session.frozen === true) return;
@@ -78,36 +75,4 @@ export function forkCurrentChat(chatID: string): void {
   });
 }
 
-/** Send merge_tangent command for the active tangent chat. */
-export function mergeTangent(): void {
-  const session = getActive();
-  if (session === undefined || session.is_tangent !== true) return;
-  const parentID = session.parent_chat_id;
-  void mergeTangentAction.dispatch(session.id, {
-    onSuccess: () => {
-      if (parentID !== undefined && parentID !== "") {
-        void loadList().then(() => {
-          activateChatView(parentID);
-        });
-      }
-    },
-  });
-}
 
-/** Send discard_tangent command for the active tangent chat. */
-export async function discardTangent(): Promise<void> {
-  const session = getActive();
-  if (session === undefined || session.is_tangent !== true) return;
-  const ok = await confirm("Discard this tangent? Changes won't be merged back.", "Discard", "destructive");
-  if (!ok) return;
-  const result = await discardTangentAction.dispatch(session.id);
-  if (result === null) {
-    toastError("Couldn't discard tangent");
-    return;
-  }
-  if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
-    void loadList().then(() => {
-      activateChatView(session.parent_chat_id!);
-    });
-  }
-}

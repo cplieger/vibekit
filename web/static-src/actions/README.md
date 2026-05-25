@@ -603,6 +603,7 @@ chat.restore              chat.restore_checkpoint   chat.send_prompt
 chat.set_auto_approve_crew  chat.set_supervised    chat.switch_model
 chat.trust_pending
 checkpoint.preview
+commands.fetchOptions
 conflicts.load            conflicts.open_diff
 crew.send_message
 editor.fetch_agent_lines  editor.load_diff          editor.resolve_partial
@@ -631,7 +632,7 @@ tools.save                tools.seed_mcp
 ui.copy_clipboard
 ```
 
-(81 actions as of 2026-05-25.)
+(82 actions as of 2026-05-25.)
 
 This is the registry key for log queries, telemetry, and tests.
 Pick once and don't change — callers may grep for it.

@@ -28,7 +28,7 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_FAIL: "fail",
 }));
 
-import { showSaving } from "./save-indicator.js";
+import { showSaving, _resetForTest } from "./save-indicator.js";
 import { $ } from "./dom.js";
 
 describe("save-indicator subscription", () => {
@@ -36,6 +36,7 @@ describe("save-indicator subscription", () => {
     vi.useFakeTimers();
     ($ as any).settingsSaveStatus = document.createElement("div");
     state.pending = false;
+    _resetForTest();
   });
 
   afterEach(() => {

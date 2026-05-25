@@ -79,7 +79,7 @@ export async function refreshGitBadge(): Promise<void> {
 }
 
 /** @internal Pure derivation for testing. */
-export function deriveState(
+function deriveState(
   status: StatusAllResponse | null,
   forges: ForgesListResponse | null,
 ): BadgeState {
@@ -109,7 +109,7 @@ export function deriveState(
 }
 
 /** @internal Tooltip text derived from the same data. */
-export function deriveTooltip(
+function deriveTooltip(
   state: BadgeState,
   status: StatusAllResponse | null,
   forges: ForgesListResponse | null,
@@ -162,14 +162,4 @@ function applyBadge(state: BadgeState, tooltip: string): void {
   if (btn !== null) btn.setAttribute("data-tooltip", tooltip);
 }
 
-/** @internal Test helpers — direct state inspection without DOM. */
-export function __testCurrentState(): BadgeState { return lastState; }
-export function __testCurrentTooltip(): string { return lastTooltip; }
-export function __testReset(): void {
-  if (pollTimer !== undefined) {
-    clearInterval(pollTimer);
-    pollTimer = undefined;
-  }
-  lastState = "none";
-  lastTooltip = "";
-}
+

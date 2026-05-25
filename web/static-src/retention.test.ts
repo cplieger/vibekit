@@ -15,14 +15,11 @@ vi.mock("./toast.js", () => ({
 }));
 
 import { fetchKiroSetting } from "./api-client.js";
-import { _resetForTest as resetDefine } from "./actions/define.js";
-import { _resetForTest as resetRegistry } from "./actions/registry.js";
 
 const mockFetchKiroSetting = vi.mocked(fetchKiroSetting);
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
+  vi.resetModules();
   vi.clearAllMocks();
 });
 

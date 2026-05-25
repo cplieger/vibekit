@@ -87,12 +87,6 @@ export function loadGitRepos(): void {
   initGitPanel();
 }
 
-/** No-op compatibility export for settings.ts which used to call
- *  syncGitRepo on boot to restore the active repo from server-side
- *  AppSettings. There's no active repo any more, so this does
- *  nothing — kept until the import is cleaned out of settings.ts. */
-export function syncGitRepo(_repo: string): void { /* no-op */ }
-
 /** Refresh the changes-tab view. Used by handlers/turn.ts when the
  *  agent finishes a turn that touched files. Also kicks the sidebar
  *  badge so the dot reflects the new state. */

@@ -6,7 +6,8 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 describe("a11y: tool-group header keyboard and aria", () => {
   it("header has role=button, tabindex=0, and aria-expanded=true", async () => {
-    const { getOrCreateToolGroup } = await import("./tool-group.js");
+    const { getOrCreateToolGroup, breakToolGroup } = await import("./tool-group.js");
+    breakToolGroup();
     const group = getOrCreateToolGroup((el) => { document.body.appendChild(el); });
     const header = group.querySelector(".tool-group-header") as HTMLElement;
     expect(header.getAttribute("role")).toBe("button");

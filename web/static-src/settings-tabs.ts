@@ -43,7 +43,7 @@ type Listener = (tab: SettingsTab) => void;
 const listeners = new Set<Listener>();
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
-export function onTabChange(fn: Listener): () => void {
+function onTabChange(fn: Listener): () => void {
   listeners.add(fn);
   fn(activeTab);
   return (): void => { listeners.delete(fn); };

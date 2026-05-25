@@ -43,15 +43,10 @@ import type { FileState } from "./editor-types.js";
 // Consumers that import from editor-core.ts continue to work.
 
 export {
-  fileStates, setActiveFilePath,
-  freshState, isPendingPath, parsePendingPath, isPlanDraftPath,
-  routeForPath, pendingDiffSource, gitDiffSource, getCachedDiff,
-  getActiveFilePath, getOpenFilePaths, getDirtyEditorPaths,
+  isPendingPath, parsePendingPath, isPlanDraftPath,
+  routeForPath, getDirtyEditorPaths,
 } from "./editor-types.js";
-export type { FileMode, FileState } from "./editor-types.js";
-
-// Re-export closeEditorFile from editor-openers (editor-pending.ts imports closeFile from editor-types)
-export { closeEditorFile } from "./editor-openers.js";
+export type { FileState } from "./editor-types.js";
 
 export function initEditor(): void {
   $.editorEditBtn.addEventListener("click", startEditing);

@@ -103,7 +103,7 @@ export interface RetryAttemptInfo {
   readonly maxAttempts: number;
   /** The error from the previous attempt that triggered this retry. */
   readonly error: ActionErrorLike;
-  /** Milliseconds the framework will wait before this attempt's run(). */
+  /** Milliseconds the framework waited before this attempt's run(). */
   readonly delay: number;
 }
 
@@ -214,7 +214,7 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *    - dedupe collapses to one (A and B share the same in-flight result)
    *
    *  Use cases: accidentally double-clicked buttons, the same prefetch
-   *  fired from two unrelated effects. Default: no dedup.
+   *  fired from two unrelated effects. Default: no dedupe.
    *
    *  - true: dedupe on JSON.stringify(args)
    *  - function: caller supplies the key; identical strings collapse */

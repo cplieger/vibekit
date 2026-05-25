@@ -34,7 +34,7 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
 });
 
 export const loadTools = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
-  name: "tools.load_list",
+  name: "tools.load",
   retryable: "network",
   retry: RETRY_STANDARD,
   dedupe: true,

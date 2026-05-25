@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for per-dispatch callbacks: onSuccess, onError, onSettled.
+// Tests for per-dispatch callbacks: onSuccess, onError, onCancel, onSettled.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({

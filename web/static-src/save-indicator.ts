@@ -143,3 +143,12 @@ subscribeToActions((instance) => {
     }
   }
 });
+
+/** @internal — test-only reset for module-level state. */
+export function _resetForTest(): void {
+  clearTimers();
+  lastShownAt = 0;
+  lastErrorAt = 0;
+  batchHadError = false;
+  batchActive = false;
+}
