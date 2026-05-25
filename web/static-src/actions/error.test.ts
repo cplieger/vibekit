@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError, isPermanentCode } from "./error.js";
+import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError, isPermanentCode, isNetworkError } from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -168,6 +168,7 @@ describe("classifyFetchError", () => {
     const dom = new DOMException("timed out", "TimeoutError");
     const err = classifyFetchError(dom, ac.signal);
     expect(err.code).toBe("timeout");
+    expect(err.status).toBe(0);
     expect(err.message).toBe("Request timed out");
   });
 
@@ -176,12 +177,14 @@ describe("classifyFetchError", () => {
     const dom = new DOMException("aborted", "AbortError");
     const err = classifyFetchError(dom, ac.signal);
     expect(err.code).toBe("timeout");
+    expect(err.status).toBe(0);
   });
 
   it("returns network for non-DOMException errors", () => {
     const ac = new AbortController();
     const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
     expect(err.code).toBe("network");
+    expect(err.status).toBe(0);
     expect(err.message).toBe("Failed to fetch");
   });
 
@@ -189,6 +192,7 @@ describe("classifyFetchError", () => {
     const ac = new AbortController();
     const err = classifyFetchError(42, ac.signal);
     expect(err.code).toBe("network");
+    expect(err.status).toBe(0);
     expect(err.message).toBe("network error");
   });
 });
@@ -288,6 +292,7 @@ describe("classifyFetchError — TypeError branch", () => {
     const te = new TypeError("Failed to fetch");
     const err = classifyFetchError(te, ac.signal);
     expect(err.code).toBe("network");
+    expect(err.status).toBe(0);
     expect(err.message).toBe("Failed to fetch");
     expect(err.cause).toBe(te);
   });
@@ -297,5 +302,35 @@ describe("classifyFetchError — TypeError branch", () => {
     ac.abort();
     const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
     expect(err.code).toBe("cancelled");
+  });
+});
+
+describe("isNetworkError", () => {
+  it("returns true for code 'network'", () => {
+    expect(isNetworkError({ message: "x", code: "network" })).toBe(true);
+  });
+
+  it("returns true for code 'timeout'", () => {
+    expect(isNetworkError({ message: "x", code: "timeout" })).toBe(true);
+  });
+
+  it("returns true for status 0", () => {
+    expect(isNetworkError({ message: "x", status: 0 })).toBe(true);
+  });
+
+  it("returns false for server errors", () => {
+    expect(isNetworkError({ message: "x", status: 500 })).toBe(false);
+    expect(isNetworkError({ message: "x", code: "validation" })).toBe(false);
+  });
+
+  it("returns false for transient server statuses (not network-layer)", () => {
+    expect(isNetworkError({ message: "x", status: 503 })).toBe(false);
+    expect(isNetworkError({ message: "x", status: 429 })).toBe(false);
+  });
+
+  it("returns true when classifyFetchError output is passed", () => {
+    const ac = new AbortController();
+    const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
+    expect(isNetworkError(err)).toBe(true);
   });
 });

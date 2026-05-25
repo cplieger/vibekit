@@ -62,11 +62,11 @@ function safeInvoke(actionName: string, hookName: string, fn: () => void): void 
 }
 
 /** Shared empty options object to avoid allocating {} on every dispatch call.
- *  All DispatchOptions fields are optional, so the empty object satisfies any
- *  concrete instantiation. The cast is narrower than `any`: it only widens
- *  the type-parameter slots while preserving the structural shape. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const NO_OPTS: DispatchOptions<any, any> = Object.freeze({});
+ *  All DispatchOptions fields are optional, so the empty frozen object is
+ *  structurally compatible with every instantiation. The cast uses `unknown`
+ *  in both slots — safe because the object has no defined properties, so
+ *  the callback types (which are contravariant) are never actually read. */
+const NO_OPTS = Object.freeze({}) as DispatchOptions<unknown, unknown>;
 
 /** Shared no-op for .catch() handlers on fire-and-forget promises.
  *  Avoids allocating a new `() => {}` closure on every scoped dispatch. */
@@ -198,7 +198,9 @@ function attachAttempts(e: unknown, attempts: number): void {
 function readAttempts(e: unknown): number | undefined {
   try {
     if (typeof e === "object" && e !== null && "_attempts" in e) {
-      const val = (e as { _attempts: unknown })._attempts;
+      // After `in` narrowing, TS knows `e` has `_attempts` but types it as
+      // `object & Record<"_attempts", unknown>`. Direct property access is safe.
+      const val = (e as { readonly _attempts: unknown })._attempts;
       return typeof val === "number" ? val : undefined;
     }
   } catch { /* Proxy or getter threw — skip */ }
@@ -243,17 +245,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   // scope-queued instance, it triggers the resolver so the scope chain
   // tail resolves immediately (unblocking subsequent entries).
   const scopeSkipResolvers = new Map<string, () => void>();
+  // Per-instance prev promise for cross-action race prevention.
+  const scopePrevs = new Map<string, Promise<unknown>>();
   // Per-instance early-cancel resolvers. When cancel() fires for a
   // scope-queued instance, this resolves the dispatch promise immediately
   // (returning null) so callers don't block until prev finishes.
   const scopeCancelResolvers = new Map<string, () => void>();
-  // Per-instance scope chain cleanup. When cancel() fires for a
-  // scope-queued instance, it calls this to eagerly delete the scope
-  // chain entry (if this instance is the tail). Without this, the
-  // cleanup only fires in next.finally() which requires the full
-  // microtask chain to unwind — causing flaky assertions in tests
-  // that check scopeChains.size immediately after cancel + await.
-  const scopeCleanups = new Map<string, () => void>();
   // Track active dedupe keys for this action so cancel() can eagerly
   // clear them from the module-level activeDedupes map. Without this,
   // a cancel() + immediate re-dispatch with the same dedupe key would
@@ -341,20 +338,16 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       let tailResolve!: () => void;
       const tail = new Promise<void>((r) => { tailResolve = r; });
       scopeSkipResolvers.set(id, tailResolve);
+      scopePrevs.set(id, prev);
       void next.then(tailResolve, tailResolve);
       scopeChains.set(scopeKey, tail);
-      // Register eager cleanup so cancel() can delete the scope chain
-      // entry synchronously (without waiting for next.finally()).
-      scopeCleanups.set(id, () => {
-        if (scopeChains.get(scopeKey) === tail) scopeChains.delete(scopeKey);
-      });
       // Cleanup: delete the scope chain entry when this is the last
       // entry. Use next.finally (not tail.then) to preserve the same
       // microtick timing as the original code.
       void next.finally(() => {
         scopeSkipResolvers.delete(id);
         scopeCancelResolvers.delete(id);
-        scopeCleanups.delete(id);
+        scopePrevs.delete(id);
         if (scopeChains.get(scopeKey) === tail) scopeChains.delete(scopeKey);
       }).catch(NOOP);
       // Race next against an early-cancel resolver so the dispatch
@@ -367,9 +360,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // promise resolves. Registry recording + dedupe cleanup happen
         // here; runOnce will no-op when it eventually runs (signal aborted
         // + id removed from inFlight).
-        // Wrapped in try/finally so earlyCancelResolve always fires —
-        // prevents the dispatch promise from hanging if record() or
-        // evictDedupeSlot ever throws unexpectedly.
+        // Wrapped in try/finally so onSettled + earlyCancelResolve always
+        // fire — prevents the dispatch promise from hanging and guarantees
+        // the onSettled contract even if record() throws unexpectedly.
         try {
           const now = Date.now();
           if (dedupeEntry !== null) dedupeEntry.cancelled = true;
@@ -379,8 +372,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
             dispatchedAt, startedAt: now, completedAt: now,
           });
           if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
-          if (opts.onSettled) safeInvoke(def.name, "onSettled", () => opts.onSettled!(args));
         } finally {
+          if (opts.onSettled) safeInvoke(def.name, "onSettled", () => opts.onSettled!(args));
           earlyCancelResolve(null);
         }
       });
@@ -463,8 +456,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       return null;
     }
     /** Settle this dispatch: remove from inFlight/started + fire onSettled.
-     *  Called exactly once at each exit point — replaces the outer
-     *  try/finally so the control flow is explicit and flat. */
+     *  Called from the finally block of the main try/catch so onSettled is
+     *  guaranteed to fire regardless of how the dispatch exits. */
     const settle = (): void => {
       inFlight.delete(id);
       started.delete(id);
@@ -553,7 +546,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           }
         }
         if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
-        settle();
         return null;
       }
       record({
@@ -566,7 +558,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       evictDedupeSlot(dedupeKey, dedupeEntry);
       emitSuccessToast(args, result, opts);
       if (opts.onSuccess) safeInvoke(def.name, "onSuccess", () => opts.onSuccess!(result, args));
-      settle();
       return result;
     } catch (e: unknown) {
       const err = toActionError(e);
@@ -587,9 +578,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       const errRecord: ActionInstance = {
         id, name: def.name, status, args,
         dispatchedAt, startedAt, completedAt: Date.now(),
-        ...(!cancelled ? { error: err } : undefined),
-        ...(attempts !== undefined ? { attempts } : undefined),
       };
+      if (!cancelled) (errRecord as { error?: ActionErrorLike }).error = err;
+      if (attempts !== undefined) (errRecord as { attempts?: number }).attempts = attempts;
       record(errRecord);
       // Rollback the optimistic mutation regardless of cancel/error.
       if (def.rollback !== undefined) {
@@ -608,8 +599,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       } else {
         if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
       }
-      settle();
       return null;
+    } finally {
+      settle();
     }
   }
 
@@ -809,15 +801,14 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // tail resolves immediately, unblocking subsequent entries.
         const skip = scopeSkipResolvers.get(id);
         if (skip !== undefined) {
+          const prev = scopePrevs.get(id);
           scopeSkipResolvers.delete(id);
-          skip();
-        }
-        // Eagerly clean up the scope chain entry if this instance is
-        // the tail. Prevents stale entries lingering until next.finally().
-        const cleanup = scopeCleanups.get(id);
-        if (cleanup !== undefined) {
-          scopeCleanups.delete(id);
-          cleanup();
+          scopePrevs.delete(id);
+          if (prev !== undefined) {
+            void prev.then(skip, skip);
+          } else {
+            skip();
+          }
         }
         // Trigger the early-cancel resolver so the dispatch promise
         // resolves immediately (callers don't wait for prev to finish).

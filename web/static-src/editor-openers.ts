@@ -219,6 +219,18 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   applyPendingLine(state.path);
 }
 
+/** Set state to a loaded-diff terminal state and render. */
+function settlePendingDiff(state: FileState, error: string, oldText = "", newText = ""): void {
+  state.error = error;
+  state.loaded = true;
+  state.original = newText;
+  state.current = newText;
+  state.mode = { kind: "diff", diffSource: pendingDiffSource(oldText, newText) };
+  state.pendingHunkCount = null;
+  state.cachedDiff = null;
+  restoreUI(state);
+}
+
 async function loadPendingDiff(state: FileState, signal?: AbortSignal): Promise<void> {
   interface PendingData { path?: string; kind?: string; old_text?: string; new_text?: string; truncated?: boolean }
   const url = routeForPath(state.path).readURL;
@@ -227,59 +239,18 @@ async function loadPendingDiff(state: FileState, signal?: AbortSignal): Promise<
   try {
     const r = await fetch(url, { signal: withTimeout(signal, API_TIMEOUT_MS) });
     if (r.status === 404) { is404 = true; }
-    else if (!r.ok) {
-      state.error = "Network error \u2014 try again";
-      state.loaded = true;
-      state.original = "";
-      state.current = "";
-      state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
-      state.pendingHunkCount = null;
-      state.cachedDiff = null;
-      restoreUI(state);
-      return;
-    } else {
-      d = (await r.json()) as PendingData;
-    }
+    else if (!r.ok) { settlePendingDiff(state, "Network error \u2014 try again"); return; }
+    else { d = (await r.json()) as PendingData; }
   } catch {
     if (signal?.aborted === true) return;
-    state.error = "Network error \u2014 try again";
-    state.loaded = true;
-    state.original = "";
-    state.current = "";
-    state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
-    state.pendingHunkCount = null;
-    state.cachedDiff = null;
-    restoreUI(state);
+    settlePendingDiff(state, "Network error \u2014 try again");
     return;
   }
   if (signal?.aborted === true) return;
-  if (is404 || d === null) {
-    state.error = "Change already resolved";
-    state.loaded = true;
-    state.original = "";
-    state.current = "";
-    state.mode = {
-      kind: "diff",
-      diffSource: pendingDiffSource("", ""),
-    };
-    state.pendingHunkCount = null;
-    state.cachedDiff = null;
-    restoreUI(state);
-    return;
-  }
+  if (is404 || d === null) { settlePendingDiff(state, "Change already resolved"); return; }
   const oldText = d.old_text ?? "";
   const newText = d.new_text ?? "";
-  state.original = newText;
-  state.current = newText;
-  state.loaded = true;
-  state.error = "";
-  state.mode = {
-    kind: "diff",
-    diffSource: pendingDiffSource(oldText, newText),
-  };
-  state.pendingHunkCount = null;
-  state.cachedDiff = null;
-  restoreUI(state);
+  settlePendingDiff(state, "", oldText, newText);
   applyPendingLine(state.path);
 }
 

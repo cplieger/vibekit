@@ -426,6 +426,17 @@ fires in the `finally` block, so it runs even if `onSuccess` or
 `onError` throws. Throwing inside any callback is caught and logged
 — it never disrupts the dispatch promise or other callbacks.
 
+**Callback ordering guarantee** (when retry is configured):
+
+1. `onRetryAttempt` — once per retry attempt (not the initial)
+2. On exhaustion: `onRetryExhausted` → `onError` → `onSettled`
+3. On success after retry: `onSuccess` → `onSettled`
+4. On cancel during retry/backoff: `onCancel` → `onSettled`
+
+For scoped actions, all callbacks for dispatch N complete before
+dispatch N+1's `run()` begins. This means `onSettled` of the first
+dispatch fires before the second dispatch starts its work.
+
 ## Idempotency keys
 
 Set `idempotencyKey: true` on an action definition to have the

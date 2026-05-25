@@ -140,6 +140,9 @@ describe("onCancel callback throws — onSettled still fires", () => {
 });
 
 describe("cancel after optimistic before run completes (same-tick)", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("rollback fires with code:cancelled when cancel is synchronous after dispatch", async () => {
     const rollback = vi.fn();
     let runStarted = false;
@@ -159,6 +162,7 @@ describe("cancel after optimistic before run completes (same-tick)", () => {
     const p = action.dispatch();
     // Cancel in same microtask — run() has started but signal aborts
     action.cancel();
+    await vi.advanceTimersByTimeAsync(50);
     await p;
 
     expect(rollback).toHaveBeenCalledTimes(1);
@@ -184,6 +188,7 @@ describe("re-dispatch from onSettled after cancel", () => {
   it("re-dispatch in onSettled callback starts a fresh run (no stale dedupe)", async () => {
     let runCount = 0;
     let secondResult: string | null = null;
+    let secondP: Promise<string | null> | undefined;
 
     const action = defineAction<string, string>({
       name: "test.redispatch_from_onsettled",
@@ -198,14 +203,14 @@ describe("re-dispatch from onSettled after cancel", () => {
     const p1 = action.dispatch("a", {
       onSettled: () => {
         // Re-dispatch from within onSettled after cancel
-        void action.dispatch("a").then((r) => { secondResult = r; });
+        secondP = action.dispatch("a");
+        void secondP.then((r) => { secondResult = r; });
       },
     });
     action.cancel();
     await p1;
     // Allow the re-dispatch to complete
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await secondP;
 
     expect(secondResult).toBe("run-2");
     expect(runCount).toBe(2);
@@ -214,6 +219,7 @@ describe("re-dispatch from onSettled after cancel", () => {
   it("re-dispatch in onCancel callback starts a fresh run", async () => {
     let runCount = 0;
     let secondResult: string | null = null;
+    let secondP: Promise<string | null> | undefined;
 
     const action = defineAction<string, string>({
       name: "test.redispatch_from_oncancel",
@@ -227,13 +233,13 @@ describe("re-dispatch from onSettled after cancel", () => {
 
     const p1 = action.dispatch("b", {
       onCancel: () => {
-        void action.dispatch("b").then((r) => { secondResult = r; });
+        secondP = action.dispatch("b");
+        void secondP.then((r) => { secondResult = r; });
       },
     });
     action.cancel();
     await p1;
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await secondP;
 
     expect(secondResult).toBe("run-2");
     expect(runCount).toBe(2);
@@ -246,7 +252,7 @@ describe("multiple in-flight dispatches — partial vs full cancel", () => {
     const action = defineAction<number, string>({
       name: "test.cancel_all_inflight",
       run: async (n, signal) => {
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return `done-${n}`;
       },
@@ -269,7 +275,7 @@ describe("multiple in-flight dispatches — partial vs full cancel", () => {
     const action = defineAction<number, string>({
       name: "test.dispatch_after_cancel_all",
       run: async (n, signal) => {
-        await new Promise((r) => setTimeout(r, 5));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return `ok-${n}`;
       },

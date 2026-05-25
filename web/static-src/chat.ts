@@ -271,22 +271,6 @@ export function deleteChat(id: string): void {
   void deleteChatAction.dispatch(id);
 }
 
-/** Export a chat as a downloadable JSON file. Caller must guarantee
- *  `id` is non-empty; the toolbar button disables itself when no chat
- *  is active so this is an invariant at the UI boundary. */
-export function exportChat(id: string): void {
-  if (id === "") return;
-  const a = document.createElement("a");
-  a.href = `/api/chats/${encodeURIComponent(id)}/export`;
-  a.download = `${id}.json`;
-  a.rel = "noopener";
-  // Some browsers (Firefox, WebKit) silently ignore click() on
-  // detached anchors. Append, click, remove.
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
 /** Restore an archived chat. Opens a tab and activates it after the
  *  sidebar store catches up, matching the tangent-fork pattern — the
  *  server broadcasts chat_created, but the SSE handler only updates

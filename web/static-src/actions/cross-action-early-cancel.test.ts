@@ -215,8 +215,9 @@ describe("multiple cancelled scope-queued dispatches resolve immediately", () =>
 
     resolveA!("A");
     await pA;
-    await Promise.resolve();
-    await Promise.resolve();
+    // Extra ticks: tail resolution is deferred through prev to preserve
+    // scope serialization (cross-action race fix).
+    for (let i = 0; i < 5; i++) await Promise.resolve();
 
     const { scopeChains } = _internalsForTest();
     expect(scopeChains).toBe(0);

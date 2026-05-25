@@ -10,8 +10,6 @@ vi.mock("./dom.js", () => ({
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
-  apiPostOrError: async () => ({ ok: true }),
-  apiPutOrError: async () => ({ ok: true }),
 }));
 vi.mock("./modals.js", () => ({ closeModal: () => {} }));
 vi.mock("./mcp-state.js", () => ({

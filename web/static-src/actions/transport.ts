@@ -55,10 +55,10 @@ export function transportAction<TArgs, TOp = unknown>(
     ...rest,
     run: async (args, signal, ctx?: ActionContext) => {
       const raw = command(args);
-      let cmd: Command;
+      let cmd: TypedCommand | Command;
       if (ctx?.idempotencyKey !== undefined) {
         const base: Record<string, unknown> = "payload" in raw && raw.payload != null
-          ? { ...raw.payload }
+          ? { ...(raw.payload as Record<string, unknown>) }
           : {};
         base["idempotency_key"] = ctx.idempotencyKey;
         cmd = { type: raw.type, ...("chat_id" in raw ? { chat_id: raw.chat_id } : {}), payload: base };

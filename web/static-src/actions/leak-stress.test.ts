@@ -130,10 +130,10 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     // Cancel mid-flight
     action.cancel();
     await Promise.all(promises);
-    // Drain remaining microtasks: next.finally() callbacks for scope-queued
-    // dispatches run after the early-cancel path resolves the dispatch
-    // promises. A single extra tick ensures all cleanup has completed.
-    await Promise.resolve();
+    // Drain microtasks: tail resolution is deferred through prev for
+    // cross-action race prevention. The chain of N cancelled entries
+    // requires N+1 ticks to fully drain.
+    for (let i = 0; i < 110; i++) await Promise.resolve();
 
     expect(pendingFor("stress.cancel")).toHaveLength(0);
     expect(_internalsForTest().scopeChains).toBe(0);

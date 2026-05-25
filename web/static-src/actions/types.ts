@@ -90,6 +90,11 @@ export interface RetryConfig {
 /** Standard retry config for network-retryable actions: 2 retries, 300ms initial delay. */
 export const RETRY_STANDARD: RetryConfig = { count: 2, delay: 300 } as const;
 
+/** Aggressive retry config for latency-sensitive actions: 3 retries, 100ms initial delay.
+ *  Use for operations where the user is actively waiting and transient blips should
+ *  resolve within ~700ms total budget (100 + 200 + 400). */
+export const RETRY_AGGRESSIVE: RetryConfig = { count: 3, delay: 100 } as const;
+
 /** Info passed to the per-dispatch `onRetryAttempt` callback. */
 export interface RetryAttemptInfo {
   /** Current attempt number (2 = first retry, 3 = second retry). */
@@ -293,6 +298,13 @@ export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
    *  total attempt count. Useful for telemetry that distinguishes retry
    *  exhaustion from first-attempt failures. */
   readonly onRetryExhausted?: (info: { error: ActionErrorLike; attempts: number }, args: TArgs) => void;
+  /** Per-call rollback callback. Fires after the action definition's
+   *  rollback() executes (on error or cancellation). Receives the error
+   *  that triggered rollback. Useful for callsite-specific reactions to
+   *  optimistic-mutation reversal (re-focusing an input, logging, etc.)
+   *  without modifying the action definition. Does NOT fire when no
+   *  rollback is defined or when optimistic() returned undefined. */
+  readonly onRollback?: (err: ActionErrorLike, args: TArgs) => void;
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client

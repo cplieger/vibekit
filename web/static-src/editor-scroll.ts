@@ -36,12 +36,6 @@ export function flashEditorLine(line: number): void {
 let cachedLineHeight: number | null = null;
 let cachedPaddingTop: number | null = null;
 
-/** Invalidate cached layout values (call when editor font size changes). */
-export function invalidateEditorScrollCache(): void {
-  cachedLineHeight = null;
-  cachedPaddingTop = null;
-}
-
 function getLineHeight(): number {
   if (cachedLineHeight !== null) return cachedLineHeight;
   const style = getComputedStyle($.editorCode);

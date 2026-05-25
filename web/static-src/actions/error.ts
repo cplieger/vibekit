@@ -71,6 +71,14 @@ export function toActionError(e: unknown): ActionErrorLike {
                : e.name.toLowerCase();
     return { message: e.message, code, cause: e };
   }
+  if (e instanceof AggregateError) {
+    // AggregateError from Promise.any / Promise.allSettled: surface the
+    // first child error's message for readability, attach the aggregate
+    // as cause so callers can inspect all errors if needed.
+    const first = e.errors[0];
+    const inner = first instanceof Error ? first.message : e.message;
+    return { message: inner || e.message, code: "aggregate", cause: e };
+  }
   if (e instanceof Error) {
     const rawStatus = "status" in e ? (e as { status: unknown }).status : undefined;
     const status = typeof rawStatus === "number" ? rawStatus : undefined;
@@ -84,10 +92,10 @@ export function toActionError(e: unknown): ActionErrorLike {
     };
   }
   if (typeof e === "object" && e !== null && "message" in e) {
-    const obj = e as Record<string, unknown>;
-    const message = typeof obj["message"] === "string" ? obj["message"] : String(obj["message"]);
-    const status = typeof obj["status"] === "number" ? obj["status"] : undefined;
-    const code = typeof obj["code"] === "string" ? obj["code"] : undefined;
+    const obj = e as { message: unknown; status?: unknown; code?: unknown };
+    const message = typeof obj.message === "string" ? obj.message : String(obj.message);
+    const status = typeof obj.status === "number" ? obj.status : undefined;
+    const code = typeof obj.code === "string" ? obj.code : undefined;
     return {
       message,
       ...(status !== undefined && { status }),
@@ -119,17 +127,28 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
   }
   if (e instanceof DOMException) {
     if (e.name === "TimeoutError") {
-      return new ActionError("Request timed out", { code: "timeout", cause: e });
+      return new ActionError("Request timed out", { status: 0, code: "timeout", cause: e });
     }
     if (e.name === "AbortError") {
-      return new ActionError("Request timed out", { code: "timeout", cause: e });
+      return new ActionError("Request timed out", { status: 0, code: "timeout", cause: e });
     }
   }
   if (e instanceof TypeError) {
-    return new ActionError(e.message, { code: "network", cause: e });
+    return new ActionError(e.message, { status: 0, code: "network", cause: e });
   }
   const msg = e instanceof Error ? e.message : "network error";
-  return new ActionError(msg, { code: "network", cause: e });
+  return new ActionError(msg, { status: 0, code: "network", cause: e });
+}
+
+/** True when the error represents a network-layer failure: the request
+ *  never reached the server or the connection was lost. Matches errors
+ *  with code "network" or "timeout", or status === 0 (browser convention
+ *  for failed-to-connect). Complements `isTransientStatus` (server-side
+ *  transient) and `isPermanentCode` (never-retry). */
+export function isNetworkError(err: ActionErrorLike): boolean {
+  if (err.code === "network" || err.code === "timeout") return true;
+  if (err.status === 0) return true;
+  return false;
 }
 
 /** HTTP status codes that represent transient server-side conditions
@@ -183,8 +202,7 @@ export function isRetryableError(
   if (PERMANENT_CODES.has(err.code ?? "")) return false;
   if (mode === "always") return true;
   // mode === "network"
-  if (err.code === "network" || err.code === "timeout") return true;
-  if (err.status === 0) return true;
+  if (isNetworkError(err)) return true;
   if (isTransientStatus(err.status)) return true;
   return false;
 }

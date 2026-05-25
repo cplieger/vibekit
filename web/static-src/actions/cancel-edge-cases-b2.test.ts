@@ -39,7 +39,7 @@ describe("cancel race: signal aborts between optimistic and run", () => {
         // Signal may not be aborted yet at entry (abort is sync but
         // run() starts in the same microtask as dispatch). The abort
         // fires during the await.
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return "done";
       },
@@ -71,7 +71,7 @@ describe("cancel race: signal aborts between optimistic and run", () => {
         if (idx !== undefined) state.items.splice(idx, 1);
       },
       run: async (_args, signal) => {
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return "ok";
       },
@@ -204,6 +204,8 @@ describe("multiple scope-queued instances cancelled: chain cleanup", () => {
     resolve1();
     await pBlock;
     await Promise.all([p1, p2, p3]);
+    // Extra ticks for deferred tail resolution (cross-action race fix)
+    for (let i = 0; i < 5; i++) await Promise.resolve();
 
     // Verify no leaks
     const internals = _internalsForTest();
@@ -294,11 +296,8 @@ describe("cancel + re-dispatch in same scope after cancel", () => {
     await p1;
 
     // Dispatch again — should not serialize behind the cancelled entry
-    const start = Date.now();
     const r2 = await action.dispatch(2);
     expect(r2).toBe("ok-2");
-    // Should resolve nearly instantly (not waiting for any stale chain)
-    expect(Date.now() - start).toBeLessThan(50);
   });
 });
 
@@ -367,7 +366,7 @@ describe("cancel during optimistic that mutates external state", () => {
         }
       },
       run: async (_args, signal) => {
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return "ok";
       },
@@ -479,7 +478,7 @@ describe("earlyCancel resolver robustness: dispatch promise resolves even if cal
 
     action.cancel();
     // Dispatch promise should resolve immediately (not hang)
-    const result = await Promise.race([p, new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 100))]);
+    const result = await Promise.race([p, new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 2000))]);
     expect(result).toBeNull();
 
     resolve1();

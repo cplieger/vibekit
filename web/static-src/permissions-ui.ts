@@ -70,12 +70,17 @@ class PermissionsUIController {
     }
 
     const adder = el("trust-list-add");
+    adder.setAttribute("aria-label", "Add trusted tool");
+    adder.setAttribute("aria-expanded", "false");
     adder.addEventListener("click", () => this.toggleMenu());
 
     const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
       const t = e.target as Node;
-      if (!adder.contains(t) && !menu.contains(t)) menu.classList.add("hidden");
+      if (!adder.contains(t) && !menu.contains(t)) {
+        menu.classList.add("hidden");
+        adder.setAttribute("aria-expanded", "false");
+      }
     });
 
     this.renderEditor();
@@ -165,8 +170,10 @@ class PermissionsUIController {
 
   private toggleMenu(): void {
     const menu = el<HTMLDivElement>("trust-list-menu");
+    const adder = el("trust-list-add");
     if (!menu.classList.contains("hidden")) {
       menu.classList.add("hidden");
+      adder.setAttribute("aria-expanded", "false");
       return;
     }
     menu.replaceChildren();
@@ -180,11 +187,13 @@ class PermissionsUIController {
       item.addEventListener("click", () => {
         this.addTool(name);
         menu.classList.add("hidden");
+        adder.setAttribute("aria-expanded", "false");
       });
       menu.appendChild(item);
     }
 
     menu.classList.remove("hidden");
+    adder.setAttribute("aria-expanded", "true");
   }
 
   // --- Private: command rules ---

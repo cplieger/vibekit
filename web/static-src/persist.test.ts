@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
-  apiPatch: vi.fn(() => Promise.resolve(undefined)),
   withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
   API_TIMEOUT_MS: 30000,
 }));

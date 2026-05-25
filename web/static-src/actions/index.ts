@@ -20,7 +20,17 @@ export { apiAction } from "./api.js";
 // classifyFetchError: normalise fetch catch-block errors into ActionError
 // with canonical code (cancelled/timeout/network). Useful in custom
 // defineAction run() implementations that call fetch directly.
-export { ActionError, hasErrorString, classifyFetchError, isRetryableError, isTransientStatus, isPermanentCode, isActionError } from "./error.js";
+export {
+  ActionError,
+  hasErrorString,
+  classifyFetchError,
+  isRetryableError,
+  isTransientStatus,
+  isPermanentCode,
+  isActionError,
+  isNetworkError,
+  toActionError,
+} from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch
@@ -30,7 +40,7 @@ export { ActionError, hasErrorString, classifyFetchError, isRetryableError, isTr
 //   - pendingForAny: OR-query for binding one element to multiple
 //     action names (e.g. a Save button covering several settings
 //     actions).
-export { subscribe as subscribeToActions, pendingCount, pendingForAny } from "./registry.js";
+export { subscribe as subscribeToActions, pendingCount, pendingForAny, isPending, onceSettled } from "./registry.js";
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
@@ -63,7 +73,7 @@ export type { DispatchOptions, RetryAttemptInfo, DispatchResult } from "./types.
 
 // Standard retry config constant: eliminates `retry: { count: 2, delay: 300 }`
 // repetition across action definitions.
-export { RETRY_STANDARD } from "./types.js";
+export { RETRY_STANDARD, RETRY_AGGRESSIVE } from "./types.js";
 
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.

@@ -149,10 +149,11 @@ onSSE("turn_ended", (chatID, p) => {
   // Render file-change summary banner if files were modified.
   const changedFiles = p.changed_files;
   if (changedFiles !== undefined && Object.keys(changedFiles).length > 0) {
-    const count = Object.keys(changedFiles).length;
+    const entries = Object.values(changedFiles);
+    const count = entries.length;
     let added = 0;
     let removed = 0;
-    for (const f of Object.values(changedFiles)) {
+    for (const f of entries) {
       added += f.lines_added;
       removed += f.lines_removed;
     }
@@ -165,12 +166,9 @@ onSSE("turn_ended", (chatID, p) => {
     banner.setAttribute("data-chat-entry", "");
     banner.textContent = parts.join(" · ");
     // Dedup: skip if a turn-file-changes already exists as the last entry
-    const existing = msgsEl.lastElementChild;
-    if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
-      const lastChild = msgsEl.lastElementChild;
-      if (lastChild !== null) {
-        lastChild.insertAdjacentElement("afterend", banner);
-      }
+    const lastChild = msgsEl.lastElementChild;
+    if (lastChild !== null && !lastChild.classList.contains("turn-file-changes")) {
+      lastChild.insertAdjacentElement("afterend", banner);
     }
   }
 });

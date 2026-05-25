@@ -719,3 +719,159 @@ describe("onRetryExhausted callback", () => {
     consoleErr.mockRestore();
   });
 });
+
+describe("scope + retry + callbacks interaction", () => {
+  it("scoped action fires onRetryAttempt then onSuccess in correct order", async () => {
+    const events: string[] = [];
+    let runCount = 0;
+    const action = defineAction({
+      name: "test.scope_retry_cb_order",
+      scope: "sr",
+      retryable: "always",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        runCount++;
+        if (runCount === 1) throw new ActionError("blip", { code: "network" });
+        return "done";
+      },
+    });
+    const result = await action.dispatch(undefined, {
+      onRetryAttempt: () => { events.push("retry"); },
+      onSuccess: () => { events.push("success"); },
+      onSettled: () => { events.push("settled"); },
+    });
+    expect(result).toBe("done");
+    expect(events).toEqual(["retry", "success", "settled"]);
+  });
+
+  it("scoped action fires onRetryExhausted then onError then onSettled", async () => {
+    const events: string[] = [];
+    const action = defineAction({
+      name: "test.scope_retry_exhaust_cb",
+      scope: "sr2",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        throw new ActionError("persistent", { code: "network" });
+      },
+    });
+    await action.dispatch(undefined, {
+      onRetryAttempt: () => { events.push("retry"); },
+      onRetryExhausted: () => { events.push("exhausted"); },
+      onError: () => { events.push("error"); },
+      onSettled: () => { events.push("settled"); },
+    });
+    expect(events).toEqual(["retry", "exhausted", "error", "settled"]);
+  });
+
+  it("second scoped dispatch callbacks fire only after first completes retries", async () => {
+    const order: string[] = [];
+    let firstRuns = 0;
+    const action = defineAction({
+      name: "test.scope_serial_retry_cb",
+      scope: "serial",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        firstRuns++;
+        if (firstRuns <= 2) throw new ActionError("fail", { code: "network" });
+        return "ok";
+      },
+    });
+    const p1 = action.dispatch(undefined, {
+      onRetryExhausted: () => { order.push("p1:exhausted"); },
+      onError: () => { order.push("p1:error"); },
+      onSettled: () => { order.push("p1:settled"); },
+    });
+    const p2 = action.dispatch(undefined, {
+      onSuccess: () => { order.push("p2:success"); },
+      onSettled: () => { order.push("p2:settled"); },
+    });
+    await Promise.all([p1, p2]);
+    // p1 exhausts retries (2 attempts), then p2 runs (attempt 3 succeeds)
+    expect(order).toEqual([
+      "p1:exhausted", "p1:error", "p1:settled",
+      "p2:success", "p2:settled",
+    ]);
+  });
+
+  it("onSettled fires for scoped action even when retry + cancel interact", async () => {
+    vi.useFakeTimers();
+    const settled = vi.fn();
+    const onCancel = vi.fn();
+    const action = defineAction({
+      name: "test.scope_retry_cancel_settled",
+      scope: "sc",
+      retryable: "always",
+      retry: { count: 3, delay: 50 },
+      error: false,
+      run: async () => {
+        throw new ActionError("transient", { code: "network" });
+      },
+    });
+    const p = action.dispatch(undefined, { onSettled: settled, onCancel });
+    // Let first attempt fail, then cancel during backoff
+    await vi.advanceTimersByTimeAsync(25);
+    action.cancel();
+    await vi.advanceTimersByTimeAsync(100);
+    await p;
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+});
+
+describe("classifyFetchError ↔ isRetryableError consistency", () => {
+  it("classifyFetchError network errors are retryable under 'network' mode", async () => {
+    const { classifyFetchError, isRetryableError } = await import("./error.js");
+    const ac = new AbortController();
+    const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
+    expect(isRetryableError(err, "network")).toBe(true);
+    expect(err.status).toBe(0);
+    expect(err.code).toBe("network");
+  });
+
+  it("classifyFetchError timeout errors are retryable under 'network' mode", async () => {
+    const { classifyFetchError, isRetryableError } = await import("./error.js");
+    const ac = new AbortController();
+    const err = classifyFetchError(new DOMException("timed out", "TimeoutError"), ac.signal);
+    expect(isRetryableError(err, "network")).toBe(true);
+    expect(err.status).toBe(0);
+    expect(err.code).toBe("timeout");
+  });
+
+  it("classifyFetchError cancelled errors are NOT retryable", async () => {
+    const { classifyFetchError, isRetryableError } = await import("./error.js");
+    const ac = new AbortController();
+    ac.abort();
+    const err = classifyFetchError(new Error("aborted"), ac.signal);
+    expect(isRetryableError(err, "network")).toBe(false);
+    expect(isRetryableError(err, "always")).toBe(false);
+    expect(err.code).toBe("cancelled");
+  });
+
+  it("auto-retries classifyFetchError network error in scoped action", async () => {
+    const { classifyFetchError } = await import("./error.js");
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.classify_retry_scope",
+      scope: "net",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async (_args: undefined, signal: AbortSignal) => {
+        attempts++;
+        if (attempts === 1) {
+          throw classifyFetchError(new TypeError("Failed to fetch"), signal);
+        }
+        return "recovered";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("recovered");
+    expect(attempts).toBe(2);
+  });
+});

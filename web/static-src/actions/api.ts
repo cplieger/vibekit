@@ -116,8 +116,8 @@ async function executeRequest<T>(
       const body: unknown = await r.json();
       if (hasErrorString(body)) serverError = body.error;
       if (typeof body === "object" && body !== null && "code" in body) {
-        const rawCode = (body as Record<string, unknown>)["code"];
-        if (typeof rawCode === "string") serverCode = rawCode;
+        const { code } = body as { code: unknown };
+        if (typeof code === "string") serverCode = code;
       }
     } catch {
       // Body wasn't JSON or parse failed — leave serverError empty.
@@ -140,7 +140,9 @@ async function executeRequest<T>(
   const text = await r.text();
   if (text === "") {
     if (spec.method !== "DELETE") {
-      console.warn(`[actions] ${spec.method} ${spec.path} returned empty body — callers expecting data will receive undefined`);
+      console.warn(
+        `[actions] ${spec.method} ${spec.path} returned empty body — callers expecting data will receive undefined`,
+      );
     }
     return undefined as T; // same SAFETY note as above
   }

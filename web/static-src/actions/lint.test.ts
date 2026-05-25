@@ -6,9 +6,9 @@
 // reads, cleanup, and infrastructure stay silent.
 //
 // What this test asserts:
-//   - No new `void apiPost(`, `void apiPut(`, `void apiPatch(`,
-//     `void apiDelete(`, or `void transport.send(` calls appear
-//     outside the explicit allowlist below.
+//   - No new `void apiPost(`, `void apiDelete(`, or
+//     `void transport.send(` calls appear outside the explicit
+//     allowlist below.
 //   - Also catches aliased transport imports: `await transportSend(`
 //     and `void transportSend(` (common when destructuring or
 //     renaming the import).
@@ -70,18 +70,13 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
  *  files. */
 const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "void apiPost", re: /\bvoid\s+apiPost\s*[<(]/g },
-  { name: "void apiPut", re: /\bvoid\s+apiPut\s*[<(]/g },
-  { name: "void apiPatch", re: /\bvoid\s+apiPatch\s*[<(]/g },
   { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*[<(]/g },
   { name: "void transport.send", re: /\bvoid\s+transport\.send\s*\(/g },
   { name: "await transport.send", re: /\bawait\s+transport\.send\s*\(/g },
   { name: "void transportSend", re: /\bvoid\s+transportSend\s*\(/g },
   { name: "await transportSend", re: /\bawait\s+transportSend\s*\(/g },
   { name: "await apiPost", re: /\bawait\s+apiPost\s*[<(]/g },
-  { name: "await apiPut", re: /\bawait\s+apiPut\s*[<(]/g },
-  { name: "await apiPatch", re: /\bawait\s+apiPatch\s*[<(]/g },
   { name: "await apiDelete", re: /\bawait\s+apiDelete\s*[<(]/g },
-  { name: "await apiPostOrError", re: /\bawait\s+apiPostOrError\s*[<(]/g },
   { name: "await apiPutOrError", re: /\bawait\s+apiPutOrError\s*[<(]/g },
 ];
 

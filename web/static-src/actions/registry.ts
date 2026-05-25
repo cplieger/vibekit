@@ -285,6 +285,31 @@ export function pendingForAny(names: readonly string[]): boolean {
   return false;
 }
 
+/**
+ * Wait for the next terminal transition (success/error/cancelled) of a
+ * named action. Resolves with the settled instance. Auto-unsubscribes
+ * after the first match — no cleanup needed by the caller.
+ *
+ * If the action is not currently pending, resolves on the NEXT dispatch
+ * that reaches a terminal state (not immediately).
+ *
+ * Use cases: sequential orchestration ("wait for save to finish before
+ * navigating"), test assertions, one-shot progress indicators.
+ *
+ * @param name - Action name to observe (e.g. "settings.patch").
+ * @returns A promise that resolves with the first terminal ActionInstance.
+ */
+export function onceSettled(name: string): Promise<ActionInstance> {
+  return new Promise<ActionInstance>((resolve) => {
+    const unsub = subscribeByName(name, (inst) => {
+      if (inst.status === "success" || inst.status === "error" || inst.status === "cancelled") {
+        unsub();
+        resolve(inst);
+      }
+    });
+  });
+}
+
 /** Test-only: clear log + listeners. */
 export function _resetForTest(): void {
   log.length = 0;
