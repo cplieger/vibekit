@@ -10,7 +10,7 @@ export interface CommandRule {
   created_at: number;
 }
 
-export interface AddRuleArgs {
+interface AddRuleArgs {
   pattern: string;
   mode: "allow" | "deny";
   priority: number;

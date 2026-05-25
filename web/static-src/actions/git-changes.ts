@@ -13,7 +13,7 @@ interface GitRepoArgs {
   repo: string;
 }
 
-export interface GitRepoFilesArgs extends GitRepoArgs {
+interface GitRepoFilesArgs extends GitRepoArgs {
   files: string[];
 }
 

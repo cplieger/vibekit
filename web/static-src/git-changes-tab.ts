@@ -333,7 +333,7 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
       ev.stopPropagation();
       void import("./git-branch-switcher.js").then(({ openBranchSwitcher }) => {
         openBranchSwitcher(r.repo, chip);
-      });
+      }).catch(() => {});
       return;
     }
     const open = section.classList.toggle("expanded");
@@ -849,7 +849,7 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
       const { openNewPRForRepo } = await import("./git-prs-tab.js");
       setGitTab("prs");
       await openNewPRForRepo(r.repo, r.branch);
-    })();
+    })().catch(() => {});
   });
   hint.appendChild(btn);
   return hint;

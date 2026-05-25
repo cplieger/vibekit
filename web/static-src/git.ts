@@ -48,7 +48,7 @@ export function initGitPanel(): void {
       onConnectForge: () => { void (async () => {
         const { setGitTab } = await import("./git-tabs.js");
         setGitTab("sources");
-      })(); },
+      })().catch(() => {}); },
       // Authenticate-gh CTA: deferred for now (the new multi-repo
       // model handles auth via per-forge "Add account" buttons in
       // the Sources tab; the legacy `gh auth login` device-flow
@@ -56,7 +56,7 @@ export function initGitPanel(): void {
       onAuthenticateGh: () => { void (async () => {
         const { setGitTab } = await import("./git-tabs.js");
         setGitTab("sources");
-      })(); },
+      })().catch(() => {}); },
     });
 
     // When the user switches into a tab, run a fresh fetch so they

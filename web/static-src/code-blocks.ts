@@ -88,7 +88,7 @@ function makeCopyButton(text: string): HTMLButtonElement {
           timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
         },
       }),
-    );
+    ).catch(() => {});
   });
   return btn;
 }

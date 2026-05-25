@@ -140,7 +140,7 @@ function init(): void {
   initTangent();
   // Wire toolbar history button. Hidden when retention is 0 (no archive).
   $.historyBtn.addEventListener("click", () => {
-    void import("./history.js").then(({ showHistoryView }) => showHistoryView());
+    void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
   });
   // Sync history button visibility with retention setting.
   const syncHistoryBtn = (): void => {
@@ -404,10 +404,10 @@ function applyRoute(route: Route): void {
       break;
     case "file":     openFile(route.path, route.line); break;
     case "history":
-      void import("./history.js").then(({ showHistoryView }) => showHistoryView());
+      void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
       break;
     case "follow":
-      void import("./follow.js").then(({ showFollowView }) => showFollowView());
+      void import("./follow.js").then(({ showFollowView }) => showFollowView()).catch(() => {});
       break;
   }
 }

@@ -56,7 +56,7 @@ export const toggleServer = apiAction<ToggleArgs, void, Server>({
 
 // --- mcp.delete_server ---
 
-export interface DeleteArgs {
+interface DeleteArgs {
   id: string;
 }
 
@@ -121,7 +121,7 @@ export const saveServer = apiAction<SaveArgs, Server>({
 
 // --- mcp.search_registry ---
 
-export interface SearchRegistryArgs {
+interface SearchRegistryArgs {
   q: string;
 }
 

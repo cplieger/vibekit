@@ -199,10 +199,12 @@ function attachAttempts(e: unknown, attempts: number): void {
 
 /** Read the attempt count attached by runWithRetry, or undefined. */
 function readAttempts(e: unknown): number | undefined {
-  if (typeof e === "object" && e !== null && "_attempts" in e) {
-    const val = (e as { _attempts: unknown })._attempts;
-    return typeof val === "number" ? val : undefined;
-  }
+  try {
+    if (typeof e === "object" && e !== null && "_attempts" in e) {
+      const val = (e as { _attempts: unknown })._attempts;
+      return typeof val === "number" ? val : undefined;
+    }
+  } catch { /* Proxy or getter threw — skip */ }
   return undefined;
 }
 
@@ -651,7 +653,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       }
       return {
         onClick: () => {
-          const fresh = retryArgsFn(refArgs);
+          let fresh: TArgs | null;
+          try { fresh = retryArgsFn(refArgs); } catch { return; }
           if (fresh !== null) void dispatch(fresh);
         },
       };

@@ -80,9 +80,15 @@ export function bindLoadingState(
   let wasConnected = el.isConnected;
 
   /** Resolve the base disabled state: disabledFn takes precedence over
-   *  the snapshot-based preserveDisabled approach. */
-  const resolveBase = (): boolean =>
-    disabledFn !== undefined ? disabledFn() : (preserveDisabled ? baseDisabled : false);
+   *  the snapshot-based preserveDisabled approach. If disabledFn throws,
+   *  fall back to false so the element is at least re-enabled (safe
+   *  default) rather than stuck in the pending visual state. */
+  const resolveBase = (): boolean => {
+    if (disabledFn !== undefined) {
+      try { return disabledFn(); } catch { return false; }
+    }
+    return preserveDisabled ? baseDisabled : false;
+  };
 
   /** Restore element to idle state (B7: deduplicated helper). */
   const setIdle = (): void => {
@@ -177,8 +183,12 @@ export function bindLoadingStateMulti(
   let disposed = false;
   let wasConnected = el.isConnected;
 
-  const resolveBase = (): boolean =>
-    disabledFn !== undefined ? disabledFn() : (preserveDisabled ? baseDisabled : false);
+  const resolveBase = (): boolean => {
+    if (disabledFn !== undefined) {
+      try { return disabledFn(); } catch { return false; }
+    }
+    return preserveDisabled ? baseDisabled : false;
+  };
 
   const setIdle = (): void => {
     el.disabled = resolveBase();

@@ -114,7 +114,7 @@ export function activateChatView(id: string): void {
   // Prefetch conflict records so badges on historical tool calls
   // are present as soon as the messages render. Dynamic import
   // keeps the conflicts module lazy — most chats never see one.
-  void import("./conflicts.js").then((m) => m.loadConflictsFor(id));
+  void import("./conflicts.js").then((m) => m.loadConflictsFor(id)).catch(() => {});
 
   const session = get(id);
   if (session === undefined) return;

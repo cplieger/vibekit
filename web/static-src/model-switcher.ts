@@ -67,28 +67,27 @@ class ModelSwitchController {
     if (session === undefined) return;
     const current = session.model;
     for (const m of getCachedModels()) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = m.model_id === current
+      const opt = document.createElement("div");
+      opt.className = m.model_id === current
         ? "pill-model-item active" : "pill-model-item";
-      btn.dataset["model"] = m.model_id;
-      btn.setAttribute("role", "option");
-      btn.setAttribute("aria-selected", m.model_id === current ? "true" : "false");
+      opt.dataset["model"] = m.model_id;
+      opt.setAttribute("role", "option");
+      opt.setAttribute("aria-selected", m.model_id === current ? "true" : "false");
       const label = humanName(m.model_name || m.model_id);
-      btn.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
+      opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
       const name = document.createElement("span");
       name.textContent = label;
       const meta = document.createElement("span");
       meta.className = "pill-model-meta";
       meta.textContent = `${String(m.rate_multiplier)}x`;
-      btn.append(name, meta);
-      btn.addEventListener("click", (e: MouseEvent) => {
+      opt.append(name, meta);
+      opt.addEventListener("click", (e: MouseEvent) => {
         e.stopPropagation();
         collapseAll();
         if (m.model_id === current) return;
         this.requestModelSwitch(m.model_id);
       });
-      list.appendChild(btn);
+      list.appendChild(opt);
     }
     wireArrowNav(list, ".pill-model-item");
   }

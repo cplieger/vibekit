@@ -13,11 +13,11 @@ interface CloneArgs {
   url: string;
 }
 
-export interface DeleteLocalArgs {
+interface DeleteLocalArgs {
   repoName: string;
 }
 
-export interface SignOutArgs {
+interface SignOutArgs {
   forgeId: string;
 }
 

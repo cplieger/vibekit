@@ -62,6 +62,11 @@ describe("a11y: missing labels", () => {
     const generalBtn = bar.querySelector('[data-settings-tab="general"]') as HTMLButtonElement;
     expect(generalBtn.getAttribute("role")).toBe("tab");
     expect(generalBtn.getAttribute("aria-label")).toBe("General");
+    expect(generalBtn.getAttribute("aria-controls")).toBe("settings-panel-general");
+    expect(generalBtn.id).toBe("settings-tab-general");
+    expect(generalBtn.getAttribute("tabindex")).toBe("0");
+    const toolsBtn = bar.querySelector('[data-settings-tab="tools"]') as HTMLButtonElement;
+    expect(toolsBtn.getAttribute("tabindex")).toBe("-1");
 
     document.body.removeChild(bar);
     document.body.removeChild(select);

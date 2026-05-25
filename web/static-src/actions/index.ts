@@ -63,7 +63,7 @@ export type { DispatchOptions } from "./types.js";
 
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.
-export type { ArgsOf, ResultOf, ActionFromDef, RetryConfig } from "./types.js";
+export type { ArgsOf, ResultOf, ActionFromDef } from "./types.js";
 
 // Action and ActionContext: needed by callers that type-annotate action
 // variables or write custom run() implementations receiving the context.

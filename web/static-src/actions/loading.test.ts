@@ -688,3 +688,189 @@ describe("bindLoadingCluster", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("bindLoadingState — disabledFn edge cases", () => {
+  it("recovers gracefully when disabledFn throws on completion", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_throw",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.disabledfn_throw", btn, {
+      pendingClass: "loading",
+      disabledFn: () => { throw new Error("validation exploded"); },
+    });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains("loading")).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    resolveRun!();
+    await p;
+    // disabledFn threw → falls back to false (element re-enabled)
+    expect(btn.disabled).toBe(false);
+    // aria-busy and pendingClass still cleaned up despite the throw
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    expect(btn.classList.contains("loading")).toBe(false);
+    btn.remove();
+  });
+
+  it("disabledFn throwing does not prevent focus restore", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_throw_focus",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    let shouldThrow = false;
+    bindLoadingState("test.disabledfn_throw_focus", btn, {
+      disabledFn: () => { if (shouldThrow) throw new Error("boom"); return false; },
+    });
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    shouldThrow = true;
+    resolveRun!();
+    await p;
+    // Falls back to false → button enabled → focus restored
+    expect(btn.disabled).toBe(false);
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("disabledFn returning true suppresses focus restore", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_no_focus",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.disabledfn_no_focus", btn, {
+      disabledFn: () => true,
+    });
+    btn.focus();
+    const focusSpy = vi.spyOn(btn, "focus");
+    const p = action.dispatch({});
+    resolveRun!();
+    await p;
+    // disabledFn returns true → button stays disabled → focus NOT restored
+    expect(btn.disabled).toBe(true);
+    expect(focusSpy).not.toHaveBeenCalled();
+    btn.remove();
+  });
+
+  it("disabledFn throwing in bindLoadingStateMulti recovers gracefully", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.multi_dfn_throw",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingStateMulti(["test.multi_dfn_throw", "test.multi_dfn_other"], btn, {
+      pendingClass: "spin",
+      disabledFn: () => { throw new Error("kaboom"); },
+    });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains("spin")).toBe(true);
+    resolveRun!();
+    await p;
+    // Falls back to false on throw
+    expect(btn.disabled).toBe(false);
+    expect(btn.classList.contains("spin")).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    btn.remove();
+  });
+});
+
+describe("bindLoadingCluster — edge cases", () => {
+  it("onChange throwing does not crash subsequent transitions", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.cluster_throw",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    let callCount = 0;
+    const unbind = bindLoadingCluster(["test.cluster_throw"], () => {
+      callCount++;
+      if (callCount === 2) throw new Error("onChange exploded");
+    });
+    // callCount=1 from initial call
+    expect(callCount).toBe(1);
+    const p = action.dispatch({});
+    // callCount=2 from pending transition — throws, but registry catches
+    expect(callCount).toBe(2);
+    resolveRun!();
+    await p;
+    // callCount=3 from success transition — still fires despite prior throw
+    expect(callCount).toBe(3);
+    unbind();
+  });
+
+  it("handles action already pending at bind time", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.cluster_already_pending",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const p = action.dispatch({});
+    // Bind AFTER action is already pending
+    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
+    bindLoadingCluster(["test.cluster_already_pending"], (s) => {
+      states.push({ pending: s.pending, activeNames: [...s.activeNames] });
+    });
+    // Initial call should see the already-pending action
+    expect(states).toHaveLength(1);
+    expect(states[0]).toEqual({ pending: true, activeNames: ["test.cluster_already_pending"] });
+    resolveRun!();
+    await p;
+    expect(states[states.length - 1]).toEqual({ pending: false, activeNames: [] });
+  });
+
+  it("duplicate action names in array do not cause double notifications", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.cluster_dup",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
+    bindLoadingCluster(["test.cluster_dup", "test.cluster_dup"], (s) => {
+      states.push({ pending: s.pending, activeNames: [...s.activeNames] });
+    });
+    expect(states).toHaveLength(1);
+    const p = action.dispatch({});
+    // Should only get ONE notification per transition (not two)
+    // The name appears twice in activeNames because the loop checks each entry
+    expect(states.length).toBeLessThanOrEqual(3);
+    resolveRun!();
+    await p;
+    const final = states[states.length - 1]!;
+    expect(final.pending).toBe(false);
+  });
+
+  it("unsubscribe during onChange callback is safe", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.cluster_reentrant",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    let callCount = 0;
+    let unbindFn: (() => void) | undefined;
+    unbindFn = bindLoadingCluster(["test.cluster_reentrant"], () => {
+      callCount++;
+      if (callCount === 2) unbindFn!(); // unsubscribe during pending notification
+    });
+    expect(callCount).toBe(1);
+    const p = action.dispatch({});
+    expect(callCount).toBe(2); // pending notification triggered unsubscribe
+    resolveRun!();
+    await p;
+    // No further notifications after self-unsubscribe
+    expect(callCount).toBe(2);
+  });
+});

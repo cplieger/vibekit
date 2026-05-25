@@ -67,7 +67,7 @@ export function showBanner(
   }
   const el = document.createElement("div");
   el.className = `banner banner-${level}`;
-  el.setAttribute("role", "alert");
+  el.setAttribute("role", level === "error" ? "alert" : "status");
   const msg = document.createElement("span");
   msg.className = "banner-msg";
   msg.textContent = message;

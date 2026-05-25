@@ -23,7 +23,7 @@ export function renderDiffModeUI(state: FileState): void {
     oldLabel: src.oldLabel, newLabel: src.newLabel, lineNumbers: true, syncScroll: true,
     onAskAbout: (hunkText: string) => {
       if (pending) {
-        void import("./editor-pending.js").then((m) => m.openDiscussPrompt(state.path, hunkText));
+        void import("./editor-pending.js").then((m) => m.openDiscussPrompt(state.path, hunkText)).catch(() => {});
         return;
       }
       const chatID = getActiveId();
@@ -31,17 +31,17 @@ export function renderDiffModeUI(state: FileState): void {
       const prompt = `Explain this diff:\n\n\`\`\`diff\n${hunkText}\n\`\`\``;
       void import("./chat-commands.js").then(({ sendPromptTo }) => {
         void sendPromptTo(chatID, prompt);
-      });
+      }).catch(() => {});
     },
   };
   if (pending) {
     paneOpts.onAcceptHunk = (hunkIndex: number) => {
       state.pendingHunkDecisions.set(hunkIndex, "accept");
-      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state));
+      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
     };
     paneOpts.onRejectHunk = (hunkIndex: number) => {
       state.pendingHunkDecisions.set(hunkIndex, "reject");
-      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state));
+      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
     };
   }
   const pane = renderDiffPane(diff, paneOpts);
@@ -58,5 +58,5 @@ export function renderDiffModeUI(state: FileState): void {
   }
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
-  if (pending) void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state));
+  if (pending) void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
 }

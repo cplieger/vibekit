@@ -310,4 +310,57 @@ describe("retryArgs — fresh args at retry-click time", () => {
 
     expect(dispatches).toEqual([42]); // no second dispatch
   });
+
+  it("does not throw when retryArgs function throws", async () => {
+    const dispatches: string[] = [];
+    const action = defineAction<string, string>({
+      name: "test.retry_args_throws",
+      retryable: "always",
+      retryArgs: () => { throw new Error("retryArgs exploded"); },
+      run: async (args) => {
+        dispatches.push(args);
+        throw new ActionError("fail", { code: "network" });
+      },
+    });
+
+    await action.dispatch("orig");
+    expect(dispatches).toEqual(["orig"]);
+
+    const { error: toastError } = await import("../toast.js");
+    const calls = vi.mocked(toastError).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    const retryConfig = lastCall![1] as { onClick: () => void } | undefined;
+    expect(retryConfig).toBeDefined();
+
+    // Click retry — retryArgs throws, should not crash or dispatch
+    retryConfig!.onClick();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(dispatches).toEqual(["orig"]); // no second dispatch
+  });
+});
+
+describe("readAttempts — Proxy edge case", () => {
+  it("handles error objects with throwing _attempts getter", async () => {
+    const action = defineAction({
+      name: "test.proxy_attempts",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        const err = new ActionError("proxy", { code: "network" });
+        Object.defineProperty(err, "_attempts", {
+          get() { throw new Error("getter exploded"); },
+          configurable: true,
+        });
+        throw err;
+      },
+    });
+    // Should not throw — readAttempts gracefully handles getter errors
+    const result = await action.dispatch(undefined);
+    expect(result).toBeNull();
+    const log = recentLog();
+    expect(log[0]?.status).toBe("error");
+  });
 });

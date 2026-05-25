@@ -64,14 +64,16 @@ export async function applyActivePendingPartial(): Promise<void> {
   const merged = buildPartialMergeText(state, state.pendingHunkDecisions);
   const approxBytes = merged.length * 4;
   if (approxBytes > 4 * 1024 * 1024) {
-    const { showBanner } = await import("./banner-stack.js");
-    showBanner(
-      chatID,
-      "partial-merge-too-large",
-      "Merged result is too large (>4 MiB). Reject more hunks or use Accept for the full change.",
-      "warning",
-      true,
-    );
+    try {
+      const { showBanner } = await import("./banner-stack.js");
+      showBanner(
+        chatID,
+        "partial-merge-too-large",
+        "Merged result is too large (>4 MiB). Reject more hunks or use Accept for the full change.",
+        "warning",
+        true,
+      );
+    } catch { /* chunk load failure — silently skip banner */ }
     return;
   }
   const path = state.path;

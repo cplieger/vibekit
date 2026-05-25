@@ -37,6 +37,7 @@ export interface ActionStatus {
 }
 
 const snapshots = new Map<string, ActionStatus>();
+const MAX_SNAPSHOTS = 200;
 let listenerInstalled = false;
 let unsubscribe: (() => void) | null = null;
 
@@ -94,6 +95,12 @@ export function actionStatus(name: string): ActionStatus {
       lastSettledAt: 0,
     };
     snapshots.set(name, snap);
+    // Evict oldest idle entry when over cap to bound memory.
+    if (snapshots.size > MAX_SNAPSHOTS) {
+      for (const [k, v] of snapshots) {
+        if (k !== name && v.pending === 0) { snapshots.delete(k); break; }
+      }
+    }
   }
   // Lazy listener install: only when at least one consumer asks.
   if (!listenerInstalled) {
