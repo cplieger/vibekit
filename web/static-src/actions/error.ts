@@ -36,14 +36,14 @@ export class ActionError extends Error implements ActionErrorLike {
   }
 }
 
-/** Type predicate: true when `v` is a non-null object with a string
- *  `error` property. Replaces unsafe `as { error?: string }` casts on
- *  parsed JSON bodies throughout the action framework and api-client. */
 /** Type predicate: narrows `unknown` to ActionError. */
 export function isActionError(e: unknown): e is ActionError {
   return e instanceof ActionError;
 }
 
+/** Type predicate: true when `v` is a non-null object with a string
+ *  `error` property. Replaces unsafe `as { error?: string }` casts on
+ *  parsed JSON bodies throughout the action framework and api-client. */
 export function hasErrorString(v: unknown): v is { error: string } {
   if (typeof v !== "object" || v === null || !("error" in v)) return false;
   // After the `in` check, TS narrows `v` to `object & Record<"error", unknown>`.

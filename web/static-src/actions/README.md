@@ -400,8 +400,8 @@ sequentially).
 ## Per-dispatch callbacks
 
 `DispatchOptions` accepts `onSuccess` / `onError` / `onCancel` /
-`onSettled` / `onRetryAttempt` for callsite-specific reactions
-without bloating the action definition:
+`onSettled` / `onRetryAttempt` / `onRetryExhausted` for callsite-specific
+reactions without bloating the action definition:
 
 ```ts
 const result = await saveDraftAction.dispatch(draft, {
@@ -418,7 +418,8 @@ Signatures:
 - `onError(err: ActionErrorLike, args: TArgs)` — fires only on error (NOT cancellation)
 - `onCancel(args: TArgs)` — fires only on cancellation (NOT error). Use to distinguish user-initiated abort from failure without inspecting `onError`'s absence.
 - `onSettled(args: TArgs)` — fires for success, error, AND cancellation
-- `onRetryAttempt(info: RetryAttemptInfo, args: TArgs)` — fires before each retry attempt (not the initial attempt). `info` contains `{ attempt, maxAttempts, error }`.
+- `onRetryAttempt(info: RetryAttemptInfo, args: TArgs)` — fires before each retry attempt (not the initial attempt). `info` contains `{ attempt, maxAttempts, error, delay }`.
+- `onRetryExhausted(info: { error, attempts }, args: TArgs)` — fires when all auto-retries have failed, before the error toast. Useful for telemetry that distinguishes retry exhaustion from first-attempt failures.
 
 Callbacks fire AFTER the action-level toast emission. `onSettled`
 fires in the `finally` block, so it runs even if `onSuccess` or
