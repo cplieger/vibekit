@@ -29,9 +29,47 @@ export interface AppSettings {
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
+/** Last-known value per settings key. Seeded by initSettingsTracking()
+ *  on app boot from /api/settings; updated by patchSettings() as we
+ *  send writes. Used to filter no-op writes (same-value PATCHes that
+ *  trigger the saving animation for nothing — e.g. the bootstrap
+ *  fire of repo-picker's onSelectionChange persisting the already-
+ *  saved git_repo on every page load). */
+let lastSentPatch: Partial<AppSettings> = {};
+
+/** Seed the dedup tracker from the loaded settings. Called once at
+ *  app boot before any patchSettings() can fire. Without this, the
+ *  first patch for any key after page load is treated as a change
+ *  even when the value matches the server. */
+export function initSettingsTracking(s: AppSettings): void {
+  lastSentPatch = { ...s };
+}
+
+/** @internal Reset module state for tests. */
+export function __testResetTracking(): void {
+  lastSentPatch = {};
+  patchQueue = {};
+  if (patchTimer !== undefined) {
+    clearTimeout(patchTimer);
+    patchTimer = undefined;
+  }
+}
 
 export function patchSettings(patch: Partial<AppSettings>): void {
-  Object.assign(patchQueue, patch);
+  // Filter out keys whose value matches the last-sent value. JSON
+  // equality is good enough for the AppSettings shape (primitives +
+  // arrays of strings); avoids reflecting no-op writes back to the
+  // server and prevents the "Saving..." animation from firing on
+  // bootstrap subscriptions like onSelectionChange's immediate fire.
+  const changed: Partial<AppSettings> = {};
+  for (const k of Object.keys(patch) as Array<keyof AppSettings>) {
+    if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
+      Object.assign(changed, { [k]: patch[k] });
+      Object.assign(lastSentPatch, { [k]: patch[k] });
+    }
+  }
+  if (Object.keys(changed).length === 0) return;
+  Object.assign(patchQueue, changed);
   if (patchTimer !== undefined) return;
   showSaving();
   patchTimer = setTimeout(() => {
