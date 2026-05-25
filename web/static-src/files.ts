@@ -22,7 +22,7 @@ import {
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import { createFile, createFolder, renameFile, deleteFilesBatch, upload, downloadFiles } from "./actions/files.js";
-import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { bindLoadingStateMulti, registerCleanup } from "./actions/index.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
@@ -117,13 +117,15 @@ export function initFileBrowser(): void {
     reload: loadDir,
   });
 
-  // Auto-disable buttons while their respective actions are in flight.
-  bindLoadingState("files.upload", $.fbUpload, { preserveDisabled: true });
-  bindLoadingState("files.create_file", $.fbNewFile, { preserveDisabled: true });
-  bindLoadingState("files.create_folder", $.fbNewFolder, { preserveDisabled: true });
-  bindLoadingState("files.download", $.fbDownload, { preserveDisabled: true });
-  bindLoadingState("files.rename", $.fbRename, { preserveDisabled: true });
-  bindLoadingState("files.delete", $.fbDelete, { preserveDisabled: true });
+  // Auto-disable buttons while any mutually-exclusive file operation is
+  // in flight. Prevents races (e.g. rename + delete on the same selection).
+  const fileOps = ["files.upload", "files.create_file", "files.create_folder", "files.rename", "files.delete"] as const;
+  bindLoadingStateMulti(fileOps, $.fbUpload, { preserveDisabled: true });
+  bindLoadingStateMulti(fileOps, $.fbNewFile, { preserveDisabled: true });
+  bindLoadingStateMulti(fileOps, $.fbNewFolder, { preserveDisabled: true });
+  bindLoadingStateMulti(["files.download"], $.fbDownload, { preserveDisabled: true });
+  bindLoadingStateMulti(fileOps, $.fbRename, { preserveDisabled: true });
+  bindLoadingStateMulti(fileOps, $.fbDelete, { preserveDisabled: true });
 
   // Escape deselects all.
   onBus(BUS_KEYS_ESCAPE, () => {

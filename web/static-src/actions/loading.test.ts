@@ -417,3 +417,105 @@ describe("bindLoadingState — focus restore", () => {
     other.remove();
   });
 });
+
+describe("bindLoadingState — focus restore edge cases", () => {
+  it("does NOT restore focus when preserveDisabled keeps element disabled (baseDisabled=true)", async () => {
+    // Scenario: button is disabled by validation at the time the action
+    // starts. hadFocus is false because a disabled button can't receive
+    // focus in real browsers. After action completes, preserveDisabled
+    // restores disabled=true and focus is NOT touched.
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_preserve_disabled",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    btn.disabled = true;
+    bindLoadingState("test.focus_preserve_disabled", btn, { preserveDisabled: true });
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    // Dispatch while button is disabled — hadFocus should be false
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // Button stays disabled (preserveDisabled restores baseDisabled=true)
+    expect(btn.disabled).toBe(true);
+    // Focus stays on other — not stolen to btn
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+
+  it("restores focus after error (not just success)", async () => {
+    const action = defineAction({
+      name: "test.focus_on_error",
+      run: async () => { throw new Error("boom"); },
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.focus_on_error", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    await action.dispatch({});
+    // Focus restored even though action errored
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+});
+
+describe("bindLoadingStateMulti — focus restore", () => {
+  it("restores focus when all actions complete", async () => {
+    let resolve1!: () => void;
+    let resolve2!: () => void;
+    const a1 = defineAction({
+      name: "test.multi_focus1",
+      run: () => new Promise<void>((r) => { resolve1 = r; }),
+    });
+    const a2 = defineAction({
+      name: "test.multi_focus2",
+      run: () => new Promise<void>((r) => { resolve2 = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingStateMulti(["test.multi_focus1", "test.multi_focus2"], btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p1 = a1.dispatch({});
+    const p2 = a2.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve1();
+    await p1;
+    // Still pending (a2), focus not yet restored
+    expect(btn.disabled).toBe(true);
+    resolve2();
+    await p2;
+    // All done — focus restored
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("does NOT steal focus when user moved elsewhere", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.multi_focus_no_steal",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    bindLoadingStateMulti(["test.multi_focus_no_steal"], btn);
+    btn.focus();
+    const p = action.dispatch({});
+    other.focus();
+    resolveRun!();
+    await p;
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+});

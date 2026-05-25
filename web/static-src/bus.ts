@@ -104,7 +104,7 @@ export function dispatch(evt: ServerEvent): void {
   const set = sseHandlers.get(evt.type);
   if (set === undefined) return;
   const chatID = evt.chat_id ?? "";
-  for (const fn of set) {
+  for (const fn of [...set]) {
     try {
       fn(chatID, evt.payload);
     } catch (e) {
@@ -166,7 +166,7 @@ export function emitBus<K extends keyof BusPayloads>(
   const [event, ...rest] = args;
   const set = busHandlers.get(event);
   if (set === undefined) return;
-  for (const fn of set) {
+  for (const fn of [...set]) {
     try {
       fn(...rest);
     } catch (e) {

@@ -496,17 +496,12 @@ subscribeToActions(() => {
 });
 ```
 
-## Action status snapshots (internal)
-
-> **Note:** `actionStatus` is `@internal` — not exported from the
-> public surface (`actions/index.ts`). Import directly from
-> `./actions/action-status.js` if needed within the framework.
+## Action status snapshots
 
 For UIs that need richer state than just "is it pending":
 
 ```ts
-// Internal use only — not part of the public API.
-import { actionStatus } from "./action-status.js";
+import { actionStatus } from "./actions/index.js";
 
 const status = actionStatus("settings.save_steering");
 // status is a live-updating object — same reference, mutated in place.
@@ -542,17 +537,17 @@ git.unstage
 mcp.delete_server         mcp.open_edit             mcp.save_server
 mcp.search_registry       mcp.toggle_server
 messages.explain_error    messages.undo_edit
-notify.register_push
+notify.register_push      notify.unsubscribe_push
 permissions.add_rule      permissions.remove_rule
 plan.run
-settings.logout           settings.patch            settings.save_steering
+settings.load             settings.logout           settings.patch            settings.save_steering
 settings.set_kiro_setting
 tools.install             tools.load_list           tools.run_diagnostics
 tools.save                tools.seed_mcp
 ui.copy_clipboard
 ```
 
-(76 actions as of 2026-05-25.)
+(78 actions as of 2026-05-25.)
 
 This is the registry key for log queries, telemetry, and tests.
 Pick once and don't change — callers may grep for it.

@@ -120,6 +120,10 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
       } finally {
         for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
       }
+    }).catch(() => {
+      // Defensive: dispatch() should never reject per the action framework
+      // contract, but if it does, ensure resolvers fire so callers don't hang.
+      for (const resolve of resolvers) resolve(null);
     });
   }, 300);
   return p;

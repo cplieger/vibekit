@@ -107,7 +107,7 @@ export interface ApiResult<T> {
 
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
-import { hasErrorString } from "./actions/error.js";
+import { hasErrorString } from "./actions/index.js";
 
 /** Fetch + decode variant: runs the response through a Decoder<T>
  *  after parsing JSON. Returns a full ApiResult envelope so callers

@@ -41,6 +41,7 @@ export function openOverflowMenu(
   const root = document.createElement("div");
   root.className = "overflow-menu";
   root.setAttribute("role", "menu");
+  root.setAttribute("aria-label", "Actions");
 
   for (const item of items) {
     const btn = document.createElement("button");
@@ -109,6 +110,7 @@ export function openOverflowMenu(
 
   document.addEventListener("scroll", onScrollOrResize, true);
   window.addEventListener("resize", onScrollOrResize);
+  trigger.setAttribute("aria-haspopup", "menu");
   trigger.setAttribute("aria-expanded", "true");
 
   const cleanup = (): void => {

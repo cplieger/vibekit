@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { hasErrorString } from "./actions/error.js";
+import { hasErrorString } from "./actions/index.js";
 
 export interface UploadOptions {
   files: FileList;

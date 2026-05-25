@@ -74,11 +74,12 @@ export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previo
       // pattern is no longer in current state (e.g. an external
       // delete happened between optimistic and rollback), fall back
       // to appending so the previousRule isn't lost.
+      const prev = op.previousRule;
       const found = current.some((r) => r.pattern === op.pattern);
       if (found) {
-        setRules(current.map((r) => r.pattern === op.pattern ? op.previousRule! : r));
+        setRules(current.map((r) => r.pattern === op.pattern ? prev : r));
       } else {
-        setRules([...current, op.previousRule]);
+        setRules([...current, prev]);
       }
     } else {
       // No previous rule — remove our optimistic insert.
@@ -110,13 +111,14 @@ export const removeRule = apiAction<RemoveRuleArgs, void, { previousRule: Comman
     // original position. Without atIndex the rule would jump to the
     // end of the list on rollback (cosmetic glitch); using atIndex
     // preserves the user's display order.
+    const prev = op.previousRule;
     const current = getCurrentRules();
-    if (current.some((r) => r.pattern === op.previousRule!.pattern)) {
+    if (current.some((r) => r.pattern === prev.pattern)) {
       // Already there (e.g. loadRules re-fetched it); no-op.
       return;
     }
     const next = [...current];
-    next.splice(Math.min(op.atIndex, next.length), 0, op.previousRule);
+    next.splice(Math.min(op.atIndex, next.length), 0, prev);
     setRules(next);
   },
   error: "Couldn't remove rule",

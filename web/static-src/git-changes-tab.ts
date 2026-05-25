@@ -481,7 +481,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(pullBtn);
-  bindingCleanups.push(bindLoadingState("git.pull", pullBtn));
+  bindingCleanups.push(bindLoadingStateMulti(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn));
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
@@ -499,7 +499,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pushBtn);
-    bindingCleanups.push(bindLoadingState("git.push", pushBtn));
+    bindingCleanups.push(bindLoadingStateMulti(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn));
   }
 
   const stashBtn = btn("Stash", "Stash uncommitted changes");
@@ -510,7 +510,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stashBtn);
-  bindingCleanups.push(bindLoadingState("git.stash", stashBtn));
+  bindingCleanups.push(bindLoadingStateMulti(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn));
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
@@ -521,7 +521,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pop);
-    bindingCleanups.push(bindLoadingState("git.stash_pop", pop));
+    bindingCleanups.push(bindLoadingStateMulti(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop));
   }
 
   return bar;

@@ -621,10 +621,17 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     try {
       frozenArgs = structuredClone(args);
     } catch {
-      try {
-        frozenArgs = (Array.isArray(args) ? [...args] : { ...args as object }) as TArgs;
-      } catch {
+      // Shallow copy only makes sense for objects/arrays. Primitives
+      // (string, number, boolean, null, undefined) are immutable and
+      // need no cloning — use them directly.
+      if (args === null || args === undefined || typeof args !== "object") {
         frozenArgs = args;
+      } else {
+        try {
+          frozenArgs = (Array.isArray(args) ? [...args] : { ...args }) as TArgs;
+        } catch {
+          frozenArgs = args;
+        }
       }
     }
     return {

@@ -219,12 +219,13 @@ export function subscribeByName(name: string, fn: RegistryListener): () => void 
   let set = namedListeners.get(name);
   if (set === undefined) { set = new Set(); namedListeners.set(name, set); }
   set.add(fn);
+  const captured = set;
   return () => {
-    set!.delete(fn);
+    captured.delete(fn);
     // Only delete the Map entry if our captured set is still the current
     // one for this name. Prevents double-unsubscribe from nuking a newer
     // Set created after the first unsubscribe emptied and removed ours.
-    if (set!.size === 0 && namedListeners.get(name) === set) namedListeners.delete(name);
+    if (captured.size === 0 && namedListeners.get(name) === captured) namedListeners.delete(name);
   };
 }
 
