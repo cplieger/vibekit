@@ -175,14 +175,22 @@ function init(): void {
   // Global progress indicator: toggle a CSS class on the 2px top
   // stripe whenever any action is in-flight. Edge-only toggling
   // (0→N and N→0) avoids flicker from rapid intermediate changes.
+  // The falling edge is debounced by 200ms so very-fast actions
+  // (0→1→0 within a single frame) still produce a visible flash.
   const progressEl = document.getElementById("global-progress");
   if (progressEl !== null) {
     let wasActive = false;
+    let offTimer: ReturnType<typeof setTimeout> | undefined;
     subscribeToActions(() => {
       const active = pendingCount() > 0;
       if (active !== wasActive) {
         wasActive = active;
-        progressEl.classList.toggle("active", active);
+        if (active) {
+          if (offTimer !== undefined) { clearTimeout(offTimer); offTimer = undefined; }
+          progressEl.classList.add("active");
+        } else {
+          offTimer = setTimeout(() => { offTimer = undefined; progressEl.classList.remove("active"); }, 200);
+        }
       }
     });
   }

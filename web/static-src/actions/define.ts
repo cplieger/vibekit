@@ -75,7 +75,7 @@ function newIdempotencyKey(): string {
  *  or non-serializable values (DOM elements, functions). Used by
  *  the default dedupe key computation. */
 function safeStringify(args: unknown): string {
-  try { return JSON.stringify(args); } catch { return String(args); }
+  try { return JSON.stringify(args) ?? "undefined"; } catch { return String(args); }
 }
 
 /** Resolve a ToastSpec to its message string. Returns null when
@@ -158,7 +158,11 @@ export function defineAction<TArgs, TResult>(
     if (dedupeKey !== null) {
       const inflight = dedupeInflight.get(dedupeKey);
       if (inflight !== undefined) {
-        return inflight as Promise<TResult | null>;
+        // Wrap so the second caller's per-call callbacks still fire.
+        return (inflight as Promise<TResult | null>).then(
+          (v) => { opts.onSuccess?.(v as TResult, args); opts.onSettled?.(args); return v; },
+          (e) => { opts.onError?.(e, args); opts.onSettled?.(args); return null; },
+        );
       }
     }
 
@@ -170,16 +174,23 @@ export function defineAction<TArgs, TResult>(
       : typeof def.scope === "string" ? def.scope
       : null;
 
+    // Create AbortController at dispatch time so cancel() reaches
+    // scope-queued dispatches that haven't started runOnce yet.
+    const ac = new AbortController();
+    const id = nextInstanceID(def.name);
+    inFlight.set(id, ac);
+
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
-      result = runOnce(args, opts);
+      result = runOnce(args, opts, ac, id);
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
-      const next = prev.then(() => runOnce(args, opts));
-      // Replace the chain tail. Catch on the stored chain to keep the
-      // queue alive even if a dispatch throws (which it shouldn't —
-      // runOnce always resolves), so subsequent entries can still run.
-      scopeChains.set(scopeKey, next.catch(() => {}));
+      const next = prev.then(() => runOnce(args, opts, ac, id));
+      const tail = next.catch(() => {});
+      scopeChains.set(scopeKey, tail);
+      void next.finally(() => {
+        if (scopeChains.get(scopeKey) === tail) scopeChains.delete(scopeKey);
+      }).catch(() => {});
       result = next;
     }
 
@@ -213,11 +224,22 @@ export function defineAction<TArgs, TResult>(
   function runOnce(
     args: TArgs,
     opts: DispatchOptions<TArgs, TResult>,
+    ac: AbortController,
+    id: string,
   ): Promise<TResult | null> {
-    const id = nextInstanceID(def.name);
+    // If already cancelled while queued in scope chain, short-circuit.
+    if (ac.signal.aborted) {
+      const now = Date.now();
+      record({
+        id, name: def.name, status: "cancelled", args,
+        startedAt: now, completedAt: now,
+      });
+      inFlight.delete(id);
+      opts.onSettled?.(args);
+      return Promise.resolve(null);
+    }
+
     const startedAt = Date.now();
-    const ac = new AbortController();
-    inFlight.set(id, ac);
 
     // Build the per-dispatch context. The idempotency key is generated
     // once here (not per retry) so retries of the same dispatch send

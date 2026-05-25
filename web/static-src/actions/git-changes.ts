@@ -64,13 +64,16 @@ export const push = apiAction<{ repo: string }, unknown>({
   retryable: false,
 });
 
+// TODO: Add idempotencyKey back once the server reads the Idempotency-Key header
+// and deduplicates stash creation server-side.
 export const stash = apiAction<{ repo: string }, unknown>({
   name: "git.stash",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   error: "Stash failed",
-  idempotencyKey: true,
-  retryable: "network",
+  // Not retryable: without server-side idempotency, a timed-out stash that
+  // succeeded would create a duplicate stash on retry.
+  retryable: false,
 });
 
 export const stashPop = apiAction<{ repo: string }, unknown>({

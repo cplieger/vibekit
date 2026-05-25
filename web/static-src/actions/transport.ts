@@ -24,6 +24,7 @@ import { defineAction } from "./define.js";
 import { ActionError } from "./error.js";
 import type {
   Action,
+  ActionContext,
   ActionDefinition,
 } from "./types.js";
 
@@ -47,8 +48,11 @@ export function transportAction<TArgs>(
   const { command, ...rest } = def;
   return defineAction<TArgs, void>({
     ...rest,
-    run: async (args, signal) => {
+    run: async (args, signal, ctx?: ActionContext) => {
       const cmd = command(args);
+      if (ctx?.idempotencyKey !== undefined) {
+        (cmd as Command).payload = { ...(cmd as Command).payload as Record<string, unknown>, idempotency_key: ctx.idempotencyKey };
+      }
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call
       // setLastError would block the prompt send button for actions

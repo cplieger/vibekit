@@ -72,15 +72,15 @@ export function showError(): void {
 // dispatched from a path that doesn't call showSaving() explicitly.
 // ---------------------------------------------------------------------------
 const SETTINGS_ACTIONS = ["settings.patch", "settings.save_steering", "settings.set_kiro_setting"] as const;
-const SETTINGS_NAMES = new Set<string>(SETTINGS_ACTIONS);
+const SETTINGS_NAMES: ReadonlySet<string> = new Set<string>(SETTINGS_ACTIONS);
 
 subscribeToActions((instance) => {
   if (!SETTINGS_NAMES.has(instance.name)) return;
-  if (Date.now() - lastShownAt < 500) return;
-  if (instance.status === "pending" && pendingForAny(SETTINGS_ACTIONS)) {
-    showSaving();
+  if (instance.status === "pending") {
+    if (Date.now() - lastShownAt < 500) return;
+    if (pendingForAny(SETTINGS_ACTIONS)) showSaving();
   } else if (!pendingForAny(SETTINGS_ACTIONS)) {
-    if (instance.status === "success") showSaved();
-    else if (instance.status === "error") showError();
+    if (instance.status === "error") showError();
+    else if (instance.status === "success") showSaved();
   }
 });

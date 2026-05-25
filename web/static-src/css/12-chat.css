@@ -3,7 +3,7 @@
    Chat Area
    ========================================================================== */
 
-[id="chat-area"] { display: flex; flex-direction: column; height: 100%; overflow: hidden; container: chat-area / inline-size; }
+[id="chat-area"] { position: relative; display: flex; flex-direction: column; height: 100%; overflow: hidden; container: chat-area / inline-size; }
 
 .mobile-only {
   display: none;
