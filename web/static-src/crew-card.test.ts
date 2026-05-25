@@ -21,7 +21,8 @@ vi.mock("./store.js", () => ({
   getActiveId: vi.fn(() => ""),
 }));
 
-import { signature, titleFor, formatToolActivity } from "./crew-card.js";
+import { signature, titleFor } from "./crew-card.js";
+import { formatToolActivity } from "./format-tool-activity.js";
 import type { Crew } from "./types.js";
 
 // --- signature ---

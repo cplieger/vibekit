@@ -44,25 +44,39 @@ const ok = await deleteFile.dispatch(somePath);
 if (ok === null) return;  // toast already fired
 ```
 
+**When NOT to use `apiAction`:** when the response needs custom
+parsing beyond `res.json()`, when the call goes through the SSE
+transport layer (use `transportAction`), or when the work involves
+multiple sequential HTTP calls or non-HTTP side effects (use
+`defineAction`).
+
 ### `transportAction` — for SSE-backed intents
 
 For commands that flow through `transport.send` (prompt, resolve
-pending change, restore checkpoint, fork chat):
+pending change, restore checkpoint, fork chat). Internal to the
+actions/ directory — external callers use `apiAction` or
+`defineAction` instead.
 
 ```ts
-import { transportAction } from "./index.js";
+import { transportAction } from "./transport.js";
 
-export const sendPrompt = transportAction<{ chatID: string; text: string }>({
-  name: "chat.send_prompt",
-  command: ({ chatID, text }) => ({
-    type: "prompt",
+export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
+  name: "chat.restore_checkpoint",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, tag }) => ({
+    type: "restore_checkpoint",
     chat_id: chatID,
-    payload: { text },
+    payload: { tag },
   }),
-  // Agent's response stream IS the success feedback — no toast needed.
-  error: "Couldn't send",
+  retryable: "network",
+  error: "Couldn't restore checkpoint",
 });
 ```
+
+**When NOT to use `transportAction`:** when the caller lives outside
+`actions/` (use `defineAction` with a manual `transportSend` call),
+or when the response needs parsing beyond ok/error (use
+`defineAction`).
 
 ### `defineAction` — for everything else
 
@@ -72,8 +86,8 @@ flows, dynamic imports, clipboard writes, Promise.all fan-out):
 ```ts
 import { defineAction, ActionError } from "./index.js";
 
-export const copyToClipboard = defineAction<string, void>({
-  name: "ui.clipboard_copy",
+export const copyClipboard = defineAction<string, void>({
+  name: "ui.copy_clipboard",
   run: async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -85,6 +99,11 @@ export const copyToClipboard = defineAction<string, void>({
   error: "Couldn't copy",
 });
 ```
+
+**When NOT to use `defineAction`:** when the work is a single HTTP
+call (use `apiAction`) or a single transport command (use
+`transportAction`). Those factories handle signal wiring, error
+normalisation, and status-code classification automatically.
 
 ## Optimistic + rollback contract
 
@@ -194,7 +213,7 @@ error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
 
 `ActionError` carries optional `status` (HTTP) and `code` (string)
 fields. The framework uses these for retry eligibility and toast
-formatting. Common codes:
+formatting. Canonical codes:
 
 | Code          | Source                          | Retry-eligible (`"network"`) |
 |---------------|---------------------------------|------------------------------|
@@ -203,9 +222,15 @@ formatting. Common codes:
 | `"cancelled"` | DOMException AbortError / user  | No (not an error)            |
 | `"conflict"`  | HTTP 409                        | No                           |
 | `"not_found"` | HTTP 404                        | No                           |
+| `"dedupe"`    | Synthetic: deduped dispatch settled as non-success | No     |
 | *(none)*      | Generic Error without code      | Only if `retryable: "always"`|
 
 Status 0 (no HTTP response) is also retry-eligible under `"network"`.
+
+Additionally, actions may define domain-specific codes for internal
+classification (e.g. `"draft_failed"`, `"run_plan_failed"`). These
+are NOT retry-eligible under `retryable: "network"` — only
+`"network"` and `"timeout"` (plus `status === 0`) qualify.
 
 Throw with explicit codes for server-side classification:
 
@@ -217,6 +242,12 @@ throw new ActionError("Timed out", { code: "timeout" });
 The `toActionError()` normaliser (internal) maps DOMException names
 automatically: `TimeoutError` → `"timeout"`, `AbortError` →
 `"cancelled"`.
+
+**Rule:** any `catch` block around a raw `fetch()` call in a
+`defineAction` runner MUST set `code: "network"` on the thrown
+`ActionError` for network failures. Without it, `retryable: "network"`
+and auto-retry won't fire. Use `apiAction` or `transportAction` to
+get this for free.
 
 ## Cancellation
 
@@ -239,7 +270,8 @@ Default: no retry.
 
 Idempotent reads (GET) should set `retryable: 'network'`. Mutations
 that aren't idempotent (POST creating resources) should NOT set
-retryable.
+retryable unless paired with `idempotencyKey: true` (which makes
+the server treat retries as the original request).
 
 ```ts
 export const listFiles = apiAction<void, FileEntry[]>({
@@ -484,15 +516,40 @@ const status = actionStatus("settings.save_steering");
 Use `<area>.<verb>` or `<area>.<verb_noun>` with lowercase + underscores:
 
 ```
-chat.delete         chat.archive       chat.fork
-files.delete        files.create_file  files.rename
-settings.patch      settings.save_steering  settings.set_kiro_setting
-mcp.save_server     mcp.delete_server  mcp.toggle_server
-git.commit          git.push           git.stage
-tools.install       tools.save         tools.diagnostics
-tools.load_list     tools.seed_mcp
+chat.archive              chat.cancel               chat.clear_pending_trust
+chat.delete               chat.delete_archived      chat.discard_tangent
+chat.fork                 chat.load_history         chat.merge_tangent
+chat.resolve_all_pending  chat.resolve_pending_change  chat.respond_permission
+chat.restore              chat.restore_checkpoint   chat.send_prompt
+chat.set_auto_approve_crew  chat.set_supervised    chat.switch_model
+chat.trust_pending
+conflicts.load            conflicts.open_diff
 crew.send_message
+editor.fetch_agent_lines  editor.load_diff          editor.resolve_partial
+editor.save_file          editor.send_plan          editor.suggest_resolution
+files.create_file         files.create_folder       files.delete
+files.download            files.rename              files.upload
+forge.clone_repo          forge.connect_pat         forge.delete_local
+forge.sign_out            forge.start_device_flow
+git.checkout_branch       git.close_pr              git.commit
+git.discard               git.generate_message      git.merge_pr
+git.pull                  git.push                  git.refresh_prs
+git.stage                 git.stash                 git.stash_pop
+git.unstage
+mcp.delete_server         mcp.open_edit             mcp.save_server
+mcp.search_registry       mcp.toggle_server
+messages.explain_error    messages.undo_edit
+notify.register_push
+permissions.add_rule      permissions.remove_rule
+plan.run
+settings.logout           settings.patch            settings.save_steering
+settings.set_kiro_setting
+tools.install             tools.load_list           tools.run_diagnostics
+tools.save                tools.seed_mcp
+ui.copy_clipboard
 ```
+
+(72 actions as of 2026-05-25.)
 
 This is the registry key for log queries, telemetry, and tests.
 Pick once and don't change — callers may grep for it.
@@ -568,28 +625,83 @@ only fetches that auto-recover" guidance in the "When to use" section
 above continues to apply. These loaders are cancel-replace reads, not
 user-initiated mutations.
 
-## Error codes reference
+## Best practices
 
-Canonical `code` values on `ActionErrorLike`. The dispatcher uses
-these for retry eligibility (`isRetryClass`) and toast formatting.
+### 1. Scope key format: `<area>:<resource-id>`
 
-| Code          | Meaning                                              | Retry-eligible (`retryable: "network"`) |
-|---------------|------------------------------------------------------|:---------------------------------------:|
-| `"network"`   | Fetch failed (TypeError), connection refused, DNS    | ✓                                       |
-| `"timeout"`   | Request exceeded its deadline (DOMException)         | ✓                                       |
-| `"cancelled"` | User or framework aborted the signal                 | ✗ (no toast, rollback only)             |
-| `"dedupe"`    | Synthetic: deduped dispatch settled as non-success   | ✗                                       |
+Use a consistent prefix so different actions on the same resource
+serialize against each other:
 
-Additionally, actions may define domain-specific codes for internal
-classification (e.g. `"draft_failed"`, `"run_plan_failed"`,
-`"conflict"`). These are NOT retry-eligible under `retryable: "network"`
-— only `"network"` and `"timeout"` (plus `status === 0`) qualify.
+```ts
+scope: (args) => `chat:${args.chatID}`   // chat mutations
+scope: (args) => `git:${args.repo}`      // git operations per repo
+scope: (args) => `mcp:${args.id}`        // MCP server mutations
+scope: "settings"                        // static: one global queue
+```
 
-**Rule:** any `catch` block around a raw `fetch()` call in a
-`defineAction` runner MUST set `code: "network"` on the thrown
-`ActionError` for network failures. Without it, `retryable: "network"`
-and auto-retry won't fire. Use `apiAction` or `transportAction` to
-get this for free.
+### 2. Prefer `TOp` type parameter over `asOp<T>()` casts
+
+When both `optimistic` and `rollback` are defined, specify the third
+type parameter for compile-time safety:
+
+```ts
+apiAction<Args, Result, { before: string }>({ ... })
+```
+
+Reserve `asOp<T>()` for cases where the op shape is complex or
+shared across multiple actions.
+
+### 3. Set `retryable` + `retry` together for idempotent reads
+
+`retryable` controls the Retry button; `retry` controls silent
+auto-retry. For GET-based actions, always set both:
+
+```ts
+retryable: "network",
+retry: { count: 2, delay: 300 },
+```
+
+Never set `retry` on non-idempotent mutations without
+`idempotencyKey`.
+
+### 4. Use `error: false` only with a custom error surface
+
+When suppressing the error toast, the action MUST have an
+alternative error surface (send-state button, inline banner,
+caller-rendered retry UI). Document which surface handles it:
+
+```ts
+error: false,  // send-state.ts blocked-button is the surface
+```
+
+### 5. Scope key for per-resource vs static
+
+Use a function scope when different resources should run in
+parallel. Use a static string when ALL dispatches must serialize:
+
+```ts
+// Per-resource: different repos run in parallel
+scope: (args) => `git:${args.repo}`
+
+// Static: all settings patches serialize globally
+scope: "settings"
+```
+
+### 6. `idempotencyKey` for non-idempotent mutations with retry
+
+When a POST creates a resource but you want retry safety, combine
+`idempotencyKey: true` with `retryable: "network"`. The server
+dedupes on the header so a timed-out-but-processed request won't
+create duplicates on retry.
+
+### 7. Always `void` the dispatch at fire-and-forget callsites
+
+```ts
+void deleteFile.dispatch(path);  // no floating promise lint error
+```
+
+Only `await` when the caller needs the result or must sequence
+after completion.
 
 ## Testing actions
 

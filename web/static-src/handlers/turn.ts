@@ -4,7 +4,7 @@
 
 import { onSSE } from "../bus.js";
 import { setThinking, setWorkingLabel, get, getActiveId, dequeuePrompt, peekQueuedAttachments } from "../store.js";
-import { apiGet } from "../api-client.js";
+import { apiAction } from "../actions/index.js";
 import {
   notifyIfHidden, setBadge, isAgentFinishedEnabled, isPermissionNeededEnabled,
 } from "../notify.js";
@@ -283,12 +283,24 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
   void restoreCheckpointAction.dispatch({ chatID, tag });
 }
 
+/** Action for fetching restore preview (best-effort, no toast). */
+const fetchRestorePreviewAction = apiAction<{ chatID: string; tag: string }, { files?: string[] }>({
+  name: "checkpoint.preview",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  retryable: false,
+  request: ({ chatID, tag }) => ({
+    method: "GET",
+    path: `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`,
+  }),
+  success: false,
+  error: false,
+});
+
 async function fetchRestorePreview(chatID: string, tag: string): Promise<string[]> {
   // Best-effort: network failure or a server without preview
   // support (older build) falls through to the normal confirm
   // dialog so restores never get wedged by the advisory step.
-  const url = `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`;
-  const resp = await apiGet<{ files?: string[] }>(url);
+  const resp = await fetchRestorePreviewAction.dispatch({ chatID, tag });
   return resp?.files ?? [];
 }
 

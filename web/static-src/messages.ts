@@ -665,9 +665,6 @@ export function addBoundaryDivider(kind: BoundaryKind, label: string): void {
   scroll();
 }
 
-// Re-export for external consumers (conflicts.ts).
-export { refreshConflictBadges } from "./messages-shared.js";
-
 // Wire bus subscriptions for pending-change actions.
 initMessageActions();
 

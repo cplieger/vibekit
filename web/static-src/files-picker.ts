@@ -14,7 +14,7 @@ import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, ini
 export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
-import { uploadAction } from "./actions/files.js";
+import { upload } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 let currentPath = ".";
@@ -81,7 +81,7 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  void uploadAction.dispatch({ files, targetDir: currentPath }, {
+  void upload.dispatch({ files, targetDir: currentPath }, {
     onSuccess: (paths) => {
       onUploadComplete?.();
       for (const p of paths) attachPathToActiveChat(p);

@@ -9,7 +9,7 @@ import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./
 import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
-import { switchModel } from "./chat-commands.js";
+import { switchModelAction } from "./actions/chat.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { setCurrentModel, setLastModel } from "./session-context.js";
 import {
@@ -110,15 +110,15 @@ class ModelSwitchController {
     applyLocalModel(modelID);
   }
 
-  private async fire(chatID: string, modelID: string): Promise<void> {
+  private fire(chatID: string, modelID: string): void {
     this.queueState = { status: "switching", modelID };
-    try {
-      await switchModel(chatID, modelID);
-    } finally {
-      if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
-        this.queueState = { status: "idle" };
-      }
-    }
+    void switchModelAction.dispatch({ chatID, model: modelID }, {
+      onSettled: () => {
+        if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
+          this.queueState = { status: "idle" };
+        }
+      },
+    });
   }
 
   private enqueue(modelID: string): void {

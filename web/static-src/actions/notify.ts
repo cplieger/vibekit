@@ -16,7 +16,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
   name: "notify.register_push",
   run: async (_args, signal) => {
     if (!("serviceWorker" in navigator)) {
-      throw new ActionError("Service workers not supported");
+      throw new ActionError("Service workers not supported", { code: "unsupported" });
     }
     const reg = await navigator.serviceWorker.register("/sw.js");
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
@@ -50,7 +50,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     }
     if (posted === null) {
       try { await sub.unsubscribe(); } catch { /* best-effort */ }
-      throw new ActionError("Server rejected subscription");
+      throw new ActionError("Server rejected subscription", { code: "server_rejected" });
     }
 
     return reg;

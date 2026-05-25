@@ -40,7 +40,6 @@ vi.mock("../store.js", () => ({
   peekQueuedAttachments: (...args: unknown[]) => mockPeekQueuedAttachments(...args),
 }));
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
-vi.mock("../api-client.js", () => ({ apiGet: vi.fn() }));
 
 const { ERROR_ROUTES } = await import("./turn.js");
 

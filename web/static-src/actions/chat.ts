@@ -235,7 +235,9 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 export const deleteArchivedChatAction = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
-  retryable: "network",
+  // Not retryable: a timed-out DELETE may have succeeded server-side;
+  // retrying would hit 404 and surface a misleading error toast.
+  retryable: false,
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,

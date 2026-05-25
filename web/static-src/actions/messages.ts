@@ -13,7 +13,7 @@ export const copyClipboard = defineAction<string, void>({
     try {
       await navigator.clipboard.writeText(text);
     } catch (e) {
-      throw new ActionError("Clipboard unavailable", { cause: e });
+      throw new ActionError("Clipboard unavailable", { code: "clipboard", cause: e });
     }
   },
   success: "Copied",
@@ -55,11 +55,12 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
 export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
   scope: (args) => "chat:" + args.chatID,
+  retryable: "network",
   run: async ({ chatID, content }, signal) => {
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
-      throw new ActionError("prompt rejected");
+      throw new ActionError("prompt rejected", { code: "send_failed" });
     }
   },
   error: "Failed to send plan",

@@ -21,7 +21,7 @@ import {
   sortEntries, initEditablePath, FetchDirOpts,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction, downloadFiles } from "./actions/files.js";
+import { createFile, createFolder, renameFile, deleteFilesBatch, upload, downloadFiles } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
@@ -539,7 +539,7 @@ function uploadViaDialog(): void {
   input.multiple = true;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
-      void uploadAction.dispatch({ files: input.files, targetDir: state.currentPath }, {
+      void upload.dispatch({ files: input.files, targetDir: state.currentPath }, {
         onSuccess: (paths) => {
           loadDir();
           for (const p of paths) attachPathToActiveChat(p);

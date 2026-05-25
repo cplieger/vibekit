@@ -25,7 +25,7 @@ import { onSSE } from "./bus.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
-import { openConflictDiff as openConflictDiffAction, loadConflictsAction } from "./actions/conflicts.js";
+import { openConflictDiff as openConflictDiffAction, loadConflicts } from "./actions/conflicts.js";
 import { bindLoadingState } from "./actions/index.js";
 
 /** Cleanup functions for conflict chip loading-state bindings. */
@@ -146,7 +146,7 @@ onSSE("conflict_detected", (chatID, payload) => {
  *  ring can wrap). Best-effort — a failed fetch just means the
  *  user doesn't see stale badges, not an error path. */
 export async function loadConflictsFor(chatID: string): Promise<void> {
-  const resp = await loadConflictsAction.dispatch(chatID);
+  const resp = await loadConflicts.dispatch(chatID);
   const list = resp?.conflicts ?? [];
   for (const c of list) remember(chatID, c);
 }

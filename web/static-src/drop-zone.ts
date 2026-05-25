@@ -31,7 +31,10 @@ export function installDropZone(opts: DropZoneOptions): void {
   opts.container.addEventListener("dragenter", (e: DragEvent) => {
     e.preventDefault();
     dragCounter++;
-    if (dragCounter === 1) opts.overlay.classList.remove("hidden");
+    if (dragCounter === 1) {
+      opts.overlay.classList.remove("hidden");
+      opts.container.setAttribute("aria-dropeffect", "copy");
+    }
   });
 
   opts.container.addEventListener("dragleave", (e: DragEvent) => {
@@ -40,6 +43,7 @@ export function installDropZone(opts: DropZoneOptions): void {
     if (dragCounter <= 0) {
       dragCounter = 0;
       opts.overlay.classList.add("hidden");
+      opts.container.removeAttribute("aria-dropeffect");
       opts.onDragLeave?.();
     }
   });
@@ -54,6 +58,7 @@ export function installDropZone(opts: DropZoneOptions): void {
     e.preventDefault();
     dragCounter = 0;
     opts.overlay.classList.add("hidden");
+    opts.container.removeAttribute("aria-dropeffect");
     if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       opts.onDrop(e.dataTransfer.files);
     }

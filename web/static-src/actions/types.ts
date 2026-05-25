@@ -47,9 +47,9 @@ export interface ActionInstance<TArgs = unknown, TResult = unknown> {
   //   adds no information beyond what status already conveys.
 }
 
-/** Opaque value the optimistic() function returns and rollback()
- *  receives. Use it to thread "what to undo" across the lifecycle. */
-export type OptimisticOp = unknown;
+// OptimisticOp was removed in favour of the TOp generic parameter on
+// ActionDefinition. Use TOp directly for compile-time safety between
+// optimistic() and rollback().
 
 /** Toast wiring: either a literal string (used as-is), or a function
  *  computed from action args + result/error at call time. Pass false
@@ -96,12 +96,12 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *
    *  The return type is linked to rollback's `op` parameter via TOp
    *  (3rd type param). Specify TOp to get compile-time safety between
-   *  optimistic and rollback without needing asOp<T>() casts. */
+   *  optimistic and rollback without needing manual casts. */
   optimistic?: (args: TArgs) => TOp | undefined;
 
   /** Undo the optimistic mutation. Called only if run() throws.
    *  The `op` parameter is typed as TOp when the 3rd type param is
-   *  specified, eliminating the need for asOp<T>() casts. */
+   *  specified, eliminating the need for manual casts. */
   rollback?: (args: TArgs, op: TOp | undefined, err: ActionErrorLike) => void;
 
   /** Toast on success. Default: no toast (success is usually obvious
@@ -248,3 +248,19 @@ export type RequestSpec =
 /** Subscriber callback for the registry. Fires once per state
  *  transition (pending -> success/error/cancelled). */
 export type RegistryListener = (instance: ActionInstance) => void;
+
+// ---------------------------------------------------------------------------
+// Utility extraction types: pull TArgs / TResult from an Action or
+// ActionDefinition without manually re-declaring them.
+// ---------------------------------------------------------------------------
+
+/** Extract the TArgs type parameter from an Action. */
+export type ArgsOf<A> = A extends Action<infer T, unknown> ? T : never;
+
+/** Extract the TResult type parameter from an Action. */
+export type ResultOf<A> = A extends Action<unknown, infer T> ? T : never;
+
+/** Extract the Action type that a given ActionDefinition would produce. */
+export type ActionFromDef<D> = D extends ActionDefinition<infer A, infer R, unknown>
+  ? Action<A, R>
+  : never;

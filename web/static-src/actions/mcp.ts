@@ -60,10 +60,12 @@ export interface DeleteArgs {
   id: string;
 }
 
+// No auto-retry: a timed-out DELETE may have succeeded server-side;
+// retrying would hit 404 and surface a misleading error toast.
+// Manual Retry button is still available via retryable: "network".
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
   scope: (args) => "mcp:" + args.id,
   request: ({ id }) => ({
     method: "DELETE",

@@ -56,3 +56,7 @@ export type { ActionErrorLike } from "./types.js";
 // onSettled). External callers (settings.ts, notify.ts) pass these
 // inline; exporting the type lets helpers type-annotate the opts arg.
 export type { DispatchOptions } from "./types.js";
+
+// Utility extraction types: pull TArgs / TResult from an Action without
+// manually re-declaring them. Useful in test helpers and callback typing.
+export type { ArgsOf, ResultOf, ActionFromDef } from "./types.js";

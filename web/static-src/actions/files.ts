@@ -29,7 +29,9 @@ export const createFile = defineAction<CreateArgs, unknown>({
       });
     } catch (e) {
       if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      }
       throw new ActionError("network error", { code: "network", cause: e });
     }
     if (!r.ok) {
@@ -59,7 +61,9 @@ export const createFolder = defineAction<CreateArgs, unknown>({
       });
     } catch (e) {
       if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      }
       throw new ActionError("network error", { code: "network", cause: e });
     }
     if (!r.ok) {
@@ -212,7 +216,7 @@ export interface UploadArgs {
   targetDir: string;
 }
 
-export const uploadAction = defineAction<UploadArgs, string[]>({
+export const upload = defineAction<UploadArgs, string[]>({
   name: "files.upload",
   scope: "upload",
   // retryable intentionally omitted: XHR-based multipart upload cannot safely

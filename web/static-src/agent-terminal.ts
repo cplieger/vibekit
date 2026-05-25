@@ -102,6 +102,8 @@ function createTab(termId: string, command: string, args?: string[]): void {
   pane.dataset["termId"] = termId;
   const pre = document.createElement("pre");
   pre.className = "agent-term-output";
+  pre.setAttribute("aria-live", "polite");
+  pre.setAttribute("aria-label", `Terminal output: ${label}`);
   pane.appendChild(pre);
   container.appendChild(pane);
 

@@ -10,7 +10,7 @@ import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
-import { installTools, saveTools, seedMcp, loadToolsListAction } from "./actions/tools.js";
+import { installTools, saveTools, seedMcp, loadTools as loadToolsAction } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
 
@@ -78,7 +78,7 @@ class ToolsManager {
   private editingTool: { cat: string; name: string } | null = null;
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
-    loadToolsListAction.cancel();
+    loadToolsAction.cancel();
   }
 
   init(): void {
@@ -96,7 +96,7 @@ class ToolsManager {
   }
 
   loadToolsList(): void {
-    void loadToolsListAction.dispatch(undefined, {
+    void loadToolsAction.dispatch(undefined, {
       onSuccess: (d) => {
         this.toolsData = d;
         this.renderToolsList();

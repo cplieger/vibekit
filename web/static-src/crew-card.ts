@@ -449,8 +449,6 @@ function getOrCreateToolContainer(
 }
 
 
-export { formatToolActivity } from "./format-tool-activity.js";
-
 /** Update the activity line when a tool call completes. Called from
  *  messages.ts updateToolCall after propagating to the crew-row clone. */
 export function onCrewToolCompleted(subSessionID: string): void {

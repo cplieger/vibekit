@@ -64,7 +64,7 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
 
 /** Fetch past conflicts for a chat. Background best-effort — fails
  *  silently so a network hiccup doesn't surface an error toast. */
-export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>({
+export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   name: "conflicts.load",
   retryable: "network",
   retry: { count: 2, delay: 300 },

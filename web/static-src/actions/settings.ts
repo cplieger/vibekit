@@ -31,6 +31,7 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
 
 export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
+  retryable: "network",
   // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
   // with dispatch, so DOM refs are guaranteed valid at call time.
   optimistic: ({ emailEl, stAuthEl }) => {
@@ -47,7 +48,9 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
       r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
     } catch (e) {
       if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      }
       throw new ActionError("network error", { code: "network", cause: e });
     }
     if (!r.ok) {

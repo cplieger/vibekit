@@ -77,10 +77,6 @@ export function addEditActions(el: HTMLDivElement): void {
   }).catch(() => {});
 }
 
-/** Re-decorate any tool-edit action rows pointing at `path` with a
- *  freshly-landed conflict chip. */
-export { refreshConflictBadges } from "./messages-shared.js";
-
 /** Add Accept / Reject / Diff buttons to a tool card whose write is
  *  staged under Supervised mode. */
 function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: string, path: string): void {
