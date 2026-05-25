@@ -7,7 +7,7 @@ import { openEditorView, closeTab } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
-import { abortSuggestion } from "./editor-conflict.js";
+import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
 import { apiGet, withTimeout, API_TIMEOUT_MS } from "./api-client.js";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
@@ -293,6 +293,7 @@ export function closeEditorFile(path: string): void {
   fileStates.delete(path);
   pendingLines.delete(path);
   clearAgentLineCache(path);
+  clearSuggestionState(path);
   closeTab(`editor:${path}`);
   const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) setActiveFilePath("");

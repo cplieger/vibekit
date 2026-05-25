@@ -116,8 +116,20 @@ const scopeChains = new Map<string, Promise<unknown>>();
 /** In-flight dedupe map. dedupe-keyed dispatches that match an active
  *  in-flight key return the SAME promise as the original (no new
  *  optimistic fires, no second run() call). When the original
- *  resolves, the entry is removed so the next dispatch starts fresh. */
-const dedupeInflight = new Map<string, Promise<unknown>>();
+ *  resolves, the entry is removed so the next dispatch starts fresh.
+ *
+ *  The entry stores both the shared promise AND a mutable error/
+ *  cancelled flag so deduped callers' onError callbacks receive the
+ *  ACTUAL error from the original dispatch (not a synthetic stub).
+ *  Populated by runOnce via the optional errorSink param. */
+interface DedupeEntry {
+  promise: Promise<unknown>;
+  /** Set by runOnce when the original dispatch errors (NOT cancelled). */
+  error?: ActionErrorLike;
+  /** Set by runOnce when the original dispatch was cancelled. */
+  cancelled?: boolean;
+}
+const dedupeInflight = new Map<string, DedupeEntry>();
 
 /** Sleep helper for retry backoff. Cancellable via signal: rejects
  *  with an AbortError if the signal aborts during the wait, so the
@@ -156,33 +168,34 @@ export function defineAction<TArgs, TResult>(
     // collapses to a single shared dispatch.
     const dedupeKey = computeDedupeKey(args);
     if (dedupeKey !== null) {
-      const inflight = dedupeInflight.get(dedupeKey);
-      if (inflight !== undefined) {
-        // Wrap so the second caller's per-call callbacks still fire.
-        // runOnce never rejects (it resolves to null on error/cancel),
-        // so we must check the resolved value to decide which callback
-        // to fire. The .catch branch is defense-in-depth for unexpected
-        // rejections.
-        return (inflight as Promise<TResult | null>).then(
+      const entry = dedupeInflight.get(dedupeKey);
+      if (entry !== undefined) {
+        // Wrap so the second caller's per-call callbacks fire with the
+        // ACTUAL outcome of the original dispatch (not a synthetic
+        // stub). entry.error / entry.cancelled are populated by
+        // runOnce when the original dispatch settles.
+        return (entry.promise as Promise<TResult | null>).then(
           (v) => {
             try {
               if (v !== null) {
                 opts.onSuccess?.(v as TResult, args);
+              } else if (entry.error !== undefined) {
+                // Original errored; propagate the real error.
+                opts.onError?.(entry.error, args);
+              } else if (entry.cancelled === true) {
+                // Original was cancelled. Per the contract documented
+                // in DispatchOptions, onSettled fires for cancellation
+                // but onError does not. Skip onError here.
               } else {
-                // Original dispatch errored or was cancelled. We don't
-                // have access to the original error here, so report a
-                // generic dedup-collapsed failure.
+                // Defensive: should not happen — promise resolved null
+                // without setting error or cancelled. Fall back to
+                // synthetic.
                 opts.onError?.({ message: "deduped dispatch did not succeed", code: "dedupe" }, args);
               }
             } finally {
               opts.onSettled?.(args);
             }
             return v;
-          },
-          (e) => {
-            try { opts.onError?.(e, args); }
-            finally { opts.onSettled?.(args); }
-            return null;
           },
         );
       }
@@ -202,12 +215,18 @@ export function defineAction<TArgs, TResult>(
     const id = nextInstanceID(def.name);
     inFlight.set(id, ac);
 
+    // Create the dedupe entry up front so runOnce can populate its
+    // error / cancelled fields when the original dispatch settles.
+    // Deduped callers read these to fire their own callbacks with the
+    // actual outcome of the original.
+    const dedupeEntry: DedupeEntry | null = dedupeKey !== null ? { promise: undefined as unknown as Promise<unknown> } : null;
+
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
-      result = runOnce(args, opts, ac, id);
+      result = runOnce(args, opts, ac, id, dedupeEntry);
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
-      const next = prev.then(() => runOnce(args, opts, ac, id));
+      const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry));
       const tail = next.catch(() => {});
       scopeChains.set(scopeKey, tail);
       void next.finally(() => {
@@ -217,14 +236,15 @@ export function defineAction<TArgs, TResult>(
     }
 
     // Track in dedupe map until the dispatch resolves.
-    if (dedupeKey !== null) {
-      dedupeInflight.set(dedupeKey, result);
+    if (dedupeKey !== null && dedupeEntry !== null) {
+      dedupeEntry.promise = result;
+      dedupeInflight.set(dedupeKey, dedupeEntry);
       void result.finally(() => {
         // Only delete if we're still the in-flight entry (defensive
         // against another dispatch having replaced us mid-flight,
         // though that shouldn't happen since we'd have returned the
         // existing entry first).
-        if (dedupeInflight.get(dedupeKey) === result) {
+        if (dedupeInflight.get(dedupeKey) === dedupeEntry) {
           dedupeInflight.delete(dedupeKey);
         }
       });
@@ -248,10 +268,14 @@ export function defineAction<TArgs, TResult>(
     opts: DispatchOptions<TArgs, TResult>,
     ac: AbortController,
     id: string,
+    dedupeEntry: DedupeEntry | null,
   ): Promise<TResult | null> {
     // If already cancelled while queued in scope chain, short-circuit.
     if (ac.signal.aborted) {
       const now = Date.now();
+      // Mark the dedupe entry as cancelled so deduped callers' onError
+      // doesn't fire (only onSettled does, per the contract).
+      if (dedupeEntry !== null) dedupeEntry.cancelled = true;
       record({
         id, name: def.name, status: "cancelled", args,
         startedAt: now, completedAt: now,
@@ -283,6 +307,7 @@ export function defineAction<TArgs, TResult>(
         // Skip run() entirely; nothing committed yet so no rollback
         // needed (the optimistic itself failed).
         const err = toActionError(e);
+        if (dedupeEntry !== null) dedupeEntry.error = err;
         record({
           id, name: def.name, status: "error", args,
           startedAt, completedAt: Date.now(), error: err,
@@ -307,6 +332,7 @@ export function defineAction<TArgs, TResult>(
         // treat as cancelled even if run() resolved. Most adapters
         // throw on abort, but be defensive.
         if (ac.signal.aborted) {
+          if (dedupeEntry !== null) dedupeEntry.cancelled = true;
           record({
             id, name: def.name, status: "cancelled", args,
             startedAt, completedAt: Date.now(),
@@ -331,6 +357,13 @@ export function defineAction<TArgs, TResult>(
         // If aborted, classify as cancelled rather than error.
         const cancelled = ac.signal.aborted;
         const status = cancelled ? "cancelled" : "error";
+        // Populate dedupe entry so deduped callers receive the actual
+        // outcome (real error or cancellation flag) rather than a
+        // synthetic stub.
+        if (dedupeEntry !== null) {
+          if (cancelled) dedupeEntry.cancelled = true;
+          else dedupeEntry.error = err;
+        }
         record({
           id, name: def.name, status, args,
           startedAt, completedAt: Date.now(),

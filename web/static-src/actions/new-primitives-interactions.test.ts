@@ -198,6 +198,40 @@ describe("deduped dispatch fires per-call callbacks", () => {
     expect(onSuccess1).toHaveBeenCalledTimes(1);
     expect(onSuccess2).toHaveBeenCalledTimes(1);
   });
+
+  it("deduped caller's onError receives the ACTUAL error from the original dispatch", async () => {
+    // Tradeoff-2 fix: previously deduped callers got a synthetic
+    // {message: "deduped dispatch did not succeed", code: "dedupe"}.
+    // Now they receive the real error captured in the dedupe entry.
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe_real_error",
+      dedupe: true,
+      run: () => {
+        const err = new ActionError("server rejected", { status: 422, code: "validation_failed" });
+        return Promise.reject(err);
+      },
+    });
+
+    const onError1 = vi.fn();
+    const onError2 = vi.fn();
+    const onSuccess2 = vi.fn();
+
+    const p1 = action.dispatch({ id: "x" }, { onError: onError1 });
+    const p2 = action.dispatch({ id: "x" }, { onError: onError2, onSuccess: onSuccess2 });
+
+    await Promise.all([p1, p2]);
+
+    // Original got the real error.
+    expect(onError1).toHaveBeenCalledTimes(1);
+    expect(onError1.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+
+    // Deduped caller now gets the SAME real error (not the synthetic one).
+    expect(onError2).toHaveBeenCalledTimes(1);
+    expect(onError2.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+
+    // Success was never called.
+    expect(onSuccess2).not.toHaveBeenCalled();
+  });
 });
 
 // ===========================================================================

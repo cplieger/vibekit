@@ -20,16 +20,30 @@ function spinnerNode(): HTMLDivElement {
 let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 let lastShownAt = 0;
+// Tracks the time at which the last error was displayed. If a success
+// arrives within MIN_ERROR_DISPLAY_MS of an error, we delay the ✓
+// override so the user actually sees the error. Without this guard,
+// a rapid error→success sequence (e.g. retry click after error)
+// causes a near-imperceptible ✗→✓ blink.
+let lastErrorAt = 0;
+const MIN_ERROR_DISPLAY_MS = 1500;
+let pendingSuccessTimer: ReturnType<typeof setTimeout> | undefined;
 
 function clearTimers(): void {
   if (fadeTimer !== undefined) clearTimeout(fadeTimer);
   if (hideTimer !== undefined) clearTimeout(hideTimer);
+  if (pendingSuccessTimer !== undefined) clearTimeout(pendingSuccessTimer);
   fadeTimer = undefined;
   hideTimer = undefined;
+  pendingSuccessTimer = undefined;
 }
 
 export function showSaving(): void {
   lastShownAt = Date.now();
+  // Reset error-display credit: the user is starting a new operation,
+  // they're aware of the new in-flight save (spinner is visible). The
+  // next showSaved should not be delayed by an old error.
+  lastErrorAt = 0;
   clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(spinnerNode());
@@ -37,8 +51,28 @@ export function showSaving(): void {
 }
 
 export function showSaved(): void {
+  // Tradeoff 3: if an error was just displayed, delay the ✓ override
+  // until the error has had at least MIN_ERROR_DISPLAY_MS visibility.
+  // Without this, a rapid error→success would cause a ✗→✓ blink.
+  const elapsedSinceError = Date.now() - lastErrorAt;
+  if (lastErrorAt > 0 && elapsedSinceError < MIN_ERROR_DISPLAY_MS) {
+    if (pendingSuccessTimer !== undefined) clearTimeout(pendingSuccessTimer);
+    const remaining = MIN_ERROR_DISPLAY_MS - elapsedSinceError;
+    pendingSuccessTimer = setTimeout(() => {
+      pendingSuccessTimer = undefined;
+      doShowSaved();
+    }, remaining);
+    return;
+  }
+  doShowSaved();
+}
+
+function doShowSaved(): void {
   lastShownAt = Date.now();
-  clearTimers();
+  if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+  if (hideTimer !== undefined) clearTimeout(hideTimer);
+  fadeTimer = undefined;
+  hideTimer = undefined;
   const el = $.settingsSaveStatus;
   el.replaceChildren(iconEl(ICON_SAVE_OK));
   el.classList.remove("hidden", "fade-out");
@@ -53,6 +87,7 @@ export function showSaved(): void {
  *  detailed message, this is just the inline visual signal. */
 export function showError(): void {
   lastShownAt = Date.now();
+  lastErrorAt = Date.now();
   clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(iconEl(ICON_SAVE_FAIL));

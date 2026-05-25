@@ -128,7 +128,10 @@ export function debouncedDispatch<TArgs, TResult>(
     lastArgs = undefined;
     pending = false;
     if (a !== undefined) {
-      lastFiredAt = Date.now();
+      // Treat flush as a leading-edge fire in leading mode (starts a
+      // new cooldown window). In trailing mode, lastFiredAt is never
+      // read so we skip the assignment to avoid a misleading dead write.
+      if (opts.leading === true) lastFiredAt = Date.now();
       void action.dispatch(a);
     }
   };

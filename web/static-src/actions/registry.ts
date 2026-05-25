@@ -77,7 +77,10 @@ export function record(instance: ActionInstance): void {
   }
   // Defensive: counter should never go negative; clamp to 0 if it
   // does (would indicate a record() invariant violation).
-  if (_pendingN < 0) _pendingN = 0;
+  if (_pendingN < 0) {
+    console.warn("[actions] _pendingN went negative — invariant violation; clamping to 0");
+    _pendingN = 0;
+  }
   // Snapshot listeners so a subscriber added during dispatch (or
   // removed) doesn't see this event mid-iteration. Principle of
   // least surprise: a listener added in response to event N first

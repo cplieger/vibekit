@@ -54,7 +54,11 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
 /** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
 export const suggestResolution = apiAction<{ ours: string; theirs: string; context: string }, { output?: string; error?: string }>({
   name: "editor.suggest_resolution",
-  dedupe: true,
+  // No dedupe: the per-file suggestionGen counter in editor-conflict.ts
+  // already handles supersession (only the latest dispatch's result is
+  // rendered). dedupe would also collapse same-args calls into one
+  // promise, but rapid clicks on the same hunk are guarded earlier by
+  // requestSuggestion's `existing?.loading` check.
   request: (body) => ({ method: "POST", path: "/api/utility/resolve-conflict", body }),
   error: false,
 });

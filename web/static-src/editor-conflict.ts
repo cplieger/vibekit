@@ -28,6 +28,13 @@ function currentSuggestionGen(path: string): number {
   return suggestionGenByPath.get(path) ?? 0;
 }
 
+/** Clean up per-file generation tracking when a file is closed. Called
+ *  from closeEditorFile so the suggestionGenByPath Map doesn't grow
+ *  unbounded over a long session with many files opened/closed. */
+export function clearSuggestionState(path: string): void {
+  suggestionGenByPath.delete(path);
+}
+
 /** Abort any in-flight suggestion request. If path is provided, reset
  *  loading state on THAT file; otherwise default to the active file.
  *  Called on tab close (with path) and on broader teardown (without).

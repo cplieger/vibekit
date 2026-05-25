@@ -229,6 +229,14 @@ Two actions sharing the same `scope` string serialize against each
 other, not just within one action — useful when add/remove/patch
 actions on the same data model must follow each other strictly.
 
+**When NOT to use scope:** don't add scope to actions that should
+run in parallel (independent file uploads, unrelated API calls,
+read-only fetches for different resources). Scope serializes — use
+it only when ordering or mutual exclusion matters. For preventing
+accidental concurrent dispatches with the same args, prefer `dedupe`
+(which collapses to one shared run) over `scope` (which queues
+sequentially).
+
 ## Per-dispatch callbacks
 
 `DispatchOptions` accepts `onSuccess` / `onError` / `onSettled` for
@@ -271,16 +279,23 @@ a resource becomes safe to retry, since the server returns the
 original response on the second request.
 
 For custom defineAction implementations, the key is exposed via the
-3rd context argument to `run`:
+3rd context argument to `run`. The function is called once per
+dispatch and the value is frozen across retries — meaning the key
+identifies the LOGICAL request (not each retry attempt), giving the
+server a stable dedup key:
 
 ```ts
 const action = defineAction<MyArgs, MyResult>({
   name: "custom.action",
-  idempotencyKey: (args) => `${args.userId}:${Date.now()}`,
+  // Called once per dispatch; result is frozen across retries.
+  // Use a deterministic-per-dispatch nonce.
+  idempotencyKey: (args) => `${args.userId}:${crypto.randomUUID()}`,
   run: async (args, signal, ctx) => {
     return await fetch("/x", {
       method: "POST",
-      headers: { "Idempotency-Key": ctx?.idempotencyKey ?? "" },
+      headers: ctx?.idempotencyKey !== undefined
+        ? { "Idempotency-Key": ctx.idempotencyKey }
+        : {},
       body: JSON.stringify(args),
       signal,
     }).then((r) => r.json());
@@ -288,12 +303,22 @@ const action = defineAction<MyArgs, MyResult>({
 });
 ```
 
+**Interaction with `dedupe`:** `idempotencyKey` is server-side
+deduplication (across retries of one dispatch). `dedupe` is
+client-side (collapses concurrent dispatches with matching args
+into one in-flight call). They are complementary: use both when
+both retries AND accidental double-clicks are concerns. They aren't
+redundant — `dedupe` never reaches the server; `idempotencyKey` only
+helps when the request actually fires.
+
 ## Request deduplication
 
 Set `dedupe: true` on an action definition to collapse concurrent
 dispatches with matching args into a single in-flight promise. The
 second caller gets the SAME promise back, no new optimistic fires,
-no duplicate run() call.
+no duplicate run() call. Per-call `onSuccess` / `onError` callbacks
+on the deduped caller fire with the original dispatch's actual
+outcome (real error, not a synthetic stub).
 
 ```ts
 export const fetchSidebarBadges = apiAction<void, BadgeData>({
@@ -319,7 +344,8 @@ import { debouncedDispatch } from "./actions/index.js";
 const search = debouncedDispatch(searchAction, { wait: 300 });
 
 input.addEventListener("input", (e) => {
-  search({ query: e.target.value });   // last-typed value wins
+  const target = e.target as HTMLInputElement;
+  search({ query: target.value });     // last-typed value wins
 });
 input.addEventListener("blur", () => {
   search.cancel();                     // drop pending if blurred
@@ -331,8 +357,10 @@ form.addEventListener("submit", () => {
 
 Replaces ad-hoc `setTimeout` + `clearTimeout` chains for typeahead
 search, slash-command option fetches, auto-save. Set
-`leading: true` for leading-edge mode (fire immediately, suppress
-trailing fires within the window).
+`leading: true` for leading+trailing semantics: the first call fires
+immediately, subsequent calls within the wait window are suppressed
+but the most-recent ones fire automatically when the window expires.
+`flush()` and `cancel()` work in both modes.
 
 ## Pending count + multi-action loading state
 

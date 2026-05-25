@@ -112,4 +112,26 @@ describe("save-indicator subscription", () => {
 
     expect(el.children.length).toBe(0);
   });
+
+  it("delays showSaved if it would happen too soon after showError (Tradeoff 3)", async () => {
+    const el = $.settingsSaveStatus;
+    // Simulate error showing
+    vi.advanceTimersByTime(1000);
+    state.pending = false;
+    state.cb!({ name: "settings.patch", status: "error" });
+    expect(el.querySelector("[data-icon='fail']")).not.toBeNull();
+
+    // 300ms later, a success arrives directly (no showSaving in between)
+    vi.advanceTimersByTime(300);
+    state.pending = false;
+    state.cb!({ name: "settings.save_steering", status: "success" });
+
+    // Success should NOT be visible yet — error still has 1200ms credit remaining
+    expect(el.querySelector("[data-icon='fail']")).not.toBeNull();
+    expect(el.querySelector("[data-icon='ok']")).toBeNull();
+
+    // Advance past the credit window — now ✓ should appear
+    vi.advanceTimersByTime(1300);
+    expect(el.querySelector("[data-icon='ok']")).not.toBeNull();
+  });
 });

@@ -17,7 +17,14 @@ class RetentionController {
 
   isRetentionEnabled(): boolean { return this.retentionDays > 0; }
 
-  onRetentionChange(fn: () => void): void { this.listeners.add(fn); }
+  /** Subscribe to retention changes. Returns an unsubscribe function
+   *  for symmetry with subscribeToActions / other registry-style APIs.
+   *  Currently most callers register at module init and never unsubscribe,
+   *  but the API shape is now consistent. */
+  onRetentionChange(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
+  }
 
   async refreshRetention(): Promise<void> {
     const signal = this.refreshSlot.start();
@@ -38,5 +45,5 @@ const instance = new RetentionController();
 registerCleanup(() => instance.cancelLoad());
 
 export function isRetentionEnabled(): boolean { return instance.isRetentionEnabled(); }
-export function onRetentionChange(fn: () => void): void { instance.onRetentionChange(fn); }
+export function onRetentionChange(fn: () => void): () => void { return instance.onRetentionChange(fn); }
 export async function refreshRetention(): Promise<void> { return instance.refreshRetention(); }

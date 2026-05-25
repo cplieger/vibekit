@@ -102,15 +102,20 @@ export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
     return { previousRule, atIndex: idx };
   },
   rollback: ({ getCurrentRules, setRules }, op) => {
-    const o = asOp<{ previousRule: CommandRule | undefined }>(op);
+    const o = asOp<{ previousRule: CommandRule | undefined; atIndex: number }>(op);
     if (o === undefined || o.previousRule === undefined) return;
-    // Splice previousRule back into the current rules array.
+    // Splice previousRule back into the current rules array at its
+    // original position. Without atIndex the rule would jump to the
+    // end of the list on rollback (cosmetic glitch); using atIndex
+    // preserves the user's display order.
     const current = getCurrentRules();
     if (current.some((r) => r.pattern === o.previousRule!.pattern)) {
       // Already there (e.g. loadRules re-fetched it); no-op.
       return;
     }
-    setRules([...current, o.previousRule]);
+    const next = [...current];
+    next.splice(Math.min(o.atIndex, next.length), 0, o.previousRule);
+    setRules(next);
   },
   error: "Couldn't remove rule",
 });

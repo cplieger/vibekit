@@ -4,12 +4,22 @@
 // pulling in transport / toast / store.
 // ---------------------------------------------------------------------------
 
-/** Lifecycle status of a single dispatched action instance. */
-export type ActionStatus =
+/** Lifecycle status of a single dispatched action instance.
+ *
+ *  Note: this is the lifecycle phase enum. Do not confuse with the
+ *  `ActionStatus` interface from `action-status.ts` which is a richer
+ *  per-name snapshot ({ pending, lastError, lastSuccess, ... }). The
+ *  two share the public namespace because only the snapshot interface
+ *  is re-exported via `actions/index.ts`. */
+export type ActionLifecycleStatus =
   | "pending"     // optimistic ran (if any), run() in flight
   | "success"     // run() resolved
   | "error"       // run() threw; rollback ran
   | "cancelled";  // dispatch().cancel() called or AbortController fired
+
+/** @deprecated Use ActionLifecycleStatus. Kept as alias for any
+ *  internal consumers that imported ActionStatus before the rename. */
+export type ActionStatus = ActionLifecycleStatus;
 
 /** Errors thrown by an action's run() function. ActionError subclass
  *  in error.ts attaches HTTP status + server error code metadata. */
@@ -25,7 +35,7 @@ export interface ActionErrorLike {
 export interface ActionInstance<TArgs = unknown, TResult = unknown> {
   readonly id: string;            // ULID-like; unique per dispatch
   readonly name: string;          // matches ActionDefinition.name
-  readonly status: ActionStatus;
+  readonly status: ActionLifecycleStatus;
   readonly args: TArgs;
   readonly startedAt: number;     // Date.now() at dispatch
   readonly completedAt?: number;  // Date.now() at terminal state

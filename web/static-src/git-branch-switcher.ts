@@ -117,7 +117,9 @@ function closePopover(): void {
   activeAnchor = null;
   document.removeEventListener("click", outsideClickHandler);
   document.removeEventListener("keydown", escapeHandler);
-  savedAnchor?.focus();
+  // Guard against focus on a detached element (anchor may have been
+  // removed from the DOM during the request, e.g. git tab re-rendered).
+  if (savedAnchor?.isConnected === true) savedAnchor.focus();
 }
 
 function outsideClickHandler(e: MouseEvent): void {
@@ -166,7 +168,9 @@ async function doCheckout(repo: string, branch: string, create: boolean): Promis
     { repo, branch, create },
     {
       onSuccess: () => {
-        void import("./git-changes-tab.js").then((m) => m.refreshChanges());
+        void import("./git-changes-tab.js")
+          .then((m) => m.refreshChanges())
+          .catch((e) => console.error("[git-branch] refresh import failed", e));
       },
       onError: () => {
         // Restore the previous label if the anchor is still in the DOM.
