@@ -37,15 +37,15 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
 
     // Dispatch #1
     const p1 = action.dispatch("x");
-    
+
     // Cancel immediately (synchronous)
     action.cancel();
-    
+
     // Re-dispatch with same args in same synchronous block
     const p2 = action.dispatch("x");
-    
+
     const [r1, r2] = await Promise.all([p1, p2]);
-    
+
     expect(r1).toBeNull(); // cancelled
     // If this fails with r2 === null, the re-dispatch collapsed onto the cancelled promise
     expect(r2).toBe("result-2"); // should start fresh
@@ -73,9 +73,9 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
     const p1 = action.dispatch("x");
     action.cancel();
     const p2 = action.dispatch("x");
-    
+
     const [r1, r2] = await Promise.all([p1, p2]);
-    
+
     expect(r1).toBeNull();
     // run() is only called once (for p2) since p1 was cancelled before
     // entering run(). So runCount=1 → "result-1".

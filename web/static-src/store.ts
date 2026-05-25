@@ -126,7 +126,7 @@ export function dequeuePrompt(id: string): string | undefined {
   return next;
 }
 
-/** Dequeue the attachments for the next queued prompt (peek without removing — 
+/** Dequeue the attachments for the next queued prompt (peek without removing —
  *  call before dequeuePrompt to capture them). */
 export function peekQueuedAttachments(id: string): readonly unknown[] {
   const aq = _queuedAttachments.get(id);

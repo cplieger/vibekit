@@ -400,8 +400,8 @@ sequentially).
 ## Per-dispatch callbacks
 
 `DispatchOptions` accepts `onSuccess` / `onError` / `onCancel` /
-`onSettled` / `onRetryAttempt` / `onRetryExhausted` for callsite-specific
-reactions without bloating the action definition:
+`onSettled` / `onRollback` / `onRetryAttempt` / `onRetryExhausted`
+for callsite-specific reactions without bloating the action definition:
 
 ```ts
 const result = await saveDraftAction.dispatch(draft, {
@@ -409,6 +409,7 @@ const result = await saveDraftAction.dispatch(draft, {
   onError:   (err, args) => editor.markDirty(),
   onCancel:  (args) => editor.clearProgress(),
   onSettled: (args) => closeProgressDialog(),
+  onRollback: (err, args) => editor.refreshView(),
   onRetryAttempt: (info, args) => console.log(`Retry ${info.attempt}/${info.maxAttempts}`),
 });
 ```
@@ -418,6 +419,7 @@ Signatures:
 - `onError(err: ActionErrorLike, args: TArgs)` — fires only on error (NOT cancellation)
 - `onCancel(args: TArgs)` — fires only on cancellation (NOT error). Use to distinguish user-initiated abort from failure without inspecting `onError`'s absence.
 - `onSettled(args: TArgs)` — fires for success, error, AND cancellation
+- `onRollback(err: ActionErrorLike, args: TArgs)` — fires after the action definition's `rollback()` executes (on error or cancellation). Only fires when `rollback` is defined AND `optimistic()` ran. Use for callsite-specific reactions to optimistic-mutation reversal.
 - `onRetryAttempt(info: RetryAttemptInfo, args: TArgs)` — fires before each retry attempt (not the initial attempt). `info` contains `{ attempt, maxAttempts, error, delay }`.
 - `onRetryExhausted(info: { error, attempts }, args: TArgs)` — fires when all auto-retries have failed, before the error toast. Useful for telemetry that distinguishes retry exhaustion from first-attempt failures.
 
@@ -429,9 +431,9 @@ fires in the `finally` block, so it runs even if `onSuccess` or
 **Callback ordering guarantee** (when retry is configured):
 
 1. `onRetryAttempt` — once per retry attempt (not the initial)
-2. On exhaustion: `onRetryExhausted` → `onError` → `onSettled`
+2. On exhaustion: `onRetryExhausted` → `onRollback` → `onError` → `onSettled`
 3. On success after retry: `onSuccess` → `onSettled`
-4. On cancel during retry/backoff: `onCancel` → `onSettled`
+4. On cancel during retry/backoff: `onRollback` → `onCancel` → `onSettled`
 
 For scoped actions, all callbacks for dispatch N complete before
 dispatch N+1's `run()` begins. This means `onSettled` of the first

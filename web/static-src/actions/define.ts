@@ -434,6 +434,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   function evictDedupeSlot(dk: string | null, entry: DedupeSlot | null): void {
     if (dk !== null && entry !== null && activeDedupes.get(dk) === entry) {
       activeDedupes.delete(dk);
+      activeDedupeKeys.delete(dk);
     }
   }
 
@@ -544,6 +545,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           } catch (e) {
             console.error(`[actions] rollback (cancellation) for ${def.name} threw`, e);
           }
+          if (opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!({ message: "cancelled", code: "cancelled" }, args));
         }
         if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
         return null;
@@ -592,6 +594,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         } catch (rbCaught) {
           console.error(`[actions] rollback for ${def.name} threw`, rbCaught);
         }
+        if (opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!(cancelled ? { message: "cancelled", code: "cancelled" } : err, args));
       }
       if (!cancelled) {
         emitErrorToast(args, err, opts);

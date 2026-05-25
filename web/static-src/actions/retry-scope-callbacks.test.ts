@@ -567,8 +567,10 @@ describe("retry abort during backoff — stale state prevention", () => {
 });
 
 describe("onRetryAttempt callback", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("fires before each retry attempt with correct info including delay", async () => {
-    vi.useFakeTimers();
     const retryInfo: Array<{ attempt: number; maxAttempts: number; error: string; delay: number }> = [];
     let runCount = 0;
     const action = defineAction({
@@ -597,7 +599,6 @@ describe("onRetryAttempt callback", () => {
       { attempt: 2, maxAttempts: 3, error: "transient", delay: 100 },
       { attempt: 3, maxAttempts: 3, error: "transient", delay: 300 },
     ]);
-    vi.useRealTimers();
   });
 
   it("does not fire on the initial attempt", async () => {
@@ -800,27 +801,30 @@ describe("scope + retry + callbacks interaction", () => {
 
   it("onSettled fires for scoped action even when retry + cancel interact", async () => {
     vi.useFakeTimers();
-    const settled = vi.fn();
-    const onCancel = vi.fn();
-    const action = defineAction({
-      name: "test.scope_retry_cancel_settled",
-      scope: "sc",
-      retryable: "always",
-      retry: { count: 3, delay: 50 },
-      error: false,
-      run: async () => {
-        throw new ActionError("transient", { code: "network" });
-      },
-    });
-    const p = action.dispatch(undefined, { onSettled: settled, onCancel });
-    // Let first attempt fail, then cancel during backoff
-    await vi.advanceTimersByTimeAsync(25);
-    action.cancel();
-    await vi.advanceTimersByTimeAsync(100);
-    await p;
-    expect(settled).toHaveBeenCalledTimes(1);
-    expect(onCancel).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
+    try {
+      const settled = vi.fn();
+      const onCancel = vi.fn();
+      const action = defineAction({
+        name: "test.scope_retry_cancel_settled",
+        scope: "sc",
+        retryable: "always",
+        retry: { count: 3, delay: 50 },
+        error: false,
+        run: async () => {
+          throw new ActionError("transient", { code: "network" });
+        },
+      });
+      const p = action.dispatch(undefined, { onSettled: settled, onCancel });
+      // Let first attempt fail, then cancel during backoff
+      await vi.advanceTimersByTimeAsync(25);
+      action.cancel();
+      await vi.advanceTimersByTimeAsync(100);
+      await p;
+      expect(settled).toHaveBeenCalledTimes(1);
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
