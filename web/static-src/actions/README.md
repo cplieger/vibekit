@@ -627,7 +627,7 @@ plan.run
 settings.load             settings.load_kiro_config settings.logout
 settings.patch            settings.refresh_retention  settings.save_steering
 settings.set_kiro_setting
-tools.install             tools.load_list           tools.run_diagnostics
+tools.install             tools.load                tools.run_diagnostics
 tools.save                tools.seed_mcp
 ui.copy_clipboard
 ```

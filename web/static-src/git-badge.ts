@@ -161,5 +161,3 @@ function applyBadge(state: BadgeState, tooltip: string): void {
   const btn = el.parentElement;
   if (btn !== null) btn.setAttribute("data-tooltip", tooltip);
 }
-
-

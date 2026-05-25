@@ -1036,5 +1036,3 @@ function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""
   div.textContent = text;
   host.appendChild(div);
 }
-
-

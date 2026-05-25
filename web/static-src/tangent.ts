@@ -74,5 +74,3 @@ function forkCurrentChat(chatID: string): void {
     },
   });
 }
-
-
