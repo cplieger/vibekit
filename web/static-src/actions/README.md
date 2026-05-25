@@ -169,14 +169,12 @@ export const renameChat = apiAction<{ id: string; name: string }, void, { before
 });
 ```
 
-When `TOp` isn't specified (defaults to `unknown`), use the
-`asOp<T>()` helper from `./op.js` to narrow safely:
+When `TOp` isn't specified (defaults to `unknown`), narrow with a
+type guard or cast inside `rollback`:
 
 ```ts
-import { asOp } from "./op.js";
-
 rollback: ({ id }, op) => {
-  const o = asOp<{ before: string }>(op);
+  const o = op as { before: string } | undefined;
   if (o !== undefined) store.setChatName(id, o.before);
 },
 ```
@@ -549,7 +547,7 @@ tools.save                tools.seed_mcp
 ui.copy_clipboard
 ```
 
-(72 actions as of 2026-05-25.)
+(73 actions as of 2026-05-25.)
 
 This is the registry key for log queries, telemetry, and tests.
 Pick once and don't change — callers may grep for it.
@@ -639,7 +637,7 @@ scope: (args) => `mcp:${args.id}`        // MCP server mutations
 scope: "settings"                        // static: one global queue
 ```
 
-### 2. Prefer `TOp` type parameter over `asOp<T>()` casts
+### 2. Prefer `TOp` type parameter over manual casts
 
 When both `optimistic` and `rollback` are defined, specify the third
 type parameter for compile-time safety:
@@ -648,7 +646,7 @@ type parameter for compile-time safety:
 apiAction<Args, Result, { before: string }>({ ... })
 ```
 
-Reserve `asOp<T>()` for cases where the op shape is complex or
+Reserve `as` casts for cases where the op shape is complex or
 shared across multiple actions.
 
 ### 3. Set `retryable` + `retry` together for idempotent reads

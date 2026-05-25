@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Minimal reactive signals: signal, computed, effect, batch.
+// Minimal reactive signals: signal, effect, batch.
 // MessageChannel batching for streaming smoothness (React scheduler pattern).
 // ---------------------------------------------------------------------------
 
@@ -31,8 +31,6 @@ function schedulePending(): void {
 }
 
 export interface Signal<T> { value: T; peek(): T }
-export interface Computed<T> { readonly value: T; peek(): T }
-export type Effect = () => void;
 
 export function signal<T>(initial: T): Signal<T> {
   let val = initial;
@@ -52,30 +50,7 @@ export function signal<T>(initial: T): Signal<T> {
   };
 }
 
-export function computed<T>(fn: () => T): Computed<T> {
-  let val: T;
-  let dirty = true;
-  const subs = new Set<Subscriber>();
-  const sub: Subscriber = {
-    execute() { dirty = true; notify(subs); if (batchDepth > 0) schedulePending(); },
-  };
-  return {
-    get value(): T {
-      if (tracking !== null) subs.add(tracking);
-      if (dirty) {
-        const prev = tracking;
-        tracking = sub;
-        val = fn();
-        tracking = prev;
-        dirty = false;
-      }
-      return val;
-    },
-    peek(): T { if (dirty) { this.value; } return val; },
-  };
-}
-
-export function effect(fn: () => void | (() => void)): Effect {
+export function effect(fn: () => void | (() => void)): () => void {
   let cleanup: (() => void) | void;
   const sub: Subscriber = {
     execute() {

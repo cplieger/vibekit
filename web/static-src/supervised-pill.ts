@@ -270,6 +270,8 @@ class SupervisedPillController {
 
     this.unbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
     this.unbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+    this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptBtn, { preserveDisabled: true }));
+    this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectBtn, { preserveDisabled: true }));
 
     li.appendChild(actionsSpan);
     return li;

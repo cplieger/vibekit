@@ -358,3 +358,75 @@ describe("retry button re-dispatch respects scope", () => {
     expect(attemptA).toBe(1);
   });
 });
+
+// ===========================================================================
+// 5. Throwing onSuccess/onError callbacks don't corrupt status or break chain
+// ===========================================================================
+
+describe("throwing callbacks don't break scope chain", () => {
+  it("onSuccess throwing does not re-record action as error", async () => {
+    const action = defineAction<void, string>({
+      name: "test.cb_throw_success",
+      scope: "cb-scope",
+      run: () => Promise.resolve("ok"),
+    });
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await action.dispatch(undefined, {
+      onSuccess: () => { throw new Error("callback boom"); },
+    });
+    consoleSpy.mockRestore();
+
+    // Action still reports success (not corrupted to error)
+    expect(result).toBe("ok");
+    const log = recentLog();
+    const entry = log.find((e) => e.name === "test.cb_throw_success");
+    expect(entry?.status).toBe("success");
+  });
+
+  it("onSuccess throwing does not block next action in scope chain", async () => {
+    let bRan = false;
+
+    const actionA = defineAction<void, string>({
+      name: "test.cb_throw_chain_A",
+      scope: "cb-chain",
+      run: () => Promise.resolve("A"),
+    });
+
+    const actionB = defineAction<void, string>({
+      name: "test.cb_throw_chain_B",
+      scope: "cb-chain",
+      run: () => { bRan = true; return Promise.resolve("B"); },
+    });
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pA = actionA.dispatch(undefined, {
+      onSuccess: () => { throw new Error("callback boom"); },
+    });
+    const pB = actionB.dispatch();
+
+    await pA;
+    await pB;
+    consoleSpy.mockRestore();
+
+    expect(bRan).toBe(true);
+  });
+
+  it("onError throwing does not reject dispatch promise", async () => {
+    const action = defineAction<void, string>({
+      name: "test.cb_throw_error",
+      scope: "cb-err-scope",
+      error: false,
+      run: () => Promise.reject(new Error("fail")),
+    });
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await action.dispatch(undefined, {
+      onError: () => { throw new Error("callback boom"); },
+    });
+    consoleSpy.mockRestore();
+
+    // dispatch resolves null (not rejects)
+    expect(result).toBeNull();
+  });
+});

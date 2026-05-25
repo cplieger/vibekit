@@ -69,6 +69,8 @@ function updateIcon(): void {
 
   btn.setAttribute("data-tooltip",
     current === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  btn.setAttribute("aria-label",
+    current === "dark" ? "Switch to light theme" : "Switch to dark theme");
 }
 
 /** Wire up the theme toggle button. Call once during UI init. */

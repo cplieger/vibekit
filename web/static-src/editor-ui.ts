@@ -130,6 +130,7 @@ export function renderEditModeUI(state: FileState): void {
   const isModified = state.current !== state.original;
   $.editorDiffBtn.classList.toggle("hidden", isPlanDraft || !isModified);
   $.editorDiffBtn.setAttribute("data-tooltip", "View diff vs saved");
+  $.editorDiffBtn.setAttribute("aria-label", "View diff vs saved");
   const editing = state.mode.kind === "edit" && state.mode.editing;
   if (editing) {
     $.editorContent.value = state.current;

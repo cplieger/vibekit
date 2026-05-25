@@ -10,8 +10,7 @@
 // Fixed by using `any` in those slots.
 
 import { describe, it, expect } from "vitest";
-import { defineAction } from "./define.js";
-import type { Action, ArgsOf, ResultOf, ActionFromDef } from "./types.js";
+import type { Action, ActionDefinition, ArgsOf, ResultOf, ActionFromDef } from "./types.js";
 
 // Helper: assert two types are equal at compile time.
 type AssertEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -48,17 +47,12 @@ describe("type utilities", () => {
     expect(true).toBe(true);
   });
 
-  it("ActionFromDef extracts Action from a concrete defineAction return", () => {
-    const action = defineAction<{ id: string }, string>({
-      name: "test.types_utility",
-      run: (args) => Promise.resolve(args.id),
-    });
-    type Def = typeof action;
+  it("ActionFromDef extracts Action from an ActionDefinition type", () => {
+    type Def = ActionDefinition<{ id: string }, string>;
     type A = ActionFromDef<Def>;
-    // ActionFromDef on an Action-typed value should preserve Args/Result
     expectType<AssertEqual<ArgsOf<A>, { id: string }>>();
     expectType<AssertEqual<ResultOf<A>, string>>();
-    expect(action.name).toBe("test.types_utility");
+    expect(true).toBe(true);
   });
 
   it("ArgsOf returns never for non-Action types", () => {

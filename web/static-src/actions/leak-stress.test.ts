@@ -113,7 +113,7 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
       name: "stress.cancel",
       scope: "cancel-scope",
       run: async (_args, signal) => {
-        await new Promise((r) => setTimeout(r, 1));
+        await Promise.resolve();
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
         return "ok";
       },

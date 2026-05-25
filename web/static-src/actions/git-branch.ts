@@ -1,3 +1,6 @@
+// Actions for git branch operations: checkout, create.
+// ---------------------------------------------------------------------------
+
 import { apiAction } from "./index.js";
 
 interface CheckoutArgs {

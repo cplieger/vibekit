@@ -265,6 +265,8 @@ export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; na
 export const cancelTurnAction = transportAction<string>({
   name: "chat.cancel",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't cancel",
 });
 
@@ -279,6 +281,7 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
     if (session === undefined) return undefined;

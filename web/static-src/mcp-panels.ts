@@ -116,10 +116,9 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: 
     }
   });
 
-  const r = await saveServer.dispatch({ id: session.editing.id, body });
-
-  unsub();
-  unbind?.();
+  const r = await saveServer.dispatch({ id: session.editing.id, body }, {
+    onSettled: () => { unsub(); unbind?.(); },
+  });
 
   if (r === null) {
     errEl.textContent = capturedError?.message ?? "Save failed.";

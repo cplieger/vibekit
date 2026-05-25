@@ -345,7 +345,7 @@ describe("dedupe shared promise behavior", () => {
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => setTimeout(() => r("shared-result"), 10));
+        return Promise.resolve("shared-result");
       },
     });
 

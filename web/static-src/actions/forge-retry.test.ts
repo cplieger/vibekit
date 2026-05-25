@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Tests for retry behavior of forge actions post round-2 changes:
-// - signOut: retryable, NO auto-retry (destructive DELETE), Retry button on network error
+// - signOut: NOT retryable (destructive DELETE may succeed on timeout)
 // - startDeviceFlow: retryable, no auto-retry (no toast — error: false)
 // - cloneRepo: retryable + retry config, auto-retries, idempotency key reused
 // - connectPAT: retryable + retry config, auto-retries, idempotency key reused
@@ -34,12 +34,12 @@ function networkError(): never {
 }
 
 // ===========================================================================
-// signOut — retryable: "network", NO auto-retry (destructive DELETE),
-// error toast with Retry button on network error
+// signOut — retryable: false (destructive DELETE that may succeed on timeout),
+// error toast WITHOUT Retry button
 // ===========================================================================
 
 describe("forge.signOut retry", () => {
-  it("shows Retry button on network error (no auto-retry)", async () => {
+  it("does NOT show Retry button on network error (destructive DELETE)", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -49,8 +49,8 @@ describe("forge.signOut retry", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledTimes(1);
     const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
-    expect(retryArg).toBeDefined();
-    expect(typeof retryArg!.onClick).toBe("function");
+    // No retry button — a timed-out DELETE may have succeeded server-side
+    expect(retryArg).toBeUndefined();
   });
 
   it("does NOT show Retry button on HTTP 403", async () => {
@@ -62,30 +62,6 @@ describe("forge.signOut retry", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
     const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
     expect(retryArg).toBeUndefined();
-  });
-
-  it("Retry re-dispatches with same frozen args", async () => {
-    let attempt = 0;
-    const fetchSpy = vi.fn<typeof fetch>(() => {
-      attempt++;
-      if (attempt <= 1) return Promise.reject(new TypeError("Failed to fetch"));
-      return Promise.resolve(new Response(null, { status: 204 }));
-    });
-    vi.stubGlobal("fetch", fetchSpy);
-
-    await signOut.dispatch({ forgeId: "gh:user" });
-    expect(attempt).toBe(1); // 1 attempt only, no auto-retry
-
-    // Click the retry button (manual retry triggers a new dispatch)
-    const retryFn = vi.mocked(toast.error).mock.calls[0]![1]!.onClick;
-    const p2 = retryFn();
-    if (p2 instanceof Promise) await p2;
-
-    // 2nd attempt succeeds
-    expect(attempt).toBe(2);
-    // Last call used the same path (same args)
-    const lastCall = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1]!;
-    expect(lastCall[0]).toBe("/api/forges/gh%3Auser");
   });
 });
 

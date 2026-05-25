@@ -21,7 +21,7 @@
 // hook to stop receiving updates and avoid leaking listeners.
 // ---------------------------------------------------------------------------
 
-import { subscribe, isPending } from "./registry.js";
+import { subscribeByName, isPending } from "./registry.js";
 
 /** Element types that have a `.disabled` writable boolean. */
 type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -113,12 +113,9 @@ export function bindLoadingState(
   // Initial paint.
   apply();
 
-  // Re-evaluate on every transition for the named action. Other action
-  // transitions are ignored to avoid wasted work for fan-out cases
-  // where many actions are in flight simultaneously.
-  const unsubscribe = subscribe((instance) => {
-    if (instance.name === actionName) apply();
-  });
+  // Re-evaluate on every transition for the named action. Uses per-name
+  // subscription to avoid O(n) fan-out across all bindLoadingState bindings.
+  const unsubscribe = subscribeByName(actionName, apply);
 
   // Unsubscribe restores element state if still mid-pending (B2).
   return () => { disposed = true; restore(); unsubscribe(); };

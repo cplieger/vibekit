@@ -1,3 +1,6 @@
+// Actions for crew (subagent) interactions.
+// ---------------------------------------------------------------------------
+
 import { transportAction } from "./transport.js";
 
 interface SendMessageArgs {

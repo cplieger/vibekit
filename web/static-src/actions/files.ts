@@ -18,6 +18,7 @@ export interface CreateArgs {
 export const createFile = defineAction<CreateArgs, unknown>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
+  retry: { count: 2, delay: 300 },
   run: async (args, signal) => {
     let r: Response;
     try {
@@ -50,6 +51,7 @@ export const createFile = defineAction<CreateArgs, unknown>({
 export const createFolder = defineAction<CreateArgs, unknown>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
+  retry: { count: 2, delay: 300 },
   run: async (args, signal) => {
     let r: Response;
     try {
@@ -136,7 +138,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
         });
       }),
     );
-    const failed = results.filter((r) => !r.ok) as { ok: false; name: string; error: string; status: number }[];
+    const failed = results.filter((r): r is { ok: false; name: string; error: string; status: number } => !r.ok);
     if (failed.length > 0) {
       // If all failures are network/timeout/cancelled, classify the aggregate error
       const allNetwork = failed.every((f) => f.status === 0);

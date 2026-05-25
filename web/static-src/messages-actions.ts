@@ -123,6 +123,8 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 
   actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
   actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+  actionBindUnbinds.push(bindLoadingState("chat.resolve_all_pending", acceptBtn, { preserveDisabled: true }));
+  actionBindUnbinds.push(bindLoadingState("chat.resolve_all_pending", rejectBtn, { preserveDisabled: true }));
 
   row.append(diffBtn, rejectBtn, acceptBtn);
   row.dataset["path"] = path;

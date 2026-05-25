@@ -48,6 +48,9 @@ import type {
 
 let instanceCounter = 0;
 
+/** Shared empty options object to avoid allocating {} on every dispatch call. */
+const EMPTY_OPTS: DispatchOptions<never, never> = Object.freeze({});
+
 /** Generate a monotonically-increasing instance ID for registry tracking.
  *  Format: `"<actionName>#<counter>"`. Not globally unique across page
  *  reloads — only unique within a single page session. */
@@ -187,7 +190,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
 
   function dispatch(
     args: TArgs,
-    opts: DispatchOptions<TArgs, TResult> = {},
+    opts: DispatchOptions<TArgs, TResult> = EMPTY_OPTS as DispatchOptions<TArgs, TResult>,
   ): Promise<TResult | null> {
     // Dedupe: if a dispatch with a matching dedupe key is already
     // in flight, return its promise instead of starting a new one.
@@ -327,7 +330,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         dispatchedAt, startedAt: now, completedAt: now,
       });
       inFlight.delete(id);
-      opts.onSettled?.(args);
+      try { opts.onSettled?.(args); } catch (cbErr) {
+        console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+      }
       return Promise.resolve(null);
     }
 
@@ -360,8 +365,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         });
         inFlight.delete(id);
         emitErrorToast(args, err, opts);
-        opts.onError?.(err, args);
-        opts.onSettled?.(args);
+        try { opts.onError?.(err, args); } catch (cbErr) {
+          console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
+        }
+        try { opts.onSettled?.(args); } catch (cbErr) {
+          console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+        }
         return Promise.resolve(null);
       }
     }
@@ -385,7 +394,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         });
         inFlight.delete(id);
         emitCancelled(args, optOp);
-        opts.onSettled?.(args);
+        try { opts.onSettled?.(args); } catch (cbErr) {
+          console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+        }
         return null;
       }
       record({
@@ -394,8 +405,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       });
       inFlight.delete(id);
       emitSuccessToast(args, result, opts);
-      opts.onSuccess?.(result, args);
-      opts.onSettled?.(args);
+      try { opts.onSuccess?.(result, args); } catch (cbErr) {
+        console.error(`[actions] onSuccess callback for ${def.name} threw`, cbErr);
+      }
+      try { opts.onSettled?.(args); } catch (cbErr) {
+        console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+      }
       return result;
     } catch (e: unknown) {
       const err = toActionError(e);
@@ -428,9 +443,13 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       }
       if (!cancelled) {
         emitErrorToast(args, err, opts);
-        opts.onError?.(err, args);
+        try { opts.onError?.(err, args); } catch (cbErr) {
+          console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
+        }
       }
-      opts.onSettled?.(args);
+      try { opts.onSettled?.(args); } catch (cbErr) {
+        console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+      }
       return null;
     }
   }

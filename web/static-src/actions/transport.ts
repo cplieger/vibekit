@@ -75,6 +75,7 @@ export function transportAction<TArgs, TOp = unknown>(
         }
         throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
           status: r.status,
+          ...(r.code !== undefined ? { code: r.code } : {}),
         });
       }
       return undefined;

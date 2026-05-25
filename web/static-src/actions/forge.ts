@@ -41,12 +41,11 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
 });
 
 /** Sign out of a forge account (delete the token).
- *  No auto-retry: a timed-out DELETE may have succeeded server-side;
- *  retrying would hit 404 and surface a misleading error toast.
- *  Manual Retry button is still available via retryable: "network". */
+ *  Not retryable: a timed-out DELETE may have succeeded server-side;
+ *  retrying would hit 404 and surface a misleading error toast. */
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
-  retryable: "network",
+  retryable: false,
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,

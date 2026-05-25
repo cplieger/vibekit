@@ -55,6 +55,10 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
   // Background fan-out for revalidation; partial failure is expected.
   "forge-auth.ts",      // apiPost in revalidateInBackground (probe per forge)
 
+  // Inline dialog mutations: error surfaces in the dialog status line,
+  // not via toast. Intentionally excluded from the action framework.
+  "git-prs-tab.ts",     // apiPost for PR creation + description generation (inline dialog)
+
   // Fire-and-forget cleanup after successful plan send.
   "plan-actions.ts",    // await apiDelete plan-draft + await apiPutOrError plan update
 ]);
@@ -65,20 +69,20 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
  *  framework). The lint runs against non-test, non-action source
  *  files. */
 const PATTERNS: { name: string; re: RegExp }[] = [
-  { name: "void apiPost", re: /\bvoid\s+apiPost\s*\(/g },
-  { name: "void apiPut", re: /\bvoid\s+apiPut\s*\(/g },
-  { name: "void apiPatch", re: /\bvoid\s+apiPatch\s*\(/g },
-  { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*\(/g },
+  { name: "void apiPost", re: /\bvoid\s+apiPost\s*[<(]/g },
+  { name: "void apiPut", re: /\bvoid\s+apiPut\s*[<(]/g },
+  { name: "void apiPatch", re: /\bvoid\s+apiPatch\s*[<(]/g },
+  { name: "void apiDelete", re: /\bvoid\s+apiDelete\s*[<(]/g },
   { name: "void transport.send", re: /\bvoid\s+transport\.send\s*\(/g },
   { name: "await transport.send", re: /\bawait\s+transport\.send\s*\(/g },
   { name: "void transportSend", re: /\bvoid\s+transportSend\s*\(/g },
   { name: "await transportSend", re: /\bawait\s+transportSend\s*\(/g },
-  { name: "await apiPost", re: /\bawait\s+apiPost\s*\(/g },
-  { name: "await apiPut", re: /\bawait\s+apiPut\s*\(/g },
-  { name: "await apiPatch", re: /\bawait\s+apiPatch\s*\(/g },
-  { name: "await apiDelete", re: /\bawait\s+apiDelete\s*\(/g },
-  { name: "await apiPostOrError", re: /\bawait\s+apiPostOrError\s*\(/g },
-  { name: "await apiPutOrError", re: /\bawait\s+apiPutOrError\s*\(/g },
+  { name: "await apiPost", re: /\bawait\s+apiPost\s*[<(]/g },
+  { name: "await apiPut", re: /\bawait\s+apiPut\s*[<(]/g },
+  { name: "await apiPatch", re: /\bawait\s+apiPatch\s*[<(]/g },
+  { name: "await apiDelete", re: /\bawait\s+apiDelete\s*[<(]/g },
+  { name: "await apiPostOrError", re: /\bawait\s+apiPostOrError\s*[<(]/g },
+  { name: "await apiPutOrError", re: /\bawait\s+apiPutOrError\s*[<(]/g },
 ];
 
 function listTSFiles(dir: string, out: string[] = []): string[] {

@@ -52,6 +52,7 @@ export function renderDiffModeUI(state: FileState): void {
   if (!isPendingPath(state.path)) {
     $.editorDiffBtn.classList.remove("hidden");
     $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
+    $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
     $.editorEditBtn.classList.remove("hidden");
     $.editorEditBtn.disabled = false;
   }

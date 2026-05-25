@@ -354,6 +354,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.className = "crew-msg-send";
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
+  sendBtn.setAttribute("aria-label", "Send");
   loadingUnbinds.push(bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();

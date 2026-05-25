@@ -201,10 +201,11 @@ describe("cancel after dedupe entry created but before runOnce starts", () => {
 
     // After cancellation, a fresh dispatch should work (dedupe map cleared)
     runCalls = 0;
+    vi.useFakeTimers();
     const p3 = action.dispatch({ id: "b" });
-    // Wait for the setTimeout to fire
-    await new Promise<void>((r) => setTimeout(r, 60));
+    await vi.advanceTimersByTimeAsync(50);
     const r3 = await p3;
+    vi.useRealTimers();
     expect(runCalls).toBe(1);
     expect(r3).toBe("result-b");
   });

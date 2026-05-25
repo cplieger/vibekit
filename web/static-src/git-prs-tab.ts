@@ -100,7 +100,7 @@ export function initPRsTab(): void {
 
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
-  onSSE("forges_changed", () => { void refreshPRs().catch(() => {}); });
+  onSSE("forges_changed", () => { void refreshPRsAction.dispatch(undefined); });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled

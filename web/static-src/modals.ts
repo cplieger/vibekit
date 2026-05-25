@@ -43,6 +43,11 @@ export function initAllModals(): void {
     const modal = overlay as HTMLDivElement;
     modal.setAttribute("aria-modal", "true");
     modal.setAttribute("role", "dialog");
+    // Link dialog to its title for screen reader announcement.
+    const titleEl = modal.querySelector("[id$='-modal-title'], [id$='-title']");
+    if (titleEl !== null && titleEl.id !== "") {
+      modal.setAttribute("aria-labelledby", titleEl.id);
+    }
     setupOverlayClose(modal);
     // Wire close buttons: any button inside .modal-header-row that has aria-label="Close".
     for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {

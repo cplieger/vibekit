@@ -29,6 +29,10 @@ const MAX_LOG_HARD = 1000;
 const log: (ActionInstance | null)[] = [];
 const idMap = new Map<string, ActionInstance>();
 const listeners = new Set<RegistryListener>();
+// Per-name listeners: subscribers that only care about a single action
+// name. Avoids O(n) fan-out in record() for name-filtered consumers
+// like bindLoadingState (typically ~40 active bindings).
+const namedListeners = new Map<string, Set<RegistryListener>>();
 // Per-name pending index: maps action name → Set of instance IDs that
 // are currently pending. Enables O(1) isPending() and O(k) pendingFor()
 // where k = pending count for that name (typically 0–2).
@@ -177,6 +181,17 @@ export function record(instance: ActionInstance): void {
       console.error("[actions] registry listener threw", e);
     }
   }
+  // Notify per-name listeners (bindLoadingState, actionStatus).
+  const named = namedListeners.get(instance.name);
+  if (named !== undefined) {
+    for (const fn of named) {
+      try {
+        fn(instance);
+      } catch (e) {
+        console.error("[actions] registry listener threw", e);
+      }
+    }
+  }
 }
 
 /**
@@ -189,6 +204,25 @@ export function record(instance: ActionInstance): void {
 export function subscribe(fn: RegistryListener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+/**
+ * Subscribe to lifecycle events for a single action name. More efficient
+ * than `subscribe` + manual name filtering when only one action is of
+ * interest (avoids O(n) fan-out across all subscribers per record() call).
+ *
+ * @param name - Action name to observe (e.g. "git.commit").
+ * @param fn - Listener invoked only when instance.name matches.
+ * @returns An unsubscribe function.
+ */
+export function subscribeByName(name: string, fn: RegistryListener): () => void {
+  let set = namedListeners.get(name);
+  if (set === undefined) { set = new Set(); namedListeners.set(name, set); }
+  set.add(fn);
+  return () => {
+    set!.delete(fn);
+    if (set!.size === 0) namedListeners.delete(name);
+  };
 }
 
 /** @internal Test-only public surface. */
@@ -253,5 +287,6 @@ export function _resetForTest(): void {
   idMap.clear();
   pendingByName.clear();
   listeners.clear();
+  namedListeners.clear();
   _pendingN = 0;
 }

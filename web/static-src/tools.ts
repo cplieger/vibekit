@@ -170,10 +170,12 @@ class ToolsManager {
     actions.className = "list-row-actions";
     const editBtn = document.createElement("button");
     editBtn.className = "list-row-btn"; editBtn.setAttribute("data-tooltip", "Edit");
+    editBtn.setAttribute("aria-label", `Edit ${name}`);
     editBtn.innerHTML = ICON_EDIT;
     editBtn.addEventListener("click", () => this.openToolModal(sec, name));
     const delBtn = document.createElement("button");
     delBtn.className = "list-row-btn"; delBtn.setAttribute("data-tooltip", "Delete");
+    delBtn.setAttribute("aria-label", `Delete ${name}`);
     delBtn.innerHTML = ICON_CLOSE;
     delBtn.addEventListener("click", () => {
       void (async () => {

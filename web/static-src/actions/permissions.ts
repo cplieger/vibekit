@@ -1,3 +1,6 @@
+// Actions for command permission rules: add, remove, reorder.
+// ---------------------------------------------------------------------------
+
 import { apiAction } from "./index.js";
 
 export interface CommandRule {
@@ -87,7 +90,9 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown, { pattern: string; 
 
 export const removeRuleAction = apiAction<RemoveRuleArgs, void, { previousRule: CommandRule | undefined; atIndex: number }>({
   name: "permissions.remove_rule",
-  retryable: "network",
+  // Not retryable: a timed-out DELETE may have succeeded server-side;
+  // retrying would hit 404 and trigger a misleading rollback.
+  retryable: false,
   scope: "permissions",
   request: ({ pattern }) => ({
     method: "DELETE",

@@ -75,6 +75,7 @@ function makeCopyButton(text: string): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "code-act-btn";
   btn.setAttribute("data-tooltip", "Copy");
+  btn.setAttribute("aria-label", "Copy");
   btn.replaceChildren(iconEl(ICON_COPY));
   let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
@@ -98,9 +99,11 @@ function makeRunButton(text: string): HTMLButtonElement {
   btn.replaceChildren(iconEl(ICON_PLAY));
   if (shellRunCb === null) {
     btn.setAttribute("data-tooltip", "Shell not available");
+    btn.setAttribute("aria-label", "Shell not available");
     btn.disabled = true;
   } else {
     btn.setAttribute("data-tooltip", "Run in shell");
+    btn.setAttribute("aria-label", "Run in shell");
     btn.addEventListener("click", () => { shellRunCb?.(text.trim()); });
   }
   return btn;
