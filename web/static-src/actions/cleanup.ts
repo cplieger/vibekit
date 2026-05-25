@@ -2,7 +2,7 @@
 // cleanup hooks. Wired to window.beforeunload so navigation away
 // from the page (or tab close) aborts everything cleanly.
 //
-// Cleanup hooks must be idempotent. cancelAllPending is allowed to fire
+// Cleanup hooks must be idempotent. Cancellation is allowed to fire
 // multiple times (e.g., cancelled navigation followed by confirmed
 // navigation). Aborting an already-aborted controller is a no-op by spec;
 // ensure your hook has equivalent semantics.
@@ -16,10 +16,6 @@
 //      msgControllers in store.ts, browserFetchHolder in files.ts,
 //      pollGitHubDevice timer chain) call registerCleanup(fn) at
 //      init time. The fn is invoked on global cleanup.
-//
-// Test-only: cancelAllPending() is exported so tests can invoke it
-// directly without dispatching a beforeunload event. _resetForTest
-// clears the registries.
 // ---------------------------------------------------------------------------
 
 import type { Action } from "./types.js";
@@ -61,8 +57,9 @@ export function registerCleanup(fn: () => void): () => void {
 
 /** Cancel every in-flight action + run every cleanup hook. Errors from
  *  individual hooks are caught + logged; one bad hook does not stop
- *  the rest from running. */
-export function cancelAllPending(): void {
+ *  the rest from running. Internal — invoked by the beforeunload handler
+ *  installed via installBeforeunloadOnce(). */
+function cancelAllPending(): void {
   // trackedActions is safe to iterate directly: action.cancel() does
   // not modify the Set (only _registerAction adds, _resetForTest clears).
   for (const action of trackedActions) {
@@ -95,6 +92,11 @@ function installBeforeunloadOnce(): void {
     // aborted client-side. pagehide is fired too late on most browsers.
     window.addEventListener("beforeunload", cancelAllPending);
   }
+}
+
+/** Test-only: invoke the same cleanup logic that beforeunload runs. */
+export function _cancelAllForTest(): void {
+  cancelAllPending();
 }
 
 /** Test-only: clear both registries + uninstall the listener. */

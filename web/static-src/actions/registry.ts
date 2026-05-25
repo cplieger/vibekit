@@ -178,7 +178,7 @@ export function record(instance: ActionInstance): void {
       console.error("[actions] registry listener threw", e);
     }
   }
-  // Notify per-name listeners (bindLoadingState, actionStatus).
+  // Notify per-name listeners (bindLoadingState).
   const named = namedListeners.get(instance.name);
   if (named !== undefined) {
     for (const fn of named) {
@@ -278,44 +278,6 @@ export function pendingForAny(names: readonly string[]): boolean {
     if (s !== undefined && s.size > 0) return true;
   }
   return false;
-}
-
-/**
- * Wait for the next terminal transition (success/error/cancelled) of a
- * named action. Resolves with the settled instance. Auto-unsubscribes
- * after the first match — no cleanup needed by the caller.
- *
- * If the action is not currently pending, resolves on the NEXT dispatch
- * that reaches a terminal state (not immediately).
- *
- * Use cases: sequential orchestration ("wait for save to finish before
- * navigating"), test assertions, one-shot progress indicators.
- *
- * @param name - Action name to observe (e.g. "settings.patch").
- * @param signal - Optional AbortSignal. When aborted, the promise rejects
- *   with an AbortError and the listener is cleaned up. Prevents leaks when
- *   the action may never fire (e.g. component unmount before dispatch).
- * @returns A promise that resolves with the first terminal ActionInstance.
- */
-export function onceSettled(name: string, signal?: AbortSignal): Promise<ActionInstance> {
-  return new Promise<ActionInstance>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException("aborted", "AbortError"));
-      return;
-    }
-    const unsub = subscribeByName(name, (inst) => {
-      if (inst.status === "success" || inst.status === "error" || inst.status === "cancelled") {
-        unsub();
-        if (signal !== undefined) signal.removeEventListener("abort", onAbort);
-        resolve(inst);
-      }
-    });
-    function onAbort(): void {
-      unsub();
-      reject(new DOMException("aborted", "AbortError"));
-    }
-    if (signal !== undefined) signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 /** Test-only: clear log + listeners. */

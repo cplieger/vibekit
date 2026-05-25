@@ -98,16 +98,6 @@ describe("defineAction — happy path", () => {
     await action.dispatch({}, { silent: true });
     expect(toast.success).not.toHaveBeenCalled();
   });
-
-  it("dispatch({ successMessage }) overrides the success toast", async () => {
-    const action = defineAction({
-      name: "test.custom_success",
-      run: async () => "x",
-      success: "Default",
-    });
-    await action.dispatch({}, { successMessage: "Custom" });
-    expect(toast.success).toHaveBeenCalledWith("Custom");
-  });
 });
 
 describe("defineAction — error path", () => {

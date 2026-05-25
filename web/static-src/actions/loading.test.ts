@@ -8,7 +8,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { bindLoadingState, bindLoadingStateMulti, bindLoadingCluster } from "./loading.js";
+import { bindLoadingState } from "./loading.js";
 
 beforeEach(() => {
   resetDefine();
@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("bindLoadingState", () => {
+describe("bindLoadingState — single name", () => {
   it("toggles disabled while action is pending", async () => {
     let resolveRun: (value: string) => void;
     const action = defineAction({
@@ -284,7 +284,7 @@ describe("bindLoadingState", () => {
   });
 });
 
-describe("bindLoadingStateMulti", () => {
+describe("bindLoadingState — multi-name", () => {
   it("disables while ANY named action is pending", async () => {
     let resolve1!: () => void;
     let resolve2!: () => void;
@@ -297,7 +297,7 @@ describe("bindLoadingStateMulti", () => {
       run: () => new Promise<void>((r) => { resolve2 = r; }),
     });
     const btn = document.createElement("button");
-    bindLoadingStateMulti(["test.multi1", "test.multi2"], btn);
+    bindLoadingState(["test.multi1", "test.multi2"], btn);
     expect(btn.disabled).toBe(false);
     const p1 = a1.dispatch({});
     expect(btn.disabled).toBe(true);
@@ -314,7 +314,7 @@ describe("bindLoadingStateMulti", () => {
 
   it("returns no-op for empty actionNames", () => {
     const btn = document.createElement("button");
-    const unbind = bindLoadingStateMulti([], btn);
+    const unbind = bindLoadingState([], btn);
     expect(typeof unbind).toBe("function");
     unbind(); // should not throw
   });
@@ -326,7 +326,7 @@ describe("bindLoadingStateMulti", () => {
       run: () => new Promise<void>((r) => { resolve = r; }),
     });
     const btn = document.createElement("button");
-    bindLoadingStateMulti(["test.multi_single"], btn);
+    bindLoadingState(["test.multi_single"], btn);
     const p = action.dispatch({});
     expect(btn.disabled).toBe(true);
     resolve();
@@ -342,7 +342,7 @@ describe("bindLoadingStateMulti", () => {
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
-    bindLoadingStateMulti(["test.multi_dispose", "test.multi_other"], btn);
+    bindLoadingState(["test.multi_dispose", "test.multi_other"], btn);
     const p = action.dispatch({});
     expect(btn.disabled).toBe(true);
     btn.remove();
@@ -359,7 +359,7 @@ describe("bindLoadingStateMulti", () => {
       run: () => new Promise<void>((r) => { resolve = r; }),
     });
     const btn = document.createElement("button");
-    const unbind = bindLoadingStateMulti(["test.multi_unsub"], btn);
+    const unbind = bindLoadingState(["test.multi_unsub"], btn);
     const p = action.dispatch({});
     expect(btn.disabled).toBe(true);
     unbind();
@@ -467,7 +467,7 @@ describe("bindLoadingState — focus restore edge cases", () => {
   });
 });
 
-describe("bindLoadingStateMulti — focus restore", () => {
+describe("bindLoadingState — multi-name focus restore", () => {
   it("restores focus when all actions complete", async () => {
     let resolve1!: () => void;
     let resolve2!: () => void;
@@ -481,7 +481,7 @@ describe("bindLoadingStateMulti — focus restore", () => {
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
-    bindLoadingStateMulti(["test.multi_focus1", "test.multi_focus2"], btn);
+    bindLoadingState(["test.multi_focus1", "test.multi_focus2"], btn);
     btn.focus();
     expect(document.activeElement).toBe(btn);
     const p1 = a1.dispatch({});
@@ -508,7 +508,7 @@ describe("bindLoadingStateMulti — focus restore", () => {
     const other = document.createElement("input");
     document.body.appendChild(btn);
     document.body.appendChild(other);
-    bindLoadingStateMulti(["test.multi_focus_no_steal"], btn);
+    bindLoadingState(["test.multi_focus_no_steal"], btn);
     btn.focus();
     const p = action.dispatch({});
     other.focus();
@@ -577,7 +577,7 @@ describe("bindLoadingState — disabledFn", () => {
     expect(btn.disabled).toBe(false);
   });
 
-  it("disabledFn works with bindLoadingStateMulti", async () => {
+  it("disabledFn works with bindLoadingState", async () => {
     let resolve1!: () => void;
     const a1 = defineAction({
       name: "test.multi_dfn1",
@@ -585,7 +585,7 @@ describe("bindLoadingState — disabledFn", () => {
     });
     let externalDisabled = false;
     const btn = document.createElement("button");
-    bindLoadingStateMulti(["test.multi_dfn1", "test.multi_dfn2"], btn, {
+    bindLoadingState(["test.multi_dfn1", "test.multi_dfn2"], btn, {
       disabledFn: () => externalDisabled,
     });
     expect(btn.disabled).toBe(false);
@@ -596,96 +596,6 @@ describe("bindLoadingState — disabledFn", () => {
     await p;
     // disabledFn returns true → stays disabled
     expect(btn.disabled).toBe(true);
-  });
-});
-
-describe("bindLoadingCluster", () => {
-  it("invokes onChange with initial state immediately", () => {
-    const cb = vi.fn();
-    bindLoadingCluster(["test.cluster1"], cb);
-    expect(cb).toHaveBeenCalledTimes(1);
-    expect(cb).toHaveBeenCalledWith({ pending: false, activeNames: [] });
-  });
-
-  it("reports pending: true and activeNames when action dispatches", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster2",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
-    bindLoadingCluster(["test.cluster2"], (s) => { states.push({ ...s }); });
-    expect(states).toHaveLength(1);
-    const p = action.dispatch({});
-    // pending transition fires onChange
-    expect(states).toHaveLength(2);
-    expect(states[1]).toEqual({ pending: true, activeNames: ["test.cluster2"] });
-    resolveRun!();
-    await p;
-    // success transition fires onChange
-    expect(states).toHaveLength(3);
-    expect(states[2]).toEqual({ pending: false, activeNames: [] });
-  });
-
-  it("tracks multiple actions in the cluster", async () => {
-    let resolve1!: () => void;
-    let resolve2!: () => void;
-    const a1 = defineAction({
-      name: "test.cluster_m1",
-      run: () => new Promise<void>((r) => { resolve1 = r; }),
-    });
-    const a2 = defineAction({
-      name: "test.cluster_m2",
-      run: () => new Promise<void>((r) => { resolve2 = r; }),
-    });
-    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
-    bindLoadingCluster(["test.cluster_m1", "test.cluster_m2"], (s) => {
-      states.push({ pending: s.pending, activeNames: [...s.activeNames] });
-    });
-    const p1 = a1.dispatch({});
-    const p2 = a2.dispatch({});
-    // Both pending
-    const last = states[states.length - 1]!;
-    expect(last.pending).toBe(true);
-    expect(last.activeNames).toContain("test.cluster_m1");
-    expect(last.activeNames).toContain("test.cluster_m2");
-    resolve1();
-    await p1;
-    // Only a2 pending
-    const afterFirst = states[states.length - 1]!;
-    expect(afterFirst.pending).toBe(true);
-    expect(afterFirst.activeNames).toEqual(["test.cluster_m2"]);
-    resolve2();
-    await p2;
-    const final = states[states.length - 1]!;
-    expect(final.pending).toBe(false);
-    expect(final.activeNames).toEqual([]);
-  });
-
-  it("unsubscribe stops further notifications", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster_unsub",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    const cb = vi.fn();
-    const handle = bindLoadingCluster(["test.cluster_unsub"], cb);
-    expect(cb).toHaveBeenCalledTimes(1);
-    handle.dispose();
-    const p = action.dispatch({});
-    // No further calls after unsubscribe
-    expect(cb).toHaveBeenCalledTimes(1);
-    resolveRun!();
-    await p;
-    expect(cb).toHaveBeenCalledTimes(1);
-  });
-
-  it("handles empty actionNames array", () => {
-    const cb = vi.fn();
-    const handle = bindLoadingCluster([], cb);
-    expect(cb).toHaveBeenCalledWith({ pending: false, activeNames: [] });
-    handle.dispose(); // no-op, should not throw
-    expect(cb).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -763,7 +673,7 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     btn.remove();
   });
 
-  it("disabledFn throwing in bindLoadingStateMulti recovers gracefully", async () => {
+  it("disabledFn throwing in bindLoadingState recovers gracefully", async () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.multi_dfn_throw",
@@ -771,7 +681,7 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
-    bindLoadingStateMulti(["test.multi_dfn_throw", "test.multi_dfn_other"], btn, {
+    bindLoadingState(["test.multi_dfn_throw", "test.multi_dfn_other"], btn, {
       pendingClass: "spin",
       disabledFn: () => { throw new Error("kaboom"); },
     });
@@ -788,89 +698,3 @@ describe("bindLoadingState — disabledFn edge cases", () => {
   });
 });
 
-describe("bindLoadingCluster — edge cases", () => {
-  it("onChange throwing does not crash subsequent transitions", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster_throw",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    let callCount = 0;
-    const handle = bindLoadingCluster(["test.cluster_throw"], () => {
-      callCount++;
-      if (callCount === 2) throw new Error("onChange exploded");
-    });
-    // callCount=1 from initial call
-    expect(callCount).toBe(1);
-    const p = action.dispatch({});
-    // callCount=2 from pending transition — throws, but registry catches
-    expect(callCount).toBe(2);
-    resolveRun!();
-    await p;
-    // callCount=3 from success transition — still fires despite prior throw
-    expect(callCount).toBe(3);
-    handle.dispose();
-  });
-
-  it("handles action already pending at bind time", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster_already_pending",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    const p = action.dispatch({});
-    // Bind AFTER action is already pending
-    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
-    bindLoadingCluster(["test.cluster_already_pending"], (s) => {
-      states.push({ pending: s.pending, activeNames: [...s.activeNames] });
-    });
-    // Initial call should see the already-pending action
-    expect(states).toHaveLength(1);
-    expect(states[0]).toEqual({ pending: true, activeNames: ["test.cluster_already_pending"] });
-    resolveRun!();
-    await p;
-    expect(states[states.length - 1]).toEqual({ pending: false, activeNames: [] });
-  });
-
-  it("duplicate action names in array do not cause double notifications", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster_dup",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    const states: Array<{ pending: boolean; activeNames: readonly string[] }> = [];
-    bindLoadingCluster(["test.cluster_dup", "test.cluster_dup"], (s) => {
-      states.push({ pending: s.pending, activeNames: [...s.activeNames] });
-    });
-    expect(states).toHaveLength(1);
-    const p = action.dispatch({});
-    // Should only get ONE notification per transition (not two)
-    // The name appears twice in activeNames because the loop checks each entry
-    expect(states.length).toBeLessThanOrEqual(3);
-    resolveRun!();
-    await p;
-    const final = states[states.length - 1]!;
-    expect(final.pending).toBe(false);
-  });
-
-  it("unsubscribe during onChange callback is safe", async () => {
-    let resolveRun: () => void;
-    const action = defineAction({
-      name: "test.cluster_reentrant",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
-    });
-    let callCount = 0;
-    let clusterHandle: ReturnType<typeof bindLoadingCluster> | undefined;
-    clusterHandle = bindLoadingCluster(["test.cluster_reentrant"], () => {
-      callCount++;
-      if (callCount === 2) clusterHandle!.dispose(); // unsubscribe during pending notification
-    });
-    expect(callCount).toBe(1);
-    const p = action.dispatch({});
-    expect(callCount).toBe(2); // pending notification triggered unsubscribe
-    resolveRun!();
-    await p;
-    // No further notifications after self-unsubscribe
-    expect(callCount).toBe(2);
-  });
-});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError, isPermanentCode, isNetworkError } from "./error.js";
+import { ActionError, hasErrorString, toActionError, classifyFetchError, isRetryableError } from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -200,29 +200,6 @@ describe("classifyFetchError", () => {
   });
 });
 
-describe("isTransientStatus", () => {
-  it("returns true for 408, 429, 502, 503, 504", () => {
-    expect(isTransientStatus(408)).toBe(true);
-    expect(isTransientStatus(429)).toBe(true);
-    expect(isTransientStatus(502)).toBe(true);
-    expect(isTransientStatus(503)).toBe(true);
-    expect(isTransientStatus(504)).toBe(true);
-  });
-
-  it("returns false for non-transient statuses", () => {
-    expect(isTransientStatus(200)).toBe(false);
-    expect(isTransientStatus(400)).toBe(false);
-    expect(isTransientStatus(401)).toBe(false);
-    expect(isTransientStatus(403)).toBe(false);
-    expect(isTransientStatus(404)).toBe(false);
-    expect(isTransientStatus(500)).toBe(false);
-  });
-
-  it("returns false for undefined", () => {
-    expect(isTransientStatus(undefined)).toBe(false);
-  });
-});
-
 describe("isRetryableError", () => {
   it("returns false when mode is undefined or false", () => {
     expect(isRetryableError({ message: "x", code: "network" }, undefined)).toBe(false);
@@ -268,27 +245,6 @@ describe("isRetryableError", () => {
   });
 });
 
-describe("isPermanentCode", () => {
-  it("returns true for all permanent codes", () => {
-    expect(isPermanentCode("cancelled")).toBe(true);
-    expect(isPermanentCode("send_failed")).toBe(true);
-    expect(isPermanentCode("clipboard")).toBe(true);
-    expect(isPermanentCode("unsupported")).toBe(true);
-    expect(isPermanentCode("server_rejected")).toBe(true);
-  });
-
-  it("returns false for non-permanent codes", () => {
-    expect(isPermanentCode("network")).toBe(false);
-    expect(isPermanentCode("timeout")).toBe(false);
-    expect(isPermanentCode("validation")).toBe(false);
-    expect(isPermanentCode("unknown")).toBe(false);
-  });
-
-  it("returns false for undefined", () => {
-    expect(isPermanentCode(undefined)).toBe(false);
-  });
-});
-
 describe("classifyFetchError — TypeError branch", () => {
   it("returns network with TypeError message for TypeError", () => {
     const ac = new AbortController();
@@ -308,42 +264,3 @@ describe("classifyFetchError — TypeError branch", () => {
   });
 });
 
-describe("isNetworkError", () => {
-  it("returns true for code 'network'", () => {
-    expect(isNetworkError({ message: "x", code: "network" })).toBe(true);
-  });
-
-  it("returns true for code 'timeout'", () => {
-    expect(isNetworkError({ message: "x", code: "timeout" })).toBe(true);
-  });
-
-  it("returns true for status 0", () => {
-    expect(isNetworkError({ message: "x", status: 0 })).toBe(true);
-  });
-
-  it("returns false for server errors", () => {
-    expect(isNetworkError({ message: "x", status: 500 })).toBe(false);
-    expect(isNetworkError({ message: "x", code: "validation" })).toBe(false);
-  });
-
-  it("returns false for transient server statuses (not network-layer)", () => {
-    expect(isNetworkError({ message: "x", status: 503 })).toBe(false);
-    expect(isNetworkError({ message: "x", status: 429 })).toBe(false);
-  });
-
-  it("returns true when classifyFetchError output is passed", () => {
-    const ac = new AbortController();
-    const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
-    expect(isNetworkError(err)).toBe(true);
-  });
-
-  it("returns true when toActionError DOMException TimeoutError is passed", () => {
-    const err = toActionError(new DOMException("timed out", "TimeoutError"));
-    expect(isNetworkError(err)).toBe(true);
-  });
-
-  it("returns true when toActionError DOMException NetworkError is passed", () => {
-    const err = toActionError(new DOMException("network", "NetworkError"));
-    expect(isNetworkError(err)).toBe(true);
-  });
-});

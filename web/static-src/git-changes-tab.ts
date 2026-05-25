@@ -20,7 +20,7 @@ import {
   stage, discard, pull, push, stash, stashPop,
   unstage, commit as commitAction, generateCommitMessage,
 } from "./actions/git-changes.js";
-import { bindLoadingState, bindLoadingStateMulti, registerCleanup } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -439,7 +439,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stageAllBtn);
-  bindingCleanups.push(bindLoadingStateMulti(["git.stage", "git.commit"], stageAllBtn));
+  bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
   discardAllBtn.addEventListener("click", () => {
@@ -466,7 +466,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     })();
   });
   bar.appendChild(discardAllBtn);
-  bindingCleanups.push(bindLoadingStateMulti(["git.discard", "git.commit"], discardAllBtn));
+  bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";
@@ -481,7 +481,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(pullBtn);
-  bindingCleanups.push(bindLoadingStateMulti(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn));
+  bindingCleanups.push(bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn));
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
@@ -499,7 +499,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pushBtn);
-    bindingCleanups.push(bindLoadingStateMulti(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn));
+    bindingCleanups.push(bindLoadingState(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn));
   }
 
   const stashBtn = btn("Stash", "Stash uncommitted changes");
@@ -510,7 +510,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stashBtn);
-  bindingCleanups.push(bindLoadingStateMulti(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn));
+  bindingCleanups.push(bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn));
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
@@ -521,7 +521,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pop);
-    bindingCleanups.push(bindLoadingStateMulti(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop));
+    bindingCleanups.push(bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop));
   }
 
   return bar;

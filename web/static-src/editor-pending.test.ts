@@ -33,7 +33,6 @@ vi.mock("./actions/editor.js", () => ({
 
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: () => () => {},
-  bindLoadingStateMulti: () => () => {},
 }));
 
 vi.mock("./bus.js", () => ({

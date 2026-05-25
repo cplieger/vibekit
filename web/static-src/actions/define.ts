@@ -23,8 +23,7 @@
 // retries with exponential backoff before surfacing the error toast.
 //
 // Toast wiring: integrates with toast.ts. Defaults:
-//   - success: NO toast unless `success` is set in the definition or
-//     overridden via dispatch({ successMessage })
+//   - success: NO toast unless `success` is set in the definition.
 //   - error:   ALWAYS toast unless `error: false` is explicitly set.
 //     Default error message is "<HumanName> failed: <serverMessage>".
 //
@@ -43,8 +42,6 @@ import type {
   ActionDefinition,
   ActionErrorLike,
   DispatchOptions,
-  DispatchResult,
-  RetryAttemptInfo,
   ToastSpec,
 } from "./types.js";
 
@@ -256,8 +253,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   const inFlight = new Map<string, AbortController>();
   // Track which instances have entered runOnce. Instances NOT in this
   // set are still scope-queued. cancel() eagerly removes scope-queued
-  // instances from inFlight so isInflight reflects cancellation
-  // immediately rather than waiting for the scope chain to advance.
+  // instances from inFlight so dispatched-instance bookkeeping reflects
+  // cancellation immediately rather than waiting for the scope chain to advance.
   const started = new Set<string>();
   // Per-instance scope-skip resolvers. When cancel() fires for a
   // scope-queued instance, it triggers the resolver so the scope chain
@@ -303,12 +300,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
             } else if (entry.error !== undefined) {
               const capturedErr = entry.error;
               if (opts.onError) safeInvoke(def.name, "onError", () => opts.onError!(capturedErr, args));
-            } else if (entry.cancelled === true) {
-              // Original was cancelled — fire onCancel (not onError).
-              if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
-            } else {
+            } else if (entry.cancelled !== true) {
+              // Original errored without a captured error AND wasn't cancelled.
+              // Synthesize a generic dedupe error for the caller's onError.
               if (opts.onError) safeInvoke(def.name, "onError", () => opts.onError!({ message: "deduped dispatch did not succeed", code: "dedupe" }, args));
             }
+            // Cancelled originals don't fire onError on deduped callers.
             if (opts.onSettled) safeInvoke(def.name, "onSettled", () => opts.onSettled!(args));
             return v;
           },
@@ -389,7 +386,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
             id, name: def.name, status: "cancelled", args,
             dispatchedAt, startedAt: now, completedAt: now,
           });
-          if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
         } finally {
           if (opts.onSettled) safeInvoke(def.name, "onSettled", () => opts.onSettled!(args));
           earlyCancelResolve(null);
@@ -494,7 +490,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         id, name: def.name, status: "cancelled", args,
         dispatchedAt, startedAt: now, completedAt: now,
       });
-      if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
       settle();
       return null;
     }
@@ -546,7 +541,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     });
 
     try {
-      const { result, attempts } = await runWithRetry(args, ac.signal, ctx, opts.onRetryAttempt, opts.onRetryExhausted);
+      const { result, attempts } = await runWithRetry(args, ac.signal, ctx);
       // Cancellation can race success — if the signal aborted,
       // treat as cancelled even if run() resolved. Most adapters
       // throw on abort, but be defensive.
@@ -563,9 +558,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           } catch (e) {
             console.error(`[actions] rollback (cancellation) for ${def.name} threw`, e);
           }
-          if (def.optimistic !== undefined && opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!({ message: "cancelled", code: "cancelled" }, args));
         }
-        if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
         return null;
       }
       record({
@@ -611,13 +604,10 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         } catch (rbCaught) {
           console.error(`[actions] rollback for ${def.name} threw`, rbCaught);
         }
-        if (def.optimistic !== undefined && opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!(cancelled ? { message: "cancelled", code: "cancelled" } : err, args));
       }
       if (!cancelled) {
         emitErrorToast(args, err, opts);
         if (opts.onError) safeInvoke(def.name, "onError", () => opts.onError!(err, args));
-      } else {
-        if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
       }
       return null;
     } finally {
@@ -633,13 +623,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
    *  Returns { result, attempts } where attempts is total run() calls.
    *  On failure, attaches `_attempts` to the thrown error so the caller
    *  can record the count in the registry. */
-  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext, onRetryAttempt?: (info: RetryAttemptInfo, args: TArgs) => void, onRetryExhausted?: (info: { error: ActionErrorLike; attempts: number }, args: TArgs) => void): Promise<{ result: TResult; attempts: number }> {
+  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<{ result: TResult; attempts: number }> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
     const baseDelay = cfg?.delay ?? 0;
     const factor = cfg?.factor ?? 2;
     let attempt = 0;
-    let lastRetryError: ActionErrorLike | undefined;
     let nextDelay = Math.min(baseDelay, 5000);
     while (true) {
       if (signal.aborted) {
@@ -649,27 +638,14 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       }
       try {
         attempt++;
-        if (attempt > 1 && onRetryAttempt !== undefined) {
-          // Reuse nextDelay computed at the end of the previous catch block.
-          // For attempt 2: baseDelay * factor^0 = baseDelay (matches prior formula).
-          safeInvoke(def.name, "onRetryAttempt", () => onRetryAttempt({ attempt, maxAttempts, error: lastRetryError!, delay: nextDelay }, args));
-        }
         const result = await def.run(args, signal, ctx);
         return { result, attempts: attempt };
       } catch (e) {
         if (signal.aborted) { attachAttempts(e, attempt); throw e; }
-        if (attempt >= maxAttempts) {
-          if (onRetryExhausted !== undefined && maxAttempts > 1) {
-            const err = toActionError(e);
-            safeInvoke(def.name, "onRetryExhausted", () => onRetryExhausted({ error: err, attempts: attempt }, args));
-          }
-          attachAttempts(e, attempt); throw e;
-        }
+        if (attempt >= maxAttempts) { attachAttempts(e, attempt); throw e; }
         const err = toActionError(e);
         if (!shouldRetry(err)) { attachAttempts(e, attempt); throw e; }
-        lastRetryError = err;
-        // Compute delay once: used for sleep AND reported to onRetryAttempt
-        // at the top of the next iteration (avoids duplicate Math.pow).
+        // Compute delay for backoff; capped at 5s.
         nextDelay = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
         try {
           await sleep(nextDelay, signal);
@@ -702,7 +678,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   ): void {
     if (opts.silent === true) return;
     try {
-      const msg = opts.successMessage ?? resolveToast(def.success, args, result);
+      const msg = resolveToast(def.success, args, result);
       if (msg !== null) toastSuccess(msg);
     } catch (e) {
       // Throwing in a success toast spec is silently dropped by design —
@@ -745,37 +721,11 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   /** Build the retry button config for error toasts. Returns an
    *  `{ onClick }` object when the error is retry-eligible (per
    *  `def.retryable`), which toast.ts renders as a "Retry" button.
-   *  When def.retryArgs is set, the retry computes fresh args at click
-   *  time (avoiding stale DOM refs). Otherwise args are structuredClone'd
-   *  so post-dispatch mutations don't corrupt the retry payload.
-   *  Returns undefined (no button) when the error doesn't qualify
-   *  for retry. */
+   *  Args are structuredClone'd so post-dispatch mutations don't
+   *  corrupt the retry payload. Returns undefined (no button) when
+   *  the error doesn't qualify for retry. */
   function buildRetryButton(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
     if (!shouldRetry(err)) return undefined;
-    // When retryArgs is provided, defer arg computation to click time
-    // so the retry always uses fresh state (e.g. live DOM refs, current
-    // array contents). The original args are still cloned as a fallback
-    // reference for the retryArgs function.
-    if (def.retryArgs !== undefined) {
-      const retryArgsFn = def.retryArgs;
-      // Clone original args as a stable reference for retryArgs to read
-      // identifiers from (e.g. chatID, pattern). Best-effort clone.
-      let refArgs: TArgs;
-      try { refArgs = structuredClone(args); } catch {
-        if (args === null || args === undefined || typeof args !== "object") {
-          refArgs = args;
-        } else {
-          try { refArgs = (Array.isArray(args) ? [...args] : { ...args }) as TArgs; } catch { refArgs = args; }
-        }
-      }
-      return {
-        onClick: () => {
-          let fresh: TArgs | null;
-          try { fresh = retryArgsFn(refArgs); } catch { return; }
-          if (fresh !== null) void dispatch(fresh);
-        },
-      };
-    }
     // Snapshot args so mutations after dispatch don't corrupt retry.
     // structuredClone handles deep cloning; on failure (DOM refs,
     // functions) fall back to a shallow copy which at least isolates
@@ -815,7 +765,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     }
     activeDedupeKeys.clear();
     // Eagerly remove scope-queued instances (not yet started) from
-    // inFlight so isInflight reflects cancellation immediately. Started
+    // inFlight so the bookkeeping reflects cancellation immediately. Started
     // instances are removed by runOnce's settle() helper when they complete.
     for (const [id, controller] of [...inFlight.entries()]) {
       controller.abort();
@@ -849,7 +799,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     name: def.name,
     dispatch,
     cancel,
-    get isInflight() { return inFlight.size > 0; },
   };
 
   // Register with the global cleanup tracker so beforeunload/teardown
@@ -875,31 +824,3 @@ export function _internalsForTest(): { scopeChains: number; activeDedupes: numbe
   return { scopeChains: scopeChains.size, activeDedupes: activeDedupes.size };
 }
 
-/** Dispatch an action and return a discriminated result with the error. */
-export function dispatchWithResult<TArgs, TResult>(
-  action: Action<TArgs, TResult>,
-  args: TArgs,
-  opts?: DispatchOptions<TArgs, TResult>,
-): Promise<DispatchResult<TResult>> {
-  let captured: DispatchResult<TResult> | undefined;
-  return action.dispatch(args, {
-    ...opts,
-    onSuccess: (result, a) => {
-      captured = { ok: true, value: result };
-      opts?.onSuccess?.(result, a);
-    },
-    onError: (err, a) => {
-      captured = { ok: false, error: err, cancelled: false };
-      opts?.onError?.(err, a);
-    },
-    onCancel: (a) => {
-      captured = { ok: false, error: { message: "cancelled", code: "cancelled" }, cancelled: true };
-      opts?.onCancel?.(a);
-    },
-  }).then((result) => {
-    if (captured !== undefined) return captured;
-    return result !== null
-      ? { ok: true as const, value: result }
-      : { ok: false as const, error: { message: "dispatch failed" } as ActionErrorLike, cancelled: false };
-  });
-}

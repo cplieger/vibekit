@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Tests for the five UX primitives added on top of the action
 // framework: idempotency keys, pendingCount/pendingForAny,
-// request deduplication, debouncedDispatch, actionStatus.
+// request deduplication, debouncedDispatch.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -21,14 +21,12 @@ import {
 } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { debouncedDispatch } from "./debounce.js";
-import { actionStatus, _resetForTest as resetActionStatus } from "./action-status.js";
-import { ActionError } from "./error.js";
+
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
   resetCleanup();
-  resetActionStatus();
   vi.clearAllMocks();
 });
 
@@ -351,77 +349,5 @@ describe("debouncedDispatch", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(dbg.isPending()).toBe(false);
     vi.useRealTimers();
-  });
-});
-
-// ===========================================================================
-// actionStatus
-// ===========================================================================
-
-describe("actionStatus", () => {
-  it("tracks pending count + last success", async () => {
-    const action = defineAction<{ x: number }, number>({
-      name: "test.as.success",
-      run: (args) => Promise.resolve(args.x),
-    });
-    const status = actionStatus("test.as.success");
-    expect(status.pending).toBe(0);
-    expect(status.lastSuccess).toBeUndefined();
-
-    await action.dispatch({ x: 42 });
-    expect(status.pending).toBe(0);
-    expect(status.lastSuccess).toBe(42);
-    expect(status.lastSettledAt).toBeGreaterThan(0);
-  });
-
-  it("tracks last error", async () => {
-    const action = defineAction<void, void>({
-      name: "test.as.error",
-      error: false,
-      run: () => Promise.reject(new ActionError("nope", { status: 500 })),
-    });
-    const status = actionStatus("test.as.error");
-    await action.dispatch();
-    expect(status.lastError?.message).toBe("nope");
-    expect(status.lastError?.status).toBe(500);
-  });
-
-  it("snapshot is mutable in place — same reference reflects updates", async () => {
-    const action = defineAction<{ x: number }, number>({
-      name: "test.as.live",
-      run: (args) => Promise.resolve(args.x),
-    });
-    const status = actionStatus("test.as.live");
-    await action.dispatch({ x: 1 });
-    expect(status.lastSuccess).toBe(1);
-    await action.dispatch({ x: 2 });
-    // SAME object, updated in place.
-    expect(status.lastSuccess).toBe(2);
-  });
-
-  it("pending counter increments + decrements correctly with concurrent dispatches", async () => {
-    let resolveA: () => void = () => {};
-    let resolveB: () => void = () => {};
-    const action = defineAction<{ tag: string }, void>({
-      name: "test.as.concurrent",
-      run: (args) => new Promise<void>((r) => {
-        if (args.tag === "a") resolveA = r;
-        else resolveB = r;
-      }),
-    });
-    const status = actionStatus("test.as.concurrent");
-    const pa = action.dispatch({ tag: "a" });
-    const pb = action.dispatch({ tag: "b" });
-    expect(status.pending).toBe(2);
-    resolveA(); await pa;
-    expect(status.pending).toBe(1);
-    resolveB(); await pb;
-    expect(status.pending).toBe(0);
-  });
-
-  it("returns the same snapshot object on repeat calls", () => {
-    const a = actionStatus("test.as.same");
-    const b = actionStatus("test.as.same");
-    expect(a).toBe(b);
   });
 });

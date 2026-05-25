@@ -9,7 +9,7 @@ import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import {
   registerCleanup,
-  cancelAllPending,
+  _cancelAllForTest as cancelAllPending,
   _resetForTest as resetCleanup,
 } from "./cleanup.js";
 

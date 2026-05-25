@@ -395,22 +395,6 @@ describe("chat.cancel_turn — dispatch callbacks", () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "fail" }), "c1");
     expect(onSettled).toHaveBeenCalledWith("c1");
   });
-
-  it("fires onCancel callback on cancellation", async () => {
-    mockSend.mockImplementation((_cmd, opts) =>
-      new Promise((_resolve, reject) => {
-        opts!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }),
-    );
-    const onCancel = vi.fn();
-    const onSettled = vi.fn();
-    const { cancelTurn } = await import("./chat.js");
-    const p = cancelTurn.dispatch("c1", { onCancel, onSettled });
-    cancelTurn.cancel();
-    await p;
-    expect(onCancel).toHaveBeenCalledWith("c1");
-    expect(onSettled).toHaveBeenCalledWith("c1");
-  });
 });
 
 // ===========================================================================

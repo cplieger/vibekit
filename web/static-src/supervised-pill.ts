@@ -23,7 +23,7 @@ import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import { setSupervised, resolveAllPending, resolvePendingChange, trustPending, clearPendingTrust } from "./actions/chat.js";
-import { bindLoadingState, bindLoadingStateMulti } from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
 class SupervisedPillController {
@@ -109,8 +109,8 @@ class SupervisedPillController {
     const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
     const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
     const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
-    if (acceptAllBtn) this.unbinds.push(bindLoadingStateMulti(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn));
-    if (rejectAllBtn) this.unbinds.push(bindLoadingStateMulti(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn));
+    if (acceptAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn));
+    if (rejectAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn));
     if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
     if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
   }
@@ -272,8 +272,8 @@ class SupervisedPillController {
     acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
     actionsSpan.appendChild(acceptBtn);
 
-    this.unbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
-    this.unbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
+    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
+    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
 
     li.appendChild(actionsSpan);
     return li;

@@ -90,23 +90,6 @@ export interface RetryConfig {
 /** Standard retry config for network-retryable actions: 2 retries, 300ms initial delay. */
 export const RETRY_STANDARD: RetryConfig = { count: 2, delay: 300 } as const;
 
-/** Aggressive retry config for latency-sensitive actions: 3 retries, 100ms initial delay.
- *  Use for operations where the user is actively waiting and transient blips should
- *  resolve within ~700ms total budget (100 + 200 + 400). */
-export const RETRY_AGGRESSIVE: RetryConfig = { count: 3, delay: 100 } as const;
-
-/** Info passed to the per-dispatch `onRetryAttempt` callback. */
-export interface RetryAttemptInfo {
-  /** Current attempt number (2 = first retry, 3 = second retry). */
-  readonly attempt: number;
-  /** Maximum total attempts (initial + retries). */
-  readonly maxAttempts: number;
-  /** The error from the previous attempt that triggered this retry. */
-  readonly error: ActionErrorLike;
-  /** Milliseconds the framework waited before this attempt's run(). */
-  readonly delay: number;
-}
-
 export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
   /** Stable identifier, e.g. "chat.delete", "files.create".
    *  Used in the registry log + as a default toast prefix. */
@@ -219,21 +202,6 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *  - true: dedupe on JSON.stringify(args)
    *  - function: caller supplies the key; identical strings collapse */
   dedupe?: boolean | ((args: TArgs) => string);
-
-  /** Compute fresh args at retry-click time. When the error toast's Retry
-   *  button is clicked, this function is called to produce the args for the
-   *  re-dispatch. Use this when args contain non-cloneable references (DOM
-   *  elements, live getters) that may become stale between the original
-   *  dispatch and the user clicking Retry.
-   *
-   *  Receives the original args (structuredClone'd if possible, shallow-
-   *  copied otherwise) as a reference for extracting stable identifiers.
-   *  Return null to suppress the retry (button click becomes a no-op).
-   *
-   *  When not set, the framework uses structuredClone (with shallow-copy
-   *  fallback) of the original args — safe for primitives and plain data,
-   *  but stale for DOM refs or mutable arrays. */
-  retryArgs?: (originalArgs: TArgs) => TArgs | null;
 }
 
 /** A registered action, returned by defineAction(). Can be dispatched
@@ -257,19 +225,12 @@ export interface Action<TArgs, TResult> {
    *  the cancel-request itself — name the action to avoid confusion
    *  (e.g. "chat.cancel_turn" so `cancelTurn.cancel()` reads clearly). */
   cancel(): void;
-
-  /** True when at least one dispatch is currently in-flight (pending).
-   *  Convenience accessor equivalent to `isPending(action.name)` from
-   *  the registry, but avoids the import and name-string coupling. */
-  readonly isInflight: boolean;
 }
 
 /** Per-dispatch overrides. */
 export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
   /** Suppress the success toast for this call. Errors still toast. */
   readonly silent?: boolean;
-  /** Override the success toast message for this call. */
-  readonly successMessage?: string;
   /** Override the error toast prefix for this call. */
   readonly errorPrefix?: string;
   /** Per-call success callback. Fires after the action-level success
@@ -280,31 +241,10 @@ export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
   /** Per-call error callback. Fires after the action-level error
    *  toast (if any). Useful for callsite-specific recovery UI. */
   readonly onError?: (err: ActionErrorLike, args: TArgs) => void;
-  /** Per-call cancellation callback. Fires when the dispatch is
-   *  cancelled (signal aborted) — BEFORE onSettled. Use this to
-   *  distinguish cancellation from error without inspecting onError's
-   *  absence. Does NOT fire on error or success. */
-  readonly onCancel?: (args: TArgs) => void;
   /** Per-call settled callback. Fires for both success and error
    *  AND on cancellation. Useful for clearing per-call loading
    *  state that bindLoadingState doesn't cover. */
   readonly onSettled?: (args: TArgs) => void;
-  /** Per-call retry attempt callback. Fires before each retry attempt
-   *  (not the initial attempt). Receives attempt info including the
-   *  error that triggered the retry. */
-  readonly onRetryAttempt?: (info: RetryAttemptInfo, args: TArgs) => void;
-  /** Per-call retry exhaustion callback. Fires when all auto-retries
-   *  have failed, before the error toast. Receives the final error and
-   *  total attempt count. Useful for telemetry that distinguishes retry
-   *  exhaustion from first-attempt failures. */
-  readonly onRetryExhausted?: (info: { error: ActionErrorLike; attempts: number }, args: TArgs) => void;
-  /** Per-call rollback callback. Fires after the action definition's
-   *  rollback() executes (on error or cancellation). Receives the error
-   *  that triggered rollback. Useful for callsite-specific reactions to
-   *  optimistic-mutation reversal (re-focusing an input, logging, etc.)
-   *  without modifying the action definition. Does NOT fire when no
-   *  rollback is defined or when optimistic() returned undefined. */
-  readonly onRollback?: (err: ActionErrorLike, args: TArgs) => void;
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client
@@ -321,36 +261,3 @@ export type RequestSpec =
 /** Subscriber callback for the registry. Fires once per state
  *  transition (pending -> success/error/cancelled). */
 export type RegistryListener = (instance: ActionInstance) => void;
-
-// ---------------------------------------------------------------------------
-// Utility extraction types: pull TArgs / TResult from an Action or
-// ActionDefinition without manually re-declaring them.
-// ---------------------------------------------------------------------------
-
-/** @internal Extract the TArgs type parameter from an Action.
- *
- *  Note: uses `any` in the non-inferred slot because Action's callback
- *  fields (onSuccess, onError, etc.) put TArgs/TResult in contravariant
- *  positions \u2014 `unknown` would cause `Action<X, Y> extends Action<infer T, unknown>`
- *  to fail variance and resolve to `never`. `any` bypasses variance.
- *
- *  Future-use scaffolding. No current external consumers. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ArgsOf<A> = A extends Action<infer T, any> ? T : never;
-
-/** @internal Extract the TResult type parameter from an Action.
- *  See ArgsOf for variance rationale. Future-use scaffolding. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ResultOf<A> = A extends Action<any, infer T> ? T : never;
-
-/** @internal Extract the Action type that a given ActionDefinition would produce.
- *  See ArgsOf for variance rationale. Future-use scaffolding. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ActionFromDef<D> = D extends ActionDefinition<infer A, infer R, any>
-  ? Action<A, R>
-  : never;
-
-/** Discriminated union: the outcome of a single dispatch. */
-export type DispatchResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: ActionErrorLike; readonly cancelled: boolean };

@@ -3,8 +3,9 @@
 // cause chain for diagnostics. apiAction / transportAction wrappers
 // normalise their failure shapes into this.
 //
-// Catching code that handles "any error" can use `instanceof ActionError`
-// to discriminate user-actionable failures from infra exceptions.
+// Public surface: ActionError class + hasErrorString predicate.
+// Internal helpers (classifyFetchError, toActionError, isRetryableError)
+// are exported but consumed only inside actions/.
 // ---------------------------------------------------------------------------
 
 import type { ActionErrorLike } from "./types.js";
@@ -36,11 +37,6 @@ export class ActionError extends Error implements ActionErrorLike {
   }
 }
 
-/** Type predicate: narrows `unknown` to ActionError. */
-export function isActionError(e: unknown): e is ActionError {
-  return e instanceof ActionError;
-}
-
 /** Type predicate: true when `v` is a non-null object with a string
  *  `error` property. Replaces unsafe `as { error?: string }` casts on
  *  parsed JSON bodies throughout the action framework and api-client. */
@@ -53,13 +49,10 @@ export function hasErrorString(v: unknown): v is { error: string } {
 /** Coerce any thrown value into an ActionErrorLike snapshot. Used by
  *  the dispatcher when recording an instance to the registry.
  *
- *  Builds a minimal result object — only includes status/code/cause
- *  fields when they carry a defined value. */
+ *  Internal — consumed only by define.ts. Builds a minimal result
+ *  object — only includes status/code/cause fields when defined. */
 export function toActionError(e: unknown): ActionErrorLike {
   if (e instanceof ActionError) {
-    // Direct property assignment avoids temporary object allocation from
-    // spread-based conditional inclusion (`...(x && { x })`). Measurable
-    // in V8 microbenchmarks when toActionError sits on the error hot path.
     const r: { message: string; status?: number; code?: string; cause?: unknown } = { message: e.message };
     if (e.status !== undefined) r.status = e.status;
     if (e.code !== undefined) r.code = e.code;
@@ -112,25 +105,21 @@ export function toActionError(e: unknown): ActionErrorLike {
 
 /**
  * Classify a caught fetch error into an ActionError with a canonical code.
- * Used by transportAction / apiAction wrappers to normalise network-layer
- * failures into retry-eligible ActionErrors.
+ * Used by transportAction / apiAction wrappers and a few action defs that
+ * call fetch directly.
  *
  * Classification priority:
  *  1. Signal already aborted → "cancelled" (user or framework cancelled)
- *  2. DOMException TimeoutError → "timeout"
- *  3. DOMException AbortError with live signal → "timeout" (AbortSignal.timeout)
- *  4. TypeError → "network" (browsers throw TypeError for network failures)
- *  5. Everything else → "network"
+ *  2. DOMException TimeoutError / AbortError with live signal → "timeout"
+ *  3. TypeError → "network" (browsers throw TypeError for network failures)
+ *  4. Everything else → "network"
  */
 export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError {
   if (signal.aborted) {
     return new ActionError("Request cancelled", { code: "cancelled", cause: e });
   }
   if (e instanceof DOMException) {
-    if (e.name === "TimeoutError") {
-      return new ActionError("Request timed out", { status: 0, code: "timeout", cause: e });
-    }
-    if (e.name === "AbortError") {
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
       return new ActionError("Request timed out", { status: 0, code: "timeout", cause: e });
     }
   }
@@ -141,58 +130,27 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
   return new ActionError(msg, { status: 0, code: "network", cause: e });
 }
 
-/** True when the error represents a network-layer failure: the request
- *  never reached the server or the connection was lost. Matches errors
- *  with code "network" or "timeout", or status === 0 (browser convention
- *  for failed-to-connect). Complements `isTransientStatus` (server-side
- *  transient) and `isPermanentCode` (never-retry). */
-export function isNetworkError(err: ActionErrorLike): boolean {
-  if (err.code === "network" || err.code === "timeout") return true;
-  if (err.status === 0) return true;
-  return false;
-}
-
-/** HTTP status codes that represent transient server-side conditions
- *  (rate-limiting, temporary unavailability). These qualify for retry
- *  under the "network" retryable mode because the server is expected
- *  to recover without client-side changes.
- *
- *  408: server closed connection waiting for the request (keep-alive timeout)
- *  429: rate-limited
- *  502/503/504: upstream unavailability or gateway timeout */
+// HTTP status codes that represent transient server-side conditions
+// (rate-limiting, temporary unavailability). These qualify for retry
+// under the "network" retryable mode because the server is expected
+// to recover without client-side changes.
 const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504]);
 
-/** True when the HTTP status code represents a transient condition
- *  eligible for retry (408 Request Timeout, 429 Too Many Requests,
- *  502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout). */
-export function isTransientStatus(status: number | undefined): boolean {
-  return status !== undefined && TRANSIENT_STATUSES.has(status);
-}
-
-/** Codes that represent permanent failures — never retry regardless
- *  of the retryable mode. These indicate the operation was explicitly
- *  rejected or is semantically invalid. */
+// Codes that represent permanent failures — never retry regardless
+// of the retryable mode. These indicate the operation was explicitly
+// rejected or is semantically invalid.
 const PERMANENT_CODES = new Set(["cancelled", "send_failed", "clipboard", "unsupported", "server_rejected"]);
-
-/** True when the error code represents a permanent failure that should
- *  never be retried (cancelled, send_failed, clipboard, unsupported,
- *  server_rejected). Used by external callers that need to distinguish
- *  permanent from transient failures for UI decisions. */
-export function isPermanentCode(code: string | undefined): boolean {
-  return code !== undefined && PERMANENT_CODES.has(code);
-}
 
 /**
  * Determine whether an error qualifies for retry under the given mode.
  *
  * - `undefined` / `false`: never retryable.
- * - `"network"`: retryable when the error is a network/timeout failure
- *   (code === "network" | "timeout", status === 0, or transient HTTP status).
+ * - `"network"`: retryable when code is "network"/"timeout", status === 0,
+ *   or status is a transient HTTP status (408/429/502/503/504).
  * - `"always"`: retryable for any error EXCEPT permanent failure codes.
  *
- * Used by:
- *  - `runWithRetry` to decide whether to auto-retry before surfacing the error.
- *  - `buildRetryButton` to decide whether to show the manual Retry button.
+ * Internal — consumed only by define.ts (auto-retry classification +
+ * Retry-button visibility decision).
  */
 export function isRetryableError(
   err: ActionErrorLike,
@@ -202,8 +160,9 @@ export function isRetryableError(
   // Permanent codes are never retryable regardless of mode.
   if (PERMANENT_CODES.has(err.code ?? "")) return false;
   if (mode === "always") return true;
-  // mode === "network"
-  if (isNetworkError(err)) return true;
-  if (isTransientStatus(err.status)) return true;
+  // mode === "network": network-layer error OR transient HTTP status.
+  if (err.code === "network" || err.code === "timeout") return true;
+  if (err.status === 0) return true;
+  if (err.status !== undefined && TRANSIENT_STATUSES.has(err.status)) return true;
   return false;
 }
