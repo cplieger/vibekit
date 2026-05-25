@@ -11,6 +11,7 @@
 import type { ActionInstance, RegistryListener } from "./types.js";
 
 const MAX_LOG_SIZE = 200;
+const MAX_LOG_HARD = 1000;
 
 // Module-level state. The registry is intentionally a singleton — at
 // most one log per page; subscribers are tab-scoped.
@@ -35,7 +36,8 @@ export function record(instance: ActionInstance): void {
     if (log.length > MAX_LOG_SIZE) {
       // Evict the first NON-pending entry so pendingFor() never loses
       // track of long-running actions. If all entries are pending
-      // (extreme case), skip eviction this round and let the log grow.
+      // (extreme case), skip eviction this round — hard cap below
+      // bounds worst case.
       let evictIdx = -1;
       for (let i = 0; i < log.length; i++) {
         if (log[i]!.status !== "pending") { evictIdx = i; break; }
@@ -48,6 +50,16 @@ export function record(instance: ActionInstance): void {
           const entry = log[i];
           if (entry !== undefined) idMap.set(entry.id, i);
         }
+      }
+    }
+    // Hard cap: force-evict oldest entry regardless of pending status
+    // to bound memory in extreme runaway scenarios (B5/B6).
+    if (log.length > MAX_LOG_HARD) {
+      log.splice(0, 1);
+      idMap.clear();
+      for (let i = 0; i < log.length; i++) {
+        const entry = log[i];
+        if (entry !== undefined) idMap.set(entry.id, i);
       }
     }
   }

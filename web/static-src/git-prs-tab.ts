@@ -107,7 +107,9 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   refreshController = new AbortController();
   const { signal } = refreshController;
   // Honour external signal (e.g. from action framework).
-  if (externalSignal) externalSignal.addEventListener("abort", () => refreshController?.abort(), { once: true });
+  // Capture local ref to avoid stale closure over module-level refreshController.
+  const myController = refreshController;
+  if (externalSignal) externalSignal.addEventListener("abort", () => myController.abort(), { once: true });
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
   if (forgesRes === null) {
@@ -124,6 +126,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
       signal,
     );
     if (reposRes === null) continue;
+    if (signal.aborted) return;
     for (const repo of reposRes.repos) {
       tasks.push({ forge, repo });
     }

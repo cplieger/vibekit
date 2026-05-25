@@ -36,17 +36,24 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
     body: { pattern, mode, priority },
   }),
   optimistic: ({ pattern, mode, priority, rules, setRules }) => {
-    const pending: CommandRule = { pattern, mode, priority, created_at: Date.now() };
     const idx = rules.findIndex((e) => e.pattern === pattern);
+    const previousRule = idx >= 0 ? rules[idx] : undefined;
+    const pending: CommandRule = { pattern, mode, priority, created_at: Date.now() };
     const next = [...rules];
     if (idx >= 0) next[idx] = pending; else next.push(pending);
     setRules(next);
-    return { pattern };
+    return { pattern, previousRule };
   },
   rollback: ({ rules, setRules }, op) => {
     if (op !== undefined && op !== null && typeof op === "object" && "pattern" in op) {
-      const { pattern } = op as { pattern: string };
-      setRules(rules.filter((e) => e.pattern !== pattern));
+      const { pattern, previousRule } = op as { pattern: string; previousRule?: CommandRule };
+      if (previousRule) {
+        // restore the old rule
+        setRules([...rules.filter((e) => e.pattern !== pattern), previousRule]);
+      } else {
+        // was a fresh add: just remove
+        setRules(rules.filter((e) => e.pattern !== pattern));
+      }
     }
   },
   error: "Couldn't add rule",
@@ -60,16 +67,16 @@ export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
   }),
   optimistic: ({ pattern, rules, setRules }) => {
     const idx = rules.findIndex((e) => e.pattern === pattern);
-    const removed = idx >= 0 ? rules[idx] : undefined;
+    const previousRule = idx >= 0 ? rules[idx] : undefined;
     setRules(rules.filter((e) => e.pattern !== pattern));
-    return { removed, idx };
+    return { previousRule, atIndex: idx };
   },
   rollback: ({ rules, setRules }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "removed" in op) {
-      const { removed, idx } = op as { removed: CommandRule | undefined; idx: number };
-      if (removed === undefined) return;
+    if (op !== undefined && op !== null && typeof op === "object" && "previousRule" in op) {
+      const { previousRule, atIndex } = op as { previousRule: CommandRule | undefined; atIndex: number };
+      if (previousRule === undefined) return;
       const next = [...rules];
-      next.splice(idx, 0, removed);
+      next.splice(Math.min(atIndex >= 0 ? atIndex : rules.length, rules.length), 0, previousRule);
       setRules(next);
     }
   },

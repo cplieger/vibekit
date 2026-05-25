@@ -216,4 +216,45 @@ describe("bindLoadingState", () => {
     expect(btn.getAttribute("aria-busy")).toBe("true");
     expect(btn.disabled).toBe(false);
   });
+
+  it("preserveDisabled: external mutation DURING pending is overwritten on completion (documented limitation)", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind12",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    // Initially enabled.
+    bindLoadingState("test.bind12", btn, { preserveDisabled: true });
+    expect(btn.disabled).toBe(false);
+    // Start action — snapshots baseDisabled = false.
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    // External code mutates disabled DURING pending phase.
+    // This mutation will be lost — documented limitation.
+    btn.disabled = true;
+    resolveRun!();
+    await p;
+    // Restores to the snapshot taken at pending edge (false), NOT the
+    // external mutation (true). This is the documented contract.
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("disposed listener does not fire after unbind (B3)", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind13",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const unbind = bindLoadingState("test.bind13", btn);
+    // Unbind before any action starts.
+    unbind();
+    // Now dispatch — the disposed listener should not re-enable/disable.
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(false); // not affected
+    resolveRun!();
+    await p;
+    expect(btn.disabled).toBe(false); // still not affected
+  });
 });

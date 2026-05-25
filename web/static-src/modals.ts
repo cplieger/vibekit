@@ -94,6 +94,7 @@ export function closeTopModal(): boolean {
 
 /** Active login-poll abort controller; aborted when the modal is dismissed. */
 let loginPollAbort: AbortController | null = null;
+let loginPollUnregister: (() => void) | null = null;
 
 export function showLoginModal(): void {
   $.loginModal.classList.remove("hidden");
@@ -102,6 +103,8 @@ export function showLoginModal(): void {
 export function hideLoginModal(): void {
   loginPollAbort?.abort();
   loginPollAbort = null;
+  loginPollUnregister?.();
+  loginPollUnregister = null;
   $.loginModal.classList.add("hidden");
 }
 
@@ -190,21 +193,26 @@ function doLogin(
       const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
       const ctrl = new AbortController();
       loginPollAbort = ctrl;
-      registerCleanup(() => loginPollAbort?.abort());
+      loginPollUnregister?.();
+      loginPollUnregister = registerCleanup(() => loginPollAbort?.abort());
       const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000)]);
       void (async () => {
         while (!signal.aborted) {
           await new Promise<void>((r) => setTimeout(r, 3000));
           if (signal.aborted) break;
-          const wd = await apiGet<WhoamiResponse>("/api/whoami");
+          const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
           if (signal.aborted) break;
           if (wd?.email !== undefined && wd.email !== "") {
             loginPollAbort = null;
+            loginPollUnregister?.();
+            loginPollUnregister = null;
             onLoggedIn();
             return;
           }
         }
         if (ctrl.signal.aborted) return; // user dismissed
+        loginPollUnregister?.();
+        loginPollUnregister = null;
         status.textContent = "Login timed out. Please reload and try again.";
       })();
     }

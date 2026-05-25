@@ -35,6 +35,44 @@ function panel(): HTMLElement {
   return document.getElementById("forges-panel") as HTMLElement;
 }
 
+describe("forge-auth: race condition guards", () => {
+  beforeEach(() => {
+    setupDOM();
+    vi.clearAllMocks();
+  });
+
+  it("concurrent renderForgesPanel calls: only the latest render paints", async () => {
+    // First call: slow — resolves after the second call starts.
+    let resolveFirst!: (v: unknown) => void;
+    const firstPromise = new Promise((r) => { resolveFirst = r; });
+    mockedApiGet.mockReturnValueOnce(firstPromise as any);
+
+    // Second call: fast — resolves immediately.
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [{ id: "gitlab:gitlab.com", kind: "gitlab", host: "gitlab.com", username: "fast", connected: true }],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+
+    const p1 = renderForgesPanel({ revalidate: false });
+    const p2 = renderForgesPanel({ revalidate: false });
+
+    // Let the second call finish first.
+    await p2;
+
+    // Now resolve the first (stale) call.
+    resolveFirst({
+      forges: [{ id: "github:github.com", kind: "github", host: "github.com", username: "stale", connected: true }],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await p1;
+
+    // The panel should show the FAST result, not the stale one.
+    const rows = panel().querySelectorAll(".forge-account-row");
+    expect(rows.length).toBe(1);
+    expect(panel().querySelector(".forge-account-primary")?.textContent).toBe("fast");
+  });
+});
+
 describe("forge-auth: 4-section layout", () => {
   beforeEach(() => {
     setupDOM();

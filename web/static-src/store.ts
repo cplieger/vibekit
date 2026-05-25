@@ -39,6 +39,7 @@ let _sessions: Session[] = [];
 let _activeId = "";
 let sessionIndex = new Map<string, Session>();
 const msgIndex = new Map<string, Map<string, number>>();
+const _queuedAttachments = new Map<string, unknown[][]>();
 let listController: AbortController | null = null;
 const msgControllers = new Map<string, AbortController>();
 
@@ -93,11 +94,18 @@ export function queuedPrompt(id: string): string | undefined {
   return q[0];
 }
 
-export function enqueuePrompt(id: string, text: string): void {
+export function enqueuePrompt(id: string, text: string, attachments?: readonly unknown[]): void {
   const s = get(id);
   if (s === undefined) return;
   if (s.prompt_queue === undefined) s.prompt_queue = [];
   s.prompt_queue.push(text);
+  if (attachments !== undefined && attachments.length > 0) {
+    if (!_queuedAttachments.has(id)) _queuedAttachments.set(id, []);
+    _queuedAttachments.get(id)!.push([...attachments]);
+  } else {
+    if (!_queuedAttachments.has(id)) _queuedAttachments.set(id, []);
+    _queuedAttachments.get(id)!.push([]);
+  }
   emit();
 }
 
@@ -108,15 +116,37 @@ export function dequeuePrompt(id: string): string | undefined {
   if (q === undefined || q.length === 0) return undefined;
   const next = q.shift();
   if (q.length === 0) delete s.prompt_queue;
+  // Also shift attachments (consumed via dequeuePromptAttachments or discarded).
+  const aq = _queuedAttachments.get(id);
+  if (aq !== undefined) {
+    aq.shift();
+    if (aq.length === 0) _queuedAttachments.delete(id);
+  }
   emit();
   return next;
+}
+
+/** Dequeue the attachments for the next queued prompt (peek without removing — 
+ *  call before dequeuePrompt to capture them). */
+export function peekQueuedAttachments(id: string): readonly unknown[] {
+  const aq = _queuedAttachments.get(id);
+  if (aq === undefined || aq.length === 0) return [];
+  return aq[0]!;
+}
+
+/** Replace attachments on the last queued entry (used when the action
+ *  enqueued text-only and the caller needs to attach files after). */
+export function setLastQueuedAttachments(id: string, attachments: readonly unknown[]): void {
+  const aq = _queuedAttachments.get(id);
+  if (aq === undefined || aq.length === 0) return;
+  aq[aq.length - 1] = [...attachments];
 }
 
 export function setQueuedPrompt(id: string, text: string | undefined): void {
   const s = get(id);
   if (s === undefined) return;
-  if (text === undefined) { delete s.prompt_queue; }
-  else { s.prompt_queue = [text]; }
+  if (text === undefined) { delete s.prompt_queue; _queuedAttachments.delete(id); }
+  else { s.prompt_queue = [text]; _queuedAttachments.set(id, [[]]); }
   emit();
 }
 

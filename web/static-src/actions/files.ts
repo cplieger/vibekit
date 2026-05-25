@@ -146,15 +146,20 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
     });
     if (!r.ok) throw new ActionError("Download failed", { status: r.status });
     const blob = await r.blob();
+    if (signal.aborted) return;
     // Trigger browser download via objectURL anchor
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "download.zip";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    try {
+      if (signal.aborted) return;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "download.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   },
   error: "Download failed",
 });

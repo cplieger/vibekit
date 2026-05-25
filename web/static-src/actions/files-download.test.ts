@@ -71,6 +71,41 @@ describe("downloadFiles action", () => {
     expect(log[0]?.status).toBe("error");
   });
 
+  it("does not trigger download if cancelled after blob()", async () => {
+    const fakeBlob = new Blob(["zip-content"], { type: "application/zip" });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(fakeBlob),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const revokeURL = vi.fn();
+    const createURL = vi.fn().mockReturnValue("blob:fake-url");
+    vi.stubGlobal("URL", { ...URL, createObjectURL: createURL, revokeObjectURL: revokeURL });
+
+    const clickSpy = vi.fn();
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      if (tag === "a") {
+        return { href: "", download: "", click: clickSpy, remove: vi.fn() } as unknown as HTMLAnchorElement;
+      }
+      return document.createElement(tag);
+    });
+    vi.spyOn(document.body, "appendChild").mockImplementation((el) => el);
+
+    // Start dispatch then cancel immediately — the blob() resolves but
+    // signal should be aborted before the anchor click.
+    const promise = downloadFiles.dispatch({ paths: ["a.txt"] });
+    downloadFiles.cancel();
+    const result = await promise;
+
+    expect(result).toBeNull();
+    expect(clickSpy).not.toHaveBeenCalled();
+    // revokeObjectURL should still be called if createObjectURL was called
+    if (createURL.mock.calls.length > 0) {
+      expect(revokeURL).toHaveBeenCalledWith("blob:fake-url");
+    }
+  });
+
   it("records pending then success in registry", async () => {
     const fakeBlob = new Blob(["z"]);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(fakeBlob) }));

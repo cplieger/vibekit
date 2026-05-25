@@ -73,6 +73,14 @@ let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
  *  buttons. Drained at the top of each paintForgesData call. */
 let signOutUnbinds: Array<() => void> = [];
 
+/** Per-render cleanup: unbind functions from bindLoadingState on PAT
+ *  form submit buttons. Drained at the top of each paintForgesData call. */
+let patFormUnbinds: Array<() => void> = [];
+
+/** Generation counter to prevent stale concurrent renderForgesPanel
+ *  calls from overwriting a newer render. */
+let renderGen = 0;
+
 // --- In-flight handles for cancel-on-navigate -------------------------
 
 /** Stop flag for the OAuth device-flow polling chain. tick() exits
@@ -153,7 +161,10 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   const root = document.getElementById("forges-panel");
   if (root === null) return;
 
+  const myGen = ++renderGen;
+
   const data = await apiGet<ForgesListResponse>("/api/forges");
+  if (myGen !== renderGen) return;
   if (data === null) {
     root.innerHTML = `<div class="forge-error">Failed to load forges.</div>`;
     return;
@@ -171,6 +182,7 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   } else {
     await refreshReposByForge(data.forges);
   }
+  if (myGen !== renderGen) return;
 
   paintForgesData(root, data);
 
@@ -232,6 +244,8 @@ function paintForgesData(root: HTMLElement, data: ForgesListResponse): void {
   // Drain per-render cleanup from previous paint.
   for (const fn of signOutUnbinds) fn();
   signOutUnbinds = [];
+  for (const fn of patFormUnbinds) fn();
+  patFormUnbinds = [];
 
   // Cache OAuth availability for use in add-account pane.
   oauthByKind = data.oauth ?? {};
@@ -747,6 +761,7 @@ function slotOf(section: HTMLElement): HTMLElement {
 // --- GitHub OAuth device flow ---
 
 async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
+  pollStopped = false;
   setStatus(host, "Contacting GitHub…");
   const start = await startDeviceFlow.dispatch({});
   if (start === null) {
@@ -884,6 +899,7 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
 
   // B3: track unbind so the subscription is cleaned up on close.
   const unbindLoading = bindLoadingState("forge.connect_pat", submit);
+  patFormUnbinds.push(unbindLoading);
   cancel.addEventListener("click", () => { unbindLoading(); closeSlot(slot); });
   form.appendChild(cancel);
 

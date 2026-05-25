@@ -38,6 +38,7 @@ function getAgentLines(path: string): Set<number> {
 export async function fetchAgentLines(path: string, _signal?: AbortSignal): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") return;
+  fetchAgentLinesAction.cancel();
   const data = await fetchAgentLinesAction.dispatch({ chatID, path });
   if (data === null) return;
   if (getActiveFilePath() !== path) return;
@@ -45,7 +46,7 @@ export async function fetchAgentLines(path: string, _signal?: AbortSignal): Prom
   agentLineSetCache.delete(path);
   // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);
-  if (state !== undefined && state.loaded && state.mode.kind === "edit" && !state.mode.editing) {
+  if (state !== undefined && state.loaded && state.mode.kind === "edit") {
     rebuildGutter(state.current);
   }
 }

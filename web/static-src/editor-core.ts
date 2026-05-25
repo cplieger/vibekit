@@ -180,8 +180,9 @@ function saveFile(): void {
   if (state === undefined) return;
   const content = $.editorContent.value;
   void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
-    if (d === null || d.error !== undefined) {
-      $.editorError.textContent = d?.error ?? "Save failed";
+    if (d === null) return; // cancelled (e.g. page unload) — bail silently
+    if (d.error !== undefined) {
+      $.editorError.textContent = d.error;
       $.editorError.classList.remove("hidden");
       return;
     }

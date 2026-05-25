@@ -6,6 +6,7 @@ vi.mock("./store.js", () => ({
   setThinking: vi.fn(),
   setModel: vi.fn(),
   enqueuePrompt: vi.fn(),
+  setLastQueuedAttachments: vi.fn(),
 }));
 
 vi.mock("./transport.js", () => ({
@@ -66,6 +67,9 @@ describe("switchModel", () => {
     vi.mocked(transport.send).mockResolvedValue({ ok: true, status: 200 });
     const result = await switchModel("chat1", "gpt-4");
     expect(result).toBe(true);
-    expect(store.setThinking).toHaveBeenCalledWith("chat1", false);
+    // B2 fix: switchModelAction no longer touches thinking state —
+    // it's owned by sendPromptAction; the model switcher button uses
+    // bindLoadingState for its own indicator.
+    expect(store.setThinking).not.toHaveBeenCalled();
   });
 });

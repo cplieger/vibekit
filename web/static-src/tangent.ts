@@ -90,15 +90,14 @@ export async function discardTangent(): Promise<void> {
   if (session === undefined || session.is_tangent !== true) return;
   const ok = await confirm("Discard this tangent? Changes won't be merged back.", "Discard", "destructive");
   if (!ok) return;
-  void discardTangentAction.dispatch(session.id).then((result) => {
-    if (result === null) {
-      toastError("Couldn't discard tangent");
-      return;
-    }
-    if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
-      void loadList().then(() => {
-        activateChatView(session.parent_chat_id!);
-      });
-    }
-  });
+  const result = await discardTangentAction.dispatch(session.id);
+  if (result === null) {
+    toastError("Couldn't discard tangent");
+    return;
+  }
+  if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
+    void loadList().then(() => {
+      activateChatView(session.parent_chat_id!);
+    });
+  }
 }

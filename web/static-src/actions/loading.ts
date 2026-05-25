@@ -42,6 +42,14 @@ export interface BindLoadingOptions {
   preserveDisabled?: boolean;
 }
 
+/**
+ * Bind a button/input element's disabled / aria-busy state to a named
+ * action's pending count.
+ *
+ * **Limitation (preserveDisabled):** External mutations to `el.disabled`
+ * DURING the pending phase are overwritten on completion. Set the desired
+ * disabled state AFTER the action completes if needed.
+ */
 export function bindLoadingState(
   actionName: string,
   el: DisableableElement,
@@ -53,8 +61,17 @@ export function bindLoadingState(
   // avoids stale bind-time capture when external code mutates disabled.
   let wasPending = false;
   let baseDisabled = el.disabled;
+  let disposed = false;
+
+  /** Restore element to idle state (B7: deduplicated helper). */
+  const setIdle = (): void => {
+    el.disabled = preserveDisabled ? baseDisabled : false;
+    if (manageAriaBusy) el.removeAttribute("aria-busy");
+    if (pendingClass) el.classList.remove(pendingClass);
+  };
 
   const apply = (): void => {
+    if (disposed) return;
     const isPending = pendingFor(actionName).length > 0;
     // Snapshot the live disabled state on the pending edge (before we
     // clobber it) so we can restore it when the action completes.
@@ -65,9 +82,7 @@ export function bindLoadingState(
       if (pendingClass) el.classList.add(pendingClass);
     } else if (wasPending) {
       // Transition pending→idle: restore element state.
-      el.disabled = preserveDisabled ? baseDisabled : false;
-      if (manageAriaBusy) el.removeAttribute("aria-busy");
-      if (pendingClass) el.classList.remove(pendingClass);
+      setIdle();
     }
     wasPending = isPending;
   };
@@ -75,9 +90,7 @@ export function bindLoadingState(
   /** Restore element state as if the action completed. */
   const restore = (): void => {
     if (wasPending) {
-      el.disabled = preserveDisabled ? baseDisabled : false;
-      if (manageAriaBusy) el.removeAttribute("aria-busy");
-      if (pendingClass) el.classList.remove(pendingClass);
+      setIdle();
       wasPending = false;
     }
   };
@@ -93,5 +106,5 @@ export function bindLoadingState(
   });
 
   // Unsubscribe restores element state if still mid-pending (B2).
-  return () => { restore(); unsubscribe(); };
+  return () => { disposed = true; restore(); unsubscribe(); };
 }

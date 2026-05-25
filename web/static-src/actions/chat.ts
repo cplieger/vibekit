@@ -133,7 +133,8 @@ export const renameChatAction = transportAction<{ chatID: string; name: string }
     setName(chatID, name);
     return { prev };
   },
-  rollback: ({ chatID }, op) => {
+  rollback: ({ chatID, name }, op) => {
+    if (get(chatID)?.name === name) return; // SSE already confirmed
     if (op && typeof op === "object" && "prev" in op) {
       setName(chatID, (op as { prev: string }).prev);
     }
@@ -283,19 +284,16 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     }
   },
   run: async ({ chatID, model }, signal) => {
-    setThinking(chatID, true);
-    try {
-      const r = await transportSend(
-        { type: "switch_model", chat_id: chatID, payload: { model } },
-        { signal, reportSendState: false },
-      );
-      if (!r.ok) {
-        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
-      }
-      return true;
-    } finally {
-      setThinking(chatID, false);
+    // Don't touch thinking state — it's owned by sendPromptAction and
+    // bindLoadingState on the model switcher button handles the UI indicator.
+    const r = await transportSend(
+      { type: "switch_model", chat_id: chatID, payload: { model } },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
     }
+    return true;
   },
   error: "Couldn't switch model",
 });

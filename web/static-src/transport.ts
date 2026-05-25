@@ -83,12 +83,16 @@ export type TypedCommand =
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };
 
+export const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
+
 export interface SendResult {
   ok: boolean;
   /** HTTP status. 0 for non-HTTP failures (timeout, network). */
   status: number;
   /** Server error message, if any. */
   error?: string;
+  /** Structured error code for non-HTTP failures. */
+  code?: string;
 }
 
 export interface SendOptions {
@@ -311,16 +315,20 @@ class TransportController {
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
       let msg: string;
+      let code: string;
       if (err?.name === "TimeoutError") {
         msg = "Request timed out";
+        code = TRANSPORT_ERROR_CODES.TIMEOUT;
       } else if (err?.name === "AbortError") {
         msg = "Request cancelled";
+        code = TRANSPORT_ERROR_CODES.CANCELLED;
       } else {
         msg = err?.message ?? "Network error";
+        code = TRANSPORT_ERROR_CODES.NETWORK;
       }
       const reportSendState = opts?.reportSendState ?? true;
       if (reportSendState) setLastError(msg);
-      return { ok: false, status: 0, error: msg };
+      return { ok: false, status: 0, error: msg, code };
     } finally {
       this.inflight.delete(ctrl);
     }

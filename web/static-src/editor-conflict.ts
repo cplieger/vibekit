@@ -12,6 +12,10 @@ import { registerCleanup } from "./actions/cleanup.js";
 
 registerCleanup(() => suggestResolution.cancel());
 
+/** Generation counter: incremented on each requestSuggestion dispatch
+ *  so superseded dispatches can detect they were cancelled. */
+let suggestionGen = 0;
+
 /** Abort any in-flight suggestion request (called on tab close). */
 export function abortSuggestion(): void {
   suggestResolution.cancel();
@@ -121,6 +125,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   const existing = state.suggestions.get(hunk.startLine);
   if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
   suggestResolution.cancel();
+  const myDispatchId = ++suggestionGen;
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
   const context = buildHunkContext(state.mode.conflict, hunk);
@@ -130,6 +135,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     context,
   };
   const resp = await suggestResolution.dispatch(body);
+  if (myDispatchId !== suggestionGen) return; // superseded by another dispatch; silently bail
   if (state.mode.kind !== "conflict") return;
   if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];

@@ -36,6 +36,7 @@ import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import { takeAttachments, addAttachment } from "./attachments.js";
 import { switchModelAction, resolvePendingChangeAction, sendPromptAction } from "./actions/chat.js";
+import { setLastQueuedAttachments } from "./store.js";
 
 /** Options for the low-level prompt sender. */
 export interface SendPromptOpts {
@@ -66,6 +67,9 @@ export async function sendPromptTo(
     // Restore attachments on failure so the user doesn't lose them.
     for (const a of attachments) addAttachment(a.path);
     return "failed";
+  }
+  if (result === "queued" && attachments.length > 0) {
+    setLastQueuedAttachments(chatID, attachments);
   }
   return result;
 }

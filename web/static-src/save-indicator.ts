@@ -19,6 +19,7 @@ function spinnerNode(): HTMLDivElement {
 
 let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
+let lastShownAt = 0;
 
 function clearTimers(): void {
   if (fadeTimer !== undefined) clearTimeout(fadeTimer);
@@ -28,6 +29,7 @@ function clearTimers(): void {
 }
 
 export function showSaving(): void {
+  lastShownAt = Date.now();
   clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(spinnerNode());
@@ -35,6 +37,7 @@ export function showSaving(): void {
 }
 
 export function showSaved(): void {
+  lastShownAt = Date.now();
   clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(iconEl(ICON_SAVE_OK));
@@ -49,6 +52,7 @@ export function showSaved(): void {
  *  so the spinner doesn't stay forever; the toast already carries the
  *  detailed message, this is just the inline visual signal. */
 export function showError(): void {
+  lastShownAt = Date.now();
   clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(iconEl(ICON_SAVE_FAIL));
@@ -69,6 +73,7 @@ export function showError(): void {
 // ---------------------------------------------------------------------------
 subscribeToActions((instance) => {
   if (instance.name !== "settings.patch") return;
+  if (Date.now() - lastShownAt < 500) return;
   if (instance.status === "pending" && pendingFor("settings.patch").length > 0) {
     showSaving();
   } else if (pendingFor("settings.patch").length === 0) {

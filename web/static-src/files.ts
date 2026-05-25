@@ -463,6 +463,7 @@ function startInlineRename(targetName: string): void {
       // Reload the directory to rebuild rows with click handlers and
       // correct sort order (fixes stale handler + sort-after-rename).
       state.deselectAll();
+      updateActionButtons();
       loadDir();
     });
   };
@@ -495,6 +496,7 @@ function deleteSelected(): void {
         return;
       }
       state.deselectAll();
+      updateActionButtons();
       setTimeout(loadDir, 200);
     });
   })();

@@ -46,7 +46,6 @@ export const signOut = apiAction<SignOutArgs, void>({
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
   }),
   error: "Couldn't sign out",
-  retryable: "network",
 });
 
 /** Clone a single repo into the workspace. Error toast suppressed —

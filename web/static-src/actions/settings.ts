@@ -74,7 +74,8 @@ interface KiroSettingOp {
 
 export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
   name: "settings.set_kiro_setting",
-  retryable: "network",
+  // Not retryable: args contain DOM refs that become stale on retry, and
+  // settings saves are user-initiated (cheap to redo manually).
   request: ({ key, value }) => ({
     method: "PUT",
     path: "/api/kiro-settings",
@@ -117,7 +118,8 @@ interface PatchAppOp {
 
 export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
   name: "settings.patch",
-  retryable: "network",
+  // Not retryable: args contain DOM refs that become stale on retry, and
+  // settings saves are user-initiated (cheap to redo manually).
   request: ({ body }) => ({
     method: "PATCH",
     path: "/api/settings",

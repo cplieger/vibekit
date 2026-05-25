@@ -49,8 +49,8 @@ export const deleteServer = apiAction<DeleteArgs, void>({
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
-      const [entry] = op as [Server, number];
-      insertConfiguredEntry(entry);
+      const [entry, atIndex] = op as [Server, number];
+      insertConfiguredEntry(entry, atIndex);
     }
   },
   error: "Couldn't remove integration",

@@ -89,6 +89,6 @@ export function _resetForTest(): void {
   cleanupHooks.clear();
   if (beforeunloadInstalled && typeof window !== "undefined") {
     window.removeEventListener("beforeunload", cancelAllPending);
-    beforeunloadInstalled = false;
   }
+  beforeunloadInstalled = false;
 }

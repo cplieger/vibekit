@@ -40,7 +40,10 @@ export function toActionError(e: unknown): ActionErrorLike {
   // DOMExceptions carry a meaningful name ('AbortError', 'TimeoutError')
   // that downstream classifiers rely on as a code.
   if (e instanceof DOMException) {
-    return { message: e.message, code: e.name.toLowerCase(), cause: e };
+    const code = e.name === "TimeoutError" ? "timeout"
+               : e.name === "AbortError" ? "cancelled"
+               : e.name.toLowerCase();
+    return { message: e.message, code, cause: e };
   }
   if (e instanceof Error) {
     return { message: e.message, cause: e };

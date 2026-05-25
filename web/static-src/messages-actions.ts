@@ -182,7 +182,8 @@ export function initMessageActions(): void {
     removePendingActions(card, payload.action === "accept" ? "completed" : "failed");
   });
 
-  onBus(BUS_PENDING_CLEARED, () => {
+  onBus(BUS_PENDING_CLEARED, (payload) => {
+    if (payload.chatID !== getActiveId()) return;
     for (const row of document.querySelectorAll<HTMLDivElement>(".tool-pending-actions")) {
       const card = row.closest<HTMLDivElement>(".tool-call");
       if (card !== null) removePendingActions(card, "failed");

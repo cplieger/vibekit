@@ -3,13 +3,14 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { setThinking, setWorkingLabel, get, getActiveId } from "../store.js";
+import { setThinking, setWorkingLabel, get, getActiveId, dequeuePrompt, peekQueuedAttachments } from "../store.js";
 import { apiGet } from "../api-client.js";
 import {
   notifyIfHidden, setBadge, isAgentFinishedEnabled, isPermissionNeededEnabled,
 } from "../notify.js";
 import { showPermissionDialog } from "../messages.js";
-import { drainQueuedPrompt } from "../chat.js";
+import { sendPromptTo } from "../chat-commands.js";
+import { addAttachment } from "../attachments.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import {
@@ -18,6 +19,21 @@ import {
 import { setSubagentPendingApproval } from "../crew-card.js";
 import { permissionResponseAction, restoreCheckpointAction } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
+
+/** Drain one queued prompt, restoring any attachments that were saved
+ *  alongside it so they flow through the next sendPromptTo call. */
+function drainQueuedPromptWithAttachments(chatID: string): void {
+  const attachments = peekQueuedAttachments(chatID);
+  const text = dequeuePrompt(chatID);
+  if (text === undefined) return;
+  // Restore attachments so takeAttachments() inside sendPromptTo picks them up.
+  for (const a of attachments) {
+    if (a !== null && typeof a === "object" && "path" in a) {
+      addAttachment((a as { path: string }).path);
+    }
+  }
+  void sendPromptTo(chatID, text);
+}
 
 /** Track last notification time per chat to avoid duplicate notifications
  *  on SSE reconnect replay (events arrive within milliseconds). */
@@ -41,7 +57,7 @@ onSSE("turn_ended", (chatID, p) => {
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();
-  drainQueuedPrompt(chatID);
+  drainQueuedPromptWithAttachments(chatID);
 
   const stopReason = p.stop_reason;
   if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {

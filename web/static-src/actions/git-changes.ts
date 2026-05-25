@@ -72,7 +72,9 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
   name: "git.commit",
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
   error: "Commit failed",
-  retryable: "network",
+  // Not retryable: a timed-out commit may have succeeded server-side;
+  // retrying would create a duplicate commit.
+  retryable: false,
 });
 
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({

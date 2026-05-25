@@ -96,7 +96,12 @@ class MCPStateController {
 
   get status(): ReadonlyMap<string, RuntimeStatus> { return this._status; }
 
-  abort(): void { this.serversSlot.abort(); this.statusSlot.abort(); }
+  abort(): void {
+    this.serversSlot.abort();
+    this.statusSlot.abort();
+    this.serversFetchPending = false;
+    this.statusFetchPending = false;
+  }
 
   setRenderCallback(cb: () => void): void { this.renderCb = cb; }
 
@@ -182,12 +187,17 @@ export function removeConfiguredEntry(id: string): [Server, number] | undefined 
   return [entry, idx];
 }
 
-/** Re-insert a previously removed entry using id-based ordering. */
-export function insertConfiguredEntry(entry: Server, _atIndex?: number): void {
+/** Re-insert a previously removed entry at its original position when available. */
+export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
   const arr = [...configured] as Server[];
-  // Find correct position by id ordering; fall back to end if no suitable spot.
-  let pos = arr.findIndex((s) => s.id > entry.id);
-  if (pos === -1) pos = arr.length;
+  let pos: number;
+  if (atIndex !== undefined && atIndex >= 0 && atIndex <= arr.length) {
+    pos = atIndex;
+  } else {
+    // Fall back to id ordering if no positional hint.
+    pos = arr.findIndex((s) => s.id > entry.id);
+    if (pos === -1) pos = arr.length;
+  }
   arr.splice(pos, 0, entry);
   configured = arr;
   instance.renderCb?.();

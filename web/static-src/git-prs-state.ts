@@ -69,11 +69,14 @@ export function removePRFromGroups(forgeId: string, owner: string, name: string,
 /** Re-insert a previously removed PR (rollback). Uses PR.number ordering. */
 export function reinsertPRInGroups(result: PRRemoveResult): void {
   if (groupsRef === null) return;
-  if (!groupsRef.groups.includes(result.group as RepoGroup)) return;
-  const prs = result.group.prs;
-  // Find correct insert position by PR number (descending — higher numbers first).
-  let idx = prs.findIndex((p) => p.number < result.pr.number);
-  if (idx === -1) idx = prs.length;
-  prs.splice(idx, 0, result.pr);
+  const currentGroup = groupsRef.groups.find(g =>
+    g.forge_id === result.group.forge_id && g.owner === result.group.owner && g.name === result.group.name);
+  if (!currentGroup) return;
+  // find correct position by PR.number (descending — higher numbers first)
+  let idx = currentGroup.prs.findIndex((p) => p.number < result.pr.number);
+  if (idx === -1) idx = currentGroup.prs.length;
+  // dedup guard against double-rollback
+  if (currentGroup.prs.some((p) => p.number === result.pr.number)) return;
+  currentGroup.prs.splice(idx, 0, result.pr);
   groupsRef.paint();
 }

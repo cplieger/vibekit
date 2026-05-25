@@ -51,7 +51,7 @@ export function initAgentTerminals(): void {
     exitedQueue.push(p.terminal_id);
   });
 
-  registerCleanup(() => { unsub1(); unsub2(); unsub3(); });
+  registerCleanup(() => { unsub1(); unsub2(); unsub3(); terms.clear(); exitedQueue.length = 0; });
 
   // Wire tab clicks via event delegation on the tab bar.
   const tabBar = document.getElementById("shell-tabs");

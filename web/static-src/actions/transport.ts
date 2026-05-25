@@ -55,14 +55,17 @@ export function transportAction<TArgs>(
       // unrelated to prompt sending (e.g. permission_response).
       const r = await transportSend(cmd, { signal, reportSendState: false });
       if (!r.ok) {
-        if (signal.aborted) {
+        if (signal.aborted || r.code === "cancelled") {
           throw new ActionError("cancelled", { code: "cancelled" });
         }
-        const isTimeout = r.status === 0 && (r.error?.includes("timed out") ?? false);
-        const isNetwork = r.status === 0 && !isTimeout;
+        if (r.code === "timeout") {
+          throw new ActionError(r.error ?? "Request timed out", { status: r.status, code: "timeout" });
+        }
+        if (r.code === "network") {
+          throw new ActionError(r.error ?? "network error", { status: r.status, code: "network" });
+        }
         throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
           status: r.status,
-          ...(isTimeout ? { code: "timeout" } : isNetwork ? { code: "network" } : {}),
         });
       }
       return undefined;

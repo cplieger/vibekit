@@ -105,6 +105,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
 function closePopover(): void {
   if (openPopover === null) return;
   branchController?.abort();
+  branchController = null;
   openPopover.remove();
   openPopover = null;
   const savedAnchor = activeAnchor;
