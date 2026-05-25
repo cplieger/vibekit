@@ -537,3 +537,8 @@ export function _resetForTest(): void {
   scopeChains.clear();
   dedupeInflight.clear();
 }
+
+/** Test-only: expose internal map sizes for leak verification. */
+export function _internalsForTest(): { scopeChains: number; dedupeInflight: number } {
+  return { scopeChains: scopeChains.size, dedupeInflight: dedupeInflight.size };
+}

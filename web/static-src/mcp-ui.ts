@@ -15,6 +15,7 @@ import {
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
 import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
+import { bindLoadingState } from "./actions/index.js";
 
 // --- Section scaffold ---
 
@@ -175,6 +176,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   const slider = document.createElement("span");
   slider.className = "toggle-slider";
   label.append(input, slider);
+  bindLoadingState("mcp.toggle_server", input);
   return label;
 }
 
@@ -219,6 +221,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("data-tooltip", "Remove");
   btn.setAttribute("aria-label", `Remove ${s.name}`);
   btn.innerHTML = ICON_TRASH_14;
+  bindLoadingState("mcp.delete_server", btn);
   btn.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(

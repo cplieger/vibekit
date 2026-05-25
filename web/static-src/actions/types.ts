@@ -8,18 +8,13 @@
  *
  *  Note: this is the lifecycle phase enum. Do not confuse with the
  *  `ActionStatus` interface from `action-status.ts` which is a richer
- *  per-name snapshot ({ pending, lastError, lastSuccess, ... }). The
- *  two share the public namespace because only the snapshot interface
- *  is re-exported via `actions/index.ts`. */
+ *  per-name snapshot ({ pending, lastError, lastSuccess, ... }). */
 export type ActionLifecycleStatus =
   | "pending"     // optimistic ran (if any), run() in flight
   | "success"     // run() resolved
   | "error"       // run() threw; rollback ran
   | "cancelled";  // dispatch().cancel() called or AbortController fired
 
-/** @deprecated Use ActionLifecycleStatus. Kept as alias for any
- *  internal consumers that imported ActionStatus before the rename. */
-export type ActionStatus = ActionLifecycleStatus;
 
 /** Errors thrown by an action's run() function. ActionError subclass
  *  in error.ts attaches HTTP status + server error code metadata. */

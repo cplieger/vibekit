@@ -72,7 +72,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   }),
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  error: "Couldn't rename",
+  error: (args) => `Couldn't rename "${args.original}"`,
 });
 
 // --- files.delete ---

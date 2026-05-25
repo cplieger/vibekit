@@ -37,6 +37,7 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
 export const undoEdit = transportAction<{ chatID: string; tag: string; filePath: string }>({
   name: "messages.undo_edit",
   scope: (args) => "chat:" + args.chatID,
+  retryable: "network",
   command: ({ chatID, tag, filePath }) => ({
     type: "undo_edit",
     chat_id: chatID,

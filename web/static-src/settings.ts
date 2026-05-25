@@ -139,6 +139,7 @@ function initSteeringEditor(): void {
 // --- Logout ---
 
 function initLogoutButton(): void {
+  bindLoadingState("settings.logout", $.logoutBtn);
   $.logoutBtn.addEventListener("click", () => {
     void logoutAction.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
   });

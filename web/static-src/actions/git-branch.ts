@@ -21,5 +21,5 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
   }),
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  error: "Branch checkout failed",
+  error: (args) => `Couldn't check out "${args.branch}"`,
 });

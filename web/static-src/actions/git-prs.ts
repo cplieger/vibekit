@@ -37,7 +37,7 @@ export const mergePRAction = apiAction<PRArgs, unknown>({
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
-  error: "Merge failed",
+  error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
   // Not retryable: a timed-out merge may have succeeded server-side.
   retryable: false,
 });
@@ -49,7 +49,7 @@ export const closePRAction = apiAction<PRArgs, unknown>({
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
-  error: "Couldn't close PR",
+  error: (args) => `Couldn't close PR #${String(args.pr_number)}`,
   idempotencyKey: true,
   retryable: "network",
 });

@@ -31,6 +31,7 @@ export interface StartDeviceFlowArgs {}
 export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   dedupe: true,
+  retryable: "network",
   request: () => ({
     method: "POST",
     path: "/api/forges/oauth/github/start",
@@ -42,6 +43,7 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
 /** Sign out of a forge account (delete the token). */
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
+  retryable: "network",
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
@@ -55,6 +57,8 @@ export const signOut = apiAction<SignOutArgs, void>({
 export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
   idempotencyKey: true,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: ({ url }) => ({
     method: "POST",
     path: "/api/git/clone",
@@ -90,6 +94,8 @@ export interface ConnectPATArgs {
 export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
   name: "forge.connect_pat",
   idempotencyKey: true,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: ({ kind, host, token }) => ({
     method: "POST",
     path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,

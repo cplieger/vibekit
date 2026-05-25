@@ -109,6 +109,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
     if (o !== undefined) setSupervisedMode(chatID, o.prev);
   },
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't update supervised mode",
 });
 
@@ -180,6 +181,7 @@ export const mergeTangentAction = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
+  retryable: "network",
   error: "Couldn't merge tangent",
 });
 
@@ -205,6 +207,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     if (o !== undefined) setAutoApproveCrew(chatID, o.prev);
   },
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't update auto-approve",
 });
 
@@ -213,6 +216,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
 export const restoreChatAction = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
   scope: (id) => `chat:${id}`,
+  retryable: "network",
   request: (id) => ({
     method: "POST",
     path: "/api/chats/archived",
@@ -377,6 +381,7 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
     payload: { tool_call_id: toolCallID, action },
   }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't resolve change",
 });
 
@@ -384,7 +389,9 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
 
 export const permissionResponseAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
   name: "chat.permission_response",
+  scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   command: ({ chatID, requestID, optionID }) => ({
     type: "permission_response",
     chat_id: chatID,
@@ -397,10 +404,12 @@ export const permissionResponseAction = transportAction<{ chatID: string; reques
 
 export const restoreCheckpointAction = transportAction<{ chatID: string; tag: string }>({
   name: "chat.restore_checkpoint",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, tag }) => ({
     type: "restore_checkpoint",
     chat_id: chatID,
     payload: { tag },
   }),
+  retryable: "network",
   error: "Couldn't restore checkpoint",
 });

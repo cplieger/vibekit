@@ -13,21 +13,23 @@ export { defineAction } from "./define.js";
 export { apiAction } from "./api.js";
 export { transportAction } from "./transport.js";
 
-// Error class + helper for callers throwing structured action errors
-// from within run() (lets toast / retry classification see status + code).
-export { ActionError, toActionError } from "./error.js";
+// Error class for callers throwing structured action errors from within
+// run() (lets toast / retry classification see status + code).
+export { ActionError } from "./error.js";
+/** @internal Only consumed by the dispatcher (define.ts). */
+export { toActionError } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch
 //     error metadata around the saveServer call.
-//   - pendingFor: loading-state helpers + the upload guard query the
-//     registry directly to gate their behavior.
 //   - pendingCount: total in-flight count — drives global progress
 //     indicators (app-bar loading bar).
 //   - pendingForAny: OR-query for binding one element to multiple
 //     action names (e.g. a Save button covering several settings
 //     actions).
-export { subscribe as subscribeToActions, pendingFor, pendingCount, pendingForAny } from "./registry.js";
+export { subscribe as subscribeToActions, pendingCount, pendingForAny } from "./registry.js";
+/** @internal Only consumed by loading.ts internally; no external caller. */
+export { pendingFor } from "./registry.js";
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
@@ -46,12 +48,16 @@ export { initActionConsoleLog } from "./console-log.js";
 // single dispatch after a quiet window. Useful for typeahead search,
 // auto-save, slash-command option fetches.
 export { debouncedDispatch } from "./debounce.js";
-export type { DebouncedDispatch, DebounceOptions } from "./debounce.js";
+export type { DebouncedDispatch } from "./debounce.js";
+/** @internal No external consumer; kept for potential future use. */
+export type { DebounceOptions } from "./debounce.js";
 
 // Action status: consolidated view (pending count, last error/success,
 // last dispatched/settled timestamps) for surfaces that need richer
 // state than `pendingFor` alone.
+/** @internal No external consumer yet; only tests exercise this. */
 export { actionStatus } from "./action-status.js";
+/** @internal */
 export type { ActionStatus } from "./action-status.js";
 
 // One type used by external callers (mcp-panels narrows the registry

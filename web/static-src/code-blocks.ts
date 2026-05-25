@@ -79,11 +79,13 @@ function makeCopyButton(text: string): HTMLButtonElement {
   let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
     void import("./actions/messages.js").then(({ copyClipboard }) =>
-      copyClipboard.dispatch(text, { silent: true }).then((r) => {
-        if (r === null) return;
-        btn.textContent = "✓";
-        clearTimeout(timer);
-        timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+      copyClipboard.dispatch(text, {
+        silent: true,
+        onSuccess: () => {
+          btn.textContent = "✓";
+          clearTimeout(timer);
+          timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+        },
       }),
     );
   });

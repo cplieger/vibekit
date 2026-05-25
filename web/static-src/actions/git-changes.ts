@@ -26,6 +26,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   error: "Couldn't stage",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
@@ -45,6 +46,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   error: "Couldn't unstage",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });
 
 export const pull = apiAction<{ repo: string }, unknown>({
@@ -53,6 +55,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   error: "Pull failed",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });
 
 export const push = apiAction<{ repo: string }, unknown>({
@@ -102,4 +105,5 @@ export const generateCommitMessage = apiAction<{ repo: string }, { message?: str
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });

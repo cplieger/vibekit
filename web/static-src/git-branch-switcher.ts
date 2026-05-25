@@ -97,6 +97,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     if (name === "") return;
     void doCheckout(repo, name, true);
   });
+  popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
 
   // Close on outside click + Escape.
   setTimeout(() => {

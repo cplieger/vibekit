@@ -36,6 +36,7 @@ export interface ToggleArgs {
 export const toggleServer = apiAction<ToggleArgs, void>({
   name: "mcp.toggle_server",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   scope: (args) => "mcp:" + args.id,
   request: ({ id, enabled }) => ({
     method: "PATCH",
@@ -86,6 +87,7 @@ export const deleteServer = apiAction<DeleteArgs, void>({
 export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   dedupe: (id) => "edit:" + id,
   request: (id) => ({
     method: "GET",
@@ -105,6 +107,8 @@ export interface SaveArgs {
 export const saveServer = apiAction<SaveArgs, Server>({
   name: "mcp.save_server",
   idempotencyKey: true,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
     method: id === "" ? "POST" : "PUT",
@@ -122,6 +126,8 @@ export interface SearchRegistryArgs {
 
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   dedupe: (args) => "search:" + args.q,
   request: ({ q }) => ({
     method: "GET",

@@ -228,6 +228,7 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   retryBtn.type = "button";
   retryBtn.className = "btn-small";
   retryBtn.textContent = "Retry";
+  bindLoadingState("mcp.search_registry", retryBtn);
   retryBtn.addEventListener("click", () => { void searchRegistry.dispatch({ q }); });
   results.appendChild(retryBtn);
 }

@@ -10,6 +10,8 @@ import { routeForPath } from "../editor-types.js";
 export const saveFile = apiAction<{ path: string; content: string }, { ok?: boolean; error?: string }>({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: ({ path, content }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
@@ -43,6 +45,7 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
 export const resolvePendingPartial = transportAction<{ chatID: string; toolCallID: string; mergedText: string }>({
   name: "editor.resolve_pending_partial",
   scope: (args) => "chat:" + args.chatID,
+  retryable: "network",
   command: ({ chatID, toolCallID, mergedText }) => ({
     type: "resolve_pending_change_partial",
     chat_id: chatID,

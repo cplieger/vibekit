@@ -194,38 +194,39 @@ function saveFile(): void {
   const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const content = $.editorContent.value;
-  void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
-    if (d === null) return; // cancelled (e.g. page unload) — bail silently
-    if (d.error !== undefined) {
+  void saveFileAction.dispatch({ path: state.path, content }, {
+    onSuccess: (d) => {
+      if (d.error !== undefined) {
+        if (getActiveFilePath() === state.path) {
+          $.editorError.textContent = d.error;
+          $.editorError.classList.remove("hidden");
+        }
+        return;
+      }
+      state.original = content;
+      // Don't overwrite state.current — user may have edited during save.
+      // Re-derive button state from live values; guard against file switch.
       if (getActiveFilePath() === state.path) {
-        $.editorError.textContent = d.error;
-        $.editorError.classList.remove("hidden");
+        $.editorSaveBtn.disabled = state.current === state.original;
       }
-      return;
-    }
-    state.original = content;
-    // Don't overwrite state.current — user may have edited during save.
-    // Re-derive button state from live values; guard against file switch.
-    if (getActiveFilePath() === state.path) {
-      $.editorSaveBtn.disabled = state.current === state.original;
-    }
-    $.editorError.classList.add("hidden");
-    if (getActiveFilePath() === state.path) {
-      if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-        state.mode = { kind: "edit", editing: false };
-        renderEditModeUI(state);
+      $.editorError.classList.add("hidden");
+      if (getActiveFilePath() === state.path) {
+        if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
+          state.mode = { kind: "edit", editing: false };
+          renderEditModeUI(state);
+        }
+        if (state.returnToGitDiff !== null) {
+          const { ref, repo } = state.returnToGitDiff;
+          state.returnToGitDiff = null;
+          state.mode = {
+            kind: "diff",
+            diffSource: gitDiffSource(ref, "", content),
+          };
+          state.pendingHunkCount = null;
+          void fetchGitDiffSources(state, repo, ref);
+        }
       }
-      if (state.returnToGitDiff !== null) {
-        const { ref, repo } = state.returnToGitDiff;
-        state.returnToGitDiff = null;
-        state.mode = {
-          kind: "diff",
-          diffSource: gitDiffSource(ref, "", content),
-        };
-        state.pendingHunkCount = null;
-        void fetchGitDiffSources(state, repo, ref);
-      }
-    }
+    },
   });
 }
 
