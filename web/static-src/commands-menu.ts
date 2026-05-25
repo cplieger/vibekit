@@ -293,7 +293,11 @@ class CommandsMenuController {
   private renderSelection(): void {
     if (this.popover === null) return;
     const rows = this.popover.querySelectorAll<HTMLButtonElement>(".commands-popover-row");
-    rows.forEach((r, i) => r.classList.toggle("selected", i === this.selectedIndex));
+    rows.forEach((r, i) => {
+      const selected = i === this.selectedIndex;
+      r.classList.toggle("selected", selected);
+      r.setAttribute("aria-selected", String(selected));
+    });
   }
 
   private closePopover(): void {

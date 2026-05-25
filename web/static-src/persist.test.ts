@@ -133,18 +133,18 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
-    // Simulate the bootstrap fire from onSelectionChange: same git_repo
+    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
+    // Simulate the bootstrap fire from onSelectionChange: same shell_policy
     // value the server already has.
-    patchSettings({ git_repo: "homelab" });
+    patchSettings({ shell_policy: "safe_commands" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
-    // git_repo unchanged, last_model changed.
-    patchSettings({ git_repo: "homelab" });
+    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
+    // shell_policy unchanged, last_model changed.
+    patchSettings({ shell_policy: "safe_commands" });
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -185,9 +185,9 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking({ git_repo: "homelab" });
+    initSettingsTracking({ shell_policy: "safe_commands" });
     const { showSaving } = await import("./save-indicator.js");
-    patchSettings({ git_repo: "homelab" });
+    patchSettings({ shell_policy: "safe_commands" });
     await vi.advanceTimersByTimeAsync(350);
     expect(showSaving).not.toHaveBeenCalled();
   });

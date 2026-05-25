@@ -4,7 +4,7 @@
 
 import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { closeModal } from "./modals.js";
+import { closeModal, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
@@ -247,7 +247,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
 function openAddModal(): void {
   setEditing({ id: "" });
   initModal({ mode: "search", server: null });
-  $.mcpModal.classList.remove("hidden");
+  openModal($.mcpModal);
 }
 
 async function openEditModal(id: string): Promise<void> {
@@ -256,7 +256,7 @@ async function openEditModal(id: string): Promise<void> {
   setEditing({ id });
   const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";
   initModal({ mode, server: s });
-  $.mcpModal.classList.remove("hidden");
+  openModal($.mcpModal);
 }
 
 // --- Init ---

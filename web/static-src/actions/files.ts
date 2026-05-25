@@ -125,14 +125,25 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
             return { ok: false as const, name, error: serverError || `HTTP ${String(r.status)}`, status: r.status };
           }
           return { ok: true as const, name };
+        }, (e: unknown) => {
+          if (signal.aborted) return { ok: false as const, name, error: "cancelled", status: 0 };
+          if (e instanceof DOMException) return { ok: false as const, name, error: "Request timed out", status: 0 };
+          return { ok: false as const, name, error: "network error", status: 0 };
         });
       }),
     );
     const failed = results.filter((r) => !r.ok) as { ok: false; name: string; error: string; status: number }[];
     if (failed.length > 0) {
+      // If all failures are network/timeout/cancelled, classify the aggregate error
+      const allNetwork = failed.every((f) => f.status === 0);
+      const firstErr = failed[0]!.error;
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
       const names = failed.map((f) => f.name).join(", ");
       const word = failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
-      throw new ActionError(`${word} (${names}): ${failed[0]!.error}`, { status: failed[0]!.status });
+      throw new ActionError(`${word} (${names}): ${firstErr}`, {
+        status: failed[0]!.status,
+        ...(allNetwork ? { code: firstErr === "Request timed out" ? "timeout" : "network" } : {}),
+      });
     }
   },
   optimistic: (args) => {
@@ -161,12 +172,19 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
   retryable: false, // zip downloads aren't great for retry semantics
   run: async (args, signal) => {
-    const r = await fetch("/api/files/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: args.paths }),
-      signal: withTimeout(signal, 60_000),
-    });
+    let r: Response;
+    try {
+      r = await fetch("/api/files/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: args.paths }),
+        signal: withTimeout(signal, 60_000),
+      });
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      throw new ActionError("network error", { code: "network", cause: e });
+    }
     if (!r.ok) throw new ActionError("Download failed", { status: r.status });
     const blob = await r.blob();
     if (signal.aborted) return;

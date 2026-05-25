@@ -1,5 +1,4 @@
 import { apiAction } from "./index.js";
-import { asOp } from "./op.js";
 
 export interface CommandRule {
   pattern: string;
@@ -38,7 +37,7 @@ export interface RemoveRuleArgs {
 // Any mismatch between local and server state is corrected on the next page
 // load when loadRules() is called during initShellPolicy().
 
-export const addRuleAction = apiAction<AddRuleArgs, unknown>({
+export const addRuleAction = apiAction<AddRuleArgs, unknown, { pattern: string; previousRule: CommandRule | undefined }>({
   name: "permissions.add_rule",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -60,34 +59,33 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
     return { pattern, previousRule };
   },
   rollback: ({ getCurrentRules, setRules }, op) => {
-    const o = asOp<{ pattern: string; previousRule?: CommandRule }>(op);
-    if (o === undefined) return;
+    if (op === undefined) return;
     // Read current state at rollback time, not the dispatch-time
     // snapshot. If concurrent mutations (e.g. loadRules) replaced
     // the rules array, we splice into the latest state instead of
     // clobbering it.
     const current = getCurrentRules();
-    if (o.previousRule !== undefined) {
+    if (op.previousRule !== undefined) {
       // Restore the pre-optimistic version of THIS rule (overwrite
       // our optimistic insert with the previous version). If the
       // pattern is no longer in current state (e.g. an external
       // delete happened between optimistic and rollback), fall back
       // to appending so the previousRule isn't lost.
-      const found = current.some((r) => r.pattern === o.pattern);
+      const found = current.some((r) => r.pattern === op.pattern);
       if (found) {
-        setRules(current.map((r) => r.pattern === o.pattern ? o.previousRule! : r));
+        setRules(current.map((r) => r.pattern === op.pattern ? op.previousRule! : r));
       } else {
-        setRules([...current, o.previousRule]);
+        setRules([...current, op.previousRule]);
       }
     } else {
       // No previous rule — remove our optimistic insert.
-      setRules(current.filter((e) => e.pattern !== o.pattern));
+      setRules(current.filter((e) => e.pattern !== op.pattern));
     }
   },
   error: "Couldn't add rule",
 });
 
-export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
+export const removeRuleAction = apiAction<RemoveRuleArgs, void, { previousRule: CommandRule | undefined; atIndex: number }>({
   name: "permissions.remove_rule",
   retryable: "network",
   scope: "permissions",
@@ -102,19 +100,18 @@ export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
     return { previousRule, atIndex: idx };
   },
   rollback: ({ getCurrentRules, setRules }, op) => {
-    const o = asOp<{ previousRule: CommandRule | undefined; atIndex: number }>(op);
-    if (o === undefined || o.previousRule === undefined) return;
+    if (op === undefined || op.previousRule === undefined) return;
     // Splice previousRule back into the current rules array at its
     // original position. Without atIndex the rule would jump to the
     // end of the list on rollback (cosmetic glitch); using atIndex
     // preserves the user's display order.
     const current = getCurrentRules();
-    if (current.some((r) => r.pattern === o.previousRule!.pattern)) {
+    if (current.some((r) => r.pattern === op.previousRule!.pattern)) {
       // Already there (e.g. loadRules re-fetched it); no-op.
       return;
     }
     const next = [...current];
-    next.splice(Math.min(o.atIndex, next.length), 0, o.previousRule);
+    next.splice(Math.min(op.atIndex, next.length), 0, op.previousRule);
     setRules(next);
   },
   error: "Couldn't remove rule",

@@ -11,7 +11,9 @@
 // Action factories.
 export { defineAction } from "./define.js";
 export { apiAction } from "./api.js";
-export { transportAction } from "./transport.js";
+// transportAction is internal-only: consumed exclusively by action
+// modules inside actions/ (chat.ts, editor.ts, messages.ts, crew.ts).
+// External callers use defineAction or apiAction instead.
 
 // Error class for callers throwing structured action errors from within
 // run() (lets toast / retry classification see status + code).
@@ -49,3 +51,8 @@ export type { DebouncedDispatch } from "./debounce.js";
 // One type used by external callers (mcp-panels narrows the registry
 // listener arg). The rest of the framework's types stay internal.
 export type { ActionErrorLike } from "./types.js";
+
+// DispatchOptions: per-dispatch overrides (silent, onSuccess, onError,
+// onSettled). External callers (settings.ts, notify.ts) pass these
+// inline; exporting the type lets helpers type-annotate the opts arg.
+export type { DispatchOptions } from "./types.js";

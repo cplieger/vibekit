@@ -7,7 +7,7 @@
 //   // ...later, on teardown:
 //   unbind();
 //
-// While `pendingFor("git.commit").length > 0`, the element gets:
+// While `isPending("git.commit")`, the element gets:
 //   - disabled = true
 //   - aria-busy = "true"  (omit by passing { ariaBusy: false })
 //   - optionally an extra CSS class via { pendingClass: "btn-loading" }
@@ -21,7 +21,7 @@
 // hook to stop receiving updates and avoid leaking listeners.
 // ---------------------------------------------------------------------------
 
-import { subscribe, pendingFor } from "./registry.js";
+import { subscribe, isPending } from "./registry.js";
 
 /** Element types that have a `.disabled` writable boolean. */
 type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -84,14 +84,14 @@ export function bindLoadingState(
 
   const apply = (): void => {
     if (disposed) return;
-    const isPending = pendingFor(actionName).length > 0;
+    const pending = isPending(actionName);
     // Snapshot the live disabled state on the pending edge (before we
     // clobber it) so we can restore it when the action completes.
-    if (isPending && !wasPending) {
+    if (pending && !wasPending) {
       baseDisabled = el.disabled;
       hadFocus = document.activeElement === el;
     }
-    if (isPending) {
+    if (pending) {
       el.disabled = true;
       if (manageAriaBusy) el.setAttribute("aria-busy", "true");
       if (pendingClass) el.classList.add(pendingClass);
@@ -99,7 +99,7 @@ export function bindLoadingState(
       // Transition pending→idle: restore element state.
       setIdle();
     }
-    wasPending = isPending;
+    wasPending = pending;
   };
 
   /** Restore element state as if the action completed. */

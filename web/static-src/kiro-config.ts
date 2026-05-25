@@ -5,8 +5,8 @@
 
 import { ICON_EDIT } from "./icons.js";
 import { openFile } from "./editor-openers.js";
-import { defineAction } from "./actions/define.js";
-import { ActionError } from "./actions/error.js";
+import { defineAction } from "./actions/index.js";
+import { ActionError } from "./actions/index.js";
 import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 

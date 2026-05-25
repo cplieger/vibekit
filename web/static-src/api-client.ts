@@ -24,6 +24,11 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
     : AbortSignal.timeout(ms);
 }
 
+/** Internal fetch wrapper shared by apiGet/apiPost/apiPut/apiPatch/apiDelete.
+ *  Applies a timeout signal (via withTimeout), logs failures centrally,
+ *  and returns null on any non-2xx or network error — callers never see
+ *  exceptions. DELETE and 204 responses return an empty object cast to T
+ *  (truthy marker) since there's no body to parse. */
 async function request<T>(
   method: string, path: string, body?: unknown, signal?: AbortSignal,
 ): Promise<T | null> {
@@ -103,6 +108,11 @@ export interface ApiResult<T> {
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
 
+/** Fetch + decode variant: runs the response through a Decoder<T>
+ *  after parsing JSON. Returns a full ApiResult envelope so callers
+ *  can distinguish network errors (status 0), HTTP errors (4xx/5xx),
+ *  and decoder failures (shape mismatch) without try/catch. Used by
+ *  apiGetTyped / apiPostTyped for type-safe API consumption. */
 async function requestTyped<T>(
   method: string, path: string, decoder: Decoder<T>, body?: unknown, signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
@@ -162,6 +172,10 @@ export function apiGetTypedRaw<T>(path: string, decoder: Decoder<T>, signal?: Ab
   return requestTyped<T>("GET", path, decoder, undefined, signal);
 }
 
+/** Fetch variant that extracts the server's `error` field from non-2xx
+ *  JSON responses. Used by apiPostOrError / apiPutOrError for forms
+ *  that need to surface specific server validation messages (400, 409)
+ *  inline rather than silently returning null. */
 async function requestWithError<T>(
   method: string, path: string, body: unknown, signal?: AbortSignal,
 ): Promise<ApiResult<T>> {

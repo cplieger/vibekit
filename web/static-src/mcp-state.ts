@@ -168,7 +168,7 @@ export function updateConfiguredEntry(id: string, patch: Partial<Server>): Serve
   const idx = configured.findIndex((s) => s.id === id);
   if (idx === -1) return undefined;
   const prev = { ...configured[idx] } as Server;
-  const arr = [...configured] as Server[];
+  const arr = [...configured];
   arr[idx] = { ...arr[idx], ...patch } as Server;
   configured = arr;
   instance.renderCb?.();
@@ -177,7 +177,7 @@ export function updateConfiguredEntry(id: string, patch: Partial<Server>): Serve
 
 /** @internal Remove a configured entry by id. Returns [entry, index] for rollback. */
 export function removeConfiguredEntry(id: string): [Server, number] | undefined {
-  const arr = [...configured] as Server[];
+  const arr = [...configured];
   const idx = arr.findIndex((s) => s.id === id);
   if (idx === -1) return undefined;
   const entry = arr[idx]!;
@@ -189,7 +189,7 @@ export function removeConfiguredEntry(id: string): [Server, number] | undefined 
 
 /** Re-insert a previously removed entry at its original position when available. */
 export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
-  const arr = [...configured] as Server[];
+  const arr = [...configured];
   let pos: number;
   if (atIndex !== undefined && atIndex >= 0 && atIndex <= arr.length) {
     pos = atIndex;

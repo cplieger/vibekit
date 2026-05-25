@@ -3,7 +3,7 @@
 // and are intentionally excluded.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction } from "./index.js";
+import { apiAction, defineAction, ActionError } from "./index.js";
 import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
 import type { PRRemoveResult } from "../git-prs-state.js";
 
@@ -24,14 +24,14 @@ function optimisticRemovePR(args: PRArgs): PRRemoveResult | undefined {
   return removePRFromGroups(args.forge_id, args.owner, args.name, args.pr_number);
 }
 
-function rollbackRemovePR(_args: PRArgs, op: unknown): void {
-  if (op !== undefined) reinsertPRInGroups(op as PRRemoveResult);
+function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
+  if (op !== undefined) reinsertPRInGroups(op);
 }
 
 // --- Actions ---
 
 /** Merge a pull request. */
-export const mergePRAction = apiAction<PRArgs, unknown>({
+export const mergePRAction = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.merge_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: {} }),
@@ -43,7 +43,7 @@ export const mergePRAction = apiAction<PRArgs, unknown>({
 });
 
 /** Close a pull request without merging. */
-export const closePRAction = apiAction<PRArgs, unknown>({
+export const closePRAction = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.close_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
@@ -60,7 +60,15 @@ export const refreshPRsAction = defineAction<void, void>({
   dedupe: true,
   run: async (_args, signal) => {
     const { refreshPRs } = await import("../git-prs-tab.js");
-    await refreshPRs(signal);
+    try {
+      await refreshPRs(signal);
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      throw new ActionError(
+        e instanceof Error ? e.message : "network error",
+        { code: "network", cause: e },
+      );
+    }
   },
   error: "Couldn't refresh PRs",
   retryable: "network",

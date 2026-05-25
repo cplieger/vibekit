@@ -61,7 +61,7 @@ export function transportAction<TArgs, TOp = unknown>(
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call
       // setLastError would block the prompt send button for actions
-      // unrelated to prompt sending (e.g. permission_response).
+      // unrelated to prompt sending (e.g. respond_permission).
       const r = await transportSend(cmd, { signal, reportSendState: false });
       if (!r.ok) {
         if (signal.aborted || r.code === "cancelled") {

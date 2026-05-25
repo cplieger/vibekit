@@ -59,7 +59,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
   name: "git.pull",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
-  success: "Pulled",
+  success: (args) => args.repo !== "" ? `Pulled ${args.repo}` : "Pulled",
   error: "Pull failed",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -69,7 +69,7 @@ export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
-  success: "Pushed",
+  success: (args) => args.repo !== "" ? `Pushed ${args.repo}` : "Pushed",
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
   retryable: false,

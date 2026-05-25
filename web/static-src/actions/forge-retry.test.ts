@@ -42,7 +42,10 @@ describe("forge.signOut retry", () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    await signOut.dispatch({ forgeId: "gh:user" });
+    const p = signOut.dispatch({ forgeId: "gh:user" });
+    // Advance past auto-retry delays (300ms + 600ms)
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
@@ -65,22 +68,29 @@ describe("forge.signOut retry", () => {
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
-      if (attempt === 1) return Promise.reject(new TypeError("Failed to fetch"));
+      if (attempt <= 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response(null, { status: 204 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    await signOut.dispatch({ forgeId: "gh:user" });
-    expect(attempt).toBe(1);
+    const p = signOut.dispatch({ forgeId: "gh:user" });
+    // Advance past auto-retry delays (300ms + 600ms) for initial dispatch
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
+    expect(attempt).toBe(3); // 1 initial + 2 retries, all fail
 
-    // Click the retry button
+    // Click the retry button (manual retry triggers a new dispatch)
     const retryFn = vi.mocked(toast.error).mock.calls[0]![1]!.onClick;
-    retryFn();
-    await vi.advanceTimersByTimeAsync(0);
+    const p2 = retryFn();
+    // Advance past auto-retry delays for the manual retry dispatch
+    await vi.advanceTimersByTimeAsync(1000);
+    if (p2 instanceof Promise) await p2;
 
-    expect(attempt).toBe(2);
-    // Second call used the same path (same args)
-    expect(fetchSpy.mock.calls[1]![0]).toBe("/api/forges/gh%3Auser");
+    // 4th attempt succeeds
+    expect(attempt).toBe(4);
+    // Last call used the same path (same args)
+    const lastCall = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1]!;
+    expect(lastCall[0]).toBe("/api/forges/gh%3Auser");
   });
 });
 

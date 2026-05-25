@@ -2,7 +2,8 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
+import { apiAction, defineAction, ActionError } from "./index.js";
+import { transportAction } from "./transport.js";
 import { routeForPath } from "../editor-types.js";
 
 /** Save the active editor file (PUT). Inline error surface in the editor pane;
@@ -51,6 +52,7 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
   name: "editor.resolve_partial",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   command: ({ chatID, toolCallID, mergedText }) => ({
     type: "resolve_pending_change_partial",
     chat_id: chatID,

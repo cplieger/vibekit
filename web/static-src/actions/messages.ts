@@ -2,7 +2,8 @@
 // Actions: messages, plan, clipboard (ui.copy_clipboard).
 // ---------------------------------------------------------------------------
 
-import { defineAction, apiAction, transportAction, ActionError } from "./index.js";
+import { defineAction, apiAction, ActionError } from "./index.js";
+import { transportAction } from "./transport.js";
 import { sendPromptTo } from "../chat-commands.js";
 
 /** Copy text to clipboard with success/error toast. */
@@ -38,12 +39,13 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   name: "messages.undo_edit",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   command: ({ chatID, tag, filePath }) => ({
     type: "undo_edit",
     chat_id: chatID,
     payload: { tag, file_path: filePath },
   }),
-  success: "Edit undone",
+  success: (args) => `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
   error: "Undo failed — the checkpoint may have expired",
 });
 

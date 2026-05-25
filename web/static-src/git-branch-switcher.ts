@@ -118,6 +118,7 @@ function closePopover(): void {
   activeAnchor = null;
   document.removeEventListener("click", outsideClickHandler);
   document.removeEventListener("keydown", escapeHandler);
+  document.removeEventListener("keydown", arrowNavHandler);
   // Guard against focus on a detached element (anchor may have been
   // removed from the DOM during the request, e.g. git tab re-rendered).
   if (savedAnchor?.isConnected === true) savedAnchor.focus();
@@ -134,6 +135,19 @@ function outsideClickHandler(e: MouseEvent): void {
 
 function escapeHandler(e: KeyboardEvent): void {
   if (e.key === "Escape") closePopover();
+}
+
+function arrowNavHandler(e: KeyboardEvent): void {
+  if (openPopover === null) return;
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...openPopover.querySelectorAll<HTMLButtonElement>(".git-branch-popover-row")];
+  if (rows.length === 0) return;
+  e.preventDefault();
+  const current = rows.indexOf(document.activeElement as HTMLButtonElement);
+  let next: number;
+  if (e.key === "ArrowDown") next = current < rows.length - 1 ? current + 1 : 0;
+  else next = current > 0 ? current - 1 : rows.length - 1;
+  rows[next]!.focus();
 }
 
 function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {

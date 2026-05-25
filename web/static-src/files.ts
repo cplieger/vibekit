@@ -277,6 +277,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
     const sorted = sortEntries(state.entries);
     state.sortedNames = sorted.map((e) => e.name);
 
+    $.fbList.setAttribute("role", "list");
     const frag = document.createDocumentFragment();
     if (state.currentPath !== ".") frag.appendChild(parentRow());
     for (const entry of sorted) frag.appendChild(entryRow(entry));
@@ -328,6 +329,7 @@ function parentRow(): HTMLDivElement {
 function entryRow(entry: FileEntry): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "fb-row";
+  row.setAttribute("role", "listitem");
   row.dataset["name"] = entry.name;
   row.dataset["isDir"] = String(entry.isDir);
 

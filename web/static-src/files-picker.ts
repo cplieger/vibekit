@@ -8,7 +8,7 @@
 // folder, then auto-attaches the uploaded paths.
 // ---------------------------------------------------------------------------
 
-import { closeModal } from "./modals.js";
+import { closeModal, openModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FetchDirOpts } from "./files-shared.js";
 export type { FileEntry } from "./files-shared.js";
@@ -32,7 +32,7 @@ export function openFilePicker(preUploadFiles?: FileList, startPath = "."): void
   selected.clear();
   loadDir();
   syncAttachBtn();
-  el<HTMLDivElement>("filepicker-modal").classList.remove("hidden");
+  openModal(el<HTMLDivElement>("filepicker-modal"));
   if (preUploadFiles !== undefined && preUploadFiles.length > 0) {
     performUpload(preUploadFiles);
   }

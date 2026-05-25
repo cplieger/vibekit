@@ -128,6 +128,7 @@ class PromptInputController {
     this.divider = document.querySelector(".send-divider");
     this.sendWrap = document.getElementById("send-wrap");
 
+    this.cancelHalf?.setAttribute("aria-label", "Cancel turn");
     this.cancelHalf?.addEventListener("click", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();

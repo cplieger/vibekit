@@ -1,4 +1,4 @@
-import { transportAction } from "./index.js";
+import { transportAction } from "./transport.js";
 
 interface SendMessageArgs {
   chatID: string;
@@ -9,6 +9,8 @@ interface SendMessageArgs {
 export const sendMessage = transportAction<SendMessageArgs>({
   name: "crew.send_message",
   scope: (args) => "crew:" + args.chatID + ":" + args.subSessionID,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   command: ({ chatID, subSessionID, text }) => ({
     type: "message_subagent",
     chat_id: chatID,

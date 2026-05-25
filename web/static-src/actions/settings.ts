@@ -42,7 +42,14 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
   // run() intentionally ignores args — DOM refs are only for optimistic/rollback.
   // The framework passes the full args object; we destructure to nothing.
   run: async (_args, signal) => {
-    const r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
+    let r: Response;
+    try {
+      r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      throw new ActionError("network error", { code: "network", cause: e });
+    }
     if (!r.ok) {
       const body = await r.text().catch(() => "");
       let msg = `HTTP ${String(r.status)}`;

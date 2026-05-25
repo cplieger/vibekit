@@ -314,6 +314,7 @@ function showView(tab: TabSpec): void {
 
 function renderDOM(): void {
   const list = $.tabList;
+  if (!list.hasAttribute("role")) list.setAttribute("role", "tablist");
 
   const existing = new Map<string, HTMLElement>();
   for (const el of [...list.children]) {

@@ -44,6 +44,7 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,

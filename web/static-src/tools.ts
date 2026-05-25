@@ -6,7 +6,7 @@
 // singleton instance, preserving the existing public API.
 // ---------------------------------------------------------------------------
 
-import { closeModal, RollingOutput } from "./modals.js";
+import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
@@ -221,7 +221,7 @@ class ToolsManager {
       f.version.value = ""; f.install.value = ""; f.binaries.value = ""; f.pkg.value = "";
     }
     this.updateToolFormVisibility();
-    $.toolModal.classList.remove("hidden");
+    openModal($.toolModal);
   }
 
   private saveToolFromModal(): void {

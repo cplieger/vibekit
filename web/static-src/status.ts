@@ -167,6 +167,7 @@ export function setStatus(s: ConnectionStatus): void {
   } else {
     dot.style.setProperty("--status-color", "var(--c-yellow)");
   }
+  dot.setAttribute("aria-label", `Connection: ${s}`);
   $.stWs.textContent = s;
 }
 

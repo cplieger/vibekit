@@ -5,14 +5,14 @@
 // clear pending trust.
 // ---------------------------------------------------------------------------
 
-import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { asOp } from "./op.js";
+import { apiAction, defineAction, ActionError } from "./index.js";
+import { transportAction } from "./transport.js";
 import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
 
-export const deleteChatAction = transportAction<string>({
+export const deleteChatAction = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.delete",
   scope: (id) => `chat:${id}`,
   retryable: false,
@@ -29,18 +29,18 @@ export const deleteChatAction = transportAction<string>({
   // remove it, causing a brief flicker. Full correctness would require server-side
   // dedup + ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
-    if (o !== undefined) reinsertSession(o.session, o.atIndex);
+    if (op !== undefined) reinsertSession(op.session, op.atIndex);
   },
   error: "Couldn't delete chat",
 });
 
 // --- chat.archive ---
 
-export const archiveChatAction = apiAction<string, unknown>({
+export const archiveChatAction = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: (id) => ({
     method: "POST",
     path: `/api/chats/${encodeURIComponent(id)}/archive`,
@@ -53,8 +53,7 @@ export const archiveChatAction = apiAction<string, unknown>({
     return { session, atIndex };
   },
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
-    if (o !== undefined) reinsertSession(o.session, o.atIndex);
+    if (op !== undefined) reinsertSession(op.session, op.atIndex);
   },
   success: false,
   error: "Couldn't archive chat",
@@ -62,7 +61,7 @@ export const archiveChatAction = apiAction<string, unknown>({
 
 // --- chat.discard_tangent ---
 
-export const discardTangentAction = transportAction<string>({
+export const discardTangentAction = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
   name: "chat.discard_tangent",
   scope: (id) => `chat:${id}`,
   retryable: false,
@@ -77,10 +76,9 @@ export const discardTangentAction = transportAction<string>({
     return { session, atIndex, parentID };
   },
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number; parentID?: string }>(op);
-    if (o !== undefined) {
-      reinsertSession(o.session, o.atIndex);
-      if (o.parentID !== undefined) setFrozen(o.parentID, true);
+    if (op !== undefined) {
+      reinsertSession(op.session, op.atIndex);
+      if (op.parentID !== undefined) setFrozen(op.parentID, true);
     }
   },
   // Caller (chat.ts onClose) fires a richer manual toast on failure.
@@ -89,7 +87,7 @@ export const discardTangentAction = transportAction<string>({
 
 // --- chat.set_supervised ---
 
-export const setSupervisedAction = transportAction<{ chatID: string; enabled: boolean }>({
+export const setSupervisedAction = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_supervised",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
@@ -105,8 +103,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: boolean }>(op);
-    if (o !== undefined) setSupervisedMode(chatID, o.prev);
+    if (op !== undefined) setSupervisedMode(chatID, op.prev);
   },
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -135,6 +132,7 @@ export const trustPendingAction = transportAction<string>({
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't trust pending changes",
 });
 
@@ -145,12 +143,13 @@ export const clearPendingTrustAction = transportAction<string>({
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't clear pending trust",
 });
 
 // --- chat.fork ---
 
-export const forkChatAction = transportAction<{ chatID: string; tangentID: string }>({
+export const forkChatAction = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
   name: "chat.fork",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -166,8 +165,7 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
     return { chatID, wasFrozen };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ wasFrozen: boolean }>(op);
-    if (o !== undefined) setFrozen(chatID, o.wasFrozen);
+    if (op !== undefined) setFrozen(chatID, op.wasFrozen);
   },
   retryable: "network",
   error: "Couldn't fork chat",
@@ -190,7 +188,7 @@ export const mergeTangentAction = transportAction<string>({
 
 // --- chat.set_auto_approve_crew ---
 
-export const setAutoApproveCrewAction = transportAction<{ chatID: string; enabled: boolean }>({
+export const setAutoApproveCrewAction = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_auto_approve_crew",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
@@ -206,8 +204,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: boolean }>(op);
-    if (o !== undefined) setAutoApproveCrew(chatID, o.prev);
+    if (op !== undefined) setAutoApproveCrew(chatID, op.prev);
   },
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -220,6 +217,7 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
   scope: (id) => `chat:${id}`,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: (id) => ({
     method: "POST",
     path: "/api/chats/archived",
@@ -234,6 +232,7 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,
@@ -271,7 +270,7 @@ export const cancelTurnAction = transportAction<string>({
 //
 // On failure, rollback restores the previous model via setModel(). bindLoadingState handles the spinner.
 
-export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
+export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
@@ -283,8 +282,7 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: string }>(op);
-    if (o !== undefined) setModel(chatID, o.prev);
+    if (op !== undefined) setModel(chatID, op.prev);
   },
   run: async ({ chatID, model }, signal) => {
     // Don't touch thinking state — it's owned by sendPromptAction and
@@ -329,7 +327,7 @@ export interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
-export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">({
+export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -338,8 +336,7 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
     return { chatID };
   },
   rollback: (_args, op) => {
-    const o = asOp<{ chatID: string }>(op);
-    if (o !== undefined) setThinking(o.chatID, false);
+    if (op !== undefined) setThinking(op.chatID, false);
   },
   run: async (args, signal, ctx) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
@@ -373,7 +370,10 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
       enqueuePrompt(chatID, text, attachments);
       return "queued";
     }
-    throw new ActionError(r.error ?? "send failed", { status: r.status });
+    throw new ActionError(r.error ?? "send failed", {
+      status: r.status,
+      ...(r.code !== undefined ? { code: r.code } : {}),
+    });
   },
   error: false,  // send-state.ts (blocked send button) is the surface
 });
@@ -393,15 +393,15 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
   error: "Couldn't resolve change",
 });
 
-// --- chat.permission_response ---
+// --- chat.respond_permission ---
 // Scope is per-request (not per-chat): two pending permission requests in
 // the same chat are independent and should fire in parallel. Serializing
 // them behind the chat scope would delay the second response until the
 // first round-trips, which feels sluggish when the agent is waiting on
 // multiple permissions simultaneously.
 
-export const permissionResponseAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
-  name: "chat.permission_response",
+export const respondPermissionAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
+  name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -424,5 +424,6 @@ export const restoreCheckpointAction = transportAction<{ chatID: string; tag: st
     payload: { tag },
   }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't restore checkpoint",
 });

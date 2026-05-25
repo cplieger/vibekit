@@ -25,9 +25,14 @@ const MAX_LOG_HARD = 1000;
 // log:       ordered ring of recent instances (newest at end). Evicted
 //            slots are null (tombstones); head tracks the first live slot.
 // idMap:     id -> ActionInstance for O(1) state-transition updates.
+// pendingByName: name -> Set<id> for O(1) pendingFor/pendingForAny.
 const log: (ActionInstance | null)[] = [];
 const idMap = new Map<string, ActionInstance>();
 const listeners = new Set<RegistryListener>();
+// Per-name pending index: maps action name → Set of instance IDs that
+// are currently pending. Enables O(1) isPending() and O(k) pendingFor()
+// where k = pending count for that name (typically 0–2).
+const pendingByName = new Map<string, Set<string>>();
 // Incremental count of currently-pending instances. Maintained in
 // record() at status transitions; pendingCount() returns this in O(1).
 let _pendingN = 0;
@@ -47,15 +52,38 @@ function compact(): void {
 }
 
 /** Record a state transition. Called by define.ts at every status
- *  change. The instance is push-replaced (newest at end). */
+ *  change (pending → success/error/cancelled). The instance is
+ *  push-replaced in the log (newest at end).
+ *
+ *  Eviction strategy (bounded memory):
+ *  - Soft cap (MAX_LOG_SIZE=200): evicts the oldest NON-pending entry
+ *    so long-running pending actions are never lost.
+ *  - Hard cap (MAX_LOG_HARD=1000): force-evicts the oldest entry
+ *    regardless of status to bound memory in runaway scenarios.
+ *  - Tombstone compaction: leading nulls are spliced when the head
+ *    pointer exceeds 256, keeping array iteration fast.
+ *
+ *  Notifies all subscribers synchronously after the state update.
+ *  Listener errors are caught and logged (never propagate). */
 export function record(instance: ActionInstance): void {
   // De-duplicate by id: replace any existing entry with the same id
   // (state transitions on the same instance overwrite, not append).
   const existing = idMap.get(instance.id);
   if (existing !== undefined) {
-    // Update incremental counter on transitions.
-    if (existing.status === "pending" && instance.status !== "pending") _pendingN--;
-    else if (existing.status !== "pending" && instance.status === "pending") _pendingN++;
+    // Update incremental counter + per-name index on transitions.
+    if (existing.status === "pending" && instance.status !== "pending") {
+      _pendingN--;
+      const s = pendingByName.get(existing.name);
+      if (s !== undefined) {
+        s.delete(instance.id);
+        if (s.size === 0) pendingByName.delete(existing.name);
+      }
+    } else if (existing.status !== "pending" && instance.status === "pending") {
+      _pendingN++;
+      let s = pendingByName.get(instance.name);
+      if (s === undefined) { s = new Set(); pendingByName.set(instance.name, s); }
+      s.add(instance.id);
+    }
     // Overwrite in the log array. Scan from the end (most recent
     // transitions are near the tail — typically last or second-to-last).
     for (let i = log.length - 1; i >= _head; i--) {
@@ -84,7 +112,12 @@ export function record(instance: ActionInstance): void {
     log.push(instance);
     idMap.set(instance.id, instance);
     _liveCount++;
-    if (instance.status === "pending") _pendingN++;
+    if (instance.status === "pending") {
+      _pendingN++;
+      let s = pendingByName.get(instance.name);
+      if (s === undefined) { s = new Set(); pendingByName.set(instance.name, s); }
+      s.add(instance.id);
+    }
     if (_liveCount > MAX_LOG_SIZE) {
       // Evict the first NON-pending live entry so pendingFor() never
       // loses track of long-running actions.
@@ -104,7 +137,14 @@ export function record(instance: ActionInstance): void {
       for (let i = _head; i < log.length; i++) {
         const entry = log[i] ?? null;
         if (entry !== null) {
-          if (entry.status === "pending") _pendingN--;
+          if (entry.status === "pending") {
+            _pendingN--;
+            const s = pendingByName.get(entry.name);
+            if (s !== undefined) {
+              s.delete(entry.id);
+              if (s.size === 0) pendingByName.delete(entry.name);
+            }
+          }
           idMap.delete(entry.id);
           log[i] = null;
           _liveCount--;
@@ -161,15 +201,24 @@ export function recentLog(): readonly ActionInstance[] {
   return result;
 }
 
+/** O(1) check: true if at least one instance of the named action is
+ *  currently pending. Prefer over `pendingFor(name).length > 0` when
+ *  you only need the boolean (avoids allocating the result array). */
+export function isPending(name: string): boolean {
+  const s = pendingByName.get(name);
+  return s !== undefined && s.size > 0;
+}
+
 /** Currently-pending instances of a named action. Useful for deriving
- *  loading state without an explicit observer. */
+ *  loading state without an explicit observer. O(k) where k = pending
+ *  count for that name (typically 0–2). */
 export function pendingFor(name: string): readonly ActionInstance[] {
+  const ids = pendingByName.get(name);
+  if (ids === undefined || ids.size === 0) return [];
   const result: ActionInstance[] = [];
-  for (let i = _head; i < log.length; i++) {
-    const entry = log[i] ?? null;
-    if (entry !== null && entry.name === name && entry.status === "pending") {
-      result.push(entry);
-    }
+  for (const id of ids) {
+    const inst = idMap.get(id);
+    if (inst !== undefined) result.push(inst);
   }
   return result;
 }
@@ -183,18 +232,15 @@ export function pendingCount(): number {
 
 /**
  * True if any of the named actions has at least one pending instance.
- * Uses a Set internally to avoid quadratic scan when `names` is large.
+ * O(names.length) via the per-name pending index.
  *
  * @param names - Action names to check (e.g. ["settings.patch", "settings.save_steering"]).
  * @returns `true` if at least one instance with a matching name is pending.
  */
 export function pendingForAny(names: readonly string[]): boolean {
-  if (names.length === 0) return false;
-  // Set lookup avoids quadratic scan when names is large.
-  const set = new Set(names);
-  for (let i = _head; i < log.length; i++) {
-    const entry = log[i] ?? null;
-    if (entry !== null && entry.status === "pending" && set.has(entry.name)) return true;
+  for (let i = 0; i < names.length; i++) {
+    const s = pendingByName.get(names[i]!);
+    if (s !== undefined && s.size > 0) return true;
   }
   return false;
 }
@@ -205,6 +251,7 @@ export function _resetForTest(): void {
   _head = 0;
   _liveCount = 0;
   idMap.clear();
+  pendingByName.clear();
   listeners.clear();
   _pendingN = 0;
 }

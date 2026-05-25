@@ -277,7 +277,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     return result;
   }
 
-  /** Compute the dedupe key for a dispatch, or null if dedupe is off. */
+  /** Compute the dedupe key for a dispatch, or null if dedupe is off.
+   *  When a key is returned and matches an in-flight entry in the
+   *  module-level `dedupeInflight` map, the framework collapses the
+   *  new dispatch onto the existing promise (no second run() call,
+   *  no duplicate optimistic mutation). The key is scoped by action
+   *  name so different actions with identical args don't collide. */
   function computeDedupeKey(args: TArgs): string | null {
     const cfg = def.dedupe;
     if (cfg === undefined || cfg === false) return null;
@@ -285,8 +290,20 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     return `${def.name}::${argKey}`;
   }
 
-  /** Single dispatch lifecycle: optimistic → run (with retry) →
-   *  success / error / cancelled. Always resolves (never rejects). */
+  /** Core single-dispatch lifecycle orchestrator. Executes the full
+   *  optimistic → run (with retry) → success/error/cancel pipeline for
+   *  one dispatch instance. Handles:
+   *  - Early exit if already cancelled while queued in a scope chain
+   *  - Idempotency key generation (stable across retries)
+   *  - Optimistic mutation with error-path rollback
+   *  - Registry recording at each state transition
+   *  - Toast emission and per-dispatch callback invocation
+   *  - Populating the dedupe entry's error/cancelled fields so
+   *    collapsed callers receive the actual outcome
+   *
+   *  Always resolves (never rejects) — errors are captured internally
+   *  and surfaced via callbacks + toasts. Returns TResult on success,
+   *  null on error or cancellation. */
   async function runOnce(
     args: TArgs,
     opts: DispatchOptions<TArgs, TResult>,
@@ -507,6 +524,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     }
   }
 
+  /** Build the retry button config for error toasts. Returns an
+   *  `{ onClick }` object when the error is retry-class (per
+   *  `def.retryable`), which toast.ts renders as a "Retry" button.
+   *  The args are structuredClone'd so post-dispatch mutations don't
+   *  corrupt the retry payload. Returns undefined (no button) when
+   *  the error class doesn't qualify for retry. */
   function computeRetry(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
     if (!isRetryClass(err)) return undefined;
     // Snapshot args so mutations after dispatch don't corrupt retry.

@@ -20,6 +20,7 @@ import { isToolDone } from "./tool-schema.js";
 import { humanName } from "./strings.js";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
+import { openModal } from "./modals.js";
 
 const els = new Map<string, HTMLDivElement>();
 const transcripts = new Map<string, string>();
@@ -181,5 +182,5 @@ function lastSentences(text: string, n: number): string {
 function openPopup(id: string, label: string): void {
   $.subagentModalTitle.textContent = label;
   $.subagentModalBody.textContent = transcripts.get(id) ?? "";
-  $.subagentModal.classList.remove("hidden");
+  openModal($.subagentModal);
 }

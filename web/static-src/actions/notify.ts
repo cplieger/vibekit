@@ -23,7 +23,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
 
     const keyData = await apiGet<{ publicKey: string }>("/api/push/vapid-key", signal);
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
-    if (keyData === null) throw new ActionError("Could not fetch VAPID key");
+    if (keyData === null) throw new ActionError("Could not fetch VAPID key", { code: "network" });
 
     const appServerKey = urlBase64ToUint8Array(keyData.publicKey);
     const sub = await reg.pushManager.subscribe({
@@ -50,7 +50,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     }
     if (posted === null) {
       try { await sub.unsubscribe(); } catch { /* best-effort */ }
-      throw new ActionError("Server rejected subscription");
+      throw new ActionError("Server rejected subscription", { code: "network" });
     }
 
     return reg;
