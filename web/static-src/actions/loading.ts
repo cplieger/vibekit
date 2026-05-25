@@ -21,7 +21,7 @@
 // hook to stop receiving updates and avoid leaking listeners.
 // ---------------------------------------------------------------------------
 
-import { subscribeByName, isPending, pendingForAny } from "./registry.js";
+import { subscribeByName, isPending, pendingCount } from "./registry.js";
 
 /** Element types that have a `.disabled` writable boolean. */
 type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -118,9 +118,9 @@ export function bindLoadingState(
 
   /** Read the current pending state across all bound names. Single-name
    *  case uses the cheaper isPending() (one Map lookup); multi-name uses
-   *  pendingForAny(). */
+   *  pendingCount(names) > 0. */
   const readPending = (): boolean =>
-    names.length === 1 ? isPending(names[0]!) : pendingForAny(names);
+    names.length === 1 ? isPending(names[0]!) : pendingCount(names) > 0;
 
   let unsubs: (() => void)[] | undefined;
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Tests for the five UX primitives added on top of the action
-// framework: idempotency keys, pendingCount/pendingForAny,
+// framework: idempotency keys, pendingCount,
 // request deduplication, debouncedDispatch.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -17,7 +17,6 @@ import { apiAction } from "./api.js";
 import {
   _resetForTest as resetRegistry,
   pendingCount,
-  pendingForAny,
 } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { debouncedDispatch } from "./debounce.js";
@@ -140,11 +139,11 @@ describe("idempotencyKey", () => {
 });
 
 // ===========================================================================
-// pendingCount + pendingForAny
+// pendingCount (with and without name array)
 // ===========================================================================
 
-describe("pendingCount + pendingForAny", () => {
-  it("pendingCount sums across all action names", async () => {
+describe("pendingCount", () => {
+  it("sums across all action names without arguments", async () => {
     let resolveA: () => void = () => {};
     let resolveB: () => void = () => {};
     const a = defineAction<void, void>({
@@ -165,23 +164,23 @@ describe("pendingCount + pendingForAny", () => {
     expect(pendingCount()).toBe(0);
   });
 
-  it("pendingForAny returns true if any named action is pending", async () => {
+  it("with names array returns count for those actions", async () => {
     let resolveA: () => void = () => {};
     const a = defineAction<void, void>({
       name: "test.pfa.a",
       run: () => new Promise<void>((r) => { resolveA = r; }),
     });
-    expect(pendingForAny(["test.pfa.a", "test.pfa.b"])).toBe(false);
+    expect(pendingCount(["test.pfa.a", "test.pfa.b"])).toBe(0);
     const pa = a.dispatch();
-    expect(pendingForAny(["test.pfa.a"])).toBe(true);
-    expect(pendingForAny(["test.pfa.b"])).toBe(false);
-    expect(pendingForAny(["test.pfa.a", "test.pfa.b"])).toBe(true);
+    expect(pendingCount(["test.pfa.a"])).toBe(1);
+    expect(pendingCount(["test.pfa.b"])).toBe(0);
+    expect(pendingCount(["test.pfa.a", "test.pfa.b"])).toBe(1);
     resolveA(); await pa;
-    expect(pendingForAny(["test.pfa.a"])).toBe(false);
+    expect(pendingCount(["test.pfa.a"])).toBe(0);
   });
 
-  it("pendingForAny on empty list returns false", () => {
-    expect(pendingForAny([])).toBe(false);
+  it("with empty names array returns 0", () => {
+    expect(pendingCount([])).toBe(0);
   });
 });
 

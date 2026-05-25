@@ -9,7 +9,7 @@
 
 import { $ } from "./dom.js";
 import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
-import { subscribeToActions, pendingForAny } from "./actions/index.js";
+import { subscribeToActions, pendingCount } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -133,7 +133,7 @@ subscribeToActions((instance) => {
     showSaving();
   } else {
     if (instance.status === "error") batchHadError = true;
-    if (!pendingForAny(SETTINGS_ACTIONS)) {
+    if (pendingCount(SETTINGS_ACTIONS) === 0) {
       // Batch fully settled. Show error if ANY action in the batch
       // errored, otherwise show success.
       if (batchHadError) showError();

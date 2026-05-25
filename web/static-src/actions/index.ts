@@ -27,11 +27,10 @@ export { ActionError, hasErrorString, classifyFetchError } from "./error.js";
 //   - subscribeToActions: 4 consumers — mcp-panels (capture per-dispatch
 //     error metadata), save-indicator (settings batch detection),
 //     app.ts boot wiring, commands-menu (post-fetch state).
-//   - pendingCount: total in-flight count — drives the global progress
-//     indicator in app.ts and supervised-pill.
-//   - pendingForAny: OR-query for the settings batch-settled detection
-//     pattern in save-indicator.
-export { subscribe as subscribeToActions, pendingCount, pendingForAny } from "./registry.js";
+//   - pendingCount: 0-arg returns total in-flight count for the global
+//     progress indicator (app.ts, supervised-pill); array form returns
+//     count for the named actions (save-indicator's batch-settled check).
+export { subscribe as subscribeToActions, pendingCount } from "./registry.js";
 
 // Loading-state helper: bind a button's disabled + aria-busy state to
 // one or more named actions' pending count. Overloaded — pass a single
@@ -58,13 +57,11 @@ export type { DebouncedDispatch } from "./debounce.js";
 export { RETRY_STANDARD } from "./types.js";
 
 // Type exports — consumed by callers that type-annotate their action
-// variables, options, or context parameters. Kept minimal: only types
-// that callers reference explicitly.
+// variables. Kept minimal: only types that callers reference explicitly
+// in production code outside actions/. Inferred types (DispatchOptions,
+// ActionDefinition, ActionContext, RetryConfig) are NOT exported because
+// callers get them through type inference on the factory signatures.
 export type {
-  Action,             // type-annotate action variables
-  ActionDefinition,   // type-annotate action factory args
-  ActionContext,      // 3rd arg to run() in custom defineAction calls
-  DispatchOptions,    // type-annotate dispatch opts
+  Action,             // 9 prod consumers (type-annotate action variables)
   ActionErrorLike,    // mcp-panels narrows the registry listener arg
-  RetryConfig,        // custom retry configurations
 } from "./types.js";

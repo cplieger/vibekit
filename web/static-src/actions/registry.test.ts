@@ -1,15 +1,13 @@
 // @vitest-environment happy-dom
-// Targeted tests for registry.ts performance changes (C5F2):
-// tombstone eviction, Set-based listener iteration, pendingFor/recentLog
-// filtering, _resetForTest completeness.
+// Targeted tests for registry.ts: tombstone eviction, Set-based listener
+// iteration, pendingFor/pendingCount/recentLog correctness, _resetForTest.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   record,
   subscribe,
   recentLog,
-  pendingFor,
   pendingCount,
-  pendingForAny,
+  pendingFor,
   isPending,
   _resetForTest,
 } from "./registry.js";
@@ -170,46 +168,6 @@ describe("listener iteration", () => {
 });
 
 // ===========================================================================
-// pendingFor / pendingForAny with tombstones
-// ===========================================================================
-
-describe("pendingFor with tombstones", () => {
-  it("skips tombstoned (evicted) entries", () => {
-    // Fill log to trigger eviction
-    for (let i = 0; i < 200; i++) {
-      record(makeInstance({ id: `x-${i}`, name: "other", status: "success" }));
-    }
-    // Add a pending entry for our target action
-    record(makeInstance({ id: "target", name: "my.action", status: "pending" }));
-    // The pending entry should survive eviction (soft cap preserves pending)
-    expect(pendingFor("my.action")).toHaveLength(1);
-    expect(pendingFor("my.action")[0]!.id).toBe("target");
-  });
-
-  it("returns empty when all matching entries are completed", () => {
-    record(makeInstance({ id: "done", name: "my.action", status: "success" }));
-    expect(pendingFor("my.action")).toHaveLength(0);
-  });
-});
-
-describe("pendingForAny", () => {
-  it("returns true when at least one named action is pending", () => {
-    record(makeInstance({ id: "a1", name: "chat.send", status: "pending" }));
-    record(makeInstance({ id: "a2", name: "chat.delete", status: "success" }));
-    expect(pendingForAny(["chat.send", "chat.delete"])).toBe(true);
-  });
-
-  it("returns false when no named actions are pending", () => {
-    record(makeInstance({ id: "a1", name: "chat.send", status: "success" }));
-    expect(pendingForAny(["chat.send"])).toBe(false);
-  });
-
-  it("returns false for empty names array", () => {
-    record(makeInstance({ id: "a1", name: "chat.send", status: "pending" }));
-    expect(pendingForAny([])).toBe(false);
-  });
-});
-
 // ===========================================================================
 // recentLog tombstone filtering
 // ===========================================================================

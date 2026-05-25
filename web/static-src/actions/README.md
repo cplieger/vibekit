@@ -273,7 +273,7 @@ instead of the trailing edge. Returns `{ flush, cancel, isPending }`.
 ## Registry observers
 
 ```ts
-import { subscribeToActions, pendingCount, pendingForAny } from "./actions/index.js";
+import { subscribeToActions, pendingCount } from "./actions/index.js";
 
 // Per-event listener (all actions):
 const unsub = subscribeToActions((inst) => {
@@ -283,8 +283,8 @@ const unsub = subscribeToActions((inst) => {
 // Global counter (drives app-bar progress):
 if (pendingCount() > 0) showSpinner();
 
-// OR-query (drives "all settings settled" detection):
-if (!pendingForAny(["settings.patch", "settings.save_steering"])) finalize();
+// Per-action-set count (drives "all settings settled" detection):
+if (pendingCount(["settings.patch", "settings.save_steering"]) === 0) finalize();
 ```
 
 ## Cleanup hooks

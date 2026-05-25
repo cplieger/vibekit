@@ -11,7 +11,7 @@ const { state } = vi.hoisted(() => {
 
 vi.mock("./actions/index.js", () => ({
   subscribeToActions: (fn: (i: any) => void) => { state.cb = fn; return () => {}; },
-  pendingForAny: () => state.pending,
+  pendingCount: (_names?: readonly string[]) => state.pending ? 1 : 0,
 }));
 
 vi.mock("./dom.js", () => ({

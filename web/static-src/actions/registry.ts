@@ -244,9 +244,36 @@ export function isPending(name: string): boolean {
   return s !== undefined && s.size > 0;
 }
 
-/** Currently-pending instances of a named action. Useful for deriving
- *  loading state without an explicit observer. O(k) where k = pending
- *  count for that name (typically 0–2). */
+/**
+ * Pending count for action(s).
+ *
+ * - Without arguments: total count of pending instances across all actions.
+ *   Drives global progress indicators (app-bar loading bar).
+ * - With a name array: sum of pending instances for those names. Useful for
+ *   batch-settled detection (e.g. "all settings actions done").
+ *
+ * O(1) for the no-arg case, O(names.length) for the array case.
+ *
+ * @example
+ * ```ts
+ * if (pendingCount() > 0) showSpinner();
+ * if (pendingCount(["settings.patch", "settings.save_steering"]) === 0) finalize();
+ * ```
+ */
+export function pendingCount(names?: readonly string[]): number {
+  if (names === undefined) return _pendingTotal;
+  let total = 0;
+  for (let i = 0; i < names.length; i++) {
+    const s = pendingByName.get(names[i]!);
+    if (s !== undefined) total += s.size;
+  }
+  return total;
+}
+
+/** @internal Test-only: snapshot of pending instances for a given action
+ *  name. Not exported from `index.ts` — registry-correctness tests use
+ *  this to verify the per-name pending index. Production code uses
+ *  `pendingCount` or `bindLoadingState` instead. */
 export function pendingFor(name: string): readonly ActionInstance[] {
   const ids = pendingByName.get(name);
   if (ids === undefined || ids.size === 0) return [];
@@ -256,28 +283,6 @@ export function pendingFor(name: string): readonly ActionInstance[] {
     if (entry !== undefined) result.push(entry.instance);
   }
   return result;
-}
-
-/** Total count of pending action instances across all action names.
- *  Useful for an app-bar global progress indicator: when > 0, show
- *  some "doing things" affordance. O(1). */
-export function pendingCount(): number {
-  return _pendingTotal;
-}
-
-/**
- * True if any of the named actions has at least one pending instance.
- * O(names.length) via the per-name pending index.
- *
- * @param names - Action names to check (e.g. ["settings.patch", "settings.save_steering"]).
- * @returns `true` if at least one instance with a matching name is pending.
- */
-export function pendingForAny(names: readonly string[]): boolean {
-  for (let i = 0; i < names.length; i++) {
-    const s = pendingByName.get(names[i]!);
-    if (s !== undefined && s.size > 0) return true;
-  }
-  return false;
 }
 
 /** Test-only: clear log + listeners. */
