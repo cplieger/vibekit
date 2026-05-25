@@ -77,7 +77,7 @@ export async function apiDelete(path: string, signal?: AbortSignal): Promise<boo
  *  the server's JSON body (empty string if the body didn't include one).
  *  Used by forms that need to surface specific failure reasons (400
  *  validation errors, 409 conflicts) inline instead of silently failing. */
-export interface ApiResult<T> {
+interface ApiResult<T> {
   ok: boolean;
   status: number;
   data: T | null;

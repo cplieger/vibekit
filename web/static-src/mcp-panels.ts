@@ -17,7 +17,7 @@ import type { DebouncedDispatch } from "./actions/index.js";
 
 export type AddMode = "search" | "remote" | "npm" | "raw";
 
-export interface EditingContext {
+interface EditingContext {
   id: string;
 }
 
@@ -60,7 +60,7 @@ export function setEditing(ctx: EditingContext): void {
   }
 }
 
-export interface InitArgs { mode: AddMode; server: Server | null }
+interface InitArgs { mode: AddMode; server: Server | null }
 
 export function initModal(args: InitArgs): void {
   const title = el<HTMLSpanElement>("mcp-modal-title");

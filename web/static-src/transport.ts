@@ -85,7 +85,7 @@ export type TypedCommand =
 
 const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
 
-export interface SendResult {
+interface SendResult {
   ok: boolean;
   /** HTTP status. 0 for non-HTTP failures (timeout, network). */
   status: number;
@@ -95,7 +95,7 @@ export interface SendResult {
   code?: string;
 }
 
-export interface SendOptions {
+interface SendOptions {
   /** Caller-supplied signal for cancellation (e.g. on tab close or chat delete). */
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */

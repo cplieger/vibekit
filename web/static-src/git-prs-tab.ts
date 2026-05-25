@@ -68,9 +68,6 @@ registerCleanup(() => refreshController?.abort());
 // --- Accessors for optimistic mutations (wired via git-prs-state) ---
 // removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
 // to break the circular dependency with actions/git-prs.ts.
-// Re-export the type for any downstream consumers.
-export type { PRRemoveResult } from "./git-prs-state.js";
-
 // --- Public API ---
 
 let prsInited = false;

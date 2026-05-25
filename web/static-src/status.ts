@@ -17,7 +17,7 @@ import type { MeteringItem, ConnectionStatus } from "./types.js";
 // --- Context bar controller ---
 
 /** Options for updateContextBar — named fields prevent argument-order bugs. */
-export interface ContextBarUpdate {
+interface ContextBarUpdate {
   pct: number;
   contextSize: number;
   credits: number;

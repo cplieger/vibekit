@@ -12,7 +12,7 @@ export interface FileEntry {
   modTime: number;
 }
 
-export interface DirListing {
+interface DirListing {
   files: FileEntry[];
   writable: boolean;
   error?: string;

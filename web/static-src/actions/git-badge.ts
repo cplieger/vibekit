@@ -24,7 +24,7 @@ interface ConfiguredForge {
 }
 interface ForgesListResponse { forges: ConfiguredForge[] }
 
-export interface GitBadgeData {
+interface GitBadgeData {
   status: StatusAllResponse | null;
   forges: ForgesListResponse | null;
 }

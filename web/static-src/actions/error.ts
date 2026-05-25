@@ -57,19 +57,24 @@ export function hasErrorString(v: unknown): v is { error: string } {
  *  fields when they carry a defined value. */
 export function toActionError(e: unknown): ActionErrorLike {
   if (e instanceof ActionError) {
-    return {
-      message: e.message,
-      ...(e.status !== undefined && { status: e.status }),
-      ...(e.code !== undefined && { code: e.code }),
-      ...(e.cause !== undefined && { cause: e.cause }),
-    };
+    // Direct property assignment avoids temporary object allocation from
+    // spread-based conditional inclusion (`...(x && { x })`). Measurable
+    // in V8 microbenchmarks when toActionError sits on the error hot path.
+    const r: { message: string; status?: number; code?: string; cause?: unknown } = { message: e.message };
+    if (e.status !== undefined) r.status = e.status;
+    if (e.code !== undefined) r.code = e.code;
+    if (e.cause !== undefined) r.cause = e.cause;
+    return r;
   }
   if (e instanceof DOMException) {
     const code = e.name === "TimeoutError" ? "timeout"
                : e.name === "AbortError" ? "cancelled"
                : e.name === "NetworkError" ? "network"
                : e.name.toLowerCase();
-    return { message: e.message, code, cause: e };
+    // Network/timeout DOMExceptions get status: 0 to match the convention
+    // established by classifyFetchError (browser convention for failed-to-connect).
+    const isNetLayer = code === "network" || code === "timeout";
+    return { message: e.message, code, ...(isNetLayer && { status: 0 }), cause: e };
   }
   if (e instanceof AggregateError) {
     // AggregateError from Promise.any / Promise.allSettled: surface the
@@ -84,24 +89,20 @@ export function toActionError(e: unknown): ActionErrorLike {
     const status = typeof rawStatus === "number" ? rawStatus : undefined;
     const rawCode = "code" in e ? (e as { code: unknown }).code : undefined;
     const code = typeof rawCode === "string" ? rawCode : undefined;
-    return {
-      message: e.message,
-      ...(status !== undefined && { status }),
-      ...(code !== undefined && { code }),
-      cause: e,
-    };
+    const r: { message: string; status?: number; code?: string; cause: unknown } = { message: e.message, cause: e };
+    if (status !== undefined) r.status = status;
+    if (code !== undefined) r.code = code;
+    return r;
   }
   if (typeof e === "object" && e !== null && "message" in e) {
     const obj = e as { message: unknown; status?: unknown; code?: unknown };
     const message = typeof obj.message === "string" ? obj.message : String(obj.message);
     const status = typeof obj.status === "number" ? obj.status : undefined;
     const code = typeof obj.code === "string" ? obj.code : undefined;
-    return {
-      message,
-      ...(status !== undefined && { status }),
-      ...(code !== undefined && { code }),
-      cause: e,
-    };
+    const r: { message: string; status?: number; code?: string; cause: unknown } = { message, cause: e };
+    if (status !== undefined) r.status = status;
+    if (code !== undefined) r.code = code;
+    return r;
   }
   if (e === null) return { message: "Unknown error (null thrown)", code: "unknown" };
   if (e === undefined) return { message: "Unknown error (undefined thrown)", code: "unknown" };

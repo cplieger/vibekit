@@ -57,6 +57,7 @@ describe("toActionError", () => {
     const dom = new DOMException("timed out", "TimeoutError");
     const result = toActionError(dom);
     expect(result.code).toBe("timeout");
+    expect(result.status).toBe(0);
     expect(result.cause).toBe(dom);
   });
 
@@ -64,12 +65,14 @@ describe("toActionError", () => {
     const dom = new DOMException("aborted", "AbortError");
     const result = toActionError(dom);
     expect(result.code).toBe("cancelled");
+    expect(result.status).toBeUndefined();
   });
 
   it("maps DOMException NetworkError", () => {
     const dom = new DOMException("network", "NetworkError");
     const result = toActionError(dom);
     expect(result.code).toBe("network");
+    expect(result.status).toBe(0);
   });
 
   it("maps unknown DOMException name to lowercase", () => {
@@ -331,6 +334,16 @@ describe("isNetworkError", () => {
   it("returns true when classifyFetchError output is passed", () => {
     const ac = new AbortController();
     const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
+    expect(isNetworkError(err)).toBe(true);
+  });
+
+  it("returns true when toActionError DOMException TimeoutError is passed", () => {
+    const err = toActionError(new DOMException("timed out", "TimeoutError"));
+    expect(isNetworkError(err)).toBe(true);
+  });
+
+  it("returns true when toActionError DOMException NetworkError is passed", () => {
+    const err = toActionError(new DOMException("network", "NetworkError"));
     expect(isNetworkError(err)).toBe(true);
   });
 });

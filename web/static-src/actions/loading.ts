@@ -26,7 +26,7 @@ import { subscribeByName, isPending, pendingForAny } from "./registry.js";
 /** Element types that have a `.disabled` writable boolean. */
 type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
-export interface BindLoadingOptions {
+interface BindLoadingOptions {
   /** When true (default), set `aria-busy="true"` while pending. */
   ariaBusy?: boolean;
   /** When true, don't manage aria-busy at all — lets external code own

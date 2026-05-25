@@ -42,7 +42,6 @@ import type {
   ActionContext,
   ActionDefinition,
   ActionErrorLike,
-  ActionInstance,
   DispatchOptions,
   DispatchResult,
   RetryAttemptInfo,
@@ -106,6 +105,7 @@ function safeStringify(args: unknown): string {
   if (args === undefined) return "undefined";
   if (args === null || typeof args === "number" || typeof args === "boolean") return String(args);
   if (typeof args === "string") return JSON.stringify(args);
+  if (typeof args === "bigint" || typeof args === "symbol") return String(args);
   try { return JSON.stringify(args) ?? "undefined"; } catch { return String(args); }
 }
 
@@ -545,7 +545,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           } catch (e) {
             console.error(`[actions] rollback (cancellation) for ${def.name} threw`, e);
           }
-          if (opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!({ message: "cancelled", code: "cancelled" }, args));
+          if (def.optimistic !== undefined && opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!({ message: "cancelled", code: "cancelled" }, args));
         }
         if (opts.onCancel) safeInvoke(def.name, "onCancel", () => opts.onCancel!(args));
         return null;
@@ -577,13 +577,12 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       // Clear dedupe BEFORE callbacks so dispatches from onError
       // with the same key start a fresh run.
       evictDedupeSlot(dedupeKey, dedupeEntry);
-      const errRecord: ActionInstance = {
+      record({
         id, name: def.name, status, args,
         dispatchedAt, startedAt, completedAt: Date.now(),
-      };
-      if (!cancelled) (errRecord as { error?: ActionErrorLike }).error = err;
-      if (attempts !== undefined) (errRecord as { attempts?: number }).attempts = attempts;
-      record(errRecord);
+        ...(!cancelled && { error: err }),
+        ...(attempts !== undefined && { attempts }),
+      });
       // Rollback the optimistic mutation regardless of cancel/error.
       if (def.rollback !== undefined) {
         try {
@@ -594,7 +593,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         } catch (rbCaught) {
           console.error(`[actions] rollback for ${def.name} threw`, rbCaught);
         }
-        if (opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!(cancelled ? { message: "cancelled", code: "cancelled" } : err, args));
+        if (def.optimistic !== undefined && opts.onRollback) safeInvoke(def.name, "onRollback", () => opts.onRollback!(cancelled ? { message: "cancelled", code: "cancelled" } : err, args));
       }
       if (!cancelled) {
         emitErrorToast(args, err, opts);
@@ -623,6 +622,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     const factor = cfg?.factor ?? 2;
     let attempt = 0;
     let lastRetryError: ActionErrorLike | undefined;
+    let nextDelay = Math.min(baseDelay, 5000);
     while (true) {
       if (signal.aborted) {
         const abortErr = new DOMException("aborted", "AbortError");
@@ -632,8 +632,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       try {
         attempt++;
         if (attempt > 1 && onRetryAttempt !== undefined) {
-          const wait = Math.min(baseDelay * Math.pow(factor, attempt - 2), 5000);
-          safeInvoke(def.name, "onRetryAttempt", () => onRetryAttempt({ attempt, maxAttempts, error: lastRetryError!, delay: wait }, args));
+          // Reuse nextDelay computed at the end of the previous catch block.
+          // For attempt 2: baseDelay * factor^0 = baseDelay (matches prior formula).
+          safeInvoke(def.name, "onRetryAttempt", () => onRetryAttempt({ attempt, maxAttempts, error: lastRetryError!, delay: nextDelay }, args));
         }
         const result = await def.run(args, signal, ctx);
         return { result, attempts: attempt };
@@ -649,9 +650,11 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         const err = toActionError(e);
         if (!shouldRetry(err)) { attachAttempts(e, attempt); throw e; }
         lastRetryError = err;
-        const wait = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
+        // Compute delay once: used for sleep AND reported to onRetryAttempt
+        // at the top of the next iteration (avoids duplicate Math.pow).
+        nextDelay = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
         try {
-          await sleep(wait, signal);
+          await sleep(nextDelay, signal);
         } catch {
           // Sleep was aborted — throw a proper AbortError rather than
           // re-throwing the stale run() error `e`. The caller checks

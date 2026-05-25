@@ -40,7 +40,7 @@ export {
 //   - pendingForAny: OR-query for binding one element to multiple
 //     action names (e.g. a Save button covering several settings
 //     actions).
-export { subscribe as subscribeToActions, pendingCount, pendingForAny, isPending, onceSettled } from "./registry.js";
+export { subscribe as subscribeToActions, subscribeByName, pendingCount, pendingFor, pendingForAny, isPending, onceSettled } from "./registry.js";
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
@@ -75,6 +75,10 @@ export type { DispatchOptions, RetryAttemptInfo, DispatchResult } from "./types.
 // repetition across action definitions.
 export { RETRY_STANDARD, RETRY_AGGRESSIVE } from "./types.js";
 
+// RetryConfig: needed by consumers defining custom retry configurations
+// beyond the standard presets.
+export type { RetryConfig } from "./types.js";
+
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.
 export type { ArgsOf, ResultOf, ActionFromDef } from "./types.js";
@@ -85,7 +89,7 @@ export type { Action, ActionContext, ActionDefinition } from "./types.js";
 
 // Instance snapshot: needed by subscribeToActions consumers who want to
 // type-annotate callback parameters.
-export type { ActionInstance } from "./types.js";
+export type { ActionInstance, ActionLifecycleStatus, RegistryListener } from "./types.js";
 
 // Per-name status snapshot: consolidated view of pending count, last
 // error/success, and timestamps for a named action.

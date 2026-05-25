@@ -316,11 +316,11 @@ describe("git.stage — scope serialization", () => {
 
   it("runs in parallel for different repos", async () => {
     const log: string[] = [];
-    mockFetch.mockImplementation(async (_url: string, opts: any) => {
-      const body = JSON.parse(opts.body as string);
-      log.push(`start:${body.repo as string}`);
+    mockFetch.mockImplementation(async (_url: string, opts: RequestInit) => {
+      const body = JSON.parse(opts.body as string) as { repo: string };
+      log.push(`start:${body.repo}`);
       await new Promise<void>((r) => setTimeout(r, 50));
-      log.push(`end:${body.repo as string}`);
+      log.push(`end:${body.repo}`);
       return new Response(JSON.stringify({}), { status: 200 });
     });
     const { stage } = await import("./git-changes.js");
@@ -396,9 +396,9 @@ describe("chat.cancel_turn — dispatch callbacks", () => {
   });
 
   it("fires onCancel callback on cancellation", async () => {
-    mockSend.mockImplementation((_cmd: any, opts: any) =>
+    mockSend.mockImplementation((_cmd, opts) =>
       new Promise((_resolve, reject) => {
-        opts.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        opts!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       }),
     );
     const onCancel = vi.fn();
@@ -418,9 +418,9 @@ describe("chat.cancel_turn — dispatch callbacks", () => {
 
 describe("files.download — abort handling", () => {
   it("returns null on cancellation", async () => {
-    mockFetch.mockImplementation((_url: string, opts: any) =>
+    mockFetch.mockImplementation((_url: string, opts: RequestInit) =>
       new Promise((_resolve, reject) => {
-        (opts.signal as AbortSignal).addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        opts.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       }),
     );
     const { downloadFiles } = await import("./files.js");

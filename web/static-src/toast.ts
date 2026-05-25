@@ -35,7 +35,7 @@
 // error surface.
 // ---------------------------------------------------------------------------
 
-export type ToastLevel = "info" | "success" | "error";
+type ToastLevel = "info" | "success" | "error";
 
 const MAX_VISIBLE = 3;
 const DURATION_DEFAULT_MS = 4000;
@@ -57,7 +57,7 @@ interface ToastEntry {
  *  dismissed and may return a Promise (rejections are logged but
  *  not surfaced — the caller is responsible for showing a fresh
  *  toast on a re-failure). */
-export interface ToastRetry {
+interface ToastRetry {
   readonly label?: string;
   readonly onClick: () => void | Promise<void>;
 }

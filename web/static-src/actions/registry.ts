@@ -103,8 +103,8 @@ export function record(instance: ActionInstance): void {
     // Now that this entry is terminal, check if we're over the cap.
     if (instance.status !== "pending" && _liveCount > MAX_LOG_SIZE) {
       for (let i = _head; i < log.length; i++) {
-        const entry = log[i] ?? null;
-        if (entry !== null && entry.status !== "pending" && entry.id !== instance.id) {
+        const entry = log[i];
+        if (entry !== null && entry !== undefined && entry.status !== "pending" && entry.id !== instance.id) {
           idMap.delete(entry.id);
           log[i] = null;
           _liveCount--;
@@ -128,8 +128,8 @@ export function record(instance: ActionInstance): void {
       // Evict the first NON-pending live entry so pendingFor() never
       // loses track of long-running actions.
       for (let i = _head; i < log.length; i++) {
-        const entry = log[i] ?? null;
-        if (entry !== null && entry.status !== "pending") {
+        const entry = log[i];
+        if (entry !== null && entry !== undefined && entry.status !== "pending") {
           idMap.delete(entry.id);
           log[i] = null;
           _liveCount--;
@@ -141,8 +141,8 @@ export function record(instance: ActionInstance): void {
     // status to bound memory in extreme runaway scenarios (B5/B6).
     if (_liveCount > MAX_LOG_HARD) {
       for (let i = _head; i < log.length; i++) {
-        const entry = log[i] ?? null;
-        if (entry !== null) {
+        const entry = log[i];
+        if (entry !== null && entry !== undefined) {
           if (entry.status === "pending") {
             _pendingTotal--;
             const s = pendingByName.get(entry.name);
@@ -235,8 +235,8 @@ export function subscribeByName(name: string, fn: RegistryListener): () => void 
 export function recentLog(): readonly ActionInstance[] {
   const result: ActionInstance[] = [];
   for (let i = _head; i < log.length; i++) {
-    const entry = log[i] ?? null;
-    if (entry !== null) result.push(entry);
+    const entry = log[i];
+    if (entry != null) result.push(entry);
   }
   return result;
 }

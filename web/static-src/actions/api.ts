@@ -47,7 +47,7 @@ const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "applic
 
 /** Caller-facing shape of an apiAction definition. Differs from the
  *  raw ActionDefinition in that `request` replaces `run`. */
-export interface ApiActionDefinition<TArgs, TResult, TOp = unknown>
+interface ApiActionDefinition<TArgs, TResult, TOp = unknown>
   extends Omit<ActionDefinition<TArgs, TResult, TOp>, "run"> {
   /** HTTP request descriptor. Re-evaluated for each dispatch with the
    *  current args (so paths can interpolate args). */

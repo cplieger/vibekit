@@ -43,6 +43,11 @@ export function uploadFiles(opts: UploadOptions): void {
   const cancelBtn = $.uploadProgressCancel;
 
   progress.classList.remove("upload-closed");
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", "0");
+  progress.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
   fill.style.width = "0%";
   label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
 
@@ -68,6 +73,7 @@ export function uploadFiles(opts: UploadOptions): void {
       const pct = Math.round((e.loaded / e.total) * 100);
       fill.style.width = `${String(pct)}%`;
       label.textContent = `Uploading... ${String(pct)}%`;
+      progress.setAttribute("aria-valuenow", String(pct));
     }
   });
   xhr.addEventListener("load", () => {

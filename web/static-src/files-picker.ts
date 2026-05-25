@@ -162,6 +162,7 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
   check.type = "checkbox";
   check.className = "fb-check";
   check.checked = selected.has(name);
+  check.setAttribute("aria-label", `Select ${name}`);
   check.addEventListener("change", () => {
     if (check.checked) selected.add(name);
     else selected.delete(name);
