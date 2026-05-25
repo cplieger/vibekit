@@ -69,6 +69,7 @@ export const stash = apiAction<{ repo: string }, unknown>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   error: "Stash failed",
+  idempotencyKey: true,
   retryable: "network",
 });
 

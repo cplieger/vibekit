@@ -22,6 +22,7 @@ export const copyClipboard = defineAction<string, void>({
 /** Ask the utility bridge to explain a tool error. */
 export const explainError = apiAction<{ errorText: string; context: string }, { output?: string }>({
   name: "messages.explain_error",
+  dedupe: (args) => "explain:" + args.errorText.slice(0, 100),
   request: ({ errorText, context }) => ({
     method: "POST",
     path: "/api/utility/explain-error",
@@ -35,6 +36,7 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
 /** Undo a single file edit via checkpoint restore. */
 export const undoEdit = transportAction<{ chatID: string; tag: string; filePath: string }>({
   name: "messages.undo_edit",
+  scope: (args) => "chat:" + args.chatID,
   command: ({ chatID, tag, filePath }) => ({
     type: "undo_edit",
     chat_id: chatID,
@@ -48,6 +50,7 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
  *  best-effort between calls (checked before sendPromptTo). */
 export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
+  scope: (args) => "chat:" + args.chatID,
   run: async ({ chatID, content }, signal) => {
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);

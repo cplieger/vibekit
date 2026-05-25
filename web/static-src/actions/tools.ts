@@ -5,6 +5,7 @@ import { apiAction } from "./index.js";
 
 export const installTools = apiAction<void, { output?: string; error?: string }>({
   name: "tools.install",
+  scope: "tools",
   request: () => ({ method: "POST", path: "/api/tools/install" }),
   error: "Tool install failed",
 });
@@ -12,12 +13,14 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
 export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>, unknown>({
   name: "tools.save",
   retryable: "network",
+  scope: "tools",
   request: (data) => ({ method: "PUT", path: "/api/tools", body: data }),
   error: "Couldn't save tool config",
 });
 
 export const runDiagnostics = apiAction<void, { report?: string; error?: string }>({
   name: "tools.diagnostics",
+  dedupe: true,
   request: () => ({ method: "POST", path: "/api/diagnostics", body: {} }),
   error: false,
 });
@@ -26,12 +29,14 @@ export const loadToolsListAction = apiAction<void, Record<string, Record<string,
   name: "tools.load_list",
   retryable: "network",
   retry: { count: 2, delay: 300 },
+  dedupe: true,
   request: () => ({ method: "GET", path: "/api/tools" }),
   error: false,
 });
 
 export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   name: "tools.seed_mcp",
+  scope: "tools",
   request: ({ name, install }) => ({
     method: "POST",
     path: "/api/mcp",

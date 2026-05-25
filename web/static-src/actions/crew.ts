@@ -8,6 +8,7 @@ interface SendMessageArgs {
 
 export const sendMessage = transportAction<SendMessageArgs>({
   name: "crew.send_message",
+  scope: (args) => "crew:" + args.chatID + ":" + args.subSessionID,
   command: ({ chatID, subSessionID, text }) => ({
     type: "message_subagent",
     chat_id: chatID,

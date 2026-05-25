@@ -70,7 +70,7 @@ import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurnAction } from "./actions/chat.js";
-import { initActionConsoleLog } from "./actions/index.js";
+import { initActionConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -171,6 +171,21 @@ function init(): void {
   // browser console so failures are visible in DevTools regardless of
   // toast policy (suppressed-toast actions still get logged).
   initActionConsoleLog();
+
+  // Global progress indicator: toggle a CSS class on the 2px top
+  // stripe whenever any action is in-flight. Edge-only toggling
+  // (0→N and N→0) avoids flicker from rapid intermediate changes.
+  const progressEl = document.getElementById("global-progress");
+  if (progressEl !== null) {
+    let wasActive = false;
+    subscribeToActions(() => {
+      const active = pendingCount() > 0;
+      if (active !== wasActive) {
+        wasActive = active;
+        progressEl.classList.toggle("active", active);
+      }
+    });
+  }
 
   void checkAuthAndStart();
 }

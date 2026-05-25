@@ -33,6 +33,7 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
   name: "permissions.add_rule",
   retryable: "network",
   retry: { count: 2, delay: 300 },
+  idempotencyKey: true,
   scope: "permissions",
   request: ({ pattern, mode, priority }) => ({
     method: "POST",

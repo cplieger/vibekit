@@ -4,6 +4,28 @@
 import { apiAction } from "./index.js";
 import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
 
+/** Result shape from the registry search endpoint. */
+export interface RegistrySearchResult {
+  servers: Array<{
+    name: string;
+    title?: string;
+    description?: string;
+    version?: string;
+    repository?: string;
+    packages?: Array<{
+      registry_type: string;
+      identifier: string;
+      version?: string;
+      env_vars?: Array<{ name: string; description?: string; required?: boolean; secret?: boolean }>;
+    }>;
+    remotes?: Array<{
+      type: string;
+      url: string;
+      headers?: Array<{ name: string; description?: string; value?: string; required?: boolean; secret?: boolean }>;
+    }>;
+  }>;
+}
+
 // --- mcp.toggle_server ---
 
 export interface ToggleArgs {
@@ -81,11 +103,28 @@ export interface SaveArgs {
 
 export const saveServer = apiAction<SaveArgs, Server>({
   name: "mcp.save_server",
+  idempotencyKey: true,
   scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
     method: id === "" ? "POST" : "PUT",
     path: id === "" ? "/api/mcp" : `/api/mcp/${encodeURIComponent(id)}`,
     body,
+  }),
+  error: false,
+});
+
+// --- mcp.search_registry ---
+
+export interface SearchRegistryArgs {
+  q: string;
+}
+
+export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
+  name: "mcp.search_registry",
+  dedupe: (args) => "search:" + args.q,
+  request: ({ q }) => ({
+    method: "GET",
+    path: `/api/mcp/registry/search?q=${encodeURIComponent(q)}&limit=20`,
   }),
   error: false,
 });

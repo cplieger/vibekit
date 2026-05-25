@@ -4,14 +4,14 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { apiGet } from "./api-client.js";
 import { closeModal } from "./modals.js";
 import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
-import { saveServer } from "./actions/mcp.js";
-import { subscribeToActions, bindLoadingState } from "./actions/index.js";
+import { saveServer, searchRegistry, type RegistrySearchResult } from "./actions/mcp.js";
+import { subscribeToActions, bindLoadingState, debouncedDispatch } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
+import type { DebouncedDispatch } from "./actions/index.js";
 import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Add / edit modal ---
@@ -24,18 +24,11 @@ export interface EditingContext {
 
 class EditSession {
   editing: EditingContext = { id: "" };
-  searchController: AbortController | null = null;
   disabledToolsList: string[] = [];
 
   reset(): void {
-    this.abortSearch();
     this.editing = { id: "" };
     this.disabledToolsList = [];
-  }
-
-  abortSearch(): void {
-    this.searchController?.abort();
-    this.searchController = null;
   }
 
   startEdit(id: string): void {
@@ -49,11 +42,10 @@ class EditSession {
 }
 
 let session = new EditSession();
-registerCleanup(() => session.abortSearch());
 
-/** Abort any in-flight search when the modal is dismissed. */
+/** Cancel any in-flight debounced search when the modal is dismissed. */
 export function cleanupModal(): void {
-  session.abortSearch();
+  debouncedSearch?.cancel();
 }
 
 export function setEditing(ctx: EditingContext): void {
@@ -156,12 +148,8 @@ interface RegistryEntry {
   }>;
 }
 
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const id = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => { clearTimeout(id); reject(signal.reason); }, { once: true });
-  });
-}
+let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
+registerCleanup(() => { debouncedSearch?.cancel(); });
 
 function initSearchPanel(): void {
   const input = el<HTMLInputElement>("mcp-search-input");
@@ -171,51 +159,46 @@ function initSearchPanel(): void {
   results.replaceChildren();
   input.focus();
 
-  const fire = (): void => {
-    session.abortSearch();
-    void runSearch(input.value.trim(), results);
-  };
+  debouncedSearch = debouncedDispatch(searchRegistry, { wait: 200 });
+
+  const unsub = subscribeToActions((inst) => {
+    if (inst.name !== "mcp.search_registry") return;
+    if (inst.status === "success") {
+      const d = inst.result as RegistrySearchResult | undefined;
+      const q = (inst.args as { q: string }).q;
+      renderSearchResults(results, d, q);
+    } else if (inst.status === "error") {
+      renderSearchError(results, (inst.args as { q: string }).q);
+    }
+  });
+  registerCleanup(unsub);
 
   input.oninput = (): void => {
-    session.abortSearch();
-    session.searchController = new AbortController();
-    const signal = session.searchController.signal;
-    void delay(250, signal).then(() => {
-      void runSearch(input.value.trim(), results);
-    }).catch(() => { /* aborted */ });
+    const q = input.value.trim();
+    if (q === "") { results.replaceChildren(); debouncedSearch!.cancel(); return; }
+    debouncedSearch!({ q });
   };
 
   input.onkeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") { e.preventDefault(); fire(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (q === "") return;
+      debouncedSearch!.flush({ q });
+    }
   };
 
-  btn.onclick = fire;
+  btn.onclick = (): void => {
+    const q = input.value.trim();
+    if (q === "") return;
+    debouncedSearch!.flush({ q });
+  };
 }
 
-async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
-  // Cancels any in-flight fetch from a previous runSearch (e.g., Enter pressed
-  // while debounced search is mid-fetch).
-  session.searchController?.abort();
-  session.searchController = new AbortController();
-  if (q === "") { results.replaceChildren(); return; }
-  const signal = session.searchController.signal;
-  const d = await apiGet<{ servers: RegistryEntry[] }>(
-    `/api/mcp/registry/search?q=${encodeURIComponent(q)}&limit=20`,
-    signal,
-  );
-  if (signal.aborted) return;
+function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | undefined, q: string): void {
   results.replaceChildren();
-  if (d === null) {
-    const err = document.createElement("p");
-    err.className = "mcp-empty";
-    err.textContent = "Registry unreachable. Use the Remote URL or npm package forms instead.";
-    results.appendChild(err);
-    const retryBtn = document.createElement("button");
-    retryBtn.type = "button";
-    retryBtn.className = "btn-small";
-    retryBtn.textContent = "Retry";
-    retryBtn.addEventListener("click", () => { void runSearch(q, results); });
-    results.appendChild(retryBtn);
+  if (d === undefined || d === null) {
+    renderSearchError(results, q);
     return;
   }
   if (d.servers.length === 0) {
@@ -226,6 +209,20 @@ async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
     return;
   }
   for (const entry of d.servers) results.appendChild(renderRegistryResult(entry));
+}
+
+function renderSearchError(results: HTMLDivElement, q: string): void {
+  results.replaceChildren();
+  const err = document.createElement("p");
+  err.className = "mcp-empty";
+  err.textContent = "Registry unreachable. Use the Remote URL or npm package forms instead.";
+  results.appendChild(err);
+  const retryBtn = document.createElement("button");
+  retryBtn.type = "button";
+  retryBtn.className = "btn-small";
+  retryBtn.textContent = "Retry";
+  retryBtn.addEventListener("click", () => { void searchRegistry.dispatch({ q }); });
+  results.appendChild(retryBtn);
 }
 
 function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {

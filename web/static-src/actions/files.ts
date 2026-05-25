@@ -17,6 +17,7 @@ export interface CreateArgs {
 
 export const createFile = defineAction<CreateArgs, unknown>({
   name: "files.create_file",
+  scope: (args) => "dir:" + args.dir,
   run: async (args, signal) => {
     const r = await fetch("/api/files/action", {
       method: "POST",
@@ -39,6 +40,7 @@ export const createFile = defineAction<CreateArgs, unknown>({
 
 export const createFolder = defineAction<CreateArgs, unknown>({
   name: "files.create_folder",
+  scope: (args) => "dir:" + args.dir,
   run: async (args, signal) => {
     const r = await fetch("/api/files/action", {
       method: "POST",
@@ -61,6 +63,8 @@ export const createFolder = defineAction<CreateArgs, unknown>({
 
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }, unknown>({
   name: "files.rename",
+  scope: (args) => "file:" + args.dir + "/" + args.original,
+  idempotencyKey: true,
   request: ({ dir, original, newName }) => ({
     method: "POST",
     path: "/api/files/action",
@@ -81,6 +85,7 @@ export interface DeleteArgs {
 
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
+  scope: (args) => "dir:" + args.dir,
   // Batch delete must NOT retry: a timeout/network error may mean some
   // items were already deleted server-side. Retrying would re-attempt
   // those deletions, causing 404s or deleting newly-created files with

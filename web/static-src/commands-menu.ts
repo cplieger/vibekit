@@ -13,9 +13,8 @@
 
 import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
-import { apiGet } from "./api-client.js";
 import type { AvailableCommand } from "./types.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { apiAction, debouncedDispatch, registerCleanup, subscribeToActions } from "./actions/index.js";
 
 interface OptionEntry {
   label: string;
@@ -35,6 +34,34 @@ interface PopoverRowOpts {
 }
 
 // ---------------------------------------------------------------------------
+// Stage-2 fetch action: debounced option lookup for arg completion.
+// ---------------------------------------------------------------------------
+
+interface FetchOptionsArgs {
+  chatID: string;
+  command: string;
+  partial: string;
+}
+
+interface FetchOptionsResult {
+  options: OptionEntry[];
+}
+
+const fetchOptionsAction = apiAction<FetchOptionsArgs, FetchOptionsResult>({
+  name: "commands.fetchOptions",
+  request: ({ chatID, command, partial }) => ({
+    method: "GET",
+    path: `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
+      + `&command=${encodeURIComponent(command)}`
+      + `&partial=${encodeURIComponent(partial)}`,
+  }),
+  error: false,
+  dedupe: (args) => args.chatID + ":" + args.command + ":" + args.partial,
+});
+
+const debouncedFetch = debouncedDispatch(fetchOptionsAction, { wait: 150 });
+
+// ---------------------------------------------------------------------------
 // CommandsMenuController — encapsulates the popover lifecycle state.
 // ---------------------------------------------------------------------------
 
@@ -42,8 +69,6 @@ class CommandsMenuController {
   private popover: HTMLDivElement | null = null;
   private isOpen = false;
   private selectedIndex = 0;
-  private optionsTimer: ReturnType<typeof setTimeout> | undefined;
-  private optionsAbort: AbortController | undefined;
   private cachedItems: PopoverItem[] = [];
   private blurTimer: ReturnType<typeof setTimeout> | undefined;
   /** Tracks whether the popover is showing stage-2 (arg completion). */
@@ -65,13 +90,13 @@ class CommandsMenuController {
       const val = input.value;
       if (!val.startsWith("/")) {
         this.closePopover();
-        this.cancelOptions();
+        debouncedFetch.cancel();
         return;
       }
       const spaceIdx = val.indexOf(" ");
       if (spaceIdx === -1) {
         // Stage 1: command picker.
-        this.cancelOptions();
+        debouncedFetch.cancel();
         this.openPopover(val);
       } else {
         // Stage 2: arg completion.
@@ -83,6 +108,10 @@ class CommandsMenuController {
     });
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
+      // Flush pending debounce on Enter even if popover hasn't opened yet.
+      if (e.key === "Enter" && !this.isOpen && debouncedFetch.isPending()) {
+        debouncedFetch.flush();
+      }
       if (!this.isOpen) return;
       const items = this.cachedItems;
       switch (e.key) {
@@ -116,7 +145,7 @@ class CommandsMenuController {
           e.stopPropagation();
           e.stopImmediatePropagation();
           this.closePopover();
-          this.cancelOptions();
+          debouncedFetch.cancel();
           break;
       }
     });
@@ -124,7 +153,7 @@ class CommandsMenuController {
     input.addEventListener("focus", () => { this.clearBlurTimer(); });
 
     input.addEventListener("blur", () => {
-      this.blurTimer = setTimeout(() => { this.closePopover(); this.cancelOptions(); }, 120);
+      this.blurTimer = setTimeout(() => { this.closePopover(); debouncedFetch.cancel(); }, 120);
     });
   }
 
@@ -138,43 +167,26 @@ class CommandsMenuController {
   // --- Stage 2: arg completion ---
 
   private scheduleOptions(command: string, partial: string): void {
-    this.cancelOptions();
-    this.optionsTimer = setTimeout(() => {
-      void this.fetchOptions(command, partial);
-    }, 150);
-  }
-
-  private cancelOptions(): void {
-    if (this.optionsTimer !== undefined) {
-      clearTimeout(this.optionsTimer);
-      this.optionsTimer = undefined;
-    }
-    if (this.optionsAbort !== undefined) {
-      this.optionsAbort.abort();
-      this.optionsAbort = undefined;
-    }
+    const chatID = getActiveId();
+    if (chatID === "") return;
+    debouncedFetch({ chatID, command, partial });
   }
 
   /** Public hook for global cleanup. */
-  cancelLoad(): void { this.cancelOptions(); }
+  cancelLoad(): void { debouncedFetch.cancel(); fetchOptionsAction.cancel(); }
 
-  private async fetchOptions(command: string, partial: string): Promise<void> {
+  /**
+   * Called by the action's onSuccess callback to render options.
+   * Kept as a method so the controller instance is accessible.
+   */
+  showOptions(command: string, options: OptionEntry[]): void {
     const chatID = getActiveId();
     if (chatID === "") return;
-    this.optionsAbort = new AbortController();
-    const myCtrl = this.optionsAbort;
-    const signal = AbortSignal.any([myCtrl.signal, AbortSignal.timeout(5000)]);
-    const url = `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
-      + `&command=${encodeURIComponent(command)}`
-      + `&partial=${encodeURIComponent(partial)}`;
-    const d = await apiGet<{ options: OptionEntry[] }>(url, signal);
-    if (myCtrl !== this.optionsAbort) return; // stale
-    if (chatID !== getActiveId()) return;
-    if (d === null || !Array.isArray(d.options) || d.options.length === 0) {
+    if (options.length === 0) {
       this.closePopover();
       return;
     }
-    this.openOptionsPopover(command, d.options);
+    this.openOptionsPopover(command, options);
   }
 
   private openOptionsPopover(command: string, options: OptionEntry[]): void {
@@ -336,6 +348,16 @@ function buildPopoverRow(opts: PopoverRowOpts): HTMLButtonElement {
 
 const controller = new CommandsMenuController();
 registerCleanup(() => controller.cancelLoad());
+
+subscribeToActions((instance) => {
+  if (instance.name !== "commands.fetchOptions" || instance.status !== "success") return;
+  const args = instance.args as FetchOptionsArgs;
+  const result = instance.result as FetchOptionsResult | undefined;
+  if (args.chatID !== getActiveId()) return;
+  const options = result?.options;
+  if (!Array.isArray(options) || options.length === 0) return;
+  controller.showOptions(args.command, options);
+});
 
 export function initCommandsMenu(): void {
   controller.init();

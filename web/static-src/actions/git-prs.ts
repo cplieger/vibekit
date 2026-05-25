@@ -50,12 +50,14 @@ export const closePRAction = apiAction<PRArgs, unknown>({
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
   error: "Couldn't close PR",
+  idempotencyKey: true,
   retryable: "network",
 });
 
 /** Refresh all PRs across connected forges. */
 export const refreshPRsAction = defineAction<void, void>({
   name: "git.refresh_prs",
+  dedupe: true,
   run: async (_args, signal) => {
     const { refreshPRs } = await import("../git-prs-tab.js");
     await refreshPRs(signal);

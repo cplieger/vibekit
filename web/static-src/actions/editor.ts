@@ -9,6 +9,7 @@ import { routeForPath } from "../editor-types.js";
  *  framework toast suppressed. */
 export const saveFile = apiAction<{ path: string; content: string }, { ok?: boolean; error?: string }>({
   name: "editor.save_file",
+  scope: (args) => "file:" + args.path,
   request: ({ path, content }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
@@ -23,6 +24,7 @@ export const saveFile = apiAction<{ path: string; content: string }, { ok?: bool
  *  regardless of signal state. Cancellation is checked between steps. */
 export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "editor.send_plan",
+  scope: (args) => "chat:" + args.chatID,
   run: async ({ chatID, content }, signal) => {
     const { writePlanDraft, runPlan } = await import("../plan-actions.js");
     if (!(await writePlanDraft(chatID, content))) {
@@ -40,6 +42,7 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
 /** Apply partial (per-hunk) pending change via transport. */
 export const resolvePendingPartial = transportAction<{ chatID: string; toolCallID: string; mergedText: string }>({
   name: "editor.resolve_pending_partial",
+  scope: (args) => "chat:" + args.chatID,
   command: ({ chatID, toolCallID, mergedText }) => ({
     type: "resolve_pending_change_partial",
     chat_id: chatID,
@@ -51,6 +54,7 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
 /** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
 export const suggestResolution = apiAction<{ ours: string; theirs: string; context: string }, { output?: string; error?: string }>({
   name: "editor.suggest_resolution",
+  dedupe: true,
   request: (body) => ({ method: "POST", path: "/api/utility/resolve-conflict", body }),
   error: false,
 });

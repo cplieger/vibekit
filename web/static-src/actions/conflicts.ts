@@ -43,6 +43,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
 export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   name: "conflicts.open_diff",
   retryable: "network",
+  dedupe: true,
   run: async (args, signal) => {
     const [expected, actual] = await Promise.all([
       fetchBlob(args.chatID, args.expectedSha, signal),
@@ -66,6 +67,7 @@ export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>
   name: "conflicts.load",
   retryable: "network",
   retry: { count: 2, delay: 300 },
+  dedupe: (args) => "conflicts:" + args,
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
   error: false,
 });

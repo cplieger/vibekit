@@ -30,6 +30,7 @@ export interface StartDeviceFlowArgs {}
  *  the callsite renders inline status instead. */
 export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
   name: "forge.start_device_flow",
+  dedupe: true,
   request: () => ({
     method: "POST",
     path: "/api/forges/oauth/github/start",

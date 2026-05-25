@@ -9,7 +9,7 @@
 
 import { $ } from "./dom.js";
 import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
-import { subscribeToActions, pendingFor } from "./actions/index.js";
+import { subscribeToActions, pendingForAny } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -64,19 +64,22 @@ export function showError(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Hybrid registry subscription: if any pendingFor('settings.patch') is
-// in flight, ensure the spinner is visible. The imperative showSaving/
-// showSaved/showError API remains canonical (it handles the debounce
-// timer + generation counter in persist.ts). This subscription is a
-// safety net so the spinner also shows if a settings.patch is dispatched
-// from a path that doesn't call showSaving() explicitly.
+// Hybrid registry subscription: if any settings action is in flight,
+// ensure the spinner is visible. The imperative showSaving/showSaved/
+// showError API remains canonical (it handles the debounce timer +
+// generation counter in persist.ts / settings.ts). This subscription
+// is a safety net so the spinner also shows if a settings action is
+// dispatched from a path that doesn't call showSaving() explicitly.
 // ---------------------------------------------------------------------------
+const SETTINGS_ACTIONS = ["settings.patch", "settings.save_steering", "settings.set_kiro_setting"] as const;
+const SETTINGS_NAMES = new Set<string>(SETTINGS_ACTIONS);
+
 subscribeToActions((instance) => {
-  if (instance.name !== "settings.patch") return;
+  if (!SETTINGS_NAMES.has(instance.name)) return;
   if (Date.now() - lastShownAt < 500) return;
-  if (instance.status === "pending" && pendingFor("settings.patch").length > 0) {
+  if (instance.status === "pending" && pendingForAny(SETTINGS_ACTIONS)) {
     showSaving();
-  } else if (pendingFor("settings.patch").length === 0) {
+  } else if (!pendingForAny(SETTINGS_ACTIONS)) {
     if (instance.status === "success") showSaved();
     else if (instance.status === "error") showError();
   }

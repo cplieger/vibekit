@@ -14,6 +14,7 @@ import { send as transportSend } from "../transport.js";
 
 export const deleteChatAction = transportAction<string>({
   name: "chat.delete",
+  scope: (id) => `chat:${id}`,
   retryable: false,
   command: (id) => ({ type: "delete_chat", chat_id: id }),
   optimistic: (id) => {
@@ -38,6 +39,7 @@ export const deleteChatAction = transportAction<string>({
 
 export const archiveChatAction = apiAction<string, unknown>({
   name: "chat.archive",
+  scope: (id) => `chat:${id}`,
   retryable: "network",
   request: (id) => ({
     method: "POST",
@@ -62,6 +64,7 @@ export const archiveChatAction = apiAction<string, unknown>({
 
 export const discardTangentAction = transportAction<string>({
   name: "chat.discard_tangent",
+  scope: (id) => `chat:${id}`,
   retryable: false,
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
   optimistic: (id) => {
@@ -88,6 +91,7 @@ export const discardTangentAction = transportAction<string>({
 
 export const setSupervisedAction = transportAction<{ chatID: string; enabled: boolean }>({
   name: "chat.set_supervised",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
     type: "set_supervised_mode",
     chat_id: chatID,
@@ -113,6 +117,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
 
 export const resolveAllPendingAction = transportAction<{ chatID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_all_pending",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, action }) => ({
     type: "resolve_all_pending_changes",
     chat_id: chatID,
@@ -126,6 +131,7 @@ export const resolveAllPendingAction = transportAction<{ chatID: string; action:
 
 export const trustPendingAction = transportAction<string>({
   name: "chat.trust_pending",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
   retryable: "network",
   error: "Couldn't trust pending changes",
@@ -135,6 +141,7 @@ export const trustPendingAction = transportAction<string>({
 
 export const clearPendingTrustAction = transportAction<string>({
   name: "chat.clear_pending_trust",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
   retryable: "network",
   error: "Couldn't clear pending trust",
@@ -144,6 +151,7 @@ export const clearPendingTrustAction = transportAction<string>({
 
 export const forkChatAction = transportAction<{ chatID: string; tangentID: string }>({
   name: "chat.fork",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, tangentID }) => ({
     type: "fork_chat",
     chat_id: chatID,
@@ -169,6 +177,7 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
 
 export const mergeTangentAction = transportAction<string>({
   name: "chat.merge_tangent",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
   error: "Couldn't merge tangent",
 });
@@ -177,6 +186,7 @@ export const mergeTangentAction = transportAction<string>({
 
 export const setAutoApproveCrewAction = transportAction<{ chatID: string; enabled: boolean }>({
   name: "chat.set_auto_approve_crew",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
     type: "set_auto_approve_crew",
     chat_id: chatID,
@@ -201,6 +211,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
 
 export const restoreChatAction = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
+  scope: (id) => `chat:${id}`,
   request: (id) => ({
     method: "POST",
     path: "/api/chats/archived",
@@ -213,6 +224,7 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 
 export const deleteArchivedChatAction = apiAction<string, unknown>({
   name: "chat.delete_archived",
+  scope: (id) => `chat:${id}`,
   retryable: "network",
   request: (id) => ({
     method: "DELETE",
@@ -225,6 +237,7 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 
 export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
+  dedupe: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
@@ -235,6 +248,7 @@ export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; na
 
 export const cancelTurnAction = transportAction<string>({
   name: "chat.cancel",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
   error: "Couldn't cancel",
 });
@@ -248,6 +262,7 @@ export const cancelTurnAction = transportAction<string>({
 
 export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
   name: "chat.switch_model",
+  scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
@@ -300,6 +315,8 @@ export interface SendPromptArgs {
 
 export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">({
   name: "chat.send_prompt",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   optimistic: ({ chatID }) => {
     setThinking(chatID, true);
     return { chatID };
@@ -308,7 +325,7 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
     const o = asOp<{ chatID: string }>(op);
     if (o !== undefined) setThinking(o.chatID, false);
   },
-  run: async (args, signal) => {
+  run: async (args, signal, ctx) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
     const r = await transportSend(
       {
@@ -319,6 +336,7 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
           open_files: openFiles as string[],
           attachments: (attachments !== undefined && attachments.length > 0)
             ? (attachments as unknown[]) : undefined,
+          idempotency_key: ctx?.idempotencyKey,
         },
       },
       { signal, reportSendState: true },  // send-state IS the error surface
@@ -346,6 +364,7 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
 
 export const resolvePendingChangeAction = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_pending_change",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, toolCallID, action }) => ({
     type: "resolve_pending_change",
     chat_id: chatID,
