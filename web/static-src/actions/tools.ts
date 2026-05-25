@@ -11,6 +11,7 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
 
 export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>, unknown>({
   name: "tools.save",
+  retryable: "network",
   request: (data) => ({ method: "PUT", path: "/api/tools", body: data }),
   error: "Couldn't save tool config",
 });

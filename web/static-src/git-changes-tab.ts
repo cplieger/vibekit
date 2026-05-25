@@ -591,7 +591,16 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
     ).then((data) => {
       if (signal?.aborted) return;
       if (data === null) {
-        diffDrawer.textContent = "Failed to load diff.";
+        diffDrawer.replaceChildren();
+        const msg = document.createElement("span");
+        msg.textContent = "Failed to load diff.";
+        diffDrawer.appendChild(msg);
+        const retryBtn = document.createElement("button");
+        retryBtn.type = "button";
+        retryBtn.className = "btn-small";
+        retryBtn.textContent = "Retry";
+        retryBtn.addEventListener("click", () => { loadedDiff = false; loadDiff(); });
+        diffDrawer.appendChild(retryBtn);
         return;
       }
       const diff = data.diff ?? "";
@@ -677,7 +686,9 @@ function renderRecentCommits(r: RepoStatus): HTMLElement {
     loaded = true;
     void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
       `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
+      diffAbort?.signal,
     ).then((data) => {
+      if (diffAbort?.signal.aborted) return;
       if (data === null) {
         body.textContent = "Failed to load.";
         return;

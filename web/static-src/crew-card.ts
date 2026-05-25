@@ -20,6 +20,7 @@ import { buildToolCard } from "./tool-card.js";
 import { isToolActive } from "./tool-schema.js";
 import { getActiveId } from "./store.js";
 import { sendMessage } from "./actions/crew.js";
+import { bindLoadingState } from "./actions/index.js";
 import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
 import { formatToolActivity } from "./format-tool-activity.js";
 
@@ -348,6 +349,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.className = "crew-msg-send";
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
+  bindLoadingState("crew.send_message", sendBtn);
   const doSend = (): void => {
     const text = input.value.trim();
     if (text === "") return;

@@ -17,6 +17,7 @@ import {
 } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { bindLoadingState } from "./actions/index.js";
 
 type QueueState =
   | { status: "idle" }
@@ -40,6 +41,7 @@ class ModelSwitchController {
         this.renderCondensedList();
       },
     });
+    bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
     onBus(BUS_TURN_IDLE, (chatID: string) => this.drainQueue(chatID));
   }
 
@@ -110,14 +112,12 @@ class ModelSwitchController {
 
   private async fire(chatID: string, modelID: string): Promise<void> {
     this.queueState = { status: "switching", modelID };
-    $.switchModelBtn.classList.add("switching");
     try {
       await switchModel(chatID, modelID);
     } finally {
       if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
         this.queueState = { status: "idle" };
       }
-      $.switchModelBtn.classList.remove("switching");
     }
   }
 

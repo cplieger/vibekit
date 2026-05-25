@@ -166,7 +166,17 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   const data = await apiGet<ForgesListResponse>("/api/forges");
   if (myGen !== renderGen) return;
   if (data === null) {
-    root.innerHTML = `<div class="forge-error">Failed to load forges.</div>`;
+    root.replaceChildren();
+    const errDiv = document.createElement("div");
+    errDiv.className = "forge-error";
+    errDiv.textContent = "Failed to load forges.";
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn-small";
+    retryBtn.textContent = "Retry";
+    retryBtn.addEventListener("click", () => { void renderForgesPanel(); });
+    errDiv.appendChild(retryBtn);
+    root.appendChild(errDiv);
     return;
   }
 

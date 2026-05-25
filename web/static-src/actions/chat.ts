@@ -182,6 +182,12 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
     chat_id: chatID,
     payload: { tangent_id: tangentID },
   }),
+  optimistic: ({ chatID }) => {
+    setFrozen(chatID, true);
+    return { chatID };
+  },
+  rollback: ({ chatID }) => { setFrozen(chatID, false); },
+  retryable: "network",
   error: "Couldn't fork chat",
 });
 
@@ -234,6 +240,7 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 
 export const deleteArchivedChatAction = apiAction<string, unknown>({
   name: "chat.delete_archived",
+  retryable: "network",
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,
@@ -245,6 +252,7 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 
 export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
+  retryable: "network",
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
 });

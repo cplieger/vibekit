@@ -9,6 +9,7 @@
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
 import { forkChatAction, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";
 import { error as toastError } from "./toast.js";
@@ -18,7 +19,7 @@ import { error as toastError } from "./toast.js";
  *  — it only acts on the active chat, so universal toolbar placement
  *  was wrong. */
 export function initTangent(): void {
-  const btn = document.getElementById("fork-pill");
+  const btn = document.getElementById("fork-pill") as HTMLButtonElement | null;
   if (btn === null) return;
 
   btn.addEventListener("click", () => {
@@ -27,6 +28,7 @@ export function initTangent(): void {
     if (session.frozen === true) return; // already has a tangent
     forkCurrentChat(session.id);
   });
+  bindLoadingState("chat.fork", btn);
 
   // Show/hide fork button based on active session state.
   effect(() => {

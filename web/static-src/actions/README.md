@@ -160,6 +160,26 @@ Cancellation behaves like an error for the rollback hook (the
 optimistic mutation IS undone) but does NOT fire an error toast
 (cancellation is the user's intent, not a failure).
 
+## Retry button
+
+Set `retryable: 'network'` to surface a Retry button on error toasts
+for network/timeout failures (status 0, code `'timeout'`, code
+`'network'`). Use `'always'` only for fully idempotent actions; the
+lint test will warn. Default: no retry.
+
+Idempotent reads (GET) should set `retryable: 'network'`. Mutations
+that aren't idempotent (POST creating resources) should NOT set
+retryable.
+
+```ts
+export const listFiles = apiAction<void, FileEntry[]>({
+  name: "files.list",
+  request: () => ({ method: "GET", path: "/api/files" }),
+  retryable: "network",   // safe — GET is idempotent
+  error: "Couldn't list files",
+});
+```
+
 ## Naming convention
 
 Use `<area>.<verb>` with lowercase + underscores or hyphens:

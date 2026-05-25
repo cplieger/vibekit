@@ -26,6 +26,7 @@ import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
 import { openConflictDiff as openConflictDiffAction, loadConflictsAction } from "./actions/conflicts.js";
+import { bindLoadingState } from "./actions/index.js";
 
 /** One conflict record. Shape matches the server-side
  *  `ConflictPayload` Go struct 1:1. */
@@ -155,7 +156,10 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   const c = getConflict(chatID, path);
   const existing = row.querySelector(".conflict-chip") as HTMLButtonElement | null;
   if (c === null) {
-    if (existing !== null) existing.remove();
+    if (existing !== null) {
+      if ((existing as any).__unbindLoading) (existing as any).__unbindLoading();
+      existing.remove();
+    }
     return;
   }
   let chip = existing;
@@ -168,6 +172,7 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
       void openConflictDiff(chatID, path);
     });
     row.appendChild(chip);
+    (chip as any).__unbindLoading = bindLoadingState("conflicts.open_diff", chip);
   }
   // Refresh visible state on every call so second-drift overwrites
   // stale label/tooltip captured at first render.

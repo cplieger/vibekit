@@ -12,6 +12,7 @@
 import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup } from "./actions/cleanup.js";
+import { bindLoadingState } from "./actions/index.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
@@ -80,6 +81,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           void doCheckout(repo, b.name, false).finally(() => closePopover());
         });
         list.appendChild(row);
+        bindLoadingState("git.checkout_branch", row);
       }
     };
     render("");

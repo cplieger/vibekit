@@ -123,13 +123,21 @@ export function displayPath(currentPath: string): string {
 }
 
 /** Build an error row element safely (no innerHTML with user content). */
-export function errorRow(msg: string): HTMLDivElement {
+export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "fb-row";
   const span = document.createElement("span");
   span.className = "fb-meta";
   span.textContent = msg;
   row.appendChild(span);
+  if (onRetry !== undefined) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-small";
+    btn.textContent = "Retry";
+    btn.addEventListener("click", onRetry);
+    row.appendChild(btn);
+  }
   return row;
 }
 

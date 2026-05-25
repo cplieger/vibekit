@@ -264,6 +264,9 @@ class SupervisedPillController {
     acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
     actionsSpan.appendChild(acceptBtn);
 
+    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
+    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+
     li.appendChild(actionsSpan);
     return li;
   }

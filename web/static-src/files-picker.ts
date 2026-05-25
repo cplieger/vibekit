@@ -115,7 +115,7 @@ function loadDir(): void {
   void fetchDir(currentPath, pickerFetchHolder).then((d) => {
     if (d.error !== undefined) {
       if (d.error === "stale") return;
-      list.appendChild(errorRow(d.error));
+      list.appendChild(errorRow(d.error, () => loadDir()));
       return;
     }
 

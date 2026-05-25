@@ -8,7 +8,7 @@
 
 import {
   getActiveId, getActive, get, getSessions, setActive,
-  loadList, loadMessages, upsertHeader, dequeuePrompt,
+  loadList, loadMessages, upsertHeader,
   contextSizeFor, defaultUsage, version, removeChat,
 } from "./store.js";
 import { effect } from "./signals.js";
@@ -195,20 +195,7 @@ export function sendPrompt(text: string): void {
   void sendPromptTo(chatID, text);
 }
 
-/** Drain the single-slot queued prompt for `chatID` if any. Called from
- *  the turn_ended handler. Safe to call when the queue is empty.
- *
- *  Invariant: only one prompt may be in-flight per chat at a time (the
- *  server enforces this via 409). When a prompt is queued (because the
- *  user typed while a turn was active), we drain exactly one here so
- *  the next turn starts. If the server 409s again, sendPromptTo will
- *  re-queue and the cycle repeats on the next turn_ended. */
-export function drainQueuedPrompt(chatID: string): void {
-  const text = dequeuePrompt(chatID);
-  if (text === undefined) return;
-  void sendPromptTo(chatID, text);
-  // Remaining queued messages will drain on subsequent turn_ended events.
-}
+
 
 // --- Session lifecycle ---
 

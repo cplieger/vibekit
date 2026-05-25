@@ -67,6 +67,7 @@ export const fetchAgentLinesAction = apiAction<{ chatID: string; path: string },
 /** Fetch git diff sources for the editor diff view. Toast on failure. */
 export const loadDiff = defineAction<{ path: string; repo: string; ref: string }, { oldContent: string; newContent: string; error: string }>({
   name: "editor.load_diff",
+  retryable: "network",
   run: async ({ path, repo, ref }, signal) => {
     const { apiGet } = await import("../api-client.js");
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";

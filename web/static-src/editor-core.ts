@@ -60,6 +60,7 @@ export function initEditor(): void {
   $.editorPendingAcceptBtn.addEventListener("click", () => { void resolveActivePending("accept"); });
   $.editorPendingRejectBtn.addEventListener("click", () => { void resolveActivePending("reject"); });
   $.editorPendingApplyPartialBtn.addEventListener("click", () => { void applyActivePendingPartial(); });
+  bindLoadingState("editor.resolve_pending_partial", $.editorPendingApplyPartialBtn);
   $.editorPendingDiscussBtn.addEventListener("click", () => { openDiscussPromptForActive(); });
 
   onBus(BUS_PENDING_RESOLVED, (p) => {

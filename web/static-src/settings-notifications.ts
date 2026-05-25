@@ -13,6 +13,7 @@ import { patchSettings } from "./persist.js";
 import type { AppSettings } from "./persist.js";
 import { $ } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
+import { bindLoadingState } from "./actions/index.js";
 
 export function initNotificationToggles(): void {
   const notifyToggle = $.notifyToggle;
@@ -35,6 +36,7 @@ export function initNotificationToggles(): void {
   notifyToggle.checked = areNotificationsEnabled();
   finishedToggle.checked = isAgentFinishedEnabled();
   permissionToggle.checked = isPermissionNeededEnabled();
+  bindLoadingState("notify.register_push", notifyToggle);
 
   const updateSub = (): void => {
     notifySubOptions.classList.toggle("hidden", !notifyToggle.checked);

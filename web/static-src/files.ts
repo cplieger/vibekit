@@ -205,7 +205,7 @@ function loadDirAsync(): Promise<void> {
 
 function showError(msg: string): void {
   $.fbList.replaceChildren();
-  $.fbList.appendChild(errorRow(msg));
+  $.fbList.appendChild(errorRow(msg, loadDir));
 }
 
 // --- Navigation ---

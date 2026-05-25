@@ -211,6 +211,12 @@ async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
     err.className = "mcp-empty";
     err.textContent = "Registry unreachable. Use the Remote URL or npm package forms instead.";
     results.appendChild(err);
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn-small";
+    retryBtn.textContent = "Retry";
+    retryBtn.addEventListener("click", () => { void runSearch(q, results); });
+    results.appendChild(retryBtn);
     return;
   }
   if (d.servers.length === 0) {
