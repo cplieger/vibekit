@@ -119,11 +119,11 @@ describe("deleteFilesBatch optimistic + rollback + scope", () => {
     const p1 = deleteFilesBatch.dispatch({ dir: "/src", names: ["a.ts"], listEl });
     const p2 = deleteFilesBatch.dispatch({ dir: "/src", names: ["b.ts"], listEl });
     // Allow microtasks to settle so scope chain queues the second dispatch
-    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(callCount).toBe(1);
     resolveFirst!();
     await p1;
-    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     await p2;
     expect(callCount).toBe(2);
   });
@@ -224,11 +224,11 @@ describe("sendPromptAction rollback on failure", () => {
     const { sendPromptAction } = await import("./chat.js");
     const p1 = sendPromptAction.dispatch(promptArgs);
     const p2 = sendPromptAction.dispatch({ ...promptArgs, text: "second" });
-    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(callCount).toBe(1);
     resolveFirst!();
     await p1;
-    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     await p2;
     expect(callCount).toBe(2);
   });

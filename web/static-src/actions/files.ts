@@ -1,8 +1,7 @@
 // Actions for the file browser: create, delete, rename, upload.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
-import { hasErrorString } from "./error.js";
+import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
@@ -119,9 +118,9 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   },
   optimistic: (args) => {
     for (const row of [...args.listEl.children]) {
-      const el = row as HTMLDivElement;
-      if (args.names.includes(el.dataset["name"] ?? "")) {
-        el.classList.add("fb-row-exiting");
+      if (!(row instanceof HTMLDivElement)) continue;
+      if (args.names.includes(row.dataset["name"] ?? "")) {
+        row.classList.add("fb-row-exiting");
       }
     }
     return undefined;
@@ -131,7 +130,8 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     // the list's children (the exiting rows no longer exist in the DOM).
     // That's fine — the fresh listing from the server is the source of truth.
     for (const row of [...args.listEl.children]) {
-      (row as HTMLDivElement).classList.remove("fb-row-exiting");
+      if (!(row instanceof HTMLDivElement)) continue;
+      row.classList.remove("fb-row-exiting");
     }
   },
   error: (_args, err) => err.message,
@@ -152,9 +152,7 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
         signal: withTimeout(signal, 60_000),
       });
     } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      throw new ActionError("network error", { code: "network", cause: e });
+      throw classifyFetchError(e, signal);
     }
     if (!r.ok) throw new ActionError("Download failed", { status: r.status });
     const blob = await r.blob();

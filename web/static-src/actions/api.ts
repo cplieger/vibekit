@@ -35,7 +35,7 @@
 
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 import { defineAction, IDEMPOTENCY_HEADER } from "./define.js";
-import { ActionError, hasErrorString } from "./error.js";
+import { ActionError, classifyFetchError, hasErrorString } from "./error.js";
 import type {
   Action,
   ActionContext,
@@ -106,35 +106,25 @@ async function executeRequest<T>(
   try {
     r = await fetch(spec.path, init);
   } catch (e) {
-    // Distinguish: user cancellation vs request timeout vs network.
-    // The original `signal` is the caller's; `init.signal` is the
-    // composed signal from withTimeout. If only the composed signal
-    // aborted, the timeout fired — surface that as a typed error.
-    if (signal.aborted) {
-      throw new ActionError("cancelled", { code: "cancelled", cause: e });
-    }
-    if (e instanceof DOMException) {
-      if (e.name === "TimeoutError") throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      if (e.name === "AbortError" && !signal.aborted) throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      // Otherwise rethrow as cancellation — the framework handles signal.aborted separately.
-    }
-    throw new ActionError(
-      e instanceof Error ? e.message : "network error",
-      { code: "network", cause: e },
-    );
+    throw classifyFetchError(e, signal);
   }
   if (!r.ok) {
-    // Try to parse a JSON error body for a server-supplied message.
+    // Try to parse a JSON error body for a server-supplied message and code.
     let serverError = "";
+    let serverCode: string | undefined;
     try {
       const body: unknown = await r.json();
       if (hasErrorString(body)) serverError = body.error;
+      if (typeof body === "object" && body !== null && "code" in body) {
+        const rawCode = (body as Record<string, unknown>)["code"];
+        if (typeof rawCode === "string") serverCode = rawCode;
+      }
     } catch {
       // Body wasn't JSON or parse failed — leave serverError empty.
     }
     throw new ActionError(
       serverError !== "" ? serverError : `HTTP ${String(r.status)}`,
-      { status: r.status },
+      { status: r.status, ...(serverCode !== undefined ? { code: serverCode } : {}) },
     );
   }
   // 204 No Content: no body to parse, regardless of method.

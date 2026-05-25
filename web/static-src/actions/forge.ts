@@ -21,14 +21,12 @@ export interface SignOutArgs {
   forgeId: string;
 }
 
-export interface StartDeviceFlowArgs {}
-
 // --- Actions ---
 
 /** Start the GitHub OAuth device flow. Returns the device flow
  *  response on success or null on failure. Error toast suppressed —
  *  the callsite renders inline status instead. */
-export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
+export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   dedupe: true,
   retryable: "network",

@@ -57,16 +57,20 @@ onSSE("turn_ended", (chatID, p) => {
   refreshGitBadge();
   drainQueuedPromptWithAttachments(chatID);
 
+  // Prune stale entries unconditionally to prevent unbounded growth
+  // when notifications are disabled (the notify path below is the only
+  // consumer but may be skipped).
+  const now = Date.now();
+  _pruneNotifyMap(now);
+
   const stopReason = p.stop_reason;
   if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
     // Dedup: skip notification if we already notified for this chat
     // within the last 2s (SSE reconnect replay fires duplicates in
     // rapid succession).
-    const now = Date.now();
     const last = _lastNotifyMs.get(chatID) ?? 0;
     if (now - last > 2000) {
       _lastNotifyMs.set(chatID, now);
-      _pruneNotifyMap(now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
       notifyIfHidden("Vibekit", `${name}: Agent finished`);

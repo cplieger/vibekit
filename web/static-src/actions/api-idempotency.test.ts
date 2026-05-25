@@ -125,3 +125,39 @@ describe("apiAction — response edge cases", () => {
     expect(opts.headers?.["Content-Type"]).toBeUndefined();
   });
 });
+
+describe("apiAction — error code propagation", () => {
+  it("propagates code from JSON error body to ActionError", async () => {
+    mockFetch.mockResolvedValue(new Response(
+      JSON.stringify({ error: "rate limited", code: "rate_limit" }),
+      { status: 429 },
+    ));
+    const action = apiAction<void, unknown>({
+      name: "test.code_prop",
+      request: () => ({ method: "POST", path: "/api/limited", body: {} }),
+      error: false,
+    });
+    await action.dispatch(undefined);
+    const entry = recentLog()[0]!;
+    expect(entry.status).toBe("error");
+    expect(entry.error?.message).toBe("rate limited");
+    expect(entry.error?.status).toBe(429);
+    expect(entry.error?.code).toBe("rate_limit");
+  });
+
+  it("omits code when error body has no code field", async () => {
+    mockFetch.mockResolvedValue(new Response(
+      JSON.stringify({ error: "not found" }),
+      { status: 404 },
+    ));
+    const action = apiAction<void, unknown>({
+      name: "test.no_code",
+      request: () => ({ method: "GET", path: "/api/missing" }),
+      error: false,
+    });
+    await action.dispatch(undefined);
+    const entry = recentLog()[0]!;
+    expect(entry.error?.message).toBe("not found");
+    expect(entry.error?.code).toBeUndefined();
+  });
+});

@@ -155,3 +155,24 @@ describe("deduped caller: cancel semantics", () => {
     expect(r2).toBeNull();
   });
 });
+
+describe("cancel on idle action (no in-flight instances)", () => {
+  it("does not throw when called with nothing in-flight", () => {
+    const action = defineAction<void, string>({
+      name: "test.cancel_idle",
+      run: async () => "ok",
+    });
+    // Should be a no-op, not throw.
+    expect(() => action.cancel()).not.toThrow();
+  });
+
+  it("subsequent dispatch still works after cancel on idle", async () => {
+    const action = defineAction<void, string>({
+      name: "test.cancel_then_dispatch",
+      run: async () => "result",
+    });
+    action.cancel();
+    const result = await action.dispatch();
+    expect(result).toBe("result");
+  });
+});

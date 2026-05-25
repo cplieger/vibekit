@@ -9,8 +9,7 @@
 // dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
-import { hasErrorString } from "./error.js";
+import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -48,11 +47,7 @@ export const logout = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement
     try {
       r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
     } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
-        throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      }
-      throw new ActionError("network error", { code: "network", cause: e });
+      throw classifyFetchError(e, signal);
     }
     if (!r.ok) {
       const body = await r.text().catch(() => "");
@@ -115,6 +110,16 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     }
   },
   error: "Couldn't save setting",
+});
+
+// --- Load settings (deduped fetch for SSE-triggered reconcile) ---
+
+export const loadSettingsAction = apiAction<void, Record<string, unknown>>({
+  name: "settings.load",
+  dedupe: true,
+  request: () => ({ method: "GET", path: "/api/settings" }),
+  error: false,
+  success: false,
 });
 
 // --- Patch app settings (debug_logs, etc.) ---

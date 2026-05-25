@@ -805,7 +805,7 @@ async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
   }
   pollStopped = false;
   setStatus(host, "Contacting GitHub…");
-  const start = await startDeviceFlow.dispatch({});
+  const start = await startDeviceFlow.dispatch(undefined);
   if (start === null) {
     setStatus(host, "Failed to start device flow.", "err");
     return;

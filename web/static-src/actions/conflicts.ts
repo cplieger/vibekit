@@ -1,9 +1,7 @@
 // Actions for conflict-resolution user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { defineAction } from "./define.js";
-import { apiAction } from "./api.js";
-import { ActionError } from "./error.js";
+import { defineAction, apiAction, ActionError, classifyFetchError } from "./index.js";
 import { withTimeout } from "../api-client.js";
 import type { Conflict } from "../conflicts.js";
 
@@ -26,14 +24,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
     return await resp.text();
   } catch (e) {
     if (e instanceof ActionError) throw e;
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-    // Any DOMException (AbortError/TimeoutError) from the derived
-    // timeout signal means the 15 s budget expired — the caller's
-    // signal is still live so this is a timeout, not a user cancel.
-    if (e instanceof DOMException) {
-      throw new ActionError("Request timed out", { code: "timeout", cause: e });
-    }
-    throw new ActionError("network error", { code: "network", cause: e });
+    throw classifyFetchError(e, signal);
   }
 }
 

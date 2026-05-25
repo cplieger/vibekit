@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { _resetForTest as resetRegistry, record } from "./registry.js";
 import {
-  initActionConsoleLog,
+  initConsoleLog,
   _resetForTest as resetConsole,
 } from "./console-log.js";
 import type { ActionInstance } from "./types.js";
@@ -33,7 +33,7 @@ function makeInstance(over: Partial<ActionInstance> = {}): ActionInstance {
 
 describe("action console logger", () => {
   it("logs error transitions to console.error", () => {
-    initActionConsoleLog();
+    initConsoleLog();
     record(
       makeInstance({
         name: "save.do",
@@ -50,7 +50,7 @@ describe("action console logger", () => {
   });
 
   it("ignores non-error transitions", () => {
-    initActionConsoleLog();
+    initConsoleLog();
     record(makeInstance({ status: "success" }));
     record(makeInstance({ status: "pending" }));
     record(makeInstance({ status: "cancelled" }));
@@ -58,7 +58,7 @@ describe("action console logger", () => {
   });
 
   it("survives errors with only a message", () => {
-    initActionConsoleLog();
+    initConsoleLog();
     record(makeInstance({ name: "min", error: { message: "minimal" } }));
     expect(errSpy).toHaveBeenCalledTimes(1);
     const msg = errSpy.mock.calls[0]?.[0] as string;
@@ -69,21 +69,21 @@ describe("action console logger", () => {
   });
 
   it("includes the error object as second arg for expansion", () => {
-    initActionConsoleLog();
+    initConsoleLog();
     const error = { message: "boom", code: "X", cause: new Error("inner") };
     record(makeInstance({ name: "fail", error }));
     expect(errSpy.mock.calls[0]?.[1]).toBe(error);
   });
 
   it("does not double-subscribe on re-init", () => {
-    initActionConsoleLog();
-    initActionConsoleLog();
+    initConsoleLog();
+    initConsoleLog();
     record(makeInstance({ name: "once", error: { message: "x" } }));
     expect(errSpy).toHaveBeenCalledTimes(1);
   });
 
   it("teardown fn stops logging", () => {
-    const stop = initActionConsoleLog();
+    const stop = initConsoleLog();
     stop();
     record(makeInstance({ name: "after-stop", error: { message: "x" } }));
     expect(errSpy).not.toHaveBeenCalled();

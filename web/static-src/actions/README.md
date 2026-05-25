@@ -29,26 +29,30 @@ the server error":
 ```ts
 import { apiAction } from "./index.js";
 
-export const deleteFile = apiAction<string, void>({
-  name: "files.delete",
-  request: (path) => ({
+export const createFile = apiAction<{ dir: string; name: string }, unknown>({
+  name: "files.create_file",
+  scope: (args) => "dir:" + args.dir,
+  retry: { count: 2, delay: 300 },
+  retryable: "network",
+  request: (args) => ({
     method: "POST",
     path: "/api/files/action",
-    body: { action: "delete", path },
+    body: { action: "touch", path: args.dir + "/" + args.name },
   }),
-  error: "Couldn't delete",
+  error: "Couldn't create file",
 });
 
 // Dispatch site:
-const ok = await deleteFile.dispatch(somePath);
+const ok = await createFile.dispatch({ dir: "/src", name: "util.ts" });
 if (ok === null) return;  // toast already fired
 ```
 
 **When NOT to use `apiAction`:** when the response needs custom
 parsing beyond `res.json()`, when the call goes through the SSE
-transport layer (use `transportAction`), or when the work involves
+transport layer (use `transportAction`), when the work involves
 multiple sequential HTTP calls or non-HTTP side effects (use
-`defineAction`).
+`defineAction`), or when a batch of parallel fetches must aggregate
+errors (use `defineAction` with `Promise.all`).
 
 ### `transportAction` — for SSE-backed intents
 
@@ -521,7 +525,6 @@ chat.resolve_all_pending  chat.resolve_pending_change  chat.respond_permission
 chat.restore              chat.restore_checkpoint   chat.send_prompt
 chat.set_auto_approve_crew  chat.set_supervised    chat.switch_model
 chat.trust_pending
-checkpoint.preview
 conflicts.load            conflicts.open_diff
 crew.send_message
 editor.fetch_agent_lines  editor.load_diff          editor.resolve_partial
@@ -530,6 +533,7 @@ files.create_file         files.create_folder       files.delete
 files.download            files.rename              files.upload
 forge.clone_repo          forge.connect_pat         forge.delete_local
 forge.sign_out            forge.start_device_flow
+git-badge.forges          git-badge.refresh         git-badge.status
 git.checkout_branch       git.close_pr              git.commit
 git.discard               git.generate_message      git.merge_pr
 git.pull                  git.push                  git.refresh_prs
@@ -541,8 +545,8 @@ messages.explain_error    messages.undo_edit
 notify.register_push
 permissions.add_rule      permissions.remove_rule
 plan.run
-settings.load_kiro_config settings.logout           settings.patch
-settings.refresh_retention  settings.save_steering  settings.set_kiro_setting
+settings.logout           settings.patch            settings.save_steering
+settings.set_kiro_setting
 tools.install             tools.load_list           tools.run_diagnostics
 tools.save                tools.seed_mcp
 ui.copy_clipboard
@@ -563,10 +567,10 @@ Pick once and don't change — callers may grep for it.
 
   ```ts
   // ui-file.ts
-  import { deleteFile } from "./actions/files.js";
+  import { deleteFilesBatch } from "./actions/files.js";
 
   deleteBtn.addEventListener("click", () => {
-    void deleteFile.dispatch(targetPath);
+    void deleteFilesBatch.dispatch({ dir: currentDir, names: selected, listEl });
   });
   ```
 
@@ -696,11 +700,26 @@ create duplicates on retry.
 ### 7. Always `void` the dispatch at fire-and-forget callsites
 
 ```ts
-void deleteFile.dispatch(path);  // no floating promise lint error
+void deleteFilesBatch.dispatch({ dir, names, listEl });  // no floating promise lint error
 ```
 
 Only `await` when the caller needs the result or must sequence
 after completion.
+
+### 8. Avoid `optimistic` on `dedupe: true` actions
+
+When a dispatch dedupes (collapses into an existing in-flight call),
+`optimistic()` does NOT fire for the deduped caller. If the action
+relies on optimistic UI, the second caller's UI won't update until
+the shared promise resolves. Use `dedupe` only for actions where
+the result alone drives the UI (reads, badge refreshes).
+
+### 9. `onSettled` fires even on cancellation
+
+`onSettled` fires for success, error, AND cancellation. Use it for
+cleanup that must run regardless of outcome (closing dialogs,
+releasing locks). Don't use it for success-only reactions — use
+`onSuccess` instead.
 
 ## Testing actions
 
@@ -712,14 +731,14 @@ vi.mock("../toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
 }));
 import { recentLog, _resetForTest } from "./registry.js";
-import { deleteFile } from "./files.js";
+import { createFile } from "./files.js";
 
 beforeEach(() => _resetForTest());
 
-test("deleteFile records success", async () => {
+test("createFile records success", async () => {
   // Mock fetch to return 200 OK
   vi.stubGlobal("fetch", () => Promise.resolve(new Response("{}", { status: 200 })));
-  await deleteFile.dispatch("/some/path");
+  await createFile.dispatch({ dir: "/src", name: "util.ts" });
   expect(recentLog()[0]?.status).toBe("success");
 });
 ```

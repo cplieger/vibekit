@@ -17,7 +17,10 @@ export { apiAction } from "./api.js";
 
 // Error class for callers throwing structured action errors from within
 // run() (lets toast / retry classification see status + code).
-export { ActionError, hasErrorString } from "./error.js";
+// classifyFetchError: normalise fetch catch-block errors into ActionError
+// with canonical code (cancelled/timeout/network). Useful in custom
+// defineAction run() implementations that call fetch directly.
+export { ActionError, hasErrorString, classifyFetchError } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch
@@ -40,7 +43,7 @@ export { registerCleanup } from "./cleanup.js";
 
 // Live console logger: subscribes to the registry and emits
 // console.error for every action that fails. Wired once at app init.
-export { initActionConsoleLog } from "./console-log.js";
+export { initConsoleLog } from "./console-log.js";
 
 // Debounce helper: wrap an action so rapid calls coalesce into a
 // single dispatch after a quiet window. Useful for typeahead search,
@@ -60,6 +63,10 @@ export type { DispatchOptions } from "./types.js";
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.
 export type { ArgsOf, ResultOf, ActionFromDef, RetryConfig } from "./types.js";
+
+// Action and ActionContext: needed by callers that type-annotate action
+// variables or write custom run() implementations receiving the context.
+export type { Action, ActionContext, ActionDefinition } from "./types.js";
 
 // Lifecycle status enum + instance snapshot: needed by subscribeToActions
 // consumers who want to type-annotate callback parameters or narrow on

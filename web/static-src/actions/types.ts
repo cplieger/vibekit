@@ -214,7 +214,13 @@ export interface Action<TArgs, TResult> {
 
   /** Cancel all in-flight instances. Each instance moves to status
    *  "cancelled" and run()'s signal aborts. Rollback IS called on
-   *  cancellation (the optimistic mutation should be undone). */
+   *  cancellation (the optimistic mutation should be undone).
+   *
+   *  Note: this aborts the action's own HTTP/transport requests, NOT
+   *  the domain operation. For actions whose domain semantics are
+   *  "cancel something" (e.g. cancelTurn), calling `.cancel()` aborts
+   *  the cancel-request itself — name the action to avoid confusion
+   *  (e.g. "chat.cancel_turn" so `cancelTurn.cancel()` reads clearly). */
   cancel(): void;
 }
 

@@ -32,7 +32,7 @@ import type {
  *  the raw ActionDefinition in that `command` replaces `run`. The
  *  result is `void` because transport.send does not return a payload
  *  (the response arrives later via SSE events). */
-export interface TransportActionDefinition<TArgs, TOp = unknown>
+interface TransportActionDefinition<TArgs, TOp = unknown>
   extends Omit<ActionDefinition<TArgs, void, TOp>, "run"> {
   /** Build the typed command (or untyped Command for legacy intents)
    *  for this dispatch. Re-evaluated per-dispatch with current args. */

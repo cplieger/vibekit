@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Accessibility tests: verify missing labels, focus management, and keyboard nav fixes.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
 import { CHECKBOX } from "./smd-parser-types.js";
 
@@ -12,6 +12,15 @@ describe("a11y: missing labels", () => {
     const cb = container.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(cb).not.toBeNull();
     expect(cb.getAttribute("aria-label")).toBe("Task item");
+  });
+
+  it("toast element has aria-label with level and message", async () => {
+    const { showToast } = await import("./toast.js");
+    const dismiss = showToast("File saved", "success", 5000);
+    const toast = document.querySelector(".vk-toast-success") as HTMLDivElement;
+    expect(toast).not.toBeNull();
+    expect(toast.getAttribute("aria-label")).toBe("success notification: File saved. Click to dismiss.");
+    dismiss();
   });
 });
 
@@ -34,5 +43,28 @@ describe("a11y: keyboard navigation on picker grid", () => {
     expect(btn2.getAttribute("tabindex")).toBe("-1");
 
     document.body.removeChild(container);
+  });
+});
+
+describe("a11y: focus management", () => {
+  it("overflow menu returns focus to trigger on close", async () => {
+    const { openOverflowMenu, closeOverflowMenu } = await import("./overflow-menu.js");
+    const trigger = document.createElement("button");
+    trigger.textContent = "Menu";
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    openOverflowMenu(trigger, [
+      { id: "a", label: "Action A", onSelect: vi.fn() },
+    ]);
+
+    // Focus moved to menu item
+    const menuItem = document.querySelector(".overflow-menu-item") as HTMLButtonElement;
+    expect(menuItem).not.toBeNull();
+
+    closeOverflowMenu();
+
+    expect(document.activeElement).toBe(trigger);
+    document.body.removeChild(trigger);
   });
 });

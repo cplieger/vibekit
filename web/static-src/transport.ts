@@ -83,7 +83,7 @@ export type TypedCommand =
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };
 
-export const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
+const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
 
 export interface SendResult {
   ok: boolean;

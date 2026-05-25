@@ -8,7 +8,7 @@
 // isn't spammed with every keystroke-driven action. Cancelled
 // instances are also skipped (cancellation is usually intentional).
 //
-// Wired once at app startup via initActionConsoleLog().
+// Wired once at app startup via initConsoleLog().
 // ---------------------------------------------------------------------------
 
 import { subscribe } from "./registry.js";
@@ -21,7 +21,7 @@ let unsubscribe: (() => void) | null = null;
  *
  * @returns A teardown function that unsubscribes the logger.
  */
-export function initActionConsoleLog(): () => void {
+export function initConsoleLog(): () => void {
   unsubscribe?.();
   const unsub = subscribe((inst) => {
     if (inst.status !== "error") return;

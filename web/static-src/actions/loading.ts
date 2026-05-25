@@ -78,8 +78,14 @@ export function bindLoadingState(
     el.disabled = preserveDisabled ? baseDisabled : false;
     if (manageAriaBusy) el.removeAttribute("aria-busy");
     if (pendingClass) el.classList.remove(pendingClass);
-    // Restore focus if the element had it before being disabled.
-    if (hadFocus && el.isConnected && !el.disabled) el.focus();
+    // Restore focus only if the user hasn't explicitly moved focus
+    // elsewhere during the pending phase. When a button is disabled,
+    // focus moves to <body>; if it's still there, the user didn't
+    // intentionally navigate away, so restoring is correct.
+    if (hadFocus && el.isConnected && !el.disabled) {
+      const active = document.activeElement;
+      if (active === null || active === document.body) el.focus();
+    }
     hadFocus = false;
   };
 
@@ -164,7 +170,10 @@ export function bindLoadingStateMulti(
     el.disabled = preserveDisabled ? baseDisabled : false;
     if (manageAriaBusy) el.removeAttribute("aria-busy");
     if (pendingClass) el.classList.remove(pendingClass);
-    if (hadFocus && el.isConnected && !el.disabled) el.focus();
+    if (hadFocus && el.isConnected && !el.disabled) {
+      const active = document.activeElement;
+      if (active === null || active === document.body) el.focus();
+    }
     hadFocus = false;
   };
 

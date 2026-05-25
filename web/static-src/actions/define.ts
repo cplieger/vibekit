@@ -46,9 +46,22 @@ import type {
   ToastSpec,
 } from "./types.js";
 
+/** Codes that represent PERMANENT failures — retry would not help.
+ *  Excluded regardless of retryable mode (including 'always'). */
+const PERMANENT_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "cancelled",
+  "send_failed",
+  "clipboard",
+  "unsupported",
+  "server_rejected",
+]);
+
 let instanceCounter = 0;
 
-/** Shared empty options object to avoid allocating {} on every dispatch call. */
+/** Shared empty options object to avoid allocating {} on every dispatch call.
+ *  All DispatchOptions fields are optional, so the empty object satisfies any
+ *  concrete instantiation. The cast is narrower than `any`: it only widens
+ *  the type-parameter slots while preserving the structural shape. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const EMPTY_OPTS: DispatchOptions<any, any> = Object.freeze({});
 
@@ -159,6 +172,23 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Attach attempt count to a thrown error so the catch block in runOnce
+ *  can record it in the registry. Uses a non-enumerable property to avoid
+ *  polluting serialization. */
+function attachAttempts(e: unknown, attempts: number): void {
+  if (typeof e === "object" && e !== null) {
+    Object.defineProperty(e, "_attempts", { value: attempts, configurable: true });
+  }
+}
+
+/** Read the attempt count attached by runWithRetry, or undefined. */
+function readAttempts(e: unknown): number | undefined {
+  if (typeof e === "object" && e !== null && "_attempts" in e) {
+    return (e as { _attempts: number })._attempts;
+  }
+  return undefined;
+}
+
 /**
  * Create an action from a declarative definition. The returned action
  * manages the full lifecycle: optimistic UI → run (with optional retry)
@@ -255,8 +285,10 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     // Create the dedupe entry up front so runOnce can populate its
     // error / cancelled fields when the original dispatch settles.
     // Deduped callers read these to fire their own callbacks with the
-    // actual outcome of the original.
-    const dedupeEntry: DedupeEntry | null = dedupeKey !== null ? { promise: undefined as unknown as Promise<unknown> } : null;
+    // actual outcome of the original. The promise field is assigned
+    // immediately below (before the entry is visible in dedupeInflight
+    // via the set() call after this block).
+    const dedupeEntry: DedupeEntry | null = dedupeKey !== null ? { promise: null as unknown as Promise<unknown> } : null;
 
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
@@ -429,6 +461,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         return result;
       } catch (e: unknown) {
         const err = toActionError(e);
+        const attempts = readAttempts(e);
         // If aborted, classify as cancelled rather than error.
         const cancelled = ac.signal.aborted;
         const status = cancelled ? "cancelled" : "error";
@@ -446,6 +479,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           id, name: def.name, status, args,
           dispatchedAt, startedAt, completedAt: Date.now(),
           ...(cancelled ? {} : { error: err }),
+          ...(attempts !== undefined ? { attempts } : {}),
         });
         // Rollback the optimistic mutation regardless of cancel/error.
         if (def.rollback !== undefined) {
@@ -479,7 +513,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
    *  re-fire — it stays applied across retries (the rollback only
    *  fires once retries are exhausted). Backoff: delay * factor^attempt,
    *  capped at 5000ms. Idempotency key in ctx is stable across retries.
-   *  Returns { result, attempts } where attempts is total run() calls. */
+   *  Returns { result, attempts } where attempts is total run() calls.
+   *  On failure, attaches `_attempts` to the thrown error so the caller
+   *  can record the count in the registry. */
   async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<{ result: TResult; attempts: number }> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
@@ -492,31 +528,21 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         const result = await def.run(args, signal, ctx);
         return { result, attempts: attempt };
       } catch (e) {
-        if (signal.aborted) throw e;
-        if (attempt >= maxAttempts) throw e;
+        if (signal.aborted) { attachAttempts(e, attempt); throw e; }
+        if (attempt >= maxAttempts) { attachAttempts(e, attempt); throw e; }
         // Only retry on retry-class errors per def.retryable's
         // classifier. Mirrors computeRetry's logic.
         const err = toActionError(e);
-        if (!isRetryClass(err)) throw e;
+        if (!isRetryClass(err)) { attachAttempts(e, attempt); throw e; }
         const wait = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
         try {
           await sleep(wait, signal);
         } catch {
-          throw e; // signal aborted during backoff
+          attachAttempts(e, attempt); throw e; // signal aborted during backoff
         }
       }
     }
   }
-
-  /** Codes that represent PERMANENT failures \u2014 retry would not help.
-   *  Excluded regardless of retryable mode (including 'always'). */
-  const PERMANENT_FAILURE_CODES = new Set([
-    "cancelled",
-    "send_failed",
-    "clipboard",
-    "unsupported",
-    "server_rejected",
-  ]);
 
   /** True if the error matches the action's `retryable` classifier
    *  AND so qualifies for auto-retry. Same logic that computes the
@@ -588,21 +614,34 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   function computeRetry(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
     if (!isRetryClass(err)) return undefined;
     // Snapshot args so mutations after dispatch don't corrupt retry.
+    // structuredClone handles deep cloning; on failure (DOM refs,
+    // functions) fall back to a shallow copy which at least isolates
+    // top-level property mutations from the retry payload.
     let frozenArgs: TArgs;
-    try { frozenArgs = structuredClone(args); } catch { frozenArgs = args; }
+    try {
+      frozenArgs = structuredClone(args);
+    } catch {
+      try {
+        frozenArgs = (Array.isArray(args) ? [...args] : { ...args as object }) as TArgs;
+      } catch {
+        frozenArgs = args;
+      }
+    }
     return {
       onClick: () => { void dispatch(frozenArgs); },
     };
   }
 
   function cancel(): void {
-    // Snapshot: abort() handlers call inFlight.delete(id) which would
-    // mutate the Map during iteration, potentially skipping entries.
+    // Snapshot the values: the async finally block in runOnce calls
+    // inFlight.delete(id) when each promise settles. While abort()
+    // itself is synchronous and won't trigger the delete immediately,
+    // snapshotting is defensive against future refactors that might
+    // add synchronous cleanup in abort listeners.
+    if (inFlight.size === 0) return;
     for (const ac of [...inFlight.values()]) {
       ac.abort();
     }
-    // Don't clear inFlight here — the .then(reject) handler will
-    // remove entries as run() rejects.
   }
 
   const action: Action<TArgs, TResult> = {

@@ -4,9 +4,8 @@
 // Each device auto-prompts for browser permission when enabled globally.
 // ---------------------------------------------------------------------------
 
-import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
-import { registerPush } from "./actions/notify.js";
+import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
@@ -114,7 +113,7 @@ class NotifyController {
       if (sub === null) return;
       const endpoint = sub.endpoint;
       sub.unsubscribe().catch(() => {});
-      void apiPost("/api/push/unsubscribe", { endpoint });
+      void unsubscribePush.dispatch({ endpoint });
     }).catch(() => {});
     reg.unregister().catch(() => {});
   }

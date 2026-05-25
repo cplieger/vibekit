@@ -5,9 +5,8 @@
 // Fetch calls go through api-client.ts for consistent error handling.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { patchAppSettings } from "./actions/settings.js";
+import { patchAppSettings, loadSettingsAction } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -111,19 +110,22 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
       },
       { silent: true },
     ).then((r) => {
-      if (r === null) {
-        Object.assign(lastSentPatch, rollback);
+      try {
+        if (r === null) Object.assign(lastSentPatch, rollback);
+        if (gen === patchGen) {
+          if (r === null) showError(); else showSaved();
+        }
+      } catch (e) {
+        console.error("[persist] indicator callback threw", e);
+      } finally {
+        for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
       }
-      if (gen === patchGen) {
-        if (r === null) showError(); else showSaved();
-      }
-      for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
     });
   }, 300);
   return p;
 }
 
 export async function loadSettings(): Promise<AppSettings> {
-  const s = await apiGet<AppSettings>("/api/settings");
-  return s ?? {};
+  const s = await loadSettingsAction.dispatch(undefined);
+  return (s as AppSettings) ?? {};
 }

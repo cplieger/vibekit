@@ -191,4 +191,18 @@ describe("patchSettings no-op dedup", () => {
     await vi.advanceTimersByTimeAsync(350);
     expect(showSaving).not.toHaveBeenCalled();
   });
+
+  it("resolvers fire even when showSaved throws (try/finally guarantee)", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.mocked(showSaved).mockImplementation(() => { throw new Error("indicator boom"); });
+    const p = patchSettings({ last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+    // The promise should still resolve (resolvers fire in finally block).
+    const result = await p;
+    expect(result).not.toBeUndefined();
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
+    vi.mocked(showSaved).mockReset();
+  });
 });

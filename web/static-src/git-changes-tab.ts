@@ -20,7 +20,7 @@ import {
   stage, discard, pull, push, stash, stashPop,
   unstage, commit as commitAction, generateCommitMessage,
 } from "./actions/git-changes.js";
-import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { bindLoadingState, bindLoadingStateMulti, registerCleanup } from "./actions/index.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -439,7 +439,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stageAllBtn);
-  bindingCleanups.push(bindLoadingState("git.stage", stageAllBtn));
+  bindingCleanups.push(bindLoadingStateMulti(["git.stage", "git.commit"], stageAllBtn));
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
   discardAllBtn.addEventListener("click", () => {
@@ -466,7 +466,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     })();
   });
   bar.appendChild(discardAllBtn);
-  bindingCleanups.push(bindLoadingState("git.discard", discardAllBtn));
+  bindingCleanups.push(bindLoadingStateMulti(["git.discard", "git.commit"], discardAllBtn));
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";

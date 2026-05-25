@@ -39,6 +39,7 @@ export const deleteChatAction = transportAction<string, { session: import("../ty
 export const archiveChatAction = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
+  idempotencyKey: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   request: (id) => ({
@@ -216,6 +217,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
 export const restoreChat = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
   scope: (id) => `chat:${id}`,
+  idempotencyKey: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   request: (id) => ({
@@ -227,16 +229,13 @@ export const restoreChat = apiAction<string, { ok: boolean }>({
 });
 
 // --- chat.delete_archived ---
-// No auto-retry: DELETE is destructive. If the first attempt succeeds but
-// the response times out, a retry would hit 404 and surface a misleading
-// error toast. Same rationale as forge.delete_local (round-1 revert).
-// Manual Retry button is still available via retryable: "network".
+// No auto-retry and no manual Retry button: DELETE is destructive. If the
+// first attempt succeeds but the response times out, a retry would hit 404
+// and surface a misleading error toast.
 
 export const deleteArchivedChat = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
-  // Not retryable: a timed-out DELETE may have succeeded server-side;
-  // retrying would hit 404 and surface a misleading error toast.
   retryable: false,
   request: (id) => ({
     method: "DELETE",

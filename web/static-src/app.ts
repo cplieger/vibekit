@@ -70,7 +70,7 @@ import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
-import { initActionConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
+import { initConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -170,7 +170,7 @@ function init(): void {
   // Action-framework global: live-log every action error to the
   // browser console so failures are visible in DevTools regardless of
   // toast policy (suppressed-toast actions still get logged).
-  initActionConsoleLog();
+  initConsoleLog();
 
   // Global progress indicator: toggle a CSS class on the 2px top
   // stripe whenever any action is in-flight. Edge-only toggling

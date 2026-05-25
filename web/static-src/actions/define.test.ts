@@ -511,4 +511,52 @@ describe("defineAction — retryable error toast", () => {
     await action.dispatch({});
     expect(toast.error).not.toHaveBeenCalled();
   });
+
+  it("retry button uses a snapshot of args — post-dispatch mutations don't corrupt retry", async () => {
+    let lastArgs: { count: number } | undefined;
+    const action = defineAction<{ count: number }, string>({
+      name: "test.retry_stale_args",
+      run: async (args) => {
+        lastArgs = args;
+        throw new ActionError("fail", { status: 0 });
+      },
+      retryable: "network",
+    });
+    const args = { count: 1 };
+    await action.dispatch(args);
+    // Mutate args AFTER dispatch — should NOT affect the retry payload.
+    args.count = 999;
+    const retryFn = vi.mocked(toast.error).mock.calls[0]?.[1]?.onClick as () => void;
+    expect(retryFn).toBeDefined();
+    retryFn();
+    await vi.waitFor(() => { expect(lastArgs).toBeDefined(); });
+    // Retry should use the snapshot (count: 1), not the mutated value.
+    expect(lastArgs!.count).toBe(1);
+  });
+
+  it("retry button uses shallow copy when structuredClone fails (DOM refs)", async () => {
+    // Simulate args with non-cloneable values (functions, DOM-like objects)
+    const el = { tagName: "BUTTON", focus: () => {} };
+    let lastArgs: { el: typeof el; label: string } | undefined;
+    const action = defineAction<{ el: typeof el; label: string }, string>({
+      name: "test.retry_dom_args",
+      run: async (args) => {
+        lastArgs = args;
+        throw new ActionError("fail", { status: 0 });
+      },
+      retryable: "network",
+    });
+    const args = { el, label: "Save" };
+    await action.dispatch(args);
+    // Mutate a top-level property — shallow copy should isolate this.
+    args.label = "MUTATED";
+    const retryFn = vi.mocked(toast.error).mock.calls[0]?.[1]?.onClick as () => void;
+    expect(retryFn).toBeDefined();
+    retryFn();
+    await vi.waitFor(() => { expect(lastArgs).toBeDefined(); });
+    // Shallow copy preserves the original label.
+    expect(lastArgs!.label).toBe("Save");
+    // DOM ref is the same object (shallow copy, not deep).
+    expect(lastArgs!.el).toBe(el);
+  });
 });

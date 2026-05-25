@@ -3,8 +3,7 @@
 // (turn_ended, forges_changed) coalesce into a single fetch pair.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./api.js";
-import { defineAction, ActionError } from "./index.js";
+import { apiAction, defineAction, ActionError } from "./index.js";
 
 // --- Response types (mirrored from git-badge.ts) ---
 

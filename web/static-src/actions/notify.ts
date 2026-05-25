@@ -1,9 +1,22 @@
 // Actions for push notification lifecycle.
 // ---------------------------------------------------------------------------
 
-import { defineAction, ActionError } from "./index.js";
+import { defineAction, ActionError, apiAction } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
 import { urlBase64ToUint8Array } from "../push-util.js";
+
+/** Fire-and-forget unsubscribe from push notifications. No toast, no
+ *  retry — best-effort cleanup when the user disables notifications. */
+export const unsubscribePush = apiAction<{ endpoint: string }>({
+  name: "notify.unsubscribe_push",
+  request: ({ endpoint }) => ({
+    method: "POST",
+    path: "/api/push/unsubscribe",
+    body: { endpoint },
+  }),
+  error: false,
+  success: false,
+});
 
 /**
  * notify.register_push — wraps the full push registration flow:

@@ -411,8 +411,8 @@ describe("forge.start_device_flow", () => {
       return Promise.resolve(new Response(JSON.stringify({ device_code: "x", user_code: "y", verification_uri: "z", expires_in: 900, interval: 5 }), { status: 200 }));
     });
     const { startDeviceFlow } = await import("./forge.js");
-    const p1 = startDeviceFlow.dispatch({});
-    const p2 = startDeviceFlow.dispatch({});
+    const p1 = startDeviceFlow.dispatch(undefined);
+    const p2 = startDeviceFlow.dispatch(undefined);
     await Promise.all([p1, p2]);
     expect(runCount).toBe(1);
   });

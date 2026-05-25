@@ -25,7 +25,7 @@ import { profileFor } from "./tool-schema.js";
 import type { ToolLocation } from "./types.js";
 import { registerCleanup } from "./actions/index.js";
 
-export const TAB_ID = "__follow__";
+const TAB_ID = "__follow__";
 
 // ---------------------------------------------------------------------------
 // FollowController: owns all follow-along state as instance fields.

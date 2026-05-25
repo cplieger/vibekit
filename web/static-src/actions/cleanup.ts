@@ -24,14 +24,22 @@
 
 import type { Action } from "./types.js";
 
-const trackedActions = new Set<Action<unknown, unknown>>();
+/** Minimal shape needed for cleanup — avoids variance-unsafe casts.
+ *  cancel() here means "abort in-flight requests for this action",
+ *  not "perform a domain-level cancel operation". */
+interface Cancellable {
+  readonly name: string;
+  cancel(): void;
+}
+
+const trackedActions = new Set<Cancellable>();
 const cleanupHooks = new Set<() => void>();
 let beforeunloadInstalled = false;
 
 /** Internal: register an Action so cancelAllPending() can iterate it.
  *  Called from defineAction(); not part of the public API. */
 export function _registerAction<TArgs, TResult>(action: Action<TArgs, TResult>): void {
-  trackedActions.add(action as Action<unknown, unknown>);
+  trackedActions.add(action);
   installBeforeunloadOnce();
 }
 

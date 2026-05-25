@@ -184,7 +184,7 @@ describe("forge.startDeviceFlow retry", () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    const result = await startDeviceFlow.dispatch({});
+    const result = await startDeviceFlow.dispatch(undefined);
 
     // Only 1 attempt — no retry config
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -206,7 +206,7 @@ describe("forge.startDeviceFlow retry", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const onError = vi.fn();
-    await startDeviceFlow.dispatch({}, { onError });
+    await startDeviceFlow.dispatch(undefined, { onError });
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0]).toMatchObject({ code: "network" });

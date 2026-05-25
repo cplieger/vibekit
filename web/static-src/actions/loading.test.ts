@@ -368,3 +368,52 @@ describe("bindLoadingStateMulti", () => {
     await p;
   });
 });
+
+describe("bindLoadingState — focus restore", () => {
+  it("restores focus to button when user has not moved focus elsewhere", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_restore",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.focus_restore", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    // Button disabled → focus moves to body
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // Focus restored because user didn't move it elsewhere
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("does NOT steal focus back when user moved focus to another element", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_no_steal",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    bindLoadingState("test.focus_no_steal", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    // User explicitly moves focus to another element during pending
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    resolveRun!();
+    await p;
+    // Focus should NOT be stolen back to btn
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+});

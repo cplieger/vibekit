@@ -191,6 +191,7 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
   // tabindex so keyboard users can Tab to the toast and read/dismiss
   // it. Without this, the toast is unreachable via keyboard.
   el.setAttribute("tabindex", "0");
+  el.setAttribute("aria-label", `${level} notification: ${message}. Click to dismiss.`);
   // Errors are interruptive; everything else is polite. The container's
   // aria-live wins for screen reader announcement, but role=alert on
   // the individual error toast also signals importance to a11y trees

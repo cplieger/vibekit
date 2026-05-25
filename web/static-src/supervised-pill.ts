@@ -105,8 +105,8 @@ class SupervisedPillController {
     const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
     const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
     const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
-    if (acceptAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptAllBtn));
-    if (rejectAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectAllBtn));
+    if (acceptAllBtn) this.unbinds.push(bindLoadingStateMulti(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn));
+    if (rejectAllBtn) this.unbinds.push(bindLoadingStateMulti(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn));
     if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
     if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
   }

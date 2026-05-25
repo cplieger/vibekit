@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Tests for kiro-config.ts: cancel + dispatch freshness, render on success, error path.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
@@ -40,10 +40,15 @@ import { $ } from "./dom.js";
 const mockApiGet = vi.mocked(apiGet);
 
 beforeEach(() => {
+  vi.useFakeTimers();
   resetDefine();
   resetRegistry();
   mockApiGet.mockReset();
   $.kiroConfigList.replaceChildren();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("kiro-config", () => {
@@ -62,9 +67,8 @@ describe("kiro-config", () => {
     loadKiroConfig();
 
     // Wait for async resolution
-    await vi.waitFor(() => {
-      expect(callCount).toBeGreaterThanOrEqual(2);
-    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callCount).toBeGreaterThanOrEqual(2);
   });
 
   it("render runs on success", async () => {
@@ -75,9 +79,8 @@ describe("kiro-config", () => {
     const { loadKiroConfig } = await import("./kiro-config.js");
     loadKiroConfig();
 
-    await vi.waitFor(() => {
-      expect($.kiroConfigList.children.length).toBeGreaterThan(0);
-    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect($.kiroConfigList.children.length).toBeGreaterThan(0);
     expect($.kiroConfigList.textContent).toContain("Steering docs");
     expect($.kiroConfigList.textContent).toContain("my-doc");
   });
@@ -88,9 +91,9 @@ describe("kiro-config", () => {
     const { loadKiroConfig } = await import("./kiro-config.js");
     loadKiroConfig();
 
-    await vi.waitFor(() => {
-      expect($.kiroConfigList.children.length).toBeGreaterThan(0);
-    });
+    // Advance through retries (2 retries: 300ms + 600ms)
+    await vi.advanceTimersByTimeAsync(1000);
+    expect($.kiroConfigList.children.length).toBeGreaterThan(0);
     expect($.kiroConfigList.textContent).toContain("Failed to load config");
   });
 });

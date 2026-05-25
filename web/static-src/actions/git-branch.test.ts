@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Tests for checkoutBranch action (optimistic anchor + empty body).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
   info: vi.fn(),
@@ -35,10 +35,15 @@ import { _resetForTest as resetRegistry } from "./registry.js";
 const mockFetch = vi.fn();
 
 beforeEach(() => {
+  vi.useFakeTimers();
   resetDefine();
   resetRegistry();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("checkoutBranch", () => {
@@ -54,7 +59,10 @@ describe("checkoutBranch", () => {
 
   it("returns null on HTTP error", async () => {
     mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
-    const result = await checkoutBranch.dispatch({ repo: "", branch: "feature", create: false });
+    const p = checkoutBranch.dispatch({ repo: "", branch: "feature", create: false });
+    await vi.advanceTimersByTimeAsync(300); // first retry
+    await vi.advanceTimersByTimeAsync(600); // second retry
+    const result = await p;
     expect(result).toBeNull();
   });
 
