@@ -16,67 +16,31 @@ export interface CreateArgs {
 
 // --- files.create_file ---
 
-export const createFile = defineAction<CreateArgs, unknown>({
+export const createFile = apiAction<CreateArgs, unknown>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
   retry: { count: 2, delay: 300 },
-  run: async (args, signal) => {
-    let r: Response;
-    try {
-      r = await fetch("/api/files/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "touch", path: joinPath(args.dir, args.name) }),
-        signal: withTimeout(signal, API_TIMEOUT_MS),
-      });
-    } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
-        throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      }
-      throw new ActionError("network error", { code: "network", cause: e });
-    }
-    if (!r.ok) {
-      let msg = `HTTP ${String(r.status)}`;
-      try { const b: unknown = await r.json(); if (hasErrorString(b)) msg = b.error; } catch { /* */ }
-      throw new ActionError(msg, { status: r.status });
-    }
-    return undefined;
-  },
   retryable: "network",
+  request: (args) => ({
+    method: "POST",
+    path: "/api/files/action",
+    body: { action: "touch", path: joinPath(args.dir, args.name) },
+  }),
   error: "Couldn't create file",
 });
 
 // --- files.create_folder ---
 
-export const createFolder = defineAction<CreateArgs, unknown>({
+export const createFolder = apiAction<CreateArgs, unknown>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
   retry: { count: 2, delay: 300 },
-  run: async (args, signal) => {
-    let r: Response;
-    try {
-      r = await fetch("/api/files/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "mkdir", path: joinPath(args.dir, args.name) }),
-        signal: withTimeout(signal, API_TIMEOUT_MS),
-      });
-    } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
-        throw new ActionError("Request timed out", { code: "timeout", cause: e });
-      }
-      throw new ActionError("network error", { code: "network", cause: e });
-    }
-    if (!r.ok) {
-      let msg = `HTTP ${String(r.status)}`;
-      try { const b: unknown = await r.json(); if (hasErrorString(b)) msg = b.error; } catch { /* */ }
-      throw new ActionError(msg, { status: r.status });
-    }
-    return undefined;
-  },
   retryable: "network",
+  request: (args) => ({
+    method: "POST",
+    path: "/api/files/action",
+    body: { action: "mkdir", path: joinPath(args.dir, args.name) },
+  }),
   error: "Couldn't create folder",
 });
 

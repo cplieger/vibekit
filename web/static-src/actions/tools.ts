@@ -8,6 +8,7 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
   scope: "tools",
   idempotencyKey: true,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: () => ({ method: "POST", path: "/api/tools/install" }),
   error: "Tool install failed",
 });
@@ -15,6 +16,7 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
 export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>, unknown>({
   name: "tools.save",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   scope: "tools",
   idempotencyKey: true,
   request: (data) => ({ method: "PUT", path: "/api/tools", body: data }),
@@ -44,6 +46,7 @@ export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   scope: "tools",
   idempotencyKey: true,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: ({ name, install }) => ({
     method: "POST",
     path: "/api/mcp",

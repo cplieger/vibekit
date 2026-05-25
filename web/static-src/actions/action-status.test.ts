@@ -116,4 +116,37 @@ describe("actionStatus", () => {
     await p;
     expect(s.pending).toBe(0);
   });
+
+  it("seeds lastDispatchedAt from pending instances", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.late_ts",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const p = action.dispatch({});
+    const s = actionStatus("test.late_ts");
+    // lastDispatchedAt should be seeded from the pending instance
+    expect(s.lastDispatchedAt).toBeGreaterThan(0);
+    resolve();
+    await p;
+  });
+
+  it("does not double-count pending when actionStatus is called from within a listener", async () => {
+    // Simulate: another listener calls actionStatus during a pending notification
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.double_count",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    // First, install actionStatus for a different name to get the global listener installed
+    actionStatus("test.other_name");
+    // Now dispatch — the global listener fires but snapshots.get("test.double_count") is undefined
+    const p = action.dispatch({});
+    // Now call actionStatus mid-flight — seeds from pendingFor
+    const s = actionStatus("test.double_count");
+    expect(s.pending).toBe(1); // not 2
+    resolve();
+    await p;
+    expect(s.pending).toBe(0);
+  });
 });

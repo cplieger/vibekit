@@ -77,6 +77,16 @@ export interface ActionContext {
   readonly idempotencyKey?: string;
 }
 
+/** Configuration for automatic retry of transient failures. */
+export interface RetryConfig {
+  /** Additional attempts beyond the first (e.g. 2 = up to 3 total). */
+  readonly count: number;
+  /** Milliseconds before the first retry. */
+  readonly delay: number;
+  /** Backoff multiplier per retry (default 2). */
+  readonly factor?: number;
+}
+
 export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
   /** Stable identifier, e.g. "chat.delete", "files.create".
    *  Used in the registry log + as a default toast prefix. */
@@ -141,11 +151,7 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *
    *  Example: `retry: { count: 2, delay: 300 }` — total ~900ms latency
    *  budget for transient blips, invisible to the user when successful. */
-  retry?: {
-    readonly count: number;        // additional attempts beyond the first
-    readonly delay: number;        // ms before first retry
-    readonly factor?: number;      // multiplier per retry (default 2)
-  };
+  retry?: RetryConfig;
 
   /** When two dispatches share the same scope, the second waits for
    *  the first to finish (success / error / cancel) before its

@@ -9,7 +9,7 @@
 // served by transport.ts's `send()` function. Keep the two separate.
 // ---------------------------------------------------------------------------
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
 
 export const API_TIMEOUT_MS = 30_000;
 

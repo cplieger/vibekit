@@ -521,6 +521,7 @@ chat.resolve_all_pending  chat.resolve_pending_change  chat.respond_permission
 chat.restore              chat.restore_checkpoint   chat.send_prompt
 chat.set_auto_approve_crew  chat.set_supervised    chat.switch_model
 chat.trust_pending
+checkpoint.preview
 conflicts.load            conflicts.open_diff
 crew.send_message
 editor.fetch_agent_lines  editor.load_diff          editor.resolve_partial
@@ -540,14 +541,14 @@ messages.explain_error    messages.undo_edit
 notify.register_push
 permissions.add_rule      permissions.remove_rule
 plan.run
-settings.logout           settings.patch            settings.save_steering
-settings.set_kiro_setting
+settings.load_kiro_config settings.logout           settings.patch
+settings.refresh_retention  settings.save_steering  settings.set_kiro_setting
 tools.install             tools.load_list           tools.run_diagnostics
 tools.save                tools.seed_mcp
 ui.copy_clipboard
 ```
 
-(73 actions as of 2026-05-25.)
+(76 actions as of 2026-05-25.)
 
 This is the registry key for log queries, telemetry, and tests.
 Pick once and don't change — callers may grep for it.

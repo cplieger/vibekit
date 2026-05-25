@@ -13,10 +13,10 @@ const mockAppendChunk = vi.fn();
 const mockUpsertToolCall = vi.fn();
 
 vi.mock("../store.js", () => ({
-  appendMessage: (...args: unknown[]) => mockAppendMessage(...args),
-  upsertMessage: (...args: unknown[]) => mockUpsertMessage(...args),
-  appendChunk: (...args: unknown[]) => mockAppendChunk(...args),
-  upsertToolCall: (...args: unknown[]) => mockUpsertToolCall(...args),
+  appendMessage: mockAppendMessage,
+  upsertMessage: mockUpsertMessage,
+  appendChunk: mockAppendChunk,
+  upsertToolCall: mockUpsertToolCall,
 }));
 
 const mockMarkGitDirty = vi.fn();
@@ -26,17 +26,17 @@ vi.mock("../git.js", () => ({
 
 const mockIsRepoMutatingKind = vi.fn(() => false);
 vi.mock("../tool-schema.js", () => ({
-  isRepoMutatingKind: (...args: unknown[]) => mockIsRepoMutatingKind(...args),
+  isRepoMutatingKind: mockIsRepoMutatingKind,
 }));
 
 const mockClearBannerCodes = vi.fn();
 vi.mock("../banner-stack.js", () => ({
-  clearBannerCodes: (...args: unknown[]) => mockClearBannerCodes(...args),
+  clearBannerCodes: mockClearBannerCodes,
 }));
 
 const mockSetSubagentActivity = vi.fn();
 vi.mock("../crew-card.js", () => ({
-  setSubagentActivity: (...args: unknown[]) => mockSetSubagentActivity(...args),
+  setSubagentActivity: mockSetSubagentActivity,
 }));
 
 // Capture SSE handlers

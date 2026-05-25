@@ -302,7 +302,7 @@ describe("files.create_file scope + retryable", () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     const { createFile } = await import("./files.js");
     const result = await createFile.dispatch({ dir: "/src", name: "new.ts" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({});
     expect(toast.error).not.toHaveBeenCalled();
   });
 

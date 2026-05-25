@@ -56,6 +56,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   error: (args) => `Couldn't close PR #${String(args.pr_number)}`,
   idempotencyKey: true,
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });
 
 /** Refresh all PRs across connected forges. */

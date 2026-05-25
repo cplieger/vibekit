@@ -188,18 +188,18 @@ describe("onSuccess → dispatch chain with same scope", () => {
     });
 
     // Dispatch with onSuccess that chains ONE more dispatch (depth 1 → 0)
+    let chainedPromise: Promise<unknown> | null = null;
     const p = action.dispatch({ depth: 1 }, {
       onSuccess: () => {
         dispatchCount++;
         // Only chain once (depth 0 has no onSuccess)
-        void action.dispatch({ depth: 0 });
+        chainedPromise = action.dispatch({ depth: 0 });
       },
     });
 
     await p;
-    // Wait for the chained dispatch to complete
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-    await Promise.resolve();
+    // Await the chained dispatch directly
+    await chainedPromise;
 
     expect(dispatchCount).toBe(1); // onSuccess fired exactly once
     const log = recentLog();

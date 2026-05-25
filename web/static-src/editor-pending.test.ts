@@ -19,14 +19,16 @@ vi.mock("./store.js", () => ({
   get: () => ({ pending_changes: [{ tool_call_id: "tc1", path: "foo.ts", kind: "edit" }] }),
 }));
 
-const mockDispatch = vi.fn();
+const { mockDispatch, mockPartialDispatch } = vi.hoisted(() => ({
+  mockDispatch: vi.fn(),
+  mockPartialDispatch: vi.fn(),
+}));
 vi.mock("./actions/chat.js", () => ({
-  resolvePendingChangeAction: { dispatch: (...args: unknown[]) => mockDispatch(...args) },
+  resolvePendingChangeAction: { dispatch: mockDispatch },
 }));
 
-const mockPartialDispatch = vi.fn();
 vi.mock("./actions/editor.js", () => ({
-  resolvePendingPartial: { dispatch: (...args: unknown[]) => mockPartialDispatch(...args) },
+  resolvePendingPartial: { dispatch: mockPartialDispatch },
 }));
 
 vi.mock("./actions/index.js", () => ({

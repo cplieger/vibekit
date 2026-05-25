@@ -43,7 +43,7 @@ import type {
   RequestSpec,
 } from "./types.js";
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
 
 /** Caller-facing shape of an apiAction definition. Differs from the
  *  raw ActionDefinition in that `request` replaces `run`. */

@@ -175,6 +175,8 @@ describe("onError → dispatch chain in same scope", () => {
   it("multiple error-triggered dispatches serialize in order", async () => {
     const order: string[] = [];
     let callCount = 0;
+    let chainP1: Promise<unknown> | null = null;
+    let chainP2: Promise<unknown> | null = null;
 
     const flaky = defineAction<number, string>({
       name: "test.err_multi",
@@ -194,16 +196,15 @@ describe("onError → dispatch chain in same scope", () => {
     // First dispatch fails, triggers two recovery dispatches
     const p0 = flaky.dispatch(0, {
       onError: () => {
-        void flaky.dispatch(1);
-        void flaky.dispatch(2);
+        chainP1 = flaky.dispatch(1);
+        chainP2 = flaky.dispatch(2);
       },
     });
 
     await p0;
-    // Wait for scope chain to drain
-    await new Promise((r) => setTimeout(r, 0));
-    await Promise.resolve();
-    await Promise.resolve();
+    // Await the chained dispatches directly
+    await chainP1;
+    await chainP2;
 
     expect(order).toEqual(["flaky-fail", "flaky-ok-1", "flaky-ok-2"]);
     expect(callCount).toBe(3);
@@ -572,17 +573,16 @@ describe("onSuccess re-dispatch with dedupe", () => {
       },
     });
 
-    let chainedResult: string | null = null;
+    let chainedPromise: Promise<string | null> | null = null;
     await action.dispatch("key", {
       onSuccess: () => {
         // Dedupe entry cleared before onSuccess — this starts a fresh run
-        void action.dispatch("key").then((r) => { chainedResult = r; });
+        chainedPromise = action.dispatch("key");
       },
     });
 
-    // Wait for the chained dispatch
-    await new Promise((r) => setTimeout(r, 0));
-    await Promise.resolve();
+    // Await the chained dispatch directly
+    const chainedResult = await chainedPromise;
 
     expect(runCount).toBe(2); // Two separate runs
     expect(chainedResult).toBe("run-2");

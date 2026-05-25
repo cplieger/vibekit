@@ -27,9 +27,9 @@
 // which is fine: it gets refreshed on every navigation.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
+import { refreshGitBadgeAction } from "./actions/git-badge.js";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -69,10 +69,9 @@ export function initGitBadge(): void {
 /** Recompute the badge state from current server data. Safe to call
  *  often — coalesces by short-circuiting if nothing visible changed. */
 export async function refreshGitBadge(): Promise<void> {
-  const [statusRes, forgesRes] = await Promise.all([
-    apiGet<StatusAllResponse>("/api/git/status-all").catch(() => null),
-    apiGet<ForgesListResponse>("/api/forges").catch(() => null),
-  ]);
+  const result = await refreshGitBadgeAction.dispatch(undefined);
+  const statusRes = result?.status ?? null;
+  const forgesRes = result?.forges ?? null;
 
   const state = deriveState(statusRes, forgesRes);
   const tooltip = deriveTooltip(state, statusRes, forgesRes);

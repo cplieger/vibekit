@@ -498,8 +498,7 @@ describe("defineAction — retryable error toast", () => {
     expect(retryFn).toBeDefined();
     retryFn();
     // Wait for the re-dispatch to complete.
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-    expect(attempts).toBe(2);
+    await vi.waitFor(() => { expect(attempts).toBe(2); });
   });
 
   it("retry suppressed when error: false (no toast at all)", async () => {

@@ -9,7 +9,7 @@ import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import { undoEdit } from "./actions/messages.js";
 import { resolvePendingChangeAction } from "./actions/chat.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, bindLoadingStateMulti } from "./actions/index.js";
 
 /** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
 const actionBindUnbinds: Array<() => void> = [];
@@ -121,10 +121,8 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   acceptBtn.setAttribute("aria-label", "Accept change");
   acceptBtn.addEventListener("click", () => { resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "accept"); });
 
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_all_pending", acceptBtn, { preserveDisabled: true }));
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_all_pending", rejectBtn, { preserveDisabled: true }));
+  actionBindUnbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
+  actionBindUnbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
 
   row.append(diffBtn, rejectBtn, acceptBtn);
   row.dataset["path"] = path;

@@ -8,7 +8,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { bindLoadingState } from "./loading.js";
+import { bindLoadingState, bindLoadingStateMulti } from "./loading.js";
 
 beforeEach(() => {
   resetDefine();
@@ -281,5 +281,90 @@ describe("bindLoadingState", () => {
     // Note: unbind() is a no-op after auto-dispose.
     expect(btn.disabled).toBe(true);
     unbind(); // cleanup
+  });
+});
+
+describe("bindLoadingStateMulti", () => {
+  it("disables while ANY named action is pending", async () => {
+    let resolve1!: () => void;
+    let resolve2!: () => void;
+    const a1 = defineAction({
+      name: "test.multi1",
+      run: () => new Promise<void>((r) => { resolve1 = r; }),
+    });
+    const a2 = defineAction({
+      name: "test.multi2",
+      run: () => new Promise<void>((r) => { resolve2 = r; }),
+    });
+    const btn = document.createElement("button");
+    bindLoadingStateMulti(["test.multi1", "test.multi2"], btn);
+    expect(btn.disabled).toBe(false);
+    const p1 = a1.dispatch({});
+    expect(btn.disabled).toBe(true);
+    const p2 = a2.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve1();
+    await p1;
+    // Still disabled because a2 is pending
+    expect(btn.disabled).toBe(true);
+    resolve2();
+    await p2;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("returns no-op for empty actionNames", () => {
+    const btn = document.createElement("button");
+    const unbind = bindLoadingStateMulti([], btn);
+    expect(typeof unbind).toBe("function");
+    unbind(); // should not throw
+  });
+
+  it("delegates to bindLoadingState for single-name array", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_single",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    bindLoadingStateMulti(["test.multi_single"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve();
+    await p;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("auto-disposes when element is removed from DOM", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_dispose",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingStateMulti(["test.multi_dispose", "test.multi_other"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    btn.remove();
+    resolve();
+    await p;
+    // Auto-disposed: element stays disabled (no restore)
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("unsubscribe mid-pending restores element state", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_unsub",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    const unbind = bindLoadingStateMulti(["test.multi_unsub"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    unbind();
+    expect(btn.disabled).toBe(false);
+    resolve();
+    await p;
   });
 });

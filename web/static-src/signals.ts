@@ -30,7 +30,7 @@ function schedulePending(): void {
   channel.port2.postMessage(null);
 }
 
-export interface Signal<T> { value: T; peek(): T }
+interface Signal<T> { value: T; peek(): T }
 
 export function signal<T>(initial: T): Signal<T> {
   let val = initial;

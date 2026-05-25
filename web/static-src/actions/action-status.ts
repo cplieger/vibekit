@@ -47,22 +47,20 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
   if (inst.dispatchedAt > snap.lastDispatchedAt) {
     snap.lastDispatchedAt = inst.dispatchedAt;
   }
+  // Always recompute pending from the registry's authoritative index.
+  // Avoids double-count when actionStatus() is first called from within
+  // a listener during the same record() notification that fires us.
+  snap.pending = pendingFor(inst.name).length;
   switch (inst.status) {
-    case "pending":
-      snap.pending++;
-      break;
     case "success":
-      snap.pending = Math.max(0, snap.pending - 1);
       snap.lastSuccess = inst.result;
       snap.lastSettledAt = inst.completedAt ?? Date.now();
       break;
     case "error":
-      snap.pending = Math.max(0, snap.pending - 1);
       if (inst.error !== undefined) snap.lastError = inst.error;
       snap.lastSettledAt = inst.completedAt ?? Date.now();
       break;
     case "cancelled":
-      snap.pending = Math.max(0, snap.pending - 1);
       snap.lastSettledAt = inst.completedAt ?? Date.now();
       break;
   }
@@ -85,9 +83,14 @@ export function actionStatus(name: string): ActionStatus {
   if (snap === undefined) {
     // Seed pending count from the registry so callers that subscribe
     // AFTER an action is already in-flight see the correct count.
+    const pending = pendingFor(name);
+    let lastDispatchedAt = 0;
+    for (let i = 0; i < pending.length; i++) {
+      if (pending[i]!.dispatchedAt > lastDispatchedAt) lastDispatchedAt = pending[i]!.dispatchedAt;
+    }
     snap = {
-      pending: pendingFor(name).length,
-      lastDispatchedAt: 0,
+      pending: pending.length,
+      lastDispatchedAt,
       lastSettledAt: 0,
     };
     snapshots.set(name, snap);

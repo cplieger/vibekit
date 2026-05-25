@@ -23,7 +23,7 @@ import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import { setSupervised, resolveAllPending, resolvePendingChangeAction, trustPending, clearPendingTrust } from "./actions/chat.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, bindLoadingStateMulti } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
 class SupervisedPillController {
@@ -268,10 +268,8 @@ class SupervisedPillController {
     acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
     actionsSpan.appendChild(acceptBtn);
 
-    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
-    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
-    this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptBtn, { preserveDisabled: true }));
-    this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectBtn, { preserveDisabled: true }));
+    this.unbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
+    this.unbinds.push(bindLoadingStateMulti(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
 
     li.appendChild(actionsSpan);
     return li;
