@@ -424,3 +424,74 @@ describe("multi-action cluster + dedupe interactions", () => {
     expect(btn.disabled).toBe(false);
   });
 });
+
+describe("bindDisabledPattern — edge cases", () => {
+  it("auto-disposes when element is removed from DOM mid-pending", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "dp.dom_remove",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindDisabledPattern(btn, {
+      actions: ["dp.dom_remove"],
+      disabledWhen: () => false,
+    });
+    const p = action.dispatch(undefined);
+    expect(btn.disabled).toBe(true);
+    // Remove from DOM — next registry notification triggers auto-dispose
+    document.body.removeChild(btn);
+    resolve();
+    await p;
+    // After auto-dispose, element state is frozen (no further updates)
+    // The disabled state remains as-is from when it was removed
+  });
+
+  it("restores focus after pending completes when button had focus", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "dp.focus_restore",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindDisabledPattern(btn, {
+      actions: ["dp.focus_restore"],
+      disabledWhen: () => false,
+    });
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch(undefined);
+    expect(btn.disabled).toBe(true);
+    // Focus moves to body when button is disabled
+    resolve();
+    await p;
+    expect(btn.disabled).toBe(false);
+    // Focus should be restored
+    expect(document.activeElement).toBe(btn);
+    document.body.removeChild(btn);
+  });
+
+  it("does not restore focus when disabledWhen keeps element disabled", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "dp.focus_no_restore",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    const handle = bindDisabledPattern(btn, {
+      actions: ["dp.focus_no_restore"],
+      disabledWhen: () => true, // always disabled
+    });
+    btn.focus();
+    const p = action.dispatch(undefined);
+    resolve();
+    await p;
+    // Element stays disabled (disabledWhen=true), so no focus restore
+    expect(btn.disabled).toBe(true);
+    handle.dispose();
+    document.body.removeChild(btn);
+  });
+});

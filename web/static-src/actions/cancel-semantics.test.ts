@@ -178,3 +178,190 @@ describe("cancel on idle action (no in-flight instances)", () => {
     expect(result).toBe("result");
   });
 });
+
+describe("deduped onCancel — scoped fast-path abort", () => {
+  it("deduped caller fires onCancel when original is cancelled via scope-queue fast-path", async () => {
+    let resolve1!: () => void;
+    const gate1 = new Promise<void>((r) => { resolve1 = r; });
+
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe_scope_fastpath_cancel",
+      dedupe: true,
+      scope: "s",
+      run: async (_args, signal) => {
+        await gate1;
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        return "done";
+      },
+    });
+
+    const onCancel1 = vi.fn();
+    const onCancel2 = vi.fn();
+    const onError1 = vi.fn();
+    const onError2 = vi.fn();
+    const onSettled1 = vi.fn();
+    const onSettled2 = vi.fn();
+
+    // First dispatch starts running (holds the scope)
+    const p1 = action.dispatch({ id: "a" }, { onCancel: onCancel1, onError: onError1, onSettled: onSettled1 });
+    // Second dispatch dedupes onto first
+    const p2 = action.dispatch({ id: "a" }, { onCancel: onCancel2, onError: onError2, onSettled: onSettled2 });
+
+    // Cancel while first is in-flight
+    action.cancel();
+    resolve1();
+    await Promise.all([p1, p2]);
+
+    expect(onCancel1).toHaveBeenCalledTimes(1);
+    expect(onCancel2).toHaveBeenCalledTimes(1);
+    expect(onError1).not.toHaveBeenCalled();
+    expect(onError2).not.toHaveBeenCalled();
+    expect(onSettled1).toHaveBeenCalledTimes(1);
+    expect(onSettled2).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduped caller does NOT fire onCancel when original errors", async () => {
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe_error_no_onCancel",
+      dedupe: true,
+      run: async () => { throw new Error("server error"); },
+    });
+
+    const onCancel = vi.fn();
+    const onError = vi.fn();
+    const onSettled = vi.fn();
+
+    const p1 = action.dispatch({ id: "a" });
+    const p2 = action.dispatch({ id: "a" }, { onCancel, onError, onSettled });
+    await Promise.all([p1, p2]);
+
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduped caller fires onCancel on success-race cancel (run resolves but signal aborted)", async () => {
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe_success_race_cancel",
+      dedupe: true,
+      run: (_args, signal) =>
+        new Promise<string>((resolve) => {
+          signal.addEventListener("abort", () => {
+            // Resolve AFTER abort — simulates success-race
+            Promise.resolve().then(() => resolve("late-result"));
+          });
+        }),
+    });
+
+    const onCancel1 = vi.fn();
+    const onCancel2 = vi.fn();
+    const onSuccess2 = vi.fn();
+    const onError2 = vi.fn();
+    const onSettled2 = vi.fn();
+
+    const p1 = action.dispatch({ id: "a" }, { onCancel: onCancel1 });
+    const p2 = action.dispatch({ id: "a" }, { onCancel: onCancel2, onSuccess: onSuccess2, onError: onError2, onSettled: onSettled2 });
+
+    action.cancel();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    expect(r1).toBeNull();
+    expect(r2).toBeNull();
+    expect(onCancel1).toHaveBeenCalledTimes(1);
+    expect(onCancel2).toHaveBeenCalledTimes(1);
+    expect(onSuccess2).not.toHaveBeenCalled();
+    expect(onError2).not.toHaveBeenCalled();
+    expect(onSettled2).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fast-path post-optimistic abort", () => {
+  it("optimistic does NOT run when signal is already aborted (scope-queued cancel)", async () => {
+    let resolve1!: () => void;
+    const gate = new Promise<void>((r) => { resolve1 = r; });
+    const rollback = vi.fn();
+    let optimisticCalled = false;
+    let runCalled = false;
+
+    const blocker = defineAction<void, string>({
+      name: "test.fastpath_blocker",
+      scope: "s",
+      run: async () => { await gate; return "block"; },
+    });
+
+    const action = defineAction<void, string>({
+      name: "test.fastpath_post_optimistic",
+      scope: "s",
+      optimistic: () => { optimisticCalled = true; return { token: "opt" }; },
+      rollback,
+      run: async (_args, signal) => {
+        runCalled = true;
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        return "ok";
+      },
+    });
+
+    // First dispatch holds the scope chain
+    const pBlock = blocker.dispatch();
+
+    // Second dispatch queued behind blocker in scope "s"
+    const p = action.dispatch();
+
+    // Cancel the action while it's still queued
+    action.cancel();
+
+    // Release the blocker so the scope chain advances
+    resolve1();
+    await pBlock;
+    const result = await p;
+
+    expect(result).toBeNull();
+    // Fast-path abort: neither optimistic nor run should execute
+    expect(optimisticCalled).toBe(false);
+    expect(runCalled).toBe(false);
+    expect(rollback).not.toHaveBeenCalled();
+
+    const log = recentLog();
+    const entry = log.find((e) => e.name === "test.fastpath_post_optimistic");
+    expect(entry?.status).toBe("cancelled");
+  });
+
+  it("deduped caller gets onCancel when original hits fast-path abort", async () => {
+    let resolve1!: () => void;
+    const gate = new Promise<void>((r) => { resolve1 = r; });
+
+    const blocker = defineAction<void, string>({
+      name: "test.dedupe_fastpath_blocker",
+      scope: "s",
+      run: async () => { await gate; return "block"; },
+    });
+
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe_fastpath_cancel",
+      dedupe: true,
+      scope: "s",
+      run: async () => "should-not-run",
+    });
+
+    const pBlock = blocker.dispatch();
+
+    const onCancel1 = vi.fn();
+    const onCancel2 = vi.fn();
+    const onSettled1 = vi.fn();
+    const onSettled2 = vi.fn();
+
+    const p1 = action.dispatch({ id: "x" }, { onCancel: onCancel1, onSettled: onSettled1 });
+    const p2 = action.dispatch({ id: "x" }, { onCancel: onCancel2, onSettled: onSettled2 });
+
+    // Cancel while queued
+    action.cancel();
+    resolve1();
+    await pBlock;
+    await Promise.all([p1, p2]);
+
+    expect(onCancel1).toHaveBeenCalledTimes(1);
+    expect(onCancel2).toHaveBeenCalledTimes(1);
+    expect(onSettled1).toHaveBeenCalledTimes(1);
+    expect(onSettled2).toHaveBeenCalledTimes(1);
+  });
+});

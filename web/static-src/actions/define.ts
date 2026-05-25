@@ -233,6 +233,11 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   // instances from inFlight so isInflight reflects cancellation
   // immediately rather than waiting for the scope chain to advance.
   const started = new Set<string>();
+  // Track active dedupe keys for this action so cancel() can eagerly
+  // clear them from the module-level dedupeInflight map. Without this,
+  // a cancel() + immediate re-dispatch with the same dedupe key would
+  // collapse onto the cancelled promise instead of starting fresh.
+  const activeDedupeKeys = new Set<string>();
 
   function dispatch(
     args: TArgs,
@@ -321,6 +326,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     if (dedupeKey !== null && dedupeEntry !== null) {
       dedupeEntry.promise = result;
       dedupeInflight.set(dedupeKey, dedupeEntry);
+      activeDedupeKeys.add(dedupeKey);
       void result.finally(() => {
         // Only delete if we're still the in-flight entry (defensive
         // against another dispatch having replaced us mid-flight,
@@ -328,6 +334,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // existing entry first).
         if (dedupeInflight.get(dedupeKey) === dedupeEntry) {
           dedupeInflight.delete(dedupeKey);
+          activeDedupeKeys.delete(dedupeKey);
         }
       });
     }
@@ -695,9 +702,17 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
 
   function cancel(): void {
     if (inFlight.size === 0) return;
+    // Eagerly clear dedupe entries so a re-dispatch with the same key
+    // after cancel() starts a fresh run instead of collapsing onto the
+    // (now-cancelled) promise. The async .finally() cleanup remains as
+    // a safety net for the normal (non-cancel) path.
+    for (const dk of activeDedupeKeys) {
+      dedupeInflight.delete(dk);
+    }
+    activeDedupeKeys.clear();
     // Eagerly remove scope-queued instances (not yet started) from
     // inFlight so isInflight reflects cancellation immediately. Started
-    // instances are removed by runOnce's finally block when they settle.
+    // instances are removed by runOnce's settle() helper when they complete.
     for (const [id, controller] of [...inFlight.entries()]) {
       controller.abort();
       if (!started.has(id)) {

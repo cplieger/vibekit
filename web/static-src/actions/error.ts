@@ -104,7 +104,8 @@ export function toActionError(e: unknown): ActionErrorLike {
   }
   if (e === null) return { message: "Unknown error (null thrown)", code: "unknown" };
   if (e === undefined) return { message: "Unknown error (undefined thrown)", code: "unknown" };
-  return { message: String(e), cause: e };
+  const msg = String(e);
+  return { message: msg !== "" ? msg : "Unknown error (empty value thrown)", cause: e };
 }
 
 /**

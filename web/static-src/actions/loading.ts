@@ -299,10 +299,24 @@ export function bindDisabledPattern(
 ): DisabledPatternHandle {
   const { actions, disabledWhen, pendingClass, ariaBusy = true } = opts;
   let disposed = false;
+  let wasPending = false;
+  let hadFocus = false;
+  let wasConnected = el.isConnected;
 
   const apply = (): void => {
     if (disposed) return;
+    // Auto-dispose if the element was removed from the DOM.
+    if (wasConnected && !el.isConnected) {
+      disposed = true;
+      for (const u of unsubs) u();
+      return;
+    }
+    if (el.isConnected) wasConnected = true;
     const pending = actions.length > 0 && pendingForAny(actions);
+    // Capture focus on pending edge so we can restore it on completion.
+    if (pending && !wasPending) {
+      hadFocus = document.activeElement === el;
+    }
     let manualDisabled: boolean;
     try { manualDisabled = disabledWhen(); } catch { manualDisabled = false; }
     const shouldDisable = pending || manualDisabled;
@@ -313,7 +327,15 @@ export function bindDisabledPattern(
     } else {
       if (ariaBusy) el.removeAttribute("aria-busy");
       if (pendingClass) el.classList.remove(pendingClass);
+      // Restore focus when transitioning from pending to idle and
+      // the element is still enabled (not disabled by disabledWhen).
+      if (wasPending && hadFocus && el.isConnected && !el.disabled) {
+        const active = document.activeElement;
+        if (active === null || active === document.body) el.focus();
+      }
+      hadFocus = false;
     }
+    wasPending = pending;
   };
 
   apply();

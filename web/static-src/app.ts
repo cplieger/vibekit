@@ -65,14 +65,10 @@ import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import { applyShareTarget } from "./share-target.js";
 
-import "./handlers/chat.js";
-import "./handlers/messages.js";
-import "./handlers/turn.js";
+import "./handlers/index.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
 import { initConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
-import "./handlers/system.js";
-import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the

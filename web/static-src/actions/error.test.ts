@@ -110,6 +110,46 @@ describe("toActionError", () => {
     const result = toActionError(42);
     expect(result.message).toBe("42");
   });
+
+  it("handles empty string thrown", () => {
+    const result = toActionError("");
+    expect(result.message).toBe("Unknown error (empty value thrown)");
+    expect(result.cause).toBe("");
+  });
+
+  it("handles false thrown", () => {
+    const result = toActionError(false);
+    expect(result.message).toBe("false");
+    expect(result.cause).toBe(false);
+  });
+
+  it("handles null thrown", () => {
+    const result = toActionError(null);
+    expect(result.message).toBe("Unknown error (null thrown)");
+    expect(result.code).toBe("unknown");
+    expect(result.cause).toBeUndefined();
+  });
+
+  it("handles undefined thrown", () => {
+    const result = toActionError(undefined);
+    expect(result.message).toBe("Unknown error (undefined thrown)");
+    expect(result.code).toBe("unknown");
+    expect(result.cause).toBeUndefined();
+  });
+
+  it("handles object with null message", () => {
+    const obj = { message: null };
+    const result = toActionError(obj);
+    expect(result.message).toBe("null");
+    expect(result.cause).toBe(obj);
+  });
+
+  it("handles object with undefined message", () => {
+    const obj = { message: undefined };
+    const result = toActionError(obj);
+    expect(result.message).toBe("undefined");
+    expect(result.cause).toBe(obj);
+  });
 });
 
 describe("classifyFetchError", () => {
