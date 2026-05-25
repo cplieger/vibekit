@@ -152,6 +152,14 @@ await action.dispatch(args, { successMessage: "Custom" }); // override success t
 await action.dispatch(args, { errorPrefix: "Per-call" }); // override error prefix
 ```
 
+**Best practice:** include the resource identifier in error messages
+so the user knows WHAT failed, not just that something failed:
+
+```ts
+error: (args) => `Couldn't rename \u201c${args.original}\u201d`,
+error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
+```
+
 ## Cancellation
 
 `action.cancel()` aborts every in-flight instance for that action.
@@ -398,6 +406,10 @@ subscribeToActions(() => {
 
 ## Action status snapshots
 
+> **Note:** `actionStatus` is currently `@internal` — no external
+> consumer uses it yet. The API is stable but may change before
+> promotion to the public surface.
+
 For UIs that need richer state than just "is it pending":
 
 ```ts
@@ -415,14 +427,14 @@ if (status.lastError !== undefined) {
 
 ## Naming convention
 
-Use `<area>.<verb>` with lowercase + underscores or hyphens:
+Use `<area>.<verb>` or `<area>.<verb_noun>` with lowercase + underscores:
 
 ```
 chat.delete         chat.archive       chat.fork
-files.delete        files.create       files.rename
-settings.save       settings.toggle    settings.steering_save
-mcp.add_server      mcp.delete_server  mcp.toggle_server
-git.commit          git.push           git.stage_all
+files.delete        files.create_file  files.rename
+settings.patch      settings.save_steering  settings.set_kiro_setting
+mcp.save_server     mcp.delete_server  mcp.toggle_server
+git.commit          git.push           git.stage
 ```
 
 This is the registry key for log queries, telemetry, and tests.

@@ -165,7 +165,7 @@ describe("forge.connectPAT retry", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const p = connectPAT.dispatch({ kind: "github" as any, host: "github.com", token: "ghp_xxx" });
+    const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     const result = await p;
@@ -185,7 +185,7 @@ describe("forge.connectPAT retry", () => {
     const fetchSpy = vi.fn(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    const p = connectPAT.dispatch({ kind: "github" as any, host: "github.com", token: "ghp_xxx" });
+    const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;

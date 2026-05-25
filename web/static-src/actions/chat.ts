@@ -176,12 +176,17 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
 });
 
 // --- chat.merge_tangent ---
+// Not retryable: merge deletes the tangent server-side. If the first
+// attempt succeeded but the response timed out, a retry would hit 404
+// (tangent already gone). Showing a Retry button would mislead the user
+// into thinking the merge failed when it actually succeeded. The SSE
+// stream will confirm the merge via a tangent_merged event.
 
 export const mergeTangentAction = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
-  retryable: "network",
+  retryable: false,
   error: "Couldn't merge tangent",
 });
 
@@ -386,10 +391,15 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
 });
 
 // --- chat.permission_response ---
+// Scope is per-request (not per-chat): two pending permission requests in
+// the same chat are independent and should fire in parallel. Serializing
+// them behind the chat scope would delay the second response until the
+// first round-trips, which feels sluggish when the agent is waiting on
+// multiple permissions simultaneously.
 
 export const permissionResponseAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
   name: "chat.permission_response",
-  scope: ({ chatID }) => `chat:${chatID}`,
+  scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   command: ({ chatID, requestID, optionID }) => ({

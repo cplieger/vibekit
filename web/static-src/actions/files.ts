@@ -72,7 +72,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   }),
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  error: (args) => `Couldn't rename "${args.original}"`,
+  error: (args) => `Couldn't rename \u201c${args.original.length > 40 ? args.original.slice(0, 37) + "\u2026" : args.original}\u201d`,
 });
 
 // --- files.delete ---

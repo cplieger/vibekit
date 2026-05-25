@@ -2,12 +2,18 @@
 // stay bounded after many dispatches. Catches memory leaks where cleanup
 // paths fail to delete map entries.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, pendingFor } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 beforeEach(() => {
+  resetDefine();
+  resetRegistry();
+  resetCleanup();
+});
+
+afterEach(() => {
   resetDefine();
   resetRegistry();
   resetCleanup();
@@ -21,16 +27,13 @@ describe("memory leak stress — scopeChains", () => {
       run: async () => "ok",
     });
 
-    const pre = _internalsForTest().scopeChains;
     const promises: Promise<unknown>[] = [];
     for (let i = 0; i < 1000; i++) {
       promises.push(action.dispatch({ i }));
     }
     await Promise.all(promises);
 
-    const post = _internalsForTest().scopeChains;
-    expect(post).toBe(pre);
-    expect(post).toBe(0);
+    expect(_internalsForTest().scopeChains).toBe(0);
   });
 
   it("1000 dynamic-scope dispatches leave scopeChains empty", async () => {
@@ -67,8 +70,8 @@ describe("memory leak stress — dedupeInflight", () => {
     await Promise.all(promises);
 
     expect(_internalsForTest().dedupeInflight).toBe(0);
-    // Verify dedupe actually worked (far fewer than 1000 calls)
-    expect(callCount).toBeLessThan(1000);
+    // Verify dedupe actually worked (exactly 5 unique arg keys)
+    expect(callCount).toBe(5);
   });
 });
 
@@ -105,7 +108,7 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     expect(pendingFor("stress.errors")).toHaveLength(0);
   });
 
-  it("1000 cancelled dispatches leave no pending entries", async () => {
+  it("100 cancelled dispatches leave no pending entries", async () => {
     const action = defineAction({
       name: "stress.cancel",
       scope: "cancel-scope",

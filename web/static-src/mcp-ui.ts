@@ -20,6 +20,7 @@ import { bindLoadingState } from "./actions/index.js";
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
+let rowBindingCleanups: Array<() => void> = [];
 
 function buildSectionScaffold(): void {
   const section = document.getElementById("mcp-section");
@@ -66,6 +67,8 @@ function renderSection(): void {
 
 function renderRows(): void {
   if (sectionBody === null) return;
+  for (const fn of rowBindingCleanups) fn();
+  rowBindingCleanups = [];
   sectionBody.replaceChildren();
 
   if (configured.length === 0) {
@@ -176,7 +179,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   const slider = document.createElement("span");
   slider.className = "toggle-slider";
   label.append(input, slider);
-  bindLoadingState("mcp.toggle_server", input);
+  rowBindingCleanups.push(bindLoadingState("mcp.toggle_server", input));
   return label;
 }
 
@@ -221,7 +224,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("data-tooltip", "Remove");
   btn.setAttribute("aria-label", `Remove ${s.name}`);
   btn.innerHTML = ICON_TRASH_14;
-  bindLoadingState("mcp.delete_server", btn);
+  rowBindingCleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(

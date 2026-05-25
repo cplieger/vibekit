@@ -6,12 +6,17 @@ import { apiAction, transportAction, defineAction, ActionError } from "./index.j
 import { routeForPath } from "../editor-types.js";
 
 /** Save the active editor file (PUT). Inline error surface in the editor pane;
- *  framework toast suppressed. */
+ *  framework toast suppressed.
+ *
+ *  No auto-retry: content is captured at dispatch time. If the user types
+ *  more after the first attempt fails, a retry would overwrite their new
+ *  edits with the stale snapshot. The manual Retry button (retryable:
+ *  "network") is kept so the user can consciously re-save, but auto-retry
+ *  is intentionally omitted. */
 export const saveFile = apiAction<{ path: string; content: string }, { ok?: boolean; error?: string }>({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
   request: ({ path, content }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,

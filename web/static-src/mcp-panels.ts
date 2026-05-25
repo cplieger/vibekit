@@ -48,6 +48,7 @@ let session = new EditSession();
 export function cleanupModal(): void {
   debouncedSearch?.cancel();
   searchRegistry.cancel();
+  retryBtnUnbind?.(); retryBtnUnbind = null;
   searchUnsub?.();
   searchUnsub = null;
 }
@@ -154,7 +155,8 @@ interface RegistryEntry {
 
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
 let searchUnsub: (() => void) | null = null;
-registerCleanup(() => { debouncedSearch?.cancel(); searchUnsub?.(); });
+let retryBtnUnbind: (() => void) | null = null;
+registerCleanup(() => { debouncedSearch?.cancel(); searchUnsub?.(); retryBtnUnbind?.(); });
 
 function initSearchPanel(): void {
   const input = el<HTMLInputElement>("mcp-search-input");
@@ -182,7 +184,7 @@ function initSearchPanel(): void {
 
   input.oninput = (): void => {
     const q = input.value.trim();
-    if (q === "") { results.replaceChildren(); debouncedSearch!.cancel(); return; }
+    if (q === "") { retryBtnUnbind?.(); retryBtnUnbind = null; results.replaceChildren(); debouncedSearch!.cancel(); return; }
     debouncedSearch!({ q });
   };
 
@@ -203,6 +205,7 @@ function initSearchPanel(): void {
 }
 
 function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | undefined, q: string): void {
+  retryBtnUnbind?.(); retryBtnUnbind = null;
   results.replaceChildren();
   if (d === undefined || d === null) {
     renderSearchError(results, q);
@@ -219,6 +222,7 @@ function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | 
 }
 
 function renderSearchError(results: HTMLDivElement, q: string): void {
+  retryBtnUnbind?.(); retryBtnUnbind = null;
   results.replaceChildren();
   const err = document.createElement("p");
   err.className = "mcp-empty";
@@ -228,7 +232,7 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   retryBtn.type = "button";
   retryBtn.className = "btn-small";
   retryBtn.textContent = "Retry";
-  bindLoadingState("mcp.search_registry", retryBtn);
+  retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn);
   retryBtn.addEventListener("click", () => { void searchRegistry.dispatch({ q }); });
   results.appendChild(retryBtn);
 }

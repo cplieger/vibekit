@@ -40,8 +40,8 @@ describe("dedupe with undefined args", () => {
       },
     });
 
-    const p1 = action.dispatch(undefined as unknown as void);
-    const p2 = action.dispatch(undefined as unknown as void);
+    const p1 = action.dispatch(undefined);
+    const p2 = action.dispatch(undefined);
     expect(runCalls).toBe(1);
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toBe("ok");
