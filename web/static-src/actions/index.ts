@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 // Action factories.
-export { defineAction } from "./define.js";
+export { defineAction, dispatchWithResult } from "./define.js";
 export { apiAction } from "./api.js";
 // transportAction is internal-only: consumed exclusively by action
 // modules inside actions/ (chat.ts, editor.ts, messages.ts, crew.ts).
@@ -20,7 +20,7 @@ export { apiAction } from "./api.js";
 // classifyFetchError: normalise fetch catch-block errors into ActionError
 // with canonical code (cancelled/timeout/network). Useful in custom
 // defineAction run() implementations that call fetch directly.
-export { ActionError, hasErrorString, classifyFetchError, isRetryableError, isTransientStatus, isPermanentCode } from "./error.js";
+export { ActionError, hasErrorString, classifyFetchError, isRetryableError, isTransientStatus, isPermanentCode, isActionError } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch
@@ -59,7 +59,7 @@ export type { ActionErrorLike } from "./types.js";
 // DispatchOptions: per-dispatch overrides (silent, onSuccess, onError,
 // onSettled). External callers (settings.ts, notify.ts) pass these
 // inline; exporting the type lets helpers type-annotate the opts arg.
-export type { DispatchOptions, RetryAttemptInfo } from "./types.js";
+export type { DispatchOptions, RetryAttemptInfo, DispatchResult } from "./types.js";
 
 // Standard retry config constant: eliminates `retry: { count: 2, delay: 300 }`
 // repetition across action definitions.

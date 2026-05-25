@@ -41,7 +41,7 @@ const namedListeners = new Map<string, Set<RegistryListener>>();
 const pendingByName = new Map<string, Set<string>>();
 // Incremental count of currently-pending instances. Maintained in
 // record() at status transitions; pendingCount() returns this in O(1).
-let _pendingN = 0;
+let _pendingTotal = 0;
 // Number of live (non-null) entries in the log.
 let _liveCount = 0;
 // Head pointer: first potentially-live index. Entries before head are
@@ -83,14 +83,14 @@ export function record(instance: ActionInstance): void {
     const prev = existing.instance;
     // Update incremental counter + per-name index on transitions.
     if (prev.status === "pending" && instance.status !== "pending") {
-      _pendingN--;
+      _pendingTotal--;
       const s = pendingByName.get(prev.name);
       if (s !== undefined) {
         s.delete(instance.id);
         if (s.size === 0) pendingByName.delete(prev.name);
       }
     } else if (prev.status !== "pending" && instance.status === "pending") {
-      _pendingN++;
+      _pendingTotal++;
       let s = pendingByName.get(instance.name);
       if (s === undefined) { s = new Set(); pendingByName.set(instance.name, s); }
       s.add(instance.id);
@@ -119,7 +119,7 @@ export function record(instance: ActionInstance): void {
     idMap.set(instance.id, { instance, index: idx });
     _liveCount++;
     if (instance.status === "pending") {
-      _pendingN++;
+      _pendingTotal++;
       let s = pendingByName.get(instance.name);
       if (s === undefined) { s = new Set(); pendingByName.set(instance.name, s); }
       s.add(instance.id);
@@ -144,7 +144,7 @@ export function record(instance: ActionInstance): void {
         const entry = log[i] ?? null;
         if (entry !== null) {
           if (entry.status === "pending") {
-            _pendingN--;
+            _pendingTotal--;
             const s = pendingByName.get(entry.name);
             if (s !== undefined) {
               s.delete(entry.id);
@@ -162,9 +162,9 @@ export function record(instance: ActionInstance): void {
   }
   // Defensive: counter should never go negative; clamp to 0 if it
   // does (would indicate a record() invariant violation).
-  if (_pendingN < 0) {
-    console.warn("[actions] _pendingN went negative — invariant violation; clamping to 0");
-    _pendingN = 0;
+  if (_pendingTotal < 0) {
+    console.warn("[actions] _pendingTotal went negative — invariant violation; clamping to 0");
+    _pendingTotal = 0;
   }
   // Notify listeners. Iterate the Set directly — safe because we
   // catch per-listener errors. Set iteration semantics: entries
@@ -267,7 +267,7 @@ export function pendingFor(name: string): readonly ActionInstance[] {
  *  Useful for an app-bar global progress indicator: when > 0, show
  *  some "doing things" affordance. O(1). */
 export function pendingCount(): number {
-  return _pendingN;
+  return _pendingTotal;
 }
 
 /**
@@ -294,5 +294,5 @@ export function _resetForTest(): void {
   pendingByName.clear();
   listeners.clear();
   namedListeners.clear();
-  _pendingN = 0;
+  _pendingTotal = 0;
 }

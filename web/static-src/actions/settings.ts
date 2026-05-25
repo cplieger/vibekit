@@ -9,9 +9,8 @@
 // dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
+import { apiAction } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
-import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
 
@@ -30,33 +29,15 @@ export const saveSteering = apiAction<{ content: string }, unknown>({
 
 // --- Logout ---
 
-export const logout = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
+export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
   retryable: "network",
-  // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
-  // with dispatch, so DOM refs are guaranteed valid at call time.
+  request: () => ({ method: "POST", path: "/api/logout" }),
   optimistic: ({ emailEl, stAuthEl }) => {
     const prev = emailEl.textContent ?? "";
     emailEl.textContent = "";
     stAuthEl.textContent = "not signed in";
     return prev;
-  },
-  // run() intentionally ignores args — DOM refs are only for optimistic/rollback.
-  // The framework passes the full args object; we destructure to nothing.
-  run: async (_args, signal) => {
-    let r: Response;
-    try {
-      r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
-    } catch (e) {
-      throw classifyFetchError(e, signal);
-    }
-    if (!r.ok) {
-      const body = await r.text().catch(() => "");
-      let msg = `HTTP ${String(r.status)}`;
-      try { const j: unknown = JSON.parse(body); if (hasErrorString(j)) msg = j.error; } catch { /* */ }
-      throw new ActionError(msg, { status: r.status });
-    }
-    return {};
   },
   rollback: ({ emailEl, stAuthEl }, op) => {
     if (op === undefined) return;

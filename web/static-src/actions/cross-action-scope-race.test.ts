@@ -455,8 +455,8 @@ describe("dedupe + scope + cancel race", () => {
     // Dedupe map should be clean after settling
     await Promise.resolve();
     await Promise.resolve();
-    const { dedupeInflight } = _internalsForTest();
-    expect(dedupeInflight).toBe(0);
+    const { activeDedupes } = _internalsForTest();
+    expect(activeDedupes).toBe(0);
   });
 });
 

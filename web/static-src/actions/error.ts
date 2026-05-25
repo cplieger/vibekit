@@ -39,6 +39,11 @@ export class ActionError extends Error implements ActionErrorLike {
 /** Type predicate: true when `v` is a non-null object with a string
  *  `error` property. Replaces unsafe `as { error?: string }` casts on
  *  parsed JSON bodies throughout the action framework and api-client. */
+/** Type predicate: narrows `unknown` to ActionError. */
+export function isActionError(e: unknown): e is ActionError {
+  return e instanceof ActionError;
+}
+
 export function hasErrorString(v: unknown): v is { error: string } {
   if (typeof v !== "object" || v === null || !("error" in v)) return false;
   // After the `in` check, TS narrows `v` to `object & Record<"error", unknown>`.
@@ -48,26 +53,16 @@ export function hasErrorString(v: unknown): v is { error: string } {
 /** Coerce any thrown value into an ActionErrorLike snapshot. Used by
  *  the dispatcher when recording an instance to the registry.
  *
- *  Optimised: builds result objects via direct conditional literals
- *  instead of `{...({} | {k:v})}` spread patterns — avoids allocating
- *  intermediate empty/single-key objects on every error conversion. */
+ *  Builds a minimal result object — only includes status/code/cause
+ *  fields when they carry a defined value. */
 export function toActionError(e: unknown): ActionErrorLike {
   if (e instanceof ActionError) {
-    return e.status !== undefined
-      ? e.code !== undefined
-        ? e.cause !== undefined
-          ? { message: e.message, status: e.status, code: e.code, cause: e.cause }
-          : { message: e.message, status: e.status, code: e.code }
-        : e.cause !== undefined
-          ? { message: e.message, status: e.status, cause: e.cause }
-          : { message: e.message, status: e.status }
-      : e.code !== undefined
-        ? e.cause !== undefined
-          ? { message: e.message, code: e.code, cause: e.cause }
-          : { message: e.message, code: e.code }
-        : e.cause !== undefined
-          ? { message: e.message, cause: e.cause }
-          : { message: e.message };
+    return {
+      message: e.message,
+      ...(e.status !== undefined && { status: e.status }),
+      ...(e.code !== undefined && { code: e.code }),
+      ...(e.cause !== undefined && { cause: e.cause }),
+    };
   }
   if (e instanceof DOMException) {
     const code = e.name === "TimeoutError" ? "timeout"
@@ -81,31 +76,29 @@ export function toActionError(e: unknown): ActionErrorLike {
     const status = typeof rawStatus === "number" ? rawStatus : undefined;
     const rawCode = "code" in e ? (e as { code: unknown }).code : undefined;
     const code = typeof rawCode === "string" ? rawCode : undefined;
-    return status !== undefined
-      ? code !== undefined
-        ? { message: e.message, status, code, cause: e }
-        : { message: e.message, status, cause: e }
-      : code !== undefined
-        ? { message: e.message, code, cause: e }
-        : { message: e.message, cause: e };
+    return {
+      message: e.message,
+      ...(status !== undefined && { status }),
+      ...(code !== undefined && { code }),
+      cause: e,
+    };
   }
   if (typeof e === "object" && e !== null && "message" in e) {
     const obj = e as Record<string, unknown>;
     const message = typeof obj["message"] === "string" ? obj["message"] : String(obj["message"]);
     const status = typeof obj["status"] === "number" ? obj["status"] : undefined;
     const code = typeof obj["code"] === "string" ? obj["code"] : undefined;
-    return status !== undefined
-      ? code !== undefined
-        ? { message, status, code, cause: e }
-        : { message, status, cause: e }
-      : code !== undefined
-        ? { message, code, cause: e }
-        : { message, cause: e };
+    return {
+      message,
+      ...(status !== undefined && { status }),
+      ...(code !== undefined && { code }),
+      cause: e,
+    };
   }
   if (e === null) return { message: "Unknown error (null thrown)", code: "unknown" };
   if (e === undefined) return { message: "Unknown error (undefined thrown)", code: "unknown" };
   const msg = String(e);
-  return { message: msg !== "" ? msg : "Unknown error (empty value thrown)", cause: e };
+  return { message: msg !== "" ? msg : "Unknown error (empty value thrown)", code: "unknown", cause: e };
 }
 
 /**
@@ -186,9 +179,9 @@ export function isRetryableError(
   mode: "network" | "always" | false | undefined,
 ): boolean {
   if (mode === undefined || mode === false) return false;
-  if (mode === "always") {
-    return !PERMANENT_CODES.has(err.code ?? "");
-  }
+  // Permanent codes are never retryable regardless of mode.
+  if (PERMANENT_CODES.has(err.code ?? "")) return false;
+  if (mode === "always") return true;
   // mode === "network"
   if (err.code === "network" || err.code === "timeout") return true;
   if (err.status === 0) return true;

@@ -95,9 +95,9 @@ describe("dedupe + scope combined behavior", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    const { scopeChains, dedupeInflight } = _internalsForTest();
+    const { scopeChains, activeDedupes } = _internalsForTest();
     expect(scopeChains).toBe(0);
-    expect(dedupeInflight).toBe(0);
+    expect(activeDedupes).toBe(0);
   });
 });
 
@@ -244,8 +244,8 @@ describe("cancel + success race in dedupe", () => {
     await p1;
 
     await Promise.resolve();
-    const { dedupeInflight } = _internalsForTest();
-    expect(dedupeInflight).toBe(0);
+    const { activeDedupes } = _internalsForTest();
+    expect(activeDedupes).toBe(0);
   });
 });
 

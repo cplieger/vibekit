@@ -98,6 +98,8 @@ export interface RetryAttemptInfo {
   readonly maxAttempts: number;
   /** The error from the previous attempt that triggered this retry. */
   readonly error: ActionErrorLike;
+  /** Milliseconds the framework will wait before this attempt's run(). */
+  readonly delay: number;
 }
 
 export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
@@ -286,6 +288,11 @@ export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
    *  (not the initial attempt). Receives attempt info including the
    *  error that triggered the retry. */
   readonly onRetryAttempt?: (info: RetryAttemptInfo, args: TArgs) => void;
+  /** Per-call retry exhaustion callback. Fires when all auto-retries
+   *  have failed, before the error toast. Receives the final error and
+   *  total attempt count. Useful for telemetry that distinguishes retry
+   *  exhaustion from first-attempt failures. */
+  readonly onRetryExhausted?: (info: { error: ActionErrorLike; attempts: number }, args: TArgs) => void;
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client
@@ -330,3 +337,8 @@ export type ResultOf<A> = A extends Action<any, infer T> ? T : never;
 export type ActionFromDef<D> = D extends ActionDefinition<infer A, infer R, any>
   ? Action<A, R>
   : never;
+
+/** Discriminated union: the outcome of a single dispatch. */
+export type DispatchResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: ActionErrorLike; readonly cancelled: boolean };

@@ -100,6 +100,10 @@ onSSE("turn_ended", (chatID, p) => {
   // --- DOM rendering: only for the active chat ---
   if (chatID !== getActiveId()) return;
 
+  // Single DOM lookup shared by both turn-summary and file-changes rendering.
+  const msgsEl = document.getElementById("messages");
+  if (msgsEl === null) return;
+
   // Render turn summary (credits + elapsed time).
   const credits = p.credits_delta;
   const elapsed = p.elapsed_ms;
@@ -119,10 +123,7 @@ onSSE("turn_ended", (chatID, p) => {
     }
     const summaryText = parts.join(" · ");
 
-    const container = document.getElementById("messages");
-    const msgs = container !== null
-      ? container.querySelectorAll(".message.assistant")
-      : [];
+    const msgs = msgsEl.querySelectorAll(".message.assistant");
     const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
     const actionsRow = lastMsg?.nextElementSibling;
     if (actionsRow !== null
@@ -163,15 +164,12 @@ onSSE("turn_ended", (chatID, p) => {
     banner.setAttribute("role", "note");
     banner.setAttribute("data-chat-entry", "");
     banner.textContent = parts.join(" · ");
-    const msgsEl = document.getElementById("messages");
-    if (msgsEl !== null) {
-      // Dedup: skip if a turn-file-changes already exists as the last entry
-      const existing = msgsEl.lastElementChild;
-      if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
-        const lastChild = msgsEl.lastElementChild;
-        if (lastChild !== null) {
-          lastChild.insertAdjacentElement("afterend", banner);
-        }
+    // Dedup: skip if a turn-file-changes already exists as the last entry
+    const existing = msgsEl.lastElementChild;
+    if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
+      const lastChild = msgsEl.lastElementChild;
+      if (lastChild !== null) {
+        lastChild.insertAdjacentElement("afterend", banner);
       }
     }
   }

@@ -409,10 +409,8 @@ function createEntry(action: "touch" | "mkdir", name: string): void {
   void actionFn.dispatch({
     dir: state.currentPath,
     name,
-  }).then(async (r) => {
-    if (r === null) return;
-    await loadDirAsync();
-    startInlineRename(name);
+  }, {
+    onSuccess: () => { void loadDirAsync().then(() => startInlineRename(name)); },
   });
 }
 

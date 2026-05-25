@@ -1,4 +1,4 @@
-// Stress test: verifies scopeChains, dedupeInflight, and inFlight maps
+// Stress test: verifies scopeChains, activeDedupes, and inFlight maps
 // stay bounded after many dispatches. Catches memory leaks where cleanup
 // paths fail to delete map entries.
 
@@ -57,8 +57,8 @@ describe("memory leak stress — scopeChains", () => {
   });
 });
 
-describe("memory leak stress — dedupeInflight", () => {
-  it("1000 deduped dispatches leave dedupeInflight empty", async () => {
+describe("memory leak stress — activeDedupes", () => {
+  it("1000 deduped dispatches leave activeDedupes empty", async () => {
     let callCount = 0;
     const action = defineAction({
       name: "stress.dedupe",
@@ -73,7 +73,7 @@ describe("memory leak stress — dedupeInflight", () => {
     }
     await Promise.all(promises);
 
-    expect(_internalsForTest().dedupeInflight).toBe(0);
+    expect(_internalsForTest().activeDedupes).toBe(0);
     // Verify dedupe actually worked (exactly 5 unique arg keys)
     expect(callCount).toBe(5);
   });
@@ -130,6 +130,10 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     // Cancel mid-flight
     action.cancel();
     await Promise.all(promises);
+    // Drain remaining microtasks: next.finally() callbacks for scope-queued
+    // dispatches run after the early-cancel path resolves the dispatch
+    // promises. A single extra tick ensures all cleanup has completed.
+    await Promise.resolve();
 
     expect(pendingFor("stress.cancel")).toHaveLength(0);
     expect(_internalsForTest().scopeChains).toBe(0);
@@ -153,7 +157,7 @@ describe("memory leak stress — combined scope + dedupe", () => {
 
     const internals = _internalsForTest();
     expect(internals.scopeChains).toBe(0);
-    expect(internals.dedupeInflight).toBe(0);
+    expect(internals.activeDedupes).toBe(0);
     expect(pendingFor("stress.both")).toHaveLength(0);
   });
 });

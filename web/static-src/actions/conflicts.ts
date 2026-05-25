@@ -14,19 +14,20 @@ interface OpenDiffArgs {
   otherChat: string;
 }
 
+/** Fetch a single blob by SHA. Uses raw fetch because the response is
+ *  plain text (not JSON), which apiAction's executeRequest doesn't
+ *  support. Error classification is handled via classifyFetchError. */
 async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Promise<string> {
   if (sha === "") return "";
+  const path = `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`;
+  let resp: Response;
   try {
-    const resp = await fetch(
-      `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`,
-      { signal: withTimeout(signal, 15_000) },
-    );
-    if (!resp.ok) throw new ActionError("server returned non-ok", { status: resp.status });
-    return await resp.text();
+    resp = await fetch(path, { signal: withTimeout(signal, 15_000) });
   } catch (e) {
-    if (e instanceof ActionError) throw e;
     throw classifyFetchError(e, signal);
   }
+  if (!resp.ok) throw new ActionError("server returned non-ok", { status: resp.status });
+  return resp.text();
 }
 
 /** Open a side-by-side diff for a conflict chip. Fetches both blobs

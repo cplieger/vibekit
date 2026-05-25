@@ -121,8 +121,8 @@ describe("dedupe + retry interaction", () => {
     await p;
 
     // Dedupe map should be empty after settlement
-    const { dedupeInflight } = _internalsForTest();
-    expect(dedupeInflight).toBe(0);
+    const { activeDedupes } = _internalsForTest();
+    expect(activeDedupes).toBe(0);
   });
 });
 
@@ -475,8 +475,8 @@ describe("dedupe + cancel interaction", () => {
     action.cancel();
     await p;
 
-    const { dedupeInflight } = _internalsForTest();
-    expect(dedupeInflight).toBe(0);
+    const { activeDedupes } = _internalsForTest();
+    expect(activeDedupes).toBe(0);
   });
 });
 
@@ -560,7 +560,7 @@ describe("onSuccess re-dispatch with dedupe", () => {
   });
 
   it("dispatch from onSuccess with same dedupe key starts a fresh run (eager cleanup)", async () => {
-    // With the eager clearDedupe fix, dispatching from onSuccess with
+    // With the eager evictDedupeSlot fix, dispatching from onSuccess with
     // the same key starts a fresh run because the dedupe entry is
     // cleared synchronously before callbacks fire.
     let runCount = 0;

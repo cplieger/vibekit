@@ -103,28 +103,27 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     patchInputs = [];
     patchResolvers = [];
     const gen = ++patchGen;
+    let result: Record<string, unknown> | null = null;
     void patchAppSettings.dispatch(
       {
         body: body as Record<string, unknown>,
         ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
       },
-      { silent: true },
-    ).then((r) => {
-      try {
-        if (r === null) Object.assign(lastSentPatch, rollback);
-        if (gen === patchGen) {
-          if (r === null) showError(); else showSaved();
-        }
-      } catch (e) {
-        console.error("[persist] indicator callback threw", e);
-      } finally {
-        for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
-      }
-    }).catch(() => {
-      // Defensive: dispatch() should never reject per the action framework
-      // contract, but if it does, ensure resolvers fire so callers don't hang.
-      for (const resolve of resolvers) resolve(null);
-    });
+      {
+        silent: true,
+        onSuccess: (r) => {
+          result = r as Record<string, unknown>;
+          if (gen === patchGen) showSaved();
+        },
+        onError: () => {
+          Object.assign(lastSentPatch, rollback);
+          if (gen === patchGen) showError();
+        },
+        onSettled: () => {
+          for (const resolve of resolvers) resolve(result);
+        },
+      },
+    );
   }, 300);
   return p;
 }

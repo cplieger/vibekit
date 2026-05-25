@@ -512,14 +512,69 @@ describe("isRetryClass — transient HTTP status auto-retry", () => {
   });
 });
 
+describe("retry abort during backoff — stale state prevention", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("cancel during backoff sleep records cancelled (not stale run error)", async () => {
+    let runCount = 0;
+    const action = defineAction({
+      name: "test.abort_backoff_stale",
+      retryable: "always",
+      retry: { count: 3, delay: 200 },
+      error: false,
+      run: async () => {
+        runCount++;
+        throw new ActionError("transient failure", { status: 503, code: "network" });
+      },
+    });
+    const p = action.dispatch(undefined);
+    // First run() throws immediately, then retry loop enters sleep(200ms).
+    // Cancel during the backoff sleep.
+    await vi.advanceTimersByTimeAsync(100);
+    action.cancel();
+    await vi.advanceTimersByTimeAsync(200);
+    const result = await p;
+    expect(result).toBeNull();
+    expect(runCount).toBe(1);
+    const log = recentLog();
+    // Must be cancelled, not error — the stale run error must not leak through.
+    expect(log[0]?.status).toBe("cancelled");
+    // The error field should NOT be present on a cancelled record.
+    expect(log[0]?.error).toBeUndefined();
+  });
+
+  it("cancel during backoff does not fire onError (fires onCancel)", async () => {
+    const onError = vi.fn();
+    const onCancel = vi.fn();
+    const action = defineAction({
+      name: "test.abort_backoff_callbacks",
+      retryable: "always",
+      retry: { count: 2, delay: 100 },
+      error: false,
+      run: async () => {
+        throw new ActionError("server error", { status: 500, code: "network" });
+      },
+    });
+    const p = action.dispatch(undefined, { onError, onCancel });
+    await vi.advanceTimersByTimeAsync(50);
+    action.cancel();
+    await vi.advanceTimersByTimeAsync(200);
+    await p;
+    expect(onError).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("onRetryAttempt callback", () => {
-  it("fires before each retry attempt with correct info", async () => {
-    const retryInfo: Array<{ attempt: number; maxAttempts: number; error: string }> = [];
+  it("fires before each retry attempt with correct info including delay", async () => {
+    vi.useFakeTimers();
+    const retryInfo: Array<{ attempt: number; maxAttempts: number; error: string; delay: number }> = [];
     let runCount = 0;
     const action = defineAction({
       name: "test.on_retry_attempt",
       retryable: "always",
-      retry: { count: 2, delay: 0 },
+      retry: { count: 2, delay: 100, factor: 3 },
       error: false,
       run: async () => {
         runCount++;
@@ -527,16 +582,22 @@ describe("onRetryAttempt callback", () => {
         return "ok";
       },
     });
-    const result = await action.dispatch(undefined, {
+    const p = action.dispatch(undefined, {
       onRetryAttempt: (info) => {
-        retryInfo.push({ attempt: info.attempt, maxAttempts: info.maxAttempts, error: info.error.message });
+        retryInfo.push({ attempt: info.attempt, maxAttempts: info.maxAttempts, error: info.error.message, delay: info.delay });
       },
     });
+    // Advance past first retry delay (100ms) and second (300ms)
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await p;
     expect(result).toBe("ok");
+    // delay for attempt 2: baseDelay * factor^0 = 100
+    // delay for attempt 3: baseDelay * factor^1 = 300
     expect(retryInfo).toEqual([
-      { attempt: 2, maxAttempts: 3, error: "transient" },
-      { attempt: 3, maxAttempts: 3, error: "transient" },
+      { attempt: 2, maxAttempts: 3, error: "transient", delay: 100 },
+      { attempt: 3, maxAttempts: 3, error: "transient", delay: 300 },
     ]);
+    vi.useRealTimers();
   });
 
   it("does not fire on the initial attempt", async () => {
@@ -573,6 +634,87 @@ describe("onRetryAttempt callback", () => {
     });
     expect(result).toBe("recovered");
     expect(attempts).toBe(2);
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
+  });
+});
+
+describe("onRetryExhausted callback", () => {
+  it("fires when all retries are exhausted", async () => {
+    const exhaustedInfo: Array<{ error: string; attempts: number }> = [];
+    const action = defineAction({
+      name: "test.retry_exhausted",
+      retryable: "always",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        throw new ActionError("persistent failure", { code: "network" });
+      },
+    });
+    await action.dispatch(undefined, {
+      onRetryExhausted: (info) => {
+        exhaustedInfo.push({ error: info.error.message, attempts: info.attempts });
+      },
+    });
+    expect(exhaustedInfo).toEqual([
+      { error: "persistent failure", attempts: 3 },
+    ]);
+  });
+
+  it("does not fire when retry succeeds", async () => {
+    let runCount = 0;
+    const exhaustedCalls: number[] = [];
+    const action = defineAction({
+      name: "test.retry_exhausted_success",
+      retryable: "always",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        runCount++;
+        if (runCount === 1) throw new ActionError("transient", { code: "network" });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined, {
+      onRetryExhausted: (info) => { exhaustedCalls.push(info.attempts); },
+    });
+    expect(result).toBe("ok");
+    expect(exhaustedCalls).toEqual([]);
+  });
+
+  it("does not fire when no retries configured", async () => {
+    const exhaustedCalls: number[] = [];
+    const action = defineAction({
+      name: "test.retry_exhausted_no_retry",
+      retryable: "always",
+      error: false,
+      run: async () => {
+        throw new ActionError("fail", { code: "network" });
+      },
+    });
+    await action.dispatch(undefined, {
+      onRetryExhausted: (info) => { exhaustedCalls.push(info.attempts); },
+    });
+    expect(exhaustedCalls).toEqual([]);
+  });
+
+  it("throwing in onRetryExhausted does not disrupt error handling", async () => {
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const onError = vi.fn();
+    const action = defineAction({
+      name: "test.retry_exhausted_throws",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        throw new ActionError("fail", { code: "network" });
+      },
+    });
+    await action.dispatch(undefined, {
+      onRetryExhausted: () => { throw new Error("exhausted callback exploded"); },
+      onError,
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
     expect(consoleErr).toHaveBeenCalled();
     consoleErr.mockRestore();
   });

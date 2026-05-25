@@ -114,6 +114,7 @@ describe("toActionError", () => {
   it("handles empty string thrown", () => {
     const result = toActionError("");
     expect(result.message).toBe("Unknown error (empty value thrown)");
+    expect(result.code).toBe("unknown");
     expect(result.cause).toBe("");
   });
 
@@ -238,6 +239,12 @@ describe("isRetryableError", () => {
   it("returns false for non-transient statuses under 'network' mode", () => {
     expect(isRetryableError({ message: "x", status: 400 }, "network")).toBe(false);
     expect(isRetryableError({ message: "x", status: 500 }, "network")).toBe(false);
+  });
+
+  it("returns false for permanent codes under 'network' mode even with transient status", () => {
+    expect(isRetryableError({ message: "x", code: "cancelled", status: 503 }, "network")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "send_failed", status: 0 }, "network")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "unsupported", status: 429 }, "network")).toBe(false);
   });
 
   it("returns true for any error under 'always' mode (except permanent)", () => {
