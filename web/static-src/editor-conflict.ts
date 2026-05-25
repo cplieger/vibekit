@@ -18,7 +18,15 @@ let suggestionGen = 0;
 
 /** Abort any in-flight suggestion request. If path is provided, reset
  *  loading state on THAT file; otherwise default to the active file.
- *  Called on tab close (with path) and on broader teardown (without). */
+ *  Called on tab close (with path) and on broader teardown (without).
+ *
+ *  Note: we no longer call suggestResolution.cancel() here. That call
+ *  was a global kill-switch that aborted in-flight suggestions for ALL
+ *  files (the framework's cancel iterates every entry in inFlight).
+ *  In multi-file conflict mode that wiped suggestions on unrelated
+ *  files. The suggestionGen counter + per-file state checks in
+ *  requestSuggestion already discard stale results correctly; the
+ *  in-flight request can complete and its result will be ignored. */
 export function abortSuggestion(path?: string): void {
   // Reset any entries with loading: true so the UI doesn't show stale spinners.
   const targetPath = path ?? getActiveFilePath();
@@ -28,7 +36,9 @@ export function abortSuggestion(path?: string): void {
       if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
     }
   }
-  suggestResolution.cancel();
+  // Bump generation so any in-flight requestSuggestion for this path
+  // discards its result on resolution.
+  suggestionGen++;
 }
 
 export function renderConflictModeUI(state: FileState): void {

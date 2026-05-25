@@ -289,9 +289,13 @@ describe("transportAction idempotency_key in payload", () => {
     await action.dispatch({ chatID: "c1" });
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const cmd = mockSend.mock.calls[0]![0] as { type: string; chat_id: string };
+    const cmd = mockSend.mock.calls[0]![0] as { type: string; chat_id: string; payload?: { idempotency_key?: string } };
     expect(cmd.type).toBe("cancel");
     expect(cmd.chat_id).toBe("c1");
+    // F3 fix verification: the idempotency_key MUST be in the payload.
+    expect(cmd.payload).toBeDefined();
+    expect(cmd.payload!.idempotency_key).toEqual(expect.any(String));
+    expect(cmd.payload!.idempotency_key!.length).toBeGreaterThan(5);
   });
 });
 

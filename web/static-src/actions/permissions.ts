@@ -69,8 +69,16 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
     const current = getCurrentRules();
     if (o.previousRule !== undefined) {
       // Restore the pre-optimistic version of THIS rule (overwrite
-      // our optimistic insert with the previous version).
-      setRules(current.map((r) => r.pattern === o.pattern ? o.previousRule! : r));
+      // our optimistic insert with the previous version). If the
+      // pattern is no longer in current state (e.g. an external
+      // delete happened between optimistic and rollback), fall back
+      // to appending so the previousRule isn't lost.
+      const found = current.some((r) => r.pattern === o.pattern);
+      if (found) {
+        setRules(current.map((r) => r.pattern === o.pattern ? o.previousRule! : r));
+      } else {
+        setRules([...current, o.previousRule]);
+      }
     } else {
       // No previous rule — remove our optimistic insert.
       setRules(current.filter((e) => e.pattern !== o.pattern));

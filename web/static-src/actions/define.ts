@@ -159,9 +159,31 @@ export function defineAction<TArgs, TResult>(
       const inflight = dedupeInflight.get(dedupeKey);
       if (inflight !== undefined) {
         // Wrap so the second caller's per-call callbacks still fire.
+        // runOnce never rejects (it resolves to null on error/cancel),
+        // so we must check the resolved value to decide which callback
+        // to fire. The .catch branch is defense-in-depth for unexpected
+        // rejections.
         return (inflight as Promise<TResult | null>).then(
-          (v) => { opts.onSuccess?.(v as TResult, args); opts.onSettled?.(args); return v; },
-          (e) => { opts.onError?.(e, args); opts.onSettled?.(args); return null; },
+          (v) => {
+            try {
+              if (v !== null) {
+                opts.onSuccess?.(v as TResult, args);
+              } else {
+                // Original dispatch errored or was cancelled. We don't
+                // have access to the original error here, so report a
+                // generic dedup-collapsed failure.
+                opts.onError?.({ message: "deduped dispatch did not succeed", code: "dedupe" }, args);
+              }
+            } finally {
+              opts.onSettled?.(args);
+            }
+            return v;
+          },
+          (e) => {
+            try { opts.onError?.(e, args); }
+            finally { opts.onSettled?.(args); }
+            return null;
+          },
         );
       }
     }

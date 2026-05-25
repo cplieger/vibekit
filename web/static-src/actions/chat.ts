@@ -339,7 +339,9 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
           open_files: openFiles as string[],
           attachments: (attachments !== undefined && attachments.length > 0)
             ? (attachments as unknown[]) : undefined,
-          idempotency_key: ctx?.idempotencyKey,
+          // Only include the key if the framework provided one (avoids
+          // sending `idempotency_key: undefined` which serializes inconsistently).
+          ...(ctx?.idempotencyKey !== undefined ? { idempotency_key: ctx.idempotencyKey } : {}),
         },
       },
       { signal, reportSendState: true },  // send-state IS the error surface

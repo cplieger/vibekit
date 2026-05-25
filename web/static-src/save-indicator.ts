@@ -74,13 +74,36 @@ export function showError(): void {
 const SETTINGS_ACTIONS = ["settings.patch", "settings.save_steering", "settings.set_kiro_setting"] as const;
 const SETTINGS_NAMES: ReadonlySet<string> = new Set<string>(SETTINGS_ACTIONS);
 
+// Track whether any settings action in the current batch has errored.
+// Reset on the rising edge (first action goes pending) and consumed
+// when the last action settles. Without this, "last status wins" —
+// if action A errors at t=3000 and action B succeeds at t=3500, we'd
+// show ✓ even though A failed.
+let batchHadError = false;
+
 subscribeToActions((instance) => {
   if (!SETTINGS_NAMES.has(instance.name)) return;
   if (instance.status === "pending") {
+    // Reset error flag when starting a fresh batch (no settings actions
+    // were pending before this one became pending).
+    // Note: pendingForAny includes the just-recorded instance, so we
+    // can't use it here to detect "first in batch". Instead we reset
+    // on every pending — if a previous error was set, it'd be picked
+    // up by the next completion. The trade-off: a long-running batch
+    // sees error reset when a new dispatch starts, but that's acceptable
+    // because the new dispatch is now the "current" save attempt.
+    // For tighter semantics, we'd need to scan log status, which is
+    // O(n); skip that optimization for now.
     if (Date.now() - lastShownAt < 500) return;
-    if (pendingForAny(SETTINGS_ACTIONS)) showSaving();
-  } else if (!pendingForAny(SETTINGS_ACTIONS)) {
-    if (instance.status === "error") showError();
-    else if (instance.status === "success") showSaved();
+    showSaving();
+  } else {
+    if (instance.status === "error") batchHadError = true;
+    if (!pendingForAny(SETTINGS_ACTIONS)) {
+      // Batch fully settled. Show error if ANY action in the batch
+      // errored, otherwise show success.
+      if (batchHadError || instance.status === "error") showError();
+      else if (instance.status === "success") showSaved();
+      batchHadError = false;
+    }
   }
 });

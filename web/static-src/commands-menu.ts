@@ -108,9 +108,17 @@ class CommandsMenuController {
     });
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
-      // Flush pending debounce on Enter even if popover hasn't opened yet.
+      // Flush pending debounce on Enter even if popover hasn't opened yet,
+      // but ONLY if the current input is still in stage-2 format. If the
+      // user typed `/cmd arg` then deleted back to `/cmd`, the pending
+      // debounce holds stale args — flushing them would render irrelevant
+      // options. Cancel instead in that case.
       if (e.key === "Enter" && !this.isOpen && debouncedFetch.isPending()) {
-        debouncedFetch.flush();
+        if (input.value.indexOf(" ") === -1) {
+          debouncedFetch.cancel();
+        } else {
+          debouncedFetch.flush();
+        }
       }
       if (!this.isOpen) return;
       const items = this.cachedItems;
@@ -145,7 +153,7 @@ class CommandsMenuController {
           e.stopPropagation();
           e.stopImmediatePropagation();
           this.closePopover();
-          debouncedFetch.cancel();
+          this.cancelLoad();
           break;
       }
     });
@@ -153,7 +161,7 @@ class CommandsMenuController {
     input.addEventListener("focus", () => { this.clearBlurTimer(); });
 
     input.addEventListener("blur", () => {
-      this.blurTimer = setTimeout(() => { this.closePopover(); debouncedFetch.cancel(); }, 120);
+      this.blurTimer = setTimeout(() => { this.closePopover(); this.cancelLoad(); }, 120);
     });
   }
 
@@ -354,8 +362,21 @@ subscribeToActions((instance) => {
   const args = instance.args as FetchOptionsArgs;
   const result = instance.result as FetchOptionsResult | undefined;
   if (args.chatID !== getActiveId()) return;
-  const options = result?.options;
-  if (!Array.isArray(options) || options.length === 0) return;
+  // Stage-2 race fix: discard results whose partial-text is no longer
+  // a prefix of the current input. Without this, an earlier slow fetch
+  // resolving after a newer one would render stale options.
+  const currentVal = $.promptInput.value;
+  const spaceIdx = currentVal.indexOf(" ");
+  if (spaceIdx === -1) return; // input no longer in stage-2 format
+  const currentCommand = currentVal.slice(0, spaceIdx);
+  const currentPartial = currentVal.slice(spaceIdx + 1);
+  if (args.command !== currentCommand) return;
+  if (!currentPartial.startsWith(args.partial)) return;
+  // Always pass through to showOptions — it handles the empty-options
+  // case by closing the popover (so a previous popover with stale
+  // results is dismissed when the new query returns empty).
+  const options = result?.options ?? [];
+  if (!Array.isArray(options)) return;
   controller.showOptions(args.command, options);
 });
 

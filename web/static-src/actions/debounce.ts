@@ -65,7 +65,24 @@ export function debouncedDispatch<TArgs, TResult>(
       // would fire two concurrent runs of the action within `wait` ms.
       if (now - lastFiredAt < opts.wait) {
         // Track the most-recent suppressed args so flush() can fire them.
+        // Schedule a trailing timer to fire them automatically once the
+        // cooldown expires; otherwise suppressed args would be lost
+        // when flush() isn't explicitly called.
         lastArgs = args;
+        pending = true;
+        if (timer === undefined) {
+          const remaining = opts.wait - (now - lastFiredAt);
+          timer = setTimeout(() => {
+            timer = undefined;
+            pending = false;
+            const a = lastArgs;
+            lastArgs = undefined;
+            if (a !== undefined) {
+              lastFiredAt = Date.now();
+              void action.dispatch(a);
+            }
+          }, remaining);
+        }
         return;
       }
       // Leading-edge: fire immediately, then suppress until quiet.

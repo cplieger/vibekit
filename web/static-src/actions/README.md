@@ -339,7 +339,7 @@ trailing fires within the window).
 For surfaces that need to know about multiple actions:
 
 ```ts
-import { pendingCount, pendingForAny } from "./actions/index.js";
+import { pendingCount, pendingForAny, subscribeToActions } from "./actions/index.js";
 
 // Global app-bar progress indicator:
 const progressBar = $.appProgress;
