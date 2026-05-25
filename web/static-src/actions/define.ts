@@ -99,8 +99,12 @@ function newIdempotencyKey(): string {
 
 /** Defensive JSON.stringify — falls back to String(args) on cycles
  *  or non-serializable values (DOM elements, functions). Used by
- *  the default dedupe key computation. */
+ *  the default dedupe key computation. Primitive shortcut avoids
+ *  JSON.stringify overhead for the common single-value case. */
 function safeStringify(args: unknown): string {
+  if (args === undefined) return "undefined";
+  if (args === null || typeof args === "number" || typeof args === "boolean") return String(args);
+  if (typeof args === "string") return JSON.stringify(args);
   try { return JSON.stringify(args) ?? "undefined"; } catch { return String(args); }
 }
 

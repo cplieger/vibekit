@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError } from "./error.js";
+import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError, isPermanentCode } from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -251,5 +251,44 @@ describe("isRetryableError", () => {
     expect(isRetryableError({ message: "x", code: "send_failed" }, "always")).toBe(false);
     expect(isRetryableError({ message: "x", code: "clipboard" }, "always")).toBe(false);
     expect(isRetryableError({ message: "x", code: "unsupported" }, "always")).toBe(false);
+  });
+});
+
+describe("isPermanentCode", () => {
+  it("returns true for all permanent codes", () => {
+    expect(isPermanentCode("cancelled")).toBe(true);
+    expect(isPermanentCode("send_failed")).toBe(true);
+    expect(isPermanentCode("clipboard")).toBe(true);
+    expect(isPermanentCode("unsupported")).toBe(true);
+    expect(isPermanentCode("server_rejected")).toBe(true);
+  });
+
+  it("returns false for non-permanent codes", () => {
+    expect(isPermanentCode("network")).toBe(false);
+    expect(isPermanentCode("timeout")).toBe(false);
+    expect(isPermanentCode("validation")).toBe(false);
+    expect(isPermanentCode("unknown")).toBe(false);
+  });
+
+  it("returns false for undefined", () => {
+    expect(isPermanentCode(undefined)).toBe(false);
+  });
+});
+
+describe("classifyFetchError — TypeError branch", () => {
+  it("returns network with TypeError message for TypeError", () => {
+    const ac = new AbortController();
+    const te = new TypeError("Failed to fetch");
+    const err = classifyFetchError(te, ac.signal);
+    expect(err.code).toBe("network");
+    expect(err.message).toBe("Failed to fetch");
+    expect(err.cause).toBe(te);
+  });
+
+  it("prefers cancelled over TypeError when signal is aborted", () => {
+    const ac = new AbortController();
+    ac.abort();
+    const err = classifyFetchError(new TypeError("Failed to fetch"), ac.signal);
+    expect(err.code).toBe("cancelled");
   });
 });

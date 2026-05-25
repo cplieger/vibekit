@@ -238,3 +238,98 @@ describe("a11y: aria-expanded on popover triggers", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("true");
   });
 });
+
+describe("a11y: tool-card aria-expanded on toggle", () => {
+  it("tool-toggle button starts with aria-expanded=false and aria-label", async () => {
+    vi.resetModules();
+    vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
+    vi.mock("./editor-openers.js", () => ({ openFile: () => {}, openFileDiff: () => {} }));
+    vi.mock("./tool-group.js", () => ({ trackInProgress: () => {} }));
+
+    const { buildToolCard } = await import("./tool-card.js");
+    const el = buildToolCard({
+      id: "t1",
+      title: "Running: grep",
+      kind: "tool_use",
+      status: "completed",
+      input: { pattern: "foo" },
+      live: false,
+    });
+
+    const toggle = el.querySelector(".tool-toggle") as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-label")).toBe("Toggle tool details");
+  });
+
+  it("tool-toggle aria-expanded toggles on click", async () => {
+    vi.resetModules();
+    vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
+    vi.mock("./editor-openers.js", () => ({ openFile: () => {}, openFileDiff: () => {} }));
+    vi.mock("./tool-group.js", () => ({ trackInProgress: () => {} }));
+
+    const { buildToolCard } = await import("./tool-card.js");
+    const el = buildToolCard({
+      id: "t2",
+      title: "Running: grep",
+      kind: "tool_use",
+      status: "completed",
+      input: { pattern: "bar" },
+      live: false,
+    });
+    document.body.appendChild(el);
+
+    const toggle = el.querySelector(".tool-toggle") as HTMLButtonElement;
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    document.body.removeChild(el);
+  });
+});
+
+describe("a11y: async-button screen reader announcements", () => {
+  it("announces 'Action completed' on success via aria-live region", async () => {
+    vi.useFakeTimers();
+    const { withAsyncFeedback } = await import("./async-button.js");
+    const btn = document.createElement("button");
+    btn.innerHTML = "Go";
+    document.body.appendChild(btn);
+
+    await withAsyncFeedback(btn, () => Promise.resolve());
+
+    // The sr-only live region should exist (use span selector to avoid banner-stack)
+    const liveEl = document.querySelector("span.sr-only[aria-live='polite']") as HTMLElement;
+    expect(liveEl).not.toBeNull();
+
+    // After the 50ms delay, the announcement text is set
+    await vi.advanceTimersByTimeAsync(50);
+    expect(liveEl.textContent).toBe("Action completed");
+
+    await vi.advanceTimersByTimeAsync(1200);
+    document.body.removeChild(btn);
+    vi.useRealTimers();
+  });
+
+  it("announces 'Action failed' on error via aria-live region", async () => {
+    vi.useFakeTimers();
+    const { withAsyncFeedback } = await import("./async-button.js");
+    const btn = document.createElement("button");
+    btn.innerHTML = "Go";
+    document.body.appendChild(btn);
+
+    await withAsyncFeedback(btn, () => Promise.reject(new Error("oops")));
+
+    // Advance past the 50ms announce delay
+    await vi.advanceTimersByTimeAsync(50);
+    const liveEl = document.querySelector("span.sr-only[aria-live='polite']") as HTMLElement;
+    expect(liveEl).not.toBeNull();
+    expect(liveEl.textContent).toBe("Action failed");
+
+    await vi.advanceTimersByTimeAsync(1200);
+    document.body.removeChild(btn);
+    vi.useRealTimers();
+  });
+});

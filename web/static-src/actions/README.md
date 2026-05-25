@@ -229,6 +229,20 @@ formatting. Canonical codes:
 
 Status 0 (no HTTP response) is also retry-eligible under `"network"`.
 
+Transient HTTP statuses (retry-eligible under `"network"` mode):
+
+| Status | Meaning              | Retry-eligible |
+|--------|----------------------|----------------|
+| 408    | Request Timeout      | Yes            |
+| 429    | Too Many Requests    | Yes            |
+| 502    | Bad Gateway          | Yes            |
+| 503    | Service Unavailable  | Yes            |
+| 504    | Gateway Timeout      | Yes            |
+
+Non-transient statuses (e.g. 400, 401, 403, 404, 409) are NOT
+retry-eligible under `"network"` — they indicate permanent client
+or server-side rejections that re-dispatching won't fix.
+
 Additionally, actions may define domain-specific codes for internal
 classification (e.g. `"draft_failed"`, `"run_plan_failed"`). These
 are NOT retry-eligible under `retryable: "network"` — only
@@ -263,6 +277,18 @@ Cancellation behaves like an error for the rollback hook (the
 optimistic mutation IS undone) but does NOT fire an error toast
 (cancellation is the user's intent, not a failure).
 
+### `action.isInflight`
+
+A convenience boolean getter on the action object. Returns `true`
+when at least one dispatch is currently in-flight (pending), `false`
+otherwise. Reflects cancellation immediately — calling `cancel()`
+sets it to `false` without waiting for the scope chain to advance.
+
+```ts
+const save = defineAction({ name: "doc.save", run: ... });
+saveBtn.disabled = save.isInflight;  // disable while saving
+```
+
 ## Retry button
 
 Set `retryable: 'network'` to surface a Retry button on error toasts
@@ -283,6 +309,36 @@ export const listFiles = apiAction<void, FileEntry[]>({
   error: "Couldn't list files",
 });
 ```
+
+### `retryArgs` — fresh args at retry-click time
+
+When the Retry button is clicked, the framework normally re-dispatches
+with a `structuredClone` of the original args. This is stale when args
+contain DOM references, live getters, or mutable arrays that change
+between the original dispatch and the retry click.
+
+Set `retryArgs` to compute fresh args at click time:
+
+```ts
+export const deleteSelected = apiAction<{ listEl: HTMLElement; names: string[] }, void>({
+  name: "files.delete_selected",
+  retryable: "network",
+  retryArgs: (original) => {
+    // Re-read the current selection from the DOM at retry time
+    const listEl = document.querySelector<HTMLElement>("#file-list");
+    if (!listEl) return null;  // suppress retry if element gone
+    const names = [...listEl.querySelectorAll(".selected")].map(el => el.textContent!);
+    return { listEl, names };
+  },
+  request: (args) => ({ method: "POST", path: "/api/files/delete", body: { names: args.names } }),
+  error: "Couldn't delete files",
+});
+```
+
+- Return `null` from `retryArgs` to suppress the retry (click becomes a no-op).
+- If `retryArgs` throws, the retry is silently suppressed (no crash).
+- The `original` parameter is a best-effort clone of the original args
+  (for extracting stable identifiers like IDs or paths).
 
 ## Auto-retry with backoff
 
@@ -343,21 +399,26 @@ sequentially).
 
 ## Per-dispatch callbacks
 
-`DispatchOptions` accepts `onSuccess` / `onError` / `onSettled` for
-callsite-specific reactions without bloating the action definition:
+`DispatchOptions` accepts `onSuccess` / `onError` / `onCancel` /
+`onSettled` / `onRetryAttempt` for callsite-specific reactions
+without bloating the action definition:
 
 ```ts
 const result = await saveDraftAction.dispatch(draft, {
   onSuccess: (result, args) => editor.focus(),
   onError:   (err, args) => editor.markDirty(),
+  onCancel:  (args) => editor.clearProgress(),
   onSettled: (args) => closeProgressDialog(),
+  onRetryAttempt: (info, args) => console.log(`Retry ${info.attempt}/${info.maxAttempts}`),
 });
 ```
 
 Signatures:
 - `onSuccess(result: TResult, args: TArgs)` — fires only on success
 - `onError(err: ActionErrorLike, args: TArgs)` — fires only on error (NOT cancellation)
+- `onCancel(args: TArgs)` — fires only on cancellation (NOT error). Use to distinguish user-initiated abort from failure without inspecting `onError`'s absence.
 - `onSettled(args: TArgs)` — fires for success, error, AND cancellation
+- `onRetryAttempt(info: RetryAttemptInfo, args: TArgs)` — fires before each retry attempt (not the initial attempt). `info` contains `{ attempt, maxAttempts, error }`.
 
 Callbacks fire AFTER the action-level toast emission. `onSettled`
 fires in the `finally` block, so it runs even if `onSuccess` or

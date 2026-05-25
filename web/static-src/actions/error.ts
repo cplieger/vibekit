@@ -117,7 +117,8 @@ export function toActionError(e: unknown): ActionErrorLike {
  *  1. Signal already aborted → "cancelled" (user or framework cancelled)
  *  2. DOMException TimeoutError → "timeout"
  *  3. DOMException AbortError with live signal → "timeout" (AbortSignal.timeout)
- *  4. Everything else → "network"
+ *  4. TypeError → "network" (browsers throw TypeError for network failures)
+ *  5. Everything else → "network"
  */
 export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError {
   if (signal.aborted) {
@@ -130,6 +131,9 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
     if (e.name === "AbortError") {
       return new ActionError("Request timed out", { code: "timeout", cause: e });
     }
+  }
+  if (e instanceof TypeError) {
+    return new ActionError(e.message, { code: "network", cause: e });
   }
   const msg = e instanceof Error ? e.message : "network error";
   return new ActionError(msg, { code: "network", cause: e });
@@ -156,6 +160,14 @@ export function isTransientStatus(status: number | undefined): boolean {
  *  of the retryable mode. These indicate the operation was explicitly
  *  rejected or is semantically invalid. */
 const PERMANENT_CODES = new Set(["cancelled", "send_failed", "clipboard", "unsupported", "server_rejected"]);
+
+/** True when the error code represents a permanent failure that should
+ *  never be retried (cancelled, send_failed, clipboard, unsupported,
+ *  server_rejected). Used by external callers that need to distinguish
+ *  permanent from transient failures for UI decisions. */
+export function isPermanentCode(code: string | undefined): boolean {
+  return code !== undefined && PERMANENT_CODES.has(code);
+}
 
 /**
  * Determine whether an error qualifies for retry under the given mode.
