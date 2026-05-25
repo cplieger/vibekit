@@ -97,16 +97,34 @@ function generateIdempotencyKey(): string {
   return `${ts}-${rnd}`;
 }
 
+/** Monotonic counter for symbol identity in dedupe keys. Symbols with
+ *  the same description are distinct values but String(sym) is identical,
+ *  so we assign each unique symbol a stable numeric ID. */
+let _symbolCounter = 0;
+const _symbolMap = new Map<symbol, number>();
+function symbolId(sym: symbol): number {
+  let id = _symbolMap.get(sym);
+  if (id === undefined) { id = ++_symbolCounter; _symbolMap.set(sym, id); }
+  return id;
+}
+
 /** Defensive JSON.stringify — falls back to String(args) on cycles
  *  or non-serializable values (DOM elements, functions). Used by
  *  the default dedupe key computation. Primitive shortcut avoids
- *  JSON.stringify overhead for the common single-value case. */
+ *  JSON.stringify overhead for the common single-value case.
+ *  Uses a custom replacer to distinguish undefined from null in
+ *  arrays/objects (JSON.stringify converts both to "null"). */
 function safeStringify(args: unknown): string {
   if (args === undefined) return "undefined";
   if (args === null || typeof args === "number" || typeof args === "boolean") return String(args);
   if (typeof args === "string") return JSON.stringify(args);
-  if (typeof args === "bigint" || typeof args === "symbol") return String(args);
-  try { return JSON.stringify(args) ?? "undefined"; } catch { return String(args); }
+  if (typeof args === "bigint") return `${String(args)}n`;
+  if (typeof args === "symbol") return `@@sym${String(symbolId(args))}`;
+  try {
+    return JSON.stringify(args, (_key, value: unknown) =>
+      value === undefined ? "__undef__" : value,
+    ) ?? "undefined";
+  } catch { return String(args); }
 }
 
 /** Resolve a ToastSpec to its message string. Returns null when
@@ -846,6 +864,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
  *  a fresh state without serializing behind a previous test's chain. */
 export function _resetForTest(): void {
   instanceCounter = 0;
+  _symbolCounter = 0;
+  _symbolMap.clear();
   scopeChains.clear();
   activeDedupes.clear();
 }

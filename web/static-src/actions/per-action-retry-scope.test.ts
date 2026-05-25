@@ -178,7 +178,7 @@ describe("forge.connect_pat — retry + idempotency", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
-    const p = connectPAT.dispatch({ kind: "github" as any, host: "github.com", token: "ghp_xxx" });
+    const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
     await vi.advanceTimersByTimeAsync(300);
     const r = await p;
     expect(r).toEqual({ status: "ok" });

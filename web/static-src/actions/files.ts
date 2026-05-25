@@ -6,6 +6,7 @@ import { RETRY_STANDARD } from "./types.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
+import { truncate } from "../strings.js";
 
 // --- Shared types for create actions ---
 
@@ -57,7 +58,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   }),
   retryable: "network",
   retry: RETRY_STANDARD,
-  error: (args) => `Couldn't rename \u201c${args.original.length > 40 ? args.original.slice(0, 37) + "\u2026" : args.original}\u201d`,
+  error: (args) => `Couldn't rename \u201c${truncate(args.original)}\u201d`,
 });
 
 // --- files.delete ---

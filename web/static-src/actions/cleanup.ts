@@ -63,7 +63,9 @@ export function registerCleanup(fn: () => void): () => void {
  *  individual hooks are caught + logged; one bad hook does not stop
  *  the rest from running. */
 export function cancelAllPending(): void {
-  for (const action of [...trackedActions]) {
+  // trackedActions is safe to iterate directly: action.cancel() does
+  // not modify the Set (only _registerAction adds, _resetForTest clears).
+  for (const action of trackedActions) {
     try {
       action.cancel();
     } catch (e) {

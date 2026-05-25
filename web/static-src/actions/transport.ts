@@ -80,10 +80,9 @@ export function transportAction<TArgs, TOp = unknown>(
         if (r.code === "network") {
           throw new ActionError(r.error ?? "network error", { status: r.status, code: "network" });
         }
-        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
-          status: r.status,
-          ...(r.code !== undefined ? { code: r.code } : {}),
-        });
+        const errOpts: { status: number; code?: string } = { status: r.status };
+        if (r.code !== undefined) errOpts.code = r.code;
+        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
       }
       return undefined;
     },

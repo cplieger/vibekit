@@ -116,15 +116,17 @@ async function executeRequest<T>(
       const body: unknown = await r.json();
       if (hasErrorString(body)) serverError = body.error;
       if (typeof body === "object" && body !== null && "code" in body) {
-        const { code } = body as { code: unknown };
+        const code = (body as Record<"code", unknown>).code;
         if (typeof code === "string") serverCode = code;
       }
     } catch {
       // Body wasn't JSON or parse failed — leave serverError empty.
     }
+    const opts: { status: number; code?: string } = { status: r.status };
+    if (serverCode !== undefined) opts.code = serverCode;
     throw new ActionError(
       serverError !== "" ? serverError : `HTTP ${String(r.status)}`,
-      { status: r.status, ...(serverCode !== undefined ? { code: serverCode } : {}) },
+      opts,
     );
   }
   // 204 No Content: no body to parse, regardless of method.

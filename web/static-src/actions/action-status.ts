@@ -11,15 +11,16 @@
 //     settings-* action).
 //
 // Lifecycle:
-//   - First call to `actionStatus(name)` registers a lazy listener on
-//     the registry. Subsequent calls return the cached snapshot.
+//   - First call to `actionStatus(name)` registers a per-name listener
+//     on the registry via subscribeByName. Subsequent calls return the
+//     cached snapshot.
 //   - The snapshot is mutated in-place so callers holding a reference
 //     see updates without resubscribing. (DO NOT mutate the returned
 //     object externally.)
 // ---------------------------------------------------------------------------
 
-import type { ActionErrorLike, ActionInstance, RegistryListener } from "./types.js";
-import { subscribe, pendingFor } from "./registry.js";
+import type { ActionErrorLike, ActionInstance } from "./types.js";
+import { subscribeByName, pendingFor } from "./registry.js";
 
 export interface ActionStatus {
   /** Number of currently-pending instances of this action name. */
@@ -34,24 +35,26 @@ export interface ActionStatus {
   /** Timestamp of the most recent terminal transition (success / error /
    *  cancelled). 0 if no terminal yet. */
   lastSettledAt: number;
+  /** Timestamp of the most recent cancellation. 0 if never cancelled.
+   *  Distinguishes "last settled was a cancel" from success/error without
+   *  requiring callers to compare timestamps across fields. */
+  lastCancelledAt: number;
 }
 
 const snapshots = new Map<string, ActionStatus>();
+const unsubs = new Map<string, () => void>();
 const MAX_SNAPSHOTS = 200;
-let listenerInstalled = false;
-let unsubscribe: (() => void) | null = null;
 
-const registryListener: RegistryListener = (inst: ActionInstance): void => {
-  const snap = snapshots.get(inst.name);
-  if (snap === undefined) return; // not watched
-  // Update last-dispatched for any transition.
+function handleEvent(name: string, inst: ActionInstance): void {
+  const snap = snapshots.get(name);
+  if (snap === undefined) return;
   if (inst.dispatchedAt > snap.lastDispatchedAt) {
     snap.lastDispatchedAt = inst.dispatchedAt;
   }
   // Always recompute pending from the registry's authoritative index.
   // Avoids double-count when actionStatus() is first called from within
   // a listener during the same record() notification that fires us.
-  snap.pending = pendingFor(inst.name).length;
+  snap.pending = pendingFor(name).length;
   switch (inst.status) {
     case "success":
       snap.lastSuccess = inst.result;
@@ -63,16 +66,19 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
       break;
     case "cancelled":
       snap.lastSettledAt = inst.completedAt ?? Date.now();
+      snap.lastCancelledAt = inst.completedAt ?? Date.now();
       break;
   }
-};
+}
 
 /**
  * Get a live, mutable snapshot of an action's status. The returned
  * object updates in-place as the action's lifecycle progresses; do
  * NOT mutate it externally.
  *
- * First call for a given name lazily installs a registry listener.
+ * First call for a given name lazily installs a per-name registry
+ * listener via subscribeByName (O(1) per record() call vs the previous
+ * global subscribe which was O(n) across all watched names).
  * Subsequent calls return the cached (same-reference) snapshot.
  *
  * @param name - Action name to observe (e.g. "settings.patch").
@@ -81,41 +87,46 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
  */
 export function actionStatus(name: string): ActionStatus {
   let snap = snapshots.get(name);
-  if (snap === undefined) {
-    // Seed pending count from the registry so callers that subscribe
-    // AFTER an action is already in-flight see the correct count.
-    const pending = pendingFor(name);
-    let lastDispatchedAt = 0;
-    for (let i = 0; i < pending.length; i++) {
-      if (pending[i]!.dispatchedAt > lastDispatchedAt) lastDispatchedAt = pending[i]!.dispatchedAt;
-    }
-    snap = {
-      pending: pending.length,
-      lastDispatchedAt,
-      lastSettledAt: 0,
-    };
-    snapshots.set(name, snap);
-    // Evict oldest idle entry when over cap to bound memory.
-    if (snapshots.size > MAX_SNAPSHOTS) {
-      for (const [k, v] of snapshots) {
-        if (k !== name && v.pending === 0) { snapshots.delete(k); break; }
+  if (snap !== undefined) return snap;
+
+  // Seed pending count from the registry so callers that subscribe
+  // AFTER an action is already in-flight see the correct count.
+  const pending = pendingFor(name);
+  let lastDispatchedAt = 0;
+  for (let i = 0; i < pending.length; i++) {
+    if (pending[i]!.dispatchedAt > lastDispatchedAt) lastDispatchedAt = pending[i]!.dispatchedAt;
+  }
+  snap = {
+    pending: pending.length,
+    lastDispatchedAt,
+    lastSettledAt: 0,
+    lastCancelledAt: 0,
+  };
+  snapshots.set(name, snap);
+
+  // Per-name subscription: only fires for this action's events.
+  const unsub = subscribeByName(name, (inst) => handleEvent(name, inst));
+  unsubs.set(name, unsub);
+
+  // Evict oldest idle entry when over cap to bound memory.
+  if (snapshots.size > MAX_SNAPSHOTS) {
+    for (const [k, v] of snapshots) {
+      if (k !== name && v.pending === 0) {
+        snapshots.delete(k);
+        const u = unsubs.get(k);
+        if (u !== undefined) { u(); unsubs.delete(k); }
+        break;
       }
     }
-  }
-  // Lazy listener install: only when at least one consumer asks.
-  if (!listenerInstalled) {
-    unsubscribe = subscribe(registryListener);
-    listenerInstalled = true;
   }
   return snap;
 }
 
-/** Test-only: clear snapshots so tests don't bleed state. Also resets
- *  the listener-installed flag so a freshly-reset registry will get a
- *  new subscription on the next actionStatus() call. */
+/** Test-only: clear snapshots so tests don't bleed state. Also
+ *  unsubscribes all per-name listeners so a freshly-reset registry
+ *  doesn't accumulate stale subscriptions. */
 export function _resetForTest(): void {
-  unsubscribe?.();
-  unsubscribe = null;
+  for (const unsub of unsubs.values()) unsub();
+  unsubs.clear();
   snapshots.clear();
-  listenerInstalled = false;
 }

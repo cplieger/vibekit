@@ -28,8 +28,8 @@ const MAX_LOG_HARD = 1000;
 //            AND O(1) log-slot overwrites (no backward scan needed).
 // pendingByName: name -> Set<id> for O(1) pendingFor/pendingForAny.
 const log: (ActionInstance | null)[] = [];
-interface IdEntry { instance: ActionInstance; index: number }
-const idMap = new Map<string, IdEntry>();
+interface LogSlot { instance: ActionInstance; index: number }
+const idMap = new Map<string, LogSlot>();
 const listeners = new Set<RegistryListener>();
 // Per-name listeners: subscribers that only care about a single action
 // name. Avoids O(n) fan-out in record() for name-filtered consumers
@@ -169,12 +169,7 @@ export function record(instance: ActionInstance): void {
   // Notify listeners. Iterate the Set directly — safe because we
   // catch per-listener errors. Set iteration semantics: entries
   // deleted during iteration are not re-visited; entries added during
-  // iteration ARE visited. This matches the previous snapshot behavior
-  // for the removal case (unsubscribe mid-iteration is safe) while
-  // avoiding an array allocation on every record() call. The add-
-  // during-iteration case (new subscriber sees current event) is an
-  // acceptable semantic change — the previous code prevented it, but
-  // no production code relies on that guarantee.
+  // iteration ARE visited.
   for (const fn of listeners) {
     try {
       fn(instance);
@@ -297,16 +292,29 @@ export function pendingForAny(names: readonly string[]): boolean {
  * navigating"), test assertions, one-shot progress indicators.
  *
  * @param name - Action name to observe (e.g. "settings.patch").
+ * @param signal - Optional AbortSignal. When aborted, the promise rejects
+ *   with an AbortError and the listener is cleaned up. Prevents leaks when
+ *   the action may never fire (e.g. component unmount before dispatch).
  * @returns A promise that resolves with the first terminal ActionInstance.
  */
-export function onceSettled(name: string): Promise<ActionInstance> {
-  return new Promise<ActionInstance>((resolve) => {
+export function onceSettled(name: string, signal?: AbortSignal): Promise<ActionInstance> {
+  return new Promise<ActionInstance>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("aborted", "AbortError"));
+      return;
+    }
     const unsub = subscribeByName(name, (inst) => {
       if (inst.status === "success" || inst.status === "error" || inst.status === "cancelled") {
         unsub();
+        if (signal !== undefined) signal.removeEventListener("abort", onAbort);
         resolve(inst);
       }
     });
+    function onAbort(): void {
+      unsub();
+      reject(new DOMException("aborted", "AbortError"));
+    }
+    if (signal !== undefined) signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

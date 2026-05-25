@@ -217,6 +217,7 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
     retryBtn.type = "button";
     retryBtn.className = "vk-toast-retry";
     retryBtn.textContent = retry.label ?? "Retry";
+    retryBtn.setAttribute("aria-label", retry.label ?? "Retry action");
     retryBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       // Capture before dismissing in case onClick throws.

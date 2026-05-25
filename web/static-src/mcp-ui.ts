@@ -133,19 +133,24 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
 function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
   const dot = document.createElement("span");
   dot.className = "mcp-dot";
+  dot.setAttribute("role", "img");
   if (!s.enabled) {
     dot.classList.add("disabled");
     dot.title = "Disabled";
+    dot.setAttribute("aria-label", `${s.name}: disabled`);
   } else if (st === undefined) {
     dot.classList.add("idle");
     dot.title = "Not yet connected — start a chat to initialise";
+    dot.setAttribute("aria-label", `${s.name}: idle`);
   } else {
     const meta = STATUS_META[st.state] ?? STATUS_META.idle;
     dot.classList.add(meta.css);
     if (st.state === "failed" && st.error !== "") {
       dot.title = `Failed to initialise: ${st.error}`;
+      dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
     } else {
       dot.title = meta.title;
+      dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
     }
   }
   return dot;

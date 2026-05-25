@@ -7,6 +7,7 @@
 
 import { apiAction } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
+import { truncate } from "../strings.js";
 
 // --- Wire types ---
 
@@ -26,7 +27,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   error: (args) => args.files.length === 1
-    ? `Couldn't stage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    ? `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't stage ${String(args.files.length)} files`,
   retryable: "network",
   retry: RETRY_STANDARD,
@@ -38,7 +39,7 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   error: (args) => args.files.length === 1
-    ? `Couldn't discard \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    ? `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't discard ${String(args.files.length)} files`,
   // Destructive: timed-out discard may have succeeded server-side
   retryable: false,
@@ -50,7 +51,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   error: (args) => args.files.length === 1
-    ? `Couldn't unstage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    ? `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't unstage ${String(args.files.length)} files`,
   retryable: "network",
   retry: RETRY_STANDARD,
@@ -104,7 +105,7 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
   success: "Committed",
   error: (args) => {
     const line = args.message.split("\n")[0] ?? "";
-    const short = line.length > 40 ? line.slice(0, 37) + "\u2026" : line;
+    const short = truncate(line);
     return short !== "" ? `Commit failed: \u201c${short}\u201d` : "Commit failed";
   },
   // Not retryable: a timed-out commit may have succeeded server-side;

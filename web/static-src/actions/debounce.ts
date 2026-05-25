@@ -26,8 +26,9 @@ export interface DebouncedDispatch<TArgs> {
 
   /** Fire immediately with the most-recent args (or args supplied
    *  here, overriding the pending). No-op if nothing is pending and
-   *  no args supplied. */
-  flush(args?: TArgs): void;
+   *  no args supplied. Returns the dispatch promise so callers can
+   *  await the result (e.g. "save on Enter, then navigate"). */
+  flush(args?: TArgs): Promise<unknown> | undefined;
 
   /** Discard any pending dispatch without firing. Useful on blur,
    *  navigation, or when a different code path makes the pending
@@ -133,7 +134,7 @@ export function debouncedDispatch<TArgs, TResult>(
     }
   }
 
-  fn.flush = (args?: TArgs): void => {
+  fn.flush = (args?: TArgs): Promise<unknown> | undefined => {
     if (timer !== undefined) {
       clearTimeout(timer);
       timer = undefined;
@@ -146,8 +147,9 @@ export function debouncedDispatch<TArgs, TResult>(
       // new cooldown window). In trailing mode, lastFiredAt is never
       // read so we skip the assignment to avoid a misleading dead write.
       if (opts.leading === true) lastFiredAt = Date.now();
-      void action.dispatch(a);
+      return action.dispatch(a);
     }
+    return undefined;
   };
 
   fn.cancel = (): void => {

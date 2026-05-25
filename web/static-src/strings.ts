@@ -21,3 +21,8 @@ export function escAttr(t: string): string {
 export function humanName(s: string): string {
   return s.replace(/[-_]/g, " ");
 }
+
+/** Truncate a string to `max` characters with an ellipsis (…). */
+export function truncate(s: string, max = 40): string {
+  return s.length > max ? s.slice(0, max - 3) + "\u2026" : s;
+}

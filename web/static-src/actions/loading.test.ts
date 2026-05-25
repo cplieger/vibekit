@@ -669,9 +669,9 @@ describe("bindLoadingCluster", () => {
       run: () => new Promise<void>((r) => { resolveRun = r; }),
     });
     const cb = vi.fn();
-    const unbind = bindLoadingCluster(["test.cluster_unsub"], cb);
+    const handle = bindLoadingCluster(["test.cluster_unsub"], cb);
     expect(cb).toHaveBeenCalledTimes(1);
-    unbind();
+    handle.dispose();
     const p = action.dispatch({});
     // No further calls after unsubscribe
     expect(cb).toHaveBeenCalledTimes(1);
@@ -682,9 +682,9 @@ describe("bindLoadingCluster", () => {
 
   it("handles empty actionNames array", () => {
     const cb = vi.fn();
-    const unbind = bindLoadingCluster([], cb);
+    const handle = bindLoadingCluster([], cb);
     expect(cb).toHaveBeenCalledWith({ pending: false, activeNames: [] });
-    unbind(); // no-op, should not throw
+    handle.dispose(); // no-op, should not throw
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });
@@ -796,7 +796,7 @@ describe("bindLoadingCluster — edge cases", () => {
       run: () => new Promise<void>((r) => { resolveRun = r; }),
     });
     let callCount = 0;
-    const unbind = bindLoadingCluster(["test.cluster_throw"], () => {
+    const handle = bindLoadingCluster(["test.cluster_throw"], () => {
       callCount++;
       if (callCount === 2) throw new Error("onChange exploded");
     });
@@ -809,7 +809,7 @@ describe("bindLoadingCluster — edge cases", () => {
     await p;
     // callCount=3 from success transition — still fires despite prior throw
     expect(callCount).toBe(3);
-    unbind();
+    handle.dispose();
   });
 
   it("handles action already pending at bind time", async () => {
@@ -860,10 +860,10 @@ describe("bindLoadingCluster — edge cases", () => {
       run: () => new Promise<void>((r) => { resolveRun = r; }),
     });
     let callCount = 0;
-    let unbindFn: (() => void) | undefined;
-    unbindFn = bindLoadingCluster(["test.cluster_reentrant"], () => {
+    let clusterHandle: ReturnType<typeof bindLoadingCluster> | undefined;
+    clusterHandle = bindLoadingCluster(["test.cluster_reentrant"], () => {
       callCount++;
-      if (callCount === 2) unbindFn!(); // unsubscribe during pending notification
+      if (callCount === 2) clusterHandle!.dispose(); // unsubscribe during pending notification
     });
     expect(callCount).toBe(1);
     const p = action.dispatch({});

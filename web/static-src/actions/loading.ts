@@ -386,11 +386,12 @@ export interface ClusterState {
  * @param actionNames - Action names in the cluster.
  * @param onChange - Invoked synchronously on every transition with the
  *   current cluster state. Called once immediately with the initial state.
- * @returns An unsubscribe function.
+ * @returns A handle with `dispose()` and a `pending` getter for
+ *   synchronous state queries.
  *
  * @example
  * ```ts
- * const unbind = bindLoadingCluster(
+ * const cluster = bindLoadingCluster(
  *   ["settings.patch", "settings.save_steering"],
  *   ({ pending, activeNames }) => {
  *     saveBtn.disabled = pending || !formValid;
@@ -400,18 +401,24 @@ export interface ClusterState {
  *       : "Idle";
  *   },
  * );
+ * // Synchronous query:
+ * if (cluster.pending) { ... }
+ * // Teardown:
+ * cluster.dispose();
  * ```
  */
 export function bindLoadingCluster(
   actionNames: readonly string[],
   onChange: (state: ClusterState) => void,
-): () => void {
+): ClusterHandle {
   if (actionNames.length === 0) {
     onChange({ pending: false, activeNames: [] });
-    return () => {};
+    return { get pending() { return false; }, dispose() {} };
   }
 
   let disposed = false;
+  let prevPending = false;
+  let prevActiveCount = 0;
 
   const notify = (): void => {
     if (disposed) return;
@@ -419,16 +426,45 @@ export function bindLoadingCluster(
     for (let i = 0; i < actionNames.length; i++) {
       if (isPending(actionNames[i]!)) activeNames.push(actionNames[i]!);
     }
-    onChange({ pending: activeNames.length > 0, activeNames });
+    const nowPending = activeNames.length > 0;
+    // Skip notification when the pending state and active count are
+    // unchanged — avoids redundant re-renders in callers that drive
+    // DOM updates from onChange (common with multi-action clusters).
+    if (nowPending === prevPending && activeNames.length === prevActiveCount) return;
+    prevPending = nowPending;
+    prevActiveCount = activeNames.length;
+    // Re-check disposed: onChange from a prior notification in the same
+    // record() cycle may have called dispose() (self-unsubscribe pattern).
+    if (disposed) return;
+    onChange({ pending: nowPending, activeNames });
   };
 
-  // Initial state.
-  notify();
+  // Initial state — always fires (no prior state to compare against).
+  const initialActive: string[] = [];
+  for (let i = 0; i < actionNames.length; i++) {
+    if (isPending(actionNames[i]!)) initialActive.push(actionNames[i]!);
+  }
+  prevPending = initialActive.length > 0;
+  prevActiveCount = initialActive.length;
+  onChange({ pending: prevPending, activeNames: initialActive });
 
   const unsubs = actionNames.map((name) => subscribeByName(name, notify));
 
-  return () => {
-    disposed = true;
-    for (const u of unsubs) u();
+  return {
+    get pending() { return prevPending; },
+    dispose() {
+      disposed = true;
+      for (const u of unsubs) u();
+    },
   };
+}
+
+/** Handle returned by `bindLoadingCluster`. */
+export interface ClusterHandle {
+  /** True when at least one action in the cluster is currently pending.
+   *  Synchronous — reads the last-computed state without re-querying
+   *  the registry. */
+  readonly pending: boolean;
+  /** Unsubscribe from all registry listeners. */
+  dispose(): void;
 }

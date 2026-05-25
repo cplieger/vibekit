@@ -45,12 +45,12 @@ export { subscribe as subscribeToActions, subscribeByName, pendingCount, pending
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
 export { bindLoadingState, bindLoadingStateMulti, bindLoadingCluster, bindDisabledPattern } from "./loading.js";
-export type { ClusterState, DisabledPatternOptions, DisabledPatternHandle } from "./loading.js";
+export type { ClusterState, ClusterHandle, DisabledPatternOptions, DisabledPatternHandle } from "./loading.js";
 
 // Cleanup hooks: register raw (non-action) cleanup for fetch
 // controllers / timers; the framework auto-installs a beforeunload
 // listener that drains everything.
-export { registerCleanup } from "./cleanup.js";
+export { registerCleanup, cancelAllPending } from "./cleanup.js";
 
 // Live console logger: subscribes to the registry and emits
 // console.error for every action that fails. Wired once at app init.

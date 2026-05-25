@@ -84,6 +84,28 @@ describe("safeStringify — bigint and symbol dedupe keys", () => {
     expect(r1).toBe("result-Symbol(a)");
     expect(r2).toBe("result-Symbol(b)");
   });
+
+  it("two symbols with SAME description produce different dedupe keys", async () => {
+    let runCount = 0;
+    const sym1 = Symbol("dup");
+    const sym2 = Symbol("dup");
+    const action = defineAction<symbol, string>({
+      name: "test.symbol_same_desc",
+      dedupe: true,
+      run: async (args) => {
+        runCount++;
+        return `result-${String(args)}`;
+      },
+    });
+    const [r1, r2] = await Promise.all([
+      action.dispatch(sym1),
+      action.dispatch(sym2),
+    ]);
+    // Same description but different symbols → different dedupe keys → both run
+    expect(runCount).toBe(2);
+    expect(r1).toBe("result-Symbol(dup)");
+    expect(r2).toBe("result-Symbol(dup)");
+  });
 });
 
 describe("subscribeByName — exported primitive", () => {

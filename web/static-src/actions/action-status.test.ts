@@ -133,6 +133,23 @@ describe("actionStatus", () => {
     await p;
   });
 
+  it("lastCancelledAt updates on cancellation", async () => {
+    const action = defineAction({
+      name: "test.cancel_ts",
+      run: (_args, signal) =>
+        new Promise<void>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    const s = actionStatus("test.cancel_ts");
+    expect(s.lastCancelledAt).toBe(0);
+    const p = action.dispatch({});
+    action.cancel();
+    await p;
+    expect(s.lastCancelledAt).toBeGreaterThan(0);
+    expect(s.lastSettledAt).toBe(s.lastCancelledAt);
+  });
+
   it("does not double-count pending when actionStatus is called from within a listener", async () => {
     // Simulate: another listener calls actionStatus during a pending notification
     let resolve!: () => void;
