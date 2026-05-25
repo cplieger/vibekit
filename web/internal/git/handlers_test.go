@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -579,7 +580,7 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	// it. Drop this and CVE-2017-1000117 class issues come back.
 	wantArgPair := []string{"-c", "protocol.ext.allow=never"}
 	foundExt := false
-	for i := 0; i < len(cmd.Args)-1; i++ {
+	for i := range len(cmd.Args) - 1 {
 		if cmd.Args[i] == wantArgPair[0] && cmd.Args[i+1] == wantArgPair[1] {
 			foundExt = true
 			break
@@ -599,13 +600,7 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		t.Errorf("gitExec arg[0] = %q, want binary ending in 'git'", cmd.Args[0])
 	}
 	// "status" must appear somewhere after the prefix.
-	foundStatus := false
-	for _, a := range cmd.Args[1:] {
-		if a == "status" {
-			foundStatus = true
-			break
-		}
-	}
+	foundStatus := slices.Contains(cmd.Args[1:], "status")
 	if !foundStatus {
 		t.Errorf("gitExec args missing 'status' subcommand: %v", cmd.Args)
 	}
