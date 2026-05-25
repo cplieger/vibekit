@@ -14,7 +14,7 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { signal, batch } from "./signals.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 // --- Reactive version counter: effects that read this re-run on mutation ---
 export const version = signal(0);

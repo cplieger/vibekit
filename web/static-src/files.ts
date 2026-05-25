@@ -166,6 +166,7 @@ export { loadDir as loadFileBrowser };
 // --- Path input ---
 
 function initPathInput(): void {
+  $.fbPath.setAttribute("aria-label", "File browser path");
   initEditablePath($.fbPath, {
     onNavigate: (target) => navigate(target),
     getDisplayPath: () => displayPath(state.currentPath),

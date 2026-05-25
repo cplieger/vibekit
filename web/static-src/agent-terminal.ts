@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "./bus.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 interface AgentTerm {
   id: string;

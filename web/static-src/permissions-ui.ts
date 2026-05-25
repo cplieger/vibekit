@@ -18,7 +18,7 @@ import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to

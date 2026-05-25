@@ -8,7 +8,7 @@ import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath, fileStates } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 registerCleanup(() => suggestResolution.cancel());
 

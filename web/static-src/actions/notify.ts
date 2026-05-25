@@ -50,7 +50,7 @@ export const registerPushAction = defineAction<void, ServiceWorkerRegistration>(
     }
     if (posted === null) {
       try { await sub.unsubscribe(); } catch { /* best-effort */ }
-      throw new ActionError("Server rejected subscription", { code: "network" });
+      throw new ActionError("Server rejected subscription");
     }
 
     return reg;

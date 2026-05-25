@@ -21,7 +21,7 @@ import {
   clearAgentLineCache,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 // --- Active-load cancellation ---
 

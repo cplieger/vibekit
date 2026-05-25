@@ -11,8 +11,7 @@
 
 import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
-import { registerCleanup } from "./actions/cleanup.js";
-import { bindLoadingState } from "./actions/index.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
@@ -38,10 +37,10 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   pop.className = "git-branch-popover";
   pop.setAttribute("role", "menu");
   pop.innerHTML = `
-    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off">
-    <div class="git-branch-popover-list" role="none">Loading…</div>
+    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off" aria-label="Filter branches">
+    <div class="git-branch-popover-list" role="group" aria-label="Branches">Loading…</div>
     <form class="git-branch-popover-create">
-      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off">
+      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off" aria-label="New branch name">
     </form>
   `;
   document.body.appendChild(pop);
@@ -99,10 +98,11 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   });
   popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
 
-  // Close on outside click + Escape.
+  // Close on outside click + Escape + arrow nav.
   setTimeout(() => {
     document.addEventListener("click", outsideClickHandler);
     document.addEventListener("keydown", escapeHandler);
+    document.addEventListener("keydown", arrowNavHandler);
   }, 0);
 }
 

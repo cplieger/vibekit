@@ -10,6 +10,7 @@ import {
   pendingFor,
   pendingCount,
   pendingForAny,
+  isPending,
   _resetForTest,
 } from "./registry.js";
 import type { ActionInstance } from "./types.js";
@@ -299,5 +300,83 @@ describe("pendingN tracking", () => {
     // Transition back to pending (e.g. retry)
     record(makeInstance({ id: "t5", status: "pending" }));
     expect(pendingCount()).toBe(1);
+  });
+});
+
+// ===========================================================================
+// pendingByName index (isPending + integrity)
+// ===========================================================================
+
+describe("pendingByName index", () => {
+  it("isPending returns true for pending action, false after completion", () => {
+    record(makeInstance({ id: "p1", name: "chat.send", status: "pending" }));
+    expect(isPending("chat.send")).toBe(true);
+
+    record(makeInstance({ id: "p1", name: "chat.send", status: "success" }));
+    expect(isPending("chat.send")).toBe(false);
+  });
+
+  it("isPending returns false for unknown action name", () => {
+    expect(isPending("nonexistent")).toBe(false);
+  });
+
+  it("tracks multiple pending instances of the same name", () => {
+    record(makeInstance({ id: "a1", name: "file.upload", status: "pending" }));
+    record(makeInstance({ id: "a2", name: "file.upload", status: "pending" }));
+    expect(isPending("file.upload")).toBe(true);
+    expect(pendingFor("file.upload")).toHaveLength(2);
+
+    record(makeInstance({ id: "a1", name: "file.upload", status: "success" }));
+    expect(isPending("file.upload")).toBe(true);
+    expect(pendingFor("file.upload")).toHaveLength(1);
+
+    record(makeInstance({ id: "a2", name: "file.upload", status: "error", error: { message: "fail" } }));
+    expect(isPending("file.upload")).toBe(false);
+    expect(pendingFor("file.upload")).toHaveLength(0);
+  });
+
+  it("retry (terminal→pending) re-adds to pendingByName", () => {
+    record(makeInstance({ id: "r1", name: "git.push", status: "pending" }));
+    record(makeInstance({ id: "r1", name: "git.push", status: "error", error: { message: "timeout" } }));
+    expect(isPending("git.push")).toBe(false);
+
+    // Retry: same id goes back to pending
+    record(makeInstance({ id: "r1", name: "git.push", status: "pending" }));
+    expect(isPending("git.push")).toBe(true);
+    expect(pendingFor("git.push")).toHaveLength(1);
+    expect(pendingFor("git.push")[0]!.id).toBe("r1");
+  });
+
+  it("pending→pending re-record does not duplicate in index", () => {
+    record(makeInstance({ id: "d1", name: "chat.send", status: "pending" }));
+    record(makeInstance({ id: "d1", name: "chat.send", status: "pending" }));
+    expect(pendingFor("chat.send")).toHaveLength(1);
+    expect(pendingCount()).toBe(1);
+  });
+
+  it("hard-cap eviction removes from pendingByName", () => {
+    for (let i = 0; i < 1000; i++) {
+      record(makeInstance({ id: `hc-${i}`, name: "bulk.op", status: "pending" }));
+    }
+    expect(isPending("bulk.op")).toBe(true);
+
+    // 1001st triggers hard eviction of oldest pending entry
+    record(makeInstance({ id: "hc-overflow", name: "bulk.op", status: "pending" }));
+    // The evicted entry (hc-0) should be removed from pendingByName
+    expect(pendingCount()).toBe(1000);
+    const pending = pendingFor("bulk.op");
+    expect(pending.find(e => e.id === "hc-0")).toBeUndefined();
+  });
+
+  it("_resetForTest clears pendingByName", () => {
+    record(makeInstance({ id: "z1", name: "action.a", status: "pending" }));
+    record(makeInstance({ id: "z2", name: "action.b", status: "pending" }));
+    expect(isPending("action.a")).toBe(true);
+    expect(isPending("action.b")).toBe(true);
+
+    _resetForTest();
+
+    expect(isPending("action.a")).toBe(false);
+    expect(isPending("action.b")).toBe(false);
   });
 });

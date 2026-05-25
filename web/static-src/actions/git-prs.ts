@@ -16,14 +16,18 @@ interface PRArgs {
   pr_number: number;
 }
 
+/** Build the API path for a PR action (merge/close). */
 function prPath(args: PRArgs, action: string): string {
   return `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.owner)}/${encodeURIComponent(args.name)}/prs/${args.pr_number}/${action}`;
 }
 
+/** Optimistically remove a PR from the UI groups. Returns the undo
+ *  state needed by rollbackRemovePR, or undefined if the PR wasn't found. */
 function optimisticRemovePR(args: PRArgs): PRRemoveResult | undefined {
   return removePRFromGroups(args.forge_id, args.owner, args.name, args.pr_number);
 }
 
+/** Rollback: re-insert the PR into its original group position. */
 function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
   if (op !== undefined) reinsertPRInGroups(op);
 }

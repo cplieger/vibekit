@@ -48,6 +48,9 @@ import type {
 
 let instanceCounter = 0;
 
+/** Generate a monotonically-increasing instance ID for registry tracking.
+ *  Format: `"<actionName>#<counter>"`. Not globally unique across page
+ *  reloads — only unique within a single page session. */
 function nextInstanceID(name: string): string {
   instanceCounter += 1;
   return `${name}#${String(instanceCounter)}`;
@@ -59,12 +62,13 @@ function nextInstanceID(name: string): string {
  *  same dispatch sends the same key). */
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 
-/** Generate a ULID-ish idempotency key. Doesn't need true ULID
+/** Generate a unique idempotency key. Doesn't need true ULID
  *  ordering; just needs to be unique across dispatches and stable
- *  enough that a retry sends the same value. */
+ *  enough that a retry sends the same value (generated once per
+ *  dispatch, not per retry). */
 function newIdempotencyKey(): string {
-  // 26-char base32 string: 12 hex from ts + 14 random base36. Cheap,
-  // collision-resistant for our scale (up to ~36^14 unique keys per ms).
+  // Format: base36 timestamp + "-" + 14-char random base36 suffix.
+  // Collision-resistant for our scale (up to ~36^14 unique keys per ms).
   const ts = Date.now().toString(36);
   const rnd = Math.random().toString(36).slice(2, 16).padEnd(14, "0");
   return `${ts}-${rnd}`;

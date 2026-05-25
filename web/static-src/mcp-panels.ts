@@ -9,10 +9,9 @@ import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry, type RegistrySearchResult } from "./actions/mcp.js";
-import { subscribeToActions, bindLoadingState, debouncedDispatch } from "./actions/index.js";
+import { subscribeToActions, bindLoadingState, debouncedDispatch, registerCleanup } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import type { DebouncedDispatch } from "./actions/index.js";
-import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Add / edit modal ---
 

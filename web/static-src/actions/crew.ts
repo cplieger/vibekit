@@ -9,6 +9,7 @@ interface SendMessageArgs {
 export const sendMessage = transportAction<SendMessageArgs>({
   name: "crew.send_message",
   scope: (args) => "crew:" + args.chatID + ":" + args.subSessionID,
+  idempotencyKey: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   command: ({ chatID, subSessionID, text }) => ({

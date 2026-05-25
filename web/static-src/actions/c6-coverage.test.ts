@@ -13,7 +13,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetRegistry, isPending } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { actionStatus, _resetForTest as resetActionStatus } from "./action-status.js";
 import { bindLoadingState } from "./loading.js";
@@ -70,7 +70,6 @@ describe("actionStatus + retry interaction", () => {
   });
 
   it("actionStatus.lastError is set when all retries are exhausted", async () => {
-    vi.useFakeTimers();
     const action = defineAction<void, string>({
       name: "test.status_retry_exhaust",
       retryable: "always",
@@ -147,10 +146,45 @@ describe("bindLoadingState + retry interaction", () => {
 
     const p = action.dispatch();
     expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
 
     await vi.advanceTimersByTimeAsync(50);
     await p;
 
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+  });
+
+  it("isPending stays true while bindLoadingState keeps button disabled during retry", async () => {
+    let attempt = 0;
+    let resolveSecond: (() => void) | null = null;
+    const action = defineAction<void, string>({
+      name: "test.ispending_bind",
+      retryable: "network",
+      retry: { count: 1, delay: 80 },
+      error: false,
+      run: () => {
+        attempt++;
+        if (attempt < 2) throw new ActionError("net", { code: "network" });
+        return new Promise<string>((r) => { resolveSecond = () => r("ok"); });
+      },
+    });
+
+    const btn = document.createElement("button");
+    bindLoadingState("test.ispending_bind", btn);
+
+    const p = action.dispatch();
+    expect(isPending("test.ispending_bind")).toBe(true);
+    expect(btn.disabled).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(80);
+    // Retry fired, second attempt is now running (pending)
+    expect(isPending("test.ispending_bind")).toBe(true);
+    expect(btn.disabled).toBe(true);
+
+    resolveSecond!();
+    await p;
+    expect(isPending("test.ispending_bind")).toBe(false);
     expect(btn.disabled).toBe(false);
   });
 });
@@ -354,5 +388,70 @@ describe("debouncedDispatch + actionStatus interaction", () => {
     resolveRun!();
     await vi.advanceTimersByTimeAsync(0);
     expect(status.pending).toBe(0);
+  });
+});
+
+// ===========================================================================
+// 6. Documented invariant: optimistic does NOT re-fire during retries
+// ===========================================================================
+
+describe("optimistic does not re-fire during auto-retry", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("optimistic is called exactly once even when run() retries multiple times", async () => {
+    let attempt = 0;
+    const optimisticSpy = vi.fn(() => ({ snapshot: "before" }));
+    const rollbackSpy = vi.fn();
+
+    const action = defineAction<string, string, { snapshot: string }>({
+      name: "test.optimistic_no_refire",
+      retryable: "always",
+      retry: { count: 2, delay: 50 },
+      error: false,
+      optimistic: optimisticSpy,
+      rollback: rollbackSpy,
+      run: () => {
+        attempt++;
+        if (attempt < 3) return Promise.reject(new ActionError("fail", { status: 500 }));
+        return Promise.resolve("done");
+      },
+    });
+
+    const p = action.dispatch("arg");
+    expect(optimisticSpy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(50); // first retry
+    expect(optimisticSpy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100); // second retry (succeeds)
+    await p;
+
+    expect(optimisticSpy).toHaveBeenCalledTimes(1);
+    expect(rollbackSpy).not.toHaveBeenCalled(); // success → no rollback
+    expect(attempt).toBe(3);
+  });
+
+  it("rollback fires once after all retries are exhausted", async () => {
+    const optimisticSpy = vi.fn(() => ({ val: 42 }));
+    const rollbackSpy = vi.fn();
+
+    const action = defineAction<string, string, { val: number }>({
+      name: "test.optimistic_rollback_after_retry",
+      retryable: "always",
+      retry: { count: 1, delay: 50 },
+      error: false,
+      optimistic: optimisticSpy,
+      rollback: rollbackSpy,
+      run: () => Promise.reject(new ActionError("down", { status: 503 })),
+    });
+
+    const p = action.dispatch("x");
+    await vi.advanceTimersByTimeAsync(50);
+    await p;
+
+    expect(optimisticSpy).toHaveBeenCalledTimes(1);
+    expect(rollbackSpy).toHaveBeenCalledTimes(1);
+    expect(rollbackSpy).toHaveBeenCalledWith("x", { val: 42 }, expect.objectContaining({ message: "down" }));
   });
 });

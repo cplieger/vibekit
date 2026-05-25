@@ -13,7 +13,7 @@ import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 interface ArchivedHeader {
   id: string;

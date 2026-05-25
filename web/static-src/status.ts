@@ -155,6 +155,28 @@ export function refreshCompactionThreshold(): void {
   contextBar.refreshCompactionThreshold();
 }
 
+// --- Connection status live-region debounce ---
+// Prevents rapid connecting→disconnected→connecting cycles from spamming
+// screen readers. Only announces after status is stable for 2s.
+let statusAnnounceTimer: ReturnType<typeof setTimeout> | undefined;
+let statusLiveEl: HTMLElement | null = null;
+
+function getStatusLiveEl(): HTMLElement {
+  if (statusLiveEl === null) {
+    statusLiveEl = document.getElementById("status-live");
+    if (statusLiveEl === null) {
+      statusLiveEl = document.createElement("span");
+      statusLiveEl.id = "status-live";
+      statusLiveEl.setAttribute("role", "status");
+      statusLiveEl.setAttribute("aria-live", "polite");
+      statusLiveEl.setAttribute("aria-atomic", "true");
+      statusLiveEl.className = "sr-only";
+      document.body.appendChild(statusLiveEl);
+    }
+  }
+  return statusLiveEl;
+}
+
 export function setStatus(s: ConnectionStatus): void {
   const dot = $.statusDot;
   dot.classList.remove("connected", "error");
@@ -169,6 +191,12 @@ export function setStatus(s: ConnectionStatus): void {
   }
   dot.setAttribute("aria-label", `Connection: ${s}`);
   $.stWs.textContent = s;
+
+  // Debounced live-region announcement (2s stable).
+  clearTimeout(statusAnnounceTimer);
+  statusAnnounceTimer = setTimeout(() => {
+    getStatusLiveEl().textContent = `Connection ${s}`;
+  }, 2000);
 }
 
 export function updateContextBar(opts: ContextBarUpdate): void {

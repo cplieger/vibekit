@@ -6,7 +6,7 @@ import { $, el } from "./dom.js";
 import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
 import { isSafeUrl } from "./utils-url.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 import { trapFocus } from "./focus-trap.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 

@@ -227,12 +227,15 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 });
 
 // --- chat.delete_archived ---
+// No auto-retry: DELETE is destructive. If the first attempt succeeds but
+// the response times out, a retry would hit 404 and surface a misleading
+// error toast. Same rationale as forge.delete_local (round-1 revert).
+// Manual Retry button is still available via retryable: "network".
 
 export const deleteArchivedChatAction = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet, apiGetTyped, CancellableSlot } from "./api-client.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 import {
   asObject, decodeArray, optStr, reqStr, type Decoder,
 } from "./validators.js";

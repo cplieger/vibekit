@@ -7,7 +7,7 @@
 import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { registerPushAction } from "./actions/notify.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.

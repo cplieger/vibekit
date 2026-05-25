@@ -276,6 +276,7 @@ class CommandsMenuController {
       };
       if (cmd.isPrompt === true) opts.badge = "prompt";
       const row = buildPopoverRow(opts);
+      row.id = `cmd-opt-${i}`;
       this.popover?.appendChild(row);
     });
     this.renderSelection();
@@ -293,11 +294,17 @@ class CommandsMenuController {
   private renderSelection(): void {
     if (this.popover === null) return;
     const rows = this.popover.querySelectorAll<HTMLButtonElement>(".commands-popover-row");
+    let activeId = "";
     rows.forEach((r, i) => {
       const selected = i === this.selectedIndex;
       r.classList.toggle("selected", selected);
       r.setAttribute("aria-selected", String(selected));
+      if (selected) activeId = r.id || `cmd-opt-${i}`;
     });
+    // Communicate active option to screen readers via aria-activedescendant.
+    if (activeId !== "") {
+      $.promptInput.setAttribute("aria-activedescendant", activeId);
+    }
   }
 
   private closePopover(): void {
@@ -306,6 +313,7 @@ class CommandsMenuController {
     this.isOpen = false;
     this.cachedItems = [];
     this.stage2Command = null;
+    $.promptInput.removeAttribute("aria-activedescendant");
   }
 
   private filterAll(filter: string): PopoverItem[] {

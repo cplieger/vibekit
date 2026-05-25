@@ -73,6 +73,9 @@ export function cancelAllPending(): void {
   }
 }
 
+/** Install the beforeunload listener exactly once. Called lazily on
+ *  first action registration or cleanup hook registration. Uses
+ *  beforeunload (not pagehide) so abort fires before navigation. */
 function installBeforeunloadOnce(): void {
   if (beforeunloadInstalled) return;
   beforeunloadInstalled = true;
