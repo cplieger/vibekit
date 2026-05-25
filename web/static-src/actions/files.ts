@@ -182,9 +182,11 @@ export interface UploadArgs {
 
 export const uploadAction = defineAction<UploadArgs, string[]>({
   name: "files.upload",
-  retryable: "network",
-  // retry intentionally omitted: XHR-based multipart upload cannot safely
+  scope: "upload",
+  // retryable intentionally omitted: XHR-based multipart upload cannot safely
   // retry after partial byte transmission without data-resend implications.
+  // scope: "upload" serializes concurrent dispatches through the framework
+  // queue, preventing the race where two rapid drops both-reject or both-pass.
   run: (args, signal) => {
     return new Promise<string[]>((resolve, reject) => {
       uploadFiles({

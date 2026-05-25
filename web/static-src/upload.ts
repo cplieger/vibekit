@@ -7,7 +7,6 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { pendingFor } from "./actions/index.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -22,23 +21,14 @@ export interface UploadOptions {
 
 // NOTE: Only one upload at a time is supported. The progress bar is a
 // singleton DOM element shared across browser upload and chat drop.
-// Concurrent uploads would corrupt the progress display. Callers should
-// check pendingFor('files.upload').length > 0 before dispatching.
+// Concurrent uploads would corrupt the progress display. Serialization
+// is enforced by scope: "upload" on the action definition, which queues
+// subsequent dispatches until the current upload completes.
 
 export function uploadFiles(opts: UploadOptions): void {
   // If already cancelled, bail out before showing any progress UI.
   if (opts.signal?.aborted) {
     opts.onError?.("Upload cancelled");
-    return;
-  }
-
-  // > 1 because the current dispatch is already recorded as pending by the
-  // framework before run() executes; we only reject if a *different* upload
-  // is also in flight. This relies on the action framework incrementing the
-  // pending count synchronously before invoking run(), which is guaranteed
-  // by defineAction's dispatch implementation.
-  if (pendingFor("files.upload").length > 1) {
-    opts.onError?.("Another upload is already in progress");
     return;
   }
 

@@ -31,6 +31,7 @@ export interface AppSettings {
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
+let patchSnapshot: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchGen = 0;
 let patchResolvers: Array<(r: Record<string, unknown> | null) => void> = [];
@@ -55,6 +56,7 @@ export function initSettingsTracking(s: AppSettings): void {
 export function __testResetTracking(): void {
   lastSentPatch = {};
   patchQueue = {};
+  patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
   if (patchTimer !== undefined) {
@@ -72,6 +74,9 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
   const changed: Partial<AppSettings> = {};
   for (const k of Object.keys(patch) as Array<keyof AppSettings>) {
     if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
+      if (!(k in patchSnapshot)) {
+        Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
+      }
       Object.assign(changed, { [k]: patch[k] });
       Object.assign(lastSentPatch, { [k]: patch[k] });
     }
@@ -93,7 +98,9 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     const body = patchQueue;
     const allInputs = patchInputs;
     const resolvers = patchResolvers;
+    const rollback = patchSnapshot;
     patchQueue = {};
+    patchSnapshot = {};
     patchInputs = [];
     patchResolvers = [];
     const gen = ++patchGen;
@@ -104,6 +111,9 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
       },
       { silent: true },
     ).then((r) => {
+      if (r === null) {
+        Object.assign(lastSentPatch, rollback);
+      }
       if (gen === patchGen) {
         if (r === null) showError(); else showSaved();
       }

@@ -49,10 +49,10 @@ export function transportAction<TArgs>(
   return defineAction<TArgs, void>({
     ...rest,
     run: async (args, signal, ctx?: ActionContext) => {
-      const cmd = command(args);
-      if (ctx?.idempotencyKey !== undefined) {
-        (cmd as Command).payload = { ...(cmd as Command).payload as Record<string, unknown>, idempotency_key: ctx.idempotencyKey };
-      }
+      const raw = command(args);
+      const cmd: Command = ctx?.idempotencyKey !== undefined
+        ? { ...raw, payload: { ...(raw as Command).payload as Record<string, unknown> | undefined, idempotency_key: ctx.idempotencyKey } }
+        : raw;
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call
       // setLastError would block the prompt send button for actions

@@ -5,7 +5,9 @@
 
 import { ICON_EDIT } from "./icons.js";
 import { openFile } from "./editor-openers.js";
-import { apiAction } from "./actions/index.js";
+import { defineAction } from "./actions/define.js";
+import { ActionError } from "./actions/error.js";
+import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 
 interface KiroConfigItem {
@@ -21,12 +23,16 @@ const TYPE_LABELS: Record<string, string> = {
   agent: "Custom agents",
 };
 
-const loadKiroConfigAction = apiAction<void, { items: KiroConfigItem[] }>({
+const loadKiroConfigAction = defineAction<void, { items: KiroConfigItem[] }>({
   name: "settings.load_kiro_config",
-  dedupe: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  request: () => ({ method: "GET", path: "/api/workspace/kiro-config" }),
+  run: async (_args, signal) => {
+    const data = await apiGet<{ items: KiroConfigItem[] }>("/api/workspace/kiro-config", signal);
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!data) throw new ActionError("Failed to load config", { code: "network" });
+    return data;
+  },
   error: false,
 });
 

@@ -14,6 +14,10 @@ dispatcher handles the lifecycle.
 - **Don't use an action** for background polls (use raw fetch with
   api-client helpers), SSE bus handlers, or read-only fetches
   that auto-recover.
+  - *Exception:* read-only fetches that benefit from dedupe +
+    auto-retry + cancellation may use `defineAction`/`apiAction`
+    with `error: false`. See `kiro-config.ts`, `retention.ts`,
+    and `status.ts` (compaction buffer) for examples.
 
 ## The three factories
 
@@ -361,6 +365,12 @@ search, slash-command option fetches, auto-save. Set
 immediately, subsequent calls within the wait window are suppressed
 but the most-recent ones fire automatically when the window expires.
 `flush()` and `cancel()` work in both modes.
+
+**`cancel()` and leading-mode cooldown:** `cancel()` clears the
+pending timer and drops queued args, but does NOT reset the internal
+`lastFiredAt` timestamp. This means the next call within `wait` ms
+after the last leading-edge fire is still suppressed — cancelling
+does not re-open the cooldown window.
 
 ## Pending count + multi-action loading state
 

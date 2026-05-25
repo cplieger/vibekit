@@ -209,8 +209,8 @@ export async function loadList(): Promise<boolean> {
   listController = controller;
   const knownBefore = new Set(sessionIndex.keys());
   const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, controller.signal);
-  if (controller.signal.aborted) return false;
-  if (d === null || d.chats === undefined) return false;
+  if (controller.signal.aborted) { listController = null; return false; }
+  if (d === null || d.chats === undefined) { listController = null; return false; }
   const next: Session[] = [];
   for (const h of d.chats) {
     const existing = get(h.id);
@@ -253,6 +253,7 @@ export async function loadList(): Promise<boolean> {
     if (!knownBefore.has(id) && !nextIds.has(id)) next.push(s);
   }
   setSessions(next);
+  listController = null;
   emit();
   return true;
 }
@@ -268,10 +269,10 @@ export async function loadMessages(chatID: string, before?: number, limit = 50):
     decodeChatGetResponseLocal,
     controller.signal,
   );
-  if (controller.signal.aborted) return false;
-  if (d === null) return false;
+  if (controller.signal.aborted) { msgControllers.delete(chatID); return false; }
+  if (d === null) { msgControllers.delete(chatID); return false; }
   const session = get(chatID);
-  if (session === undefined) return false;
+  if (session === undefined) { msgControllers.delete(chatID); return false; }
   if (before !== undefined) {
     session.messages = [...d.messages, ...session.messages];
   } else {
@@ -280,6 +281,7 @@ export async function loadMessages(chatID: string, before?: number, limit = 50):
   session.message_count = d.chat.message_count;
   session.has_more = d.has_more;
   rebuildMsgIndex(chatID, session.messages);
+  msgControllers.delete(chatID);
   emit();
   return true;
 }
