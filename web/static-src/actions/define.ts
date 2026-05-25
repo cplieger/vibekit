@@ -39,6 +39,7 @@ import { record } from "./registry.js";
 import { _registerAction } from "./cleanup.js";
 import type {
   Action,
+  ActionContext,
   ActionDefinition,
   ActionErrorLike,
   DispatchOptions,
@@ -51,6 +52,30 @@ let instanceCounter = 0;
 function nextInstanceID(name: string): string {
   instanceCounter += 1;
   return `${name}#${String(instanceCounter)}`;
+}
+
+/** Header name used by apiAction when an idempotency key is generated.
+ *  Servers can dedupe on this header; the value is a per-dispatch
+ *  ULID-like string that survives across retries (so a retry of the
+ *  same dispatch sends the same key). */
+export const IDEMPOTENCY_HEADER = "Idempotency-Key";
+
+/** Generate a ULID-ish idempotency key. Doesn't need true ULID
+ *  ordering; just needs to be unique across dispatches and stable
+ *  enough that a retry sends the same value. */
+function newIdempotencyKey(): string {
+  // 26-char base32 string: 12 hex from ts + 14 random base36. Cheap,
+  // collision-resistant for our scale (up to ~36^14 unique keys per ms).
+  const ts = Date.now().toString(36);
+  const rnd = Math.random().toString(36).slice(2, 16).padEnd(14, "0");
+  return `${ts}-${rnd}`;
+}
+
+/** Defensive JSON.stringify — falls back to String(args) on cycles
+ *  or non-serializable values (DOM elements, functions). Used by
+ *  the default dedupe key computation. */
+function safeStringify(args: unknown): string {
+  try { return JSON.stringify(args); } catch { return String(args); }
 }
 
 /** Resolve a ToastSpec to its message string. Returns null when
@@ -88,6 +113,12 @@ function defaultErrorPrefix(name: string): string {
  *  other, not just within one action). */
 const scopeChains = new Map<string, Promise<unknown>>();
 
+/** In-flight dedupe map. dedupe-keyed dispatches that match an active
+ *  in-flight key return the SAME promise as the original (no new
+ *  optimistic fires, no second run() call). When the original
+ *  resolves, the entry is removed so the next dispatch starts fresh. */
+const dedupeInflight = new Map<string, Promise<unknown>>();
+
 /** Sleep helper for retry backoff. Cancellable via signal: rejects
  *  with an AbortError if the signal aborts during the wait, so the
  *  retry chain unwinds cleanly when action.cancel() fires mid-backoff. */
@@ -119,6 +150,18 @@ export function defineAction<TArgs, TResult>(
     args: TArgs,
     opts: DispatchOptions<TArgs, TResult> = {},
   ): Promise<TResult | null> {
+    // Dedupe: if a dispatch with a matching dedupe key is already
+    // in flight, return its promise instead of starting a new one.
+    // Different from scope (which queues sequentially) — dedupe
+    // collapses to a single shared dispatch.
+    const dedupeKey = computeDedupeKey(args);
+    if (dedupeKey !== null) {
+      const inflight = dedupeInflight.get(dedupeKey);
+      if (inflight !== undefined) {
+        return inflight as Promise<TResult | null>;
+      }
+    }
+
     // Compute the scope key (if any) and queue behind the previous
     // entry in that scope. A scope is just a string identifier; two
     // different actions sharing the same string serialize together.
@@ -127,17 +170,42 @@ export function defineAction<TArgs, TResult>(
       : typeof def.scope === "string" ? def.scope
       : null;
 
+    let result: Promise<TResult | null>;
     if (scopeKey === null) {
-      return runOnce(args, opts);
+      result = runOnce(args, opts);
+    } else {
+      const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
+      const next = prev.then(() => runOnce(args, opts));
+      // Replace the chain tail. Catch on the stored chain to keep the
+      // queue alive even if a dispatch throws (which it shouldn't —
+      // runOnce always resolves), so subsequent entries can still run.
+      scopeChains.set(scopeKey, next.catch(() => {}));
+      result = next;
     }
 
-    const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
-    const next = prev.then(() => runOnce(args, opts));
-    // Replace the chain tail. Catch on the stored chain to keep the
-    // queue alive even if a dispatch throws (which it shouldn't —
-    // runOnce always resolves), so subsequent entries can still run.
-    scopeChains.set(scopeKey, next.catch(() => {}));
-    return next;
+    // Track in dedupe map until the dispatch resolves.
+    if (dedupeKey !== null) {
+      dedupeInflight.set(dedupeKey, result);
+      void result.finally(() => {
+        // Only delete if we're still the in-flight entry (defensive
+        // against another dispatch having replaced us mid-flight,
+        // though that shouldn't happen since we'd have returned the
+        // existing entry first).
+        if (dedupeInflight.get(dedupeKey) === result) {
+          dedupeInflight.delete(dedupeKey);
+        }
+      });
+    }
+
+    return result;
+  }
+
+  /** Compute the dedupe key for a dispatch, or null if dedupe is off. */
+  function computeDedupeKey(args: TArgs): string | null {
+    const cfg = def.dedupe;
+    if (cfg === undefined || cfg === false) return null;
+    const argKey = typeof cfg === "function" ? cfg(args) : safeStringify(args);
+    return `${def.name}::${argKey}`;
   }
 
   /** Single dispatch lifecycle: optimistic → run (with retry) →
@@ -150,6 +218,17 @@ export function defineAction<TArgs, TResult>(
     const startedAt = Date.now();
     const ac = new AbortController();
     inFlight.set(id, ac);
+
+    // Build the per-dispatch context. The idempotency key is generated
+    // once here (not per retry) so retries of the same dispatch send
+    // the same key and the server can dedupe.
+    const idemKey =
+      typeof def.idempotencyKey === "function" ? def.idempotencyKey(args)
+      : def.idempotencyKey === true ? newIdempotencyKey()
+      : null;
+    const ctx: ActionContext = idemKey !== null
+      ? { instanceID: id, idempotencyKey: idemKey }
+      : { instanceID: id };
 
     let optOp: OptimisticOp | undefined;
     if (def.optimistic !== undefined) {
@@ -178,7 +257,7 @@ export function defineAction<TArgs, TResult>(
       startedAt,
     });
 
-    return runWithRetry(args, ac.signal).then(
+    return runWithRetry(args, ac.signal, ctx).then(
       (result) => {
         // Cancellation can race success — if the signal aborted,
         // treat as cancelled even if run() resolved. Most adapters
@@ -236,11 +315,11 @@ export function defineAction<TArgs, TResult>(
   }
 
   /** Run with auto-retry on retry-class errors. Each attempt re-runs
-   *  def.run() with the same args + signal. Optimistic does NOT
+   *  def.run() with the same args + signal + ctx. Optimistic does NOT
    *  re-fire — it stays applied across retries (the rollback only
    *  fires once retries are exhausted). Backoff: delay * factor^attempt,
-   *  capped at 5000ms. */
-  async function runWithRetry(args: TArgs, signal: AbortSignal): Promise<TResult> {
+   *  capped at 5000ms. Idempotency key in ctx is stable across retries. */
+  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<TResult> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
     const baseDelay = cfg?.delay ?? 0;
@@ -248,7 +327,7 @@ export function defineAction<TArgs, TResult>(
     let attempt = 0;
     while (true) {
       try {
-        return await def.run(args, signal);
+        return await def.run(args, signal, ctx);
       } catch (e) {
         attempt++;
         if (signal.aborted) throw e;
@@ -374,9 +453,10 @@ export function defineAction<TArgs, TResult>(
 }
 
 /** Test-only: reset the instance counter for deterministic IDs.
- *  Also clears scope chains so a test can dispatch in a fresh scope
- *  without serializing behind a previous test's chain. */
+ *  Also clears scope chains + dedupe map so a test can dispatch in
+ *  a fresh state without serializing behind a previous test's chain. */
 export function _resetForTest(): void {
   instanceCounter = 0;
   scopeChains.clear();
+  dedupeInflight.clear();
 }

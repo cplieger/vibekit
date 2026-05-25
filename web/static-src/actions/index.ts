@@ -22,7 +22,12 @@ export { ActionError, toActionError } from "./error.js";
 //     error metadata around the saveServer call.
 //   - pendingFor: loading-state helpers + the upload guard query the
 //     registry directly to gate their behavior.
-export { subscribe as subscribeToActions, pendingFor } from "./registry.js";
+//   - pendingCount: total in-flight count — drives global progress
+//     indicators (app-bar loading bar).
+//   - pendingForAny: OR-query for binding one element to multiple
+//     action names (e.g. a Save button covering several settings
+//     actions).
+export { subscribe as subscribeToActions, pendingFor, pendingCount, pendingForAny } from "./registry.js";
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
@@ -36,6 +41,18 @@ export { registerCleanup } from "./cleanup.js";
 // Live console logger: subscribes to the registry and emits
 // console.error for every action that fails. Wired once at app init.
 export { initActionConsoleLog } from "./console-log.js";
+
+// Debounce helper: wrap an action so rapid calls coalesce into a
+// single dispatch after a quiet window. Useful for typeahead search,
+// auto-save, slash-command option fetches.
+export { debouncedDispatch } from "./debounce.js";
+export type { DebouncedDispatch, DebounceOptions } from "./debounce.js";
+
+// Action status: consolidated view (pending count, last error/success,
+// last dispatched/settled timestamps) for surfaces that need richer
+// state than `pendingFor` alone.
+export { actionStatus } from "./action-status.js";
+export type { ActionStatus } from "./action-status.js";
 
 // One type used by external callers (mcp-panels narrows the registry
 // listener arg). The rest of the framework's types stay internal.

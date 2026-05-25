@@ -1,0 +1,421 @@
+// @vitest-environment happy-dom
+// Tests for the five UX primitives added on top of the action
+// framework: idempotency keys, pendingCount/pendingForAny,
+// request deduplication, debouncedDispatch, actionStatus.
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+vi.mock("../toast.js", () => ({
+  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+}));
+
+import {
+  defineAction,
+  IDEMPOTENCY_HEADER,
+  _resetForTest as resetDefine,
+} from "./define.js";
+import { apiAction } from "./api.js";
+import {
+  _resetForTest as resetRegistry,
+  pendingCount,
+  pendingForAny,
+} from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { debouncedDispatch } from "./debounce.js";
+import { actionStatus, _resetForTest as resetActionStatus } from "./action-status.js";
+import { ActionError } from "./error.js";
+
+beforeEach(() => {
+  resetDefine();
+  resetRegistry();
+  resetCleanup();
+  resetActionStatus();
+  vi.clearAllMocks();
+});
+
+// ===========================================================================
+// Idempotency keys
+// ===========================================================================
+
+describe("idempotencyKey", () => {
+  it("apiAction sends Idempotency-Key header when configured: true", async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const action = apiAction<{ id: string }, unknown>({
+      name: "test.idem.true",
+      idempotencyKey: true,
+      request: ({ id }) => ({ method: "POST", path: `/api/x/${id}`, body: {} }),
+    });
+    await action.dispatch({ id: "abc" });
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers[IDEMPOTENCY_HEADER]).toBeDefined();
+    expect(typeof headers[IDEMPOTENCY_HEADER]).toBe("string");
+    expect((headers[IDEMPOTENCY_HEADER] as string).length).toBeGreaterThan(5);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("apiAction sends caller-supplied key from function form", async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const action = apiAction<{ id: string }, unknown>({
+      name: "test.idem.fn",
+      idempotencyKey: (args) => `fixed-${args.id}`,
+      request: () => ({ method: "POST", path: "/api/x", body: {} }),
+    });
+    await action.dispatch({ id: "abc" });
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers[IDEMPOTENCY_HEADER]).toBe("fixed-abc");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("retries reuse the same idempotency key across attempts", async () => {
+    let attempt = 0;
+    const fetchSpy = vi.fn(() => {
+      attempt++;
+      if (attempt < 3) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.useFakeTimers();
+
+    const action = apiAction<void, unknown>({
+      name: "test.idem.retry",
+      idempotencyKey: true,
+      retryable: "network",
+      retry: { count: 2, delay: 50 },
+      request: () => ({ method: "POST", path: "/api/x", body: {} }),
+    });
+    const p = action.dispatch();
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(100);
+    await p;
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const k1 = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    const k2 = (fetchSpy.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>;
+    const k3 = (fetchSpy.mock.calls[2]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(k1[IDEMPOTENCY_HEADER]).toBe(k2[IDEMPOTENCY_HEADER]);
+    expect(k2[IDEMPOTENCY_HEADER]).toBe(k3[IDEMPOTENCY_HEADER]);
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("no Idempotency-Key when idempotencyKey is undefined", async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const action = apiAction<void, unknown>({
+      name: "test.idem.none",
+      request: () => ({ method: "POST", path: "/api/x", body: {} }),
+    });
+    await action.dispatch();
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    expect(headers[IDEMPOTENCY_HEADER]).toBeUndefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("custom defineAction can read idempotencyKey from ctx", async () => {
+    const seen: string[] = [];
+    const action = defineAction<void, void>({
+      name: "test.idem.ctx",
+      idempotencyKey: true,
+      run: (_args, _signal, ctx) => {
+        if (ctx?.idempotencyKey !== undefined) seen.push(ctx.idempotencyKey);
+        return Promise.resolve();
+      },
+    });
+    await action.dispatch();
+    await action.dispatch();
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
+  });
+});
+
+// ===========================================================================
+// pendingCount + pendingForAny
+// ===========================================================================
+
+describe("pendingCount + pendingForAny", () => {
+  it("pendingCount sums across all action names", async () => {
+    let resolveA: () => void = () => {};
+    let resolveB: () => void = () => {};
+    const a = defineAction<void, void>({
+      name: "test.pc.a",
+      run: () => new Promise<void>((r) => { resolveA = r; }),
+    });
+    const b = defineAction<void, void>({
+      name: "test.pc.b",
+      run: () => new Promise<void>((r) => { resolveB = r; }),
+    });
+    expect(pendingCount()).toBe(0);
+    const pa = a.dispatch();
+    const pb = b.dispatch();
+    expect(pendingCount()).toBe(2);
+    resolveA(); await pa;
+    expect(pendingCount()).toBe(1);
+    resolveB(); await pb;
+    expect(pendingCount()).toBe(0);
+  });
+
+  it("pendingForAny returns true if any named action is pending", async () => {
+    let resolveA: () => void = () => {};
+    const a = defineAction<void, void>({
+      name: "test.pfa.a",
+      run: () => new Promise<void>((r) => { resolveA = r; }),
+    });
+    expect(pendingForAny(["test.pfa.a", "test.pfa.b"])).toBe(false);
+    const pa = a.dispatch();
+    expect(pendingForAny(["test.pfa.a"])).toBe(true);
+    expect(pendingForAny(["test.pfa.b"])).toBe(false);
+    expect(pendingForAny(["test.pfa.a", "test.pfa.b"])).toBe(true);
+    resolveA(); await pa;
+    expect(pendingForAny(["test.pfa.a"])).toBe(false);
+  });
+
+  it("pendingForAny on empty list returns false", () => {
+    expect(pendingForAny([])).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Dedupe
+// ===========================================================================
+
+describe("dedupe", () => {
+  it("two concurrent dispatches with matching args share one in-flight promise", async () => {
+    let resolveRun: ((v: string) => void) | null = null;
+    let runCalls = 0;
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe",
+      dedupe: true,
+      run: () => {
+        runCalls++;
+        return new Promise<string>((r) => { resolveRun = r; });
+      },
+    });
+    const p1 = action.dispatch({ id: "a" });
+    const p2 = action.dispatch({ id: "a" });
+    expect(runCalls).toBe(1); // only the first dispatch's run() fired
+    resolveRun?.("ok");
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe("ok");
+    expect(r2).toBe("ok");
+  });
+
+  it("different args do NOT collapse", async () => {
+    let runCalls = 0;
+    const action = defineAction<{ id: string }, string>({
+      name: "test.dedupe.different",
+      dedupe: true,
+      run: (args) => {
+        runCalls++;
+        return Promise.resolve(args.id);
+      },
+    });
+    await Promise.all([action.dispatch({ id: "a" }), action.dispatch({ id: "b" })]);
+    expect(runCalls).toBe(2);
+  });
+
+  it("dedupe entry clears after resolution; subsequent dispatch starts fresh", async () => {
+    let runCalls = 0;
+    const action = defineAction<{ id: string }, void>({
+      name: "test.dedupe.clear",
+      dedupe: true,
+      run: () => {
+        runCalls++;
+        return Promise.resolve();
+      },
+    });
+    await action.dispatch({ id: "a" });
+    await action.dispatch({ id: "a" });
+    expect(runCalls).toBe(2);
+  });
+
+  it("dedupe with custom function key", async () => {
+    let runCalls = 0;
+    const action = defineAction<{ user: string; tag: string }, void>({
+      name: "test.dedupe.fn",
+      dedupe: (args) => `user:${args.user}`, // ignore tag
+      run: () => {
+        runCalls++;
+        return new Promise<void>((r) => setTimeout(r, 10));
+      },
+    });
+    const p1 = action.dispatch({ user: "alice", tag: "x" });
+    const p2 = action.dispatch({ user: "alice", tag: "y" }); // different tag, same user
+    await Promise.all([p1, p2]);
+    expect(runCalls).toBe(1);
+  });
+});
+
+// ===========================================================================
+// debouncedDispatch
+// ===========================================================================
+
+describe("debouncedDispatch", () => {
+  it("coalesces rapid calls into a single dispatch with the latest args", async () => {
+    vi.useFakeTimers();
+    let runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce.basic",
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100 });
+    dbg("a"); dbg("b"); dbg("c");
+    expect(runArgs).toEqual([]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runArgs).toEqual(["c"]);
+    vi.useRealTimers();
+  });
+
+  it("flush() fires immediately with most-recent args", async () => {
+    vi.useFakeTimers();
+    let runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce.flush",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 1000 });
+    dbg("a"); dbg("b");
+    dbg.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runArgs).toEqual(["b"]);
+    // No additional fire when timer would have elapsed.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runArgs).toEqual(["b"]);
+    vi.useRealTimers();
+  });
+
+  it("cancel() drops pending dispatch", async () => {
+    vi.useFakeTimers();
+    let runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce.cancel",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100 });
+    dbg("a");
+    dbg.cancel();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(runArgs).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("leading: true fires immediately + suppresses trailing fires within wait", async () => {
+    vi.useFakeTimers();
+    let runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce.leading",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100, leading: true });
+    dbg("a"); dbg("b"); dbg("c");
+    expect(runArgs).toEqual(["a"]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runArgs).toEqual(["a"]);
+    // After quiet window, next call fires again.
+    dbg("d");
+    expect(runArgs).toEqual(["a", "d"]);
+    vi.useRealTimers();
+  });
+
+  it("isPending() reflects timer state", async () => {
+    vi.useFakeTimers();
+    const action = defineAction<string, void>({
+      name: "test.debounce.is_pending",
+      run: () => Promise.resolve(),
+    });
+    const dbg = debouncedDispatch(action, { wait: 100 });
+    expect(dbg.isPending()).toBe(false);
+    dbg("a");
+    expect(dbg.isPending()).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(dbg.isPending()).toBe(false);
+    vi.useRealTimers();
+  });
+});
+
+// ===========================================================================
+// actionStatus
+// ===========================================================================
+
+describe("actionStatus", () => {
+  it("tracks pending count + last success", async () => {
+    const action = defineAction<{ x: number }, number>({
+      name: "test.as.success",
+      run: (args) => Promise.resolve(args.x),
+    });
+    const status = actionStatus("test.as.success");
+    expect(status.pending).toBe(0);
+    expect(status.lastSuccess).toBeUndefined();
+
+    await action.dispatch({ x: 42 });
+    expect(status.pending).toBe(0);
+    expect(status.lastSuccess).toBe(42);
+    expect(status.lastSettledAt).toBeGreaterThan(0);
+  });
+
+  it("tracks last error", async () => {
+    const action = defineAction<void, void>({
+      name: "test.as.error",
+      error: false,
+      run: () => Promise.reject(new ActionError("nope", { status: 500 })),
+    });
+    const status = actionStatus("test.as.error");
+    await action.dispatch();
+    expect(status.lastError?.message).toBe("nope");
+    expect(status.lastError?.status).toBe(500);
+  });
+
+  it("snapshot is mutable in place — same reference reflects updates", async () => {
+    const action = defineAction<{ x: number }, number>({
+      name: "test.as.live",
+      run: (args) => Promise.resolve(args.x),
+    });
+    const status = actionStatus("test.as.live");
+    await action.dispatch({ x: 1 });
+    expect(status.lastSuccess).toBe(1);
+    await action.dispatch({ x: 2 });
+    // SAME object, updated in place.
+    expect(status.lastSuccess).toBe(2);
+  });
+
+  it("pending counter increments + decrements correctly with concurrent dispatches", async () => {
+    let resolveA: () => void = () => {};
+    let resolveB: () => void = () => {};
+    const action = defineAction<{ tag: string }, void>({
+      name: "test.as.concurrent",
+      run: (args) => new Promise<void>((r) => {
+        if (args.tag === "a") resolveA = r;
+        else resolveB = r;
+      }),
+    });
+    const status = actionStatus("test.as.concurrent");
+    const pa = action.dispatch({ tag: "a" });
+    const pb = action.dispatch({ tag: "b" });
+    expect(status.pending).toBe(2);
+    resolveA(); await pa;
+    expect(status.pending).toBe(1);
+    resolveB(); await pb;
+    expect(status.pending).toBe(0);
+  });
+
+  it("returns the same snapshot object on repeat calls", () => {
+    const a = actionStatus("test.as.same");
+    const b = actionStatus("test.as.same");
+    expect(a).toBe(b);
+  });
+});

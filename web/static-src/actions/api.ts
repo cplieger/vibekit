@@ -34,10 +34,11 @@
 // ---------------------------------------------------------------------------
 
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
-import { defineAction } from "./define.js";
+import { defineAction, IDEMPOTENCY_HEADER } from "./define.js";
 import { ActionError } from "./error.js";
 import type {
   Action,
+  ActionContext,
   ActionDefinition,
   RequestSpec,
 } from "./types.js";
@@ -62,9 +63,9 @@ export function apiAction<TArgs, TResult = unknown>(
   const { request, ...rest } = def;
   return defineAction<TArgs, TResult>({
     ...rest,
-    run: async (args, signal) => {
+    run: async (args, signal, ctx) => {
       const spec = request(args);
-      return executeRequest<TResult>(spec, signal);
+      return executeRequest<TResult>(spec, signal, ctx);
     },
   });
 }
@@ -72,12 +73,28 @@ export function apiAction<TArgs, TResult = unknown>(
 /** Internal: execute an HTTP request and parse the result. Mirrors
  *  api-client.ts's request() shape but throws ActionError on failure
  *  rather than returning ApiResult, since the dispatcher expects
- *  exceptions to drive the error branch. */
-async function executeRequest<T>(spec: RequestSpec, signal: AbortSignal): Promise<T> {
+ *  exceptions to drive the error branch. The optional ctx carries
+ *  per-dispatch metadata (e.g. idempotency key) populated by the
+ *  framework. */
+async function executeRequest<T>(
+  spec: RequestSpec,
+  signal: AbortSignal,
+  ctx?: ActionContext,
+): Promise<T> {
   const init: RequestInit = { method: spec.method };
+  // Build headers: JSON content-type when there's a body, plus the
+  // idempotency key if the framework generated one. Servers that
+  // don't recognize Idempotency-Key ignore it harmlessly.
+  const headers: Record<string, string> = {};
   if (spec.method !== "GET" && spec.body !== undefined) {
-    init.headers = JSON_HEADERS;
+    Object.assign(headers, JSON_HEADERS);
     init.body = JSON.stringify(spec.body);
+  }
+  if (ctx?.idempotencyKey !== undefined) {
+    headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
+  }
+  if (Object.keys(headers).length > 0) {
+    init.headers = headers;
   }
   init.signal = withTimeout(signal, API_TIMEOUT_MS);
   let r: Response;

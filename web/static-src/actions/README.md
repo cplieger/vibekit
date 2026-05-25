@@ -245,6 +245,136 @@ const result = await saveDraftAction.dispatch(draft, {
 Callbacks fire AFTER the action-level toast emission. `onSettled`
 fires for success, error, AND cancellation (similar to TanStack Query).
 
+## Idempotency keys
+
+Set `idempotencyKey: true` on an action definition to have the
+framework generate a per-dispatch key. The key is sent as the
+`Idempotency-Key` HTTP header for `apiAction` and as a
+`idempotency_key` field in the command payload for `transportAction`.
+A retry of the same dispatch sends the same key, so a server that
+recognizes the header can dedupe and treat the retry as the original
+request.
+
+```ts
+export const createPR = apiAction<CreatePRArgs, { number: number }>({
+  name: "git.create_pr",
+  idempotencyKey: true,           // server dedupes on header
+  retryable: "network",
+  retry: { count: 1, delay: 500 },
+  request: (a) => ({ method: "POST", path: "...", body: a }),
+});
+```
+
+This closes the "timed out but server processed" hole that prevents
+retry on otherwise non-idempotent operations: even a POST that creates
+a resource becomes safe to retry, since the server returns the
+original response on the second request.
+
+For custom defineAction implementations, the key is exposed via the
+3rd context argument to `run`:
+
+```ts
+const action = defineAction<MyArgs, MyResult>({
+  name: "custom.action",
+  idempotencyKey: (args) => `${args.userId}:${Date.now()}`,
+  run: async (args, signal, ctx) => {
+    return await fetch("/x", {
+      method: "POST",
+      headers: { "Idempotency-Key": ctx?.idempotencyKey ?? "" },
+      body: JSON.stringify(args),
+      signal,
+    }).then((r) => r.json());
+  },
+});
+```
+
+## Request deduplication
+
+Set `dedupe: true` on an action definition to collapse concurrent
+dispatches with matching args into a single in-flight promise. The
+second caller gets the SAME promise back, no new optimistic fires,
+no duplicate run() call.
+
+```ts
+export const fetchSidebarBadges = apiAction<void, BadgeData>({
+  name: "ui.fetch_badges",
+  dedupe: true,                    // accidental double-call collapses
+  request: () => ({ method: "GET", path: "/api/badges" }),
+});
+```
+
+Different from `scope` (which queues sequentially): dedupe collapses
+to one. Use dedupe for accidental double-clicks not yet covered by
+`bindLoadingState`, or for reads triggered from two unrelated effects
+that should land in the same network call.
+
+## Debounced dispatch
+
+`debouncedDispatch(action, { wait, leading? })` wraps an action so
+rapid calls coalesce into a single dispatch after a quiet window.
+
+```ts
+import { debouncedDispatch } from "./actions/index.js";
+
+const search = debouncedDispatch(searchAction, { wait: 300 });
+
+input.addEventListener("input", (e) => {
+  search({ query: e.target.value });   // last-typed value wins
+});
+input.addEventListener("blur", () => {
+  search.cancel();                     // drop pending if blurred
+});
+form.addEventListener("submit", () => {
+  search.flush();                      // fire immediately (e.g. Enter)
+});
+```
+
+Replaces ad-hoc `setTimeout` + `clearTimeout` chains for typeahead
+search, slash-command option fetches, auto-save. Set
+`leading: true` for leading-edge mode (fire immediately, suppress
+trailing fires within the window).
+
+## Pending count + multi-action loading state
+
+For surfaces that need to know about multiple actions:
+
+```ts
+import { pendingCount, pendingForAny } from "./actions/index.js";
+
+// Global app-bar progress indicator:
+const progressBar = $.appProgress;
+subscribeToActions(() => {
+  progressBar.classList.toggle("active", pendingCount() > 0);
+});
+
+// One Save button covers multiple settings actions:
+subscribeToActions(() => {
+  const busy = pendingForAny([
+    "settings.patch",
+    "settings.save_steering",
+    "settings.set_kiro_setting",
+  ]);
+  saveBtn.disabled = busy;
+});
+```
+
+## Action status snapshots
+
+For UIs that need richer state than just "is it pending":
+
+```ts
+import { actionStatus } from "./actions/index.js";
+
+const status = actionStatus("settings.save_steering");
+// status is a live-updating object — same reference, mutated in place.
+// { pending: number, lastError?, lastSuccess?, lastDispatchedAt, lastSettledAt }
+
+renderTimestamp(status.lastSettledAt);
+if (status.lastError !== undefined) {
+  banner.show(status.lastError.message);
+}
+```
+
 ## Naming convention
 
 Use `<area>.<verb>` with lowercase + underscores or hyphens:

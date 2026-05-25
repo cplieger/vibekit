@@ -47,6 +47,22 @@ export type ToastSpec<TArgs, TPayload> =
 
 /** The declarative shape passed to defineAction(). All optional except
  *  name + run. */
+/** Per-dispatch context passed to run() as the 3rd argument. Mostly
+ *  populated by the framework so adapters (apiAction, transportAction)
+ *  can read out values like the idempotency key without the caller
+ *  having to plumb them. Callers writing custom defineAction()
+ *  implementations may safely ignore the 3rd arg. */
+export interface ActionContext {
+  /** Stable identifier for this dispatch (matches the registry's
+   *  ActionInstance.id). Useful for correlating logs, metrics, or
+   *  per-dispatch DOM data attributes. */
+  readonly instanceID: string;
+  /** Set when ActionDefinition.idempotencyKey is configured. The
+   *  framework generates this once per dispatch (not per retry); a
+   *  retry sends the same key so the server can dedupe. */
+  readonly idempotencyKey?: string;
+}
+
 export interface ActionDefinition<TArgs, TResult> {
   /** Stable identifier, e.g. "chat.delete", "files.create".
    *  Used in the registry log + as a default toast prefix. */
@@ -55,8 +71,9 @@ export interface ActionDefinition<TArgs, TResult> {
   /** The work the action performs. Must throw ActionError on failure
    *  (or any Error — wrappers will normalise). The signal aborts when
    *  dispatch().cancel() is called or the optimistic AbortController
-   *  is torn down. */
-  run: (args: TArgs, signal: AbortSignal) => Promise<TResult>;
+   *  is torn down. The third argument carries per-dispatch context
+   *  (idempotency key, instance ID); ignore if not needed. */
+  run: (args: TArgs, signal: AbortSignal, ctx?: ActionContext) => Promise<TResult>;
 
   /** Optional optimistic mutation. Runs synchronously before run().
    *  Return any state you need to undo the mutation in rollback().
@@ -121,6 +138,41 @@ export interface ActionDefinition<TArgs, TResult> {
    *  Scope can be a static string (one queue for the whole action) or
    *  a function of args (per-resource queue, e.g. per-repo, per-chatID). */
   scope?: string | ((args: TArgs) => string);
+
+  /** Generate an idempotency key per dispatch and attach it to the
+   *  request. The server can dedupe on this key — a retry of the same
+   *  dispatch with the same key is treated as the original (returns
+   *  the original result rather than processing twice). Closes the
+   *  "timed out but server processed" hole that prevents retry on
+   *  otherwise non-idempotent operations.
+   *
+   *  - true: framework generates a ULID-like string per dispatch
+   *  - function: called with args, must return a stable string for the
+   *    same logical request (e.g. include the resource id + a per-
+   *    dispatch nonce). The same string for two dispatches MEANS the
+   *    server should treat them as the same request.
+   *  - undefined / false (default): no idempotency key sent.
+   *
+   *  apiAction sends the key as the `Idempotency-Key` HTTP header.
+   *  transportAction includes it in the command payload as `idempotency_key`.
+   *  Custom defineAction implementations receive it via run()'s 3rd
+   *  context parameter and must wire it themselves. */
+  idempotencyKey?: boolean | ((args: TArgs) => string);
+
+  /** Collapse concurrent dispatches with matching key into one in-flight
+   *  promise. The second dispatch returns the same promise as the first
+   *  rather than queueing (scope) or starting a duplicate run.
+   *
+   *  Different from scope:
+   *    - scope queues sequentially (A finishes, then B starts)
+   *    - dedupe collapses to one (A and B share the same in-flight result)
+   *
+   *  Use cases: accidentally double-clicked buttons, the same prefetch
+   *  fired from two unrelated effects. Default: no dedup.
+   *
+   *  - true: dedupe on JSON.stringify(args)
+   *  - function: caller supplies the key; identical strings collapse */
+  dedupe?: boolean | ((args: TArgs) => string);
 }
 
 /** A registered action, returned by defineAction(). Can be dispatched

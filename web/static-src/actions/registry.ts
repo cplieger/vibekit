@@ -96,6 +96,31 @@ export function pendingFor(name: string): readonly ActionInstance[] {
   return log.filter((i) => i.name === name && i.status === "pending");
 }
 
+/** Total count of pending action instances across all action names.
+ *  Useful for an app-bar global progress indicator: when > 0, show
+ *  some "doing things" affordance. */
+export function pendingCount(): number {
+  let n = 0;
+  for (const i of log) {
+    if (i.status === "pending") n++;
+  }
+  return n;
+}
+
+/** True if any of the named actions has at least one pending instance.
+ *  Useful for binding a single UI element's loading state to multiple
+ *  action names (e.g. a Save button bound to ["settings.patch",
+ *  "settings.save_steering"]). */
+export function pendingForAny(names: readonly string[]): boolean {
+  if (names.length === 0) return false;
+  // Set lookup avoids quadratic scan when names is large.
+  const set = new Set(names);
+  for (const i of log) {
+    if (i.status === "pending" && set.has(i.name)) return true;
+  }
+  return false;
+}
+
 /** Test-only: clear log + listeners. */
 export function _resetForTest(): void {
   log.length = 0;
