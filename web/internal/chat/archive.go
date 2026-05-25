@@ -40,7 +40,7 @@ func (s *Store) Archive(ctx context.Context, chatID api.ChatID) error {
 		return err
 	}
 	dstPath := filepath.Join(archiveDir, string(chatID)+chatFileSuffix)
-	if err := os.Rename(srcPath, dstPath); err != nil { //nolint:gosec // G703: paths built from validated chat ID
+	if err := os.Rename(srcPath, dstPath); err != nil { //#nosec G703 -- paths built from validated chat ID
 		m.Unlock()
 		return err
 	}
@@ -49,7 +49,7 @@ func (s *Store) Archive(ctx context.Context, chatID api.ChatID) error {
 	// drafts don't silently outlive the archived chat.
 	draftSrc := filepath.Join(s.dir, string(chatID)+planDraftSuffix)
 	draftDst := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: paths built from validated chat ID
+	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
 		slog.Warn("chat archive: plan-draft move failed",
 			"chat_id", chatID, "error", err)
 	}
@@ -166,14 +166,14 @@ func (s *Store) RestoreArchived(ctx context.Context, chatID api.ChatID) error {
 		m.Unlock()
 		return err
 	}
-	if err := os.Rename(srcPath, dstPath); err != nil {
+	if err := os.Rename(srcPath, dstPath); err != nil { //#nosec G703 -- paths built from validated chat ID
 		m.Unlock()
 		return err
 	}
 	// Also restore the plan draft if it exists.
 	draftSrc := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
 	draftDst := filepath.Join(s.dir, string(chatID)+planDraftSuffix)
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
 		slog.Warn("chat restore: plan-draft move failed",
 			"chat_id", chatID, "error", err)
 	}
