@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { hasErrorString } from "./actions/error.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -95,8 +96,8 @@ export function uploadFiles(opts: UploadOptions): void {
     } else {
       let msg = `Upload failed (${String(xhr.status)})`;
       try {
-        const body = JSON.parse(xhr.responseText) as { error?: string };
-        if (typeof body.error === "string") msg = body.error;
+        const body: unknown = JSON.parse(xhr.responseText);
+        if (hasErrorString(body)) msg = body.error;
       } catch { /* ignore */ }
       label.textContent = msg;
       setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);

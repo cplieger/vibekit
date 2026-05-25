@@ -118,11 +118,12 @@ describe("deleteFilesBatch optimistic + rollback + scope", () => {
     const listEl = makeListEl(["a.ts", "b.ts"]);
     const p1 = deleteFilesBatch.dispatch({ dir: "/src", names: ["a.ts"], listEl });
     const p2 = deleteFilesBatch.dispatch({ dir: "/src", names: ["b.ts"], listEl });
-    await Promise.resolve();
+    // Allow microtasks to settle so scope chain queues the second dispatch
+    await new Promise((r) => setTimeout(r, 0));
     expect(callCount).toBe(1);
     resolveFirst!();
     await p1;
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
     await p2;
     expect(callCount).toBe(2);
   });
@@ -223,11 +224,11 @@ describe("sendPromptAction rollback on failure", () => {
     const { sendPromptAction } = await import("./chat.js");
     const p1 = sendPromptAction.dispatch(promptArgs);
     const p2 = sendPromptAction.dispatch({ ...promptArgs, text: "second" });
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
     expect(callCount).toBe(1);
     resolveFirst!();
     await p1;
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
     await p2;
     expect(callCount).toBe(2);
   });
@@ -294,6 +295,9 @@ describe("forkChatAction idempotencyKey + optimistic + rollback", () => {
 // ===========================================================================
 
 describe("files.create_file scope + retryable", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("succeeds on 200", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     const { createFile } = await import("./files.js");
@@ -314,7 +318,11 @@ describe("files.create_file scope + retryable", () => {
   it("retryable: network shows Retry button on network error", async () => {
     mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
     const { createFile } = await import("./files.js");
-    await createFile.dispatch({ dir: "/src", name: "new.ts" });
+    const p = createFile.dispatch({ dir: "/src", name: "new.ts" });
+    // Advance through retry backoff: 300ms + 600ms
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(600);
+    await p;
     expect(toast.error).toHaveBeenCalledTimes(1);
     const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
     expect(retryArg).toBeDefined();
@@ -332,11 +340,11 @@ describe("files.create_file scope + retryable", () => {
     const { createFile } = await import("./files.js");
     const p1 = createFile.dispatch({ dir: "/src", name: "a.ts" });
     const p2 = createFile.dispatch({ dir: "/src", name: "b.ts" });
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(callCount).toBe(1);
     resolveFirst!();
     await p1;
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     await p2;
     expect(callCount).toBe(2);
   });

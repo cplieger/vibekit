@@ -364,7 +364,10 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
     const saved = input.value;
     input.value = "";
     void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }, {
-      onError: () => { input.value = saved; },
+      onError: () => {
+        // Only restore if the user hasn't typed new content since dispatch.
+        if (input.value === "") input.value = saved;
+      },
     });
   };
   sendBtn.addEventListener("click", doSend);

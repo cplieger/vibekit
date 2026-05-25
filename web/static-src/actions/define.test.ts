@@ -212,7 +212,7 @@ describe("defineAction — optimistic + rollback", () => {
     expect(order).toEqual(["opt", "run"]);
   });
 
-  it("rollback receives the OptimisticOp on error", async () => {
+  it("rollback receives the TOp on error", async () => {
     const rollback = vi.fn();
     const action = defineAction({
       name: "test.rollback",

@@ -17,7 +17,7 @@ dispatcher handles the lifecycle.
   - *Exception:* read-only fetches that benefit from dedupe +
     auto-retry + cancellation may use `defineAction`/`apiAction`
     with `error: false`. See `kiro-config.ts`, `retention.ts`,
-    and `status.ts` (compaction buffer) for examples.
+    and `commands-menu.ts` (slash-command options) for examples.
 
 ## The three factories
 

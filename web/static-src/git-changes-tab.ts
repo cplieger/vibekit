@@ -776,7 +776,6 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ai.className = "btn-small";
   ai.textContent = "✨ AI message";
   ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
-  ai.setAttribute("aria-label", "Generate commit message from staged changes");
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });

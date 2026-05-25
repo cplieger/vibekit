@@ -42,7 +42,7 @@ export interface ActionInstance<TArgs = unknown, TResult = unknown> {
   // --- Fields considered and rejected ---
   // signal: AbortSignal — ActionInstance is a serializable snapshot;
   //   AbortSignal is non-serializable and live. Callers needing
-  //   cancellation use dispatch().cancel() or action.cancel().
+  //   cancellation use action.cancel().
   // cancelable: boolean — derivable from `status === "pending"`;
   //   adds no information beyond what status already conveys.
 }
@@ -84,7 +84,7 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
 
   /** The work the action performs. Must throw ActionError on failure
    *  (or any Error — wrappers will normalise). The signal aborts when
-   *  dispatch().cancel() is called or the optimistic AbortController
+   *  action.cancel() is called or the AbortController
    *  is torn down. The third argument carries per-dispatch context
    *  (idempotency key, instance ID); ignore if not needed. */
   run: (args: TArgs, signal: AbortSignal, ctx?: ActionContext) => Promise<TResult>;

@@ -221,7 +221,10 @@ export function subscribeByName(name: string, fn: RegistryListener): () => void 
   set.add(fn);
   return () => {
     set!.delete(fn);
-    if (set!.size === 0) namedListeners.delete(name);
+    // Only delete the Map entry if our captured set is still the current
+    // one for this name. Prevents double-unsubscribe from nuking a newer
+    // Set created after the first unsubscribe emptied and removed ours.
+    if (set!.size === 0 && namedListeners.get(name) === set) namedListeners.delete(name);
   };
 }
 

@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { hasErrorString } from "./error.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
@@ -37,7 +38,7 @@ export const createFile = defineAction<CreateArgs, unknown>({
     }
     if (!r.ok) {
       let msg = `HTTP ${String(r.status)}`;
-      try { const b = (await r.json()) as { error?: string }; if (b.error) msg = b.error; } catch { /* */ }
+      try { const b: unknown = await r.json(); if (hasErrorString(b)) msg = b.error; } catch { /* */ }
       throw new ActionError(msg, { status: r.status });
     }
     return undefined;
@@ -70,7 +71,7 @@ export const createFolder = defineAction<CreateArgs, unknown>({
     }
     if (!r.ok) {
       let msg = `HTTP ${String(r.status)}`;
-      try { const b = (await r.json()) as { error?: string }; if (b.error) msg = b.error; } catch { /* */ }
+      try { const b: unknown = await r.json(); if (hasErrorString(b)) msg = b.error; } catch { /* */ }
       throw new ActionError(msg, { status: r.status });
     }
     return undefined;
@@ -125,8 +126,8 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
           if (!r.ok) {
             let serverError = "";
             try {
-              const body = (await r.json()) as { error?: string };
-              if (typeof body.error === "string") serverError = body.error;
+              const body: unknown = await r.json();
+              if (hasErrorString(body)) serverError = body.error;
             } catch { /* ignore */ }
             return { ok: false as const, name, error: serverError || `HTTP ${String(r.status)}`, status: r.status };
           }

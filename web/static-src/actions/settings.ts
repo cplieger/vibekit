@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { hasErrorString } from "./error.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -56,7 +57,7 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
     if (!r.ok) {
       const body = await r.text().catch(() => "");
       let msg = `HTTP ${String(r.status)}`;
-      try { const j = JSON.parse(body) as { error?: string }; if (j.error !== undefined && j.error !== "") msg = j.error; } catch { /* */ }
+      try { const j: unknown = JSON.parse(body); if (hasErrorString(j)) msg = j.error; } catch { /* */ }
       throw new ActionError(msg, { status: r.status });
     }
     return {};

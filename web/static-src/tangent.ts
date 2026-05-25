@@ -60,7 +60,12 @@ export function forkCurrentChat(chatID: string): void {
   void forkChatAction.dispatch({ chatID: session.id, tangentID }, {
     onSuccess: () => {
       void loadList().then(() => {
-        openChatTab(tangentID, `Tangent: ${session.name}`, session.agent);
+        // Read fresh session state — name/agent may have changed while
+        // the fork was scope-queued behind another chat mutation.
+        const fresh = get(chatID);
+        const name = fresh?.name ?? session.name;
+        const agent = fresh?.agent ?? session.agent;
+        openChatTab(tangentID, `Tangent: ${name}`, agent);
         activateChatView(tangentID);
       });
     },

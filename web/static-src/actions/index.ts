@@ -17,7 +17,7 @@ export { apiAction } from "./api.js";
 
 // Error class for callers throwing structured action errors from within
 // run() (lets toast / retry classification see status + code).
-export { ActionError } from "./error.js";
+export { ActionError, hasErrorString } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch

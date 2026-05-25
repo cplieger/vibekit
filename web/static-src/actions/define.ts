@@ -5,7 +5,7 @@
 //   2. await run(args, signal)  (with auto-retry if def.retry is set)
 //   3a. on success: record "success", fire success toast, return result
 //   3b. on error:   record "error", call rollback() with the captured
-//                   OptimisticOp + ActionError, fire error toast, return null
+//                   TOp + ActionError, fire error toast, return null
 //   3c. on cancel:  record "cancelled", call rollback(), return null
 //
 // Cancellation: each dispatch creates an AbortController. Calling
@@ -206,24 +206,29 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // runOnce when the original dispatch settles.
         return (entry.promise as Promise<TResult | null>).then(
           (v) => {
-            try {
-              if (v !== null) {
-                opts.onSuccess?.(v as TResult, args);
-              } else if (entry.error !== undefined) {
-                // Original errored; propagate the real error.
-                opts.onError?.(entry.error, args);
-              } else if (entry.cancelled === true) {
-                // Original was cancelled. Per the contract documented
-                // in DispatchOptions, onSettled fires for cancellation
-                // but onError does not. Skip onError here.
-              } else {
-                // Defensive: should not happen — promise resolved null
-                // without setting error or cancelled. Fall back to
-                // synthetic.
-                opts.onError?.({ message: "deduped dispatch did not succeed", code: "dedupe" }, args);
+            if (v !== null) {
+              try { opts.onSuccess?.(v as TResult, args); } catch (cbErr) {
+                console.error(`[actions] onSuccess callback for ${def.name} threw`, cbErr);
               }
-            } finally {
-              opts.onSettled?.(args);
+            } else if (entry.error !== undefined) {
+              // Original errored; propagate the real error.
+              try { opts.onError?.(entry.error, args); } catch (cbErr) {
+                console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
+              }
+            } else if (entry.cancelled === true) {
+              // Original was cancelled. Per the contract documented
+              // in DispatchOptions, onSettled fires for cancellation
+              // but onError does not. Skip onError here.
+            } else {
+              // Defensive: should not happen — promise resolved null
+              // without setting error or cancelled. Fall back to
+              // synthetic.
+              try { opts.onError?.({ message: "deduped dispatch did not succeed", code: "dedupe" }, args); } catch (cbErr) {
+                console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
+              }
+            }
+            try { opts.onSettled?.(args); } catch (cbErr) {
+              console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
             }
             return v;
           },

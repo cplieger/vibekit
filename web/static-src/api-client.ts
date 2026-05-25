@@ -107,6 +107,7 @@ export interface ApiResult<T> {
 
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
+import { hasErrorString } from "./actions/error.js";
 
 /** Fetch + decode variant: runs the response through a Decoder<T>
  *  after parsing JSON. Returns a full ApiResult envelope so callers
@@ -192,10 +193,7 @@ async function requestWithError<T>(
       try { parsed = JSON.parse(raw); } catch { /* non-JSON body */ }
     }
     if (!r.ok) {
-      const err = (typeof parsed === "object" && parsed !== null
-        && "error" in parsed && typeof (parsed as { error: unknown }).error === "string")
-        ? (parsed as { error: string }).error
-        : `HTTP ${String(r.status)}`;
+      const err = hasErrorString(parsed) ? parsed.error : `HTTP ${String(r.status)}`;
       console.warn("api: non-ok", method, path, r.status, err);
       return { ok: false, status: r.status, data: null, error: err };
     }

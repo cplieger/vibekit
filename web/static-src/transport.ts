@@ -26,7 +26,7 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
-import { registerCleanup } from "./actions/index.js";
+import { registerCleanup, hasErrorString } from "./actions/index.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -302,8 +302,8 @@ class TransportController {
 
       let errMsg = `HTTP ${String(r.status)}`;
       try {
-        const d = (await r.json()) as { error?: string };
-        if (d.error !== undefined) errMsg = d.error;
+        const d: unknown = await r.json();
+        if (hasErrorString(d)) errMsg = d.error;
       } catch { /* non-JSON */ }
       // 409 is a queue signal — never reported via setLastError.
       // Otherwise honour the caller's reportSendState preference

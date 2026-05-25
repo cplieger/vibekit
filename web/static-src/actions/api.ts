@@ -35,7 +35,7 @@
 
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 import { defineAction, IDEMPOTENCY_HEADER } from "./define.js";
-import { ActionError } from "./error.js";
+import { ActionError, hasErrorString } from "./error.js";
 import type {
   Action,
   ActionContext,
@@ -127,8 +127,8 @@ async function executeRequest<T>(
     // Try to parse a JSON error body for a server-supplied message.
     let serverError = "";
     try {
-      const body = (await r.json()) as { error?: unknown };
-      if (typeof body.error === "string") serverError = body.error;
+      const body: unknown = await r.json();
+      if (hasErrorString(body)) serverError = body.error;
     } catch {
       // Body wasn't JSON or parse failed — leave serverError empty.
     }
