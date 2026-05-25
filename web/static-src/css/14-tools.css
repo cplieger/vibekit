@@ -461,6 +461,21 @@
 .action-bar-local + .action-bar-sync { padding-block-start: 0; }
 .action-bar-local { padding-block-end: var(--sp-1); }
 
+/* Vertical hairline used inside an action bar between two semantic
+ * groups (e.g. local-changes vs. sync). Used by git-changes-tab.ts
+ * which appends a <span class="action-bar-sep" aria-hidden="true">
+ * between the Stage all / Discard all cluster and the Pull / Stash
+ * cluster. Without this rule the separator was an invisible empty
+ * span. */
+.action-bar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--c-border);
+  margin-inline: var(--sp-1);
+  flex-shrink: 0;
+}
+
 /* Shared button base for action-pill, btn, btn-save, btn-small */
 .action-pill, .btn, .btn-save, .btn-small {
   display: flex; align-items: center; justify-content: center;
