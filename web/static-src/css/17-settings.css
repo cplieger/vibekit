@@ -413,19 +413,39 @@
  *   - transition-behavior: allow-discrete on `display` and `overlay`
  *     keeps the animation alive across the discrete display change.
  *
- * This same triple gives us a clean exit too (open → closed) since the
- * default state is the "out" frame. */
+ * iPad Safari quirks addressed here:
+ *   - Explicit `inset: 0; margin: auto` so the dialog stays centered
+ *     during the close transition. The UA dialog:modal styles set
+ *     inset: 0 automatically only while :modal matches; once close()
+ *     is called, :modal stops matching and the dialog would jump to
+ *     its non-modal default position (effectively top-right on iOS
+ *     with RTL inset-handling) before fading out. Setting inset
+ *     explicitly here makes the centering survive the close.
+ *   - dvh instead of vh: vh on iOS Safari includes the URL bar +
+ *     on-screen keyboard space, so when those collapse the dialog
+ *     has 0 effective height. dvh tracks the actual viewport.
+ *   - min-height baseline so the dialog never collapses to its
+ *     content height when the inner list (`flex: 1`) can't size
+ *     itself against an indeterminate parent. */
 .repo-picker-dialog {
+  inset: 0;
+  margin: auto;
   padding: 0;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
   width: min(640px, 90vw);
-  max-height: min(80vh, 720px);
+  /* Fixed deterministic height: the inner list scrolls, so we don't
+   * need the dialog to size to its content. clamp() gives a sane
+   * floor (so iPad Safari can't collapse it to 0) and ceiling (so
+   * desktop doesn't get a 1500-px tall dialog on a tall monitor).
+   * dvh handles iOS's dynamic viewport (URL bar + keyboard). */
+  height: clamp(360px, 80dvh, 720px);
   flex-direction: column;
   opacity: 0;
   transform: scale(0.97);
+  transform-origin: center center;
   transition:
     opacity   var(--dur-enter),
     transform var(--dur-enter),
