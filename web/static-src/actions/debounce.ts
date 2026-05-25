@@ -51,8 +51,8 @@ export interface DebounceOptions {
  * Wrap an action with a debounce timer so rapid calls coalesce into a
  * single dispatch after a quiet window.
  *
- * @param action - The action to debounce.
- * @param opts - Debounce configuration (wait duration, leading/trailing edge).
+ * @param action - Action whose `dispatch()` will be called after the quiet window elapses.
+ * @param opts - Debounce configuration (wait duration in ms, leading/trailing edge behavior).
  * @returns A callable with `.flush()`, `.cancel()`, and `.isPending()` methods.
  *
  * @example

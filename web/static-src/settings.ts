@@ -169,7 +169,7 @@ function initDiagnostics(): void {
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
   if (btn === null || status === null) return;
 
-  bindLoadingState("tools.diagnostics", btn, { pendingClass: "btn-loading" });
+  bindLoadingState("tools.run_diagnostics", btn, { pendingClass: "btn-loading" });
 
   btn.addEventListener("click", async () => {
     status.hidden = false;

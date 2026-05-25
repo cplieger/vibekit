@@ -33,7 +33,7 @@ export interface ToggleArgs {
   enabled: boolean;
 }
 
-export const toggleServer = apiAction<ToggleArgs, void>({
+export const toggleServer = apiAction<ToggleArgs, void, Server>({
   name: "mcp.toggle_server",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -48,8 +48,7 @@ export const toggleServer = apiAction<ToggleArgs, void>({
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
-      const prev = op as Server;
-      updateConfiguredEntry(prev.id, { enabled: prev.enabled });
+      updateConfiguredEntry(op.id, { enabled: op.enabled });
     }
   },
   error: "Couldn't toggle integration",
@@ -61,7 +60,7 @@ export interface DeleteArgs {
   id: string;
 }
 
-export const deleteServer = apiAction<DeleteArgs, void>({
+export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -75,7 +74,7 @@ export const deleteServer = apiAction<DeleteArgs, void>({
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
-      const [entry, atIndex] = op as [Server, number];
+      const [entry, atIndex] = op;
       insertConfiguredEntry(entry, atIndex);
     }
   },

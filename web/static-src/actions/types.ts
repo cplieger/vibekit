@@ -13,7 +13,7 @@ export type ActionLifecycleStatus =
   | "pending"     // optimistic ran (if any), run() in flight
   | "success"     // run() resolved
   | "error"       // run() threw; rollback ran
-  | "cancelled";  // dispatch().cancel() called or AbortController fired
+  | "cancelled";  // action.cancel() called or signal aborted externally
 
 
 /** Errors thrown by an action's run() function. ActionError subclass

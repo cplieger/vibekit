@@ -33,7 +33,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
     if (e instanceof DOMException) {
       throw new ActionError("Request timed out", { code: "timeout", cause: e });
     }
-    throw new ActionError("network error", { cause: e });
+    throw new ActionError("network error", { code: "network", cause: e });
   }
 }
 

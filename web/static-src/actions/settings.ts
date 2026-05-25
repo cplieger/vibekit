@@ -10,7 +10,6 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
-import { asOp } from "./op.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -30,7 +29,7 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
 
 // --- Logout ---
 
-export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown>({
+export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
   // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
   // with dispatch, so DOM refs are guaranteed valid at call time.
@@ -53,9 +52,9 @@ export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLE
     return {};
   },
   rollback: ({ emailEl, stAuthEl }, op) => {
-    const prev = op as string;
-    emailEl.textContent = prev;
-    stAuthEl.textContent = prev !== "" ? "signed in" : "not signed in";
+    if (op === undefined) return;
+    emailEl.textContent = op;
+    stAuthEl.textContent = op !== "" ? "signed in" : "not signed in";
   },
   error: "Couldn't log out",
 });
@@ -77,7 +76,7 @@ interface KiroSettingOp {
   prevValue?: string;
 }
 
-export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
+export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
   name: "settings.set_kiro_setting",
   scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
@@ -87,7 +86,7 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  optimistic: ({ input, previousValue }): KiroSettingOp => {
+  optimistic: ({ input, previousValue }) => {
     if (input.type === "checkbox") {
       return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
     }
@@ -97,12 +96,11 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     return { prevValue: previousValue ?? input.defaultValue };
   },
   rollback: ({ input }, op) => {
-    const o = asOp<KiroSettingOp>(op);
-    if (o === undefined) return;
-    if (o.prevChecked !== undefined) {
-      input.checked = o.prevChecked;
-    } else if (o.prevValue !== undefined) {
-      input.value = o.prevValue;
+    if (op === undefined) return;
+    if (op.prevChecked !== undefined) {
+      input.checked = op.prevChecked;
+    } else if (op.prevValue !== undefined) {
+      input.value = op.prevValue;
     }
   },
   error: "Couldn't save setting",
@@ -122,7 +120,7 @@ interface PatchAppOp {
   inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
 }
 
-export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
+export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown, PatchAppOp>({
   name: "settings.patch",
   scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
@@ -132,7 +130,7 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     path: "/api/settings",
     body,
   }),
-  optimistic: ({ inputs }): PatchAppOp => {
+  optimistic: ({ inputs }) => {
     const list = inputs ?? [];
     return {
       inputs: list.map((el) => ({
@@ -143,9 +141,8 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     };
   },
   rollback: (_args, op) => {
-    const o = asOp<PatchAppOp>(op);
-    if (o === undefined) return;
-    for (const { el, prevChecked, prevValue } of o.inputs) {
+    if (op === undefined) return;
+    for (const { el, prevChecked, prevValue } of op.inputs) {
       if (el.type === "checkbox") {
         el.checked = prevChecked;
       } else {

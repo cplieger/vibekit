@@ -132,6 +132,36 @@ agnostic; cast it inside `rollback` to the shape `optimistic`
 returned. (TypeScript guards as above are best practice but
 for trivial shapes a cast is fine.)
 
+For compile-time safety between `optimistic` and `rollback`, specify
+the third type parameter `TOp` on the action definition:
+
+```ts
+export const renameChat = apiAction<{ id: string; name: string }, void, { before: string }>({
+  // ...
+  optimistic: ({ id, name }) => {
+    const before = store.getChatName(id);
+    store.setChatName(id, name);
+    return { before };  // typed as { before: string }
+  },
+  rollback: ({ id }, op) => {
+    // op is typed as { before: string } | undefined — no cast needed
+    if (op !== undefined) store.setChatName(id, op.before);
+  },
+});
+```
+
+When `TOp` isn't specified (defaults to `unknown`), use the
+`asOp<T>()` helper from `./op.js` to narrow safely:
+
+```ts
+import { asOp } from "./op.js";
+
+rollback: ({ id }, op) => {
+  const o = asOp<{ before: string }>(op);
+  if (o !== undefined) store.setChatName(id, o.before);
+},
+```
+
 ## Toast wiring
 
 | Definition field      | Default behavior                                        |
@@ -159,6 +189,34 @@ so the user knows WHAT failed, not just that something failed:
 error: (args) => `Couldn't rename \u201c${args.original}\u201d`,
 error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
 ```
+
+## Error codes reference
+
+`ActionError` carries optional `status` (HTTP) and `code` (string)
+fields. The framework uses these for retry eligibility and toast
+formatting. Common codes:
+
+| Code          | Source                          | Retry-eligible (`"network"`) |
+|---------------|---------------------------------|------------------------------|
+| `"timeout"`   | DOMException TimeoutError       | Yes                          |
+| `"network"`   | fetch TypeError (offline/DNS)   | Yes                          |
+| `"cancelled"` | DOMException AbortError / user  | No (not an error)            |
+| `"conflict"`  | HTTP 409                        | No                           |
+| `"not_found"` | HTTP 404                        | No                           |
+| *(none)*      | Generic Error without code      | Only if `retryable: "always"`|
+
+Status 0 (no HTTP response) is also retry-eligible under `"network"`.
+
+Throw with explicit codes for server-side classification:
+
+```ts
+throw new ActionError("Server rejected", { status: 409, code: "conflict" });
+throw new ActionError("Timed out", { code: "timeout" });
+```
+
+The `toActionError()` normaliser (internal) maps DOMException names
+automatically: `TimeoutError` → `"timeout"`, `AbortError` →
+`"cancelled"`.
 
 ## Cancellation
 
@@ -404,25 +462,21 @@ subscribeToActions(() => {
 });
 ```
 
-## Action status snapshots
+## Action status snapshots (internal)
 
-> **Note:** `actionStatus` is currently `@internal` — no external
-> consumer uses it yet. The API is stable but may change before
-> promotion to the public surface.
+> **Note:** `actionStatus` is `@internal` — not exported from the
+> public surface (`actions/index.ts`). Import directly from
+> `./actions/action-status.js` if needed within the framework.
 
 For UIs that need richer state than just "is it pending":
 
 ```ts
-import { actionStatus } from "./actions/index.js";
+// Internal use only — not part of the public API.
+import { actionStatus } from "./action-status.js";
 
 const status = actionStatus("settings.save_steering");
 // status is a live-updating object — same reference, mutated in place.
 // { pending: number, lastError?, lastSuccess?, lastDispatchedAt, lastSettledAt }
-
-renderTimestamp(status.lastSettledAt);
-if (status.lastError !== undefined) {
-  banner.show(status.lastError.message);
-}
 ```
 
 ## Naming convention
@@ -435,6 +489,9 @@ files.delete        files.create_file  files.rename
 settings.patch      settings.save_steering  settings.set_kiro_setting
 mcp.save_server     mcp.delete_server  mcp.toggle_server
 git.commit          git.push           git.stage
+tools.install       tools.save         tools.diagnostics
+tools.load_list     tools.seed_mcp
+crew.send_message
 ```
 
 This is the registry key for log queries, telemetry, and tests.
@@ -510,6 +567,29 @@ semantic.
 only fetches that auto-recover" guidance in the "When to use" section
 above continues to apply. These loaders are cancel-replace reads, not
 user-initiated mutations.
+
+## Error codes reference
+
+Canonical `code` values on `ActionErrorLike`. The dispatcher uses
+these for retry eligibility (`isRetryClass`) and toast formatting.
+
+| Code          | Meaning                                              | Retry-eligible (`retryable: "network"`) |
+|---------------|------------------------------------------------------|:---------------------------------------:|
+| `"network"`   | Fetch failed (TypeError), connection refused, DNS    | ✓                                       |
+| `"timeout"`   | Request exceeded its deadline (DOMException)         | ✓                                       |
+| `"cancelled"` | User or framework aborted the signal                 | ✗ (no toast, rollback only)             |
+| `"dedupe"`    | Synthetic: deduped dispatch settled as non-success   | ✗                                       |
+
+Additionally, actions may define domain-specific codes for internal
+classification (e.g. `"draft_failed"`, `"run_plan_failed"`,
+`"conflict"`). These are NOT retry-eligible under `retryable: "network"`
+— only `"network"` and `"timeout"` (plus `status === 0`) qualify.
+
+**Rule:** any `catch` block around a raw `fetch()` call in a
+`defineAction` runner MUST set `code: "network"` on the thrown
+`ActionError` for network failures. Without it, `retryable: "network"`
+and auto-retry won't fire. Use `apiAction` or `transportAction` to
+get this for free.
 
 ## Testing actions
 

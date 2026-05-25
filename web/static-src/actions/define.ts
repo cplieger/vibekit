@@ -166,7 +166,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * ```ts
  * const deleteChat = defineAction<string, void>({
  *   name: "chat.delete",
- *   run: (id, signal) => fetch(`/api/chats/${id}`, { method: "DELETE", signal }),
+ *   run: async (id, signal) => {
+ *     await fetch(`/api/chats/${id}`, { method: "DELETE", signal });
+ *   },
  *   error: "Couldn't delete chat",
  *   retryable: "network",
  * });

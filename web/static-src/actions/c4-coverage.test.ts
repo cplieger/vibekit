@@ -381,10 +381,10 @@ describe("tools.install", () => {
 });
 
 // ===========================================================================
-// tools.diagnostics — dedupe + retry
+// tools.run_diagnostics — dedupe + retry
 // ===========================================================================
 
-describe("tools.diagnostics", () => {
+describe("tools.run_diagnostics", () => {
   it("dedupe: collapses concurrent dispatches", async () => {
     let runCount = 0;
     mockFetch.mockImplementation(() => {

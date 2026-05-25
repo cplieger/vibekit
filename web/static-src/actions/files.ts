@@ -19,12 +19,19 @@ export const createFile = defineAction<CreateArgs, unknown>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
   run: async (args, signal) => {
-    const r = await fetch("/api/files/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "touch", path: joinPath(args.dir, args.name) }),
-      signal: withTimeout(signal, API_TIMEOUT_MS),
-    });
+    let r: Response;
+    try {
+      r = await fetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "touch", path: joinPath(args.dir, args.name) }),
+        signal: withTimeout(signal, API_TIMEOUT_MS),
+      });
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      throw new ActionError("network error", { code: "network", cause: e });
+    }
     if (!r.ok) {
       let msg = `HTTP ${String(r.status)}`;
       try { const b = (await r.json()) as { error?: string }; if (b.error) msg = b.error; } catch { /* */ }
@@ -42,12 +49,19 @@ export const createFolder = defineAction<CreateArgs, unknown>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
   run: async (args, signal) => {
-    const r = await fetch("/api/files/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "mkdir", path: joinPath(args.dir, args.name) }),
-      signal: withTimeout(signal, API_TIMEOUT_MS),
-    });
+    let r: Response;
+    try {
+      r = await fetch("/api/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "mkdir", path: joinPath(args.dir, args.name) }),
+        signal: withTimeout(signal, API_TIMEOUT_MS),
+      });
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      if (e instanceof DOMException) throw new ActionError("Request timed out", { code: "timeout", cause: e });
+      throw new ActionError("network error", { code: "network", cause: e });
+    }
     if (!r.ok) {
       let msg = `HTTP ${String(r.status)}`;
       try { const b = (await r.json()) as { error?: string }; if (b.error) msg = b.error; } catch { /* */ }

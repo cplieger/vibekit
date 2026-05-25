@@ -22,7 +22,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
 });
 
 export const runDiagnostics = apiAction<void, { report?: string; error?: string }>({
-  name: "tools.diagnostics",
+  name: "tools.run_diagnostics",
   dedupe: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },

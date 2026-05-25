@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Cancel-semantics coverage: tests for paths not covered elsewhere.
 // 1. Success-race cancel: run() resolves but signal already aborted.
-// 2. Deduped caller: onError does NOT fire when original is cancelled.
+// 2. Deduped caller: onError/onSuccess do NOT fire when original is cancelled.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -99,8 +99,8 @@ describe("success-race cancel: run() resolves but signal already aborted", () =>
   });
 });
 
-describe("deduped caller: cancel propagation", () => {
-  it("deduped caller's onError does NOT fire when original is cancelled", async () => {
+describe("deduped caller: cancel semantics", () => {
+  it("deduped caller's onError/onSuccess do NOT fire when original is cancelled", async () => {
     const action = defineAction<{ id: string }, string>({
       name: "test.dedupe_cancel_no_onError",
       dedupe: true,
@@ -112,18 +112,22 @@ describe("deduped caller: cancel propagation", () => {
         }),
     });
 
+    const onSuccess1 = vi.fn();
+    const onSuccess2 = vi.fn();
     const onError1 = vi.fn();
     const onError2 = vi.fn();
     const onSettled1 = vi.fn();
     const onSettled2 = vi.fn();
 
-    const p1 = action.dispatch({ id: "a" }, { onError: onError1, onSettled: onSettled1 });
-    const p2 = action.dispatch({ id: "a" }, { onError: onError2, onSettled: onSettled2 });
+    const p1 = action.dispatch({ id: "a" }, { onSuccess: onSuccess1, onError: onError1, onSettled: onSettled1 });
+    const p2 = action.dispatch({ id: "a" }, { onSuccess: onSuccess2, onError: onError2, onSettled: onSettled2 });
 
     action.cancel();
     await Promise.all([p1, p2]);
 
-    // Neither caller's onError should fire — cancellation is not an error.
+    // Neither caller's onError or onSuccess should fire — cancellation is neither.
+    expect(onSuccess1).not.toHaveBeenCalled();
+    expect(onSuccess2).not.toHaveBeenCalled();
     expect(onError1).not.toHaveBeenCalled();
     expect(onError2).not.toHaveBeenCalled();
     // Both onSettled should fire.

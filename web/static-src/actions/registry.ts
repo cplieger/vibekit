@@ -65,6 +65,21 @@ export function record(instance: ActionInstance): void {
       }
     }
     idMap.set(instance.id, instance);
+    // Evict after pending→terminal transitions: when all entries were
+    // pending at insert time, eviction couldn't find non-pending victims.
+    // Now that this entry is terminal, check if we're over the cap.
+    if (instance.status !== "pending" && _liveCount > MAX_LOG_SIZE) {
+      for (let i = _head; i < log.length; i++) {
+        const entry = log[i] ?? null;
+        if (entry !== null && entry.status !== "pending" && entry.id !== instance.id) {
+          idMap.delete(entry.id);
+          log[i] = null;
+          _liveCount--;
+          if (_liveCount <= MAX_LOG_SIZE) break;
+        }
+      }
+      compact();
+    }
   } else {
     log.push(instance);
     idMap.set(instance.id, instance);

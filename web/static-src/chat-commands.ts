@@ -54,7 +54,7 @@ export interface SendPromptOpts {
 export async function sendPromptTo(
   chatID: string, text: string, opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
-  const attachments = opts.attachments !== undefined ? [...opts.attachments] as unknown[] : takeAttachments();
+  const attachments = opts.attachments !== undefined ? [...opts.attachments] : takeAttachments();
   const result = await sendPromptAction.dispatch({
     chatID, text,
     messageID: newMessageID(),

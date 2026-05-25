@@ -47,7 +47,8 @@ export interface BindLoadingOptions {
  * action's pending count.
  *
  * @param actionName - Registry action name to observe (e.g. "git.commit").
- * @param el - The disableable element to manage.
+ * @param el - Button, input, select, or textarea whose `disabled` property
+ *   will be toggled while the action is pending.
  * @param opts - Optional configuration for aria-busy, CSS class, and
  *   disabled-state preservation.
  * @returns An unsubscribe function that restores the element and detaches
@@ -68,6 +69,7 @@ export function bindLoadingState(
   // avoids stale bind-time capture when external code mutates disabled.
   let wasPending = false;
   let baseDisabled = el.disabled;
+  let hadFocus = false;
   let disposed = false;
 
   /** Restore element to idle state (B7: deduplicated helper). */
@@ -75,6 +77,9 @@ export function bindLoadingState(
     el.disabled = preserveDisabled ? baseDisabled : false;
     if (manageAriaBusy) el.removeAttribute("aria-busy");
     if (pendingClass) el.classList.remove(pendingClass);
+    // Restore focus if the element had it before being disabled.
+    if (hadFocus && el.isConnected && !el.disabled) el.focus();
+    hadFocus = false;
   };
 
   const apply = (): void => {
@@ -82,7 +87,10 @@ export function bindLoadingState(
     const isPending = pendingFor(actionName).length > 0;
     // Snapshot the live disabled state on the pending edge (before we
     // clobber it) so we can restore it when the action completes.
-    if (isPending && !wasPending) baseDisabled = el.disabled;
+    if (isPending && !wasPending) {
+      baseDisabled = el.disabled;
+      hadFocus = document.activeElement === el;
+    }
     if (isPending) {
       el.disabled = true;
       if (manageAriaBusy) el.setAttribute("aria-busy", "true");

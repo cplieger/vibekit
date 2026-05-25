@@ -171,6 +171,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
   input.addEventListener("change", () => {
     // input.checked is already the NEW value (browser flipped it).
+    input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
     // Pass the previous state explicitly so rollback restores correctly.
     void toggleServer.dispatch({ id: s.id, enabled: input.checked }, {
       onSuccess: () => { void refetchServers(); },

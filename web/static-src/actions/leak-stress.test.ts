@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
-import { _resetForTest as resetRegistry, pendingFor } from "./registry.js";
+import { _resetForTest as resetRegistry, pendingFor, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 beforeEach(() => {
@@ -151,5 +151,62 @@ describe("memory leak stress — combined scope + dedupe", () => {
     expect(internals.scopeChains).toBe(0);
     expect(internals.dedupeInflight).toBe(0);
     expect(pendingFor("stress.both")).toHaveLength(0);
+  });
+});
+
+describe("memory leak stress — registry log eviction", () => {
+  it("1000 dispatches with full lifecycle: log stays bounded at MAX_LOG_SIZE", async () => {
+    // Use sequential dispatches so each one completes before the next
+    // starts — this exercises the eviction path (new record() sees
+    // _liveCount > MAX_LOG_SIZE and evicts settled entries).
+    const action = defineAction({
+      name: "stress.registry",
+      run: async (args: { i: number }) => args.i,
+    });
+
+    for (let i = 0; i < 1000; i++) {
+      await action.dispatch({ i });
+    }
+
+    // MAX_LOG_SIZE is 200; after 1000 sequential dispatches the log
+    // must have evicted old entries and stay bounded.
+    const log = recentLog();
+    expect(log.length).toBeLessThanOrEqual(200);
+    expect(log.every((e) => e.status !== "pending")).toBe(true);
+  });
+
+  it("tombstones are compacted (log array length stays reasonable)", async () => {
+    // Sequential dispatches trigger eviction + compact() when head > 256.
+    const action = defineAction({
+      name: "stress.compact",
+      run: async (args: { i: number }) => args.i,
+    });
+
+    for (let i = 0; i < 500; i++) {
+      await action.dispatch({ i });
+    }
+
+    const log = recentLog();
+    // After eviction + compaction, live entries stay bounded
+    expect(log.length).toBeLessThanOrEqual(200);
+    expect(log.length).toBeGreaterThan(0);
+  });
+
+  it("memory growth bounded: sequential batches don't accumulate", async () => {
+    const action = defineAction({
+      name: "stress.growth",
+      run: async (args: { i: number }) => args.i,
+    });
+
+    // Run 5 batches of 200 dispatches each (1000 total, sequential)
+    for (let batch = 0; batch < 5; batch++) {
+      for (let i = 0; i < 200; i++) {
+        await action.dispatch({ i: batch * 200 + i });
+      }
+    }
+
+    const log = recentLog();
+    expect(log.length).toBeLessThanOrEqual(200);
+    expect(pendingFor("stress.growth")).toHaveLength(0);
   });
 });

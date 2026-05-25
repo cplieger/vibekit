@@ -29,7 +29,7 @@ function drainQueuedPromptWithAttachments(chatID: string): void {
   void sendPromptTo(chatID, text, {
     ...(session?.agent !== undefined && session.agent !== "" && { agent: session.agent }),
     ...(session?.model !== undefined && session.model !== "" && { model: session.model }),
-    ...(attachments.length > 0 && { attachments: attachments as unknown[] }),
+    ...(attachments.length > 0 && { attachments }),
   });
 }
 

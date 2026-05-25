@@ -166,10 +166,8 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
     return { chatID, wasFrozen };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "wasFrozen" in op) {
-      const { wasFrozen } = op as { wasFrozen: boolean };
-      setFrozen(chatID, wasFrozen);
-    }
+    const o = asOp<{ wasFrozen: boolean }>(op);
+    if (o !== undefined) setFrozen(chatID, o.wasFrozen);
   },
   retryable: "network",
   error: "Couldn't fork chat",
@@ -296,7 +294,12 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
+      if (signal.aborted || r.code === "cancelled") {
+        throw new ActionError("cancelled", { code: "cancelled" });
+      }
+      const errOpts: { status: number; code?: string } = { status: r.status };
+      if (r.code !== undefined) errOpts.code = r.code;
+      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
     }
     return true;
   },
