@@ -9,7 +9,7 @@ import { apiAction } from "./index.js";
 
 // --- Wire types ---
 
-export interface GitRepoArgs {
+interface GitRepoArgs {
   repo: string;
 }
 

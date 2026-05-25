@@ -40,7 +40,9 @@ export class ActionError extends Error implements ActionErrorLike {
  *  `error` property. Replaces unsafe `as { error?: string }` casts on
  *  parsed JSON bodies throughout the action framework and api-client. */
 export function hasErrorString(v: unknown): v is { error: string } {
-  return typeof v === "object" && v !== null && "error" in v && typeof (v as Record<string, unknown>)["error"] === "string";
+  if (typeof v !== "object" || v === null || !("error" in v)) return false;
+  // After the `in` check, TS narrows `v` to `object & Record<"error", unknown>`.
+  return typeof v.error === "string";
 }
 
 /** Coerce any thrown value into an ActionErrorLike snapshot. Used by
@@ -65,9 +67,30 @@ export function toActionError(e: unknown): ActionErrorLike {
     return { message: e.message, code, cause: e };
   }
   if (e instanceof Error) {
-    const rawStatus = "status" in e ? (e as Record<string, unknown>)["status"] : undefined;
+    const rawStatus = "status" in e ? (e as { status: unknown }).status : undefined;
     const status = typeof rawStatus === "number" ? rawStatus : undefined;
-    return { message: e.message, ...(status !== undefined ? { status } : {}), cause: e };
+    const rawCode = "code" in e ? (e as { code: unknown }).code : undefined;
+    const code = typeof rawCode === "string" ? rawCode : undefined;
+    return {
+      message: e.message,
+      ...(status !== undefined ? { status } : {}),
+      ...(code !== undefined ? { code } : {}),
+      cause: e,
+    };
+  }
+  // Plain objects with a message field (e.g. parsed JSON error bodies
+  // re-thrown without wrapping). Preserve status + code if present.
+  if (typeof e === "object" && e !== null && "message" in e) {
+    const obj = e as Record<string, unknown>;
+    const message = typeof obj["message"] === "string" ? obj["message"] : String(obj["message"]);
+    const status = typeof obj["status"] === "number" ? obj["status"] : undefined;
+    const code = typeof obj["code"] === "string" ? obj["code"] : undefined;
+    return {
+      message,
+      ...(status !== undefined ? { status } : {}),
+      ...(code !== undefined ? { code } : {}),
+      cause: e,
+    };
   }
   return { message: String(e), cause: e };
 }

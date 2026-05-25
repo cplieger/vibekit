@@ -9,7 +9,7 @@ import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./
 import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
-import { switchModelAction } from "./actions/chat.js";
+import { switchModel } from "./actions/chat.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { setCurrentModel, setLastModel } from "./session-context.js";
 import {
@@ -61,6 +61,8 @@ class ModelSwitchController {
   private renderCondensedList(): void {
     const list = $.modelSwitchList;
     list.replaceChildren();
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Available models");
     const session = getActive();
     if (session === undefined) return;
     const current = session.model;
@@ -70,8 +72,12 @@ class ModelSwitchController {
       btn.className = m.model_id === current
         ? "pill-model-item active" : "pill-model-item";
       btn.dataset["model"] = m.model_id;
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", m.model_id === current ? "true" : "false");
+      const label = humanName(m.model_name || m.model_id);
+      btn.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
       const name = document.createElement("span");
-      name.textContent = humanName(m.model_name || m.model_id);
+      name.textContent = label;
       const meta = document.createElement("span");
       meta.className = "pill-model-meta";
       meta.textContent = `${String(m.rate_multiplier)}x`;
@@ -112,7 +118,7 @@ class ModelSwitchController {
 
   private fire(chatID: string, modelID: string): void {
     this.queueState = { status: "switching", modelID };
-    void switchModelAction.dispatch({ chatID, model: modelID }, {
+    void switchModel.dispatch({ chatID, model: modelID }, {
       onSettled: () => {
         if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
           this.queueState = { status: "idle" };

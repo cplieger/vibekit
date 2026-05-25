@@ -28,7 +28,7 @@ export interface RegistrySearchResult {
 
 // --- mcp.toggle_server ---
 
-export interface ToggleArgs {
+interface ToggleArgs {
   id: string;
   enabled: boolean;
 }
@@ -99,7 +99,7 @@ export const openEdit = apiAction<string, Server>({
 
 // --- mcp.save_server ---
 
-export interface SaveArgs {
+interface SaveArgs {
   /** Empty string for create, non-empty for update. */
   id: string;
   body: Partial<Server>;

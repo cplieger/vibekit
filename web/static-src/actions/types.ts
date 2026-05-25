@@ -199,6 +199,21 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *  - true: dedupe on JSON.stringify(args)
    *  - function: caller supplies the key; identical strings collapse */
   dedupe?: boolean | ((args: TArgs) => string);
+
+  /** Compute fresh args at retry-click time. When the error toast's Retry
+   *  button is clicked, this function is called to produce the args for the
+   *  re-dispatch. Use this when args contain non-cloneable references (DOM
+   *  elements, live getters) that may become stale between the original
+   *  dispatch and the user clicking Retry.
+   *
+   *  Receives the original args (structuredClone'd if possible, shallow-
+   *  copied otherwise) as a reference for extracting stable identifiers.
+   *  Return null to suppress the retry (button click becomes a no-op).
+   *
+   *  When not set, the framework uses structuredClone (with shallow-copy
+   *  fallback) of the original args — safe for primitives and plain data,
+   *  but stale for DOM refs or mutable arrays. */
+  retryArgs?: (originalArgs: TArgs) => TArgs | null;
 }
 
 /** A registered action, returned by defineAction(). Can be dispatched
@@ -222,6 +237,11 @@ export interface Action<TArgs, TResult> {
    *  the cancel-request itself — name the action to avoid confusion
    *  (e.g. "chat.cancel_turn" so `cancelTurn.cancel()` reads clearly). */
   cancel(): void;
+
+  /** True when at least one dispatch is currently in-flight (pending).
+   *  Convenience accessor equivalent to `isPending(action.name)` from
+   *  the registry, but avoids the import and name-string coupling. */
+  readonly isInflight: boolean;
 }
 
 /** Per-dispatch overrides. */

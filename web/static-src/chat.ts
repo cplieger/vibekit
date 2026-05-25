@@ -33,7 +33,7 @@ import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { error as toastError } from "./toast.js";
-import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChat } from "./actions/chat.js";
+import { deleteChat as deleteChatAction, archiveChat as archiveChatAction, discardTangent, restoreChat } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -65,7 +65,7 @@ export function openChatTab(id: string, name: string, agent: string): void {
         // toast so the user knows the parent is stuck and can retry.
         // We do NOT call setLastError here — that's global and would
         // block the send button on whatever chat is currently active.
-        void discardTangentAction.dispatch(id, {
+        void discardTangent.dispatch(id, {
           onError: () => {
             toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
           },

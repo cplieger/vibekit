@@ -52,7 +52,7 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
 /** Hand a plan to the running agent as a prompt.
  *  Note: sendPromptTo doesn't accept a signal, so cancellation is
  *  best-effort between calls (checked before sendPromptTo). */
-export const runPlanAction = defineAction<{ chatID: string; content: string }, void>({
+export const runPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",

@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { patchAppSettings, loadSettingsAction } from "./actions/settings.js";
+import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 

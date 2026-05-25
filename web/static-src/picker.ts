@@ -52,6 +52,7 @@ class ModelPickerController {
     const info = AGENT_INFO[agent ?? ""] ?? AGENT_INFO[""]!;
     this.callback = onSelect;
     this.currentId = currentModelId;
+    picker.setAttribute("aria-label", info.label);
 
     const svg = label.querySelector("svg");
     const svgHtml = svg !== null ? svg.outerHTML + " " : "";
@@ -97,6 +98,10 @@ class ModelPickerController {
     }
     wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
     picker.classList.remove("hidden");
+    // Focus the active model button (or first) for keyboard users.
+    const focusTarget = grid.querySelector<HTMLButtonElement>(".picker-btn.active")
+      ?? grid.querySelector<HTMLButtonElement>(".picker-btn:not(.picker-loading)");
+    focusTarget?.focus();
   }
 
   hide(): void {

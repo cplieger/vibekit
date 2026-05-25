@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for actions/editor.ts: saveFile, resolvePendingPartial, fetchAgentLinesAction, suggestResolution.
+// Tests for actions/editor.ts: saveFile, resolvePendingPartial, fetchAgentLines, suggestResolution.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -83,8 +83,8 @@ describe("editor.resolve_partial", () => {
 describe("editor.fetch_agent_lines", () => {
   it("GETs file changes with chat_id and path params", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ changes: [{ start_line: 1, end_line: 5 }] }), { status: 200 }));
-    const { fetchAgentLinesAction } = await import("./editor.js");
-    const r = await fetchAgentLinesAction.dispatch({ chatID: "c1", path: "src/a.ts" });
+    const { fetchAgentLines } = await import("./editor.js");
+    const r = await fetchAgentLines.dispatch({ chatID: "c1", path: "src/a.ts" });
     expect(r).toEqual({ changes: [{ start_line: 1, end_line: 5 }] });
     const [url] = mockFetch.mock.calls[0]!;
     expect(url).toContain("/api/file-changes");

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Cycle 7 coverage: tests for the 5 most impactful gaps identified:
-//   1. switchModelAction — optimistic+rollback (untested)
+//   1. switchModel — optimistic+rollback (untested)
 //   2. crew.sendMessage — scope+idempotencyKey+retry (no test at all)
 //   3. git-changes stage/pull — retry+scope+success toast (no test at all)
 //   4. settings.logout — optimistic+rollback (no test at all)
@@ -59,24 +59,24 @@ beforeEach(() => {
 });
 
 // ===========================================================================
-// 1. switchModelAction — optimistic sets model, rollback restores on failure
+// 1. switchModel — optimistic sets model, rollback restores on failure
 // ===========================================================================
 
-describe("switchModelAction optimistic + rollback", () => {
+describe("switchModel optimistic + rollback", () => {
   it("sets model optimistically and keeps it on success", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { switchModelAction } = await import("./chat.js");
+    const { switchModel } = await import("./chat.js");
     const { setModel } = await import("../store.js");
-    await switchModelAction.dispatch({ chatID: "c1", model: "claude-3" });
+    await switchModel.dispatch({ chatID: "c1", model: "claude-3" });
     // setModel was called with the new model
     expect(vi.mocked(setModel)).toHaveBeenCalledWith("c1", "claude-3");
   });
 
   it("rolls back model on transport failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "server error" });
-    const { switchModelAction } = await import("./chat.js");
+    const { switchModel } = await import("./chat.js");
     const { setModel } = await import("../store.js");
-    await switchModelAction.dispatch({ chatID: "c1", model: "claude-3" });
+    await switchModel.dispatch({ chatID: "c1", model: "claude-3" });
     // First call: optimistic (set to claude-3), second call: rollback (restore gpt-4)
     const calls = vi.mocked(setModel).mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
@@ -85,8 +85,8 @@ describe("switchModelAction optimistic + rollback", () => {
 
   it("error toast fires on transport failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "server error" });
-    const { switchModelAction } = await import("./chat.js");
-    await switchModelAction.dispatch({ chatID: "c1", model: "claude-3" });
+    const { switchModel } = await import("./chat.js");
+    await switchModel.dispatch({ chatID: "c1", model: "claude-3" });
     expect(toast.error).toHaveBeenCalledTimes(1);
     const msg = vi.mocked(toast.error).mock.calls[0]![0];
     expect(msg).toContain("switch model");

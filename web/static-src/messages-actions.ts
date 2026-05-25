@@ -8,7 +8,7 @@ import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import { undoEdit } from "./actions/messages.js";
-import { resolvePendingChangeAction } from "./actions/chat.js";
+import { resolvePendingChange } from "./actions/chat.js";
 import { bindLoadingState, bindLoadingStateMulti } from "./actions/index.js";
 
 /** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
@@ -130,7 +130,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
-  void resolvePendingChangeAction.dispatch(
+  void resolvePendingChange.dispatch(
     { chatID, toolCallID, action },
     { errorPrefix: `Failed to ${action} change` },
   );

@@ -8,7 +8,7 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Shared types for create actions ---
 
-export interface CreateArgs {
+interface CreateArgs {
   dir: string;
   name: string;
 }
@@ -61,7 +61,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
 
 // --- files.delete ---
 
-export interface DeleteArgs {
+interface DeleteArgs {
   dir: string;
   names: string[];
   listEl: HTMLElement;
@@ -176,7 +176,7 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
 
 // --- files.upload ---
 
-export interface UploadArgs {
+interface UploadArgs {
   files: FileList;
   targetDir: string;
 }

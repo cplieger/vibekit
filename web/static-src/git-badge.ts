@@ -29,7 +29,7 @@
 
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
-import { refreshGitBadgeAction } from "./actions/git-badge.js";
+import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
 
 const POLL_INTERVAL_MS = 15_000;
 

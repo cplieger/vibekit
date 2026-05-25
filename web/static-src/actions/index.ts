@@ -34,7 +34,8 @@ export { subscribe as subscribeToActions, pendingCount, pendingForAny } from "./
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
-export { bindLoadingState, bindLoadingStateMulti } from "./loading.js";
+export { bindLoadingState, bindLoadingStateMulti, bindLoadingCluster } from "./loading.js";
+export type { ClusterState } from "./loading.js";
 
 // Cleanup hooks: register raw (non-action) cleanup for fetch
 // controllers / timers; the framework auto-installs a beforeunload
@@ -68,10 +69,9 @@ export type { ArgsOf, ResultOf, ActionFromDef, RetryConfig } from "./types.js";
 // variables or write custom run() implementations receiving the context.
 export type { Action, ActionContext, ActionDefinition } from "./types.js";
 
-// Lifecycle status enum + instance snapshot: needed by subscribeToActions
-// consumers who want to type-annotate callback parameters or narrow on
-// the status field without relying on string-literal inference alone.
-export type { ActionLifecycleStatus, ActionInstance } from "./types.js";
+// Instance snapshot: needed by subscribeToActions consumers who want to
+// type-annotate callback parameters.
+export type { ActionInstance } from "./types.js";
 
 // Per-name status snapshot: consolidated view of pending count, last
 // error/success, and timestamps for a named action.

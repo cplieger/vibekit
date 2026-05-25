@@ -114,7 +114,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 
 // --- Load settings (deduped fetch for SSE-triggered reconcile) ---
 
-export const loadSettingsAction = apiAction<void, Record<string, unknown>>({
+export const loadSettings = apiAction<void, Record<string, unknown>>({
   name: "settings.load",
   dedupe: true,
   request: () => ({ method: "GET", path: "/api/settings" }),

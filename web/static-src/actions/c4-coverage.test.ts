@@ -112,15 +112,15 @@ describe("chat.set_supervised", () => {
 describe("chat.set_auto_approve_crew", () => {
   it("optimistic: calls setAutoApproveCrew immediately", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { setAutoApproveCrewAction } = await import("./chat.js");
-    await setAutoApproveCrewAction.dispatch({ chatID: "c1", enabled: true });
+    const chat = await import("./chat.js");
+    await chat.setAutoApproveCrew.dispatch({ chatID: "c1", enabled: true });
     expect(setAutoApproveCrew).toHaveBeenCalledWith("c1", true);
   });
 
   it("rollback: restores previous value on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { setAutoApproveCrewAction } = await import("./chat.js");
-    await setAutoApproveCrewAction.dispatch({ chatID: "c1", enabled: true });
+    const chat = await import("./chat.js");
+    await chat.setAutoApproveCrew.dispatch({ chatID: "c1", enabled: true });
     const calls = vi.mocked(setAutoApproveCrew).mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls[calls.length - 1]).toEqual(["c1", false]);
@@ -134,8 +134,8 @@ describe("chat.set_auto_approve_crew", () => {
       if (attempts < 3) return Promise.resolve({ ok: false, status: 0, error: "net", code: "network" });
       return Promise.resolve({ ok: true, status: 200 });
     });
-    const { setAutoApproveCrewAction } = await import("./chat.js");
-    const p = setAutoApproveCrewAction.dispatch({ chatID: "c1", enabled: true });
+    const chat = await import("./chat.js");
+    const p = chat.setAutoApproveCrew.dispatch({ chatID: "c1", enabled: true });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;
@@ -150,15 +150,15 @@ describe("chat.set_auto_approve_crew", () => {
 describe("chat.switch_model", () => {
   it("optimistic: calls setModel immediately", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { switchModelAction } = await import("./chat.js");
-    await switchModelAction.dispatch({ chatID: "c1", model: "new-model" });
+    const { switchModel } = await import("./chat.js");
+    await switchModel.dispatch({ chatID: "c1", model: "new-model" });
     expect(setModel).toHaveBeenCalledWith("c1", "new-model");
   });
 
   it("rollback: restores previous model on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { switchModelAction } = await import("./chat.js");
-    await switchModelAction.dispatch({ chatID: "c1", model: "new-model" });
+    const { switchModel } = await import("./chat.js");
+    await switchModel.dispatch({ chatID: "c1", model: "new-model" });
     const calls = vi.mocked(setModel).mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls[calls.length - 1]).toEqual(["c1", "m1"]);
@@ -425,8 +425,8 @@ describe("forge.start_device_flow", () => {
 describe("chat.send_prompt idempotencyKey", () => {
   it("includes idempotency_key in transport payload", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { sendPromptAction } = await import("./chat.js");
-    await sendPromptAction.dispatch({
+    const { sendPrompt } = await import("./chat.js");
+    await sendPrompt.dispatch({
       chatID: "c1", text: "hi", messageID: "m1",
       agent: "default", model: "m1", activeFile: "", openFiles: [],
     });

@@ -7,12 +7,12 @@
 
 import { apiAction, defineAction, ActionError } from "./index.js";
 import { transportAction } from "./transport.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
 
-export const deleteChatAction = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
+export const deleteChat = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.delete",
   scope: (id) => `chat:${id}`,
   retryable: false,
@@ -36,7 +36,7 @@ export const deleteChatAction = transportAction<string, { session: import("../ty
 
 // --- chat.archive ---
 
-export const archiveChatAction = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
+export const archiveChat = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
   idempotencyKey: true,
@@ -62,7 +62,7 @@ export const archiveChatAction = apiAction<string, unknown, { session: import(".
 
 // --- chat.discard_tangent ---
 
-export const discardTangentAction = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
+export const discardTangent = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
   name: "chat.discard_tangent",
   scope: (id) => `chat:${id}`,
   retryable: false,
@@ -117,12 +117,14 @@ export const setSupervised = transportAction<{ chatID: string; enabled: boolean 
 export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_all_pending",
   scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   command: ({ chatID, action }) => ({
     type: "resolve_all_pending_changes",
     chat_id: chatID,
     payload: { action },
   }),
-  retryable: "network",
   error: "Couldn't resolve pending changes",
 });
 
@@ -179,7 +181,7 @@ export const forkChat = transportAction<{ chatID: string; tangentID: string }, {
 // into thinking the merge failed when it actually succeeded. The SSE
 // stream will confirm the merge via a tangent_merged event.
 
-export const mergeTangentAction = transportAction<string>({
+export const mergeTangent = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
@@ -189,7 +191,7 @@ export const mergeTangentAction = transportAction<string>({
 
 // --- chat.set_auto_approve_crew ---
 
-export const setAutoApproveCrewAction = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
+export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_auto_approve_crew",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
@@ -201,11 +203,11 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     const session = get(chatID);
     if (session === undefined) return undefined;
     const prev = session.auto_approve_crew;
-    setAutoApproveCrew(chatID, enabled);
+    storeSetAutoApproveCrew(chatID, enabled);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined) setAutoApproveCrew(chatID, op.prev);
+    if (op !== undefined) storeSetAutoApproveCrew(chatID, op.prev);
   },
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -258,7 +260,7 @@ export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: st
 // --- chat.cancel_turn ---
 //
 // No scope: cancel must fire immediately, not queue behind an in-flight
-// sendPromptAction in the same chat. Cancel is naturally idempotent
+// sendPrompt in the same chat. Cancel is naturally idempotent
 // server-side (the server ignores it if no turn is active).
 //
 // Named "chat.cancel_turn" (not "chat.cancel") to avoid confusion with
@@ -280,7 +282,7 @@ export const cancelTurn = transportAction<string>({
 //
 // On failure, rollback restores the previous model via setModel(). bindLoadingState handles the spinner.
 
-export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
+export const switchModel = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
@@ -296,7 +298,7 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     if (op !== undefined) setModel(chatID, op.prev);
   },
   run: async ({ chatID, model }, signal) => {
-    // Don't touch thinking state — it's owned by sendPromptAction and
+    // Don't touch thinking state — it's owned by sendPrompt and
     // bindLoadingState on the model switcher button handles the UI indicator.
     const r = await transportSend(
       { type: "switch_model", chat_id: chatID, payload: { model } },
@@ -327,7 +329,7 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
 // reportSendState defaults to true here so setLastError fires; we
 // don't want a toast on top.
 
-export interface SendPromptArgs {
+interface SendPromptArgs {
   chatID: string;
   text: string;
   messageID: string;
@@ -338,7 +340,7 @@ export interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
-export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
+export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -391,9 +393,10 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued", 
 
 // --- chat.resolve_pending_change ---
 
-export const resolvePendingChangeAction = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
+export const resolvePendingChange = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_pending_change",
   scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   command: ({ chatID, toolCallID, action }) => ({
     type: "resolve_pending_change",
     chat_id: chatID,
@@ -414,6 +417,7 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
 export const respondPermission = transportAction<{ chatID: string; requestID: number; optionID: string }>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
+  idempotencyKey: true,
   retryable: "network",
   retry: { count: 2, delay: 300 },
   command: ({ chatID, requestID, optionID }) => ({
@@ -429,6 +433,7 @@ export const respondPermission = transportAction<{ chatID: string; requestID: nu
 export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
   name: "chat.restore_checkpoint",
   scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   command: ({ chatID, tag }) => ({
     type: "restore_checkpoint",
     chat_id: chatID,

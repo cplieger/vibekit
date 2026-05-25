@@ -40,6 +40,12 @@ export interface BindLoadingOptions {
    *  of disabled). Use this when the element has a separate
    *  validation-driven disabled state. */
   preserveDisabled?: boolean;
+  /** Reactive disabled predicate. When provided, the element's disabled
+   *  state is `pending || disabledFn()` on every transition. Solves the
+   *  `preserveDisabled` limitation where external mutations during the
+   *  pending phase are overwritten — the predicate is always re-evaluated.
+   *  Takes precedence over `preserveDisabled` when both are set. */
+  disabledFn?: () => boolean;
 }
 
 /**
@@ -63,7 +69,7 @@ export function bindLoadingState(
   el: DisableableElement,
   opts: BindLoadingOptions = {},
 ): () => void {
-  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false } = opts;
+  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false, disabledFn } = opts;
   const manageAriaBusy = ariaBusy && !preserveAriaBusy;
   // Track pending transitions to snapshot disabled state lazily —
   // avoids stale bind-time capture when external code mutates disabled.
@@ -73,9 +79,14 @@ export function bindLoadingState(
   let disposed = false;
   let wasConnected = el.isConnected;
 
+  /** Resolve the base disabled state: disabledFn takes precedence over
+   *  the snapshot-based preserveDisabled approach. */
+  const resolveBase = (): boolean =>
+    disabledFn !== undefined ? disabledFn() : (preserveDisabled ? baseDisabled : false);
+
   /** Restore element to idle state (B7: deduplicated helper). */
   const setIdle = (): void => {
-    el.disabled = preserveDisabled ? baseDisabled : false;
+    el.disabled = resolveBase();
     if (manageAriaBusy) el.removeAttribute("aria-busy");
     if (pendingClass) el.classList.remove(pendingClass);
     // Restore focus only if the user hasn't explicitly moved focus
@@ -158,7 +169,7 @@ export function bindLoadingStateMulti(
   if (actionNames.length === 0) return () => {};
   if (actionNames.length === 1) return bindLoadingState(actionNames[0]!, el, opts);
 
-  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false } = opts;
+  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false, disabledFn } = opts;
   const manageAriaBusy = ariaBusy && !preserveAriaBusy;
   let wasPending = false;
   let baseDisabled = el.disabled;
@@ -166,8 +177,11 @@ export function bindLoadingStateMulti(
   let disposed = false;
   let wasConnected = el.isConnected;
 
+  const resolveBase = (): boolean =>
+    disabledFn !== undefined ? disabledFn() : (preserveDisabled ? baseDisabled : false);
+
   const setIdle = (): void => {
-    el.disabled = preserveDisabled ? baseDisabled : false;
+    el.disabled = resolveBase();
     if (manageAriaBusy) el.removeAttribute("aria-busy");
     if (pendingClass) el.classList.remove(pendingClass);
     if (hadFocus && el.isConnected && !el.disabled) {
@@ -210,5 +224,70 @@ export function bindLoadingStateMulti(
     disposed = true;
     restore();
     if (unsubs) for (const u of unsubs) u();
+  };
+}
+
+/** Snapshot passed to the `bindLoadingCluster` onChange callback. */
+export interface ClusterState {
+  /** True when at least one action in the cluster is pending. */
+  readonly pending: boolean;
+  /** Names of the actions currently pending within the cluster. */
+  readonly activeNames: readonly string[];
+}
+
+/**
+ * Observe a cluster of action names and invoke a callback on every
+ * state transition. Unlike `bindLoadingStateMulti` (which manages a
+ * single element's disabled state), this provides raw state so callers
+ * can implement complex UI: show which action is active, combine with
+ * form validation, drive spinners on multiple elements, etc.
+ *
+ * @param actionNames - Action names in the cluster.
+ * @param onChange - Invoked synchronously on every transition with the
+ *   current cluster state. Called once immediately with the initial state.
+ * @returns An unsubscribe function.
+ *
+ * @example
+ * ```ts
+ * const unbind = bindLoadingCluster(
+ *   ["settings.patch", "settings.save_steering"],
+ *   ({ pending, activeNames }) => {
+ *     saveBtn.disabled = pending || !formValid;
+ *     spinner.hidden = !pending;
+ *     statusLabel.textContent = pending
+ *       ? `Saving ${activeNames[0]}…`
+ *       : "Idle";
+ *   },
+ * );
+ * ```
+ */
+export function bindLoadingCluster(
+  actionNames: readonly string[],
+  onChange: (state: ClusterState) => void,
+): () => void {
+  if (actionNames.length === 0) {
+    onChange({ pending: false, activeNames: [] });
+    return () => {};
+  }
+
+  let disposed = false;
+
+  const notify = (): void => {
+    if (disposed) return;
+    const activeNames: string[] = [];
+    for (let i = 0; i < actionNames.length; i++) {
+      if (isPending(actionNames[i]!)) activeNames.push(actionNames[i]!);
+    }
+    onChange({ pending: activeNames.length > 0, activeNames });
+  };
+
+  // Initial state.
+  notify();
+
+  const unsubs = actionNames.map((name) => subscribeByName(name, notify));
+
+  return () => {
+    disposed = true;
+    for (const u of unsubs) u();
   };
 }

@@ -9,7 +9,7 @@ import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
 // --- Types local to this slice ---
 
-export interface CloneArgs {
+interface CloneArgs {
   url: string;
 }
 
@@ -83,7 +83,7 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
 
 // --- PAT connect ---
 
-export interface ConnectPATArgs {
+interface ConnectPATArgs {
   kind: ForgeKind;
   host: string;
   token: string;

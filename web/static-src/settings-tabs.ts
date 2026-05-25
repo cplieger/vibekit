@@ -67,11 +67,16 @@ export function initSettingsTabs(): void {
   const bar = $.settingsTabBar;
   const select = $.settingsTabSelect;
 
+  bar.setAttribute("role", "tablist");
+  bar.setAttribute("aria-label", "Settings sections");
+
   // Desktop: render pill buttons. The HTML has them declared statically;
   // here we just attach click handlers and mark the initial one active.
   for (const tab of TABS) {
     const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${tab}"]`);
     if (btn === null) continue;
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-label", TAB_LABELS[tab]);
     btn.addEventListener("click", () => setSettingsTab(tab));
   }
 

@@ -24,7 +24,7 @@ const { mockDispatch, mockPartialDispatch } = vi.hoisted(() => ({
   mockPartialDispatch: vi.fn(),
 }));
 vi.mock("./actions/chat.js", () => ({
-  resolvePendingChangeAction: { dispatch: mockDispatch },
+  resolvePendingChange: { dispatch: mockDispatch },
 }));
 
 vi.mock("./actions/editor.js", () => ({

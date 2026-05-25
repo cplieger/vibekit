@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for deleteChatAction, archiveChatAction, discardTangentAction optimistic + rollback.
+// Tests for deleteChat, archiveChat, discardTangent optimistic + rollback.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,7 +16,7 @@ vi.mock("../api-client.js", () => ({
 
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive, getSessions, setFrozen } from "../store.js";
-import { deleteChatAction, archiveChatAction, discardTangentAction } from "./chat.js";
+import { deleteChat, archiveChat, discardTangent } from "./chat.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import type { Session } from "../types.js";
@@ -49,48 +49,48 @@ beforeEach(() => {
   setActive("s1");
 });
 
-describe("deleteChatAction optimistic + rollback", () => {
+describe("deleteChat optimistic + rollback", () => {
   it("removes session optimistically on dispatch", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    await deleteChatAction.dispatch("s2");
+    await deleteChat.dispatch("s2");
     expect(get("s2")).toBeUndefined();
   });
 
   it("reinserts session at original index on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    await deleteChatAction.dispatch("s2");
+    await deleteChat.dispatch("s2");
     expect(get("s2")).toBeDefined();
     expect(getSessions().findIndex((s) => s.id === "s2")).toBe(1);
   });
 
   it("does not rollback on success", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    await deleteChatAction.dispatch("s1");
+    await deleteChat.dispatch("s1");
     expect(get("s1")).toBeUndefined();
   });
 });
 
-describe("archiveChatAction optimistic + rollback", () => {
+describe("archiveChat optimistic + rollback", () => {
   it("removes session optimistically", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await archiveChatAction.dispatch("s2");
+    await archiveChat.dispatch("s2");
     expect(get("s2")).toBeUndefined();
   });
 
   it("reinserts session on HTTP error", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await archiveChatAction.dispatch("s2");
+    await archiveChat.dispatch("s2");
     expect(get("s2")).toBeDefined();
     expect(getSessions().findIndex((s) => s.id === "s2")).toBe(1);
   });
 });
 
-describe("discardTangentAction optimistic + rollback", () => {
+describe("discardTangent optimistic + rollback", () => {
   it("removes tangent and unfreezes parent optimistically", async () => {
     setSessions([makeSession("parent", { frozen: true }), makeSession("tangent", { parent_chat_id: "parent", is_tangent: true })]);
     setActive("tangent");
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    await discardTangentAction.dispatch("tangent");
+    await discardTangent.dispatch("tangent");
     expect(get("tangent")).toBeUndefined();
     expect(get("parent")?.frozen).toBeUndefined();
   });
@@ -100,7 +100,7 @@ describe("discardTangentAction optimistic + rollback", () => {
     setActive("tangent");
     setFrozen("parent", true);
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    await discardTangentAction.dispatch("tangent");
+    await discardTangent.dispatch("tangent");
     expect(get("tangent")).toBeDefined();
     expect(get("parent")?.frozen).toBe(true);
   });
@@ -109,7 +109,7 @@ describe("discardTangentAction optimistic + rollback", () => {
     setSessions([makeSession("orphan")]);
     setActive("orphan");
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    await discardTangentAction.dispatch("orphan");
+    await discardTangent.dispatch("orphan");
     expect(get("orphan")).toBeDefined();
   });
 });

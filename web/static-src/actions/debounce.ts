@@ -38,7 +38,7 @@ export interface DebouncedDispatch<TArgs> {
   isPending(): boolean;
 }
 
-export interface DebounceOptions {
+interface DebounceOptions {
   /** Quiet window in ms. */
   readonly wait: number;
   /** Fire on the leading edge instead of the trailing edge. With

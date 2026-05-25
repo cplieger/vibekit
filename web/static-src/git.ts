@@ -24,7 +24,7 @@
 import { initGitTabs, onGitTabChange, getGitTab } from "./git-tabs.js";
 import { initChangesTab, refreshChanges } from "./git-changes-tab.js";
 import { initPRsTab } from "./git-prs-tab.js";
-import { refreshPRsAction } from "./actions/git-prs.js";
+import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
@@ -64,7 +64,7 @@ export function initGitPanel(): void {
     onGitTabChange((tab) => {
       switch (tab) {
         case "changes": void refreshChanges(); break;
-        case "prs":     void refreshPRsAction.dispatch(undefined); break;
+        case "prs":     void refreshPRs.dispatch(undefined); break;
         case "sources": void refreshSources(); break;
       }
     });
@@ -74,7 +74,7 @@ export function initGitPanel(): void {
     // ended a turn, etc.) sees fresh state.
     switch (getGitTab()) {
       case "changes": void refreshChanges(); break;
-      case "prs":     void refreshPRsAction.dispatch(undefined); break;
+      case "prs":     void refreshPRs.dispatch(undefined); break;
       case "sources": void refreshSources(); break;
     }
   }

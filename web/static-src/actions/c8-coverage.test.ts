@@ -2,7 +2,7 @@
 // Cycle 8 coverage: tests for the 5 most impactful per-action gaps:
 //   1. deleteFilesBatch — optimistic+rollback, scope (ZERO tests existed)
 //   2. editor.resolve_partial — scope+retry+retryable (ZERO tests existed)
-//   3. sendPromptAction — rollback on transport failure (only 409 path tested)
+//   3. sendPrompt — rollback on transport failure (only 409 path tested)
 //   4. forkChat — idempotencyKey+optimistic+rollback+scope (ZERO tests)
 //   5. files.create_file — scope+retryable (ZERO tests existed)
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -186,10 +186,10 @@ describe("editor.resolve_partial scope + retry", () => {
 });
 
 // ===========================================================================
-// 3. sendPromptAction — rollback clears thinking on transport failure
+// 3. sendPrompt — rollback clears thinking on transport failure
 // ===========================================================================
 
-describe("sendPromptAction rollback on failure", () => {
+describe("sendPrompt rollback on failure", () => {
   const promptArgs = {
     chatID: "c1", text: "hi", messageID: "m1", agent: "default",
     model: "gpt-4", activeFile: "", openFiles: [] as string[],
@@ -197,8 +197,8 @@ describe("sendPromptAction rollback on failure", () => {
 
   it("optimistic sets thinking, rollback clears on transport error", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "server error" });
-    const { sendPromptAction } = await import("./chat.js");
-    await sendPromptAction.dispatch(promptArgs);
+    const { sendPrompt } = await import("./chat.js");
+    await sendPrompt.dispatch(promptArgs);
     // setThinking(c1, true) then setThinking(c1, false) via rollback
     const calls = vi.mocked(setThinking).mock.calls;
     expect(calls[0]).toEqual(["c1", true]);
@@ -207,8 +207,8 @@ describe("sendPromptAction rollback on failure", () => {
 
   it("idempotencyKey is sent in the command payload", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { sendPromptAction } = await import("./chat.js");
-    await sendPromptAction.dispatch(promptArgs);
+    const { sendPrompt } = await import("./chat.js");
+    await sendPrompt.dispatch(promptArgs);
     const cmd = mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } };
     expect(cmd.payload?.idempotency_key).toEqual(expect.any(String));
   });
@@ -221,9 +221,9 @@ describe("sendPromptAction rollback on failure", () => {
       if (callCount === 1) return new Promise((r) => { resolveFirst = () => r({ ok: true, status: 200 }); });
       return Promise.resolve({ ok: true, status: 200 });
     });
-    const { sendPromptAction } = await import("./chat.js");
-    const p1 = sendPromptAction.dispatch(promptArgs);
-    const p2 = sendPromptAction.dispatch({ ...promptArgs, text: "second" });
+    const { sendPrompt } = await import("./chat.js");
+    const p1 = sendPrompt.dispatch(promptArgs);
+    const p2 = sendPrompt.dispatch({ ...promptArgs, text: "second" });
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(callCount).toBe(1);
     resolveFirst!();

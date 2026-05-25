@@ -116,7 +116,7 @@ async function executeRequest<T>(
       const body: unknown = await r.json();
       if (hasErrorString(body)) serverError = body.error;
       if (typeof body === "object" && body !== null && "code" in body) {
-        const rawCode = (body as Record<string, unknown>)["code"];
+        const rawCode = (body as { code: unknown }).code;
         if (typeof rawCode === "string") serverCode = rawCode;
       }
     } catch {

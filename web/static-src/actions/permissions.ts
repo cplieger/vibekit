@@ -27,7 +27,7 @@ export interface AddRuleArgs {
   getCurrentRules: () => CommandRule[];
 }
 
-export interface RemoveRuleArgs {
+interface RemoveRuleArgs {
   pattern: string;
   rules: CommandRule[];
   setRules: (rules: CommandRule[]) => void;

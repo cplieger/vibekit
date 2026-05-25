@@ -132,6 +132,10 @@ export function clearBannersForChat(chatID: string): void {
 /** Re-render: show only banners for the active chat. */
 export function renderStack(): void {
   const container = $.bannerStack;
+  if (!container.hasAttribute("aria-label")) {
+    container.setAttribute("aria-label", "Notifications");
+    container.setAttribute("aria-live", "polite");
+  }
   container.replaceChildren();
   const activeID = getActiveId();
   for (const entry of banners.values()) {

@@ -37,10 +37,24 @@ function drainQueuedPromptWithAttachments(chatID: string): void {
  *  on SSE reconnect replay (events arrive within milliseconds). */
 const _lastNotifyMs = new Map<string, number>();
 const _NOTIFY_STALE_MS = 10_000;
+/** Hard cap: if the map exceeds this size, prune aggressively. Prevents
+ *  unbounded growth when many chats fire turn_ended without pruning
+ *  (e.g. notifications disabled so the notify path is skipped). */
+const _NOTIFY_MAP_CAP = 200;
 
 function _pruneNotifyMap(now: number): void {
   for (const [k, v] of _lastNotifyMs) {
     if (now - v > _NOTIFY_STALE_MS) _lastNotifyMs.delete(k);
+  }
+  // Hard cap: if still over limit after stale pruning, drop oldest entries.
+  if (_lastNotifyMs.size > _NOTIFY_MAP_CAP) {
+    const excess = _lastNotifyMs.size - _NOTIFY_MAP_CAP;
+    let dropped = 0;
+    for (const k of _lastNotifyMs.keys()) {
+      if (dropped >= excess) break;
+      _lastNotifyMs.delete(k);
+      dropped++;
+    }
   }
 }
 

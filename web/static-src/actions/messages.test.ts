@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for actions/messages.ts: copyClipboard, explainError, undoEdit, runPlanAction.
+// Tests for actions/messages.ts: copyClipboard, explainError, undoEdit, runPlan.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -93,15 +93,15 @@ describe("messages.undo_edit", () => {
 describe("plan.run", () => {
   it("sends plan content via sendPromptTo", async () => {
     mockSendPromptTo.mockResolvedValue("sent");
-    const { runPlanAction } = await import("./messages.js");
-    await runPlanAction.dispatch({ chatID: "c1", content: "Step 1\nStep 2" });
+    const { runPlan } = await import("./messages.js");
+    await runPlan.dispatch({ chatID: "c1", content: "Step 1\nStep 2" });
     expect(mockSendPromptTo).toHaveBeenCalledWith("c1", expect.stringContaining("Step 1"));
   });
 
   it("records error when sendPromptTo returns 'failed'", async () => {
     mockSendPromptTo.mockResolvedValue("failed");
-    const { runPlanAction } = await import("./messages.js");
-    const r = await runPlanAction.dispatch({ chatID: "c1", content: "plan" });
+    const { runPlan } = await import("./messages.js");
+    const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
     expect(r).toBeNull();
     expect(recentLog()[0]?.error?.code).toBe("send_failed");
   });

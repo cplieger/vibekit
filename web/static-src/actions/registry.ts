@@ -24,10 +24,12 @@ const MAX_LOG_HARD = 1000;
 //
 // log:       ordered ring of recent instances (newest at end). Evicted
 //            slots are null (tombstones); head tracks the first live slot.
-// idMap:     id -> ActionInstance for O(1) state-transition updates.
+// idMap:     id -> { instance, index } for O(1) state-transition updates
+//            AND O(1) log-slot overwrites (no backward scan needed).
 // pendingByName: name -> Set<id> for O(1) pendingFor/pendingForAny.
 const log: (ActionInstance | null)[] = [];
-const idMap = new Map<string, ActionInstance>();
+interface IdEntry { instance: ActionInstance; index: number }
+const idMap = new Map<string, IdEntry>();
 const listeners = new Set<RegistryListener>();
 // Per-name listeners: subscribers that only care about a single action
 // name. Avoids O(n) fan-out in record() for name-filtered consumers
@@ -51,6 +53,10 @@ function compact(): void {
   while (_head < log.length && log[_head] === null) _head++;
   if (_head > 256) {
     log.splice(0, _head);
+    // Re-index: all stored indices shifted by _head.
+    for (const entry of idMap.values()) {
+      entry.index -= _head;
+    }
     _head = 0;
   }
 }
@@ -74,29 +80,24 @@ export function record(instance: ActionInstance): void {
   // (state transitions on the same instance overwrite, not append).
   const existing = idMap.get(instance.id);
   if (existing !== undefined) {
+    const prev = existing.instance;
     // Update incremental counter + per-name index on transitions.
-    if (existing.status === "pending" && instance.status !== "pending") {
+    if (prev.status === "pending" && instance.status !== "pending") {
       _pendingN--;
-      const s = pendingByName.get(existing.name);
+      const s = pendingByName.get(prev.name);
       if (s !== undefined) {
         s.delete(instance.id);
-        if (s.size === 0) pendingByName.delete(existing.name);
+        if (s.size === 0) pendingByName.delete(prev.name);
       }
-    } else if (existing.status !== "pending" && instance.status === "pending") {
+    } else if (prev.status !== "pending" && instance.status === "pending") {
       _pendingN++;
       let s = pendingByName.get(instance.name);
       if (s === undefined) { s = new Set(); pendingByName.set(instance.name, s); }
       s.add(instance.id);
     }
-    // Overwrite in the log array. Scan from the end (most recent
-    // transitions are near the tail — typically last or second-to-last).
-    for (let i = log.length - 1; i >= _head; i--) {
-      if (log[i] !== null && log[i]!.id === instance.id) {
-        log[i] = instance;
-        break;
-      }
-    }
-    idMap.set(instance.id, instance);
+    // O(1) overwrite via stored index — no backward scan needed.
+    log[existing.index] = instance;
+    existing.instance = instance;
     // Evict after pending→terminal transitions: when all entries were
     // pending at insert time, eviction couldn't find non-pending victims.
     // Now that this entry is terminal, check if we're over the cap.
@@ -113,8 +114,9 @@ export function record(instance: ActionInstance): void {
       compact();
     }
   } else {
+    const idx = log.length;
     log.push(instance);
-    idMap.set(instance.id, instance);
+    idMap.set(instance.id, { instance, index: idx });
     _liveCount++;
     if (instance.status === "pending") {
       _pendingN++;
@@ -255,8 +257,8 @@ export function pendingFor(name: string): readonly ActionInstance[] {
   if (ids === undefined || ids.size === 0) return [];
   const result: ActionInstance[] = [];
   for (const id of ids) {
-    const inst = idMap.get(id);
-    if (inst !== undefined) result.push(inst);
+    const entry = idMap.get(id);
+    if (entry !== undefined) result.push(entry.instance);
   }
   return result;
 }

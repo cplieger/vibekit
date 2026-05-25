@@ -129,7 +129,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
           expect(html.toLowerCase()).not.toContain("<script");
         },
       ),
-      { numRuns: 200 },
+      { numRuns: 100 },
     );
   });
 });

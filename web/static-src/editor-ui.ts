@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
-import { fetchAgentLinesAction } from "./actions/editor.js";
+import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
 import {

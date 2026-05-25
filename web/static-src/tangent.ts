@@ -8,7 +8,7 @@
 
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
-import { forkChat, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
+import { forkChat, mergeTangent as mergeTangentAction, discardTangent as discardTangentAction } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";

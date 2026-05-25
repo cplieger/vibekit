@@ -22,7 +22,7 @@ import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
-import { setSupervised, resolveAllPending, resolvePendingChangeAction, trustPending, clearPendingTrust } from "./actions/chat.js";
+import { setSupervised, resolveAllPending, resolvePendingChange, trustPending, clearPendingTrust } from "./actions/chat.js";
 import { bindLoadingState, bindLoadingStateMulti } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
@@ -276,7 +276,7 @@ class SupervisedPillController {
   }
 
   private resolveOne(toolCallID: string, action: "accept" | "reject"): void {
-    void resolvePendingChangeAction.dispatch({ chatID: this.currentChatID(), toolCallID, action });
+    void resolvePendingChange.dispatch({ chatID: this.currentChatID(), toolCallID, action });
   }
 
   private bulkResolve(action: "accept" | "reject"): void {

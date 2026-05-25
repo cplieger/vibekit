@@ -9,7 +9,7 @@
 import { $ } from "./dom.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
-import { setAutoApproveCrewAction } from "./actions/chat.js";
+import { setAutoApproveCrew } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { Session } from "./types.js";
 
@@ -65,5 +65,5 @@ function toggle(): void {
   const session = getActive();
   if (session === undefined) return;
   const newValue = !session.auto_approve_crew;
-  void setAutoApproveCrewAction.dispatch({ chatID: session.id, enabled: newValue });
+  void setAutoApproveCrew.dispatch({ chatID: session.id, enabled: newValue });
 }

@@ -48,7 +48,7 @@ const fetchForges = apiAction<void, ForgesListResponse>({
 /** Refresh git badge data. Deduped so concurrent SSE triggers collapse
  *  into one in-flight pair of fetches. Returns both responses (either
  *  may be null on failure). */
-export const refreshGitBadgeAction = defineAction<void, GitBadgeData>({
+export const refreshGitBadge = defineAction<void, GitBadgeData>({
   name: "git-badge.refresh",
   dedupe: true,
   run: async (_args, signal) => {

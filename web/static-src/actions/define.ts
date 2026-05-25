@@ -42,6 +42,7 @@ import type {
   ActionContext,
   ActionDefinition,
   ActionErrorLike,
+  ActionInstance,
   DispatchOptions,
   ToastSpec,
 } from "./types.js";
@@ -58,12 +59,25 @@ const PERMANENT_FAILURE_CODES: ReadonlySet<string> = new Set([
 
 let instanceCounter = 0;
 
+/** Invoke a callback safely — errors are caught and logged without
+ *  disrupting the dispatch lifecycle. Eliminates repetitive try/catch
+ *  blocks throughout runOnce (8+ occurrences → 1 helper). */
+function safeCallback(name: string, label: string, fn: () => void): void {
+  try { fn(); } catch (e) {
+    console.error(`[actions] ${label} callback for ${name} threw`, e);
+  }
+}
+
 /** Shared empty options object to avoid allocating {} on every dispatch call.
  *  All DispatchOptions fields are optional, so the empty object satisfies any
  *  concrete instantiation. The cast is narrower than `any`: it only widens
  *  the type-parameter slots while preserving the structural shape. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const EMPTY_OPTS: DispatchOptions<any, any> = Object.freeze({});
+
+/** Shared no-op for .catch() handlers on fire-and-forget promises.
+ *  Avoids allocating a new `() => {}` closure on every scoped dispatch. */
+const NOOP = (): void => {};
 
 /** Generate a monotonically-increasing instance ID for registry tracking.
  *  Format: `"<actionName>#<counter>"`. Not globally unique across page
@@ -143,7 +157,7 @@ const scopeChains = new Map<string, Promise<unknown>>();
  *  ACTUAL error from the original dispatch (not a synthetic stub).
  *  Populated by runOnce via the optional errorSink param. */
 interface DedupeEntry {
-  promise: Promise<unknown>;
+  promise: Promise<unknown> | undefined;
   /** Set by runOnce when the original dispatch errors (NOT cancelled). */
   error?: ActionErrorLike;
   /** Set by runOnce when the original dispatch was cancelled. */
@@ -155,11 +169,9 @@ const dedupeInflight = new Map<string, DedupeEntry>();
  *  with an AbortError if the signal aborts during the wait, so the
  *  retry chain unwinds cleanly when action.cancel() fires mid-backoff. */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+  if (ms <= 0) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("aborted", "AbortError"));
-      return;
-    }
     const t = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
@@ -174,17 +186,22 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Attach attempt count to a thrown error so the catch block in runOnce
  *  can record it in the registry. Uses a non-enumerable property to avoid
- *  polluting serialization. */
+ *  polluting serialization. Safe against frozen/sealed objects — silently
+ *  skips if the property can't be defined (the attempt count is best-effort
+ *  metadata, not critical to the error flow). */
 function attachAttempts(e: unknown, attempts: number): void {
   if (typeof e === "object" && e !== null) {
-    Object.defineProperty(e, "_attempts", { value: attempts, configurable: true });
+    try {
+      Object.defineProperty(e, "_attempts", { value: attempts, configurable: true });
+    } catch { /* frozen/sealed object — skip */ }
   }
 }
 
 /** Read the attempt count attached by runWithRetry, or undefined. */
 function readAttempts(e: unknown): number | undefined {
   if (typeof e === "object" && e !== null && "_attempts" in e) {
-    return (e as { _attempts: number })._attempts;
+    const val = (e as { _attempts: unknown })._attempts;
+    return typeof val === "number" ? val : undefined;
   }
   return undefined;
 }
@@ -235,33 +252,33 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // ACTUAL outcome of the original dispatch (not a synthetic
         // stub). entry.error / entry.cancelled are populated by
         // runOnce when the original dispatch settles.
-        return (entry.promise as Promise<TResult | null>).then(
+        const shared = entry.promise;
+        if (shared === undefined) {
+          if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+          return Promise.resolve(null);
+        }
+        return (shared as Promise<TResult | null>).then(
           (v) => {
-            if (v !== null) {
-              try { opts.onSuccess?.(v, args); } catch (cbErr) {
-                console.error(`[actions] onSuccess callback for ${def.name} threw`, cbErr);
+            try {
+              if (v !== null) {
+                if (opts.onSuccess) safeCallback(def.name, "onSuccess", () => opts.onSuccess!(v, args));
+              } else if (entry.error !== undefined) {
+                const capturedErr = entry.error;
+                if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(capturedErr, args));
+              } else if (entry.cancelled === true) {
+                // Original was cancelled — onSettled fires but onError does not.
+              } else {
+                if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!({ message: "deduped dispatch did not succeed", code: "dedupe" }, args));
               }
-            } else if (entry.error !== undefined) {
-              // Original errored; propagate the real error.
-              try { opts.onError?.(entry.error, args); } catch (cbErr) {
-                console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
-              }
-            } else if (entry.cancelled === true) {
-              // Original was cancelled. Per the contract documented
-              // in DispatchOptions, onSettled fires for cancellation
-              // but onError does not. Skip onError here.
-            } else {
-              // Defensive: should not happen — promise resolved null
-              // without setting error or cancelled. Fall back to
-              // synthetic.
-              try { opts.onError?.({ message: "deduped dispatch did not succeed", code: "dedupe" }, args); } catch (cbErr) {
-                console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
-              }
-            }
-            try { opts.onSettled?.(args); } catch (cbErr) {
-              console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
+            } finally {
+              if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
             }
             return v;
+          },
+          () => {
+            // Defensive: runOnce never rejects, but guarantee onSettled fires.
+            if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+            return null;
           },
         );
       }
@@ -288,7 +305,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     // actual outcome of the original. The promise field is assigned
     // immediately below (before the entry is visible in dedupeInflight
     // via the set() call after this block).
-    const dedupeEntry: DedupeEntry | null = dedupeKey !== null ? { promise: null as unknown as Promise<unknown> } : null;
+    const dedupeEntry: DedupeEntry | null = dedupeKey !== null ? { promise: undefined } : null;
 
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
@@ -296,11 +313,11 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
       const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry, dedupeKey, dispatchedAt));
-      const tail = next.catch(() => {});
+      const tail = next.catch(NOOP);
       scopeChains.set(scopeKey, tail);
       void next.finally(() => {
         if (scopeChains.get(scopeKey) === tail) scopeChains.delete(scopeKey);
-      }).catch(() => {});
+      }).catch(NOOP);
       result = next;
     }
 
@@ -412,9 +429,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
             dispatchedAt, startedAt, completedAt: Date.now(), error: err,
           });
           emitErrorToast(args, err, opts);
-          try { opts.onError?.(err, args); } catch (cbErr) {
-            console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
-          }
+          if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(err, args));
           return null;
         }
       }
@@ -455,9 +470,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // onto this (now-settled) promise.
         clearDedupe(dedupeKey, dedupeEntry);
         emitSuccessToast(args, result, opts);
-        try { opts.onSuccess?.(result, args); } catch (cbErr) {
-          console.error(`[actions] onSuccess callback for ${def.name} threw`, cbErr);
-        }
+        if (opts.onSuccess) safeCallback(def.name, "onSuccess", () => opts.onSuccess!(result, args));
         return result;
       } catch (e: unknown) {
         const err = toActionError(e);
@@ -475,36 +488,33 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // Clear dedupe BEFORE callbacks so dispatches from onError
         // with the same key start a fresh run.
         clearDedupe(dedupeKey, dedupeEntry);
-        record({
+        const errRecord: ActionInstance = {
           id, name: def.name, status, args,
           dispatchedAt, startedAt, completedAt: Date.now(),
-          ...(cancelled ? {} : { error: err }),
-          ...(attempts !== undefined ? { attempts } : {}),
-        });
+        };
+        if (!cancelled) (errRecord as { error: ActionErrorLike }).error = err;
+        if (attempts !== undefined) (errRecord as { attempts: number }).attempts = attempts;
+        record(errRecord);
         // Rollback the optimistic mutation regardless of cancel/error.
         if (def.rollback !== undefined) {
           try {
-            const rollbackErr = cancelled
+            const rbError = cancelled
               ? { message: "cancelled", code: "cancelled" }
               : err;
-            def.rollback(args, optOp, rollbackErr);
-          } catch (rollbackErr) {
-            console.error(`[actions] rollback for ${def.name} threw`, rollbackErr);
+            def.rollback(args, optOp, rbError);
+          } catch (rbCaught) {
+            console.error(`[actions] rollback for ${def.name} threw`, rbCaught);
           }
         }
         if (!cancelled) {
           emitErrorToast(args, err, opts);
-          try { opts.onError?.(err, args); } catch (cbErr) {
-            console.error(`[actions] onError callback for ${def.name} threw`, cbErr);
-          }
+          if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(err, args));
         }
         return null;
       }
     } finally {
       inFlight.delete(id);
-      try { opts.onSettled?.(args); } catch (cbErr) {
-        console.error(`[actions] onSettled callback for ${def.name} threw`, cbErr);
-      }
+      if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
     }
   }
 
@@ -523,6 +533,14 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     const factor = cfg?.factor ?? 2;
     let attempt = 0;
     while (true) {
+      // Guard: if the signal was aborted between retries (e.g. cancel()
+      // called during the backoff sleep or between loop iterations),
+      // bail immediately instead of starting another run() call.
+      if (signal.aborted) {
+        const abortErr = new DOMException("aborted", "AbortError");
+        attachAttempts(abortErr, attempt);
+        throw abortErr;
+      }
       try {
         attempt++;
         const result = await def.run(args, signal, ctx);
@@ -608,11 +626,36 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   /** Build the retry button config for error toasts. Returns an
    *  `{ onClick }` object when the error is retry-class (per
    *  `def.retryable`), which toast.ts renders as a "Retry" button.
-   *  The args are structuredClone'd so post-dispatch mutations don't
-   *  corrupt the retry payload. Returns undefined (no button) when
-   *  the error class doesn't qualify for retry. */
+   *  When def.retryArgs is set, the retry computes fresh args at click
+   *  time (avoiding stale DOM refs). Otherwise args are structuredClone'd
+   *  so post-dispatch mutations don't corrupt the retry payload.
+   *  Returns undefined (no button) when the error class doesn't qualify
+   *  for retry. */
   function computeRetry(args: TArgs, err: ActionErrorLike): { onClick: () => void } | undefined {
     if (!isRetryClass(err)) return undefined;
+    // When retryArgs is provided, defer arg computation to click time
+    // so the retry always uses fresh state (e.g. live DOM refs, current
+    // array contents). The original args are still cloned as a fallback
+    // reference for the retryArgs function.
+    if (def.retryArgs !== undefined) {
+      const retryArgsFn = def.retryArgs;
+      // Clone original args as a stable reference for retryArgs to read
+      // identifiers from (e.g. chatID, pattern). Best-effort clone.
+      let refArgs: TArgs;
+      try { refArgs = structuredClone(args); } catch {
+        if (args === null || args === undefined || typeof args !== "object") {
+          refArgs = args;
+        } else {
+          try { refArgs = (Array.isArray(args) ? [...args] : { ...args }) as TArgs; } catch { refArgs = args; }
+        }
+      }
+      return {
+        onClick: () => {
+          const fresh = retryArgsFn(refArgs);
+          if (fresh !== null) void dispatch(fresh);
+        },
+      };
+    }
     // Snapshot args so mutations after dispatch don't corrupt retry.
     // structuredClone handles deep cloning; on failure (DOM refs,
     // functions) fall back to a shallow copy which at least isolates
@@ -646,8 +689,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     // snapshotting is defensive against future refactors that might
     // add synchronous cleanup in abort listeners.
     if (inFlight.size === 0) return;
-    for (const ac of [...inFlight.values()]) {
-      ac.abort();
+    for (const controller of [...inFlight.values()]) {
+      if (controller != null) controller.abort();
     }
   }
 
@@ -655,6 +698,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     name: def.name,
     dispatch,
     cancel,
+    get isInflight() { return inFlight.size > 0; },
   };
 
   // Register with the global cleanup tracker so beforeunload/teardown

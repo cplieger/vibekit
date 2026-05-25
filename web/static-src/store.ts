@@ -444,7 +444,7 @@ export function setFrozen(chatID: string, frozen: boolean): void {
   emit();
 }
 
-/** Set session model and notify subscribers. Used by switchModelAction. */
+/** Set session model and notify subscribers. Used by switchModel. */
 export function setModel(chatID: string, model: string): void {
   const s = get(chatID);
   if (s === undefined) return;

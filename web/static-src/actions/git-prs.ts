@@ -60,7 +60,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
 });
 
 /** Refresh all PRs across connected forges. */
-export const refreshPRsAction = defineAction<void, void>({
+export const refreshPRs = defineAction<void, void>({
   name: "git.refresh_prs",
   dedupe: true,
   run: async (_args, signal) => {

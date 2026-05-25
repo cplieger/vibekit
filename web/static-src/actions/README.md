@@ -348,14 +348,21 @@ callsite-specific reactions without bloating the action definition:
 
 ```ts
 const result = await saveDraftAction.dispatch(draft, {
-  onSuccess: () => editor.focus(),
-  onError:   () => editor.markDirty(),
-  onSettled: () => closeProgressDialog(),
+  onSuccess: (result, args) => editor.focus(),
+  onError:   (err, args) => editor.markDirty(),
+  onSettled: (args) => closeProgressDialog(),
 });
 ```
 
+Signatures:
+- `onSuccess(result: TResult, args: TArgs)` — fires only on success
+- `onError(err: ActionErrorLike, args: TArgs)` — fires only on error (NOT cancellation)
+- `onSettled(args: TArgs)` — fires for success, error, AND cancellation
+
 Callbacks fire AFTER the action-level toast emission. `onSettled`
-fires for success, error, AND cancellation (similar to TanStack Query).
+fires in the `finally` block, so it runs even if `onSuccess` or
+`onError` throws. Throwing inside any callback is caught and logged
+— it never disrupts the dispatch promise or other callbacks.
 
 ## Idempotency keys
 
@@ -715,6 +722,74 @@ the result alone drives the UI (reads, badge refreshes).
 cleanup that must run regardless of outcome (closing dialogs,
 releasing locks). Don't use it for success-only reactions — use
 `onSuccess` instead.
+
+### 10. Scope + retry: retries run WITHIN the scope slot
+
+When an action has both `scope` and `retry`, the retry loop executes
+inside the scope's serial slot. The scope chain does NOT advance to
+the next queued dispatch until all retries exhaust (or succeed). This
+means a scoped action with `retry: { count: 3, delay: 500 }` can
+hold its scope slot for up to ~3.5s on transient failures. Keep retry
+budgets short on scoped actions to avoid starving queued dispatches:
+
+```ts
+// Good: short retry budget on a scoped action
+scope: "settings",
+retry: { count: 2, delay: 200 },   // max ~600ms hold
+
+// Bad: long retry budget blocks the scope queue
+scope: "settings",
+retry: { count: 5, delay: 1000 },  // up to ~31s hold
+```
+
+### 11. Callbacks fire after scope slot releases
+
+`onSettled` runs in the `finally` block of `runOnce`, which executes
+after the scope chain's `.then()` resolves. This means dispatching
+the same scoped action from within `onSettled` does NOT deadlock —
+the scope slot is already released. However, dispatching from
+`onSuccess` or `onError` (which fire before `finally`) also works
+because the scope chain tracks the outer promise, not the callback
+execution.
+
+### 12. Permanent failure codes bypass retry
+
+The following codes are NEVER retried, even with `retryable: "always"`:
+`"cancelled"`, `"send_failed"`, `"clipboard"`, `"unsupported"`,
+`"server_rejected"`. These represent permanent failures where
+retrying would not help. If your custom `defineAction` runner throws
+with one of these codes, auto-retry and the Retry button are both
+suppressed.
+
+### 13. Use `classifyFetchError` in custom `defineAction` runners
+
+When writing a `defineAction` that calls `fetch` directly, use
+`classifyFetchError` from the error module to normalise catch-block
+errors into retry-eligible `ActionError` instances:
+
+```ts
+import { defineAction, ActionError, classifyFetchError } from "./index.js";
+
+const myAction = defineAction<Args, Result>({
+  name: "custom.fetch",
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
+  run: async (args, signal) => {
+    let res: Response;
+    try {
+      res = await fetch("/api/thing", { method: "POST", body: JSON.stringify(args), signal });
+    } catch (e) {
+      throw classifyFetchError(e, signal);  // sets code: "network" | "timeout" | "cancelled"
+    }
+    if (!res.ok) throw new ActionError("Server error", { status: res.status });
+    return res.json() as Promise<Result>;
+  },
+});
+```
+
+Without `classifyFetchError`, a raw `TypeError` from `fetch` won't
+carry `code: "network"` and `retryable: "network"` won't trigger.
+`apiAction` and `transportAction` handle this automatically.
 
 ## Testing actions
 

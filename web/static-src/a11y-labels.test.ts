@@ -22,6 +22,50 @@ describe("a11y: missing labels", () => {
     expect(toast.getAttribute("aria-label")).toBe("success notification: File saved. Click to dismiss.");
     dismiss();
   });
+
+  it("banner stack container has aria-label and aria-live", async () => {
+    // Setup minimal DOM for banner-stack
+    const container = document.createElement("div");
+    container.id = "banner-stack";
+    document.body.appendChild(container);
+
+    const { renderStack } = await import("./banner-stack.js");
+    renderStack();
+
+    expect(container.getAttribute("aria-label")).toBe("Notifications");
+    expect(container.getAttribute("aria-live")).toBe("polite");
+    document.body.removeChild(container);
+  });
+
+  it("settings tab bar gets role=tablist and buttons get role=tab", async () => {
+    // Setup minimal DOM for settings-tabs
+    const bar = document.createElement("div");
+    bar.id = "settings-tab-bar";
+    const select = document.createElement("select");
+    select.id = "settings-tab-select";
+    const tabs = ["general", "tools", "permissions", "instructions", "git"];
+    for (const t of tabs) {
+      const btn = document.createElement("button");
+      btn.setAttribute("data-settings-tab", t);
+      bar.appendChild(btn);
+      const opt = document.createElement("option");
+      opt.value = t;
+      select.appendChild(opt);
+    }
+    document.body.append(bar, select);
+
+    const { initSettingsTabs } = await import("./settings-tabs.js");
+    initSettingsTabs();
+
+    expect(bar.getAttribute("role")).toBe("tablist");
+    expect(bar.getAttribute("aria-label")).toBe("Settings sections");
+    const generalBtn = bar.querySelector('[data-settings-tab="general"]') as HTMLButtonElement;
+    expect(generalBtn.getAttribute("role")).toBe("tab");
+    expect(generalBtn.getAttribute("aria-label")).toBe("General");
+
+    document.body.removeChild(bar);
+    document.body.removeChild(select);
+  });
 });
 
 describe("a11y: keyboard navigation on picker grid", () => {
