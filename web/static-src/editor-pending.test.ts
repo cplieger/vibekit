@@ -138,7 +138,7 @@ describe("resolveActivePending", () => {
   it("disables buttons during dispatch via bindLoadingState", async () => {
     // The function calls bindLoadingState which returns an unbind.
     // We verify dispatch is called with the correct args.
-    const { fileStates, getActiveFilePath } = await import("./editor-types.js");
+    const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
     fileStates.set(path, makeState([]) as any);
     (fileStates.get(path) as any).path = path;

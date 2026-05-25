@@ -51,9 +51,9 @@ describe("action console logger", () => {
 
   it("ignores non-error transitions", () => {
     initActionConsoleLog();
-    record(makeInstance({ status: "success", error: undefined }));
-    record(makeInstance({ status: "pending", error: undefined } as Partial<ActionInstance>));
-    record(makeInstance({ status: "cancelled", error: undefined }));
+    record(makeInstance({ status: "success" }));
+    record(makeInstance({ status: "pending" }));
+    record(makeInstance({ status: "cancelled" }));
     expect(errSpy).not.toHaveBeenCalled();
   });
 

@@ -47,7 +47,6 @@ import { setSupervisedMode, setAutoApproveCrew, setModel } from "../store.js";
 import { _resetForTest as resetDefine, IDEMPOTENCY_HEADER } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
 
 const mockSend = vi.mocked(transportSend);
 const mockFetch = vi.fn();
@@ -213,7 +212,7 @@ describe("files.rename", () => {
     const init = mockFetch.mock.calls[0]?.[1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBeDefined();
-    expect(headers[IDEMPOTENCY_HEADER].length).toBeGreaterThan(5);
+    expect(headers[IDEMPOTENCY_HEADER]!.length).toBeGreaterThan(5);
   });
 
   it("retries up to 2 times on network error", async () => {
@@ -432,9 +431,9 @@ describe("chat.send_prompt idempotencyKey", () => {
       agent: "default", model: "m1", activeFile: "", openFiles: [],
     });
     const cmd = mockSend.mock.calls[0]?.[0] as Record<string, unknown>;
-    const payload = cmd.payload as Record<string, unknown>;
-    expect(payload.idempotency_key).toBeDefined();
-    expect(typeof payload.idempotency_key).toBe("string");
+    const payload = cmd["payload"] as Record<string, unknown>;
+    expect(payload["idempotency_key"]).toBeDefined();
+    expect(typeof payload["idempotency_key"]).toBe("string");
   });
 });
 

@@ -2,7 +2,7 @@
 // Tests for the five UX primitives added on top of the action
 // framework: idempotency keys, pendingCount/pendingForAny,
 // request deduplication, debouncedDispatch, actionStatus.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
@@ -38,7 +38,7 @@ beforeEach(() => {
 
 describe("idempotencyKey", () => {
   it("apiAction sends Idempotency-Key header when configured: true", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<{ id: string }, unknown>({
@@ -57,7 +57,7 @@ describe("idempotencyKey", () => {
   });
 
   it("apiAction sends caller-supplied key from function form", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<{ id: string }, unknown>({
@@ -75,7 +75,7 @@ describe("idempotencyKey", () => {
 
   it("retries reuse the same idempotency key across attempts", async () => {
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt < 3) {
         return Promise.reject(new TypeError("Failed to fetch"));
@@ -109,7 +109,7 @@ describe("idempotencyKey", () => {
   });
 
   it("no Idempotency-Key when idempotencyKey is undefined", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<void, unknown>({
@@ -193,7 +193,7 @@ describe("pendingCount + pendingForAny", () => {
 
 describe("dedupe", () => {
   it("two concurrent dispatches with matching args share one in-flight promise", async () => {
-    let resolveRun: ((v: string) => void) | null = null;
+    let resolveRun: ((v: string) => void) | undefined;
     let runCalls = 0;
     const action = defineAction<{ id: string }, string>({
       name: "test.dedupe",

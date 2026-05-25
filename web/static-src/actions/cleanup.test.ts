@@ -6,7 +6,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetRegistry } from "./registry.js";
 import {
   registerCleanup,
   cancelAllPending,
@@ -114,7 +114,7 @@ describe("cancelAllPending + registered cleanup", () => {
 
   it("a throwing action.cancel() does not stop other cancellations or hooks", async () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const a1 = defineAction({
+    defineAction({
       name: "test.cleanup-throw-1",
       run: () => Promise.resolve(undefined),
     });

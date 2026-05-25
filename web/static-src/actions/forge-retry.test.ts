@@ -39,7 +39,7 @@ function networkError(): never {
 
 describe("forge.signOut retry", () => {
   it("shows Retry button on network error", async () => {
-    const fetchSpy = vi.fn(networkError);
+    const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
     await signOut.dispatch({ forgeId: "gh:user" });
@@ -51,7 +51,7 @@ describe("forge.signOut retry", () => {
   });
 
   it("does NOT show Retry button on HTTP 403", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 })));
+    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 })));
     vi.stubGlobal("fetch", fetchSpy);
 
     await signOut.dispatch({ forgeId: "gh:user" });
@@ -63,7 +63,7 @@ describe("forge.signOut retry", () => {
 
   it("Retry re-dispatches with same frozen args", async () => {
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt === 1) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response(null, { status: 204 }));
@@ -91,7 +91,7 @@ describe("forge.signOut retry", () => {
 describe("forge.cloneRepo retry", () => {
   it("auto-retries on network error (2 retries, 3 total attempts)", async () => {
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt < 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response('{"output":"ok"}', { status: 200 }));
@@ -113,7 +113,7 @@ describe("forge.cloneRepo retry", () => {
 
   it("idempotency key is REUSED across retries", async () => {
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt < 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response('{}', { status: 200 }));
@@ -135,7 +135,7 @@ describe("forge.cloneRepo retry", () => {
   });
 
   it("no retry toast button (error: false suppresses toast entirely)", async () => {
-    const fetchSpy = vi.fn(networkError);
+    const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
     const p = cloneRepo.dispatch({ url: "https://github.com/org/repo" });
@@ -158,7 +158,7 @@ describe("forge.cloneRepo retry", () => {
 describe("forge.connectPAT retry", () => {
   it("auto-retries on network error with idempotency key reused", async () => {
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt < 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response('{"status":"ok"}', { status: 200 }));
@@ -182,7 +182,7 @@ describe("forge.connectPAT retry", () => {
   });
 
   it("no toast emitted (error: false)", async () => {
-    const fetchSpy = vi.fn(networkError);
+    const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
     const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
@@ -200,7 +200,7 @@ describe("forge.connectPAT retry", () => {
 
 describe("forge.startDeviceFlow retry", () => {
   it("no auto-retry (no retry config), returns null on network error", async () => {
-    const fetchSpy = vi.fn(networkError);
+    const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await startDeviceFlow.dispatch({});
@@ -217,7 +217,7 @@ describe("forge.startDeviceFlow retry", () => {
     // the retryable classification is still available for callers
     // using onError to implement their own retry UI.
     let attempt = 0;
-    const fetchSpy = vi.fn(() => {
+    const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt === 1) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response('{"device_code":"abc"}', { status: 200 }));
