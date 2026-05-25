@@ -4,11 +4,15 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { apiGet, apiPostOrError, apiPutOrError } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { closeModal } from "./modals.js";
 import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
+import { saveServer } from "./actions/mcp.js";
+import { subscribeToActions, bindLoadingState } from "./actions/index.js";
+import type { ActionErrorLike } from "./actions/index.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Add / edit modal ---
 
@@ -45,6 +49,7 @@ class EditSession {
 }
 
 let session = new EditSession();
+registerCleanup(() => session.abortSearch());
 
 /** Abort any in-flight search when the modal is dismissed. */
 export function cleanupModal(): void {
@@ -96,7 +101,7 @@ function setMode(mode: AddMode, existing: Server | null): void {
 
 // --- Submit helpers ---
 
-async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<boolean> {
+async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: HTMLButtonElement | null): Promise<boolean> {
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
@@ -104,23 +109,24 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement): Promise<
     body.disabled_tools = session.disabledToolsList;
   }
 
-  const saveBtn = errEl.parentElement?.querySelector<HTMLButtonElement>("[id$='-save']");
-  if (saveBtn !== null && saveBtn !== undefined) {
-    saveBtn.disabled = true;
-    saveBtn.classList.add("btn-loading");
-  }
+  const unbind = saveBtn != null
+    ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
+    : undefined;
 
-  const r = session.editing.id === ""
-    ? await apiPostOrError<Server>("/api/mcp", body)
-    : await apiPutOrError<Server>(`/api/mcp/${encodeURIComponent(session.editing.id)}`, body);
+  let capturedError: ActionErrorLike | undefined;
+  const unsub = subscribeToActions((inst) => {
+    if (inst.name === "mcp.save_server" && inst.status === "error") {
+      capturedError = inst.error;
+    }
+  });
 
-  if (saveBtn !== null && saveBtn !== undefined) {
-    saveBtn.disabled = false;
-    saveBtn.classList.remove("btn-loading");
-  }
+  const r = await saveServer.dispatch({ id: session.editing.id, body });
 
-  if (!r.ok) {
-    errEl.textContent = r.error === "" ? "Save failed." : r.error;
+  unsub();
+  unbind?.();
+
+  if (r === null) {
+    errEl.textContent = capturedError?.message ?? "Save failed.";
     errEl.classList.remove("hidden");
     return false;
   }
@@ -187,6 +193,8 @@ function initSearchPanel(): void {
 }
 
 async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
+  // Cancels any in-flight fetch from a previous runSearch (e.g., Enter pressed
+  // while debounced search is mid-fetch).
   session.searchController?.abort();
   session.searchController = new AbortController();
   if (q === "") { results.replaceChildren(); return; }
@@ -202,6 +210,12 @@ async function runSearch(q: string, results: HTMLDivElement): Promise<void> {
     err.className = "mcp-empty";
     err.textContent = "Registry unreachable. Use the Remote URL or npm package forms instead.";
     results.appendChild(err);
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn-small";
+    retryBtn.textContent = "Retry";
+    retryBtn.addEventListener("click", () => { void runSearch(q, results); });
+    results.appendChild(retryBtn);
     return;
   }
   if (d.servers.length === 0) {
@@ -312,7 +326,7 @@ function initNpmPanel(existing: Server | null): void {
       env: collectKeyPairs(envList),
       prewarm: prewarm.checked,
       enabled: existing?.enabled ?? true,
-    }, errEl);
+    }, errEl, el<HTMLButtonElement>("mcp-npm-save"));
   };
 }
 
@@ -371,7 +385,7 @@ function initRemotePanel(existing: Server | null): void {
       url: url.value.trim(),
       headers: collectKeyPairs(headers),
       enabled: existing?.enabled ?? true,
-    }, errEl);
+    }, errEl, el<HTMLButtonElement>("mcp-remote-save"));
   };
 }
 
@@ -417,7 +431,7 @@ function initRawPanel(existing: Server | null): void {
       return;
     }
     body.enabled = existing?.enabled ?? true;
-    void submitServer(body, err);
+    void submitServer(body, err, el<HTMLButtonElement>("mcp-raw-save"));
   };
 }
 
@@ -439,6 +453,7 @@ export function rawEditShape(s: Server): Record<string, unknown> {
     command: s.command ?? "",
     args: s.args ?? [],
     env,
+    prewarm: s.prewarm ?? false,
   };
 }
 
@@ -456,7 +471,8 @@ export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server>
     }
   }
   const transport: Transport = PANEL_MODES.raw.transport!;
-  return { transport, name, command, args, env };
+  const prewarm = parsed["prewarm"] === true;
+  return { transport, name, command, args, env, prewarm };
 }
 
 // --- Disabled tools chip list ---
@@ -475,14 +491,15 @@ function initDisabledToolsSection(server: Server | null): void {
 
   section.classList.remove("hidden");
   session.disabledToolsList = [...(server.disabled_tools ?? [])];
-  renderDisabledChips(chips);
+  const knownTools = server.known_tools ?? [];
+  renderDisabledChips(chips, section, knownTools);
 
   const add = (): void => {
     const name = input.value.trim();
     if (name === "" || session.disabledToolsList.includes(name)) return;
     session.disabledToolsList.push(name);
     input.value = "";
-    renderDisabledChips(chips);
+    renderDisabledChips(chips, section, knownTools);
   };
 
   addBtn.onclick = add;
@@ -515,7 +532,7 @@ function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], ch
     pill.addEventListener("click", () => {
       if (!session.disabledToolsList.includes(name)) {
         session.disabledToolsList.push(name);
-        renderDisabledChips(chips);
+        renderDisabledChips(chips, section, knownTools);
         renderToolSuggestions(section, knownTools, chips);
       }
     });
@@ -524,7 +541,7 @@ function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], ch
   section.appendChild(suggestionsEl);
 }
 
-function renderDisabledChips(container: HTMLDivElement): void {
+function renderDisabledChips(container: HTMLDivElement, section?: HTMLDivElement, knownTools?: string[]): void {
   container.replaceChildren();
   for (const name of session.disabledToolsList) {
     container.appendChild(buildChip({
@@ -534,7 +551,10 @@ function renderDisabledChips(container: HTMLDivElement): void {
       removeTitle: "Unblock",
       onRemove: () => {
         session.disabledToolsList = session.disabledToolsList.filter((n) => n !== name);
-        renderDisabledChips(container);
+        renderDisabledChips(container, section, knownTools);
+        if (section !== undefined && knownTools !== undefined) {
+          renderToolSuggestions(section, knownTools, container);
+        }
       },
     }));
   }

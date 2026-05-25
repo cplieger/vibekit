@@ -8,16 +8,18 @@
 
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
-import * as transport from "./transport.js";
+import { forkChatAction, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";
+import { error as toastError } from "./toast.js";
 
 /** Wire the fork pill in the chat prompt row. The pill lives in the
  *  per-conversation pill cluster alongside Attach / Follow / Autopilot
  *  — it only acts on the active chat, so universal toolbar placement
  *  was wrong. */
 export function initTangent(): void {
-  const btn = document.getElementById("fork-pill");
+  const btn = document.getElementById("fork-pill") as HTMLButtonElement | null;
   if (btn === null) return;
 
   btn.addEventListener("click", () => {
@@ -26,6 +28,7 @@ export function initTangent(): void {
     if (session.frozen === true) return; // already has a tangent
     forkCurrentChat(session.id);
   });
+  bindLoadingState("chat.fork", btn);
 
   // Show/hide fork button based on active session state.
   effect(() => {
@@ -53,13 +56,15 @@ export function forkCurrentChat(chatID: string): void {
   const session = get(chatID);
   if (session === undefined) return;
   if (session.frozen === true) return;
-  const tangentID = `tangent-${Date.now().toString(36)}`;
-  void transport.send({
-    type: "fork_chat",
-    chat_id: session.id,
-    payload: { tangent_id: tangentID },
-  }).then((result) => {
-    if (!result.ok) return;
+  const tangentID = `tangent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  void forkChatAction.dispatch({ chatID: session.id, tangentID }).then((result) => {
+    if (result === null) {
+      // Server may have accepted the fork but the response was lost.
+      // Refresh the chat list to detect server-side state mismatch.
+      console.warn("[tangent] fork dispatch failed — refreshing list to detect server-side state");
+      void loadList();
+      return;
+    }
     void loadList().then(() => {
       openChatTab(tangentID, `Tangent: ${session.name}`, session.agent);
       activateChatView(tangentID);
@@ -71,15 +76,12 @@ export function forkCurrentChat(chatID: string): void {
 export function mergeTangent(): void {
   const session = getActive();
   if (session === undefined || session.is_tangent !== true) return;
-  void transport.send({
-    type: "merge_tangent",
-    chat_id: session.id,
-  }).then((result) => {
-    if (!result.ok) return;
-    // Switch to the parent chat.
-    if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
+  const parentID = session.parent_chat_id;
+  void mergeTangentAction.dispatch(session.id).then((result) => {
+    if (result === null) return;
+    if (parentID !== undefined && parentID !== "") {
       void loadList().then(() => {
-        activateChatView(session.parent_chat_id!);
+        activateChatView(parentID);
       });
     }
   });
@@ -91,15 +93,14 @@ export async function discardTangent(): Promise<void> {
   if (session === undefined || session.is_tangent !== true) return;
   const ok = await confirm("Discard this tangent? Changes won't be merged back.", "Discard", "destructive");
   if (!ok) return;
-  void transport.send({
-    type: "discard_tangent",
-    chat_id: session.id,
-  }).then((result) => {
-    if (!result.ok) return;
-    if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
-      void loadList().then(() => {
-        activateChatView(session.parent_chat_id!);
-      });
-    }
-  });
+  const result = await discardTangentAction.dispatch(session.id);
+  if (result === null) {
+    toastError("Couldn't discard tangent");
+    return;
+  }
+  if (session.parent_chat_id !== undefined && session.parent_chat_id !== "") {
+    void loadList().then(() => {
+      activateChatView(session.parent_chat_id!);
+    });
+  }
 }

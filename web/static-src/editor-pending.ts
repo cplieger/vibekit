@@ -5,22 +5,32 @@
 import { $ } from "./dom.js";
 import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
-import * as transport from "./transport.js";
+import { resolvePendingChangeAction } from "./actions/chat.js";
+import { resolvePendingPartial } from "./actions/editor.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { FileState } from "./editor-types.js";
-import { fileStates, getActiveFilePathInternal, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
-import { resolvePendingChange } from "./chat-commands.js";
+import { fileStates, getActiveFilePath, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 
 /** Resolve the active pending-change tab. Works for both Accept and
  *  Reject; the server handles the rest. Closes the tab on success. */
-export function resolveActivePending(action: "accept" | "reject"): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+export async function resolveActivePending(action: "accept" | "reject"): Promise<void> {
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  closeFile(path);
-  resolvePendingChange(chatID, toolCallID, action);
+  const unbindAccept = bindLoadingState("chat.resolve_pending_change", $.editorPendingAcceptBtn);
+  const unbindReject = bindLoadingState("chat.resolve_pending_change", $.editorPendingRejectBtn);
+  try {
+    const result = await resolvePendingChangeAction.dispatch(
+      { chatID, toolCallID, action },
+    );
+    if (result !== null) closeFile(path);
+  } finally {
+    unbindAccept();
+    unbindReject();
+  }
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */
@@ -47,7 +57,7 @@ function pendingHunkCountFor(state: FileState): number {
 
 /** Apply the active pending op with only the user-accepted hunks. */
 export async function applyActivePendingPartial(): Promise<void> {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
@@ -67,12 +77,8 @@ export async function applyActivePendingPartial(): Promise<void> {
     return;
   }
   const path = state.path;
-  closeFile(path);
-  await transport.send({
-    type: "resolve_pending_change_partial",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, merged_text: merged },
-  });
+  const result = await resolvePendingPartial.dispatch({ chatID, toolCallID, mergedText: merged });
+  if (result !== null) closeFile(path);
 }
 
 /** @internal Exported for testing. */
@@ -185,7 +191,7 @@ function buildUnifiedDiffLines(state: FileState): string[] {
 
 /** Toolbar variant: discuss the whole change (no specific hunk). */
 export function openDiscussPromptForActive(): void {
-  const state = fileStates.get(getActiveFilePathInternal());
+  const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   openDiscussPrompt(state.path, "");
 }

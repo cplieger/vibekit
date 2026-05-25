@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // Property-based tests for conflicts.ts registry eviction invariants.
 // Verifies size cap, freshness dedup, and oldest-ts eviction under
 // random insert sequences.

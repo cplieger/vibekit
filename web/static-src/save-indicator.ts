@@ -8,9 +8,8 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { iconEl } from "./icons.js";
-
-const ICON_CHECK_GREEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
+import { subscribeToActions, pendingFor } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {
   const d = document.createElement("div");
@@ -19,21 +18,66 @@ function spinnerNode(): HTMLDivElement {
 }
 
 let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+let hideTimer: ReturnType<typeof setTimeout> | undefined;
+let lastShownAt = 0;
+
+function clearTimers(): void {
+  if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+  if (hideTimer !== undefined) clearTimeout(hideTimer);
+  fadeTimer = undefined;
+  hideTimer = undefined;
+}
 
 export function showSaving(): void {
-  clearTimeout(fadeTimer);
+  lastShownAt = Date.now();
+  clearTimers();
   const el = $.settingsSaveStatus;
   el.replaceChildren(spinnerNode());
   el.classList.remove("hidden", "fade-out");
 }
 
 export function showSaved(): void {
-  clearTimeout(fadeTimer);
+  lastShownAt = Date.now();
+  clearTimers();
   const el = $.settingsSaveStatus;
-  el.replaceChildren(iconEl(ICON_CHECK_GREEN));
+  el.replaceChildren(iconEl(ICON_SAVE_OK));
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");
-    setTimeout(() => el.classList.add("hidden"), 400);
+    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
   }, 1200);
 }
+
+/** Show a red ✗ in the save indicator. Used by failed settings writes
+ *  so the spinner doesn't stay forever; the toast already carries the
+ *  detailed message, this is just the inline visual signal. */
+export function showError(): void {
+  lastShownAt = Date.now();
+  clearTimers();
+  const el = $.settingsSaveStatus;
+  el.replaceChildren(iconEl(ICON_SAVE_FAIL));
+  el.classList.remove("hidden", "fade-out");
+  fadeTimer = setTimeout(() => {
+    el.classList.add("fade-out");
+    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
+  }, 2400);  // longer than success — error deserves more eye time
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid registry subscription: if any pendingFor('settings.patch') is
+// in flight, ensure the spinner is visible. The imperative showSaving/
+// showSaved/showError API remains canonical (it handles the debounce
+// timer + generation counter in persist.ts). This subscription is a
+// safety net so the spinner also shows if a settings.patch is dispatched
+// from a path that doesn't call showSaving() explicitly.
+// ---------------------------------------------------------------------------
+subscribeToActions((instance) => {
+  if (instance.name !== "settings.patch") return;
+  if (Date.now() - lastShownAt < 500) return;
+  if (instance.status === "pending" && pendingFor("settings.patch").length > 0) {
+    showSaving();
+  } else if (pendingFor("settings.patch").length === 0) {
+    if (instance.status === "success") showSaved();
+    else if (instance.status === "error") showError();
+  }
+});

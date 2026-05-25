@@ -52,6 +52,7 @@ export interface SSEPayloads {
   readonly compaction_started: void;
   readonly working_label: { readonly label: string };
   readonly subagent_activity: { readonly sub_session_id: string; readonly event: unknown };
+  /** Reserved for future crew-card auto-refresh; currently unused. */
   readonly session_list_updated: { readonly sessions: unknown[] };
   readonly steering_loaded: { readonly documents: string[] };
   readonly terminal_created: { readonly terminal_id: string; readonly command: string; readonly args?: string[] };

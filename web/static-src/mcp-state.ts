@@ -3,16 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet, apiGetTyped, CancellableSlot } from "./api-client.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import {
   asObject, decodeArray, optStr, reqStr, type Decoder,
 } from "./validators.js";
-
-const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = (v) => {
-  const o = asObject(v, "$.mcp_status");
-  return {
-    servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
-  };
-};
 
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
@@ -25,6 +19,13 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const err = optStr(s, "error", "$.mcp_status.server");
   if (err !== undefined) out.error = err;
   return out;
+};
+
+const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = (v) => {
+  const o = asObject(v, "$.mcp_status");
+  return {
+    servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
+  };
 };
 
 // --- Wire types (match internal/mcp + internal/hub/mcp_registry) ---
@@ -87,13 +88,20 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
 
 class MCPStateController {
   private readonly _status = new Map<string, RuntimeStatus>();
-  private renderCb: (() => void) | null = null;
+  renderCb: (() => void) | null = null;
   private readonly serversSlot = new CancellableSlot();
   private readonly statusSlot = new CancellableSlot();
   private serversFetchPending = false;
   private statusFetchPending = false;
 
   get status(): ReadonlyMap<string, RuntimeStatus> { return this._status; }
+
+  abort(): void {
+    this.serversSlot.abort();
+    this.statusSlot.abort();
+    this.serversFetchPending = false;
+    this.statusFetchPending = false;
+  }
 
   setRenderCallback(cb: () => void): void { this.renderCb = cb; }
 
@@ -140,6 +148,7 @@ class MCPStateController {
 // --- Singleton + delegate exports (preserves public API) ---
 
 const instance = new MCPStateController();
+registerCleanup(() => { instance.abort(); });
 
 // `configured` remains a module-level let (live binding for consumers).
 // `status` is a readonly reference to the controller's internal Map.
@@ -151,3 +160,45 @@ export function setStatus(name: string, rs: RuntimeStatus): void { instance.setS
 export function deleteStatus(name: string): void { instance.deleteStatus(name); }
 export function refetchServers(): void { instance.refetchServers(); }
 export function refetchStatus(): void { instance.refetchStatus(); }
+
+// --- Optimistic mutation helpers ---
+
+/** Patch a configured entry in-place and re-render. Returns the previous entry for rollback. */
+export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
+  const idx = configured.findIndex((s) => s.id === id);
+  if (idx === -1) return undefined;
+  const prev = { ...configured[idx] } as Server;
+  const arr = [...configured] as Server[];
+  arr[idx] = { ...arr[idx], ...patch } as Server;
+  configured = arr;
+  instance.renderCb?.();
+  return prev;
+}
+
+/** @internal Remove a configured entry by id. Returns [entry, index] for rollback. */
+export function removeConfiguredEntry(id: string): [Server, number] | undefined {
+  const arr = [...configured] as Server[];
+  const idx = arr.findIndex((s) => s.id === id);
+  if (idx === -1) return undefined;
+  const entry = arr[idx]!;
+  arr.splice(idx, 1);
+  configured = arr;
+  instance.renderCb?.();
+  return [entry, idx];
+}
+
+/** Re-insert a previously removed entry at its original position when available. */
+export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
+  const arr = [...configured] as Server[];
+  let pos: number;
+  if (atIndex !== undefined && atIndex >= 0 && atIndex <= arr.length) {
+    pos = atIndex;
+  } else {
+    // Fall back to id ordering if no positional hint.
+    pos = arr.findIndex((s) => s.id > entry.id);
+    if (pos === -1) pos = arr.length;
+  }
+  arr.splice(pos, 0, entry);
+  configured = arr;
+  instance.renderCb?.();
+}

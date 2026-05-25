@@ -97,6 +97,18 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, resolve
 		api.Forbidden(w, "refusing to mkdir protected directory")
 		return errHandled
 	}
+	// Match actionDelete's segment-depth guard: refuse to create
+	// anything shallower than two segments deep. Without this, the
+	// UI lets users mkdir `/new folder` at the FS root, then the
+	// matching delete is refused by the depth guard and the user is
+	// stuck with a folder they can't remove via the UI. Symmetric
+	// guards: don't allow what we can't undo.
+	clean := filepath.Clean(resolved)
+	if strings.Count(clean, "/") < 2 {
+		slog.Warn("filehandler: mkdir blocked on top-level path", "path", clean)
+		api.Forbidden(w, "refusing to create top-level directory")
+		return errHandled
+	}
 	if err := h.root.MkdirAll(h.relPath(resolved), 0o755); err != nil {
 		return err
 	}
@@ -111,6 +123,14 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, resolve
 	if isSensitive(resolved) || isProtectedDir(resolved) {
 		slog.Warn("filehandler: touch blocked on protected path", "path", resolved)
 		api.Forbidden(w, "refusing to touch protected path")
+		return errHandled
+	}
+	// Match actionDelete's segment-depth guard (see actionMkdir for
+	// the rationale): no creating top-level files we can't undo.
+	clean := filepath.Clean(resolved)
+	if strings.Count(clean, "/") < 2 {
+		slog.Warn("filehandler: touch blocked on top-level path", "path", clean)
+		api.Forbidden(w, "refusing to create top-level file")
 		return errHandled
 	}
 	f, err := h.root.OpenFile(h.relPath(resolved), os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)

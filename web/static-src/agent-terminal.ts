@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "./bus.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface AgentTerm {
   id: string;
@@ -27,11 +28,11 @@ const exitedQueue: string[] = [];
 const MAX_TERMINALS = 50;
 
 export function initAgentTerminals(): void {
-  onSSE("terminal_created", (_chatID, p) => {
+  const unsub1 = onSSE("terminal_created", (_chatID, p) => {
     createTab(p.terminal_id, p.command, p.args);
   });
 
-  onSSE("terminal_output", (_chatID, p) => {
+  const unsub2 = onSSE("terminal_output", (_chatID, p) => {
     const term = terms.get(p.terminal_id);
     if (term === undefined) return;
     term.output.textContent += p.data;
@@ -40,7 +41,7 @@ export function initAgentTerminals(): void {
     if (container !== null) container.scrollTop = container.scrollHeight;
   });
 
-  onSSE("terminal_exited", (_chatID, p) => {
+  const unsub3 = onSSE("terminal_exited", (_chatID, p) => {
     const term = terms.get(p.terminal_id);
     if (term === undefined) return;
     term.exited = true;
@@ -49,6 +50,8 @@ export function initAgentTerminals(): void {
     term.tab.classList.toggle("term-exited-err", p.exit_code !== 0);
     exitedQueue.push(p.terminal_id);
   });
+
+  registerCleanup(() => { unsub1(); unsub2(); unsub3(); terms.clear(); exitedQueue.length = 0; });
 
   // Wire tab clicks via event delegation on the tab bar.
   const tabBar = document.getElementById("shell-tabs");
@@ -113,12 +116,21 @@ function createTab(termId: string, command: string, args?: string[]): void {
 
   // Evict oldest completed terminal if cap is reached.
   if (terms.size > MAX_TERMINALS) {
-    const evictId = exitedQueue.shift();
+    let evictId: string | undefined;
+    // Find the first exited entry that still exists in terms.
+    while (exitedQueue.length > 0) {
+      const candidate = exitedQueue.shift()!;
+      if (terms.has(candidate)) { evictId = candidate; break; }
+    }
+    // Fallback: if no exited terminals, evict the oldest running terminal.
+    if (evictId === undefined) {
+      evictId = terms.keys().next().value;
+    }
     if (evictId !== undefined) {
       const t = terms.get(evictId);
       if (t !== undefined) {
         t.tab.remove();
-        const oldPane = container.querySelector(`[data-term-id="${evictId}"]`);
+        const oldPane = container.querySelector(`[data-term-id="${CSS.escape(evictId)}"]`);
         if (oldPane !== null) oldPane.remove();
         terms.delete(evictId);
       }

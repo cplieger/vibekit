@@ -1,18 +1,19 @@
 // ---------------------------------------------------------------------------
-// Chat history: sidebar popover with archived chats, plus a dedicated
-// full-page History view opened from the chat toolbar (#history-btn).
-// Restoring a chat spawns a new tab and loads its messages.
+// Chat history: sidebar popover listing archived chats, plus a full-page
+// History table opened from the toolbar (#history-btn). Restoring a chat
+// loads its messages into a new tab. Deletion is permanent (server-side).
 //
-// Auto-archive on tab-close: beforeunload posts archive for every chat
-// the user has open so they're not lost on page refresh. Server-side
-// retention (cleanup.periodDays) prunes the archive after N days.
+// Uses loadHistoryAction / deleteArchivedChatAction from actions/chat.ts
+// for the table view, and raw apiGet for the lightweight sidebar fetch
+// (no toast on failure — sidebar is background UI).
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiDelete } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { escText } from "./strings.js";
-import { ICON_CLOSE } from "./icons.js";
+import { ICON_TRASH } from "./icons.js";
+import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface ArchivedHeader {
   id: string;
@@ -22,7 +23,7 @@ interface ArchivedHeader {
 }
 
 class HistoryController {
-  private historyController: AbortController | null = null;
+  private tableAbortController: AbortController | null = null;
   private archivedController: AbortController | null = null;
 
   init(): void {
@@ -42,8 +43,9 @@ class HistoryController {
   }
 
   teardown(): void {
-    this.historyController?.abort();
-    this.historyController = null;
+    loadHistoryAction.cancel();
+    this.tableAbortController?.abort();
+    this.tableAbortController = null;
     this.archivedController?.abort();
     this.archivedController = null;
   }
@@ -53,13 +55,16 @@ class HistoryController {
     if (container === null) return;
     container.replaceChildren();
 
-    this.historyController?.abort();
-    this.historyController = new AbortController();
-    const { signal } = this.historyController;
+    loadHistoryAction.cancel();
+    this.tableAbortController?.abort();
+    this.tableAbortController = new AbortController();
+    const { signal } = this.tableAbortController;
 
-    const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
+    const d = await loadHistoryAction.dispatch(undefined);
     if (signal.aborted) return;
-    const chats = d?.chats ?? [];
+    // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
+    if (d === null) return;
+    const chats = d.chats ?? [];
     if (chats.length === 0) {
       const empty = document.createElement("div");
       empty.className = "list-empty";
@@ -95,16 +100,18 @@ class HistoryController {
 
       const delBtn = document.createElement("button");
       delBtn.type = "button";
-      delBtn.className = "list-row-btn";
+      delBtn.className = "btn-small btn-danger icon-only";
       delBtn.setAttribute("data-tooltip", "Delete permanently");
-      delBtn.setAttribute("aria-label", `Delete ${escText(chat.name)}`);
+      delBtn.setAttribute("aria-label", `Delete ${chat.name}`);
       delBtn.setAttribute("data-action", "delete");
-      delBtn.innerHTML = ICON_CLOSE;
+      delBtn.innerHTML = ICON_TRASH;
 
       row.append(nameWrap, date, delBtn);
       container.appendChild(row);
     }
 
+    // Bug 1: Use signal-bound listener so it's automatically removed on next
+    // loadHistoryTable call (which aborts tableAbortController).
     container.addEventListener("click", (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
       if (target === null) return;
@@ -113,19 +120,21 @@ class HistoryController {
       const chatId = row.getAttribute("data-chat-id")!;
       const action = target.getAttribute("data-action");
       if (action === "restore") {
+        // Bug 4: optimistic-remove the row to prevent double-click dispatches.
+        row.remove();
         restoreArchivedChat(chatId);
       } else if (action === "delete") {
-        void apiDelete(`/api/chats/archived/${encodeURIComponent(chatId)}`).then((ok) => {
-          if (ok) row.remove();
-          if (container.children.length === 0) {
-            const empty = document.createElement("div");
-            empty.className = "list-empty";
-            empty.textContent = "No archived chats.";
-            container.appendChild(empty);
-          }
-        });
+        // Bug 4: optimistic-remove the row on click.
+        row.remove();
+        if (container.children.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "list-empty";
+          empty.textContent = "No archived chats.";
+          container.appendChild(empty);
+        }
+        void deleteArchivedChatAction.dispatch(chatId);
       }
-    });
+    }, { signal });
   }
 
   async loadArchived(): Promise<void> {
@@ -138,6 +147,8 @@ class HistoryController {
     this.archivedController = new AbortController();
     const { signal } = this.archivedController;
 
+    // Intentional: uses raw apiGet instead of an action because this is a
+    // sidebar background fetch — no toast desired on failure (POLICY: LOG ONLY).
     const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
     if (signal.aborted) return;
     const chats = d?.chats ?? [];
@@ -183,6 +194,7 @@ class HistoryController {
       list.appendChild(row);
     }
 
+    // Bug 1: Use signal-bound listener so it's removed on next loadArchived call.
     list.addEventListener("click", (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
       if (target === null) return;
@@ -190,21 +202,16 @@ class HistoryController {
       if (row === null) return;
       const chatId = row.getAttribute("data-chat-id")!;
       if (target.getAttribute("data-action") === "restore") {
-        restoreArchivedChat(chatId);
+        // Bug 4: optimistic-remove row to prevent double-click.
         row.remove();
+        restoreArchivedChat(chatId);
       }
-    });
-  }
-
-  refreshVisibility(): void {
-    void this.loadArchived();
+    }, { signal });
   }
 }
 
 const historyCtrl = new HistoryController();
+registerCleanup(() => historyCtrl.teardown());
 
 export function initHistory(): void { historyCtrl.init(); }
 export function showHistoryView(): void { historyCtrl.showView(); }
-
-
-export function refreshHistoryVisibility(): void { historyCtrl.refreshVisibility(); }

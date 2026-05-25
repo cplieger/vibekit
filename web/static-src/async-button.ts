@@ -26,6 +26,9 @@ const X_HTML =
   'stroke="currentColor" stroke-width="3" stroke-linecap="round" ' +
   'aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
 
+/** WeakMap to track pending reset timers per button. */
+const resetTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+
 export interface AsyncFeedbackOptions {
   /** Override the post-completion glyph hold (ms). Default 1200. */
   resetMs?: number;
@@ -44,7 +47,15 @@ export async function withAsyncFeedback(
   fn: () => Promise<unknown>,
   opts: AsyncFeedbackOptions = {},
 ): Promise<void> {
-  if (btn.dataset["asyncStatus"] === "pending") return;
+  // Guard: reject re-entry while any status is active (pending, success, error display)
+  if (btn.dataset["asyncStatus"] !== undefined) return;
+
+  // Cancel any pending reset timer from a prior cycle to avoid stale restores
+  const prevTimer = resetTimers.get(btn);
+  if (prevTimer !== undefined) {
+    clearTimeout(prevTimer);
+    resetTimers.delete(btn);
+  }
 
   const origHTML = btn.innerHTML;
   const origDisabled = btn.disabled;
@@ -69,19 +80,24 @@ export async function withAsyncFeedback(
   // clone). Skip the success/error visual in that case — the new
   // DOM already reflects the result.
   if (!btn.isConnected) {
+    if (origAriaBusy === null) btn.removeAttribute("aria-busy");
+    else btn.setAttribute("aria-busy", origAriaBusy);
+    delete btn.dataset["asyncStatus"];
     return;
   }
 
   btn.dataset["asyncStatus"] = ok ? "success" : "error";
   btn.innerHTML = ok ? CHECK_HTML : X_HTML;
+  if (origAriaBusy === null) btn.removeAttribute("aria-busy");
+  else btn.setAttribute("aria-busy", origAriaBusy);
 
   const reset = opts.resetMs ?? RESET_MS;
-  setTimeout(() => {
+  const timerId = setTimeout(() => {
+    resetTimers.delete(btn);
     if (!btn.isConnected) return;
     btn.innerHTML = origHTML;
     btn.disabled = origDisabled;
-    if (origAriaBusy === null) btn.removeAttribute("aria-busy");
-    else btn.setAttribute("aria-busy", origAriaBusy);
     delete btn.dataset["asyncStatus"];
   }, reset);
+  resetTimers.set(btn, timerId);
 }

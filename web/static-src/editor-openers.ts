@@ -3,15 +3,16 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { openEditorView } from "./tabs.js";
+import { openEditorView, closeTab } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion } from "./editor-conflict.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, withTimeout, API_TIMEOUT_MS } from "./api-client.js";
+import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
-  fileStates, getActiveFilePathInternal, setActiveFilePath,
+  fileStates, getActiveFilePath, setActiveFilePath,
   isPendingPath, routeForPath, freshState,
   pendingDiffSource, gitDiffSource, registerCloseFile,
 } from "./editor-types.js";
@@ -19,11 +20,13 @@ import {
   showReadMode, applyPendingLine, fetchAgentLines, pendingLines,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // --- Active-load cancellation ---
 
 /** Aborted on every activateFile call to cancel stale in-flight loads. */
 let activeLoadController: AbortController | null = null;
+registerCleanup(() => activeLoadController?.abort());
 
 // --- Public openers ---
 
@@ -98,8 +101,11 @@ function open(path: string, opts: OpenOpts): void {
   state.mode = opts.mode;
   state.pendingHunkCount = null;
   state.cachedDiff = null;
+  if (opts.repo !== undefined) state.repo = opts.repo;
   if (opts.line !== undefined && opts.line > 0) pendingLines.set(path, opts.line);
   openEditorView(path, () => activateFile(path), () => closeEditorFile(path));
+  // Always activate — openEditorView may skip the callback if the tab was already active.
+  activateFile(path);
   const line = opts.line;
   pushRoute(line !== undefined && line > 0
     ? { kind: "file", path, line }
@@ -111,36 +117,38 @@ function open(path: string, opts: OpenOpts): void {
 }
 
 export async function fetchGitDiffSources(state: FileState, repo: string, ref: string): Promise<void> {
-  const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
-  const [oldD, newD] = await Promise.all([
-    apiGet<{ content?: string }>(
-      `/api/git/show?path=${encodeURIComponent(state.path)}&ref=${encodeURIComponent(ref)}${repoParam}`),
-    apiGet<{ content?: string; error?: string }>(
-      `/api/file?path=${encodeURIComponent(state.path)}`),
-  ]);
+  const result = await loadDiffAction.dispatch({ path: state.path, repo, ref });
+  if (result === null) {
+    state.loaded = true;
+    state.error = "Failed to load diff";
+    if (getActiveFilePath() === state.path) restoreUI(state);
+    return;
+  }
   if (state.mode.kind !== "diff") return;
   if (!fileStates.has(state.path)) return;
+  const { oldContent, newContent, error } = result;
   state.mode = {
     kind: "diff",
     diffSource: {
       ...state.mode.diffSource,
-      oldContent: oldD?.content ?? "",
-      newContent: newD?.content ?? "",
+      oldContent,
+      newContent,
     },
   };
   state.pendingHunkCount = null;
   state.cachedDiff = null;
   if (!state.loaded) {
-    state.original = state.mode.diffSource.newContent;
-    state.current = state.mode.diffSource.newContent;
+    state.original = newContent;
+    state.current = newContent;
   }
   state.loaded = true;
-  state.error = newD?.error ?? "";
-  if (getActiveFilePathInternal() === state.path) restoreUI(state);
+  state.error = error;
+  if (getActiveFilePath() === state.path) restoreUI(state);
 }
 
 export function activateFile(path: string): void {
   saveCurrentState();
+  abortSuggestion(); // cancel any in-flight suggestion for the old file
   activeLoadController?.abort();
   activeLoadController = new AbortController();
   setActiveFilePath(path);
@@ -150,7 +158,7 @@ export function activateFile(path: string): void {
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
 
-  void fetchAgentLines(path, activeLoadController.signal);
+  void fetchAgentLines(path);
 
   if (state.mode.kind === "diff" && state.mode.diffSource.fromGit === true && !state.loaded) {
     $.editorCode.textContent = "Loading diff...";
@@ -166,7 +174,7 @@ export function activateFile(path: string): void {
 }
 
 function saveCurrentState(): void {
-  const activeFilePath = getActiveFilePathInternal();
+  const activeFilePath = getActiveFilePath();
   if (activeFilePath === "") return;
   const state = fileStates.get(activeFilePath);
   if (state !== undefined && state.loaded && (state.mode.kind === "edit" && state.mode.editing || state.mode.kind === "conflict")) {
@@ -211,13 +219,40 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
 }
 
 async function loadPendingDiff(state: FileState, signal?: AbortSignal): Promise<void> {
+  interface PendingData { path?: string; kind?: string; old_text?: string; new_text?: string; truncated?: boolean }
   const url = routeForPath(state.path).readURL;
-  const d = await apiGet<{
-    path?: string; kind?: string;
-    old_text?: string; new_text?: string; truncated?: boolean;
-  }>(url, signal);
+  let d: PendingData | null = null;
+  let is404 = false;
+  try {
+    const r = await fetch(url, { signal: withTimeout(signal, API_TIMEOUT_MS) });
+    if (r.status === 404) { is404 = true; }
+    else if (!r.ok) {
+      state.error = "Network error \u2014 try again";
+      state.loaded = true;
+      state.original = "";
+      state.current = "";
+      state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
+      state.pendingHunkCount = null;
+      state.cachedDiff = null;
+      restoreUI(state);
+      return;
+    } else {
+      d = (await r.json()) as PendingData;
+    }
+  } catch {
+    if (signal?.aborted === true) return;
+    state.error = "Network error \u2014 try again";
+    state.loaded = true;
+    state.original = "";
+    state.current = "";
+    state.mode = { kind: "diff", diffSource: pendingDiffSource("", "") };
+    state.pendingHunkCount = null;
+    state.cachedDiff = null;
+    restoreUI(state);
+    return;
+  }
   if (signal?.aborted === true) return;
-  if (d === null) {
+  if (is404 || d === null) {
     state.error = "Change already resolved";
     state.loaded = true;
     state.original = "";
@@ -256,7 +291,8 @@ export function closeEditorFile(path: string): void {
   if (state !== undefined && state.mode.kind === "conflict") abortSuggestion();
   fileStates.delete(path);
   pendingLines.delete(path);
-  const activeFilePath = getActiveFilePathInternal();
+  closeTab(`editor:${path}`);
+  const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) setActiveFilePath("");
   persistOpenFiles();
 }

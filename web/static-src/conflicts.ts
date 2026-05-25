@@ -22,10 +22,14 @@
 // a pathological runaway.
 
 import { onSSE } from "./bus.js";
-import { apiGet, withTimeout, CancellableSlot } from "./api-client.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
+import { openConflictDiff as openConflictDiffAction, loadConflictsAction } from "./actions/conflicts.js";
+import { bindLoadingState } from "./actions/index.js";
+
+/** Cleanup functions for conflict chip loading-state bindings. */
+const chipUnbindMap = new WeakMap<HTMLElement, () => void>();
 
 /** One conflict record. Shape matches the server-side
  *  `ConflictPayload` Go struct 1:1. */
@@ -76,8 +80,12 @@ export function remember(chatID: string, c: Conflict): void {
   const prior = tm.entries.get(c.path);
   if (prior !== undefined && prior.ts >= c.ts) return;
   tm.entries.set(c.path, c);
-  // Update oldest tracking on insert.
-  if (c.ts < tm.oldestTs) {
+  // If we replaced the entry that was tracked as oldest, rescan to
+  // find the true oldest before the cap check (the replacement may
+  // have a newer ts, making a different entry the actual oldest).
+  if (c.path === tm.oldestPath) {
+    rescanOldest(tm);
+  } else if (c.ts < tm.oldestTs) {
     tm.oldestPath = c.path;
     tm.oldestTs = c.ts;
   }
@@ -129,7 +137,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   // traverses [data-filename] nodes; we import it lazily so this
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
-  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!));
+  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!)).catch((e) => console.warn('[conflicts] badge refresh failed', e));
 });
 
 /** Fetch every past conflict for a chat and populate the registry.
@@ -138,9 +146,7 @@ onSSE("conflict_detected", (chatID, payload) => {
  *  ring can wrap). Best-effort — a failed fetch just means the
  *  user doesn't see stale badges, not an error path. */
 export async function loadConflictsFor(chatID: string): Promise<void> {
-  const resp = await apiGet<{ conflicts?: Conflict[] }>(
-    `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts`,
-  );
+  const resp = await loadConflictsAction.dispatch(chatID);
   const list = resp?.conflicts ?? [];
   for (const c of list) remember(chatID, c);
 }
@@ -153,7 +159,11 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   const c = getConflict(chatID, path);
   const existing = row.querySelector(".conflict-chip") as HTMLButtonElement | null;
   if (c === null) {
-    if (existing !== null) existing.remove();
+    if (existing !== null) {
+      chipUnbindMap.get(existing)?.();
+      chipUnbindMap.delete(existing);
+      existing.remove();
+    }
     return;
   }
   let chip = existing;
@@ -166,6 +176,7 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
       void openConflictDiff(chatID, path);
     });
     row.appendChild(chip);
+    chipUnbindMap.set(chip, bindLoadingState("conflicts.open_diff", chip));
   }
   // Refresh visible state on every call so second-drift overwrites
   // stale label/tooltip captured at first render.
@@ -180,48 +191,18 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
 // Register with messages-shared so it can render chips without importing conflicts.ts.
 registerConflictChipRenderer(renderConflictChip);
 
-/** Controller for the currently open conflict diff fetch. Cancelled
- *  when a new diff is opened or the panel is abandoned, preventing
- *  orphaned fetches from consuming bandwidth after navigation. */
-const activeDiffSlot = new CancellableSlot();
-
 /** Open the editor in diff mode comparing the blob the other chat
- *  left against the blob this chat saw. Both blobs come from the
- *  server's content-addressed store via /api/checkpoints/{chatID}/blob/{sha}.
- *  Client-side fetch failures fall back to a console warning —
- *  this is an advisory feature, not a critical path. */
+ *  left against the blob this chat saw. Dispatches through the action
+ *  framework which handles error toasting. */
 async function openConflictDiff(chatID: string, path: string): Promise<void> {
   const c = getConflict(chatID, path);
   if (c === null) return;
-  const signal = activeDiffSlot.start();
-  const [expected, actual] = await Promise.all([
-    fetchBlob(chatID, c.expected_sha, signal),
-    fetchBlob(chatID, c.actual_sha, signal),
-  ]);
-  const { openFileDiff } = await import("./editor-openers.js");
-  openFileDiff(path, expected, actual, {
-    oldLabel: `chat ${c.other_chat} left`,
-    newLabel: "this chat saw",
+  await openConflictDiffAction.dispatch({
+    chatID,
+    path,
+    expectedSha: c.expected_sha,
+    actualSha: c.actual_sha,
+    otherChat: c.other_chat,
   });
 }
 
-async function fetchBlob(chatID: string, sha: string, parentSignal?: AbortSignal): Promise<string> {
-  if (sha === "") return "";
-  // Compose caller-provided signal with a 15s timeout so the fetch
-  // is bounded AND cancellable when the user navigates away.
-  try {
-    const resp = await fetch(
-      `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`,
-      { signal: withTimeout(parentSignal, 15_000) },
-    );
-    if (!resp.ok) return "";
-    return await resp.text();
-  } catch {
-    return "";
-  }
-}
-
-// Suppress the unused-import warning when this file is tree-shaken
-// into a build that doesn't use store directly. The onSSE handler
-// receives chatID from the SSE infrastructure and doesn't need
-// store lookups.

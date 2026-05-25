@@ -114,7 +114,6 @@ function isSettingsTab(v: string): v is SettingsTab {
  *  Safe to call even if Settings isn't currently the active app tab;
  *  the tab state is preserved for when it opens. */
 export function forceSettingsTab(tab: SettingsTab): void {
-  if (tab === activeTab) return;
   activeTab = tab;
   setTabRoute(tab);
   for (const fn of listeners) fn(tab);

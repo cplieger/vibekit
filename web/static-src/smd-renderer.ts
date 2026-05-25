@@ -21,7 +21,7 @@ import {
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
-import { isSafeUrl } from "./files-shared.js";
+import { isSafeUrl } from "./utils-url.js";
 
 export type { Renderer } from "./smd-parser-types.js";
 

@@ -24,7 +24,13 @@ vi.mock("./mcp-pairs.js", () => ({
   appendKeyPair: () => {},
   collectKeyPairs: () => [],
 }));
-vi.mock("./icons.js", () => ({ ICON_CLOSE: "" }));
+vi.mock(import("./icons.js"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual };
+});
+vi.mock("./actions/mcp.js", () => ({
+  saveServer: { dispatch: async () => ({}) },
+}));
 
 import { simplifyName, extractNpxPackage, rawEditShape, rawSubmitShape } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
@@ -91,7 +97,7 @@ describe("rawEditShape", () => {
       created_at: 0, updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "test", command: "/bin/cmd", args: ["--flag"], env: { KEY: "VAL" },
+      name: "test", command: "/bin/cmd", args: ["--flag"], env: { KEY: "VAL" }, prewarm: false,
     });
   });
 
@@ -101,7 +107,7 @@ describe("rawEditShape", () => {
       created_at: 0, updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "bare", command: "", args: [], env: {},
+      name: "bare", command: "", args: [], env: {}, prewarm: false,
     });
   });
 
@@ -112,7 +118,7 @@ describe("rawEditShape", () => {
       created_at: 0, updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "multi", command: "cmd", args: [], env: { A: "1", B: "2" },
+      name: "multi", command: "cmd", args: [], env: { A: "1", B: "2" }, prewarm: false,
     });
   });
 });
@@ -125,7 +131,7 @@ describe("rawSubmitShape", () => {
   it("returns valid partial server for complete input", () => {
     const result = rawSubmitShape({ name: "srv", command: "/bin/x", args: ["a"], env: { K: "V" } });
     expect(result).toEqual({
-      transport: "stdio", name: "srv", command: "/bin/x", args: ["a"], env: [{ name: "K", value: "V" }],
+      transport: "stdio", name: "srv", command: "/bin/x", args: ["a"], env: [{ name: "K", value: "V" }], prewarm: false,
     });
   });
 

@@ -15,7 +15,6 @@ import {
 } from "../store.js";
 
 onSSE("pending_change_added", (chatID, p) => {
-  if (p === undefined) return;
   addPendingChange(chatID, p.change);
   // Notify tool cards so they can flip their pending status. The
   // tool-card UI listens for this rather than re-rendering the whole
@@ -24,14 +23,13 @@ onSSE("pending_change_added", (chatID, p) => {
 });
 
 onSSE("pending_change_resolved", (chatID, p) => {
-  if (p === undefined) return;
   removePendingChange(chatID, p.tool_call_id);
   emitBus(BUS_PENDING_RESOLVED, { chatID, toolCallID: p.tool_call_id, action: p.action });
 });
 
 onSSE("pending_changes_cleared", (chatID, p) => {
   clearPendingChanges(chatID);
-  emitBus(BUS_PENDING_CLEARED, { chatID, reason: p?.reason ?? "" });
+  emitBus(BUS_PENDING_CLEARED, { chatID, reason: p.reason ?? "" });
 });
 
 onSSE("pending_trust_enabled", (chatID) => {

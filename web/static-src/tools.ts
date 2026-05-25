@@ -6,13 +6,13 @@
 // singleton instance, preserving the existing public API.
 // ---------------------------------------------------------------------------
 
-import { closeModal, showConfirm, RollingOutput } from "./modals.js";
+import { closeModal, RollingOutput } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
-import { ICON_EDIT, ICON_CLOSE, ICON_REFRESH } from "./icons.js";
-import { apiGet, apiPost, apiPut } from "./api-client.js";
+import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
+import { installTools, saveTools, seedMcp, loadToolsListAction } from "./actions/tools.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
-
-const SPINNER_ICON = '<div class="spinner-sm"></div>';
 
 type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
 
@@ -76,27 +76,27 @@ const f = {
 class ToolsManager {
   private toolsData: Record<string, Record<string, Record<string, unknown>>> = {};
   private editingTool: { cat: string; name: string } | null = null;
-  private toolsController: AbortController | null = null;
+  /** Public hook for global cleanup: cancels in-flight tool fetch. */
+  cancelLoad(): void {
+    loadToolsListAction.cancel();
+  }
 
   init(): void {
     $.toolAddBtn.addEventListener("click", () => this.openToolModal(null, null));
 
     const toolOutput = new RollingOutput($.toolUpdateOutput, "git-output-modal");
     $.toolUpdateBtn.addEventListener("click", () => void this.runToolsInstall(toolOutput));
+    bindLoadingState("tools.install", $.toolUpdateBtn);
 
     $.autoUpdateToggle.addEventListener("change", () => {
-      patchSettings({ auto_update: $.autoUpdateToggle.checked });
+      patchSettings({ auto_update: $.autoUpdateToggle.checked }, $.autoUpdateToggle);
     });
 
     f.save.addEventListener("click", () => this.saveToolFromModal());
   }
 
   loadToolsList(): void {
-    if (this.toolsController !== null) this.toolsController.abort();
-    this.toolsController = new AbortController();
-    const { signal } = this.toolsController;
-    void apiGet<typeof this.toolsData>("/api/tools", signal).then((d) => {
-      if (signal.aborted) return;
+    void loadToolsListAction.dispatch(undefined).then((d) => {
       if (d === null) {
         $.toolsList.innerHTML = '<div class="list-empty">Failed to load tools</div>';
         return;
@@ -107,11 +107,9 @@ class ToolsManager {
   }
 
   private async runToolsInstall(toolOutput: RollingOutput): Promise<void> {
-    $.toolUpdateBtn.disabled = true;
-    $.toolUpdateBtn.innerHTML = SPINNER_ICON;
     toolOutput.clear();
     toolOutput.append("Running setup-tools.sh...");
-    const d = await apiPost<{ output?: string; error?: string }>("/api/tools/install");
+    const d = await installTools.dispatch(undefined);
     toolOutput.clear();
     if (d === null) {
       toolOutput.append("Install request failed");
@@ -120,8 +118,6 @@ class ToolsManager {
       if (d.error !== undefined) toolOutput.append(`Error: ${d.error}`);
     }
     this.loadToolsList();
-    $.toolUpdateBtn.disabled = false;
-    $.toolUpdateBtn.innerHTML = ICON_REFRESH;
   }
 
   private renderToolsList(): void {
@@ -179,11 +175,13 @@ class ToolsManager {
     delBtn.className = "list-row-btn"; delBtn.setAttribute("data-tooltip", "Delete");
     delBtn.innerHTML = ICON_CLOSE;
     delBtn.addEventListener("click", () => {
-      showConfirm(`Remove ${name}?`, () => {
+      void (async () => {
+        const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
+        if (!ok) return;
         delete this.toolsData[sec]![name];
         this.saveToolsData();
         this.renderToolsList();
-      });
+      })();
     });
     actions.append(editBtn, delBtn);
     return actions;
@@ -261,21 +259,13 @@ class ToolsManager {
   }
 
   private saveToolsData(): void {
-    void apiPut("/api/tools", this.toolsData);
+    void saveTools.dispatch(this.toolsData);
   }
 }
 
 /** Seed an MCP config entry the user can fill in later. */
-async function seedUnconfiguredMCP(name: string, _installCommand: string): Promise<void> {
-  await apiPost("/api/mcp", {
-    name,
-    transport: "stdio",
-    enabled: false,
-    prewarm: false,
-    command: name,
-    args: [],
-    env: [],
-  });
+async function seedUnconfiguredMCP(name: string, install: string): Promise<void> {
+  await seedMcp.dispatch({ name, install });
 }
 
 function toggleLabel(id: string, show: boolean): void {
@@ -288,6 +278,7 @@ function setHintText(id: string, text: string): void {
 
 // Singleton instance — internal to the module.
 const manager = new ToolsManager();
+registerCleanup(() => manager.cancelLoad());
 
 // Public delegate functions preserving the existing module API.
 export function initTools(): void { manager.init(); }

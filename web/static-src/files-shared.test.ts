@@ -1,7 +1,9 @@
 // Unit tests for files-shared.ts — pure functions, no DOM dependency.
 import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
-import { formatSize, joinPath, parentPath, displayPath, isSafeUrl, sortEntries, relativeTime } from "./files-shared.js";
+import { formatSize, joinPath, parentPath, displayPath, sortEntries } from "./files-shared.js";
+import { isSafeUrl } from "./utils-url.js";
+import { relativeTime } from "./utils-format.js";
 
 describe("formatSize", () => {
   const cases: [number, string][] = [

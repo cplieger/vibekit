@@ -117,6 +117,18 @@
   display: flex; align-items: center; gap: var(--sp-2);
 }
 
+/* The "+" add-account button sits at the right edge of the header
+ * row, vertically centered. Square shape (overrides btn-small's
+ * wider horizontal padding) so the icon doesn't stretch the button. */
+.forge-kind-add-btn {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  padding: var(--sp-1);
+  min-width: var(--btn-h);
+}
+
+.forge-kind-add-btn svg { width: 14px; height: 14px; }
+
 /* Two-letter kind badge (SVG glyph) — mirrors .repo-picker-badge
  * for visual consistency between the picker and the forges page. */
 .forge-kind-badge {
@@ -160,12 +172,22 @@
 
 /* Slim single-line row per connected account. Identity on the left,
  * actions on the right. */
+/* Account row is now a column: top row (identity + actions) plus an
+ * optional collapsible repos footer. Width spans the full section. */
 .forge-account-row {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  display: flex; flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
+  overflow: hidden;
+}
+
+.forge-account-row-top {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
 }
 
 .forge-account-row-error {
@@ -173,11 +195,125 @@
   background: color-mix(in srgb, var(--c-danger, #e66666) 5%, var(--c-bg-secondary));
 }
 
-.forge-account-empty {
+/* Per-account collapsible repo list. The summary line shows
+ * "X repos, Y cloned locally" with a chevron that rotates on open. */
+.forge-account-repos {
+  margin: 0;
+  border-block-start: 1px solid var(--c-border);
+}
+
+.forge-account-repos-summary {
+  display: flex; align-items: center; gap: var(--sp-2);
+  list-style: none;
+  cursor: pointer;
+  /* Touch-friendly tap target: ~44px minimum height on mobile.
+   * Spacious horizontal padding so the chevron + icon + label
+   * line reads at body size. */
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  user-select: none;
+}
+
+.forge-account-repos-icon {
+  display: inline-flex; align-items: center;
+  color: var(--c-text-tertiary);
+  flex-shrink: 0;
+}
+
+.forge-account-repos-icon svg { width: 16px; height: 16px; }
+
+/* Right-aligned Clone all button on the summary line. The label
+ * pushes itself to the left via flex: 1 so the button sits at the
+ * far edge with vertical centering inherited from the summary. */
+.forge-account-repos-label {
+  flex: 1; min-width: 0;
+}
+
+.forge-account-repos-clone-all {
+  flex-shrink: 0;
+  margin-inline-start: var(--sp-2);
+}
+
+.forge-account-repos-summary::-webkit-details-marker { display: none; }
+
+.forge-account-repos-summary:hover {
+  background: var(--c-bg-tertiary);
+}
+
+.forge-account-repos-chevron {
+  display: inline-block;
+  color: var(--c-text-tertiary);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.forge-account-repos[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
+  transform: rotate(90deg);
+}
+
+.forge-account-repos-empty {
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
   font-style: italic;
+}
+
+.forge-account-repos-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  border-block-start: 1px solid var(--c-border);
+}
+
+.forge-account-repo-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+}
+
+.forge-account-repo-row:first-child { border-block-start: 0; }
+
+.forge-account-repo-state {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+}
+
+.forge-account-repo-state svg { width: 14px; height: 14px; }
+
+.forge-account-repo-identity {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  gap: 1px;
+}
+
+/* Repo title stays in the default text color regardless of the
+ * repo's cloned state. The cloned state is communicated by the
+ * green dot to the left, not by tinting the title. */
+.forge-account-repo-name {
+  font-weight: 500;
+  color: var(--c-text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-repo-row.cloned .forge-account-repo-name,
+.forge-account-repo-row .forge-account-repo-name {
+  color: var(--c-text-primary);
+}
+
+.forge-account-repo-tags {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.forge-account-repo-actions {
+  display: flex; align-items: center; gap: var(--sp-1);
+  flex-shrink: 0;
 }
 
 .forge-account-identity {
@@ -190,6 +326,18 @@
   font-weight: 500;
   color: var(--c-text-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Skeleton placeholder for the primary identity line while the
+ * background probe is still fetching email + username. Inherits
+ * the .skeleton shimmer animation; sized to roughly an email's
+ * worth of width so the row doesn't reflow when the real value
+ * lands. */
+.forge-account-primary-skeleton {
+  display: inline-block;
+  width: 12em;
+  height: 0.875rem;
+  border-radius: 0.25rem;
 }
 
 .forge-account-meta {
@@ -212,18 +360,47 @@
   text-decoration: none;
 }
 
-/* Action row below the account list: + Add an account, + Add a PAT. */
-.forge-kind-actions {
-  display: flex; gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-
-/* Inline mount point: PAT form, OAuth device prompt, or status text. */
+/* Inline mount point: add-pane (OAuth + PAT), or status text. */
 .forge-kind-slot:empty { display: none; }
 .forge-kind-slot {
   margin-block-start: var(--sp-2);
   padding-block-start: var(--sp-2);
   border-block-start: 1px dashed var(--c-border);
+}
+
+/* Unified add-account pane: OAuth device flow on top + horizontal
+ * divider + PAT form below. For non-GitHub kinds the OAuth section
+ * isn't rendered so the pane is just the PAT form. */
+.forge-add-pane {
+  display: flex; flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.forge-add-pane-intro {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  line-height: 1.5;
+}
+
+.forge-add-pane-section {
+  display: flex; flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.forge-add-pane-heading {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-tertiary);
+}
+
+.forge-add-pane-divider {
+  border: 0;
+  border-block-start: 1px solid var(--c-border);
+  margin: 0;
 }
 
 /* GitHub OAuth device-flow code display (used inside .forge-kind-slot). */

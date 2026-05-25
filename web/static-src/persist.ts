@@ -5,8 +5,9 @@
 // Fetch calls go through api-client.ts for consistent error handling.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPatch } from "./api-client.js";
-import { showSaving, showSaved } from "./save-indicator.js";
+import { apiGet } from "./api-client.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
+import { patchAppSettingsAction } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -25,10 +26,15 @@ export interface AppSettings {
    *  the agent makes stages for user review before hitting disk.
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
+  shell_policy?: "no_commands" | "safe_commands" | "all_commands";
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
+let patchInputs: HTMLInputElement[] = [];
+let patchGen = 0;
+let patchResolvers: Array<(r: Record<string, unknown> | null) => void> = [];
+
 /** Last-known value per settings key. Seeded by initSettingsTracking()
  *  on app boot from /api/settings; updated by patchSettings() as we
  *  send writes. Used to filter no-op writes (same-value PATCHes that
@@ -49,13 +55,15 @@ export function initSettingsTracking(s: AppSettings): void {
 export function __testResetTracking(): void {
   lastSentPatch = {};
   patchQueue = {};
+  patchInputs = [];
+  patchResolvers = [];
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
   }
 }
 
-export function patchSettings(patch: Partial<AppSettings>): void {
+export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<Record<string, unknown> | null> {
   // Filter out keys whose value matches the last-sent value. JSON
   // equality is good enough for the AppSettings shape (primitives +
   // arrays of strings); avoids reflecting no-op writes back to the
@@ -68,16 +76,41 @@ export function patchSettings(patch: Partial<AppSettings>): void {
       Object.assign(lastSentPatch, { [k]: patch[k] });
     }
   }
-  if (Object.keys(changed).length === 0) return;
+  if (Object.keys(changed).length === 0) {
+    // No-op: nothing to send. Resolve immediately with null so callers
+    // that await the promise don't hang.
+    return Promise.resolve(null);
+  }
   Object.assign(patchQueue, changed);
-  if (patchTimer !== undefined) return;
+  for (const input of inputs) {
+    if (!patchInputs.includes(input)) patchInputs.push(input);
+  }
+  const p = new Promise<Record<string, unknown> | null>((resolve) => { patchResolvers.push(resolve); });
+  if (patchTimer !== undefined) return p;
   showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     const body = patchQueue;
+    const allInputs = patchInputs;
+    const resolvers = patchResolvers;
     patchQueue = {};
-    void apiPatch("/api/settings", body).then(() => showSaved());
+    patchInputs = [];
+    patchResolvers = [];
+    const gen = ++patchGen;
+    void patchAppSettingsAction.dispatch(
+      {
+        body: body as Record<string, unknown>,
+        ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
+      },
+      { silent: true },
+    ).then((r) => {
+      if (gen === patchGen) {
+        if (r === null) showError(); else showSaved();
+      }
+      for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
+    });
   }, 300);
+  return p;
 }
 
 export async function loadSettings(): Promise<AppSettings> {

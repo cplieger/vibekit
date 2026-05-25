@@ -9,27 +9,21 @@
 // ---------------------------------------------------------------------------
 
 import { closeModal } from "./modals.js";
-import { uploadFiles } from "./upload.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
-import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath } from "./files-shared.js";
+import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FetchDirOpts } from "./files-shared.js";
+export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
+import { uploadAction } from "./actions/files.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 let currentPath = ".";
 const selected = new Set<string>();
 let onUploadComplete: (() => void) | null = null;
 
-export interface FileEntry {
-  name: string;
-  isDir: boolean;
-}
-
-/** Filter file entries by a case-insensitive search query. */
-export function filterEntries(entries: FileEntry[], query: string): FileEntry[] {
-  if (query === "") return entries;
-  const lower = query.toLowerCase();
-  return entries.filter((e) => e.name.toLowerCase().includes(lower));
-}
+/** Per-picker abort holder — prevents browser from aborting picker fetches. */
+const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
+registerCleanup(() => pickerFetchHolder.controllerHolder?.current?.abort());
 
 export function setOnUploadComplete(fn: () => void): void { onUploadComplete = fn; }
 
@@ -61,6 +55,8 @@ export function initFilePicker(): void {
     input.click();
   });
 
+  bindLoadingState("files.upload", el<HTMLButtonElement>("filepicker-upload"), { preserveDisabled: true });
+
   // "Attach" button: attach all selected paths to the chat.
   el("filepicker-attach").addEventListener("click", () => {
     if (selected.size === 0) return;
@@ -85,13 +81,11 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  uploadFiles({
-    files, targetDir: currentPath,
-    onComplete: (paths) => {
-      onUploadComplete?.();
-      for (const p of paths) attachPathToActiveChat(p);
-      closeModal(modal);
-    },
+  void uploadAction.dispatch({ files, targetDir: currentPath }).then((paths) => {
+    if (paths === null) return;
+    onUploadComplete?.();
+    for (const p of paths) attachPathToActiveChat(p);
+    closeModal(modal);
   });
 }
 
@@ -110,9 +104,10 @@ function loadDir(): void {
   pathEl.readOnly = true;
   list.replaceChildren();
 
-  void fetchDir(currentPath).then((d) => {
+  void fetchDir(currentPath, pickerFetchHolder).then((d) => {
     if (d.error !== undefined) {
-      list.appendChild(errorRow(d.error));
+      if (d.error === "stale") return;
+      list.appendChild(errorRow(d.error, () => loadDir()));
       return;
     }
 

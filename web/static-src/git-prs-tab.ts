@@ -13,12 +13,18 @@
 
 import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { relativeTime } from "./files-shared.js";
-import { kindTitle } from "./forge-types.js";
+import { relativeTime } from "./utils-format.js";
+import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { ICON_REFRESH } from "./icons.js";
+import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
+import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
+import { registerCleanup } from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
+import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
 
 // --- Types ---
 
@@ -55,35 +61,78 @@ interface PRListResponse { prs: PR[] }
 
 let lastGroups: RepoGroup[] = [];
 let filterText = "";
+let refreshGen = 0;
+let refreshController: AbortController | null = null;
+registerCleanup(() => refreshController?.abort());
+
+// --- Accessors for optimistic mutations (wired via git-prs-state) ---
+// removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
+// to break the circular dependency with actions/git-prs.ts.
+// Re-export the type for any downstream consumers.
+export type { PRRemoveResult } from "./git-prs-state.js";
 
 // --- Public API ---
 
+let prsInited = false;
+
 export function initPRsTab(): void {
+  if (prsInited) return;
+  prsInited = true;
+  bindPRState({ groups: lastGroups, paint });
+
   const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
     filterText = filterEl.value.trim().toLowerCase();
     paint();
   });
 
+  // Manual refresh button next to the filter — mirrors the
+  // pattern on the Changes tab. Spinner replaces the icon while
+  // the parallel PR fetch is in flight.
+  const refreshBtn = document.getElementById("git-refresh-prs-btn") as HTMLButtonElement | null;
+  if (refreshBtn !== null) {
+    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.addEventListener("click", () => {
+      void refreshPRsAction.dispatch(undefined);
+    });
+    bindLoadingState("git.refresh_prs", refreshBtn);
+  }
+
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
-  onSSE("forges_changed", () => { void refreshPRs(); });
+  onSSE("forges_changed", () => { void refreshPRs().catch(() => {}); });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
  *  repos). Safe to call multiple times — only the latest result wins. */
-export async function refreshPRs(): Promise<void> {
-  const forgesRes = await apiGet<ForgesListResponse>("/api/forges");
-  const forges = (forgesRes?.forges ?? []).filter((f) => f.connected);
+export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
+  const myGen = ++refreshGen;
+  refreshController?.abort();
+  refreshController = new AbortController();
+  const { signal } = refreshController;
+  // Honour external signal (e.g. from action framework).
+  // Capture local ref to avoid stale closure over module-level refreshController.
+  const myController = refreshController;
+  if (externalSignal) externalSignal.addEventListener("abort", () => myController.abort(), { once: true });
+  const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
+  if (signal.aborted) return;
+  if (forgesRes === null) {
+    throw new Error("Failed to load forges");
+  }
+  const forges = forgesRes.forges.filter((f) => f.connected);
 
   // Build a flat (forge, owner/name) list to fetch.
   const tasks: Array<{ forge: ConfiguredForge; repo: Repo }> = [];
-  for (const forge of forges) {
-    const reposRes = await apiGet<RepoListResponse>(
+  const repoResults = await Promise.all(forges.map((forge) =>
+    apiGet<RepoListResponse>(
       `/api/forges/${encodeURIComponent(forge.id)}/repos`,
-    );
-    if (reposRes === null) continue;
-    for (const repo of reposRes.repos) {
+      signal,
+    ).then((res) => ({ forge, res })),
+  ));
+  if (signal.aborted) return;
+  for (const { forge, res } of repoResults) {
+    if (res === null) continue;
+    for (const repo of res.repos) {
       tasks.push({ forge, repo });
     }
   }
@@ -93,6 +142,7 @@ export async function refreshPRs(): Promise<void> {
       try {
         const res = await apiGet<PRListResponse>(
           `/api/forges/${encodeURIComponent(forge.id)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/prs?state=open`,
+          signal,
         );
         return {
           forge_id: forge.id,
@@ -126,18 +176,30 @@ export async function refreshPRs(): Promise<void> {
     return a.full_name.localeCompare(b.full_name);
   });
 
+  // Bail if a newer refresh was started while we were fetching.
+  if (myGen !== refreshGen) return;
+
   lastGroups = groups;
+  updateGroupsRef(lastGroups);
   paint();
 }
 
 // --- Render ---
 
 function paint(): void {
+  preserveGitScroll(paintInner);
+}
+
+function paintInner(): void {
   const root = document.getElementById("git-prs-mount");
   if (root === null) return;
 
   if (lastGroups.length === 0) {
-    root.innerHTML = `<div class="git-multirepo-empty">No repositories on connected forges. Open the <strong>Sources</strong> tab to add a forge.</div>`;
+    root.innerHTML = renderEmptyState({
+      icon: ICON_PR_EMPTY,
+      title: "No connected forges",
+      hint: "Open the <strong>Sources</strong> tab to add a forge account.",
+    });
     return;
   }
 
@@ -149,16 +211,55 @@ function paint(): void {
     if (matchesFilter) visible.push(g);
   }
 
+  // Aggregate: any open PRs at all? If not, show a centered empty
+  // state instead of N collapsed sections.
+  const totalOpen = visible.reduce((acc, g) => acc + g.prs.length, 0);
+  if (totalOpen === 0 && filterText === "") {
+    root.innerHTML = renderEmptyState({
+      icon: ICON_PR_EMPTY,
+      title: "All caught up",
+      hint: "No open pull requests across your connected forges.",
+    });
+    return;
+  }
+
   root.replaceChildren();
   if (visible.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-multirepo-empty";
-    empty.textContent = "No matching pull requests.";
-    root.appendChild(empty);
+    root.innerHTML = renderEmptyState({
+      icon: ICON_FILTER,
+      title: "No matching pull requests",
+      hint: "Adjust your filter to see more.",
+    });
     return;
   }
 
   for (const g of visible) root.appendChild(renderGroup(g));
+}
+
+// --- Empty-state markup helpers ---
+
+const ICON_PR_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="6" cy="6" r="3"/>' +
+  '<circle cx="6" cy="18" r="3"/>' +
+  '<line x1="6" y1="9" x2="6" y2="15"/>' +
+  '<circle cx="18" cy="18" r="3"/>' +
+  '<path d="M18 9a9 9 0 00-9-9"/>' +
+  '</svg>';
+
+const ICON_FILTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
+  '</svg>';
+
+function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
+  return `
+    <div class="git-multirepo-empty">
+      <div class="git-multirepo-empty-icon">${opts.icon}</div>
+      <div class="git-multirepo-empty-title">${opts.title}</div>
+      <div class="git-multirepo-empty-hint">${opts.hint}</div>
+    </div>
+  `;
 }
 
 function renderGroup(g: RepoGroup): HTMLElement {
@@ -169,38 +270,45 @@ function renderGroup(g: RepoGroup): HTMLElement {
   section.dataset["repo"] = g.full_name;
   if (expandedDefault) section.classList.add("expanded");
 
-  const header = document.createElement("button");
-  header.type = "button";
-  header.className = "git-repo-section-header";
-  header.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
+  // Header is a flex container that hosts: chevron + forge icon +
+  // name + count (left side, click-to-toggle), and a right-aligned
+  // [+ New PR] button. The button's stopPropagation keeps the
+  // toggle from firing when the user clicks New PR.
+  const header = document.createElement("div");
+  header.className = "git-repo-section-header git-repo-section-header-row";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "git-repo-section-header-toggle";
+  toggle.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
-  header.innerHTML = `
+  toggle.innerHTML = `
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
+    <span class="git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}" aria-hidden="true">${FORGE_META[g.forge_kind].icon}</span>
     <span class="git-repo-section-name">${escapeHTML(g.full_name)}</span>
-    <span class="git-repo-section-meta">${escapeHTML(g.forge_host)} · ${escapeHTML(countText)}</span>
+    <span class="git-repo-section-meta">${escapeHTML(countText)}</span>
   `;
-  header.addEventListener("click", () => {
+  toggle.addEventListener("click", () => {
     const open = section.classList.toggle("expanded");
-    header.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
   });
+  header.appendChild(toggle);
+
+  const newBtn = document.createElement("button");
+  newBtn.type = "button";
+  newBtn.className = "btn-small btn-primary";
+  newBtn.textContent = "+ New PR";
+  newBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void openNewPRDialog(g);
+  });
+  header.appendChild(newBtn);
+
   section.appendChild(header);
 
   const body = document.createElement("div");
   body.className = "git-repo-section-body";
-
-  // Action bar: + New PR button
-  const bar = document.createElement("div");
-  bar.className = "git-repo-action-bar";
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.className = "btn-small btn-primary";
-  newBtn.textContent = "+ New pull request";
-  newBtn.addEventListener("click", () => {
-    void openNewPRDialog(g);
-  });
-  bar.appendChild(newBtn);
-  body.appendChild(bar);
 
   if (g.error !== undefined && g.error !== "") {
     const err = document.createElement("div");
@@ -215,7 +323,8 @@ function renderGroup(g: RepoGroup): HTMLElement {
   } else {
     const list = document.createElement("ul");
     list.className = "git-pr-list";
-    const filtered = filterText === ""
+    const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
+    const filtered = filterText === "" || groupMatchesFilter
       ? g.prs
       : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
     for (const pr of filtered) list.appendChild(renderPRRow(g, pr));
@@ -233,20 +342,31 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const meta = document.createElement("div");
   meta.className = "git-pr-row-meta";
 
-  const num = document.createElement("a");
-  num.className = "git-pr-row-number";
-  if (pr.url !== undefined && pr.url !== "") {
-    num.href = pr.url;
-    num.target = "_blank";
-    num.rel = "noreferrer";
-  }
-  num.textContent = `#${pr.number}`;
+  // Title + number share one click target — opens the PR on the
+  // forge in a new tab. Keeps the row reading like a link without
+  // a redundant "Open" button on the right.
+  const hasURL = pr.url !== undefined && pr.url !== "";
+  const linkOrSpan = (cls: string, text: string): HTMLElement => {
+    if (hasURL) {
+      const a = document.createElement("a");
+      a.className = cls;
+      a.href = pr.url!;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.textContent = text;
+      return a;
+    }
+    const s = document.createElement("span");
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  };
+
+  const num = linkOrSpan("git-pr-row-number", `#${pr.number}`);
   meta.appendChild(num);
 
-  const title = document.createElement("span");
-  title.className = "git-pr-row-title";
-  title.textContent = pr.title;
-  title.title = pr.title;
+  const title = linkOrSpan("git-pr-row-title", pr.title);
+  title.setAttribute("data-tooltip", pr.title);
   meta.appendChild(title);
 
   if (pr.draft === true) {
@@ -273,34 +393,27 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "git-pr-row-actions";
 
-  if (pr.url !== undefined && pr.url !== "") {
-    const open = document.createElement("a");
-    open.href = pr.url;
-    open.target = "_blank";
-    open.rel = "noreferrer";
-    open.className = "btn-small";
-    open.textContent = "Open ↗";
-    actions.appendChild(open);
-  }
-
   const merge = document.createElement("button");
   merge.type = "button";
   merge.className = "btn-small btn-primary";
   merge.textContent = "Merge";
-  merge.disabled = pr.mergeable !== true;
+  const mergeReason = computeMergeBlockReason(pr);
+  merge.disabled = mergeReason !== "";
+  merge.setAttribute("data-tooltip", mergeReason !== ""
+    ? `Cannot merge: ${mergeReason}`
+    : "Merge this pull request");
   merge.addEventListener("click", () => {
-    void withAsyncFeedback(merge, async () => {
+    void (async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
       if (!ok) return;
-      const res = await apiPost<{ status?: string; error?: string }>(
-        `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs/${pr.number}/merge`,
-        {},
-      );
-      if (res === null || (res.error !== undefined && res.error !== "")) {
-        throw new Error(res?.error ?? "merge failed");
-      }
-      await refreshPRs();
-    });
+      await withAsyncFeedback(merge, async () => {
+        const res = await mergePRAction.dispatch({
+          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+        });
+        if (res === null) throw new Error("failed");
+        // Skip refreshPRs — optimistic remove already shows correct state.
+      });
+    })();
   });
   actions.appendChild(merge);
 
@@ -309,18 +422,17 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   close.className = "btn-small btn-danger";
   close.textContent = "Close";
   close.addEventListener("click", () => {
-    void withAsyncFeedback(close, async () => {
+    void (async () => {
       const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
       if (!ok) return;
-      const res = await apiPost<{ status?: string; error?: string }>(
-        `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs/${pr.number}/close`,
-        {},
-      );
-      if (res === null || (res.error !== undefined && res.error !== "")) {
-        throw new Error(res?.error ?? "close failed");
-      }
-      await refreshPRs();
-    });
+      await withAsyncFeedback(close, async () => {
+        const res = await closePRAction.dispatch({
+          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+        });
+        if (res === null) throw new Error("failed");
+        // Skip refreshPRs — optimistic remove already shows correct state.
+      });
+    })();
   });
   actions.appendChild(close);
 
@@ -340,7 +452,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
  *  haven't fetched groups yet, refetch first; the source branch is
  *  pre-filled from the call site so the user doesn't have to retype. */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
-  if (lastGroups.length === 0) await refreshPRs();
+  if (lastGroups.length === 0) {
+    try { await refreshPRs(); } catch { /* ignore — we'll check lastGroups below */ }
+  }
   const group = lastGroups.find((g) => g.name === repoName);
   if (group === undefined) {
     // Repo not in any forge group (probably not on a connected
@@ -357,19 +471,22 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
 async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
   if (dlg === null) {
-    // Fallback (shouldn't happen — the dialog is in index.html).
-    alert("PR dialog not available");
     return;
   }
 
-  const baseInput = document.getElementById("pr-base") as HTMLInputElement;
-  const headInput = document.getElementById("pr-head") as HTMLInputElement;
-  const titleInput = document.getElementById("pr-title") as HTMLInputElement;
-  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement;
-  const draftInput = document.getElementById("pr-draft") as HTMLInputElement;
+  const baseInput = document.getElementById("pr-base") as HTMLInputElement | null;
+  const headInput = document.getElementById("pr-head") as HTMLInputElement | null;
+  const titleInput = document.getElementById("pr-title") as HTMLInputElement | null;
+  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement | null;
+  const draftInput = document.getElementById("pr-draft") as HTMLInputElement | null;
   const status = document.getElementById("pr-dialog-status");
-  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement;
-  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement;
+  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement | null;
+  const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement | null;
+
+  if (!baseInput || !headInput || !titleInput || !bodyInput || !draftInput || !submitBtn || !generateBtn) {
+    console.error("PR dialog missing required elements");
+    return;
+  }
 
   // Stage 1: edit. Pre-fill base/head, generate title+body via AI.
   baseInput.value = "main";
@@ -385,6 +502,7 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   // Drop any prior listeners by cloning the buttons.
   const newSubmit = submitBtn.cloneNode(true) as HTMLButtonElement;
   submitBtn.replaceWith(newSubmit);
+  newSubmit.disabled = false;
   const newGenerate = generateBtn.cloneNode(true) as HTMLButtonElement;
   generateBtn.replaceWith(newGenerate);
   // The static close buttons (data-pr-close) keep their close handler
@@ -395,13 +513,18 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     fresh.addEventListener("click", () => dlg.close());
   }
 
+  let generateAbort = new AbortController();
+  dlg.addEventListener("close", () => generateAbort.abort(), { once: true });
+
   const generate = async (): Promise<void> => {
     if (status !== null) status.textContent = "Generating description…";
     const res = await apiPost<{ title?: string; body?: string; error?: string }>(
       `/api/git/pr-description`,
       { repo: g.name, branch: baseInput.value.trim() || "main" },
+      generateAbort.signal,
     );
     if (res === null) {
+      if (generateAbort.signal.aborted) return;
       if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
       return;
     }
@@ -414,10 +537,15 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     if (status !== null) { status.textContent = "Description generated. Edit and submit."; status.className = "forge-status ok"; }
   };
 
-  newGenerate.addEventListener("click", () => { void generate(); });
+  newGenerate.addEventListener("click", () => {
+    generateAbort.abort();
+    generateAbort = new AbortController();
+    void generate();
+  });
 
   // Stage 2: review + submit.
   newSubmit.addEventListener("click", async () => {
+    newSubmit.disabled = true;
     if (status !== null) { status.textContent = "Opening PR…"; status.className = "forge-status"; }
     const res = await apiPost<{ number?: number; error?: string }>(
       `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
@@ -431,14 +559,16 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
     );
     if (res === null) {
       if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      newSubmit.disabled = false;
       return;
     }
     if (res.error !== undefined && res.error !== "") {
       if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      newSubmit.disabled = false;
       return;
     }
     dlg.close();
-    await refreshPRs();
+    await refreshPRs().catch(() => {});
   });
 
   dlg.showModal();
@@ -449,6 +579,30 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
 }
 
 // --- Helpers ---
+
+/** Explain why the Merge button is disabled, or "" if it should be
+ *  enabled. The PR struct only exposes `mergeable` (bool) + `draft`
+ *  (bool) — not the rich GitHub mergeStateStatus / GitLab merge_status
+ *  values — so the reason is somewhat coarse. We pick the most
+ *  actionable phrasing we can from those two flags so the user sees
+ *  something concrete on hover instead of a silently-disabled button.
+ *
+ *  Possible returns:
+ *    "" — enabled, no reason
+ *    "PR is a draft. Mark it as ready for review first."
+ *    "this PR isn't mergeable — likely conflicts, failing required
+ *      checks, or branch protection. Check the PR on the forge for
+ *      details."
+ */
+function computeMergeBlockReason(pr: PR): string {
+  if (pr.draft === true) {
+    return "PR is a draft. Mark it as ready for review first.";
+  }
+  if (pr.mergeable === false) {
+    return "this PR isn't mergeable — likely conflicts, failing required checks, or branch protection. Open it on the forge for details.";
+  }
+  return "";
+}
 
 function escapeHTML(s: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };

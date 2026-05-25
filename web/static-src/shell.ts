@@ -15,7 +15,7 @@
 
 import { $ } from "./dom.js";
 import { getScrollEl, setShellRunCallback } from "./messages.js";
-import { ShellWS } from "./shell-ws.js";
+import { ShellWS, encoder } from "./shell-ws.js";
 
 const shellWS = new ShellWS();
 import * as uiState from "./ui-state.js";
@@ -83,8 +83,6 @@ function getTheme(): ITheme {
 // ---------------------------------------------------------------------------
 // ShellController: owns all shell panel state as instance fields.
 // ---------------------------------------------------------------------------
-
-const encoder = new TextEncoder();
 
 class ShellController {
   private terminal: XTerm | null = null;

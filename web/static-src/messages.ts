@@ -33,17 +33,19 @@ import {
 import { linkifyPaths } from "./linkify.js";
 import { isToolDone } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview } from "./tool-card.js";
-import { apiPost } from "./api-client.js";
 import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
 import { openPlanDraftPath } from "./editor-openers.js";
+import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
+import { bindLoadingState } from "./actions/index.js";
 import {
-  addEditActions, initMessageActions,
+  addEditActions, initMessageActions, clearActionBindings,
 } from "./messages-actions.js";
 import {
   addCrew as addCrewInternal, updateCrew as updateCrewInternal,
   buildCrewCardForReplay, clearCrews, addToolToCrewRow, getCrewToolEl,
   onCrewToolCompleted, setSubagentActivity,
 } from "./crew-card.js";
+import { formatToolActivity } from "./format-tool-activity.js";
 
 export { getScrollEl, scrollToBottom, setLoadMore };
 export { showPermissionDialog, hidePermission } from "./permission.js";
@@ -52,6 +54,19 @@ export { setShellRunCallback } from "./code-blocks.js";
 
 const messagesEl = $.messages;
 const toolEls = new Map<string, HTMLDivElement>();
+
+/** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
+const bindUnbinds: Array<() => void> = [];
+
+/** Unsubscribe all bindLoadingState listeners for the current chat. */
+function clearMessagesBindings(): void {
+  for (const fn of bindUnbinds) fn();
+  bindUnbinds.length = 0;
+}
+
+/** Tracks active "copied" animation timers per button so rapid clicks
+ *  don't stack timeouts. */
+const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
 // --- Avatars ---
 
@@ -275,7 +290,7 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
   row.appendChild(rightSlot);
 
   const makeBtn = (
-    svgMarkup: string, ariaLabel: string, onClick: () => void,
+    svgMarkup: string, ariaLabel: string, onClick: (btn: HTMLButtonElement) => void,
   ): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -283,23 +298,30 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
     btn.appendChild(svgTemplate(svgMarkup)());
     btn.setAttribute("aria-label", ariaLabel);
     btn.setAttribute("data-tooltip", ariaLabel);
-    btn.addEventListener("click", () => {
-      onClick();
-      btn.classList.add("copied");
-      setTimeout(() => btn.classList.remove("copied"), 1500);
-    });
+    btn.addEventListener("click", () => { onClick(btn); });
     return btn;
   };
 
-  rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", () => {
-    void navigator.clipboard.writeText(el.textContent ?? "");
+  const copyAndAnimate = (btn: HTMLButtonElement, text: string): void => {
+    void copyClipboard.dispatch(text, { silent: true }).then((r) => {
+      if (r !== null) {
+        btn.classList.add("copied");
+        const prev = copyTimers.get(btn);
+        if (prev !== undefined) clearTimeout(prev);
+        copyTimers.set(btn, setTimeout(() => btn.classList.remove("copied"), 1500));
+      }
+    });
+  };
+
+  rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", (btn) => {
+    copyAndAnimate(btn, el.textContent ?? "");
   }));
-  rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", () => {
-    void navigator.clipboard.writeText(raw);
+  rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
+    copyAndAnimate(btn, raw);
   }));
   if (chatID !== "") {
-    rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", () => {
-      void navigator.clipboard.writeText(chatID);
+    rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+      copyAndAnimate(btn, chatID);
     }));
     rightSlot.appendChild(makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
       const a = document.createElement("a");
@@ -429,16 +451,12 @@ function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDuratio
         btn.type = "button";
         btn.className = "tool-explain-btn";
         btn.textContent = "Explain this error";
+        bindUnbinds.push(bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }));
         btn.addEventListener("click", () => {
-          btn.disabled = true;
-          btn.classList.add("btn-loading");
           void explainError(output, el.dataset["title"] ?? "").then((explanation) => {
-            btn.classList.remove("btn-loading");
             if (explanation !== "") {
               btn.textContent = explanation;
               btn.className = "tool-explain-result";
-            } else {
-              btn.disabled = false;
             }
           });
         });
@@ -464,7 +482,7 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   if (box !== null) {
     const pre = box.querySelector("pre");
     if (pre !== null) {
-      pre.innerHTML += ansiToHtml(output);
+      pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
     } else {
       const newPre = document.createElement("pre");
       newPre.innerHTML = ansiToHtml(output);
@@ -475,16 +493,16 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   }
   const out = el.querySelector(".tool-output") as HTMLDivElement | null;
   if (out === null) return;
-  const pre = document.createElement("pre");
-  pre.innerHTML = ansiToHtml(output);
-  out.appendChild(pre);
+  const existingPre = out.querySelector("pre");
+  if (existingPre !== null) {
+    existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+  } else {
+    const pre = document.createElement("pre");
+    pre.innerHTML = ansiToHtml(output);
+    out.appendChild(pre);
+  }
 }
 
-/** Format a tool title for the collapsed crew-row activity line. */
-export function formatToolActivity(title: string): string {
-  const clean = title.startsWith("Running: ") ? title.slice(9) : title;
-  return clean.length > 50 ? clean.slice(0, 47) + "\u2026" : clean;
-}
 
 /** Insert an inline diff preview from ACP tool_call content.diff blocks.
  *  Delegates to tool-card.ts's insertDiffPreview. Skips if the card
@@ -647,7 +665,7 @@ export function addBoundaryDivider(kind: BoundaryKind, label: string): void {
 }
 
 // Re-export for external consumers (conflicts.ts).
-export { refreshConflictBadges } from "./messages-actions.js";
+export { refreshConflictBadges } from "./messages-shared.js";
 
 // Wire bus subscriptions for pending-change actions.
 initMessageActions();
@@ -656,6 +674,8 @@ initMessageActions();
 
 export function clearMessages(): void {
   streamingPipeline.dispose();
+  clearMessagesBindings();
+  clearActionBindings();
   messagesEl.replaceChildren();
   toolEls.clear();
   clearCrews();
@@ -781,9 +801,6 @@ function buildEventReplay(m: Message): HTMLElement {
 
 /** Ask the utility bridge to explain a tool error in plain language. */
 async function explainError(errorText: string, toolTitle: string): Promise<string> {
-  const d = await apiPost<{ output?: string }>("/api/utility/explain-error", {
-    error: errorText.slice(0, 2000),
-    context: toolTitle,
-  });
+  const d = await explainErrorAction.dispatch({ errorText, context: toolTitle });
   return d?.output ?? "";
 }

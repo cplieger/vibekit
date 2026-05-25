@@ -26,6 +26,7 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -62,25 +63,27 @@ export interface Command {
 // The wire format is unchanged (JSON.stringify produces the same output).
 
 export type TypedCommand =
-  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string } }
+  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: string[] } }
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
-  | { type: "fork_chat"; chat_id: string; payload?: { message_id?: string } }
+  | { type: "fork_chat"; chat_id: string; payload?: { tangent_id?: string } }
   | { type: "merge_tangent"; chat_id: string }
   | { type: "discard_tangent"; chat_id: string }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | { type: "resolve_pending_change"; chat_id: string; payload: { tool_call_id: string; action: string } }
-  | { type: "resolve_pending_change_partial"; chat_id: string; payload: { tool_call_id: string; new_text: string } }
+  | { type: "resolve_pending_change_partial"; chat_id: string; payload: { tool_call_id: string; merged_text: string } }
   | { type: "resolve_all_pending_changes"; chat_id: string; payload: { action: string } }
   | { type: "trust_pending_changes"; chat_id: string }
   | { type: "clear_pending_trust"; chat_id: string }
   | { type: "permission_response"; chat_id: string; payload: { request_id: number; option_id: string } }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
-  | { type: "undo_edit"; chat_id: string; payload: { path: string } }
+  | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };
+
+export const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
 
 export interface SendResult {
   ok: boolean;
@@ -88,6 +91,8 @@ export interface SendResult {
   status: number;
   /** Server error message, if any. */
   error?: string;
+  /** Structured error code for non-HTTP failures. */
+  code?: string;
 }
 
 export interface SendOptions {
@@ -95,6 +100,12 @@ export interface SendOptions {
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */
   timeoutMs?: number;
+  /** When true (default), failures call setLastError() so the prompt
+   *  send button shows a blocked state with the error tooltip. The
+   *  action framework adapter (transportAction) passes false because
+   *  it owns the error surface via toast — letting both fire produces
+   *  duplicate user feedback for one failure. */
+  reportSendState?: boolean;
 }
 
 /** Generate a client-side request id (also used as a message id). */
@@ -144,6 +155,14 @@ class TransportController {
 
   private readonly inflight = new Set<AbortController>();
 
+  /** Abort every in-flight HTTP request started via this transport.
+   *  Used by the global beforeunload cleanup so navigation away
+   *  doesn't leak request handles. */
+  cancelInflight(): void {
+    for (const ctrl of this.inflight) ctrl.abort();
+    this.inflight.clear();
+  }
+
   init(msg: MsgHandler, status: StatusHandler): void {
     this.onMsg = msg;
     this.onStatus = (s) => { setSSEStatus(s); status(s); };
@@ -159,6 +178,7 @@ class TransportController {
       } else {
         if (this.hiddenSince !== null && Date.now() - this.hiddenSince >= HIDDEN_ABORT_MS) {
           for (const ctrl of this.inflight) ctrl.abort();
+          this.inflight.clear();
         }
         this.hiddenSince = null;
       }
@@ -222,9 +242,10 @@ class TransportController {
     };
     source.onerror = (): void => {
       if (source.readyState === EventSource.CLOSED) {
+        const bo = this.nextBackoff();
         this.conn = { phase: "idle" };
         this.onStatus("disconnected");
-        this.scheduleReconnect(this.nextBackoff());
+        this.scheduleReconnect(bo);
       }
     };
   }
@@ -284,13 +305,30 @@ class TransportController {
         const d = (await r.json()) as { error?: string };
         if (d.error !== undefined) errMsg = d.error;
       } catch { /* non-JSON */ }
-      if (r.status !== 409) setLastError(errMsg);
+      // 409 is a queue signal — never reported via setLastError.
+      // Otherwise honour the caller's reportSendState preference
+      // (defaults to true for legacy direct callers; transportAction
+      // sets it false to avoid double-feedback with its toast).
+      const reportSendState = opts?.reportSendState ?? true;
+      if (r.status !== 409 && reportSendState) setLastError(errMsg);
       return { ok: false, status: r.status, error: errMsg };
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
-      const msg = err?.name === "AbortError" ? "Request timed out" : (err?.message ?? "Network error");
-      setLastError(msg);
-      return { ok: false, status: 0, error: msg };
+      let msg: string;
+      let code: string;
+      if (err?.name === "TimeoutError") {
+        msg = "Request timed out";
+        code = TRANSPORT_ERROR_CODES.TIMEOUT;
+      } else if (err?.name === "AbortError") {
+        msg = "Request cancelled";
+        code = TRANSPORT_ERROR_CODES.CANCELLED;
+      } else {
+        msg = err?.message ?? "Network error";
+        code = TRANSPORT_ERROR_CODES.NETWORK;
+      }
+      const reportSendState = opts?.reportSendState ?? true;
+      if (reportSendState) setLastError(msg);
+      return { ok: false, status: 0, error: msg, code };
     } finally {
       this.inflight.delete(ctrl);
     }
@@ -313,6 +351,7 @@ export function computeBackoff(prevBackoffMs: number): { delay: number; backoffM
 // ---------------------------------------------------------------------------
 
 const instance = new TransportController();
+registerCleanup(() => instance.cancelInflight());
 
 export function init(msg: MsgHandler, status: StatusHandler): void {
   instance.init(msg, status);

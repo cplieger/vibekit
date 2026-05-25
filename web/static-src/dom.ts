@@ -69,7 +69,6 @@ class Elements {
 
   // Settings
   get steeringInput(): HTMLTextAreaElement { return el("steering-input"); }
-  get steeringSave(): HTMLButtonElement { return el("steering-save"); }
   get autoUpdateToggle(): HTMLInputElement { return el("auto-update-toggle"); }
   get toolUpdateBtn(): HTMLButtonElement { return el("tool-update-btn"); }
   get toolUpdateOutput(): HTMLDivElement { return el("tool-update-output"); }
@@ -137,7 +136,6 @@ class Elements {
   get gitOutputModal(): HTMLDivElement { return el("git-output-modal"); }
   get gitBranchModal(): HTMLDivElement { return el("git-branch-modal"); }
   get subagentModal(): HTMLDivElement { return el("subagent-modal"); }
-  get confirmModal(): HTMLDivElement { return el("confirm-modal"); }
 
   // Git panel (added 2026 audit)
   get gitOutputBar(): HTMLDivElement { return el("git-output-bar"); }

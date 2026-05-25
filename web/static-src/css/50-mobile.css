@@ -32,7 +32,7 @@
   }
   [id="scroll-bottom"] > span { display: none; }
   [id="user-popup"] { left: 0; right: 0; min-width: 0; width: calc(100vw - 2 * var(--sp-4)); }
-  .fb-row { padding: var(--sp-3) 0; }
+  .fb-row { padding: var(--sp-3); }
   .fb-check { width: 1.25rem; height: 1.25rem; }
 
   /* Modals: full-width on small screens */

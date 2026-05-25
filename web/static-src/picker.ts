@@ -12,6 +12,7 @@
 import type { ModelInfo } from "./types.js";
 import { escText, humanName } from "./strings.js";
 import { $ } from "./dom.js";
+import { getActive } from "./store.js";
 
 /** Per-agent label + description for the picker header. The agent name
  *  from the session is the lookup key; unknown agents fall back to the
@@ -98,10 +99,13 @@ class ModelPickerController {
     if (picker.classList.contains("hidden") || this.callback === null) return;
     const grid = picker.querySelector(".picker-grid") as HTMLDivElement;
 
+    // Read current model from store rather than relying solely on this.currentId.
+    const storeModel = getActive()?.model;
+    const effectiveId = overrideModelId ?? storeModel ?? this.currentId;
+
     const hasRealButtons = grid.querySelector(".picker-btn:not(.picker-loading)") !== null;
     if (!hasRealButtons) {
-      const currentId = overrideModelId ?? this.currentId;
-      this.show(currentId, this.callback);
+      this.show(effectiveId, this.callback);
       return;
     }
 
@@ -113,7 +117,7 @@ class ModelPickerController {
       return;
     }
     const activeBtn = grid.querySelector(".picker-btn.active");
-    const currentId = activeBtn?.getAttribute("data-model") ?? this.currentId;
+    const currentId = activeBtn?.getAttribute("data-model") ?? effectiveId;
     this.show(currentId, this.callback);
   }
 }

@@ -23,7 +23,7 @@ import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
 import { apiGet } from "./api-client.js";
 import {
   setOnEmpty, restoreTabState, getActiveTabId, activateTab,
-  toggleSettingsView, toggleGitView, toggleFilesView,
+  openTab, TAB_VIEWS,
 } from "./tabs.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
@@ -69,6 +69,8 @@ import "./handlers/chat.js";
 import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
+import { cancelTurnAction } from "./actions/chat.js";
+import { initActionConsoleLog } from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
 // Register the conflict SSE handler at startup so badges land
@@ -120,10 +122,10 @@ function init(): void {
     version.value;
     const active = getActive();
     if (active === undefined) return;
-    const sig = active.id + ":" + String(active.available_models.length);
+    const sig = active.id + ":" + active.available_models.map(m => m.id).join(",");
     if (sig !== lastModelSig) {
       lastModelSig = sig;
-      void fetchModelsFromSession();
+      fetchModelsFromSession();
     }
   });
 
@@ -146,20 +148,7 @@ function init(): void {
   };
   onRetentionChange(syncHistoryBtn);
   syncHistoryBtn();
-  // Fork pill (in-chat, per-conversation). Hidden until store has an
-  // active chat; shown alongside the other per-conversation pills.
-  const forkPill = document.getElementById("fork-pill") as HTMLButtonElement | null;
-  const syncForkPillVisibility = (): void => {
-    if (forkPill === null) return;
-    forkPill.classList.toggle("hidden", getActiveId() === "");
-  };
-  effect(() => { version.value; syncForkPillVisibility(); });
-  syncForkPillVisibility();
-  forkPill?.addEventListener("click", () => {
-    const id = getActiveId();
-    if (id === "") return;
-    void import("./tangent.js").then((m) => { m.forkCurrentChat(id); });
-  });
+  // Fork pill visibility + click is owned by tangent.ts (initTangent).
   initAwaySummary();
   initAgentTerminals();
   initTooltips();
@@ -177,6 +166,11 @@ function init(): void {
     toggleSettings: () => $.settingsBtn.click(),
     sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
   });
+
+  // Action-framework global: live-log every action error to the
+  // browser console so failures are visible in DevTools regardless of
+  // toast policy (suppressed-toast actions still get logged).
+  initActionConsoleLog();
 
   void checkAuthAndStart();
 }
@@ -219,14 +213,14 @@ async function checkAuthAndStart(): Promise<void> {
   wireCheckpointRestore($.messages);
 
   suppressPush(true);
+  // If share-target intends to create a session (e.g. ?agent=planner),
+  // skip the default empty-state createSession so we don't end up with
+  // an unused "New conversation" tab next to the planner.
+  const wantsAgent = new URLSearchParams(location.search).get("agent");
+  const shareWillCreate = wantsAgent === "planner";
   try {
     const ok = await loadList();
     skel.remove();
-    // If share-target intends to create a session (e.g. ?agent=planner),
-    // skip the default empty-state createSession so we don't end up with
-    // an unused "New conversation" tab next to the planner.
-    const wantsAgent = new URLSearchParams(location.search).get("agent");
-    const shareWillCreate = wantsAgent === "planner";
     if (!ok || getSessions().length === 0) {
       if (!shareWillCreate) createSession();
     } else {
@@ -240,8 +234,7 @@ async function checkAuthAndStart(): Promise<void> {
     }
   } catch {
     skel.remove();
-    const wantsAgent = new URLSearchParams(location.search).get("agent");
-    if (wantsAgent !== "planner") createSession();
+    if (!shareWillCreate) createSession();
   }
   suppressPush(false);
 
@@ -274,7 +267,7 @@ async function fetchModelsFromREST(): Promise<void> {
   populatePickerModels(d.models, "");
 }
 
-async function fetchModelsFromSession(): Promise<void> {
+function fetchModelsFromSession(): void {
   // Live per-chat catalog: kiro-cli's session/new response carries
   // modes.availableModels which the bridge applies onto api.Chat.
   // Whenever that list changes on the active session we push the
@@ -287,7 +280,6 @@ async function fetchModelsFromSession(): Promise<void> {
     model_name: m.name,
     ...(m.description === "" ? {} : { description: m.description }),
     rate_multiplier: m.rate_multiplier ?? 1,
-    context_window_tokens: 0,
   }));
   populatePickerModels(mapped, active.model);
   if (active.usage.context_size === 0 && active.model !== "") {
@@ -323,7 +315,7 @@ function setupInput(): void {
     // Cancel the active chat's in-flight turn. No-op if nothing running.
     if (getActiveId() === "") return;
     if (!isThinking(getActiveId())) return;
-    void transport.send({ type: "cancel", chat_id: getActiveId() });
+    void cancelTurnAction.dispatch(getActiveId());
   });
 
   const doCreate = guardAction(() => {
@@ -367,10 +359,26 @@ function applyRoute(route: Route): void {
       break;
     case "settings":
       forceSettingsTab(route.tab);
-      toggleSettingsView(route.tab, loadSettingsForTab(route.tab));
+      openTab({
+        id: "__settings__", name: "Settings", kind: "settings",
+        view: TAB_VIEWS.settings,
+        route: { kind: "settings", tab: route.tab },
+        onShow: loadSettingsForTab(route.tab),
+      });
       break;
-    case "git":      toggleGitView(loadGitRepos); break;
-    case "files":    restoreFileBrowser(route.path); toggleFilesView(loadFileBrowser); break;
+    case "git":
+      openTab({
+        id: "__git__", name: "Source Control", kind: "git",
+        view: TAB_VIEWS.git, route: { kind: "git" }, onShow: loadGitRepos,
+      });
+      break;
+    case "files":
+      restoreFileBrowser(route.path);
+      openTab({
+        id: "__files__", name: "Files", kind: "files",
+        view: TAB_VIEWS.files, route: { kind: "files", path: route.path }, onShow: loadFileBrowser,
+      });
+      break;
     case "file":     openFile(route.path, route.line); break;
     case "history":
       void import("./history.js").then(({ showHistoryView }) => showHistoryView());

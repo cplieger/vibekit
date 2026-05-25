@@ -3,41 +3,81 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { setThinking, setWorkingLabel, get, getActiveId } from "../store.js";
-import * as transport from "../transport.js";
+import { setThinking, setWorkingLabel, get, getActiveId, dequeuePrompt, peekQueuedAttachments } from "../store.js";
 import { apiGet } from "../api-client.js";
 import {
   notifyIfHidden, setBadge, isAgentFinishedEnabled, isPermissionNeededEnabled,
 } from "../notify.js";
 import { showPermissionDialog } from "../messages.js";
-import { drainQueuedPrompt } from "../chat.js";
+import { sendPromptTo } from "../chat-commands.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import {
   showBanner, onTurnEnded,
 } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
+import { permissionResponseAction, restoreCheckpointAction } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
 
+/** Drain one queued prompt, restoring any attachments that were saved
+ *  alongside it so they flow through the next sendPromptTo call. */
+function drainQueuedPromptWithAttachments(chatID: string): void {
+  const attachments = peekQueuedAttachments(chatID);
+  const text = dequeuePrompt(chatID);
+  if (text === undefined) return;
+  const session = get(chatID);
+  void sendPromptTo(chatID, text, {
+    ...(session?.agent !== undefined && session.agent !== "" && { agent: session.agent }),
+    ...(session?.model !== undefined && session.model !== "" && { model: session.model }),
+    ...(attachments.length > 0 && { attachments: attachments as unknown[] }),
+  });
+}
+
+/** Track last notification time per chat to avoid duplicate notifications
+ *  on SSE reconnect replay (events arrive within milliseconds). */
+const _lastNotifyMs = new Map<string, number>();
+const _NOTIFY_STALE_MS = 10_000;
+
+function _pruneNotifyMap(now: number): void {
+  for (const [k, v] of _lastNotifyMs) {
+    if (now - v > _NOTIFY_STALE_MS) _lastNotifyMs.delete(k);
+  }
+}
+
 onSSE("working_label", (chatID, p) => {
+  if (typeof p?.label !== "string") return;
   setWorkingLabel(chatID, p.label);
 });
 
 onSSE("turn_ended", (chatID, p) => {
+  // --- Side-effects: fire unconditionally regardless of active chat or dedup ---
   setThinking(chatID, false);
   clearLastError();
   onTurnEnded(chatID);
-
-  // Refresh the git badge so file changes the agent made during the
-  // turn surface immediately. Uses the &quick=1 status endpoint to
-  // avoid a full ahead/behind network round-trip.
   refreshGitBadge();
+  drainQueuedPromptWithAttachments(chatID);
 
-  // Render turn summary (credits + elapsed time) into the existing
-  // turn-actions row's left slot if the assistant message already got
-  // its copy/export buttons. Otherwise append a standalone summary
-  // below the last assistant message. This keeps a single row of
-  // chrome under every finalized turn instead of stacking two.
+  const stopReason = p.stop_reason;
+  if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
+    // Dedup: skip notification if we already notified for this chat
+    // within the last 2s (SSE reconnect replay fires duplicates in
+    // rapid succession).
+    const now = Date.now();
+    const last = _lastNotifyMs.get(chatID) ?? 0;
+    if (now - last > 2000) {
+      _lastNotifyMs.set(chatID, now);
+      _pruneNotifyMap(now);
+      const s = get(chatID);
+      const name = s?.name ?? "Chat";
+      notifyIfHidden("Vibekit", `${name}: Agent finished`);
+      if (document.visibilityState === "hidden") setBadge(1);
+    }
+  }
+
+  // --- DOM rendering: only for the active chat ---
+  if (chatID !== getActiveId()) return;
+
+  // Render turn summary (credits + elapsed time).
   const credits = p.credits_delta;
   const elapsed = p.elapsed_ms;
   if ((credits !== undefined && credits > 0) || (elapsed !== undefined && elapsed > 0)) {
@@ -48,7 +88,7 @@ onSSE("turn_ended", (chatID, p) => {
     if (elapsed !== undefined && elapsed > 0) {
       if (elapsed >= 60000) {
         const m = Math.floor(elapsed / 60000);
-        const s = Math.round((elapsed % 60000) / 1000);
+        const s = Math.floor((elapsed % 60000) / 1000);
         parts.push(`${String(m)}m ${String(s)}s`);
       } else {
         parts.push(`${(elapsed / 1000).toFixed(1)}s`);
@@ -56,10 +96,6 @@ onSSE("turn_ended", (chatID, p) => {
     }
     const summaryText = parts.join(" · ");
 
-    // Prefer the existing turn-actions row (thin line below the
-    // bubble, same style as checkpoint-line). messages.ts renders
-    // this row on every `message_updated` that finalises the
-    // assistant message.
     const container = document.getElementById("messages");
     const msgs = container !== null
       ? container.querySelectorAll(".message.assistant")
@@ -72,18 +108,19 @@ onSSE("turn_ended", (chatID, p) => {
       const leftSlot = actionsRow.querySelector(".turn-actions-summary");
       if (leftSlot !== null) leftSlot.textContent = summaryText;
     } else if (lastMsg !== undefined) {
-      // Fallback (pre-rename path or turn with no rendered actions).
-      const summary = document.createElement("div");
-      summary.className = "turn-summary";
-      summary.setAttribute("role", "note");
-      summary.setAttribute("aria-label", "Turn summary");
-      summary.setAttribute("data-chat-entry", "");
-      summary.textContent = summaryText;
-      lastMsg.insertAdjacentElement("afterend", summary);
+      // Dedup: skip DOM insertion only (side-effects already fired above)
+      const nextEl = lastMsg.nextElementSibling;
+      if (!(nextEl !== null && nextEl.classList.contains("turn-summary"))) {
+        const summary = document.createElement("div");
+        summary.className = "turn-summary";
+        summary.setAttribute("role", "note");
+        summary.setAttribute("aria-label", "Turn summary");
+        summary.setAttribute("data-chat-entry", "");
+        summary.textContent = summaryText;
+        lastMsg.insertAdjacentElement("afterend", summary);
+      }
     }
   }
-
-  const stopReason = p.stop_reason;
 
   // Render file-change summary banner if files were modified.
   const changedFiles = p.changed_files;
@@ -103,27 +140,21 @@ onSSE("turn_ended", (chatID, p) => {
     banner.setAttribute("role", "note");
     banner.setAttribute("data-chat-entry", "");
     banner.textContent = parts.join(" · ");
-    // Insert after the turn summary (or after the last assistant message).
-    const msgs = document.getElementById("messages");
-    if (msgs !== null) {
-      const lastChild = msgs.lastElementChild;
-      if (lastChild !== null) {
-        lastChild.insertAdjacentElement("afterend", banner);
+    const msgsEl = document.getElementById("messages");
+    if (msgsEl !== null) {
+      // Dedup: skip if a turn-file-changes already exists as the last entry
+      const existing = msgsEl.lastElementChild;
+      if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
+        const lastChild = msgsEl.lastElementChild;
+        if (lastChild !== null) {
+          lastChild.insertAdjacentElement("afterend", banner);
+        }
       }
     }
   }
-
-  if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
-    const s = get(chatID);
-    const name = s?.name ?? "Chat";
-    notifyIfHidden("Vibekit", `${name}: Agent finished`);
-    if (document.visibilityState === "hidden") setBadge(1);
-  }
-  drainQueuedPrompt(chatID);
 });
 
 onSSE("permission_needed", (chatID, p) => {
-  if (p === undefined) return;
   if (isPermissionNeededEnabled()) {
     notifyIfHidden("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
     if (document.visibilityState === "hidden") setBadge(1);
@@ -143,14 +174,16 @@ onSSE("permission_needed", (chatID, p) => {
     toolCallInput,
     p.options,
     (optionID: string) => {
-      // Clear the pending-approval indicator on the crew row.
-      if (subSid !== undefined && subSid !== "") {
-        setSubagentPendingApproval(subSid, false);
-      }
-      void transport.send({
-        type: "permission_response",
-        chat_id: chatID,
-        payload: { request_id: p.request_id, option_id: optionID },
+      // Clear the pending-approval indicator only after successful dispatch.
+      void permissionResponseAction.dispatch({
+        chatID,
+        requestID: p.request_id,
+        optionID,
+      }).then((result) => {
+        if (result === null) return;
+        if (subSid !== undefined && subSid !== "") {
+          setSubagentPendingApproval(subSid, false);
+        }
       });
     },
     p.sub_session_id,
@@ -185,7 +218,6 @@ export const ERROR_ROUTES: Readonly<Record<string, ErrorRoute>> = {
   agent_not_found:         { surface: "banner", level: "error",   dismissible: true },
   agent_config_error:      { surface: "banner", level: "error",   dismissible: false },
   model_not_found:         { surface: "banner", level: "warning", dismissible: true },
-  mcp_server_init_failure: { surface: "banner", level: "warning", dismissible: true },
   rate_limit:              { surface: "banner", level: "warning", dismissible: true },
   compaction_failed:       { surface: "banner", level: "error",   dismissible: true },
   switch_failed:           { surface: "send-error", level: "error", dismissible: false },
@@ -196,10 +228,13 @@ export const ERROR_ROUTES: Readonly<Record<string, ErrorRoute>> = {
 onSSE("error", (chatID, p) => {
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
-  if (p === undefined) return;
 
   const code = p.code ?? "";
   const msg = p.message ?? "";
+
+  // Only surface errors for the active chat to avoid polluting the
+  // send-button state with errors from background chats.
+  if (chatID !== getActiveId()) return;
 
   const route = ERROR_ROUTES[code];
   if (route !== undefined && route.surface === "banner") {
@@ -245,11 +280,7 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
   } else if (!(await confirmRestore())) {
     return;
   }
-  void transport.send({
-    type: "restore_checkpoint",
-    chat_id: chatID,
-    payload: { tag },
-  });
+  void restoreCheckpointAction.dispatch({ chatID, tag });
 }
 
 async function fetchRestorePreview(chatID: string, tag: string): Promise<string[]> {

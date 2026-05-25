@@ -5,12 +5,16 @@
 import { $, el } from "./dom.js";
 import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
+import { isSafeUrl } from "./utils-url.js";
+import { registerCleanup } from "./actions/cleanup.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 
 export function closeModal(modal: HTMLDivElement): void {
   if (modal === $.loginModal) {
     loginPollAbort?.abort();
     loginPollAbort = null;
+    loginPollUnregister?.();
+    loginPollUnregister = null;
   }
   modal.classList.add("hidden");
 }
@@ -32,8 +36,8 @@ export function initAllModals(): void {
   for (const overlay of document.querySelectorAll(".modal-overlay")) {
     const modal = overlay as HTMLDivElement;
     setupOverlayClose(modal);
-    // Wire close buttons: any button inside .modal-header-row that has title="Close".
-    for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[title="Close"]')) {
+    // Wire close buttons: any button inside .modal-header-row that has aria-label="Close".
+    for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
       btn.addEventListener("click", () => closeModal(modal));
     }
   }
@@ -86,28 +90,13 @@ export function closeTopModal(): boolean {
   return true;
 }
 
-export function showConfirm(text: string, onOk: () => void, okLabel?: string): void {
-  const textEl = el<HTMLElement>("confirm-text");
-  const cancelBtn = el<HTMLButtonElement>("confirm-cancel");
-  const okBtn = el<HTMLButtonElement>("confirm-ok");
-  textEl.textContent = text;
-
-  // Clone-replace buttons to strip any stale listeners from a
-  // previous showConfirm that was dismissed via Escape (which
-  // bypasses the per-call cleanup closure).
-  const freshCancel = cancelBtn.cloneNode(true) as HTMLButtonElement;
-  cancelBtn.replaceWith(freshCancel);
-  const freshOk = okBtn.cloneNode(true) as HTMLButtonElement;
-  freshOk.textContent = okLabel ?? "Remove";
-  okBtn.replaceWith(freshOk);
-
-  $.confirmModal.classList.remove("hidden");
-  freshCancel.addEventListener("click", () => closeModal($.confirmModal));
-  freshOk.addEventListener("click", () => { closeModal($.confirmModal); onOk(); });
-}
+// showConfirm removed — use confirm() from "./confirm.js" instead.
+// The static #confirm-modal element in index.html has also been
+// removed; confirm.ts creates its own <dialog> on demand.
 
 /** Active login-poll abort controller; aborted when the modal is dismissed. */
 let loginPollAbort: AbortController | null = null;
+let loginPollUnregister: (() => void) | null = null;
 
 export function showLoginModal(): void {
   $.loginModal.classList.remove("hidden");
@@ -116,6 +105,8 @@ export function showLoginModal(): void {
 export function hideLoginModal(): void {
   loginPollAbort?.abort();
   loginPollAbort = null;
+  loginPollUnregister?.();
+  loginPollUnregister = null;
   $.loginModal.classList.add("hidden");
 }
 
@@ -165,6 +156,9 @@ function doLogin(
   status: HTMLDivElement,
   onLoggedIn: () => void,
 ): void {
+  loginPollAbort?.abort();
+  loginPollAbort = null;
+
   const btns = document.querySelectorAll("#login-modal .modal-btn");
   for (const b of btns) (b as HTMLButtonElement).disabled = true;
 
@@ -193,27 +187,34 @@ function doLogin(
     }
     if (d.url !== undefined) {
       const codeText = d.code !== undefined ? `Code: ${d.code}` : "";
-      status.innerHTML = `${escText(codeText)}<br><a href="${escText(d.url)}" `
-        + `target="_blank" rel="noopener" style="color:var(--c-accent)">`
-        + `Open login page</a><br>`
+      const urlHtml = isSafeUrl(d.url)
+        ? `<a href="${escText(d.url)}" target="_blank" rel="noopener" style="color:var(--c-accent)">Open login page</a>`
+        : `<span style="color:var(--c-text-tertiary)">${escText(d.url)}</span>`;
+      status.innerHTML = `${escText(codeText)}<br>${urlHtml}<br>`
         + `<span style="color:var(--c-text-tertiary)">Complete login in the browser, then come back.</span>`;
       const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
       const ctrl = new AbortController();
       loginPollAbort = ctrl;
+      loginPollUnregister?.();
+      loginPollUnregister = registerCleanup(() => loginPollAbort?.abort());
       const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000)]);
       void (async () => {
         while (!signal.aborted) {
           await new Promise<void>((r) => setTimeout(r, 3000));
           if (signal.aborted) break;
-          const wd = await apiGet<WhoamiResponse>("/api/whoami");
+          const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
           if (signal.aborted) break;
           if (wd?.email !== undefined && wd.email !== "") {
             loginPollAbort = null;
+            loginPollUnregister?.();
+            loginPollUnregister = null;
             onLoggedIn();
             return;
           }
         }
         if (ctrl.signal.aborted) return; // user dismissed
+        loginPollUnregister?.();
+        loginPollUnregister = null;
         status.textContent = "Login timed out. Please reload and try again.";
       })();
     }

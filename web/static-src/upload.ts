@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { pendingFor } from "./actions/index.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -19,7 +20,28 @@ export interface UploadOptions {
   signal?: AbortSignal;
 }
 
+// NOTE: Only one upload at a time is supported. The progress bar is a
+// singleton DOM element shared across browser upload and chat drop.
+// Concurrent uploads would corrupt the progress display. Callers should
+// check pendingFor('files.upload').length > 0 before dispatching.
+
 export function uploadFiles(opts: UploadOptions): void {
+  // If already cancelled, bail out before showing any progress UI.
+  if (opts.signal?.aborted) {
+    opts.onError?.("Upload cancelled");
+    return;
+  }
+
+  // > 1 because the current dispatch is already recorded as pending by the
+  // framework before run() executes; we only reject if a *different* upload
+  // is also in flight. This relies on the action framework incrementing the
+  // pending count synchronously before invoking run(), which is guaranteed
+  // by defineAction's dispatch implementation.
+  if (pendingFor("files.upload").length > 1) {
+    opts.onError?.("Another upload is already in progress");
+    return;
+  }
+
   const form = new FormData();
   form.append("dir", opts.targetDir);
   for (const f of opts.files) form.append("files", f);
@@ -41,9 +63,11 @@ export function uploadFiles(opts: UploadOptions): void {
   cancelBtn.classList.remove("hidden");
   const onCancelClick = (): void => { xhr.abort(); };
   cancelBtn.addEventListener("click", onCancelClick, { once: true });
+  const onSignalAbort = (): void => { xhr.abort(); };
   const teardownCancelUI = (): void => {
     cancelBtn.classList.add("hidden");
     cancelBtn.removeEventListener("click", onCancelClick);
+    opts.signal?.removeEventListener("abort", onSignalAbort);
   };
 
   xhr.open("POST", "/api/file/upload");
@@ -57,13 +81,37 @@ export function uploadFiles(opts: UploadOptions): void {
   });
   xhr.addEventListener("load", () => {
     teardownCancelUI();
-    fill.style.width = "100%";
-    label.textContent = "Upload complete";
-    setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
-    const paths: string[] = [];
-    const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
-    for (const f of opts.files) paths.push(sep + f.name);
-    opts.onComplete?.(paths);
+    if (xhr.status >= 200 && xhr.status < 300) {
+      fill.style.width = "100%";
+      label.textContent = "Upload complete";
+      setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
+      // Use server-returned filenames (sanitized via filepath.Base) when available.
+      const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
+      let paths: string[];
+      try {
+        const body = JSON.parse(xhr.responseText) as { uploaded?: string[] };
+        if (Array.isArray(body.uploaded) && body.uploaded.length > 0) {
+          paths = body.uploaded.map((name: string) => sep + name);
+        } else {
+          // Fallback to client names if server doesn't return the array.
+          paths = [];
+          for (const f of opts.files) paths.push(sep + f.name);
+        }
+      } catch {
+        paths = [];
+        for (const f of opts.files) paths.push(sep + f.name);
+      }
+      opts.onComplete?.(paths);
+    } else {
+      let msg = `Upload failed (${String(xhr.status)})`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { error?: string };
+        if (typeof body.error === "string") msg = body.error;
+      } catch { /* ignore */ }
+      label.textContent = msg;
+      setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
+      opts.onError?.(msg);
+    }
   });
   xhr.addEventListener("error", () => {
     teardownCancelUI();
@@ -81,10 +129,10 @@ export function uploadFiles(opts: UploadOptions): void {
     teardownCancelUI();
     label.textContent = "Upload cancelled";
     setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
+    opts.onError?.("Upload cancelled");
   });
   if (opts.signal) {
-    if (opts.signal.aborted) { xhr.abort(); return; }
-    opts.signal.addEventListener("abort", () => { xhr.abort(); }, { once: true });
+    opts.signal.addEventListener("abort", onSignalAbort, { once: true });
   }
   xhr.send(form);
 }

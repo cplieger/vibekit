@@ -10,11 +10,31 @@
 // triggers: filter input, after a successful action, on tab activate.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH, ICON_SPINNER } from "./icons.js";
+import { ICON_REFRESH } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { preserveGitScroll } from "./git-scroll.js";
+import {
+  stage, discard, pull, push, stash, stashPop,
+  unstage, commit as commitAction, generateCommitMessage,
+} from "./actions/git-changes.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
+
+// --- Helpers for withAsyncFeedback ---
+
+/** Throw if an action dispatch returned null or undefined (failure already toasted). */
+function assertOk<T>(result: T): asserts result is NonNullable<T> {
+  if (result === null || result === undefined) throw new Error("action failed");
+}
+
+/** Sentinel thrown when user cancels a confirm dialog. withAsyncFeedback
+ *  treats it like any error (shows ✗); no toast fires because no action
+ *  was dispatched. */
+class CancelledError extends Error {
+  constructor() { super("cancelled"); }
+}
 
 // --- Wire types ---
 
@@ -43,8 +63,14 @@ interface StatusAllResponse {
 
 // --- State ---
 
+let inited = false;
 let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
+let refreshGeneration = 0;
+let refreshAbort: AbortController | null = null;
+let diffAbort: AbortController | null = null;
+registerCleanup(() => { refreshAbort?.abort(); });
+registerCleanup(() => diffAbort?.abort());
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -52,40 +78,85 @@ let filterText = "";
 const recentlyPushed = new Set<string>();
 const RECENTLY_PUSHED_TTL_MS = 60_000;
 
+// Bug 1: Preserve commit message textarea values across re-renders.
+const commitMessages = new Map<string, string>();
+
+// Bug 2: Module-level discard-all guard to prevent concurrent discards.
+const discardPendingRepos = new Set<string>();
+
+// Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
+const userCollapsedRepos = new Set<string>();
+const userExpandedRepos = new Set<string>();
+
+// Bug 4: Track expanded inline diff paths across re-renders.
+const expandedDiffPaths = new Set<string>();
+
+// Per-paint cleanup: unbind functions from bindLoadingState calls.
+let bindingCleanups: Array<() => void> = [];
+
+// Deferred paint: set when paint bails due to focused textarea.
+let paintDeferred = false;
+
 // --- Public API ---
 
 /** Initialise the Changes tab. Wires the filter input, the global
  *  refresh button, and the SSE forge-changed event. Idempotent. */
 export function initChangesTab(): void {
+  if (inited) return;
+  inited = true;
   const filterEl = document.getElementById("git-changes-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
     filterText = filterEl.value.trim().toLowerCase();
     paint();
   });
 
+  // Fire deferred paint when commit textarea loses focus.
+  document.addEventListener("focusout", (e) => {
+    if (paintDeferred && e.target instanceof HTMLTextAreaElement && e.target.classList.contains("git-commit-input")) {
+      paint();
+    }
+  });
+
   const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void withAsyncFeedback(refreshBtn, () => refreshChanges(), { keepLabel: true });
+      // Default keepLabel=false: the icon is replaced by the
+      // spinner while the refresh is in flight (then ✓/✗). The
+      // button has no text label to keep, so this reads cleaner
+      // than the icon + spinner side-by-side variant.
+      void withAsyncFeedback(refreshBtn, () => refreshChanges());
     });
   }
 
   // Refetch when the agent emits anything that touches files (it
   // emits this after every turn that wrote something), and when forge
   // accounts change (clones / removes ripple into the repo list).
-  onSSE("turn_ended", () => { void refreshChanges(); });
-  onSSE("forges_changed", () => { void refreshChanges(); });
+  // Debounced so SSE bursts coalesce into a single refresh.
+  let sseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRefresh = (): void => {
+    clearTimeout(sseRefreshTimer);
+    sseRefreshTimer = setTimeout(() => { void refreshChanges(); }, 300);
+  };
+  onSSE("turn_ended", debouncedRefresh);
+  onSSE("forges_changed", debouncedRefresh);
 
   // Initial paint.
   void refreshChanges();
 }
 
-/** Force a full /api/git/status-all refresh and repaint. */
+/** Force a full /api/git/status-all refresh and repaint. Concurrent
+ *  calls are safe: a generation counter ensures stale responses are
+ *  discarded. */
 export async function refreshChanges(): Promise<void> {
-  const data = await apiGet<StatusAllResponse>("/api/git/status-all");
+  refreshAbort?.abort();
+  const ctrl = new AbortController();
+  refreshAbort = ctrl;
+  const gen = ++refreshGeneration;
+  const data = await apiGet<StatusAllResponse>("/api/git/status-all", ctrl.signal);
+  if (gen < refreshGeneration) return; // stale — a newer call supersedes
   if (data === null) {
-    paintError("Failed to load git status.");
+    if (!ctrl.signal.aborted) paintError("Failed to load git status.");
     return;
   }
   lastStatusAll = data.repos;
@@ -95,11 +166,54 @@ export async function refreshChanges(): Promise<void> {
 // --- Render ---
 
 function paint(): void {
+  preserveGitScroll(paintInner);
+}
+
+function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
   if (root === null) return;
 
+  // Bug 1: Skip re-render entirely if a commit textarea is focused
+  // to avoid destroying user input mid-typing.
+  const focused = document.activeElement;
+  if (focused instanceof HTMLTextAreaElement && focused.classList.contains("git-commit-input")) {
+    paintDeferred = true;
+    return;
+  }
+  paintDeferred = false;
+
+  // Tear down previous bindLoadingState subscriptions before re-render.
+  for (const fn of bindingCleanups) fn();
+  bindingCleanups = [];
+
+  // Abort any in-flight diff fetches from the previous paint.
+  diffAbort?.abort();
+  diffAbort = new AbortController();
+
+  // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
+  const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
+  for (const k of userCollapsedRepos) if (!activeRepos.has(k)) userCollapsedRepos.delete(k);
+  for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
+  for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
+  for (const k of expandedDiffPaths) {
+    const nulIdx = k.indexOf("\0");
+    if (nulIdx === -1) { expandedDiffPaths.delete(k); continue; }
+    const repo = k.slice(0, nulIdx);
+    if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
+  }
+
+  // Bug 1: Capture current commit messages before destroying DOM.
+  for (const ta of root.querySelectorAll<HTMLTextAreaElement>(".git-commit-input[data-repo]")) {
+    const repo = ta.dataset["repo"];
+    if (repo) commitMessages.set(repo, ta.value);
+  }
+
   if (lastStatusAll.length === 0) {
-    root.innerHTML = `<div class="git-multirepo-empty">No repositories cloned yet. Open the <strong>Sources</strong> tab to clone one.</div>`;
+    root.innerHTML = renderEmptyState({
+      icon: ICON_REPO_EMPTY,
+      title: "No repositories cloned",
+      hint: "Open the <strong>Sources</strong> tab to clone one.",
+    });
     return;
   }
 
@@ -113,15 +227,51 @@ function paint(): void {
 
   root.replaceChildren();
   if (sections.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-multirepo-empty";
-    empty.textContent = filterText !== ""
-      ? "No matching changes."
-      : "Nothing to commit. All repos clean.";
-    root.appendChild(empty);
+    if (filterText !== "") {
+      root.innerHTML = renderEmptyState({
+        icon: ICON_FILTER,
+        title: "No matching changes",
+        hint: "Adjust your filter to see more.",
+      });
+    } else {
+      root.innerHTML = renderEmptyState({
+        icon: ICON_CLEAN,
+        title: "All clean",
+        hint: "Nothing to commit across your repositories.",
+      });
+    }
     return;
   }
   for (const s of sections) root.appendChild(s);
+}
+
+// --- Empty-state markup helpers ---
+
+const ICON_REPO_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
+  '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
+  '</svg>';
+
+const ICON_CLEAN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
+  '<polyline points="22 4 12 14.01 9 11.01"/>' +
+  '</svg>';
+
+const ICON_FILTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
+  '</svg>';
+
+function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
+  return `
+    <div class="git-multirepo-empty">
+      <div class="git-multirepo-empty-icon">${opts.icon}</div>
+      <div class="git-multirepo-empty-title">${opts.title}</div>
+      <div class="git-multirepo-empty-hint">${opts.hint}</div>
+    </div>
+  `;
 }
 
 function paintError(msg: string): void {
@@ -141,7 +291,12 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   }
   // Hide clean repos by default unless filter is active or repo
   // matched the filter explicitly.
-  const expandedDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
+  const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
+  // Bug 3: User-toggled state overrides data-driven default.
+  let expandedDefault: boolean;
+  if (userCollapsedRepos.has(r.repo)) expandedDefault = false;
+  else if (userExpandedRepos.has(r.repo)) expandedDefault = true;
+  else expandedDefault = dataDefault;
 
   const section = document.createElement("section");
   section.className = "git-repo-section";
@@ -170,6 +325,14 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     }
     const open = section.classList.toggle("expanded");
     header.setAttribute("aria-expanded", open ? "true" : "false");
+    // Bug 3: Record user's explicit toggle so re-renders respect it.
+    if (open) {
+      userExpandedRepos.add(r.repo);
+      userCollapsedRepos.delete(r.repo);
+    } else {
+      userCollapsedRepos.add(r.repo);
+      userExpandedRepos.delete(r.repo);
+    }
   });
   section.appendChild(header);
 
@@ -235,7 +398,7 @@ function renderHeaderHTML(r: RepoStatus): string {
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
     <span class="git-repo-section-meta">
-      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" title="Switch branch">${branch}</span>${ahead}${behind}${stashes}
+      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" data-tooltip="Switch branch">${branch}</span>${ahead}${behind}${stashes}
     </span>
   `;
 }
@@ -249,74 +412,103 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     b.type = "button";
     b.className = `btn-small${danger ? " btn-danger" : ""}`;
     b.textContent = label;
-    b.title = title;
+    b.setAttribute("data-tooltip", title);
     return b;
   };
 
-  const stageAll = btn("Stage all", "Stage every unstaged change");
-  stageAll.addEventListener("click", () => {
+  const stageAllBtn = btn("Stage all", "Stage every unstaged change");
+  stageAllBtn.addEventListener("click", () => {
     const files = r.files.filter((f) => !f.staged).map((f) => f.path);
     if (files.length === 0) return;
-    void withAsyncFeedback(stageAll, () => mutateRepo("/api/git/stage", r.repo, { files }));
-  });
-  bar.appendChild(stageAll);
-
-  const discardAll = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
-  discardAll.addEventListener("click", () => {
-    void withAsyncFeedback(discardAll, async () => {
-      const ok = await confirmDialog(
-        `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
-        "Discard",
-        "destructive",
-      );
-      if (!ok) return;
-      const files = r.files.map((f) => f.path);
-      if (files.length === 0) return;
-      await mutateRepo("/api/git/discard", r.repo, { files });
+    void withAsyncFeedback(stageAllBtn, async () => {
+      assertOk(await stage.dispatch({ repo: r.repo, files }));
+      await refreshChanges();
     });
   });
-  bar.appendChild(discardAll);
+  bar.appendChild(stageAllBtn);
+  bindingCleanups.push(bindLoadingState("git.stage", stageAllBtn));
+
+  const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
+  discardAllBtn.addEventListener("click", () => {
+    // Bug 2: Module-level guard prevents concurrent discard-all per repo.
+    if (discardPendingRepos.has(r.repo)) return;
+    discardPendingRepos.add(r.repo);
+    void (async () => {
+      try {
+        const ok = await confirmDialog(
+          `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
+          "Discard",
+          "destructive",
+        );
+        if (!ok) return;
+        const files = r.files.map((f) => f.path);
+        if (files.length === 0) return;
+        await withAsyncFeedback(discardAllBtn, async () => {
+          assertOk(await discard.dispatch({ repo: r.repo, files }));
+          await refreshChanges();
+        });
+      } finally {
+        discardPendingRepos.delete(r.repo);
+      }
+    })();
+  });
+  bar.appendChild(discardAllBtn);
+  bindingCleanups.push(bindLoadingState("git.discard", discardAllBtn));
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";
   sep.setAttribute("aria-hidden", "true");
   bar.appendChild(sep);
 
-  const pull = btn("Pull", "git pull");
-  pull.addEventListener("click", () => {
-    void withAsyncFeedback(pull, () => mutateRepo("/api/git/pull", r.repo, {}));
+  const pullBtn = btn("Pull", "git pull");
+  pullBtn.addEventListener("click", () => {
+    void withAsyncFeedback(pullBtn, async () => {
+      assertOk(await pull.dispatch({ repo: r.repo }));
+      await refreshChanges();
+    });
   });
-  bar.appendChild(pull);
+  bar.appendChild(pullBtn);
+  bindingCleanups.push(bindLoadingState("git.pull", pullBtn));
 
   if (r.ahead > 0) {
-    const push = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
-    push.classList.add("btn-primary");
-    push.addEventListener("click", () => {
-      void withAsyncFeedback(push, async () => {
-        await mutateRepo("/api/git/push", r.repo, {});
+    const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
+    pushBtn.classList.add("btn-primary");
+    pushBtn.addEventListener("click", () => {
+      void withAsyncFeedback(pushBtn, async () => {
+        assertOk(await push.dispatch({ repo: r.repo }));
         // Mark for "Open PR" hint surfacing on next renders.
         recentlyPushed.add(r.repo);
         setTimeout(() => {
           recentlyPushed.delete(r.repo);
           paint();
         }, RECENTLY_PUSHED_TTL_MS);
+        await refreshChanges();
       });
     });
-    bar.appendChild(push);
+    bar.appendChild(pushBtn);
+    bindingCleanups.push(bindLoadingState("git.push", pushBtn));
   }
 
-  const stash = btn("Stash", "Stash uncommitted changes");
-  stash.addEventListener("click", () => {
-    void withAsyncFeedback(stash, () => mutateRepo("/api/git/stash", r.repo, {}));
+  const stashBtn = btn("Stash", "Stash uncommitted changes");
+  stashBtn.addEventListener("click", () => {
+    void withAsyncFeedback(stashBtn, async () => {
+      assertOk(await stash.dispatch({ repo: r.repo }));
+      await refreshChanges();
+    });
   });
-  bar.appendChild(stash);
+  bar.appendChild(stashBtn);
+  bindingCleanups.push(bindLoadingState("git.stash", stashBtn));
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
     pop.addEventListener("click", () => {
-      void withAsyncFeedback(pop, () => mutateRepo("/api/git/stash-pop", r.repo, {}));
+      void withAsyncFeedback(pop, async () => {
+        assertOk(await stashPop.dispatch({ repo: r.repo }));
+        await refreshChanges();
+      });
     });
     bar.appendChild(pop);
+    bindingCleanups.push(bindLoadingState("git.stash_pop", pop));
   }
 
   return bar;
@@ -346,13 +538,13 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const status = document.createElement("span");
   status.className = "git-file-status";
   status.textContent = f.display || statusLetter(f.status);
-  status.title = describeStatus(f.status);
+  status.setAttribute("data-tooltip", describeStatus(f.status));
   top.appendChild(status);
 
   const path = document.createElement("span");
   path.className = "git-file-path";
   path.textContent = f.path;
-  path.title = f.path;
+  path.setAttribute("data-tooltip", f.path);
   top.appendChild(path);
 
   const actions = document.createElement("span");
@@ -363,7 +555,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
     b.type = "button";
     b.className = `btn-small${danger ? " btn-danger" : ""}`;
     b.textContent = label;
-    b.title = title;
+    b.setAttribute("data-tooltip", title);
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       void withAsyncFeedback(b, fn);
@@ -373,14 +565,22 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
 
   if (f.staged) {
     actions.appendChild(action("Unstage", "Move out of staged area",
-      () => mutateRepo("/api/git/unstage", r.repo, { files: [f.path] })));
+      async () => {
+        assertOk(await unstage.dispatch({ repo: r.repo, files: [f.path] }));
+        await refreshChanges();
+      }));
   } else {
     actions.appendChild(action("Stage", "Add to staged area",
-      () => mutateRepo("/api/git/stage", r.repo, { files: [f.path] })));
+      async () => {
+        assertOk(await stage.dispatch({ repo: r.repo, files: [f.path] }));
+        await refreshChanges();
+      }));
     actions.appendChild(action("Discard", "Throw away this change",
       async () => {
         const ok = await confirmDialog(`Discard changes to ${f.path}? This cannot be undone.`, "Discard", "destructive");
-        if (ok) await mutateRepo("/api/git/discard", r.repo, { files: [f.path] });
+        if (!ok) throw new CancelledError();
+        assertOk(await discard.dispatch({ repo: r.repo, files: [f.path] }));
+        await refreshChanges();
       }, true));
   }
   top.appendChild(actions);
@@ -391,31 +591,63 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   diffDrawer.className = "git-file-diff hidden";
   li.appendChild(diffDrawer);
 
+  // Bug 4: Unique key for tracking expanded state across re-renders.
+  const diffKey = `${r.repo}\0${f.path}`;
   let loadedDiff = false;
+
+  const loadDiff = (): void => {
+    loadedDiff = true;
+    diffDrawer.textContent = "Loading diff…";
+    const signal = diffAbort?.signal;
+    void apiGet<{ diff?: string }>(
+      `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
+      signal,
+    ).then((data) => {
+      if (signal?.aborted) return;
+      if (data === null) {
+        diffDrawer.replaceChildren();
+        const msg = document.createElement("span");
+        msg.textContent = "Failed to load diff.";
+        diffDrawer.appendChild(msg);
+        const retryBtn = document.createElement("button");
+        retryBtn.type = "button";
+        retryBtn.className = "btn-small";
+        retryBtn.textContent = "Retry";
+        retryBtn.addEventListener("click", () => { loadedDiff = false; loadDiff(); });
+        diffDrawer.appendChild(retryBtn);
+        return;
+      }
+      const diff = data.diff ?? "";
+      if (diff.trim() === "") {
+        diffDrawer.textContent = "(no diff available — file may be binary or empty)";
+        return;
+      }
+      diffDrawer.replaceChildren();
+      const pre = document.createElement("pre");
+      pre.className = "git-file-diff-pre";
+      pre.appendChild(renderDiffWithColors(diff));
+      diffDrawer.appendChild(pre);
+    });
+  };
+
+  // Bug 4: Restore expanded state from previous render.
+  if (expandedDiffPaths.has(diffKey)) {
+    diffDrawer.classList.remove("hidden");
+    li.classList.add("expanded");
+    loadDiff();
+  }
+
   top.addEventListener("click", () => {
     const opening = diffDrawer.classList.toggle("hidden") === false;
     li.classList.toggle("expanded", opening);
+    // Bug 4: Persist toggle state.
+    if (opening) {
+      expandedDiffPaths.add(diffKey);
+    } else {
+      expandedDiffPaths.delete(diffKey);
+    }
     if (opening && !loadedDiff) {
-      loadedDiff = true;
-      diffDrawer.textContent = "Loading diff…";
-      void apiGet<{ diff?: string }>(
-        `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
-      ).then((data) => {
-        if (data === null) {
-          diffDrawer.textContent = "Failed to load diff.";
-          return;
-        }
-        const diff = data.diff ?? "";
-        if (diff.trim() === "") {
-          diffDrawer.textContent = "(no diff available — file may be binary or empty)";
-          return;
-        }
-        diffDrawer.replaceChildren();
-        const pre = document.createElement("pre");
-        pre.className = "git-file-diff-pre";
-        pre.appendChild(renderDiffWithColors(diff));
-        diffDrawer.appendChild(pre);
-      });
+      loadDiff();
     }
   });
 
@@ -468,7 +700,9 @@ function renderRecentCommits(r: RepoStatus): HTMLElement {
     loaded = true;
     void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
       `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
+      diffAbort?.signal,
     ).then((data) => {
+      if (diffAbort?.signal.aborted) return;
       if (data === null) {
         body.textContent = "Failed to load.";
         return;
@@ -516,6 +750,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ta.placeholder = "Commit message…";
   ta.rows = 2;
   ta.dataset["repo"] = r.repo;
+  // Bug 1: Restore previously typed commit message.
+  const saved = commitMessages.get(r.repo);
+  if (saved) ta.value = saved;
   wrap.appendChild(ta);
 
   const row = document.createElement("div");
@@ -525,21 +762,17 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ai.type = "button";
   ai.className = "btn-small";
   ai.textContent = "✨ AI message";
-  ai.title = "Generate commit message from staged changes";
+  ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
-      const res = await apiPost<{ message?: string; error?: string }>(
-        `/api/git/commit-message`,
-        { repo: r.repo },
-      );
-      if (res !== null && res.message !== undefined && res.message !== "") {
-        ta.value = res.message;
-      } else if (res !== null && res.error !== undefined && res.error !== "") {
-        throw new Error(res.error);
-      }
+      const msg = await generateCommitMessage.dispatch({ repo: r.repo });
+      assertOk(msg);
+      commitMessages.set(r.repo, msg.message ?? "");
+      if (ta.isConnected) ta.value = msg.message ?? "";
     });
   });
   row.appendChild(ai);
+  bindingCleanups.push(bindLoadingState("git.generate_message", ai));
 
   const commit = document.createElement("button");
   commit.type = "button";
@@ -551,23 +784,17 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
       if (message === "") {
         throw new Error("Commit message required");
       }
-      await mutateRepo("/api/git/commit", r.repo, { message });
+      assertOk(await commitAction.dispatch({ repo: r.repo, message }));
       ta.value = "";
+      commitMessages.delete(r.repo);
+      await refreshChanges();
     });
   });
   row.appendChild(commit);
+  bindingCleanups.push(bindLoadingState("git.commit", commit));
 
   wrap.appendChild(row);
   return wrap;
-}
-
-// --- API helper ---
-
-async function mutateRepo(path: string, repo: string, body: Record<string, unknown>): Promise<void> {
-  const res = await apiPost<{ output?: string; error?: string }>(path, { repo, ...body });
-  if (res === null) throw new Error("Network error");
-  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
-  await refreshChanges();
 }
 
 // --- Helpers ---
@@ -636,8 +863,3 @@ function escapeHTML(s: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }
-
-// Stub used to silence unused-import warning when ICON_SPINNER ends
-// up unused in some build paths. Keep the import live so a future
-// inline-spinner addition has no extra import churn.
-void ICON_SPINNER;

@@ -23,6 +23,7 @@ import { getActiveId, version } from "./store.js";
 import { effect } from "./signals.js";
 import { profileFor } from "./tool-schema.js";
 import type { ToolLocation } from "./types.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 export const TAB_ID = "__follow__";
 
@@ -70,8 +71,17 @@ class FollowController {
         activateTab(chatID);
       }
     });
+    onSSE("chat_deleted", (chatID) => {
+      this.hasToolCall.delete(chatID);
+    });
     effect(() => { version.value; this.syncEnabled(); });
     this.syncEnabled();
+  }
+
+  /** Abort any in-flight follow-along file load. Wired to global cleanup. */
+  cancelLoad(): void {
+    this.loadController?.abort();
+    this.loadController = null;
   }
 
   showFollowView(): void {
@@ -83,6 +93,8 @@ class FollowController {
   }
 
   onFollowTabClosed(): void {
+    this.loadController?.abort();
+    this.loadController = null;
     this.enabled = false;
     this.paused = false;
     this.manualPause = false;
@@ -91,6 +103,9 @@ class FollowController {
     this.currentLine = 0;
     this.pendingPath = "";
     this.pendingLine = 0;
+    this.lines = [];
+    this.rowPool = [];
+    this.poolSize = 0;
   }
 
   // --- Internal ---
@@ -163,6 +178,9 @@ class FollowController {
     this.currentLine = 0;
     this.pendingPath = "";
     this.pendingLine = 0;
+    this.lines = [];
+    this.rowPool = [];
+    this.poolSize = 0;
   }
 
   private handleLocations(locations: ToolLocation[] | undefined, kind?: string): void {
@@ -187,7 +205,10 @@ class FollowController {
     this.currentLine = line;
 
     if (!hasTab(TAB_ID)) this.openFollowTab();
-    if (getActiveTabId() === TAB_ID) activateTab(TAB_ID);
+    // Note: no need to activate the tab here — activateTab() returns
+    // early when the tab is already active, and we only want to
+    // surface the follow tab if it isn't already shown (handled by
+    // openFollowTab).
 
     this.updateTabName(basename(this.currentPath));
 
@@ -333,7 +354,7 @@ class FollowController {
     probe.remove();
 
     // Attach scroll handler for virtual rendering.
-    if (this.scrollHandler !== null) pre.removeEventListener("scroll", this.scrollHandler);
+    // NOTE: No need to remove old handler — pre is freshly created each loadFile call.
     this.scrollHandler = () => { this.renderWindow(pre); };
     pre.style.overflow = "auto";
     pre.addEventListener("scroll", this.scrollHandler);
@@ -479,6 +500,7 @@ function scrollToLine(line: number): void {
 // ---------------------------------------------------------------------------
 
 const instance = new FollowController();
+registerCleanup(() => instance.cancelLoad());
 
 export function initFollowAlong(): void {
   instance.init();

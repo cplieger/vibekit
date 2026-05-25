@@ -5,9 +5,9 @@
 
 import { $ } from "./dom.js";
 import { type FileEntry, joinPath } from "./files-shared.js";
-import { uploadFiles } from "./upload.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { installDropZone } from "./drop-zone.js";
+import { uploadAction } from "./actions/files.js";
 
 export interface DragDropContext {
   getCurrentPath: () => string;
@@ -16,7 +16,8 @@ export interface DragDropContext {
 }
 
 export function initBrowserDragDrop(ctx: DragDropContext): void {
-  const wrap = $.fbList.parentElement as HTMLDivElement;
+  const wrap = $.fbList.parentElement;
+  if (wrap === null) return;
   let dropTargetFolder = "";
 
   const clearDropTarget = (): void => {
@@ -51,14 +52,11 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const currentPath = ctx.getCurrentPath();
       const targetDir = dropTargetFolder !== ""
         ? joinPath(currentPath, dropTargetFolder) : currentPath;
-      clearDropTarget();
-      uploadFiles({
-        files,
-        targetDir,
-        onComplete: (paths) => {
-          ctx.reload();
-          for (const p of paths) attachPathToActiveChat(p);
-        },
+      dropTargetFolder = "";
+      void uploadAction.dispatch({ files, targetDir }).then((paths) => {
+        if (paths === null) return;
+        ctx.reload();
+        for (const p of paths) attachPathToActiveChat(p);
       });
     },
   });

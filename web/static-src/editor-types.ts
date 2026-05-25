@@ -93,7 +93,9 @@ export interface FileState {
   error: string;
   mode: FileMode;
   suggestions: Map<number, HunkSuggestion>;
-  returnToGitDiff: { ref: string } | null;
+  returnToGitDiff: { ref: string; repo: string } | null;
+  /** Repo identifier for git-diff sources (empty string = default). */
+  repo: string;
   pendingHunkDecisions: Map<number, "accept" | "reject">;
   pendingHunkCount: number | null;
   cachedDiff: DiffLine[] | null;
@@ -133,6 +135,7 @@ class EditorState {
       mode: { kind: "edit", editing: false },
       suggestions: new Map(),
       returnToGitDiff: null,
+      repo: "",
       pendingHunkDecisions: new Map(),
       pendingHunkCount: null,
       cachedDiff: null,
@@ -154,7 +157,6 @@ const editorState = new EditorState();
 // --- Exports (delegate to singleton) ---
 
 export const fileStates = editorState.files;
-export function getActiveFilePathInternal(): string { return editorState.getActivePath(); }
 export function setActiveFilePath(path: string): void { editorState.setActivePath(path); }
 export function getCachedDiff(state: FileState): DiffLine[] { return editorState.getCachedDiff(state); }
 export function freshState(path: string): FileState { return editorState.freshState(path); }

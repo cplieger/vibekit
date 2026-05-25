@@ -16,8 +16,10 @@
 import { patchSettings } from "./persist.js";
 import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
-import { apiGet, apiDelete, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
+import { registerCleanup } from "./actions/cleanup.js";
+import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -35,13 +37,6 @@ const SUGGESTED_TOOLS = [
 
 type ShellPolicy = "no_commands" | "safe_commands" | "all_commands";
 type RuleMode = "allow" | "deny";
-
-interface CommandRule {
-  pattern: string;
-  mode: RuleMode;
-  priority: number;
-  created_at: number;
-}
 
 class PermissionsUIController {
   private currentMode: PermissionMode = "trust-all";
@@ -74,11 +69,11 @@ class PermissionsUIController {
       });
     }
 
-    el("trust-list-add").addEventListener("click", () => this.toggleMenu());
+    const adder = el("trust-list-add");
+    adder.addEventListener("click", () => this.toggleMenu());
 
+    const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
-      const adder = el("trust-list-add");
-      const menu = el("trust-list-menu");
       const t = e.target as Node;
       if (!adder.contains(t) && !menu.contains(t)) menu.classList.add("hidden");
     });
@@ -87,7 +82,7 @@ class PermissionsUIController {
   }
 
   initShellPolicy(initial: AppSettings): void {
-    this.currentShellPolicy = (initial as Record<string, unknown>)["shell_policy"] as ShellPolicy ?? "safe_commands";
+    this.currentShellPolicy = initial.shell_policy ?? "safe_commands";
 
     for (const p of ["no_commands", "safe_commands", "all_commands"] as ShellPolicy[]) {
       const id = `shell-policy-${p}`;
@@ -97,7 +92,7 @@ class PermissionsUIController {
       radio.addEventListener("change", () => {
         if (!radio.checked) return;
         this.currentShellPolicy = p;
-        void patchSettings({ shell_policy: p } as Record<string, unknown>);
+        void patchSettings({ shell_policy: p });
       });
     }
 
@@ -194,6 +189,13 @@ class PermissionsUIController {
 
   // --- Private: command rules ---
 
+  /** Public: aborts any in-flight rules load. Wired to global cleanup
+   *  so beforeunload doesn't leak the fetch handle. */
+  cancelRulesLoad(): void {
+    this.rulesController?.abort();
+    this.rulesController = null;
+  }
+
   private async loadRules(): Promise<void> {
     this.rulesController?.abort();
     this.rulesController = new AbortController();
@@ -228,6 +230,7 @@ class PermissionsUIController {
         chipClass: `chip mono chip-rule-${entry.mode}`,
         onRemove: () => { void this.removeRule(entry.pattern); },
       });
+      chip.dataset["pattern"] = entry.pattern;
       // Click the mode label to flip allow↔deny in place.
       const modeEl = chip.querySelector(".chip-mode") as HTMLElement;
       modeEl.addEventListener("click", (e) => {
@@ -239,19 +242,20 @@ class PermissionsUIController {
     }
   }
 
-  private async removeRule(pattern: string): Promise<void> {
-    const ok = await apiDelete(`/api/permissions/commands?pattern=${encodeURIComponent(pattern)}`);
-    if (!ok) return;
-    this.commandRules = this.commandRules.filter((e) => e.pattern !== pattern);
+  private setRules = (rules: CommandRule[]): void => {
+    this.commandRules = rules;
     this.renderRuleChips();
+  };
+
+  private async removeRule(pattern: string): Promise<void> {
+    if (!this.commandRules.some((e) => e.pattern === pattern)) return;
+    await removeRuleAction.dispatch({ pattern, rules: this.commandRules, setRules: this.setRules });
   }
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    const result = await apiPost("/api/permissions/commands", { pattern: clean, mode, priority });
-    if (result === null) return;
-    await this.loadRules();
+    await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
   }
 
   // --- Private: agent ignore files ---
@@ -309,6 +313,7 @@ class PermissionsUIController {
 
 // Singleton instance — internal to the module.
 const controller = new PermissionsUIController();
+registerCleanup(() => controller.cancelRulesLoad());
 
 // Public delegate functions preserving the existing module API.
 export function initPermissionsUI(initial: AppSettings): void { controller.initPermissions(initial); }

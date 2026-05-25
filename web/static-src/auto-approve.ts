@@ -9,11 +9,17 @@
 import { $ } from "./dom.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
-import * as transport from "./transport.js";
+import { setAutoApproveCrewAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { Session } from "./types.js";
 
 /** Client-side cache augmentation — avoids O(n) scan on every render. */
 interface SessionWithCrewCache extends Session { _hasCrew?: boolean; }
+
+/** Clear the crew cache for a session (e.g. after checkpoint restore). */
+export function clearCrewCache(s: Session): void {
+  delete (s as SessionWithCrewCache)._hasCrew;
+}
 
 let wired = false;
 
@@ -23,6 +29,9 @@ export function initAutoApprove(): void {
 
   const btn = $.autoApproveCrewBtn;
   btn.addEventListener("click", toggle);
+  // Capture unbind for parity with other pill controllers; not called
+  // because this pill lives for the lifetime of the page.
+  void bindLoadingState("chat.set_auto_approve_crew", $.autoApproveCrewBtn);
 
   // Re-render on every store change (active chat switch, flag change).
   effect(() => { version.value; render(); });
@@ -56,12 +65,5 @@ function toggle(): void {
   const session = getActive();
   if (session === undefined) return;
   const newValue = !session.auto_approve_crew;
-  // Optimistic update so the pill flips immediately.
-  session.auto_approve_crew = newValue;
-  render();
-  void transport.send({
-    type: "set_auto_approve_crew",
-    chat_id: session.id,
-    payload: { enabled: newValue },
-  });
+  void setAutoApproveCrewAction.dispatch({ chatID: session.id, enabled: newValue });
 }

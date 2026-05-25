@@ -14,11 +14,13 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands,
+  setAvailableCommands, setCurrentMode, clearMsgIndex, invalidateSession,
+  version,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
+import { clearCrewCache } from "../auto-approve.js";
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -89,17 +91,32 @@ onSSE("compaction_started", () => {
   // intentional no-op; see comment above
 });
 
+// Mode switch echo: when the agent switches modes (via a switch_mode
+// tool call that the user approved), the server broadcasts the new
+// mode_id. Reflect it in the store so any UI reading current_mode_id
+// stays current without waiting for the next chat_updated rebuild.
+onSSE("mode_changed", (chatID, p) => {
+  if (chatID === "") return;
+  if (typeof p.mode_id !== "string" || p.mode_id === "") return;
+  setCurrentMode(chatID, p.mode_id);
+});
+
 // Steering inclusion: render "Context loaded: tech.md, go.md" badges
 // in the message list when kiro-cli reports which steering docs were loaded.
 onSSE("steering_loaded", (chatID, payload) => {
   if (chatID === "" || getActiveId() !== chatID) return;
+  if (!Array.isArray(payload?.documents)) return;
   const docs = payload.documents;
   if (docs.length === 0) return;
+  const msgs = document.getElementById("messages");
+  if (msgs === null) return;
+  // Dedup: skip if a steering-badge already exists for this chat
+  if (msgs.querySelector(".steering-badge") !== null) return;
   const badge = document.createElement("div");
   badge.className = "steering-badge";
+  badge.setAttribute("data-chat-entry", "");
   badge.textContent = `Context loaded: ${docs.join(", ")}`;
-  const msgs = document.getElementById("messages");
-  if (msgs !== null) msgs.appendChild(badge);
+  msgs.appendChild(badge);
 });
 
 // checkpoint_restored arrives after the server rolls the workspace back
@@ -117,14 +134,23 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
   // loadMessages response. The activeId check guards against
   // reloading a chat the user isn't looking at (server-side archive
   // flow etc. don't restore checkpoints, but defence in depth).
+  // Clear the auto-approve crew cache — checkpoint restore may have
+  // rolled back past the crew event that set it.
+  clearCrewCache(s);
+
   if (getActiveId() === chatID) {
     s.messages = [];
     s.has_more = false;
+    clearMsgIndex(chatID);
+    version.value = version.peek() + 1;
+    // Rely on the version-effect's renderUpdates (triggered by
+    // loadMessages bumping version) rather than an explicit
+    // renderSwitch here — avoids a redundant intermediate render
+    // that flashes empty state before messages arrive.
     void loadMessages(chatID);
   } else {
     // Background chat: just invalidate the cache so the next switch
     // refetches from scratch.
-    s.messages = [];
-    s.has_more = false;
+    invalidateSession(chatID);
   }
 });

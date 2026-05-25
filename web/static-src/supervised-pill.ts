@@ -13,23 +13,24 @@
 //
 // Reuse: every interactive surface comes from existing primitives —
 // pill-expand.ts for the popover, file-label for file chips, tool-card
-// diff-summary span for +N -M, transport.send for the commands, the
-// store for state. No new pill-chrome CSS; we extend the existing
-// .pill-expandable / .pill-expanded rules.
+// diff-summary span for +N -M, action framework (actions/chat.ts) for
+// the commands, the store for state. No new pill-chrome CSS; we
+// extend the existing .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
-import { getActive, setSupervisedMode, version } from "./store.js";
+import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
-import * as transport from "./transport.js";
 import { openPendingDiff } from "./editor-openers.js";
+import { setSupervisedAction, resolveAllPendingAction, resolvePendingChangeAction, trustPendingAction, clearPendingTrustAction } from "./actions/chat.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
-import { resolvePendingChange } from "./chat-commands.js";
 
 class SupervisedPillController {
   private wired = false;
   private pill: HTMLElement | null = null;
   private content: HTMLDivElement | null = null;
+  private unbinds: Array<() => void> = [];
 
   /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
    *  element exists. No-op on a second call. */
@@ -59,6 +60,8 @@ class SupervisedPillController {
    *  stays tiny for realistic turns. */
   private render(): void {
     if (this.pill === null || this.content === null) return;
+    for (const u of this.unbinds) u();
+    this.unbinds = [];
     const s = getActive();
     if (s === undefined) {
       this.pill.classList.add("hidden");
@@ -92,6 +95,20 @@ class SupervisedPillController {
         : "Supervised mode off (file changes apply immediately)";
 
     this.content.replaceChildren(this.buildPopoverBody(supervised, pending, trusted));
+
+    // Bind loading state to bulk-action buttons.
+    // Trade-off: all accept/reject buttons share the same action name, so
+    // bindLoadingState disables ALL of them when any single resolve is in
+    // flight. This is acceptable because rapid-fire resolves would race on
+    // the server anyway; the brief bulk-disable prevents double-submits.
+    const acceptAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="accept-all"]');
+    const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
+    const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
+    const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
+    if (acceptAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptAllBtn));
+    if (rejectAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectAllBtn));
+    if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
+    if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
   }
 
   private buildPopoverBody(supervised: boolean, pending: PendingChange[], trusted: boolean): DocumentFragment {
@@ -125,13 +142,7 @@ class SupervisedPillController {
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
-      setSupervisedMode(this.currentChatID(), enabled);
-      void transport.send({
-        type: "set_supervised_mode",
-        chat_id: this.currentChatID(),
-        payload: { enabled },
-      });
-      this.render();
+      void setSupervisedAction.dispatch({ chatID: this.currentChatID(), enabled });
     });
 
     // Trusted-this-turn short-circuit.
@@ -147,6 +158,7 @@ class SupervisedPillController {
       const stopBtn = document.createElement("button");
       stopBtn.type = "button";
       stopBtn.className = "pill-button";
+      stopBtn.dataset["action"] = "stop-trusting";
       stopBtn.textContent = "Stop trusting";
       stopBtn.addEventListener("click", () => this.stopTrusting());
       actions.appendChild(stopBtn);
@@ -256,38 +268,31 @@ class SupervisedPillController {
     acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
     actionsSpan.appendChild(acceptBtn);
 
+    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
+    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+
     li.appendChild(actionsSpan);
     return li;
   }
 
   private resolveOne(toolCallID: string, action: "accept" | "reject"): void {
-    resolvePendingChange(this.currentChatID(), toolCallID, action);
+    void resolvePendingChangeAction.dispatch({ chatID: this.currentChatID(), toolCallID, action });
   }
 
   private bulkResolve(action: "accept" | "reject"): void {
-    void transport.send({
-      type: "resolve_all_pending_changes",
-      chat_id: this.currentChatID(),
-      payload: { action },
-    });
+    void resolveAllPendingAction.dispatch({ chatID: this.currentChatID(), action });
   }
 
   /** Post trust_pending_changes. The server sets perTurnTrust,
    *  accepts every staged op immediately, and broadcasts
    *  pending_trust_enabled so the pill flips. */
   private trustRemaining(): void {
-    void transport.send({
-      type: "trust_pending_changes",
-      chat_id: this.currentChatID(),
-    });
+    void trustPendingAction.dispatch(this.currentChatID());
   }
 
   /** Post clear_pending_trust. Mirror of trustRemaining. */
   private stopTrusting(): void {
-    void transport.send({
-      type: "clear_pending_trust",
-      chat_id: this.currentChatID(),
-    });
+    void clearPendingTrustAction.dispatch(this.currentChatID());
   }
 
   private currentChatID(): string {

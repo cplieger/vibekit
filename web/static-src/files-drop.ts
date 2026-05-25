@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { openFilePicker } from "./files-picker.js";
-import { uploadFiles } from "./upload.js";
+import { uploadAction } from "./actions/files.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { installDropZone } from "./drop-zone.js";
@@ -42,12 +42,9 @@ export function initChatAttach(): void {
     container: chatView,
     get overlay() { return getOverlay(); },
     onDrop: (files) => {
-      uploadFiles({
-        files,
-        targetDir: ".",
-        onComplete: (paths) => {
-          for (const p of paths) attachPathToActiveChat(p);
-        },
+      void uploadAction.dispatch({ files, targetDir: "." }).then((paths) => {
+        if (paths === null) return;
+        for (const p of paths) attachPathToActiveChat(p);
       });
     },
   });

@@ -4,8 +4,10 @@
 // Each device auto-prompts for browser permission when enabled globally.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
+import { registerPushAction } from "./actions/notify.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.
@@ -13,7 +15,6 @@ import { isIOS, isStandalone } from "./platform.js";
 
 type PushState =
   | { kind: "idle" }
-  | { kind: "permission_granted" }
   | { kind: "registering" }
   | { kind: "registered"; registration: ServiceWorkerRegistration }
   | { kind: "failed"; error: string };
@@ -28,7 +29,11 @@ class NotifyController {
   private notifyUICallback: (() => void) | null = null;
 
   private pushState: PushState = { kind: "idle" };
-  private pushController: AbortController | null = null;
+
+  /** Public hook for global cleanup. */
+  cancelPush(): void {
+    registerPushAction.cancel();
+  }
 
   constructor() {
     document.addEventListener("visibilitychange", () => {
@@ -87,21 +92,20 @@ class NotifyController {
       return "Notifications are not supported in this browser.";
     }
     if (Notification.permission === "granted") {
-      void this.registerPush();
+      void this.registerPushViaAction();
       return null;
     }
     if (Notification.permission === "denied") {
       return "Notifications were blocked. Allow them in your browser settings.";
     }
     Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPush();
+      if (result === "granted") void this.registerPushViaAction();
     }).catch(() => {});
     return null;
   }
 
   unregisterPush(): void {
-    this.pushController?.abort();
-    this.pushController = null;
+    registerPushAction.cancel();
     this.pushState = { kind: "idle" };
     if (this.swRegistration === null) return;
     const reg = this.swRegistration;
@@ -119,41 +123,23 @@ class NotifyController {
     if (this.pushState.kind === "registered" || this.pushState.kind === "failed" || this.pushState.kind === "registering") return;
     if (!("Notification" in window)) return;
     if (Notification.permission === "granted") {
-      void this.registerPush();
+      void this.registerPushViaAction(true);
       return;
     }
-    if (Notification.permission === "denied") return;
-    Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPush();
-    }).catch(() => {});
+    // 'denied' or 'default': do nothing. We only auto-register push
+    // when permission is already granted. The explicit toggle click
+    // path in requestPermission() handles the user-gesture prompt.
   }
 
-  private async registerPush(): Promise<void> {
-    if (this.pushState.kind === "registered" || this.pushState.kind === "registering" || !("serviceWorker" in navigator)) return;
-    this.pushController?.abort();
-    const ctrl = new AbortController();
-    this.pushController = ctrl;
+  private async registerPushViaAction(silent = false): Promise<void> {
+    if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
     this.pushState = { kind: "registering" };
-    try {
-      this.swRegistration = await navigator.serviceWorker.register("/sw.js");
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      const keyData = await apiGet<{ publicKey: string }>("/api/push/vapid-key", ctrl.signal);
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      if (keyData === null) { this.pushState = { kind: "failed", error: "no VAPID key" }; return; }
-      const appServerKey = urlBase64ToUint8Array(keyData.publicKey);
-      const sub = await this.swRegistration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: appServerKey.buffer as ArrayBuffer,
-      });
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      await apiPost("/api/push/subscribe", sub.toJSON());
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      this.pushState = { kind: "registered", registration: this.swRegistration };
-    } catch (e: unknown) {
-      if (ctrl.signal.aborted || ctrl !== this.pushController) return;
-      const msg = e instanceof Error ? e.message : "unknown";
-      this.pushState = { kind: "failed", error: msg };
-      console.warn("push registration failed:", msg);
+    const reg = await registerPushAction.dispatch(undefined, silent ? { silent: true } : undefined);
+    if (reg !== null) {
+      this.swRegistration = reg;
+      this.pushState = { kind: "registered", registration: reg };
+    } else {
+      this.pushState = { kind: "failed", error: "action failed" };
     }
   }
 
@@ -183,23 +169,11 @@ class NotifyController {
 }
 
 // ---------------------------------------------------------------------------
-// Utility (stateless)
-// ---------------------------------------------------------------------------
-
-export function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(base64);
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
-
-// ---------------------------------------------------------------------------
 // Singleton instance + function exports that form the module's public API.
 // ---------------------------------------------------------------------------
 
 const instance = new NotifyController();
+registerCleanup(() => instance.cancelPush());
 
 export function areNotificationsEnabled(): boolean { return instance.areNotificationsEnabled(); }
 export function isAgentFinishedEnabled(): boolean { return instance.isAgentFinishedEnabled(); }

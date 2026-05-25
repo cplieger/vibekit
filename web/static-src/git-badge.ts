@@ -148,12 +148,19 @@ function applyBadge(state: BadgeState, tooltip: string): void {
   if (state === "none") {
     el.classList.add("hidden");
     el.removeAttribute("data-state");
-    el.removeAttribute("title");
+    // Restore the default sidebar button tooltip when no badge.
+    const btn = el.parentElement;
+    if (btn !== null) btn.setAttribute("data-tooltip", "Toggle git");
     return;
   }
   el.classList.remove("hidden");
   el.dataset["state"] = state;
-  el.title = tooltip;
+  // The badge has pointer-events: none in CSS, so hovering the badge
+  // bubbles to the parent button. Set the tooltip there so the user
+  // sees the rich badge state on hover instead of the static
+  // "Toggle git" label.
+  const btn = el.parentElement;
+  if (btn !== null) btn.setAttribute("data-tooltip", tooltip);
 }
 
 /** @internal Test helpers — direct state inspection without DOM. */

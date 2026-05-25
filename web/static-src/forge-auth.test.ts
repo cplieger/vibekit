@@ -4,8 +4,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(() => Promise.resolve(null)),
-  apiPut: vi.fn(() => Promise.resolve(null)),
-  apiDelete: vi.fn(() => Promise.resolve(null)),
+  withTimeout: vi.fn((signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000)),
+  API_TIMEOUT_MS: 30000,
+}));
+
+vi.mock("./toast.js", () => ({
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("./confirm.js", () => ({
@@ -13,12 +20,11 @@ vi.mock("./confirm.js", () => ({
 }));
 
 import { renderForgesPanel } from "./forge-auth.js";
-import { apiGet, apiPost, apiDelete } from "./api-client.js";
+import { apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 
 const mockedApiGet = vi.mocked(apiGet);
 const mockedApiPost = vi.mocked(apiPost);
-const mockedApiDelete = vi.mocked(apiDelete);
 const mockedConfirm = vi.mocked(confirmDialog);
 
 function setupDOM(): void {
@@ -28,6 +34,44 @@ function setupDOM(): void {
 function panel(): HTMLElement {
   return document.getElementById("forges-panel") as HTMLElement;
 }
+
+describe("forge-auth: race condition guards", () => {
+  beforeEach(() => {
+    setupDOM();
+    vi.clearAllMocks();
+  });
+
+  it("concurrent renderForgesPanel calls: only the latest render paints", async () => {
+    // First call: slow — resolves after the second call starts.
+    let resolveFirst!: (v: unknown) => void;
+    const firstPromise = new Promise((r) => { resolveFirst = r; });
+    mockedApiGet.mockReturnValueOnce(firstPromise as any);
+
+    // Second call: fast — resolves immediately.
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [{ id: "gitlab:gitlab.com", kind: "gitlab", host: "gitlab.com", username: "fast", connected: true }],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+
+    const p1 = renderForgesPanel({ revalidate: false });
+    const p2 = renderForgesPanel({ revalidate: false });
+
+    // Let the second call finish first.
+    await p2;
+
+    // Now resolve the first (stale) call.
+    resolveFirst({
+      forges: [{ id: "github:github.com", kind: "github", host: "github.com", username: "stale", connected: true }],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await p1;
+
+    // The panel should show the FAST result, not the stale one.
+    const rows = panel().querySelectorAll(".forge-account-row");
+    expect(rows.length).toBe(1);
+    expect(panel().querySelector(".forge-account-primary")?.textContent).toBe("fast");
+  });
+});
 
 describe("forge-auth: 4-section layout", () => {
   beforeEach(() => {
@@ -47,29 +91,30 @@ describe("forge-auth: 4-section layout", () => {
     expect(kinds).toEqual(["github", "gitlab", "codeberg", "gitea"]);
   });
 
-  it("each section renders an empty state and an Add account button when no accounts", async () => {
+  it("each section renders an Add account button (no empty-state filler)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
     for (const s of panel().querySelectorAll<HTMLElement>(".forge-kind-section")) {
-      expect(s.querySelector(".forge-account-empty")).not.toBeNull();
+      // Empty sections render NO "no accounts connected" filler;
+      // the section is just header + the + button.
+      expect(s.querySelector(".forge-account-empty")).toBeNull();
       expect(s.querySelector("[data-forge-add]")).not.toBeNull();
     }
   });
 
-  it("only the GitHub section gets the 'Add a PAT' button", async () => {
+  it("clicking the + button opens a unified add pane (no separate Add-a-PAT button)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    const ghPat = panel().querySelector(".forge-kind-section[data-kind='github'] [data-forge-add-pat]");
-    expect(ghPat).not.toBeNull();
-    for (const k of ["gitlab", "codeberg", "gitea"]) {
+    // No section should expose a separate Add-a-PAT trigger any more.
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const pat = panel().querySelector(`.forge-kind-section[data-kind='${k}'] [data-forge-add-pat]`);
-      expect(pat).toBeNull();
+      expect(pat, `${k} should not have a separate Add-a-PAT button`).toBeNull();
     }
   });
 
@@ -153,10 +198,9 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    // Open every PAT form: github via "Add a PAT", others via "Add account".
-    const ghPat = panel().querySelector<HTMLButtonElement>(".forge-kind-section[data-kind='github'] [data-forge-add-pat]");
-    ghPat!.click();
-    for (const k of ["gitlab", "codeberg", "gitea"]) {
+    // Open the unified add pane on every section via the single
+    // "+" button. The pane includes a PAT form for every kind.
+    for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const add = panel().querySelector<HTMLButtonElement>(`.forge-kind-section[data-kind='${k}'] [data-forge-add]`);
       add!.click();
     }
@@ -219,23 +263,6 @@ describe("forge-auth: 4-section layout", () => {
     expect(slot.dataset["mode"]).toBeUndefined();
   });
 
-  it("clicking 'Add a PAT' twice toggles the GitHub PAT form open then closed", async () => {
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
-    await renderForgesPanel();
-    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github']")!;
-    const btn = section.querySelector<HTMLButtonElement>("[data-forge-add-pat]")!;
-    const slot = section.querySelector<HTMLElement>("[data-forge-slot]")!;
-    btn.click();
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
-    expect(slot.dataset["mode"]).toBe("pat");
-    btn.click();
-    expect(slot.querySelector("form.forge-pat-form")).toBeNull();
-    expect(slot.dataset["mode"]).toBeUndefined();
-  });
-
   it("re-probes connected accounts in the background on page open", async () => {
     // Initial: two connected accounts.
     mockedApiGet.mockResolvedValueOnce({
@@ -289,6 +316,9 @@ describe("forge-auth: 4-section layout", () => {
     // Empty re-fetch after delete.
     mockedApiGet.mockResolvedValue({ forges: [], kinds: ["github", "gitlab", "codeberg", "gitea"] });
     mockedConfirm.mockResolvedValueOnce(true);
+    // Mock fetch for the action framework's DELETE call.
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
     const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
@@ -302,7 +332,10 @@ describe("forge-auth: 4-section layout", () => {
     expect(msg).toContain("Sign out of a@x.io");
     expect(label).toBe("Sign out");
     expect(variant).toBe("destructive");
-    expect(mockedApiDelete).toHaveBeenCalledWith("/api/forges/github%3Agithub.com");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/forges/github%3Agithub.com",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 
   it("sign-out cancellation does not delete", async () => {
@@ -313,15 +346,17 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     mockedConfirm.mockResolvedValueOnce(false);
-    mockedApiDelete.mockClear();
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
+    fetchSpy.mockClear(); // clear any fetch calls from render
     const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
       .find((b) => b.textContent === "Sign out")!;
     signOutBtn.click();
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
 
     expect(mockedConfirm).toHaveBeenCalled();
-    expect(mockedApiDelete).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

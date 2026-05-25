@@ -44,6 +44,8 @@ const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   blocked: "Cannot send right now",
 };
 
+let initialized = false;
+
 class PromptInputController {
   // History cycling state
   private idx = -1;
@@ -52,6 +54,11 @@ class PromptInputController {
 
   // Send-button state
   private state: SendState = { kind: "idle" };
+
+  // Cached DOM references for applyButtonState
+  private cancelHalf: HTMLElement | null = null;
+  private divider: Element | null = null;
+  private sendWrap: HTMLElement | null = null;
 
   private exitCycling(): void { this.idx = -1; this.draft = ""; }
 
@@ -96,12 +103,9 @@ class PromptInputController {
     $.sendBtn.disabled = disableForm;
     $.promptInput.disabled = k === "queued" || k === "blocked";
 
-    const cancelHalf = document.getElementById("cancel-half");
-    const divider = document.querySelector(".send-divider");
-    const wrap = document.getElementById("send-wrap");
-    if (cancelHalf !== null) cancelHalf.classList.toggle("hidden", k !== "busy");
-    if (divider !== null) divider.classList.toggle("hidden", k !== "busy");
-    if (wrap !== null) wrap.classList.toggle("send-wrap-busy", k === "busy");
+    if (this.cancelHalf !== null) this.cancelHalf.classList.toggle("hidden", k !== "busy");
+    if (this.divider !== null) this.divider.classList.toggle("hidden", k !== "busy");
+    if (this.sendWrap !== null) this.sendWrap.classList.toggle("send-wrap-busy", k === "busy");
   }
 
   setSendState(next: SendState): void {
@@ -112,11 +116,18 @@ class PromptInputController {
   }
 
   init(onSubmit: Submit, onCancel: Cancel): void {
+    if (initialized) return;
+    initialized = true;
+
     const form = $.promptForm;
     const input = $.promptInput;
 
-    const cancelHalf = document.getElementById("cancel-half");
-    cancelHalf?.addEventListener("click", (e: MouseEvent) => {
+    // Cache DOM references for applyButtonState.
+    this.cancelHalf = document.getElementById("cancel-half");
+    this.divider = document.querySelector(".send-divider");
+    this.sendWrap = document.getElementById("send-wrap");
+
+    this.cancelHalf?.addEventListener("click", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (this.state.kind === "busy") onCancel();
@@ -140,7 +151,7 @@ class PromptInputController {
         this.exitCycling();
       }
 
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
         form.dispatchEvent(new Event("submit"));
         return;
@@ -169,13 +180,12 @@ class PromptInputController {
 
       if (e.key === "Escape" && this.idx !== -1) {
         e.preventDefault();
+        e.stopPropagation();
         const d = this.draft;
         this.exitCycling();
         this.setInputValue(input, d);
         return;
       }
-
-      if (this.idx !== -1 && !e.metaKey && !e.ctrlKey && !e.altKey) this.exitCycling();
     });
 
     input.addEventListener("input", () => { if (this.idx !== -1) this.exitCycling(); });

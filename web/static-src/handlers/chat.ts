@@ -23,8 +23,12 @@ onSSE("chat_deleted", (_chatID, p) => {
     // removed synchronously by the close button's click handler; hasTab
     // is false and closeTab is a no-op. On a second device this is the
     // only path that removes the stale tab.
-    if (hasTab(p.id)) closeTab(p.id);
+    if (hasTab(p.id)) closeTab(p.id, { skipOnClose: true });
     removeChat(p.id);
     void import("../conflicts.js").then((m) => m.clearConflicts(p.id));
+    // Drop any banners for the deleted chat — otherwise their
+    // BannerEntry objects + dismissed_banners localStorage entries
+    // accumulate over a long session.
+    void import("../banner-stack.js").then((m) => m.clearBannersForChat(p.id));
   }
 });

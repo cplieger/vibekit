@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Styled tooltip system: replaces bare `title` attributes with positioned,
-// delay-aware tooltips. First tooltip in a group delays 300ms; subsequent
+// delay-aware tooltips. First tooltip in a group delays 1000ms; subsequent
 // peers show instantly while the group is "warm" (500ms cooldown).
 //
 // Uses pointerover/pointerout (which bubble) rather than
@@ -23,6 +23,11 @@ type TooltipState =
 const DELAY_COLD = 1000;
 const DELAY_WARM = 0;
 const COOLDOWN = 500;
+
+// Module-level counter for unique tooltip element ids (used as the
+// target of aria-describedby on the anchor). Resets only on full
+// page reload — tooltips are short-lived so collision risk is nil.
+let tipIDSeq = 0;
 
 class TooltipController {
   private state: TooltipState = { kind: "idle" };
@@ -68,21 +73,28 @@ class TooltipController {
     if (this.state.kind === "visible" && this.state.anchor !== target) return;
     if (this.state.kind === "idle" || this.state.kind === "fading") return;
 
-    const pe = e as PointerEvent;
-    const related = pe.relatedTarget;
+    const pe = e as Event & { relatedTarget?: EventTarget | null };
+    const related = pe.relatedTarget ?? null;
     if (related instanceof Node && target.contains(related)) return;
 
     this.hide();
   }
 
   private show(anchor: HTMLElement, text: string): void {
+    if (!anchor.isConnected) { this.state = { kind: "idle" }; return; }
     this.teardown();
 
     const tip = document.createElement("div");
     tip.className = "vk-tooltip";
     tip.textContent = text;
     tip.setAttribute("role", "tooltip");
+    // Generate a unique id so screen readers can associate the
+    // tooltip with the anchor via aria-describedby. Without this the
+    // tooltip is purely visual — AT users never hear the content.
+    const tipID = `vk-tip-${++tipIDSeq}`;
+    tip.id = tipID;
     document.body.appendChild(tip);
+    anchor.setAttribute("aria-describedby", tipID);
 
     const rect = anchor.getBoundingClientRect();
     const tipRect = tip.getBoundingClientRect();
@@ -97,6 +109,8 @@ class TooltipController {
     tip.style.top = `${String(top)}px`;
 
     this.state = { kind: "visible", anchor, tip };
+    // Warm window covers DELAY_COLD so hovering a sibling anchor shows instantly
+    // (cross-anchor transition). The hide() assignments reset to true COOLDOWN.
     this.warmUntil = Date.now() + COOLDOWN + DELAY_COLD;
   }
 
@@ -110,6 +124,9 @@ class TooltipController {
 
     if (this.state.kind === "visible") {
       const tip = this.state.tip;
+      // Drop the aria-describedby pointer before fade so AT doesn't
+      // re-announce the tooltip while it animates out.
+      this.state.anchor.removeAttribute("aria-describedby");
       tip.classList.add("fading-out");
       this.state = { kind: "fading", tip };
 
@@ -135,6 +152,7 @@ class TooltipController {
         clearTimeout(this.state.timer);
         break;
       case "visible":
+        this.state.anchor.removeAttribute("aria-describedby");
         this.state.tip.remove();
         break;
       case "fading":
@@ -147,6 +165,10 @@ class TooltipController {
 
 const instance = new TooltipController();
 
+let initialized = false;
+
 export function initTooltips(): void {
+  if (initialized) return;
+  initialized = true;
   instance.init();
 }

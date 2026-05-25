@@ -15,6 +15,7 @@ import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
 import { apiGet } from "./api-client.js";
 import type { AvailableCommand } from "./types.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
 interface OptionEntry {
   label: string;
@@ -44,12 +45,23 @@ class CommandsMenuController {
   private optionsTimer: ReturnType<typeof setTimeout> | undefined;
   private optionsAbort: AbortController | undefined;
   private cachedItems: PopoverItem[] = [];
+  private blurTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Tracks whether the popover is showing stage-2 (arg completion). */
+  private stage2Command: string | null = null;
+  private initialized = false;
 
   init(): void {
+    if (this.popover === null || !document.body.contains(this.popover)) {
+      this.popover = this.buildPopover();
+    }
+
+    if (this.initialized) return;
+    this.initialized = true;
+
     const input = $.promptInput;
-    this.popover = this.buildPopover();
 
     input.addEventListener("input", () => {
+      this.clearBlurTimer();
       const val = input.value;
       if (!val.startsWith("/")) {
         this.closePopover();
@@ -76,12 +88,14 @@ class CommandsMenuController {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
+          e.stopImmediatePropagation();
           if (items.length === 0) return;
           this.selectedIndex = (this.selectedIndex + 1) % items.length;
           this.renderSelection();
           break;
         case "ArrowUp":
           e.preventDefault();
+          e.stopImmediatePropagation();
           if (items.length === 0) return;
           this.selectedIndex = (this.selectedIndex - 1 + items.length) % items.length;
           this.renderSelection();
@@ -90,18 +104,35 @@ class CommandsMenuController {
         case "Enter":
           if (items.length === 0) return;
           e.preventDefault();
-          this.acceptItem(items[this.selectedIndex] as PopoverItem);
+          e.stopImmediatePropagation();
+          if (this.stage2Command !== null) {
+            this.acceptOption(this.stage2Command, items[this.selectedIndex]!.name);
+          } else {
+            this.acceptItem(items[this.selectedIndex] as PopoverItem);
+          }
           break;
         case "Escape":
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
           this.closePopover();
           this.cancelOptions();
           break;
       }
     });
 
+    input.addEventListener("focus", () => { this.clearBlurTimer(); });
+
     input.addEventListener("blur", () => {
-      setTimeout(() => { this.closePopover(); this.cancelOptions(); }, 120);
+      this.blurTimer = setTimeout(() => { this.closePopover(); this.cancelOptions(); }, 120);
     });
+  }
+
+  private clearBlurTimer(): void {
+    if (this.blurTimer !== undefined) {
+      clearTimeout(this.blurTimer);
+      this.blurTimer = undefined;
+    }
   }
 
   // --- Stage 2: arg completion ---
@@ -124,16 +155,22 @@ class CommandsMenuController {
     }
   }
 
+  /** Public hook for global cleanup. */
+  cancelLoad(): void { this.cancelOptions(); }
+
   private async fetchOptions(command: string, partial: string): Promise<void> {
     const chatID = getActiveId();
     if (chatID === "") return;
     this.optionsAbort = new AbortController();
-    const signal = AbortSignal.any([this.optionsAbort.signal, AbortSignal.timeout(5000)]);
+    const myCtrl = this.optionsAbort;
+    const signal = AbortSignal.any([myCtrl.signal, AbortSignal.timeout(5000)]);
     const url = `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
       + `&command=${encodeURIComponent(command)}`
       + `&partial=${encodeURIComponent(partial)}`;
     const d = await apiGet<{ options: OptionEntry[] }>(url, signal);
-    if (d === null || d.options.length === 0) {
+    if (myCtrl !== this.optionsAbort) return; // stale
+    if (chatID !== getActiveId()) return;
+    if (d === null || !Array.isArray(d.options) || d.options.length === 0) {
       this.closePopover();
       return;
     }
@@ -144,12 +181,14 @@ class CommandsMenuController {
     if (this.popover === null) return;
     this.isOpen = true;
     this.selectedIndex = 0;
+    this.stage2Command = command;
     // Cache option items as PopoverItems for keydown handler.
     this.cachedItems = options.map((opt) => ({
       name: opt.label,
       description: opt.description ?? "",
     }));
     this.popover.classList.remove("hidden");
+    this.popover.setAttribute("aria-label", `Options for ${command}`);
     this.popover.innerHTML = "";
     options.forEach((opt, i) => {
       const row = buildPopoverRow({
@@ -158,6 +197,7 @@ class CommandsMenuController {
         onClick: () => this.acceptOption(command, opt.label),
         index: i,
       });
+      row.id = `cmd-opt-${i}`;
       this.popover?.appendChild(row);
     });
     this.renderSelection();
@@ -191,6 +231,7 @@ class CommandsMenuController {
     }
     this.isOpen = true;
     this.selectedIndex = 0;
+    this.stage2Command = null;
     this.cachedItems = items;
     this.popover.classList.remove("hidden");
     this.popover.innerHTML = "";
@@ -228,6 +269,7 @@ class CommandsMenuController {
     this.popover.classList.add("hidden");
     this.isOpen = false;
     this.cachedItems = [];
+    this.stage2Command = null;
   }
 
   private filterAll(filter: string): PopoverItem[] {
@@ -293,6 +335,7 @@ function buildPopoverRow(opts: PopoverRowOpts): HTMLButtonElement {
 // ---------------------------------------------------------------------------
 
 const controller = new CommandsMenuController();
+registerCleanup(() => controller.cancelLoad());
 
 export function initCommandsMenu(): void {
   controller.init();

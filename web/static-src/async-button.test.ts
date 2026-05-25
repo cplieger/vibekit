@@ -118,10 +118,8 @@ describe("withAsyncFeedback", () => {
     const work = Promise.resolve();
     btn.remove();
     await expect(withAsyncFeedback(btn, () => work)).resolves.toBeUndefined();
-    // No status on a detached button — we early-returned after fn.
-    expect(btn.dataset["asyncStatus"]).toBe("pending");
-    // Subsequent reset timer is a no-op for the detached node, so
-    // the dataset is left as 'pending'. That's fine because the
-    // node is gone from the user-visible DOM anyway.
+    // Detached button gets cleaned up: aria-busy removed, asyncStatus cleared.
+    expect(btn.dataset["asyncStatus"]).toBeUndefined();
+    expect(btn.getAttribute("aria-busy")).toBeNull();
   });
 });

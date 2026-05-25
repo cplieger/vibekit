@@ -16,6 +16,27 @@
 
 .git-tab-toolbar .tool-form-input { flex: 1; min-width: 0; }
 
+/* Filter input wrapper: positions a small magnifier SVG inside the
+ * input on the leading side. The input gets extra padding-inline-start
+ * so the typed text doesn't overlap the icon. */
+.git-tab-filter-wrap {
+  position: relative;
+  flex: 1; min-width: 0;
+  display: flex; align-items: center;
+}
+
+.git-tab-filter-icon {
+  position: absolute;
+  inset-inline-start: var(--sp-3);
+  color: var(--c-text-tertiary);
+  pointer-events: none;
+}
+
+.git-tab-filter-wrap .tool-form-input {
+  width: 100%;
+  padding-inline-start: calc(var(--sp-3) + 14px + var(--sp-2));
+}
+
 .git-tab-toolbar .icon-btn {
   width: 32px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -26,20 +47,54 @@
 .git-multirepo-mount {
   display: flex; flex-direction: column; gap: var(--sp-2);
   padding-block-end: var(--sp-3);
+  flex: 1; min-height: 0;
 }
 
-.git-multirepo-empty,
-.git-multirepo-error {
-  padding: var(--sp-4);
+/* Centered empty state: fills the available vertical space below the
+ * tab toolbar so the icon + message sit at the visual center of the
+ * tab body, not stuck at the top. */
+.git-multirepo-empty {
+  flex: 1;
+  min-height: 30vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4);
   text-align: center;
   color: var(--c-text-tertiary);
   border: 1px dashed var(--c-border);
   border-radius: var(--r);
-  font-size: var(--fs-sm);
 }
 
+.git-multirepo-empty-icon {
+  display: inline-flex;
+  color: var(--c-text-tertiary);
+  opacity: 0.7;
+}
+
+.git-multirepo-empty-icon svg {
+  width: 48px; height: 48px;
+}
+
+.git-multirepo-empty-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-secondary);
+}
+
+.git-multirepo-empty-hint {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.git-multirepo-empty-hint strong { color: var(--c-text-secondary); }
+
 .git-multirepo-error {
-  border-color: color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  padding: var(--sp-4);
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
   color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
 }
 
@@ -64,8 +119,59 @@
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
+/* Variant used in the PRs tab: the header is a flex row containing
+ * a click-to-toggle button on the left and a right-aligned action
+ * button (e.g. + New PR) that doesn't toggle. The header element
+ * itself is a div in that case (not a button), since we can't nest
+ * buttons. */
+.git-repo-section-header-row {
+  cursor: default;
+  padding: 0;
+}
+
+.git-repo-section-header-row:hover { background: transparent; }
+
+.git-repo-section-header-toggle {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: transparent;
+  border: 0;
+  font: inherit; color: inherit;
+  cursor: pointer;
+  text-align: start;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.git-repo-section-header-toggle:hover { background: var(--c-bg-secondary); }
+
+.git-repo-section-header-row > .btn-small {
+  margin-inline-end: var(--sp-3);
+  flex-shrink: 0;
+}
+
+/* Forge icon (GH octocat / GL tanuki / etc.) inside the section
+ * header. Replaces the host text ("github.com · ...") so the row
+ * reads visually instead of textually. */
+.git-repo-section-forge-icon {
+  display: inline-flex; align-items: center;
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+}
+
+.git-repo-section-forge-icon svg { width: 14px; height: 14px; }
+
+.git-repo-section-forge-github   svg { fill: var(--c-text-primary); }
+.git-repo-section-forge-gitlab   svg { fill: #fc6d26; }
+.git-repo-section-forge-codeberg svg { fill: #2185d0; }
+.git-repo-section-forge-gitea    svg { fill: #609926; }
+
 .git-repo-section.expanded > .git-repo-section-header {
   border-bottom-color: var(--c-border);
+}
+
+.git-repo-section.expanded > .git-repo-section-header-row {
+  border-bottom: 1px solid var(--c-border);
 }
 
 .git-repo-section-header:hover { background: var(--c-bg-secondary); }
@@ -76,7 +182,7 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
-.git-repo-section.expanded > .git-repo-section-header > .git-repo-section-chevron {
+.git-repo-section.expanded .git-repo-section-chevron {
   transform: rotate(90deg);
 }
 
@@ -401,11 +507,17 @@
   text-decoration: none;
 }
 
+.git-pr-row-number:hover { text-decoration: underline; }
+
 .git-pr-row-title {
   font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1; min-width: 0;
+  color: var(--c-text-primary);
+  text-decoration: none;
 }
+
+a.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
 
 .git-pr-row-tag {
   font-size: var(--fs-xs);
@@ -426,82 +538,33 @@
   align-items: center;
 }
 
-/* Sources tab */
+/* Sources tab: bare mount, the rest of the layout comes from
+ * forge-auth.ts (forge-kind-section + per-account collapsible repos).
+ * The .git-sources-cloned-dot rule below is reused by forge-auth's
+ * per-repo state indicator, so we keep it here in the multirepo
+ * stylesheet rather than fragmenting the colour token usage. */
 .git-sources-mount {
   display: flex; flex-direction: column;
   gap: var(--sp-4);
   padding-block: var(--sp-2);
 }
 
-.git-sources-repos {
-  display: flex; flex-direction: column;
-  gap: var(--sp-2);
-  padding-block-start: var(--sp-2);
-  border-block-start: 1px dashed var(--c-border);
-}
-
-.git-sources-repos-heading {
-  margin: 0;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--c-text-secondary);
-}
-
-.git-sources-repo-list {
-  list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column;
-  gap: 1px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  overflow: hidden;
-}
-
-.git-sources-repo-empty {
-  padding: var(--sp-3) var(--sp-4);
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
-
-.git-sources-repo-row {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-primary);
-}
-
-.git-sources-repo-row.cloned .git-sources-repo-name {
-  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 75%, var(--c-text-primary));
-}
-
-.git-sources-repo-state {
-  width: 18px;
-  display: inline-flex; align-items: center; justify-content: center;
+/* Cloned indicator: tiny green circle with the same vk-ping ripple
+ * the sidebar status-dot uses when connected. The ::after layer
+ * pings every 4s on top of the static dot. */
+.git-sources-cloned-dot {
+  position: relative;
+  display: inline-block;
+  width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: var(--c-green);
   flex-shrink: 0;
-  color: var(--c-text-tertiary);
 }
 
-.git-sources-repo-state svg { width: 14px; height: 14px; }
-.repo-picker-state-synced { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); font-weight: 600; }
-
-.git-sources-repo-identity {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
-  gap: 1px;
-}
-
-.git-sources-repo-name {
-  font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.git-sources-repo-meta {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.git-sources-repo-actions {
-  display: flex; align-items: center; gap: var(--sp-1);
-  flex-shrink: 0;
+.git-sources-cloned-dot::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: var(--c-green);
+  animation: vk-ping 4s ease-out infinite;
 }

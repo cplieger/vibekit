@@ -13,8 +13,8 @@
 
 import type { PlanEntry } from "./types.js";
 import { apiPutOrError, apiDelete } from "./api-client.js";
-import { sendPromptTo } from "./chat-commands.js";
 import { showBanner } from "./banner-stack.js";
+import { runPlanAction } from "./actions/messages.js";
 
 /** Serialize a plan into markdown suitable for the draft file + prompt
  *  body. High-priority items are marked inline so the agent sees them. */
@@ -67,9 +67,10 @@ async function deletePlanDraft(chatID: string): Promise<void> {
  *  tangent landed between the Edit and Send clicks), the draft stays
  *  on disk so the user's work survives the failure and they can retry
  *  from the editor. */
-export async function runPlan(chatID: string, content: string): Promise<void> {
-  if (chatID === "" || content.trim() === "") return;
-  const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
-  if (result === "failed") return;
+export async function runPlan(chatID: string, content: string): Promise<boolean> {
+  if (chatID === "" || content.trim() === "") return false;
+  const result = await runPlanAction.dispatch({ chatID, content });
+  if (result === null) return false;
   await deletePlanDraft(chatID);
+  return true;
 }

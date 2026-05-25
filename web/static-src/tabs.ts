@@ -109,7 +109,8 @@ function subscribe(fn: Subscriber): () => void {
 export function openTab(spec: TabSpec): void {
   const idx = state.tabs.findIndex((t) => t.id === spec.id);
   if (idx >= 0) {
-    // Callbacks may have changed; swap them in.
+    // Tab already open — only callbacks (onShow/onClose) are updated;
+    // name, kind, view, and route remain unchanged from the original open.
     state.tabs[idx] = { ...state.tabs[idx]!, onShow: spec.onShow, onClose: spec.onClose };
     activateTab(spec.id);
     return;
@@ -128,12 +129,14 @@ export function activateTab(id: string): void {
   callbacks.onActivate?.(id);
 }
 
-/** Close a tab. Activates the neighbor or fires onEmpty if none remain. */
-export function closeTab(id: string): void {
+/** Close a tab. Activates the neighbor or fires onEmpty if none remain.
+ *  Pass `{ skipOnClose: true }` when the chat is already deleted remotely
+ *  to avoid re-dispatching archive/delete actions against a stale session. */
+export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const tab = state.tabs[idx]!;
-  tab.onClose?.();
+  if (!opts?.skipOnClose) tab.onClose?.();
   state.tabs.splice(idx, 1);
 
   if (state.active === id) {
@@ -142,6 +145,7 @@ export function closeTab(id: string): void {
       state.active = next.id;
       emit();
       next.onShow?.();
+      callbacks.onActivate?.(next.id);
     } else {
       state.active = "";
       emit();
@@ -162,7 +166,7 @@ export function renameTab(id: string, name: string): void {
 /** Set a status indicator on a tab: "thinking" (pulsing accent dot),
  *  "permission" (amber dot), or "" to clear. */
 export function setTabStatus(id: string, status: "" | "thinking" | "permission"): void {
-  const el = document.querySelector(`[data-tab-id="${id}"] .tab-status-dot`) as HTMLElement | null;
+  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`) as HTMLElement | null;
   if (el === null) return;
   el.classList.toggle("hidden", status === "");
   el.classList.toggle("tab-dot-thinking", status === "thinking");
@@ -203,22 +207,41 @@ function scheduleEmpty(): void {
   }, 500);
 }
 
-// Clear empty timer on any activation.
-subscribe(() => {
-  if (state.active !== "" && internal.emptyTimer !== null) {
-    clearTimeout(internal.emptyTimer);
-    internal.emptyTimer = null;
-  }
-});
-
-// --- Persistence (subscriber) ---
-
-subscribe(() => {
-  uiState.save({
-    tab_order: state.tabs.map((t) => t.id),
-    active_view: state.active,
+/** Register module-level subscribers. Extracted into a function so
+ *  _resetForTest can re-register them after clearing the subscriber set. */
+function registerModuleSubscribers(): void {
+  // Clear empty timer on any activation.
+  subscribe(() => {
+    if (state.active !== "" && internal.emptyTimer !== null) {
+      clearTimeout(internal.emptyTimer);
+      internal.emptyTimer = null;
+    }
   });
-});
+
+  // Persistence.
+  subscribe(() => {
+    uiState.save({
+      tab_order: state.tabs.map((t) => t.id),
+      active_view: state.active,
+    });
+  });
+
+  // View / route sync.
+  subscribe((s) => {
+    const active = s.tabs.find((t) => t.id === s.active);
+    if (active !== undefined) showView(active);
+    else syncSidebarButtons(null);
+  });
+
+  // DOM rendering.
+  subscribe(() => {
+    if (internal.renderQueued) return;
+    internal.renderQueued = true;
+    requestAnimationFrame(() => { internal.renderQueued = false; renderDOM(); });
+  });
+}
+
+registerModuleSubscribers();
 
 /** Restore tabs to match saved order and active ID. Called once at startup
  *  after modules have registered their tabs. */
@@ -259,9 +282,12 @@ function viewTransition(fn: () => void): void {
   if (!document.startViewTransition) { fn(); return; }
   const run = (): void => {
     const t = document.startViewTransition(fn);
-    internal.vtPending = t.finished.then(() => { internal.vtPending = null; });
+    // Chain catch on the stored promise so its rejection is handled
+    // even if `t.finished` rejects (browsers can skip transitions).
+    internal.vtPending = t.finished
+      .then(() => { internal.vtPending = null; })
+      .catch(() => { internal.vtPending = null; });
     t.ready.catch(() => {});
-    t.finished.catch(() => { internal.vtPending = null; });
   };
   if (internal.vtPending !== null) void internal.vtPending.then(run);
   else run();
@@ -285,20 +311,6 @@ function showView(tab: TabSpec): void {
 
   pushRoute(tab.route);
 }
-
-subscribe((s) => {
-  const active = s.tabs.find((t) => t.id === s.active);
-  if (active !== undefined) showView(active);
-  else syncSidebarButtons(null);
-});
-
-// --- DOM rendering (subscriber) ---
-
-subscribe(() => {
-  if (internal.renderQueued) return;
-  internal.renderQueued = true;
-  requestAnimationFrame(() => { internal.renderQueued = false; renderDOM(); });
-});
 
 function renderDOM(): void {
   const list = $.tabList;
@@ -512,4 +524,7 @@ export function _resetForTest(): void {
   internal.vtPending = null;
   internal.renderQueued = false;
   subscribers.clear();
+  // Re-register module-level subscribers so tests observe the same
+  // side-effects (persistence, view sync, DOM render) as production.
+  registerModuleSubscribers();
 }

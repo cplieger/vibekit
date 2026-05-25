@@ -24,9 +24,12 @@ export default defineConfig({
     // modules (no Prisma, bcrypt, canvas).
     pool: "threads",
 
-    // Disable test isolation: pure functions have no side effects, so
-    // isolation adds overhead with no benefit.
-    isolate: false,
+    // Test isolation: each test file runs with its own module graph.
+    // We previously had isolate:false for speed, but action test files
+    // use vi.mock() which pollutes other files in the same worker
+    // (e.g. chat-delete.test.ts mocks ../transport.js, leaking into
+    // transport.test.ts). The performance delta is ~0.5s; correctness wins.
+    isolate: true,
 
     // Test files co-located with source, named *.test.ts
     include: ["**/*.test.ts"],

@@ -18,9 +18,11 @@ import { scroll, trimOldMessages } from "./scroll.js";
 import { breakToolGroup } from "./tool-group.js";
 import { buildToolCard } from "./tool-card.js";
 import { isToolActive } from "./tool-schema.js";
-import * as transport from "./transport.js";
 import { getActiveId } from "./store.js";
+import { sendMessage } from "./actions/crew.js";
+import { bindLoadingState } from "./actions/index.js";
 import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
+import { formatToolActivity } from "./format-tool-activity.js";
 
 const cards = new Map<string, HTMLDivElement>();
 const cardState = new WeakMap<HTMLDivElement, string>();
@@ -38,6 +40,8 @@ const crewToolEls = new Map<string, HTMLDivElement>();
 const activityEls = new Map<string, HTMLSpanElement>();
 // Per-subagent pending-approval state.
 const pendingApprovals = new Set<string>();
+// Track bindLoadingState unbind functions so they are drained on rebuild.
+const loadingUnbinds: Array<() => void> = [];
 
 /** Update the collapsed-row activity line for a subagent. Called when
  *  a tool call arrives, updates, or a permission is requested. */
@@ -182,8 +186,20 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   const sig = signature(crew);
   if (cardState.get(el) === sig) return;
   cardState.set(el, sig);
+  // Drain previous bindLoadingState unbinds before rebuilding.
+  for (const fn of loadingUnbinds) fn();
+  loadingUnbinds.length = 0;
   const body = el.querySelector(".crew-body") as HTMLDivElement;
   const count = el.querySelector(".crew-count") as HTMLSpanElement;
+
+  // Capture draft input values before destroying rows.
+  const drafts = new Map<string, string>();
+  for (const input of body.querySelectorAll<HTMLInputElement>(".crew-msg-field")) {
+    const row = input.closest<HTMLDivElement>(".crew-row");
+    const sid = row?.dataset["sessionId"];
+    if (sid !== undefined && input.value !== "") drafts.set(sid, input.value);
+  }
+
   body.replaceChildren();
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
@@ -207,6 +223,13 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   }
   for (const ps of crew.pending_stages ?? []) {
     body.appendChild(buildPendingRow(ps));
+  }
+
+  // Restore draft input values.
+  for (const [sid, val] of drafts) {
+    const row = body.querySelector<HTMLDivElement>(`.crew-row[data-session-id="${CSS.escape(sid)}"]`);
+    const input = row?.querySelector<HTMLInputElement>(".crew-msg-field");
+    if (input !== undefined && input !== null) input.value = val;
   }
 }
 
@@ -331,17 +354,17 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.className = "crew-msg-send";
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
+  loadingUnbinds.push(bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
     if (text === "") return;
     const chatID = getActiveId();
     if (chatID === "") return;
-    void transport.send({
-      type: "message_subagent",
-      chat_id: chatID,
-      payload: { sub_session_id: sub.session_id, text },
-    });
+    const saved = input.value;
     input.value = "";
+    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }).then((result) => {
+      if (result === null) input.value = saved;
+    });
   };
   sendBtn.addEventListener("click", doSend);
   input.addEventListener("keydown", (e) => {
@@ -426,12 +449,7 @@ function getOrCreateToolContainer(
 }
 
 
-/** Format a tool title for the collapsed-row activity line.
- *  Strips "Running: " prefix and truncates to 50 chars. */
-export function formatToolActivity(title: string): string {
-  const clean = title.startsWith("Running: ") ? title.slice(9) : title;
-  return clean.length > 50 ? clean.slice(0, 47) + "\u2026" : clean;
-}
+export { formatToolActivity } from "./format-tool-activity.js";
 
 /** Update the activity line when a tool call completes. Called from
  *  messages.ts updateToolCall after propagating to the crew-row clone. */

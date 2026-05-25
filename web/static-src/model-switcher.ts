@@ -5,7 +5,7 @@
 // empty chat, idle, mid-turn queue).
 // ---------------------------------------------------------------------------
 
-import { getActive, getActiveId, isThinking, contextSizeFor } from "./store.js";
+import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./store.js";
 import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
@@ -17,10 +17,11 @@ import {
 } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { bindLoadingState } from "./actions/index.js";
 
 type QueueState =
   | { status: "idle" }
-  | { status: "queued"; modelID: string }
+  | { status: "queued"; modelID: string; chatID: string }
   | { status: "switching"; modelID: string };
 
 class ModelSwitchController {
@@ -40,7 +41,8 @@ class ModelSwitchController {
         this.renderCondensedList();
       },
     });
-    onBus(BUS_TURN_IDLE, () => this.drainQueue());
+    bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
+    onBus(BUS_TURN_IDLE, (chatID: string) => this.drainQueue(chatID));
   }
 
   private openRichPicker(): void {
@@ -110,31 +112,31 @@ class ModelSwitchController {
 
   private async fire(chatID: string, modelID: string): Promise<void> {
     this.queueState = { status: "switching", modelID };
-    $.switchModelBtn.classList.add("switching");
     try {
       await switchModel(chatID, modelID);
     } finally {
       if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
         this.queueState = { status: "idle" };
       }
-      $.switchModelBtn.classList.remove("switching");
     }
   }
 
   private enqueue(modelID: string): void {
-    this.queueState = { status: "queued", modelID };
+    const chatID = getActiveId();
+    this.queueState = { status: "queued", modelID, chatID };
     $.switchModelBtn.classList.add("pending");
     $.switchModelBtn.setAttribute("data-tooltip", `Switch to ${humanName(modelID)} after current turn`);
   }
 
-  private drainQueue(): void {
+  private drainQueue(idleChatID: string): void {
     if (this.queueState.status !== "queued") return;
-    const modelID = this.queueState.modelID;
+    if (this.queueState.chatID !== idleChatID) return;
+    const { modelID, chatID } = this.queueState;
     this.queueState = { status: "idle" };
     $.switchModelBtn.classList.remove("pending");
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
-    if (getActiveId() === "") return;
-    void this.fire(getActiveId(), modelID);
+    if (chatID === "") return;
+    void this.fire(chatID, modelID);
   }
 }
 
@@ -149,7 +151,7 @@ export function applyLocalModel(modelID: string): void {
   setLastModel(modelID);
   const session = getActive();
   if (session !== undefined) {
-    session.model = modelID;
+    setModel(session.id, modelID);
     session.usage.context_size = contextSizeFor(modelID);
     refreshContextUI(session);
   }

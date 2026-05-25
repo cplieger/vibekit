@@ -8,13 +8,12 @@
 
 import {
   getActiveId, getActive, get, getSessions, setActive,
-  loadList, loadMessages, upsertHeader, dequeuePrompt,
-  contextSizeFor, defaultUsage, version,
+  loadList, loadMessages, upsertHeader,
+  contextSizeFor, defaultUsage, version, removeChat,
 } from "./store.js";
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";
-import * as transport from "./transport.js";
 import { sendPromptTo } from "./chat-commands.js";
 import {
   openTab, activateTab, hasTab, getActiveTabId, renameTab, setTabStatus, TAB_VIEWS,
@@ -31,9 +30,10 @@ import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
 import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
-import { apiPost } from "./api-client.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
+import { error as toastError } from "./toast.js";
+import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -61,26 +61,49 @@ export function openChatTab(id: string, name: string, agent: string): void {
       // / other devices clean up via handlers/chat.ts.
       const s = get(id);
       if (s?.is_tangent === true) {
-        void transport.send({ type: "discard_tangent", chat_id: id });
+        // If discard fails, the parent chat stays frozen. Surface via
+        // toast so the user knows the parent is stuck and can retry.
+        // We do NOT call setLastError here — that's global and would
+        // block the send button on whatever chat is currently active.
+        void discardTangentAction.dispatch(id).then((r) => {
+          if (r === null) {
+            toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
+          }
+        });
         return;
       }
       // Retention > 0: archive so the chat appears in History.
       // Retention = 0: delete permanently (no history).
+      // Zero-message chats were never persisted server-side — just
+      // remove locally without hitting the server.
       if (isRetentionEnabled()) {
         archiveChat(id);
       } else {
-        deleteChat(id);
+        if (s !== undefined && s.message_count === 0) {
+          removeChat(id);
+        } else {
+          deleteChat(id);
+        }
       }
     },
   });
 }
 
 /** Archive a chat (move to archive dir). Used on tab close instead of
- *  delete so the chat appears in History for the retention window. */
+ *  delete so the chat appears in History for the retention window.
+ *  Zero-message chats (freshly created, never used) are removed locally
+ *  without hitting the server — the server has no persisted session to
+ *  archive and would 500. */
 function archiveChat(id: string): void {
-  void apiPost(`/api/chats/${encodeURIComponent(id)}/archive`);
-  // Store is updated when the server broadcasts chat_deleted (archive
-  // triggers the same SSE event so the sidebar removes the tab).
+  const s = get(id);
+  if (s === undefined) return;
+  if (s.message_count === 0) {
+    removeChat(id);
+    return;
+  }
+  void archiveChatAction.dispatch(id);
+  // Optimistic: store is updated immediately by the action's optimistic().
+  // SSE chat_deleted will fire later but removeChat is a no-op (already gone).
 }
 
 export function activateChatView(id: string): void {
@@ -145,6 +168,10 @@ function setupLoadMore(chatID: string): void {
     session.has_more ? (): void => {
       const oldest = session.messages[0];
       if (oldest === undefined) return;
+      // prevCount is captured before the async loadMessages call. If another
+      // source appends messages concurrently, `added` may be slightly off.
+      // This is acceptable: the worst case is a harmless extra prepend of
+      // already-rendered messages, and setupLoadMore re-runs immediately after.
       const prevCount = session.messages.length;
       void loadMessages(chatID, oldest.ts).then(() => {
         if (getActiveId() !== chatID) return;
@@ -168,14 +195,7 @@ export function sendPrompt(text: string): void {
   void sendPromptTo(chatID, text);
 }
 
-/** Drain the single-slot queued prompt for `chatID` if any. Called from
- *  the turn_ended handler. Safe to call when the queue is empty. */
-export function drainQueuedPrompt(chatID: string): void {
-  const text = dequeuePrompt(chatID);
-  if (text === undefined) return;
-  void sendPromptTo(chatID, text);
-  // Remaining queued messages will drain on subsequent turn_ended events.
-}
+
 
 // --- Session lifecycle ---
 
@@ -185,6 +205,8 @@ export function createSession(initialPrompt?: string): void {
   const id = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
   const model = getLastModel();
   const agent = getCurrentAgent();
+  // Template for upsertHeader + initial render; only the header fields
+  // matter — the rest are defaults satisfying the Session type.
   const session: Session = {
     id, name: "New conversation", agent, model,
     acp_session_id: "",
@@ -243,10 +265,10 @@ export function attachPathToActiveChat(path: string): void {
   $.promptInput.focus();
 }
 
-/** User-triggered chat deletion. */
+/** User-triggered chat deletion. Optimistic: store is updated
+ *  immediately; SSE chat_deleted is a no-op (already removed). */
 export function deleteChat(id: string): void {
-  void transport.send({ type: "delete_chat", chat_id: id });
-  // Store is updated when chat_deleted SSE echoes back.
+  void deleteChatAction.dispatch(id);
 }
 
 /** Export a chat as a downloadable JSON file. Caller must guarantee
@@ -274,8 +296,8 @@ export function exportChat(id: string): void {
  *  on the conversation they just resurrected instead of having to
  *  find it in the sidebar. */
 export function restoreArchivedChat(id: string): void {
-  void apiPost<{ ok: boolean }>("/api/chats/archived", { id }).then((d) => {
-    if (d?.ok !== true) return;
+  void restoreChatAction.dispatch(id).then((d) => {
+    if (d === null || d.ok !== true) return;
     void loadList().then(() => {
       const s = get(id);
       if (s === undefined) return;

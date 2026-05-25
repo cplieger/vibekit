@@ -14,6 +14,7 @@ import { emitBus, BUS_TURN_IDLE } from "./bus.js";
 
 const CONTEXT_RESERVE_TOKENS = 16_000;
 const DEFAULT_CUTOFF_PCT = 95;
+let _prevThinking = false;
 
 export function refreshContextUI(s: Session): void {
   const u = s.usage;
@@ -42,15 +43,13 @@ export function refreshContextUI(s: Session): void {
     : DEFAULT_CUTOFF_PCT;
   const full = u.context_pct >= cutoff;
 
-  if (!s.thinking) {
-    // Notify the switcher (and any future idle consumers). The
-    // context-full guard below is independent — it runs every
-    // refresh regardless of idle state. kiro-cli auto-compacts when
-    // the window fills; we surface that state without blocking input.
+  const isThinking = s.thinking ?? false;
+  if (_prevThinking && !isThinking) {
     emitBus(BUS_TURN_IDLE, s.id);
     setInputDisabled(
       full,
       full ? "Context nearly full. kiro-cli will compact automatically on the next turn." : undefined,
     );
   }
+  _prevThinking = isThinking;
 }

@@ -3,6 +3,8 @@
 // overflow "⋯" trigger. No new dependencies — pure DOM and a single
 // outside-click + Escape handler.
 //
+// TODO: Wire into git toolbar — currently only imported by its own test.
+//
 // Items are passed in declaratively so different surfaces can share
 // the component (today: git toolbar; future: repo-picker row menu,
 // PR-row menu).
@@ -83,20 +85,39 @@ export function openOverflowMenu(
     if (e.key === "Escape") {
       e.stopPropagation();
       closeOverflowMenu();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = root.querySelectorAll<HTMLButtonElement>(".overflow-menu-item:not([aria-disabled='true'])");
+      if (items.length === 0) return;
+      const current = root.querySelector<HTMLButtonElement>(".overflow-menu-item:focus");
+      let idx = current !== null ? Array.from(items).indexOf(current) : -1;
+      idx = e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      items[idx]!.focus();
     }
   };
+  const onScrollOrResize = (): void => { closeOverflowMenu(); };
+
+  // Attach keydown immediately — Escape doesn't need deferral.
+  document.addEventListener("keydown", onKey);
 
   // Defer outside-click attach to next tick so the click that opened
   // the menu doesn't immediately close it (the click still bubbles
   // up to document).
-  setTimeout(() => {
+  const deferTimer = setTimeout(() => {
     document.addEventListener("click", onDocumentClick);
-    document.addEventListener("keydown", onKey);
   }, 0);
 
+  document.addEventListener("scroll", onScrollOrResize, true);
+  window.addEventListener("resize", onScrollOrResize);
+  trigger.setAttribute("aria-expanded", "true");
+
   const cleanup = (): void => {
+    clearTimeout(deferTimer);
     document.removeEventListener("click", onDocumentClick);
     document.removeEventListener("keydown", onKey);
+    document.removeEventListener("scroll", onScrollOrResize, true);
+    window.removeEventListener("resize", onScrollOrResize);
+    trigger.setAttribute("aria-expanded", "false");
     root.remove();
   };
 

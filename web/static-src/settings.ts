@@ -24,15 +24,28 @@ import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet, apiPut, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving, showSaved } from "./save-indicator.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
+import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
+import { runDiagnostics } from "./actions/tools.js";
+import { bindLoadingState } from "./actions/index.js";
+
+// Shared generation counter for kiro-setting saves. Last-write-wins:
+// if two settings change in rapid succession, only the final save
+// updates the indicator. This is acceptable because the indicator is
+// purely cosmetic (each save is independent on the server).
+let kiroSettingGen = 0;
 
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
+/** Fetch settings from server and apply notification state only.
+ *  Used for lightweight re-sync (e.g. after login) without touching
+ *  per-device UI state. Compare with restoreAll() which also restores
+ *  localStorage-based UI (shell, file browser, editor tabs, theme). */
 export async function syncSettings(): Promise<AppSettings> {
   const s = await loadSettings();
   // Seed the dedup tracker BEFORE any code path can fire patchSettings().
@@ -46,7 +59,8 @@ export async function syncSettings(): Promise<AppSettings> {
 }
 
 /** Restore all state: per-device UI from localStorage, global prefs from
- *  the loaded settings payload. Called once at startup. */
+ *  the loaded settings payload. Called once at startup. Unlike syncSettings(),
+ *  this also restores shell, file browser, editor tabs, and theme. */
 export function restoreAll(s: AppSettings): void {
   const ui = uiState.load();
   if (ui.shell_open) restoreShell();
@@ -102,6 +116,7 @@ export function initUI(): void {
 function initSteeringEditor(): void {
   const textarea = $.steeringInput;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let saveGen = 0;
 
   void apiGet<{ content?: string }>("/api/steering").then((d) => {
     if (d?.content !== undefined) textarea.value = d.content;
@@ -111,10 +126,12 @@ function initSteeringEditor(): void {
     clearTimeout(timer);
     showSaving();
     timer = setTimeout(() => {
-      void apiPut("/api/steering", { content: textarea.value }).then((d) => {
-        if (d === null) return;
-        showSaved();
-      });
+      const gen = ++saveGen;
+      void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true })
+        .then((r) => {
+          if (gen !== saveGen) return; // newer save pending, skip indicator update
+          if (r === null) showError(); else showSaved();
+        });
     }, 600);
   });
 }
@@ -123,9 +140,7 @@ function initSteeringEditor(): void {
 
 function initLogoutButton(): void {
   $.logoutBtn.addEventListener("click", () => {
-    void apiPost("/api/logout").then(() => {
-      setUserEmail("");
-    });
+    void logoutAction.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
   });
 }
 
@@ -153,14 +168,12 @@ function initDiagnostics(): void {
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
   if (btn === null || status === null) return;
 
+  bindLoadingState("tools.diagnostics", btn, { pendingClass: "btn-loading" });
+
   btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.classList.add("btn-loading");
     status.hidden = false;
     status.textContent = "Collecting diagnostics\u2026";
-    const out = await apiPost<{ report?: string; error?: string }>("/api/diagnostics", {});
-    btn.disabled = false;
-    btn.classList.remove("btn-loading");
+    const out = await runDiagnostics.dispatch(undefined);
     if (out === null || out.error !== undefined) {
       status.textContent = out?.error ?? "Diagnostics failed. Check server logs.";
       return;
@@ -237,10 +250,13 @@ function initExperimentalToggles(): void {
     if (input === null) continue;
     input.addEventListener("change", () => {
       showSaving();
-      void apiPut("/api/kiro-settings", {
+      const gen = ++kiroSettingGen;
+      void setKiroSettingAction.dispatch({
         key: flag.key,
         value: input.checked ? "true" : "false",
-      }).then(() => showSaved());
+        input,
+      }, { silent: true })
+        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
     });
   }
   initCompactionSettings();
@@ -267,6 +283,15 @@ function initCompactionSettings(): void {
   const inputs = compactionSettings.map(
     (s) => document.getElementById(s.inputID) as HTMLInputElement | null,
   );
+  // Snapshot values on focus so we can pass the true previous value
+  // to the action (before the change event updates the input).
+  const snapshots = new Map<HTMLInputElement, string>();
+  for (let i = 0; i < compactionSettings.length; i++) {
+    const s = compactionSettings[i]!;
+    const input = inputs[i] ?? null;
+    if (input === null || s.isBool) continue;
+    input.addEventListener("focus", () => { snapshots.set(input, input.value); });
+  }
   void Promise.all(
     compactionSettings.map((s) =>
       apiGet<KiroSettingPayload>(`/api/kiro-settings?key=${encodeURIComponent(s.key)}`),
@@ -295,8 +320,17 @@ function initCompactionSettings(): void {
       } else {
         value = input.value;
       }
+      const previousValue = s.isBool ? undefined : snapshots.get(input);
+      if (!s.isBool) snapshots.set(input, input.value);
       showSaving();
-      void apiPut("/api/kiro-settings", { key: s.key, value }).then(() => showSaved());
+      const gen = ++kiroSettingGen;
+      void setKiroSettingAction.dispatch({
+        key: s.key,
+        value,
+        input,
+        ...(previousValue !== undefined ? { previousValue } : {}),
+      }, { silent: true })
+        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
     });
   }
 }
@@ -322,6 +356,6 @@ function initDebugLogsToggle(initial: AppSettings): void {
   if (input === null) return;
   input.checked = initial.debug_logs === true;
   input.addEventListener("change", () => {
-    patchSettings({ debug_logs: input.checked });
+    patchSettings({ debug_logs: input.checked }, input);
   });
 }

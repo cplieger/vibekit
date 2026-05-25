@@ -10,7 +10,8 @@
 import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
-import { fetchKiroSetting } from "./api-client.js";
+import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
+import { registerCleanup } from "./actions/index.js";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
 // --- Context bar controller ---
@@ -31,11 +32,13 @@ export interface ContextBarUpdate {
 
 class ContextBarController {
   private compactionBufferPct = 10;
+  private compactionSlot = new CancellableSlot();
   private contextTickInitialised = false;
   private contextBarQueued = false;
   private contextBarArgs: ContextBarUpdate | null = null;
 
   private async fetchCompactionBuffer(): Promise<void> {
+    const signal = this.compactionSlot.start();
     this.compactionBufferPct = await fetchKiroSetting(
       "compaction.excludeContextWindowPercent",
       (v) => {
@@ -43,7 +46,9 @@ class ContextBarController {
         return (!Number.isNaN(n) && n >= 0 && n <= 100) ? n : null;
       },
       10,
+      signal,
     );
+    if (signal.aborted) return;
     this.positionContextTick();
   }
 
@@ -57,6 +62,10 @@ class ContextBarController {
 
   refreshCompactionThreshold(): void {
     void this.fetchCompactionBuffer();
+  }
+
+  cancelCompactionLoad(): void {
+    this.compactionSlot.abort();
   }
 
   update(opts: ContextBarUpdate): void {
@@ -110,6 +119,7 @@ class ContextBarController {
 }
 
 const contextBar = new ContextBarController();
+registerCleanup(() => contextBar.cancelCompactionLoad());
 
 
 function renderMetering(items: MeteringItem[]): void {

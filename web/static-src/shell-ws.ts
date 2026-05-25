@@ -24,7 +24,7 @@ export interface ShellWSCallbacks {
   onReconnecting(): void;
 }
 
-const encoder = new TextEncoder();
+export const encoder = new TextEncoder();
 
 // ---------------------------------------------------------------------------
 // Discriminated union for connection state — eliminates invalid
@@ -79,6 +79,8 @@ export class ShellWS {
   private callbacks: ShellWSCallbacks | null = null;
   private isActive = false;
   private openWaiters: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  private reconnectAttempt = 0;
+  private connectGen = 0;
 
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
@@ -94,11 +96,13 @@ export class ShellWS {
   async connect(): Promise<void> {
     if (this.state.kind === "connected" || this.state.kind === "connecting") return;
     this.state = { kind: "connecting" };
+    const gen = ++this.connectGen;
 
     let sock: WebSocket;
     try {
       sock = await openSocket();
     } catch {
+      if (this.connectGen !== gen) return;
       this.state = { kind: "idle" };
       if (this.isActive) {
         this.callbacks?.onReconnecting();
@@ -107,7 +111,17 @@ export class ShellWS {
       return;
     }
 
+    // If a newer connect() or disconnect() fired while openSocket was
+    // in-flight, close the newly opened socket and bail.
+    // Note: cast needed because tsgo narrows this.state to "connecting"
+    // from the pre-await assignment, but after await it may have changed.
+    if (this.connectGen !== gen || (this.state as ShellWSState).kind === "closed") {
+      sock.close();
+      return;
+    }
+
     this.state = { kind: "connected", ws: sock };
+    this.reconnectAttempt = 0;
     this.cancelReconnect();
     this.callbacks?.onOpen();
     this.notifySocketOpen();
@@ -142,6 +156,7 @@ export class ShellWS {
   /** Close the WebSocket and cancel any pending reconnect. */
   disconnect(): void {
     this.cancelReconnect();
+    this.reconnectAttempt = 0;
     this.rejectSocketWaiters("shell closed");
     const prevWs = this.state.kind === "connected" ? this.state.ws : null;
     this.state = { kind: "closed", intentional: true };
@@ -200,9 +215,10 @@ export class ShellWS {
 
   private scheduleReconnect(): void {
     this.cancelReconnect();
-    const attempt = this.state.kind === "reconnecting" ? this.state.attempt : 0;
+    const attempt = this.reconnectAttempt;
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
-    this.state = { kind: "reconnecting", attempt: attempt + 1 };
+    this.reconnectAttempt = attempt + 1;
+    this.state = { kind: "reconnecting", attempt };
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.isActive) void this.connect();

@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
+import { registerCleanup } from "./actions/index.js";
 
 class RetentionController {
   private retentionDays = 1;
@@ -29,9 +30,12 @@ class RetentionController {
     if (signal.aborted) return;
     for (const fn of this.listeners) fn();
   }
+
+  cancelLoad(): void { this.refreshSlot.abort(); }
 }
 
 const instance = new RetentionController();
+registerCleanup(() => instance.cancelLoad());
 
 export function isRetentionEnabled(): boolean { return instance.isRetentionEnabled(); }
 export function onRetentionChange(fn: () => void): void { instance.onRetentionChange(fn); }

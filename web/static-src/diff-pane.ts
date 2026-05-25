@@ -57,7 +57,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     r.textContent = opts.newLabel ?? "";
     header.appendChild(l); header.appendChild(r);
     if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
-      header.appendChild(buildWhitespaceToggle(container, lines, opts));
+      header.appendChild(buildWhitespaceToggle(container, opts));
     }
     container.appendChild(header);
   } else if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
@@ -65,7 +65,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     // header that only carries it.
     const header = document.createElement("div");
     header.className = "diff-pane-header diff-pane-header-toolbar";
-    header.appendChild(buildWhitespaceToggle(container, lines, opts));
+    header.appendChild(buildWhitespaceToggle(container, opts));
     container.appendChild(header);
   }
 
@@ -111,7 +111,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn accept";
         btn.textContent = "\u2713 Accept";
-        btn.addEventListener("click", () => { acceptCb(idx, newLines); btn.disabled = true; });
+        btn.addEventListener("click", () => { acceptCb(idx, newLines); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.reject"); if (sib) sib.disabled = true; });
         toolbar.appendChild(btn);
       }
 
@@ -122,7 +122,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn reject";
         btn.textContent = "\u2717 Reject";
-        btn.addEventListener("click", () => { rejectCb(idx); btn.disabled = true; });
+        btn.addEventListener("click", () => { rejectCb(idx); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.accept"); if (sib) sib.disabled = true; });
         toolbar.appendChild(btn);
       }
 
@@ -255,7 +255,6 @@ function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
  *  self-contained for the common case. */
 function buildWhitespaceToggle(
   container: HTMLDivElement,
-  currentLines: DiffLineLocal[],
   opts: DiffPaneOpts,
 ): HTMLLabelElement {
   const wrap = document.createElement("label");
@@ -268,7 +267,7 @@ function buildWhitespaceToggle(
   wrap.appendChild(span);
   input.addEventListener("change", () => {
     const ignore = input.checked;
-    if (opts.onToggleWhitespace !== undefined) {
+    if (opts.source === undefined && opts.onToggleWhitespace !== undefined) {
       opts.onToggleWhitespace(ignore);
     }
     if (opts.source !== undefined) {
@@ -300,13 +299,9 @@ function buildWhitespaceToggle(
           container.appendChild(node);
           node = next;
         }
-        void currentLines;
-      }).catch(() => {});
+      }).catch((e: unknown) => { console.error("[diff-pane] whitespace re-render failed", e); });
     }
   });
   return wrap;
 }
 
-// Local alias so the helper above can reference DiffLine without
-// re-importing (avoids confusing ordering in the module).
-type DiffLineLocal = Parameters<typeof renderDiffPane>[0] extends (infer T)[] ? T : never;

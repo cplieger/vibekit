@@ -9,13 +9,19 @@
 // singleton (only one open at a time); reopening swaps the anchor.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGet } from "./api-client.js";
+import { checkoutBranch } from "./actions/git-branch.js";
+import { registerCleanup } from "./actions/cleanup.js";
+import { bindLoadingState } from "./actions/index.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
 
 let openPopover: HTMLDivElement | null = null;
 let activeAnchor: HTMLElement | null = null;
+let branchController: AbortController | null = null;
+let popoverBindingCleanups: Array<() => void> = [];
+registerCleanup(() => branchController?.abort());
 
 /** Open the branch switcher anchored to anchorEl for repo. Idempotent
  *  on the same anchor (re-clicks toggle close); on a different anchor
@@ -48,7 +54,12 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   const createInput = createForm.querySelector<HTMLInputElement>(".git-branch-popover-create-input")!;
 
   // Load branches.
-  void apiGet<BranchesResponse>(`/api/git/branches?repo=${encodeURIComponent(repo)}`).then((data) => {
+  branchController?.abort();
+  branchController = new AbortController();
+  void apiGet<BranchesResponse>(
+    `/api/git/branches?repo=${encodeURIComponent(repo)}`,
+    branchController.signal,
+  ).then((data) => {
     if (data === null) {
       list.textContent = "Failed to load branches.";
       return;
@@ -64,12 +75,14 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
         const row = document.createElement("button");
         row.type = "button";
         row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
+        row.setAttribute("role", "menuitem");
         row.textContent = b.name;
-        if (b.current) row.title = "Current branch";
+        if (b.current) row.setAttribute("data-tooltip", "Current branch");
         row.addEventListener("click", () => {
           void doCheckout(repo, b.name, false).finally(() => closePopover());
         });
         list.appendChild(row);
+        popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", row));
       }
     };
     render("");
@@ -94,11 +107,17 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
 
 function closePopover(): void {
   if (openPopover === null) return;
+  for (const fn of popoverBindingCleanups) fn();
+  popoverBindingCleanups = [];
+  branchController?.abort();
+  branchController = null;
   openPopover.remove();
   openPopover = null;
+  const savedAnchor = activeAnchor;
   activeAnchor = null;
   document.removeEventListener("click", outsideClickHandler);
   document.removeEventListener("keydown", escapeHandler);
+  savedAnchor?.focus();
 }
 
 function outsideClickHandler(e: MouseEvent): void {
@@ -120,30 +139,26 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
   pop.style.top = `${rect.bottom + 4}px`;
   pop.style.left = `${rect.left}px`;
   pop.style.minWidth = `${Math.max(rect.width, 220)}px`;
-  // After paint, clamp into viewport if it overflows the right edge.
+  // After paint, clamp into viewport if it overflows.
   requestAnimationFrame(() => {
     const popRect = pop.getBoundingClientRect();
     const overflowX = popRect.right - window.innerWidth + 8;
     if (overflowX > 0) {
       pop.style.left = `${rect.left - overflowX}px`;
     }
+    // Vertical: flip above anchor if popover overflows bottom.
+    if (popRect.bottom > window.innerHeight - 8) {
+      pop.style.top = `${rect.top - popRect.height - 4}px`;
+    }
   });
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
-  const res = await apiPost<{ output?: string; error?: string }>(
-    `/api/git/checkout`,
-    { repo, branch, create },
+  const anchor = activeAnchor;
+  const res = await checkoutBranch.dispatch(
+    anchor ? { repo, branch, create, anchorEl: anchor } : { repo, branch, create },
   );
-  if (res === null) {
-    alert("Network error during checkout");
-    return;
-  }
-  if (res.error !== undefined && res.error !== "") {
-    alert(`Checkout failed: ${res.error}`);
-    return;
-  }
-  // Refresh changes tab so the new branch shows up.
+  if (res === null) return; // toast already fired
   const { refreshChanges } = await import("./git-changes-tab.js");
   void refreshChanges();
 }

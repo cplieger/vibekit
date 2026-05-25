@@ -2,8 +2,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./store.js", () => ({
+  get: vi.fn(() => ({ model: "claude" })),
   setThinking: vi.fn(),
+  setModel: vi.fn(),
   enqueuePrompt: vi.fn(),
+  setLastQueuedAttachments: vi.fn(),
 }));
 
 vi.mock("./transport.js", () => ({
@@ -19,11 +22,12 @@ vi.mock("./editor-types.js", () => ({
   getActiveFilePath: () => "src/main.ts",
   getOpenFilePaths: () => ["src/main.ts"],
 }));
-vi.mock("./attachments.js", () => ({ takeAttachments: () => [] }));
+vi.mock("./attachments.js", () => ({ takeAttachments: vi.fn(() => []), addAttachment: vi.fn() }));
 
 import { sendPromptTo, switchModel } from "./chat-commands.js";
 import * as store from "./store.js";
 import * as transport from "./transport.js";
+import * as attachments from "./attachments.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,7 +46,15 @@ describe("sendPromptTo", () => {
     vi.mocked(transport.send).mockResolvedValue({ ok: false, status: 409 });
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
-    expect(store.enqueuePrompt).toHaveBeenCalledWith("chat1", "hello");
+    expect(store.enqueuePrompt).toHaveBeenCalledWith("chat1", "hello", []);
+  });
+
+  it("returns 'queued' on 409 with attachments and calls setLastQueuedAttachments", async () => {
+    vi.mocked(transport.send).mockResolvedValue({ ok: false, status: 409 });
+    vi.mocked(attachments.takeAttachments).mockReturnValueOnce([{ path: "foo", name: "foo" }]);
+    const result = await sendPromptTo("chat1", "hello");
+    expect(result).toBe("queued");
+    expect(store.setLastQueuedAttachments).toHaveBeenCalledWith("chat1", [{ path: "foo", name: "foo" }]);
   });
 
   it("returns 'failed' on 500 and clears thinking", async () => {
@@ -64,6 +76,9 @@ describe("switchModel", () => {
     vi.mocked(transport.send).mockResolvedValue({ ok: true, status: 200 });
     const result = await switchModel("chat1", "gpt-4");
     expect(result).toBe(true);
-    expect(store.setThinking).toHaveBeenCalledWith("chat1", false);
+    // B2 fix: switchModelAction no longer touches thinking state —
+    // it's owned by sendPromptAction; the model switcher button uses
+    // bindLoadingState for its own indicator.
+    expect(store.setThinking).not.toHaveBeenCalled();
   });
 });

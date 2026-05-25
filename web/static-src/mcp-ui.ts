@@ -4,8 +4,8 @@
 
 import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { apiGet, apiPatch, apiDelete } from "./api-client.js";
-import { closeModal, showConfirm } from "./modals.js";
+import { closeModal } from "./modals.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
   type Server, type RuntimeStatus, type RuntimeState,
@@ -13,6 +13,8 @@ import {
   setStatus, deleteStatus,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
+import { extractNpxPackage } from "./mcp-panels.js";
+import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
 
 // --- Section scaffold ---
 
@@ -162,10 +164,12 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = s.enabled;
-  input.ariaLabel = `${s.enabled ? "Disable" : "Enable"} ${s.name}`;
+  input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
   input.addEventListener("change", () => {
-    void apiPatch(`/api/mcp/${encodeURIComponent(s.id)}`, { enabled: input.checked }).then(() => {
-      void refetchServers();
+    // input.checked is already the NEW value (browser flipped it).
+    // Pass the previous state explicitly so rollback restores correctly.
+    void toggleServer.dispatch({ id: s.id, enabled: input.checked }).then((r) => {
+      if (r !== null) void refetchServers();
     });
   });
   const slider = document.createElement("span");
@@ -216,15 +220,17 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("aria-label", `Remove ${s.name}`);
   btn.innerHTML = ICON_TRASH_14;
   btn.addEventListener("click", () => {
-    showConfirm(
-      `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
-      () => {
-        void apiDelete(`/api/mcp/${encodeURIComponent(s.id)}`).then(() => {
-          void refetchServers();
-        });
-      },
-      "Remove",
-    );
+    void (async () => {
+      const ok = await confirmDialog(
+        `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
+        "Remove",
+        "destructive",
+      );
+      if (!ok) return;
+      void deleteServer.dispatch({ id: s.id }).then((r) => {
+        if (r !== null) void refetchServers();
+      });
+    })();
   });
   return btn;
 }
@@ -238,7 +244,7 @@ function openAddModal(): void {
 }
 
 async function openEditModal(id: string): Promise<void> {
-  const s = await apiGet<Server>(`/api/mcp/${encodeURIComponent(id)}`);
+  const s = await openEdit.dispatch(id);
   if (s === null) return;
   setEditing({ id });
   const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";
@@ -257,12 +263,10 @@ export function initMCP(): void {
 
   onSSE("mcp_config_changed", () => { void refetchServers(); });
   onSSE("mcp_connected", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, { name: p.server, state: "connected" });
     renderSection();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, {
       name: p.server,
       state: "needs_auth",
@@ -271,7 +275,6 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_failed", (_chat, p) => {
-    if (p === undefined) return;
     setStatus(p.server, {
       name: p.server,
       state: "failed",
@@ -280,28 +283,29 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_disconnected", (_chat, p) => {
-    if (p === undefined) return;
     deleteStatus(p.server);
     renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
-    if (p === undefined) return;
     updatePrewarmStatus(p.package, p.state);
   });
 
-  void Promise.all([refetchServers(), refetchStatus()]);
+  refetchServers();
+  refetchStatus();
 }
 
 // --- Prewarm progress indicator ---
 
 /** Show/hide a prewarm status badge on the server row matching the package name. */
 function updatePrewarmStatus(pkg: string, state: string): void {
-  // Find the server row whose name or command contains the package.
-  const rows = document.querySelectorAll<HTMLElement>(".mcp-server-row");
+  // Find the server row whose configured command's npx package matches exactly.
+  const rows = document.querySelectorAll<HTMLElement>(".mcp-row");
   for (const row of rows) {
-    const name = row.dataset["serverName"] ?? "";
-    const cmd = row.dataset["serverCmd"] ?? "";
-    if (!cmd.includes(pkg) && !name.includes(pkg)) continue;
+    const serverId = row.dataset["serverId"] ?? "";
+    const server = configured.find((s) => s.id === serverId);
+    if (server === undefined) continue;
+    const serverPkg = extractNpxPackage(server);
+    if (serverPkg !== pkg && server.name !== pkg) continue;
 
     let badge = row.querySelector(".prewarm-badge") as HTMLElement | null;
     if (state === "done") {
@@ -311,7 +315,7 @@ function updatePrewarmStatus(pkg: string, state: string): void {
     if (badge === null) {
       badge = document.createElement("span");
       badge.className = "prewarm-badge";
-      const nameEl = row.querySelector(".mcp-server-name");
+      const nameEl = row.querySelector(".mcp-row-name");
       if (nameEl !== null) nameEl.after(badge);
       else row.prepend(badge);
     }

@@ -4,18 +4,28 @@
 
 import { $ } from "./dom.js";
 import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type Resolution } from "./conflict.js";
-import { apiPost } from "./api-client.js";
+import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
+import { getActiveFilePath, fileStates } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
+import { registerCleanup } from "./actions/cleanup.js";
 
-let suggestionController: AbortController | null = null;
+registerCleanup(() => suggestResolution.cancel());
+
+/** Generation counter: incremented on each requestSuggestion dispatch
+ *  so superseded dispatches can detect they were cancelled. */
+let suggestionGen = 0;
 
 /** Abort any in-flight suggestion request (called on tab close). */
 export function abortSuggestion(): void {
-  if (suggestionController !== null) {
-    suggestionController.abort();
-    suggestionController = null;
+  // Reset any entries with loading: true so the UI doesn't show stale spinners.
+  const state = fileStates.get(getActiveFilePath());
+  if (state !== undefined) {
+    for (const [key, entry] of state.suggestions) {
+      if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
+    }
   }
+  suggestResolution.cancel();
 }
 
 export function renderConflictModeUI(state: FileState): void {
@@ -121,9 +131,8 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (hunk === undefined) return;
   const existing = state.suggestions.get(hunk.startLine);
   if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
-  if (suggestionController !== null) suggestionController.abort();
-  suggestionController = new AbortController();
-  const signal = suggestionController.signal;
+  suggestResolution.cancel();
+  const myDispatchId = ++suggestionGen;
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
   const context = buildHunkContext(state.mode.conflict, hunk);
@@ -132,9 +141,10 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     theirs: hunk.theirsLines.join("\n"),
     context,
   };
-  const resp = await apiPost<{ output?: string; error?: string }>("/api/utility/resolve-conflict", body, signal);
-  if (signal.aborted) return;
+  const resp = await suggestResolution.dispatch(body);
+  if (myDispatchId !== suggestionGen) return; // superseded by another dispatch; silently bail
   if (state.mode.kind !== "conflict") return;
+  if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];
   if (current?.startLine !== hunk.startLine) return;
   if (resp === null || typeof resp.output !== "string") {
