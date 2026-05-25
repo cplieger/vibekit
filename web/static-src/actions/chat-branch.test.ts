@@ -82,12 +82,14 @@ describe("sendPromptAction — 409 queued path", () => {
 });
 
 describe("checkoutBranch", () => {
-  it("optimistically updates anchor element text", async () => {
+  it("dispatches successfully (UI is caller's responsibility)", async () => {
     mockFetch.mockResolvedValue(new Response("", { status: 200 }));
-    const anchor = document.createElement("span");
-    anchor.textContent = "main";
-    await checkoutBranch.dispatch({ repo: "", branch: "feature", create: false, anchorEl: anchor });
-    expect(anchor.textContent).toBe("feature");
+    await checkoutBranch.dispatch({ repo: "", branch: "feature", create: false });
+    expect(mockFetch).toHaveBeenCalled();
+    // The action no longer mutates DOM; verify the request was sent.
+    const call = mockFetch.mock.calls[0]!;
+    const url = call[0] as string;
+    expect(url).toContain("/api/git/checkout");
   });
 
   it("returns null on HTTP error", async () => {

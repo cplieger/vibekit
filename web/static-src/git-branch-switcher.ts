@@ -154,12 +154,25 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
+  // Capture anchor + optimistic state in the closure (not in action args)
+  // so structuredClone-on-retry never sees the DOM element. The action
+  // is purely data-driven; UI mutation is the caller's responsibility.
   const anchor = activeAnchor;
+  const prevText = anchor?.textContent ?? "";
+  if (anchor !== null) {
+    anchor.textContent = branch;
+  }
   await checkoutBranch.dispatch(
-    anchor ? { repo, branch, create, anchorEl: anchor } : { repo, branch, create },
+    { repo, branch, create },
     {
       onSuccess: () => {
         void import("./git-changes-tab.js").then((m) => m.refreshChanges());
+      },
+      onError: () => {
+        // Restore the previous label if the anchor is still in the DOM.
+        if (anchor?.isConnected === true) {
+          anchor.textContent = prevText;
+        }
       },
       onSettled: () => closePopover(),
     },

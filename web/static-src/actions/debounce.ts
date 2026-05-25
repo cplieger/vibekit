@@ -55,13 +55,25 @@ export function debouncedDispatch<TArgs, TResult>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let lastArgs: TArgs | undefined;
   let pending = false;
+  let lastFiredAt = 0;
 
   const fn = ((args: TArgs): void => {
     if (opts.leading === true) {
-      if (pending) return; // suppress all calls during the leading window
+      const now = Date.now();
+      // Suppress within the cooldown window regardless of cancel().
+      // Without this guard, a cancel followed by a quick re-dispatch
+      // would fire two concurrent runs of the action within `wait` ms.
+      if (now - lastFiredAt < opts.wait) {
+        // Track the most-recent suppressed args so flush() can fire them.
+        lastArgs = args;
+        return;
+      }
       // Leading-edge: fire immediately, then suppress until quiet.
       void action.dispatch(args);
+      lastFiredAt = now;
+      lastArgs = undefined;
       pending = true;
+      if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
         pending = false;
@@ -88,7 +100,10 @@ export function debouncedDispatch<TArgs, TResult>(
     const a = args !== undefined ? args : lastArgs;
     lastArgs = undefined;
     pending = false;
-    if (a !== undefined) void action.dispatch(a);
+    if (a !== undefined) {
+      lastFiredAt = Date.now();
+      void action.dispatch(a);
+    }
   };
 
   fn.cancel = (): void => {
@@ -98,6 +113,8 @@ export function debouncedDispatch<TArgs, TResult>(
     }
     lastArgs = undefined;
     pending = false;
+    // NOTE: do NOT reset lastFiredAt — the cooldown window must still
+    // apply after cancel to prevent immediate re-fire within `wait` ms.
   };
 
   fn.isPending = (): boolean => pending;

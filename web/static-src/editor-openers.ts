@@ -18,6 +18,7 @@ import {
 } from "./editor-types.js";
 import {
   showReadMode, applyPendingLine, fetchAgentLines, pendingLines,
+  clearAgentLineCache,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { registerCleanup } from "./actions/cleanup.js";
@@ -288,9 +289,10 @@ function persistOpenFiles(): void {
 
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
-  if (state !== undefined && state.mode.kind === "conflict") abortSuggestion();
+  if (state !== undefined && state.mode.kind === "conflict") abortSuggestion(path);
   fileStates.delete(path);
   pendingLines.delete(path);
+  clearAgentLineCache(path);
   closeTab(`editor:${path}`);
   const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) setActiveFilePath("");

@@ -6,6 +6,7 @@ import { apiAction } from "./index.js";
 export const installTools = apiAction<void, { output?: string; error?: string }>({
   name: "tools.install",
   scope: "tools",
+  idempotencyKey: true,
   request: () => ({ method: "POST", path: "/api/tools/install" }),
   error: "Tool install failed",
 });
@@ -14,6 +15,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
   name: "tools.save",
   retryable: "network",
   scope: "tools",
+  idempotencyKey: true,
   request: (data) => ({ method: "PUT", path: "/api/tools", body: data }),
   error: "Couldn't save tool config",
 });
@@ -37,6 +39,7 @@ export const loadToolsListAction = apiAction<void, Record<string, Record<string,
 export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
   name: "tools.seed_mcp",
   scope: "tools",
+  idempotencyKey: true,
   request: ({ name, install }) => ({
     method: "POST",
     path: "/api/mcp",

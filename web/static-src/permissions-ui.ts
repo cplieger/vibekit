@@ -249,13 +249,25 @@ class PermissionsUIController {
 
   private async removeRule(pattern: string): Promise<void> {
     if (!this.commandRules.some((e) => e.pattern === pattern)) return;
-    await removeRuleAction.dispatch({ pattern, rules: this.commandRules, setRules: this.setRules });
+    await removeRuleAction.dispatch({
+      pattern,
+      rules: this.commandRules,
+      setRules: this.setRules,
+      getCurrentRules: () => this.commandRules,
+    });
   }
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
+    await addRuleAction.dispatch({
+      pattern: clean,
+      mode,
+      priority,
+      rules: this.commandRules,
+      setRules: this.setRules,
+      getCurrentRules: () => this.commandRules,
+    });
   }
 
   // --- Private: agent ignore files ---

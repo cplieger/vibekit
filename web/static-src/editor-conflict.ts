@@ -16,10 +16,13 @@ registerCleanup(() => suggestResolution.cancel());
  *  so superseded dispatches can detect they were cancelled. */
 let suggestionGen = 0;
 
-/** Abort any in-flight suggestion request (called on tab close). */
-export function abortSuggestion(): void {
+/** Abort any in-flight suggestion request. If path is provided, reset
+ *  loading state on THAT file; otherwise default to the active file.
+ *  Called on tab close (with path) and on broader teardown (without). */
+export function abortSuggestion(path?: string): void {
   // Reset any entries with loading: true so the UI doesn't show stale spinners.
-  const state = fileStates.get(getActiveFilePath());
+  const targetPath = path ?? getActiveFilePath();
+  const state = fileStates.get(targetPath);
   if (state !== undefined) {
     for (const [key, entry] of state.suggestions) {
       if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });

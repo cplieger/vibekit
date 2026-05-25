@@ -261,6 +261,19 @@ export function initMCP(): void {
   const close = el<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => { cleanupModal(); closeModal($.mcpModal); });
 
+  // Hook into Escape and overlay-dismiss paths: closeModal toggles the
+  // 'hidden' class on the modal element. Watch for that transition and
+  // call cleanupModal regardless of which code path closed the modal.
+  // (cleanupModal is idempotent so the close-button path is harmless.)
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.attributeName === "class" && $.mcpModal.classList.contains("hidden")) {
+        cleanupModal();
+      }
+    }
+  });
+  observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
+
   onSSE("mcp_config_changed", () => { void refetchServers(); });
   onSSE("mcp_connected", (_chat, p) => {
     setStatus(p.server, { name: p.server, state: "connected" });

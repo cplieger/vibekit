@@ -208,7 +208,7 @@ describe("debouncedDispatch leading flush", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("leading mode: first fires immediately, suppressed call is dropped, flush is no-op", async () => {
+  it("leading mode: first fires immediately, flush() fires the most-recently-suppressed args", async () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_leading_flush",
@@ -221,21 +221,21 @@ describe("debouncedDispatch leading flush", () => {
     dbg("a");
     expect(runArgs).toEqual(["a"]);
 
-    // Second call is suppressed during the leading window
+    // Second call is suppressed during the leading window but stored
+    // so flush() can fire it (F2 fix: previously flush was a no-op).
     dbg("b");
     expect(runArgs).toEqual(["a"]);
 
-    // flush() during leading mode: no pending trailing args to fire
+    // flush() during leading mode now fires the most-recent suppressed args
     dbg.flush();
-    expect(runArgs).toEqual(["a"]);
+    expect(runArgs).toEqual(["a", "b"]);
 
-    // After wait expires, the window resets
+    // After wait expires, the cooldown resets
     await vi.advanceTimersByTimeAsync(100);
-    expect(runArgs).toEqual(["a"]);
 
     // New call after window fires immediately again
     dbg("c");
-    expect(runArgs).toEqual(["a", "c"]);
+    expect(runArgs).toEqual(["a", "b", "c"]);
   });
 
   it("flush with explicit args fires even in leading mode", async () => {

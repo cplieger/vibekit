@@ -43,9 +43,13 @@ class EditSession {
 
 let session = new EditSession();
 
-/** Cancel any in-flight debounced search when the modal is dismissed. */
+/** Cancel any in-flight work and tear down search subscription when
+ *  the modal is dismissed (close button, Escape, or overlay click). */
 export function cleanupModal(): void {
   debouncedSearch?.cancel();
+  searchRegistry.cancel();
+  searchUnsub?.();
+  searchUnsub = null;
 }
 
 export function setEditing(ctx: EditingContext): void {
@@ -149,7 +153,8 @@ interface RegistryEntry {
 }
 
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
-registerCleanup(() => { debouncedSearch?.cancel(); });
+let searchUnsub: (() => void) | null = null;
+registerCleanup(() => { debouncedSearch?.cancel(); searchUnsub?.(); });
 
 function initSearchPanel(): void {
   const input = el<HTMLInputElement>("mcp-search-input");
@@ -159,9 +164,12 @@ function initSearchPanel(): void {
   results.replaceChildren();
   input.focus();
 
+  // Tear down any prior subscription before re-installing — initSearchPanel
+  // is called every time the user switches to the Search tab.
+  searchUnsub?.();
   debouncedSearch = debouncedDispatch(searchRegistry, { wait: 200 });
 
-  const unsub = subscribeToActions((inst) => {
+  searchUnsub = subscribeToActions((inst) => {
     if (inst.name !== "mcp.search_registry") return;
     if (inst.status === "success") {
       const d = inst.result as RegistrySearchResult | undefined;
@@ -171,7 +179,6 @@ function initSearchPanel(): void {
       renderSearchError(results, (inst.args as { q: string }).q);
     }
   });
-  registerCleanup(unsub);
 
   input.oninput = (): void => {
     const q = input.value.trim();

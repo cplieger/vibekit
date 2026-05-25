@@ -21,6 +21,9 @@ const MAX_LOG_HARD = 1000;
 const log: ActionInstance[] = [];
 const idMap = new Map<string, number>();
 const listeners = new Set<RegistryListener>();
+// Incremental count of currently-pending instances. Maintained in
+// record() at status transitions; pendingCount() returns this in O(1).
+let _pendingN = 0;
 
 /** Record a state transition. Called by define.ts at every status
  *  change. The instance is push-replaced (newest at end). */
@@ -29,10 +32,15 @@ export function record(instance: ActionInstance): void {
   // (state transitions on the same instance overwrite, not append).
   const existing = idMap.get(instance.id);
   if (existing !== undefined) {
+    const prev = log[existing]!;
+    // Update incremental counter on transitions.
+    if (prev.status === "pending" && instance.status !== "pending") _pendingN--;
+    else if (prev.status !== "pending" && instance.status === "pending") _pendingN++;
     log[existing] = instance;
   } else {
     log.push(instance);
     idMap.set(instance.id, log.length - 1);
+    if (instance.status === "pending") _pendingN++;
     if (log.length > MAX_LOG_SIZE) {
       // Evict the first NON-pending entry so pendingFor() never loses
       // track of long-running actions. If all entries are pending
@@ -55,7 +63,11 @@ export function record(instance: ActionInstance): void {
     // Hard cap: force-evict oldest entry regardless of pending status
     // to bound memory in extreme runaway scenarios (B5/B6).
     if (log.length > MAX_LOG_HARD) {
-      const evictedId = log[0]!.id;
+      const evicted = log[0]!;
+      const evictedId = evicted.id;
+      // If we're force-evicting a pending entry, decrement counter
+      // (the instance is still "pending" upstream but we've forgotten it).
+      if (evicted.status === "pending") _pendingN--;
       log.splice(0, 1);
       idMap.delete(evictedId);
       for (const [id, idx] of idMap) {
@@ -63,6 +75,9 @@ export function record(instance: ActionInstance): void {
       }
     }
   }
+  // Defensive: counter should never go negative; clamp to 0 if it
+  // does (would indicate a record() invariant violation).
+  if (_pendingN < 0) _pendingN = 0;
   // Snapshot listeners so a subscriber added during dispatch (or
   // removed) doesn't see this event mid-iteration. Principle of
   // least surprise: a listener added in response to event N first
@@ -98,13 +113,9 @@ export function pendingFor(name: string): readonly ActionInstance[] {
 
 /** Total count of pending action instances across all action names.
  *  Useful for an app-bar global progress indicator: when > 0, show
- *  some "doing things" affordance. */
+ *  some "doing things" affordance. O(1). */
 export function pendingCount(): number {
-  let n = 0;
-  for (const i of log) {
-    if (i.status === "pending") n++;
-  }
-  return n;
+  return _pendingN;
 }
 
 /** True if any of the named actions has at least one pending instance.
@@ -126,4 +137,5 @@ export function _resetForTest(): void {
   log.length = 0;
   idMap.clear();
   listeners.clear();
+  _pendingN = 0;
 }

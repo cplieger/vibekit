@@ -51,6 +51,13 @@ export async function fetchAgentLines(path: string): Promise<void> {
   }
 }
 
+/** Clear cached agent-line data for a path. Called when a file is
+ *  closed so the per-file Maps don't grow unbounded over a session. */
+export function clearAgentLineCache(path: string): void {
+  agentLineCache.delete(path);
+  agentLineSetCache.delete(path);
+}
+
 // --- Show/hide mode helpers ---
 
 export function showReadMode(): void {

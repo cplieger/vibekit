@@ -245,10 +245,13 @@ export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; na
 });
 
 // --- chat.cancel ---
+//
+// No scope: cancel must fire immediately, not queue behind an in-flight
+// sendPromptAction in the same chat. Cancel is naturally idempotent
+// server-side (the server ignores it if no turn is active).
 
 export const cancelTurnAction = transportAction<string>({
   name: "chat.cancel",
-  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
   error: "Couldn't cancel",
 });

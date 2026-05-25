@@ -192,6 +192,15 @@ function paintInner(): void {
 
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
+  // Build per-repo path index for finer pruning of expandedDiffPaths.
+  // Without this, renamed/deleted files leave stale `repo\0path` keys
+  // behind that grow the Set unboundedly over edit cycles.
+  const activePathsByRepo = new Map<string, Set<string>>();
+  for (const r of lastStatusAll) {
+    const paths = new Set<string>();
+    for (const f of r.files) paths.add(f.path);
+    activePathsByRepo.set(r.repo, paths);
+  }
   for (const k of userCollapsedRepos) if (!activeRepos.has(k)) userCollapsedRepos.delete(k);
   for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
   for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
@@ -199,7 +208,11 @@ function paintInner(): void {
     const nulIdx = k.indexOf("\0");
     if (nulIdx === -1) { expandedDiffPaths.delete(k); continue; }
     const repo = k.slice(0, nulIdx);
-    if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
+    const path = k.slice(nulIdx + 1);
+    const repoPaths = activePathsByRepo.get(repo);
+    if (repoPaths === undefined || !repoPaths.has(path)) {
+      expandedDiffPaths.delete(k);
+    }
   }
 
   // Bug 1: Capture current commit messages before destroying DOM.

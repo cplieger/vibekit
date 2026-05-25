@@ -38,6 +38,7 @@ export interface ActionStatus {
 
 const snapshots = new Map<string, ActionStatus>();
 let listenerInstalled = false;
+let unsubscribe: (() => void) | null = null;
 
 const registryListener: RegistryListener = (inst: ActionInstance): void => {
   const snap = snapshots.get(inst.name);
@@ -83,7 +84,7 @@ export function actionStatus(name: string): ActionStatus {
   }
   // Lazy listener install: only when at least one consumer asks.
   if (!listenerInstalled) {
-    subscribe(registryListener);
+    unsubscribe = subscribe(registryListener);
     listenerInstalled = true;
   }
   return snap;
@@ -93,6 +94,8 @@ export function actionStatus(name: string): ActionStatus {
  *  the listener-installed flag so a freshly-reset registry will get a
  *  new subscription on the next actionStatus() call. */
 export function _resetForTest(): void {
+  unsubscribe?.();
+  unsubscribe = null;
   snapshots.clear();
   listenerInstalled = false;
 }

@@ -54,6 +54,7 @@ export const signOut = apiAction<SignOutArgs, void>({
  *  aggregates). */
 export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
+  idempotencyKey: true,
   request: ({ url }) => ({
     method: "POST",
     path: "/api/git/clone",
@@ -88,6 +89,7 @@ export interface ConnectPATArgs {
  *  form renders inline error status. */
 export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
   name: "forge.connect_pat",
+  idempotencyKey: true,
   request: ({ kind, host, token }) => ({
     method: "POST",
     path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,
