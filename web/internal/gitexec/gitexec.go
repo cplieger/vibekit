@@ -94,25 +94,47 @@ func ScrubAuthErr(err error) string {
 
 // --- Hardened subprocess execution ---
 
-// Cmd builds an *exec.Cmd for a git subprocess with a scrubbed
-// environment that prevents git from blocking on credential prompts,
-// from using askpass GUIs, from allowing user-controlled remote
-// helpers (ext::, file://), and from inheriting GIT_CONFIG_* injection
-// that would re-enable the ext:: transport class via runtime gitconfig
-// overrides.
+// Cmd builds an *exec.Cmd for a git subprocess with hardening
+// applied: protocol.ext.allow=never on the command line (so ext::
+// transports stay blocked even if user gitconfig tries to enable
+// them — `-c` always wins over gitconfig), no terminal/askpass
+// prompts (so credential failures bubble up as errors instead of
+// hanging), and runtime GIT_CONFIG_* env injection cleared so a
+// malicious parent process can't inject inline gitconfig.
+//
+// IMPORTANT: this DOES allow the user's ~/.gitconfig and the
+// system /etc/gitconfig to load. That's deliberate. The forge
+// CLIs (gh auth setup-git, glab auth git-credential, etc.) write
+// `credential.helper` lines into ~/.gitconfig so HTTPS clones of
+// private repos can authenticate. A previous version of this
+// function pinned GIT_CONFIG_GLOBAL=/dev/null which disabled the
+// credential helper alongside the ext:: hardening — clones of
+// public repos worked, but private clones failed with "terminal
+// prompts disabled". The cmdline -c approach is a more surgical
+// fix: it blocks ext:: explicitly without throwing out the rest
+// of the user's git config.
 //
 // Callers must supply a context with an appropriate timeout.
 func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Prepend hardening -c flags. Command-line -c values take priority
+	// over any gitconfig setting, so even a user gitconfig with
+	// `[protocol "ext"] allow = always` cannot re-enable ext::.
+	hardenedArgs := append([]string{
+		"-c", "protocol.ext.allow=never",
+	}, args...)
+	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 		"GIT_PROTOCOL_FROM_USER=0",
+		// Clear runtime GIT_CONFIG_* injection: a malicious parent
+		// could otherwise set GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n /
+		// GIT_CONFIG_VALUE_n to inject arbitrary inline config that
+		// overrides our cmdline hardening. (gitconfig FILES on disk
+		// are still loaded — that's where credential helpers live.)
 		"GIT_CONFIG_COUNT=",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_CONFIG_PARAMETERS=",
 	)
 	return cmd
