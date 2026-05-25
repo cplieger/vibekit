@@ -28,6 +28,7 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
     body: { error: errorText.slice(0, 2000), context },
   }),
   error: "Couldn't explain error",
+  retryable: "network",
 });
 
 /** Undo a single file edit via checkpoint restore. */

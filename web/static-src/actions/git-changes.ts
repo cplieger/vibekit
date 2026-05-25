@@ -24,6 +24,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.stage",
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   error: "Couldn't stage",
+  retryable: "network",
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
@@ -31,6 +32,8 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.discard",
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   error: "Couldn't discard",
+  // Destructive: timed-out discard may have succeeded server-side
+  retryable: false,
 });
 
 /** Unstage a file. */
@@ -38,6 +41,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.unstage",
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   error: "Couldn't unstage",
+  retryable: "network",
 });
 
 export const pull = apiAction<{ repo: string }, unknown>({

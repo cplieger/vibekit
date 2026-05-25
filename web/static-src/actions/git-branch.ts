@@ -1,5 +1,4 @@
-import { defineAction, ActionError } from "./index.js";
-import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
+import { apiAction } from "./index.js";
 
 interface CheckoutArgs {
   repo: string;
@@ -9,37 +8,15 @@ interface CheckoutArgs {
   anchorEl?: HTMLElement;
 }
 
-export const checkoutBranch = defineAction<CheckoutArgs, void>({
+export const checkoutBranch = apiAction<CheckoutArgs, void>({
   name: "git.checkout_branch",
-  run: async (args, signal) => {
-    const r = await fetch("/api/git/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo: args.repo, branch: args.branch, create: args.create }),
-      signal: withTimeout(signal, API_TIMEOUT_MS),
-    });
-    if (!r.ok) {
-      let msg = `HTTP ${String(r.status)}`;
-      try {
-        const body = (await r.json()) as { error?: string };
-        if (body.error) msg = body.error;
-      } catch { /* use default msg */ }
-      throw new ActionError(msg, { status: r.status });
-    }
-    // Handle empty 200 body (no Content-Length guarantee) — use text()
-    // first to avoid SyntaxError from json() on empty response.
-    const text = await r.text();
-    if (text === "") return;
-    let body: { error?: string };
-    try {
-      body = JSON.parse(text) as { error?: string };
-    } catch {
-      throw new ActionError("Unexpected server response", { status: r.status });
-    }
-    if (body.error !== undefined && body.error !== "") {
-      throw new ActionError(body.error, { status: r.status });
-    }
-  },
+  request: ({ repo, branch, create }) => ({
+    method: "POST",
+    path: "/api/git/checkout",
+    body: { repo, branch, create },
+  }),
+  retryable: "network",
+  error: "Branch checkout failed",
   optimistic: (args) => {
     if (!args.anchorEl) return undefined;
     const prev = args.anchorEl.textContent ?? "";
@@ -54,6 +31,4 @@ export const checkoutBranch = defineAction<CheckoutArgs, void>({
       args.anchorEl.textContent = op;
     }
   },
-  retryable: "network",
-  error: "Branch checkout failed",
 });

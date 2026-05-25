@@ -125,6 +125,9 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   acceptBtn.setAttribute("aria-label", "Accept change");
   acceptBtn.addEventListener("click", () => { resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "accept"); });
 
+  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
+  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+
   row.append(diffBtn, rejectBtn, acceptBtn);
   row.dataset["path"] = path;
   el.appendChild(row);
