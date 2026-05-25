@@ -16,7 +16,7 @@ import {
   showBanner, onTurnEnded,
 } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
-import { respondPermissionAction, restoreCheckpointAction } from "../actions/chat.js";
+import { respondPermission, restoreCheckpoint } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
 
 /** Drain one queued prompt, restoring any attachments that were saved
@@ -175,7 +175,7 @@ onSSE("permission_needed", (chatID, p) => {
     p.options,
     (optionID: string) => {
       // Clear the pending-approval indicator only after successful dispatch.
-      void respondPermissionAction.dispatch({
+      void respondPermission.dispatch({
         chatID,
         requestID: p.request_id,
         optionID,
@@ -280,7 +280,7 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
   } else if (!(await confirmRestore())) {
     return;
   }
-  void restoreCheckpointAction.dispatch({ chatID, tag });
+  void restoreCheckpoint.dispatch({ chatID, tag });
 }
 
 /** Action for fetching restore preview (best-effort, no toast). */

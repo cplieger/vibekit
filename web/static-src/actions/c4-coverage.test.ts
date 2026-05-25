@@ -73,15 +73,15 @@ afterEach(() => {
 describe("chat.set_supervised", () => {
   it("optimistic: calls setSupervisedMode immediately", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { setSupervisedAction } = await import("./chat.js");
-    await setSupervisedAction.dispatch({ chatID: "c1", enabled: true });
+    const { setSupervised } = await import("./chat.js");
+    await setSupervised.dispatch({ chatID: "c1", enabled: true });
     expect(setSupervisedMode).toHaveBeenCalledWith("c1", true);
   });
 
   it("rollback: restores previous value on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { setSupervisedAction } = await import("./chat.js");
-    await setSupervisedAction.dispatch({ chatID: "c1", enabled: true });
+    const { setSupervised } = await import("./chat.js");
+    await setSupervised.dispatch({ chatID: "c1", enabled: true });
     // rollback restores prev (false)
     const calls = vi.mocked(setSupervisedMode).mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
@@ -96,8 +96,8 @@ describe("chat.set_supervised", () => {
       if (attempts < 3) return Promise.resolve({ ok: false, status: 0, error: "net", code: "network" });
       return Promise.resolve({ ok: true, status: 200 });
     });
-    const { setSupervisedAction } = await import("./chat.js");
-    const p = setSupervisedAction.dispatch({ chatID: "c1", enabled: true });
+    const { setSupervised } = await import("./chat.js");
+    const p = setSupervised.dispatch({ chatID: "c1", enabled: true });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;
@@ -176,9 +176,9 @@ describe("chat.load_history", () => {
       runCount++;
       return Promise.resolve(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
     });
-    const { loadHistoryAction } = await import("./chat.js");
-    const p1 = loadHistoryAction.dispatch();
-    const p2 = loadHistoryAction.dispatch();
+    const { loadHistory } = await import("./chat.js");
+    const p1 = loadHistory.dispatch();
+    const p2 = loadHistory.dispatch();
     await Promise.all([p1, p2]);
     expect(runCount).toBe(1);
   });
@@ -191,8 +191,8 @@ describe("chat.load_history", () => {
       if (attempts < 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
     });
-    const { loadHistoryAction } = await import("./chat.js");
-    const p = loadHistoryAction.dispatch();
+    const { loadHistory } = await import("./chat.js");
+    const p = loadHistory.dispatch();
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;
@@ -302,13 +302,13 @@ describe("git.checkout_branch", () => {
 describe("git.close_pr", () => {
   it("sends Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    // Need to mock git-prs-state for closePRAction
+    // Need to mock git-prs-state for closePR
     vi.doMock("../git-prs-state.js", () => ({
       removePRFromGroups: vi.fn(),
       reinsertPRInGroups: vi.fn(),
     }));
-    const { closePRAction } = await import("./git-prs.js");
-    await closePRAction.dispatch({ forge_id: "gh1", owner: "org", name: "repo", pr_number: 5 });
+    const { closePR } = await import("./git-prs.js");
+    await closePR.dispatch({ forge_id: "gh1", owner: "org", name: "repo", pr_number: 5 });
     const init = mockFetch.mock.calls[0]?.[1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBeDefined();
@@ -493,8 +493,8 @@ describe("settings.save_steering", () => {
       if (attempts < 3) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(new Response("{}", { status: 200 }));
     });
-    const { saveSteeringAction } = await import("./settings.js");
-    const p = saveSteeringAction.dispatch({ content: "# steering" });
+    const { saveSteering } = await import("./settings.js");
+    const p = saveSteering.dispatch({ content: "# steering" });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;
@@ -509,9 +509,9 @@ describe("settings.save_steering", () => {
 describe("permissions.add_rule idempotencyKey", () => {
   it("sends Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    const { addRuleAction } = await import("./permissions.js");
+    const { addRule } = await import("./permissions.js");
     const rules = [{ pattern: "npm *", mode: "allow" as const, priority: 1, created_at: 1000 }];
-    await addRuleAction.dispatch({
+    await addRule.dispatch({
       pattern: "git *", mode: "allow", priority: 2,
       rules, setRules: vi.fn(), getCurrentRules: () => rules,
     });

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for addRuleAction and removeRuleAction optimistic + rollback.
+// Tests for addRule and removeRule optimistic + rollback.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -14,7 +14,7 @@ vi.mock("../api-client.js", () => ({
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
-import { addRuleAction, removeRuleAction, type CommandRule } from "./permissions.js";
+import { addRule, removeRule, type CommandRule } from "./permissions.js";
 
 const mockFetch = vi.fn();
 
@@ -32,12 +32,12 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mockFetch);
 });
 
-describe("addRuleAction optimistic + rollback", () => {
+describe("addRule optimistic + rollback", () => {
   it("adds new rule optimistically", async () => {
     let rules = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await addRuleAction.dispatch({ pattern: "git *", mode: "allow", priority: 3, rules, setRules, getCurrentRules: () => rules });
+    await addRule.dispatch({ pattern: "git *", mode: "allow", priority: 3, rules, setRules, getCurrentRules: () => rules });
     // setRules called with array containing the new rule
     expect(setRules).toHaveBeenCalled();
     const optimisticCall = setRules.mock.calls[0]![0] as CommandRule[];
@@ -48,7 +48,7 @@ describe("addRuleAction optimistic + rollback", () => {
     let rules = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await addRuleAction.dispatch({ pattern: "git *", mode: "allow", priority: 3, rules, setRules, getCurrentRules: () => rules });
+    await addRule.dispatch({ pattern: "git *", mode: "allow", priority: 3, rules, setRules, getCurrentRules: () => rules });
     // Last setRules call is the rollback — filters out the new pattern
     const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0] as CommandRule[];
     expect(lastCall.some((r) => r.pattern === "git *")).toBe(false);
@@ -58,7 +58,7 @@ describe("addRuleAction optimistic + rollback", () => {
     let rules = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await addRuleAction.dispatch({ pattern: "npm *", mode: "deny", priority: 5, rules, setRules, getCurrentRules: () => rules });
+    await addRule.dispatch({ pattern: "npm *", mode: "deny", priority: 5, rules, setRules, getCurrentRules: () => rules });
     const optimisticCall = setRules.mock.calls[0]![0] as CommandRule[];
     const updated = optimisticCall.find((r) => r.pattern === "npm *");
     expect(updated?.mode).toBe("deny");
@@ -70,7 +70,7 @@ describe("addRuleAction optimistic + rollback", () => {
     const original = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await addRuleAction.dispatch({ pattern: "npm *", mode: "deny", priority: 5, rules, setRules, getCurrentRules: () => rules });
+    await addRule.dispatch({ pattern: "npm *", mode: "deny", priority: 5, rules, setRules, getCurrentRules: () => rules });
     // Rollback should restore the previous version of "npm *"
     const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0] as CommandRule[];
     const restored = lastCall.find((r) => r.pattern === "npm *");
@@ -79,12 +79,12 @@ describe("addRuleAction optimistic + rollback", () => {
   });
 });
 
-describe("removeRuleAction optimistic + rollback", () => {
+describe("removeRule optimistic + rollback", () => {
   it("removes rule optimistically", async () => {
     let rules = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response("", { status: 204 }));
-    await removeRuleAction.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
+    await removeRule.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
     const optimisticCall = setRules.mock.calls[0]![0] as CommandRule[];
     expect(optimisticCall.some((r) => r.pattern === "npm *")).toBe(false);
   });
@@ -93,7 +93,7 @@ describe("removeRuleAction optimistic + rollback", () => {
     let rules = makeRules();
     const setRules = vi.fn((next: CommandRule[]) => { rules = next; });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await removeRuleAction.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
+    await removeRule.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
     // Rollback re-adds previousRule to current rules
     const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0] as CommandRule[];
     expect(lastCall.some((r) => r.pattern === "npm *")).toBe(true);

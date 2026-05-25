@@ -2,7 +2,11 @@
 // stay bounded after many dispatches. Catches memory leaks where cleanup
 // paths fail to delete map entries.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+vi.mock("../toast.js", () => ({
+  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+}));
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, pendingFor, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";

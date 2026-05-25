@@ -3,7 +3,7 @@
 //   1. deleteFilesBatch — optimistic+rollback, scope (ZERO tests existed)
 //   2. editor.resolve_partial — scope+retry+retryable (ZERO tests existed)
 //   3. sendPromptAction — rollback on transport failure (only 409 path tested)
-//   4. forkChatAction — idempotencyKey+optimistic+rollback+scope (ZERO tests)
+//   4. forkChat — idempotencyKey+optimistic+rollback+scope (ZERO tests)
 //   5. files.create_file — scope+retryable (ZERO tests existed)
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -235,17 +235,17 @@ describe("sendPromptAction rollback on failure", () => {
 });
 
 // ===========================================================================
-// 4. forkChatAction — idempotencyKey + optimistic + rollback + scope
+// 4. forkChat — idempotencyKey + optimistic + rollback + scope
 // ===========================================================================
 
-describe("forkChatAction idempotencyKey + optimistic + rollback", () => {
+describe("forkChat idempotencyKey + optimistic + rollback", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
   it("optimistic sets frozen, rollback restores on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { forkChatAction } = await import("./chat.js");
-    await forkChatAction.dispatch({ chatID: "c1", tangentID: "t1" });
+    const { forkChat } = await import("./chat.js");
+    await forkChat.dispatch({ chatID: "c1", tangentID: "t1" });
     const calls = vi.mocked(setFrozen).mock.calls;
     expect(calls[0]).toEqual(["c1", true]);
     expect(calls[calls.length - 1]).toEqual(["c1", false]);
@@ -253,8 +253,8 @@ describe("forkChatAction idempotencyKey + optimistic + rollback", () => {
 
   it("sends idempotency_key in command payload", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { forkChatAction } = await import("./chat.js");
-    await forkChatAction.dispatch({ chatID: "c1", tangentID: "t1" });
+    const { forkChat } = await import("./chat.js");
+    await forkChat.dispatch({ chatID: "c1", tangentID: "t1" });
     const cmd = mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } };
     expect(cmd.payload?.idempotency_key).toEqual(expect.any(String));
   });
@@ -267,9 +267,9 @@ describe("forkChatAction idempotencyKey + optimistic + rollback", () => {
       if (callCount === 1) return new Promise((r) => { resolveFirst = () => r({ ok: true, status: 200 }); });
       return Promise.resolve({ ok: true, status: 200 });
     });
-    const { forkChatAction } = await import("./chat.js");
-    const p1 = forkChatAction.dispatch({ chatID: "c1", tangentID: "t1" });
-    const p2 = forkChatAction.dispatch({ chatID: "c1", tangentID: "t2" });
+    const { forkChat } = await import("./chat.js");
+    const p1 = forkChat.dispatch({ chatID: "c1", tangentID: "t1" });
+    const p2 = forkChat.dispatch({ chatID: "c1", tangentID: "t2" });
     await Promise.resolve();
     expect(callCount).toBe(1);
     resolveFirst!();
@@ -281,8 +281,8 @@ describe("forkChatAction idempotencyKey + optimistic + rollback", () => {
 
   it("retryable: network shows Retry button on network error", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, error: "net", code: "network" });
-    const { forkChatAction } = await import("./chat.js");
-    await forkChatAction.dispatch({ chatID: "c1", tangentID: "t1" });
+    const { forkChat } = await import("./chat.js");
+    await forkChat.dispatch({ chatID: "c1", tangentID: "t1" });
     expect(toast.error).toHaveBeenCalledTimes(1);
     const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
     expect(retryArg).toBeDefined();

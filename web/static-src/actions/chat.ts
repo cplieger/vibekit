@@ -87,7 +87,7 @@ export const discardTangentAction = transportAction<string, { session: import(".
 
 // --- chat.set_supervised ---
 
-export const setSupervisedAction = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
+export const setSupervised = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_supervised",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
@@ -113,7 +113,7 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
 
 // --- chat.resolve_all_pending ---
 
-export const resolveAllPendingAction = transportAction<{ chatID: string; action: "accept" | "reject" }>({
+export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_all_pending",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, action }) => ({
@@ -127,7 +127,7 @@ export const resolveAllPendingAction = transportAction<{ chatID: string; action:
 
 // --- chat.trust_pending ---
 
-export const trustPendingAction = transportAction<string>({
+export const trustPending = transportAction<string>({
   name: "chat.trust_pending",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
@@ -138,7 +138,7 @@ export const trustPendingAction = transportAction<string>({
 
 // --- chat.clear_pending_trust ---
 
-export const clearPendingTrustAction = transportAction<string>({
+export const clearPendingTrust = transportAction<string>({
   name: "chat.clear_pending_trust",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
@@ -149,7 +149,7 @@ export const clearPendingTrustAction = transportAction<string>({
 
 // --- chat.fork ---
 
-export const forkChatAction = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
+export const forkChat = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
   name: "chat.fork",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -213,7 +213,7 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
 
 // --- chat.restore ---
 
-export const restoreChatAction = apiAction<string, { ok: boolean }>({
+export const restoreChat = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
   scope: (id) => `chat:${id}`,
   retryable: "network",
@@ -232,7 +232,7 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 // error toast. Same rationale as forge.delete_local (round-1 revert).
 // Manual Retry button is still available via retryable: "network".
 
-export const deleteArchivedChatAction = apiAction<string, unknown>({
+export const deleteArchivedChat = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
   // Not retryable: a timed-out DELETE may have succeeded server-side;
@@ -247,7 +247,7 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 
 // --- chat.load_history ---
 
-export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
+export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
   dedupe: true,
   retryable: "network",
@@ -256,18 +256,22 @@ export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; na
   error: "Couldn't load chat history",
 });
 
-// --- chat.cancel ---
+// --- chat.cancel_turn ---
 //
 // No scope: cancel must fire immediately, not queue behind an in-flight
 // sendPromptAction in the same chat. Cancel is naturally idempotent
 // server-side (the server ignores it if no turn is active).
+//
+// Named "chat.cancel_turn" (not "chat.cancel") to avoid confusion with
+// the Action.cancel() method — `cancelTurn.cancel()` reads as
+// "abort the cancel-turn action's in-flight instances", not "cancel a turn".
 
-export const cancelTurnAction = transportAction<string>({
-  name: "chat.cancel",
+export const cancelTurn = transportAction<string>({
+  name: "chat.cancel_turn",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  error: "Couldn't cancel",
+  error: "Couldn't cancel turn",
 });
 
 // --- chat.switch_model ---
@@ -408,7 +412,7 @@ export const resolvePendingChangeAction = transportAction<{ chatID: string; tool
 // first round-trips, which feels sluggish when the agent is waiting on
 // multiple permissions simultaneously.
 
-export const respondPermissionAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
+export const respondPermission = transportAction<{ chatID: string; requestID: number; optionID: string }>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   retryable: "network",
@@ -423,7 +427,7 @@ export const respondPermissionAction = transportAction<{ chatID: string; request
 
 // --- chat.restore_checkpoint ---
 
-export const restoreCheckpointAction = transportAction<{ chatID: string; tag: string }>({
+export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
   name: "chat.restore_checkpoint",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, tag }) => ({

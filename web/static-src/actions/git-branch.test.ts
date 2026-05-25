@@ -43,7 +43,7 @@ beforeEach(() => {
 
 describe("checkoutBranch", () => {
   it("dispatches successfully (UI is caller's responsibility)", async () => {
-    mockFetch.mockResolvedValue(new Response("", { status: 200 }));
+    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await checkoutBranch.dispatch({ repo: "", branch: "feature", create: false });
     expect(mockFetch).toHaveBeenCalled();
     // The action no longer mutates DOM; verify the request was sent.

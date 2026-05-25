@@ -6,7 +6,7 @@
 
 import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
-import { registerPushAction } from "./actions/notify.js";
+import { registerPush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ class NotifyController {
 
   /** Public hook for global cleanup. */
   cancelPush(): void {
-    registerPushAction.cancel();
+    registerPush.cancel();
   }
 
   constructor() {
@@ -105,7 +105,7 @@ class NotifyController {
   }
 
   unregisterPush(): void {
-    registerPushAction.cancel();
+    registerPush.cancel();
     this.pushState = { kind: "idle" };
     if (this.swRegistration === null) return;
     const reg = this.swRegistration;
@@ -134,7 +134,7 @@ class NotifyController {
   private async registerPushViaAction(silent = false): Promise<void> {
     if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
     this.pushState = { kind: "registering" };
-    const reg = await registerPushAction.dispatch(undefined, silent ? { silent: true } : undefined);
+    const reg = await registerPush.dispatch(undefined, silent ? { silent: true } : undefined);
     if (reg !== null) {
       this.swRegistration = reg;
       this.pushState = { kind: "registered", registration: reg };

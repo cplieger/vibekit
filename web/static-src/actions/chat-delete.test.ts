@@ -72,7 +72,7 @@ describe("deleteChatAction optimistic + rollback", () => {
 
 describe("archiveChatAction optimistic + rollback", () => {
   it("removes session optimistically", async () => {
-    mockFetch.mockResolvedValue(new Response("", { status: 200 }));
+    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await archiveChatAction.dispatch("s2");
     expect(get("s2")).toBeUndefined();
   });

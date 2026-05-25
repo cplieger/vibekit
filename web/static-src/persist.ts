@@ -7,7 +7,7 @@
 
 import { apiGet } from "./api-client.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { patchAppSettingsAction } from "./actions/settings.js";
+import { patchAppSettings } from "./actions/settings.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -104,7 +104,7 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     patchInputs = [];
     patchResolvers = [];
     const gen = ++patchGen;
-    void patchAppSettingsAction.dispatch(
+    void patchAppSettings.dispatch(
       {
         body: body as Record<string, unknown>,
         ...(allInputs.length > 0 ? { inputs: allInputs } : {}),

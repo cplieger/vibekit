@@ -202,8 +202,8 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "table escapes cell content", input: "\n| <b> |\n|---|\n| <i> |\n", expected: /&lt;b&gt;/ },
 
     // --- Task lists (smd-parser emits HTML5 boolean attrs as attr="") ---
-    { name: "checked task", input: "- [x] done", expected: /<input type="checkbox" disabled="" checked=""/ },
-    { name: "unchecked task", input: "- [ ] todo", expected: /<input type="checkbox" disabled=""/ },
+    { name: "checked task", input: "- [x] done", expected: /<input type="checkbox" disabled="" aria-label="Task item" checked=""/ },
+    { name: "unchecked task", input: "- [ ] todo", expected: /<input type="checkbox" disabled="" aria-label="Task item"/ },
     { name: "task list XSS in content", input: "- [x] <img onerror=alert(1)>", expected: /&lt;img onerror=alert\(1\)&gt;/ },
 
     // --- Paragraphs (no inter-paragraph newline in smd-parser output) ---

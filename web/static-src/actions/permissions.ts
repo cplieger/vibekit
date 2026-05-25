@@ -40,7 +40,7 @@ export interface RemoveRuleArgs {
 // Any mismatch between local and server state is corrected on the next page
 // load when loadRules() is called during initShellPolicy().
 
-export const addRuleAction = apiAction<AddRuleArgs, unknown, { pattern: string; previousRule: CommandRule | undefined }>({
+export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previousRule: CommandRule | undefined }>({
   name: "permissions.add_rule",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -88,7 +88,7 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown, { pattern: string; 
   error: "Couldn't add rule",
 });
 
-export const removeRuleAction = apiAction<RemoveRuleArgs, void, { previousRule: CommandRule | undefined; atIndex: number }>({
+export const removeRule = apiAction<RemoveRuleArgs, void, { previousRule: CommandRule | undefined; atIndex: number }>({
   name: "permissions.remove_rule",
   // Not retryable: a timed-out DELETE may have succeeded server-side;
   // retrying would hit 404 and trigger a misleading rollback.

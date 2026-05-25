@@ -35,7 +35,7 @@ function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
 // --- Actions ---
 
 /** Merge a pull request. */
-export const mergePRAction = apiAction<PRArgs, unknown, PRRemoveResult>({
+export const mergePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.merge_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: {} }),
@@ -47,7 +47,7 @@ export const mergePRAction = apiAction<PRArgs, unknown, PRRemoveResult>({
 });
 
 /** Close a pull request without merging. */
-export const closePRAction = apiAction<PRArgs, unknown, PRRemoveResult>({
+export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.close_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),

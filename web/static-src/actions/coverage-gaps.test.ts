@@ -119,7 +119,7 @@ describe("structuredClone fallback on retry toast", () => {
 
     // Fire the retry
     retryHandler!.onClick();
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(attempts).toBe(2);
     expect(callback).toHaveBeenCalledTimes(1);
   });
@@ -147,7 +147,7 @@ describe("structuredClone fallback on retry toast", () => {
     expect(retryHandler).toBeDefined();
 
     retryHandler!.onClick();
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(attempts).toBe(2);
   });
 });

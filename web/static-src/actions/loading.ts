@@ -21,7 +21,7 @@
 // hook to stop receiving updates and avoid leaking listeners.
 // ---------------------------------------------------------------------------
 
-import { subscribeByName, isPending } from "./registry.js";
+import { subscribeByName, isPending, pendingForAny } from "./registry.js";
 
 /** Element types that have a `.disabled` writable boolean. */
 type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -71,6 +71,7 @@ export function bindLoadingState(
   let baseDisabled = el.disabled;
   let hadFocus = false;
   let disposed = false;
+  let wasConnected = el.isConnected;
 
   /** Restore element to idle state (B7: deduplicated helper). */
   const setIdle = (): void => {
@@ -82,8 +83,14 @@ export function bindLoadingState(
     hadFocus = false;
   };
 
+  let unsub: (() => void) | undefined;
+
   const apply = (): void => {
     if (disposed) return;
+    // Auto-dispose if the element was removed from the DOM — prevents
+    // stale bindings and keeps the closure from leaking the element.
+    if (wasConnected && !el.isConnected) { disposed = true; unsub?.(); return; }
+    if (el.isConnected) wasConnected = true;
     const pending = isPending(actionName);
     // Snapshot the live disabled state on the pending edge (before we
     // clobber it) so we can restore it when the action completes.
@@ -115,8 +122,84 @@ export function bindLoadingState(
 
   // Re-evaluate on every transition for the named action. Uses per-name
   // subscription to avoid O(n) fan-out across all bindLoadingState bindings.
-  const unsubscribe = subscribeByName(actionName, apply);
+  unsub = subscribeByName(actionName, apply);
 
   // Unsubscribe restores element state if still mid-pending (B2).
-  return () => { disposed = true; restore(); unsubscribe(); };
+  return () => { disposed = true; restore(); unsub?.(); };
+}
+
+/**
+ * Bind a button/input element's disabled / aria-busy state to MULTIPLE
+ * action names. The element is disabled while ANY of the named actions
+ * is pending (OR semantics via `pendingForAny`).
+ *
+ * Use this instead of stacking multiple `bindLoadingState` calls on the
+ * same element — stacking causes the first unsubscribe to restore the
+ * element even if another action is still pending.
+ *
+ * @param actionNames - Array of registry action names to observe.
+ * @param el - Button, input, select, or textarea whose `disabled` property
+ *   will be toggled while any named action is pending.
+ * @param opts - Same options as `bindLoadingState`.
+ * @returns An unsubscribe function that restores the element and detaches
+ *   all registry listeners.
+ */
+export function bindLoadingStateMulti(
+  actionNames: readonly string[],
+  el: DisableableElement,
+  opts: BindLoadingOptions = {},
+): () => void {
+  if (actionNames.length === 0) return () => {};
+  if (actionNames.length === 1) return bindLoadingState(actionNames[0]!, el, opts);
+
+  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false } = opts;
+  const manageAriaBusy = ariaBusy && !preserveAriaBusy;
+  let wasPending = false;
+  let baseDisabled = el.disabled;
+  let hadFocus = false;
+  let disposed = false;
+  let wasConnected = el.isConnected;
+
+  const setIdle = (): void => {
+    el.disabled = preserveDisabled ? baseDisabled : false;
+    if (manageAriaBusy) el.removeAttribute("aria-busy");
+    if (pendingClass) el.classList.remove(pendingClass);
+    if (hadFocus && el.isConnected && !el.disabled) el.focus();
+    hadFocus = false;
+  };
+
+  let unsubs: (() => void)[] | undefined;
+
+  const apply = (): void => {
+    if (disposed) return;
+    if (wasConnected && !el.isConnected) { disposed = true; if (unsubs) for (const u of unsubs) u(); return; }
+    if (el.isConnected) wasConnected = true;
+    const pending = pendingForAny(actionNames);
+    if (pending && !wasPending) {
+      baseDisabled = el.disabled;
+      hadFocus = document.activeElement === el;
+    }
+    if (pending) {
+      el.disabled = true;
+      if (manageAriaBusy) el.setAttribute("aria-busy", "true");
+      if (pendingClass) el.classList.add(pendingClass);
+    } else if (wasPending) {
+      setIdle();
+    }
+    wasPending = pending;
+  };
+
+  const restore = (): void => {
+    if (wasPending) { setIdle(); wasPending = false; }
+  };
+
+  apply();
+
+  unsubs = actionNames.map((name) => subscribeByName(name, apply));
+
+  return () => {
+    disposed = true;
+    restore();
+    if (unsubs) for (const u of unsubs) u();
+  };
 }

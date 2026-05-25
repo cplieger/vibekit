@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for forkChatAction optimistic freeze + rollback.
+// Tests for forkChat optimistic freeze + rollback.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -11,7 +11,7 @@ vi.mock("../transport.js", () => ({ send: vi.fn() }));
 
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive } from "../store.js";
-import { forkChatAction } from "./chat.js";
+import { forkChat } from "./chat.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import type { Session } from "../types.js";
@@ -40,16 +40,16 @@ beforeEach(() => {
   setActive("parent-1");
 });
 
-describe("forkChatAction optimistic + rollback", () => {
+describe("forkChat optimistic + rollback", () => {
   it("sets frozen=true optimistically on dispatch", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    await forkChatAction.dispatch({ chatID: "parent-1", tangentID: "t-1" });
+    await forkChat.dispatch({ chatID: "parent-1", tangentID: "t-1" });
     expect(get("parent-1")!.frozen).toBe(true);
   });
 
   it("rolls back frozen on failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "server error" });
-    await forkChatAction.dispatch({ chatID: "parent-1", tangentID: "t-1" });
+    await forkChat.dispatch({ chatID: "parent-1", tangentID: "t-1" });
     expect(get("parent-1")!.frozen).toBeUndefined();
   });
 });

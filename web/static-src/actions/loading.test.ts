@@ -257,4 +257,29 @@ describe("bindLoadingState", () => {
     await p;
     expect(btn.disabled).toBe(false); // still not affected
   });
+
+  it("auto-disposes when element is removed from DOM mid-pending", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind_autodispose",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    const unbind = bindLoadingState("test.bind_autodispose", btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.isConnected).toBe(true);
+    // Remove element from DOM
+    btn.remove();
+    expect(btn.isConnected).toBe(false);
+    // Complete the action — the binding should auto-dispose on the
+    // success transition (sees el disconnected) and NOT restore disabled.
+    resolveRun!();
+    await p;
+    // After auto-dispose, the element stays disabled (no restore).
+    // Note: unbind() is a no-op after auto-dispose.
+    expect(btn.disabled).toBe(true);
+    unbind(); // cleanup
+  });
 });

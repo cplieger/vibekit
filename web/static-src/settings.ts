@@ -29,7 +29,7 @@ import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { saveSteeringAction, logoutAction, setKiroSettingAction } from "./actions/settings.js";
+import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState } from "./actions/index.js";
 
@@ -127,7 +127,7 @@ function initSteeringEditor(): void {
     showSaving();
     timer = setTimeout(() => {
       const gen = ++saveGen;
-      void saveSteeringAction.dispatch({ content: textarea.value }, { silent: true })
+      void saveSteering.dispatch({ content: textarea.value }, { silent: true })
         .then((r) => {
           if (gen !== saveGen) return; // newer save pending, skip indicator update
           if (r === null) showError(); else showSaved();
@@ -141,7 +141,7 @@ function initSteeringEditor(): void {
 function initLogoutButton(): void {
   bindLoadingState("settings.logout", $.logoutBtn);
   $.logoutBtn.addEventListener("click", () => {
-    void logoutAction.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
+    void logout.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
   });
 }
 
@@ -252,7 +252,7 @@ function initExperimentalToggles(): void {
     input.addEventListener("change", () => {
       showSaving();
       const gen = ++kiroSettingGen;
-      void setKiroSettingAction.dispatch({
+      void setKiroSetting.dispatch({
         key: flag.key,
         value: input.checked ? "true" : "false",
         input,
@@ -325,7 +325,7 @@ function initCompactionSettings(): void {
       if (!s.isBool) snapshots.set(input, input.value);
       showSaving();
       const gen = ++kiroSettingGen;
-      void setKiroSettingAction.dispatch({
+      void setKiroSetting.dispatch({
         key: s.key,
         value,
         input,

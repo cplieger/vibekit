@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for mergePRAction and closePRAction optimistic + rollback.
+// Tests for mergePR and closePR optimistic + rollback.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -15,7 +15,7 @@ vi.mock("../api-client.js", () => ({
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { bindPRState } from "../git-prs-state.js";
-import { mergePRAction, closePRAction } from "./git-prs.js";
+import { mergePR, closePR } from "./git-prs.js";
 
 const mockFetch = vi.fn();
 
@@ -45,10 +45,10 @@ beforeEach(() => {
 
 const prArgs = { forge_id: "gh1", owner: "org", name: "repo", pr_number: 5 };
 
-describe("mergePRAction optimistic + rollback", () => {
+describe("mergePR optimistic + rollback", () => {
   it("removes PR from group optimistically", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await mergePRAction.dispatch(prArgs);
+    await mergePR.dispatch(prArgs);
     expect(paint).toHaveBeenCalled();
   });
 
@@ -56,7 +56,7 @@ describe("mergePRAction optimistic + rollback", () => {
     const groups = makeGroups();
     bindPRState({ groups, paint });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await mergePRAction.dispatch(prArgs);
+    await mergePR.dispatch(prArgs);
     const prs = groups[0]!.prs;
     expect(prs.some((p) => p.number === 5)).toBe(true);
   });
@@ -65,16 +65,16 @@ describe("mergePRAction optimistic + rollback", () => {
     const groups = makeGroups();
     bindPRState({ groups, paint });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await mergePRAction.dispatch(prArgs);
+    await mergePR.dispatch(prArgs);
     const numbers = groups[0]!.prs.map((p) => p.number);
     expect(numbers).toEqual([10, 5, 3]);
   });
 });
 
-describe("closePRAction optimistic + rollback", () => {
+describe("closePR optimistic + rollback", () => {
   it("removes PR from group optimistically", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await closePRAction.dispatch(prArgs);
+    await closePR.dispatch(prArgs);
     expect(paint).toHaveBeenCalled();
   });
 
@@ -82,7 +82,7 @@ describe("closePRAction optimistic + rollback", () => {
     const groups = makeGroups();
     bindPRState({ groups, paint });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await closePRAction.dispatch(prArgs);
+    await closePR.dispatch(prArgs);
     const prs = groups[0]!.prs;
     expect(prs.some((p) => p.number === 5)).toBe(true);
   });
@@ -91,7 +91,7 @@ describe("closePRAction optimistic + rollback", () => {
     const groups = makeGroups();
     bindPRState({ groups, paint });
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await closePRAction.dispatch(prArgs);
+    await closePR.dispatch(prArgs);
     const numbers = groups[0]!.prs.map((p) => p.number);
     expect(numbers).toEqual([10, 5, 3]);
   });

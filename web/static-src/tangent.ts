@@ -8,7 +8,7 @@
 
 import { getActive, get, loadList, version } from "./store.js";
 import { effect } from "./signals.js";
-import { forkChatAction, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
+import { forkChat, mergeTangentAction, discardTangentAction } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import { openChatTab, activateChatView } from "./chat.js";
 import { confirm } from "./confirm.js";
@@ -57,7 +57,7 @@ export function forkCurrentChat(chatID: string): void {
   if (session === undefined) return;
   if (session.frozen === true) return;
   const tangentID = `tangent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  void forkChatAction.dispatch({ chatID: session.id, tangentID }, {
+  void forkChat.dispatch({ chatID: session.id, tangentID }, {
     onSuccess: () => {
       void loadList().then(() => {
         // Read fresh session state — name/agent may have changed while

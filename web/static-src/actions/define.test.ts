@@ -498,7 +498,7 @@ describe("defineAction — retryable error toast", () => {
     expect(retryFn).toBeDefined();
     retryFn();
     // Wait for the re-dispatch to complete.
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(attempts).toBe(2);
   });
 

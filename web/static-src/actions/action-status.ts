@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ActionErrorLike, ActionInstance, RegistryListener } from "./types.js";
-import { subscribe } from "./registry.js";
+import { subscribe, pendingFor } from "./registry.js";
 
 export interface ActionStatus {
   /** Number of currently-pending instances of this action name. */
@@ -83,8 +83,10 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
 export function actionStatus(name: string): ActionStatus {
   let snap = snapshots.get(name);
   if (snap === undefined) {
+    // Seed pending count from the registry so callers that subscribe
+    // AFTER an action is already in-flight see the correct count.
     snap = {
-      pending: 0,
+      pending: pendingFor(name).length,
       lastDispatchedAt: 0,
       lastSettledAt: 0,
     };

@@ -46,7 +46,7 @@ beforeEach(() => {
 describe("toggleServer optimistic + rollback", () => {
   it("calls updateConfiguredEntry optimistically", async () => {
     mockUpdate.mockReturnValue(makeServer("a", true));
-    mockFetch.mockResolvedValue(new Response("", { status: 200 }));
+    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await toggleServer.dispatch({ id: "a", enabled: false });
     expect(mockUpdate).toHaveBeenCalledWith("a", { enabled: false });
   });
@@ -63,7 +63,7 @@ describe("toggleServer optimistic + rollback", () => {
 
   it("toggles disabled server to enabled", async () => {
     mockUpdate.mockReturnValue(makeServer("c", false));
-    mockFetch.mockResolvedValue(new Response("", { status: 200 }));
+    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await toggleServer.dispatch({ id: "c", enabled: true });
     expect(mockUpdate).toHaveBeenCalledWith("c", { enabled: true });
   });

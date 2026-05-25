@@ -15,7 +15,7 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
 
-export const saveSteeringAction = apiAction<{ content: string }, unknown>({
+export const saveSteering = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -30,7 +30,7 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
 
 // --- Logout ---
 
-export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
+export const logout = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
   retryable: "network",
   // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
@@ -87,7 +87,7 @@ interface KiroSettingOp {
   prevValue?: string;
 }
 
-export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
+export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
   name: "settings.set_kiro_setting",
   scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
@@ -131,7 +131,7 @@ interface PatchAppOp {
   inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
 }
 
-export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown, PatchAppOp>({
+export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
   name: "settings.patch",
   scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and

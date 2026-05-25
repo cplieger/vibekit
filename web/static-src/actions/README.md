@@ -514,7 +514,7 @@ const status = actionStatus("settings.save_steering");
 Use `<area>.<verb>` or `<area>.<verb_noun>` with lowercase + underscores:
 
 ```
-chat.archive              chat.cancel               chat.clear_pending_trust
+chat.archive              chat.cancel_turn          chat.clear_pending_trust
 chat.delete               chat.delete_archived      chat.discard_tangent
 chat.fork                 chat.load_history         chat.merge_tangent
 chat.resolve_all_pending  chat.resolve_pending_change  chat.respond_permission

@@ -69,7 +69,7 @@ import "./handlers/chat.js";
 import "./handlers/messages.js";
 import "./handlers/turn.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
-import { cancelTurnAction } from "./actions/chat.js";
+import { cancelTurn } from "./actions/chat.js";
 import { initActionConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
 import "./handlers/system.js";
 import "./handlers/pending.js";
@@ -338,7 +338,7 @@ function setupInput(): void {
     // Cancel the active chat's in-flight turn. No-op if nothing running.
     if (getActiveId() === "") return;
     if (!isThinking(getActiveId())) return;
-    void cancelTurnAction.dispatch(getActiveId());
+    void cancelTurn.dispatch(getActiveId());
   });
 
   const doCreate = guardAction(() => {

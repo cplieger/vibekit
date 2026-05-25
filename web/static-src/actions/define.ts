@@ -259,10 +259,10 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
 
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
-      result = runOnce(args, opts, ac, id, dedupeEntry, dispatchedAt);
+      result = runOnce(args, opts, ac, id, dedupeEntry, dedupeKey, dispatchedAt);
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
-      const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry, dispatchedAt));
+      const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry, dedupeKey, dispatchedAt));
       const tail = next.catch(() => {});
       scopeChains.set(scopeKey, tail);
       void next.finally(() => {
@@ -316,12 +316,23 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
    *  Always resolves (never rejects) — errors are captured internally
    *  and surfaced via callbacks + toasts. Returns TResult on success,
    *  null on error or cancellation. */
+  /** Eagerly clear the dedupe entry so dispatches from within
+   *  onSuccess/onError callbacks see a clean map and start fresh
+   *  rather than collapsing onto this (now-settled) promise. The async
+   *  .finally() cleanup in dispatch() remains as a safety net. */
+  function clearDedupe(dk: string | null, entry: DedupeEntry | null): void {
+    if (dk !== null && entry !== null && dedupeInflight.get(dk) === entry) {
+      dedupeInflight.delete(dk);
+    }
+  }
+
   async function runOnce(
     args: TArgs,
     opts: DispatchOptions<TArgs, TResult>,
     ac: AbortController,
     id: string,
     dedupeEntry: DedupeEntry | null,
+    dedupeKey: string | null,
     dispatchedAt: number,
   ): Promise<TResult | null> {
     // If already cancelled while queued in scope chain, short-circuit.
@@ -330,6 +341,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       // Mark the dedupe entry as cancelled so deduped callers' onError
       // doesn't fire (only onSettled does, per the contract).
       if (dedupeEntry !== null) dedupeEntry.cancelled = true;
+      clearDedupe(dedupeKey, dedupeEntry);
       record({
         id, name: def.name, status: "cancelled", args,
         dispatchedAt, startedAt: now, completedAt: now,
@@ -364,6 +376,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // needed (the optimistic itself failed).
         const err = toActionError(e);
         if (dedupeEntry !== null) dedupeEntry.error = err;
+        clearDedupe(dedupeKey, dedupeEntry);
         record({
           id, name: def.name, status: "error", args,
           dispatchedAt, startedAt, completedAt: Date.now(), error: err,
@@ -393,6 +406,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       // throw on abort, but be defensive.
       if (ac.signal.aborted) {
         if (dedupeEntry !== null) dedupeEntry.cancelled = true;
+        clearDedupe(dedupeKey, dedupeEntry);
         record({
           id, name: def.name, status: "cancelled", args,
           dispatchedAt, startedAt, completedAt: Date.now(), attempts,
@@ -409,6 +423,10 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         dispatchedAt, startedAt, completedAt: Date.now(), result, attempts,
       });
       inFlight.delete(id);
+      // Clear dedupe BEFORE callbacks so dispatches from onSuccess
+      // with the same key start a fresh run instead of collapsing
+      // onto this (now-settled) promise.
+      clearDedupe(dedupeKey, dedupeEntry);
       emitSuccessToast(args, result, opts);
       try { opts.onSuccess?.(result, args); } catch (cbErr) {
         console.error(`[actions] onSuccess callback for ${def.name} threw`, cbErr);
@@ -429,6 +447,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         if (cancelled) dedupeEntry.cancelled = true;
         else dedupeEntry.error = err;
       }
+      // Clear dedupe BEFORE callbacks so dispatches from onError
+      // with the same key start a fresh run.
+      clearDedupe(dedupeKey, dedupeEntry);
       record({
         id, name: def.name, status, args,
         dispatchedAt, startedAt, completedAt: Date.now(),

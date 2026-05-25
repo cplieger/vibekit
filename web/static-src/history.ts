@@ -3,7 +3,7 @@
 // History table opened from the toolbar (#history-btn). Restoring a chat
 // loads its messages into a new tab. Deletion is permanent (server-side).
 //
-// Uses loadHistoryAction / deleteArchivedChatAction from actions/chat.ts
+// Uses loadHistory / deleteArchivedChat from actions/chat.ts
 // for the table view, and raw apiGet for the lightweight sidebar fetch
 // (no toast on failure — sidebar is background UI).
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH } from "./icons.js";
-import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
+import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup } from "./actions/index.js";
 
 interface ArchivedHeader {
@@ -43,7 +43,7 @@ class HistoryController {
   }
 
   teardown(): void {
-    loadHistoryAction.cancel();
+    loadHistory.cancel();
     this.tableAbortController?.abort();
     this.tableAbortController = null;
     this.archivedController?.abort();
@@ -55,12 +55,12 @@ class HistoryController {
     if (container === null) return;
     container.replaceChildren();
 
-    loadHistoryAction.cancel();
+    loadHistory.cancel();
     this.tableAbortController?.abort();
     this.tableAbortController = new AbortController();
     const { signal } = this.tableAbortController;
 
-    const d = await loadHistoryAction.dispatch(undefined);
+    const d = await loadHistory.dispatch(undefined);
     if (signal.aborted) return;
     // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
     if (d === null) {
@@ -138,7 +138,7 @@ class HistoryController {
           empty.textContent = "No archived chats.";
           container.appendChild(empty);
         }
-        void deleteArchivedChatAction.dispatch(chatId);
+        void deleteArchivedChat.dispatch(chatId);
       }
     }, { signal });
   }

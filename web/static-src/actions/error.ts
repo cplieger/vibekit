@@ -65,7 +65,37 @@ export function toActionError(e: unknown): ActionErrorLike {
     return { message: e.message, code, cause: e };
   }
   if (e instanceof Error) {
-    return { message: e.message, cause: e };
+    const status = "status" in e && typeof (e as { status: unknown }).status === "number"
+      ? (e as { status: number }).status
+      : undefined;
+    return { message: e.message, ...(status !== undefined ? { status } : {}), cause: e };
   }
   return { message: String(e), cause: e };
+}
+
+/**
+ * Classify a caught fetch error into an ActionError with a canonical code.
+ * Used by transportAction / apiAction wrappers to normalise network-layer
+ * failures into retry-eligible ActionErrors.
+ *
+ * Classification priority:
+ *  1. Signal already aborted → "cancelled" (user or framework cancelled)
+ *  2. DOMException TimeoutError → "timeout"
+ *  3. DOMException AbortError with live signal → "timeout" (AbortSignal.timeout)
+ *  4. Everything else → "network"
+ */
+export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError {
+  if (signal.aborted) {
+    return new ActionError("Request cancelled", { code: "cancelled", cause: e });
+  }
+  if (e instanceof DOMException) {
+    if (e.name === "TimeoutError") {
+      return new ActionError("Request timed out", { code: "timeout", cause: e });
+    }
+    if (e.name === "AbortError") {
+      return new ActionError("Request timed out", { code: "timeout", cause: e });
+    }
+  }
+  const msg = e instanceof Error ? e.message : "network error";
+  return new ActionError(msg, { code: "network", cause: e });
 }

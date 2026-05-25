@@ -3,7 +3,7 @@
 //   1. switchModelAction — optimistic+rollback (untested)
 //   2. crew.sendMessage — scope+idempotencyKey+retry (no test at all)
 //   3. git-changes stage/pull — retry+scope+success toast (no test at all)
-//   4. settings.logoutAction — optimistic+rollback (no test at all)
+//   4. settings.logout — optimistic+rollback (no test at all)
 //   5. mcp.toggleServer retry — auto-retry on network error (only optimistic tested)
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -214,10 +214,10 @@ describe("git-changes stage retry + scope + pull success toast", () => {
 });
 
 // ===========================================================================
-// 4. settings.logoutAction — optimistic + rollback
+// 4. settings.logout — optimistic + rollback
 // ===========================================================================
 
-describe("settings.logoutAction optimistic + rollback", () => {
+describe("settings.logout optimistic + rollback", () => {
   it("clears email/status optimistically", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     const emailEl = document.createElement("span");
@@ -225,8 +225,8 @@ describe("settings.logoutAction optimistic + rollback", () => {
     const stAuthEl = document.createElement("span");
     stAuthEl.textContent = "signed in";
 
-    const { logoutAction } = await import("./settings.js");
-    await logoutAction.dispatch({ emailEl, stAuthEl });
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ emailEl, stAuthEl });
     expect(emailEl.textContent).toBe("");
     expect(stAuthEl.textContent).toBe("not signed in");
   });
@@ -238,8 +238,8 @@ describe("settings.logoutAction optimistic + rollback", () => {
     const stAuthEl = document.createElement("span");
     stAuthEl.textContent = "signed in";
 
-    const { logoutAction } = await import("./settings.js");
-    await logoutAction.dispatch({ emailEl, stAuthEl });
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ emailEl, stAuthEl });
     expect(emailEl.textContent).toBe("user@example.com");
     expect(stAuthEl.textContent).toBe("signed in");
   });
@@ -251,8 +251,8 @@ describe("settings.logoutAction optimistic + rollback", () => {
     const stAuthEl = document.createElement("span");
     stAuthEl.textContent = "signed in";
 
-    const { logoutAction } = await import("./settings.js");
-    await logoutAction.dispatch({ emailEl, stAuthEl });
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ emailEl, stAuthEl });
     expect(toast.error).toHaveBeenCalledTimes(1);
     const msg = vi.mocked(toast.error).mock.calls[0]![0];
     expect(msg).toContain("session expired");
@@ -277,7 +277,7 @@ describe("mcp.toggleServer auto-retry on network error", () => {
     mockFetch.mockImplementation(() => {
       attempt++;
       if (attempt < 3) return Promise.reject(new TypeError("Failed to fetch"));
-      return Promise.resolve(new Response("", { status: 200 }));
+      return Promise.resolve(new Response("{}", { status: 200 }));
     });
     const { toggleServer } = await import("./mcp.js");
     const p = toggleServer.dispatch({ id: "a", enabled: false });

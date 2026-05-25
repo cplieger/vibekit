@@ -12,7 +12,7 @@ import { urlBase64ToUint8Array } from "../push-util.js";
  * Dispatched when the user explicitly toggles notifications on.
  * Rollback: unchecks the toggle so the UI reflects reality on failure.
  */
-export const registerPushAction = defineAction<void, ServiceWorkerRegistration>({
+export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   name: "notify.register_push",
   run: async (_args, signal) => {
     if (!("serviceWorker" in navigator)) {

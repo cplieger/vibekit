@@ -22,7 +22,7 @@ import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
-import { setSupervisedAction, resolveAllPendingAction, resolvePendingChangeAction, trustPendingAction, clearPendingTrustAction } from "./actions/chat.js";
+import { setSupervised, resolveAllPending, resolvePendingChangeAction, trustPending, clearPendingTrust } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
@@ -142,7 +142,7 @@ class SupervisedPillController {
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
-      void setSupervisedAction.dispatch({ chatID: this.currentChatID(), enabled });
+      void setSupervised.dispatch({ chatID: this.currentChatID(), enabled });
     });
 
     // Trusted-this-turn short-circuit.
@@ -282,19 +282,19 @@ class SupervisedPillController {
   }
 
   private bulkResolve(action: "accept" | "reject"): void {
-    void resolveAllPendingAction.dispatch({ chatID: this.currentChatID(), action });
+    void resolveAllPending.dispatch({ chatID: this.currentChatID(), action });
   }
 
   /** Post trust_pending_changes. The server sets perTurnTrust,
    *  accepts every staged op immediately, and broadcasts
    *  pending_trust_enabled so the pill flips. */
   private trustRemaining(): void {
-    void trustPendingAction.dispatch(this.currentChatID());
+    void trustPending.dispatch(this.currentChatID());
   }
 
   /** Post clear_pending_trust. Mirror of trustRemaining. */
   private stopTrusting(): void {
-    void clearPendingTrustAction.dispatch(this.currentChatID());
+    void clearPendingTrust.dispatch(this.currentChatID());
   }
 
   private currentChatID(): string {

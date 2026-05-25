@@ -21,7 +21,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
+import { mergePR, closePR, refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
@@ -407,7 +407,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
       if (!ok) return;
       await withAsyncFeedback(merge, async () => {
-        const res = await mergePRAction.dispatch({
+        const res = await mergePR.dispatch({
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
@@ -426,7 +426,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
       const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
       if (!ok) return;
       await withAsyncFeedback(close, async () => {
-        const res = await closePRAction.dispatch({
+        const res = await closePR.dispatch({
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");

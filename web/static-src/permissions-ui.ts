@@ -19,7 +19,7 @@ import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup } from "./actions/index.js";
-import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
+import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -249,7 +249,7 @@ class PermissionsUIController {
 
   private async removeRule(pattern: string): Promise<void> {
     if (!this.commandRules.some((e) => e.pattern === pattern)) return;
-    await removeRuleAction.dispatch({
+    await removeRule.dispatch({
       pattern,
       rules: this.commandRules,
       setRules: this.setRules,
@@ -260,7 +260,7 @@ class PermissionsUIController {
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    await addRuleAction.dispatch({
+    await addRule.dispatch({
       pattern: clean,
       mode,
       priority,

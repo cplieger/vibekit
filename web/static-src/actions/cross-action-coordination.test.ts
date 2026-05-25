@@ -198,7 +198,7 @@ describe("onSuccess → dispatch chain with same scope", () => {
 
     await p;
     // Wait for the chained dispatch to complete
-    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     await Promise.resolve();
 
     expect(dispatchCount).toBe(1); // onSuccess fired exactly once

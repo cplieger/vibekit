@@ -33,7 +33,7 @@ import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { error as toastError } from "./toast.js";
-import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
+import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChat } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -296,7 +296,7 @@ export function exportChat(id: string): void {
  *  on the conversation they just resurrected instead of having to
  *  find it in the sidebar. */
 export function restoreArchivedChat(id: string): void {
-  void restoreChatAction.dispatch(id, {
+  void restoreChat.dispatch(id, {
     onSuccess: (d) => {
       if (d.ok !== true) return;
       void loadList().then(() => {
