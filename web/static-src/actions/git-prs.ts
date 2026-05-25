@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
 import type { PRRemoveResult } from "../git-prs-state.js";
 
@@ -56,7 +57,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   error: (args) => `Couldn't close PR #${String(args.pr_number)}`,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });
 
 /** Refresh all PRs across connected forges. */
@@ -77,5 +78,5 @@ export const refreshPRs = defineAction<void, void>({
   },
   error: "Couldn't refresh PRs",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });

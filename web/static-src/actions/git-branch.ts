@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 
 interface CheckoutArgs {
   repo: string;
@@ -23,6 +24,6 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
     body: { repo, branch, create },
   }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: (args) => `Couldn't check out \u201c${args.branch.length > 40 ? args.branch.slice(0, 37) + "\u2026" : args.branch}\u201d`,
 });

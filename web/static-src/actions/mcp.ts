@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
 
 /** Result shape from the registry search endpoint. */
@@ -36,7 +37,7 @@ interface ToggleArgs {
 export const toggleServer = apiAction<ToggleArgs, void, Server>({
   name: "mcp.toggle_server",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
   request: ({ id, enabled }) => ({
     method: "PATCH",
@@ -88,7 +89,7 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
 export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   dedupe: (id) => id,
   request: (id) => ({
     method: "GET",
@@ -109,7 +110,7 @@ export const saveServer = apiAction<SaveArgs, Server>({
   name: "mcp.save_server",
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
     method: id === "" ? "POST" : "PUT",
@@ -128,7 +129,7 @@ interface SearchRegistryArgs {
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   dedupe: (args) => args.q,
   request: ({ q }) => ({
     method: "GET",

@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
@@ -18,7 +19,7 @@ interface CreateArgs {
 export const createFile = apiAction<CreateArgs, unknown>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   retryable: "network",
   request: (args) => ({
     method: "POST",
@@ -33,7 +34,7 @@ export const createFile = apiAction<CreateArgs, unknown>({
 export const createFolder = apiAction<CreateArgs, unknown>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   retryable: "network",
   request: (args) => ({
     method: "POST",
@@ -55,7 +56,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
     body: { action: "rename", path: joinPath(dir, original), name: newName },
   }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: (args) => `Couldn't rename \u201c${args.original.length > 40 ? args.original.slice(0, 37) + "\u2026" : args.original}\u201d`,
 });
 

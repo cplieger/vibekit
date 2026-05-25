@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
 import { send as transportSend } from "../transport.js";
@@ -41,7 +42,7 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
   scope: (id) => `chat:${id}`,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
     path: `/api/chats/${encodeURIComponent(id)}/archive`,
@@ -107,7 +108,7 @@ export const setSupervised = transportAction<{ chatID: string; enabled: boolean 
     if (op !== undefined) setSupervisedMode(chatID, op.prev);
   },
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't update supervised mode",
 });
 
@@ -119,7 +120,7 @@ export const resolveAllPending = transportAction<{ chatID: string; action: "acce
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   command: ({ chatID, action }) => ({
     type: "resolve_all_pending_changes",
     chat_id: chatID,
@@ -135,7 +136,7 @@ export const trustPending = transportAction<string>({
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't trust pending changes",
 });
 
@@ -146,7 +147,7 @@ export const clearPendingTrust = transportAction<string>({
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't clear pending trust",
 });
 
@@ -210,7 +211,7 @@ export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boo
     if (op !== undefined) storeSetAutoApproveCrew(chatID, op.prev);
   },
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't update auto-approve",
 });
 
@@ -221,7 +222,7 @@ export const restoreChat = apiAction<string, { ok: boolean }>({
   scope: (id) => `chat:${id}`,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
     path: "/api/chats/archived",
@@ -252,7 +253,7 @@ export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: st
   name: "chat.load_history",
   dedupe: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
 });
@@ -271,7 +272,7 @@ export const cancelTurn = transportAction<string>({
   name: "chat.cancel_turn",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't cancel turn",
 });
 
@@ -286,7 +287,7 @@ export const switchModel = defineAction<{ chatID: string; model: string }, boole
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
     if (session === undefined) return undefined;
@@ -403,7 +404,7 @@ export const resolvePendingChange = transportAction<{ chatID: string; toolCallID
     payload: { tool_call_id: toolCallID, action },
   }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't resolve change",
 });
 
@@ -419,7 +420,7 @@ export const respondPermission = transportAction<{ chatID: string; requestID: nu
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   command: ({ chatID, requestID, optionID }) => ({
     type: "permission_response",
     chat_id: chatID,
@@ -440,6 +441,6 @@ export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }
     payload: { tag },
   }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: "Couldn't restore checkpoint",
 });

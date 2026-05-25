@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 // --- Steering save ---
@@ -17,7 +18,7 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 export const saveSteering = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   scope: "settings",
   request: ({ content }) => ({
     method: "PUT",

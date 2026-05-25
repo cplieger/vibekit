@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { routeForPath } from "../editor-types.js";
 
@@ -52,7 +53,7 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
   name: "editor.resolve_partial",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   command: ({ chatID, toolCallID, mergedText }) => ({
     type: "resolve_pending_change_partial",
     chat_id: chatID,
@@ -82,7 +83,7 @@ export const fetchAgentLines = apiAction<{ chatID: string; path: string }, { cha
     path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
   }),
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   error: false,
 });
 

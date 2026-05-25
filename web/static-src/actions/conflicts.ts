@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { defineAction, apiAction, ActionError, classifyFetchError } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { withTimeout } from "../api-client.js";
 import type { Conflict } from "../conflicts.js";
 
@@ -58,7 +59,7 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
 export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   name: "conflicts.load",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   dedupe: (args) => args,
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
   error: false,

@@ -19,6 +19,12 @@ import { setSubagentPendingApproval } from "../crew-card.js";
 import { respondPermission, restoreCheckpoint } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
 
+/** Notify the user and set the badge if the page is hidden. */
+function notifyAndBadge(title: string, body: string): void {
+  notifyIfHidden(title, body);
+  if (document.visibilityState === "hidden") setBadge(1);
+}
+
 /** Drain one queued prompt, restoring any attachments that were saved
  *  alongside it so they flow through the next sendPromptTo call. */
 function drainQueuedPromptWithAttachments(chatID: string): void {
@@ -87,8 +93,7 @@ onSSE("turn_ended", (chatID, p) => {
       _lastNotifyMs.set(chatID, now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
-      notifyIfHidden("Vibekit", `${name}: Agent finished`);
-      if (document.visibilityState === "hidden") setBadge(1);
+      notifyAndBadge("Vibekit", `${name}: Agent finished`);
     }
   }
 
@@ -174,8 +179,7 @@ onSSE("turn_ended", (chatID, p) => {
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
-    notifyIfHidden("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
-    if (document.visibilityState === "hidden") setBadge(1);
+    notifyAndBadge("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
   }
   // Mark the subagent row as having a pending approval.
   const subSid = p.sub_session_id;
@@ -295,7 +299,7 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
       "Discard and restore",
     );
     if (!ok) return;
-  } else if (!(await confirmRestore())) {
+  } else if (!(await confirmDestructive("Restore to this checkpoint? Current file changes will be reverted.", "Restore"))) {
     return;
   }
   void restoreCheckpoint.dispatch({ chatID, tag });
@@ -327,11 +331,6 @@ async function intersectDirty(preview: string[]): Promise<string[]> {
   const { getDirtyEditorPaths } = await import("../editor-core.js");
   const dirty = new Set(getDirtyEditorPaths());
   return preview.filter((p) => dirty.has(p));
-}
-
-async function confirmRestore(): Promise<boolean> {
-  const { confirm: confirmDialog } = await import("../confirm.js");
-  return confirmDialog("Restore to this checkpoint? Current file changes will be reverted.", "Restore", "destructive");
 }
 
 async function confirmDestructive(msg: string, btn: string): Promise<boolean> {

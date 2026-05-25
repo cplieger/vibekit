@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { transportAction } from "./transport.js";
+import { RETRY_STANDARD } from "./types.js";
 
 interface SendMessageArgs {
   chatID: string;
@@ -14,7 +15,7 @@ export const sendMessage = transportAction<SendMessageArgs>({
   scope: (args) => "crew:" + args.chatID + ":" + args.subSessionID,
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   command: ({ chatID, subSessionID, text }) => ({
     type: "message_subagent",
     chat_id: chatID,

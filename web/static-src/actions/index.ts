@@ -61,6 +61,10 @@ export type { ActionErrorLike } from "./types.js";
 // inline; exporting the type lets helpers type-annotate the opts arg.
 export type { DispatchOptions, RetryAttemptInfo } from "./types.js";
 
+// Standard retry config constant: eliminates `retry: { count: 2, delay: 300 }`
+// repetition across action definitions.
+export { RETRY_STANDARD } from "./types.js";
+
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.
 export type { ArgsOf, ResultOf, ActionFromDef } from "./types.js";

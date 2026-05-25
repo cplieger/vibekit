@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
 // --- Types local to this slice ---
@@ -58,7 +59,7 @@ export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string 
   name: "forge.clone_repo",
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   request: ({ url }) => ({
     method: "POST",
     path: "/api/git/clone",
@@ -95,7 +96,7 @@ export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: s
   name: "forge.connect_pat",
   idempotencyKey: true,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   request: ({ kind, host, token }) => ({
     method: "POST",
     path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,

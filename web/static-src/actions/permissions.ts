@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 
 export interface CommandRule {
   pattern: string;
@@ -43,7 +44,7 @@ interface RemoveRuleArgs {
 export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previousRule: CommandRule | undefined }>({
   name: "permissions.add_rule",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   idempotencyKey: true,
   scope: "permissions",
   request: ({ pattern, mode, priority }) => ({

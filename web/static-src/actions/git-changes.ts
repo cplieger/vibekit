@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 
 // --- Wire types ---
 
@@ -28,7 +29,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
     ? `Couldn't stage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
     : `Couldn't stage ${String(args.files.length)} files`,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
@@ -52,7 +53,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
     ? `Couldn't unstage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
     : `Couldn't unstage ${String(args.files.length)} files`,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });
 
 export const pull = apiAction<{ repo: string }, unknown>({
@@ -62,7 +63,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
   success: (args) => args.repo !== "" ? `Pulled ${args.repo}` : "Pulled",
   error: "Pull failed",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });
 
 export const push = apiAction<{ repo: string }, unknown>({
@@ -118,5 +119,5 @@ export const generateCommitMessage = apiAction<{ repo: string }, { message?: str
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { defineAction, apiAction, ActionError } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { sendPromptTo } from "../chat-commands.js";
 
@@ -31,7 +32,7 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
   }),
   error: "Couldn't explain error",
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
 });
 
 /** Undo a single file edit via checkpoint restore. */
@@ -39,7 +40,7 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   name: "messages.undo_edit",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",
-  retry: { count: 2, delay: 300 },
+  retry: RETRY_STANDARD,
   command: ({ chatID, tag, filePath }) => ({
     type: "undo_edit",
     chat_id: chatID,

@@ -356,6 +356,13 @@ export function bindDisabledPattern(
         el.disabled = manualDisabled;
         if (ariaBusy) el.removeAttribute("aria-busy");
         if (pendingClass) el.classList.remove(pendingClass);
+        // Restore focus if the button had it before pending started
+        // and the element is still enabled and connected.
+        if (hadFocus && el.isConnected && !el.disabled) {
+          const active = document.activeElement;
+          if (active === null || active === document.body) el.focus();
+        }
+        hadFocus = false;
       }
     },
   };

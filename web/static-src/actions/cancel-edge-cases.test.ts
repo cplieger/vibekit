@@ -330,3 +330,137 @@ describe("cancel with scope + dedupe + retry combined", () => {
     expect(action.isInflight).toBe(false);
   });
 });
+
+describe("double cancel() is idempotent", () => {
+  it("calling cancel() twice does not throw or double-fire onCancel", async () => {
+    const onCancel = vi.fn();
+    const onSettled = vi.fn();
+
+    const action = defineAction<void, string>({
+      name: "test.double_cancel",
+      run: (_args, signal) =>
+        new Promise<string>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    });
+
+    const p = action.dispatch(undefined, { onCancel, onSettled });
+    action.cancel();
+    action.cancel(); // second cancel — should be no-op
+    await p;
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(action.isInflight).toBe(false);
+  });
+});
+
+describe("cancel + idempotencyKey", () => {
+  it("idempotencyKey does not prevent cancellation", async () => {
+    const onCancel = vi.fn();
+    let receivedCtx: unknown = null;
+
+    const action = defineAction<void, string>({
+      name: "test.cancel_idem",
+      idempotencyKey: true,
+      run: (_args, signal, ctx) => {
+        receivedCtx = ctx;
+        return new Promise<string>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+      },
+    });
+
+    const p = action.dispatch(undefined, { onCancel });
+    // Let run() start so ctx is captured
+    await Promise.resolve();
+    action.cancel();
+    await p;
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    // Verify idempotencyKey was generated
+    expect(receivedCtx).toHaveProperty("idempotencyKey");
+    expect((receivedCtx as { idempotencyKey: string }).idempotencyKey).toBeTruthy();
+  });
+});
+
+describe("cancel during onRetryAttempt callback", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("cancel inside onRetryAttempt prevents subsequent retry attempts", async () => {
+    let attempts = 0;
+    const onCancel = vi.fn();
+    let actionRef: ReturnType<typeof defineAction<void, string>>;
+
+    const action = defineAction<void, string>({
+      name: "test.cancel_in_retry_attempt",
+      retryable: "always",
+      retry: { count: 5, delay: 100 },
+      error: false,
+      run: async () => {
+        attempts++;
+        throw new ActionError("transient", { code: "network" });
+      },
+    });
+    actionRef = action;
+
+    const p = action.dispatch(undefined, {
+      onCancel,
+      onRetryAttempt: () => {
+        // Cancel from within the retry attempt callback
+        actionRef.cancel();
+      },
+    });
+
+    // First attempt fails, enters backoff
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+
+    // Advance past first backoff — onRetryAttempt fires and cancels
+    await vi.advanceTimersByTimeAsync(200);
+    await p;
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    // Should not have run more than 2 attempts (1st fails, 2nd attempt
+    // is where onRetryAttempt fires and cancels)
+    expect(attempts).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("cancel + scope: next-in-scope starts after cancel", () => {
+  it("cancelled dispatch unblocks the next dispatch in the same scope", async () => {
+    let resolve1!: () => void;
+    const gate = new Promise<void>((r) => { resolve1 = r; });
+    const order: string[] = [];
+
+    const first = defineAction<void, string>({
+      name: "test.scope_cancel_first",
+      scope: "unblock",
+      run: async (_args, signal) => {
+        order.push("first-start");
+        await gate;
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        return "first";
+      },
+    });
+
+    const second = defineAction<void, string>({
+      name: "test.scope_cancel_second",
+      scope: "unblock",
+      run: async () => { order.push("second-start"); return "second"; },
+    });
+
+    const p1 = first.dispatch();
+    const p2 = second.dispatch();
+
+    // Cancel first while it's running
+    first.cancel();
+    resolve1();
+    await p1;
+    const r2 = await p2;
+
+    expect(r2).toBe("second");
+    expect(order).toContain("second-start");
+  });
+});

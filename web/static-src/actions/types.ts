@@ -87,6 +87,9 @@ export interface RetryConfig {
   readonly factor?: number;
 }
 
+/** Standard retry config for network-retryable actions: 2 retries, 300ms initial delay. */
+export const RETRY_STANDARD: RetryConfig = { count: 2, delay: 300 } as const;
+
 /** Info passed to the per-dispatch `onRetryAttempt` callback. */
 export interface RetryAttemptInfo {
   /** Current attempt number (2 = first retry, 3 = second retry). */
