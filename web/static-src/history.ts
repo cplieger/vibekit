@@ -63,7 +63,13 @@ class HistoryController {
     const d = await loadHistoryAction.dispatch(undefined);
     if (signal.aborted) return;
     // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
-    if (d === null) return;
+    if (d === null) {
+      const err = document.createElement("div");
+      err.className = "list-empty";
+      err.textContent = "Failed to load history. Check your connection and try again.";
+      container.appendChild(err);
+      return;
+    }
     const chats = d.chats ?? [];
     if (chats.length === 0) {
       const empty = document.createElement("div");

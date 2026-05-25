@@ -55,7 +55,7 @@ type CommandType =
 export interface Command {
   type: CommandType;
   chat_id?: string;
-  payload?: unknown;
+  payload?: Record<string, unknown>;
 }
 
 // --- Typed command discriminated union ---

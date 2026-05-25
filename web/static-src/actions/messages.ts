@@ -22,7 +22,7 @@ export const copyClipboard = defineAction<string, void>({
 /** Ask the utility bridge to explain a tool error. */
 export const explainError = apiAction<{ errorText: string; context: string }, { output?: string }>({
   name: "messages.explain_error",
-  dedupe: (args) => "explain:" + args.errorText.slice(0, 100),
+  dedupe: (args) => args.errorText.slice(0, 100),
   request: ({ errorText, context }) => ({
     method: "POST",
     path: "/api/utility/explain-error",
@@ -43,6 +43,7 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
     chat_id: chatID,
     payload: { tag, file_path: filePath },
   }),
+  success: "Edit undone",
   error: "Undo failed — the checkpoint may have expired",
 });
 

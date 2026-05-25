@@ -88,7 +88,7 @@ export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  dedupe: (id) => "edit:" + id,
+  dedupe: (id) => id,
   request: (id) => ({
     method: "GET",
     path: `/api/mcp/${encodeURIComponent(id)}`,
@@ -128,7 +128,7 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   name: "mcp.search_registry",
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  dedupe: (args) => "search:" + args.q,
+  dedupe: (args) => args.q,
   request: ({ q }) => ({
     method: "GET",
     path: `/api/mcp/registry/search?q=${encodeURIComponent(q)}&limit=20`,

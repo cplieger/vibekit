@@ -457,6 +457,60 @@ Pick once and don't change — callers may grep for it.
   });
   ```
 
+## Decision: store.ts loadList / loadMessages remain outside actions
+
+**Re-evaluated:** Cycle 4 (2026-05-25), after dedupe key fix
+(JSON.stringify via safeStringify) and abort-mid-fetch fix
+(signal.aborted check in runOnce).
+
+**Decision:** Do NOT migrate. Cancel-replace remains the correct
+semantic.
+
+**Rationale:**
+
+1. **Cancel-replace ≠ dedupe or scope.** Both loaders intentionally
+   abort the previous in-flight request and start fresh. The action
+   framework offers dedupe (collapse to one shared promise) and scope
+   (queue sequentially). Neither models "discard stale, start new."
+   A stale loadList from 5s ago during a gap should be aborted, not
+   shared.
+
+2. **Pagination args break dedupe.** `loadMessages(chatID, before)`
+   is called with different `before` timestamps. Different args =
+   different dedupe keys = no collapse. Scope would queue them, but
+   the desired behavior on chat-switch is abort-old, not queue-behind.
+
+3. **Per-chatID controller map.** `loadMessages` uses a per-chatID
+   abort map — the action framework has no "cancel-replace per
+   resource" primitive. `scope` serializes; `dedupe` collapses.
+   Neither aborts the prior call.
+
+4. **No toast, no optimistic, no retry button.** These are background
+   data-loading operations. Callers render their own retry UI
+   (chat.ts's retry button). The action framework's value-add doesn't
+   apply.
+
+5. **registerCleanup already handles unload.** The store already uses
+   `registerCleanup()` for page-unload abort — same mechanism the
+   action framework uses internally.
+
+6. **Return-value contract.** Callers use `.then((ok) => { ... })` to
+   conditionally render skeletons, retry buttons, scroll. Refactoring
+   all callsites for `dispatch()` → `Promise<T | null>` adds churn
+   with no behavioral gain.
+
+**What changed since cycle 2 that was re-evaluated:**
+- `safeStringify` in dedupe key: makes dedupe keys correct for complex
+  args, but doesn't change the semantic mismatch (cancel-replace ≠
+  dedupe).
+- `signal.aborted` check after run resolves: makes the framework
+  strictly safer, but the store already has its own equivalent guard.
+
+**Conclusion:** The "Don't use an action for background polls / read-
+only fetches that auto-recover" guidance in the "When to use" section
+above continues to apply. These loaders are cancel-replace reads, not
+user-initiated mutations.
+
 ## Testing actions
 
 Mock the toast module + assert on the registry log:

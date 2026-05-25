@@ -32,10 +32,19 @@ export interface ActionInstance<TArgs = unknown, TResult = unknown> {
   readonly name: string;          // matches ActionDefinition.name
   readonly status: ActionLifecycleStatus;
   readonly args: TArgs;
-  readonly startedAt: number;     // Date.now() at dispatch
+  readonly dispatchedAt: number;  // Date.now() when dispatch() was called
+  readonly startedAt: number;     // Date.now() when run() begins (after scope queue)
   readonly completedAt?: number;  // Date.now() at terminal state
   readonly result?: TResult;      // present iff status === "success"
   readonly error?: ActionErrorLike; // present iff status === "error"
+  readonly attempts?: number;     // total run() invocations (1 = no retry; >1 = retries fired)
+
+  // --- Fields considered and rejected ---
+  // signal: AbortSignal — ActionInstance is a serializable snapshot;
+  //   AbortSignal is non-serializable and live. Callers needing
+  //   cancellation use dispatch().cancel() or action.cancel().
+  // cancelable: boolean — derivable from `status === "pending"`;
+  //   adds no information beyond what status already conveys.
 }
 
 /** Opaque value the optimistic() function returns and rollback()

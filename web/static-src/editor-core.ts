@@ -69,7 +69,7 @@ export function initEditor(): void {
   $.editorPendingAcceptBtn.addEventListener("click", () => { void resolveActivePending("accept"); });
   $.editorPendingRejectBtn.addEventListener("click", () => { void resolveActivePending("reject"); });
   $.editorPendingApplyPartialBtn.addEventListener("click", () => { void applyActivePendingPartial(); });
-  bindLoadingState("editor.resolve_pending_partial", $.editorPendingApplyPartialBtn);
+  bindLoadingState("editor.resolve_partial", $.editorPendingApplyPartialBtn);
   $.editorPendingDiscussBtn.addEventListener("click", () => { openDiscussPromptForActive(); });
 
   onBus(BUS_PENDING_RESOLVED, (p) => {
@@ -195,6 +195,12 @@ function saveFile(): void {
   if (state === undefined) return;
   const content = $.editorContent.value;
   void saveFileAction.dispatch({ path: state.path, content }, {
+    onError: (e) => {
+      if (getActiveFilePath() === state.path) {
+        $.editorError.textContent = e.message || "Save failed";
+        $.editorError.classList.remove("hidden");
+      }
+    },
     onSuccess: (d) => {
       if (d.error !== undefined) {
         if (getActiveFilePath() === state.path) {
@@ -239,5 +245,12 @@ async function sendActivePlan(): Promise<void> {
   if (chatID === "") return;
   const content = state.current; // capture before await
   const result = await sendPlanAction.dispatch({ chatID, content });
-  if (result !== null) state.original = content;
+  if (result === null) {
+    if (getActiveFilePath() === state.path) {
+      $.editorError.textContent = "Couldn't send plan";
+      $.editorError.classList.remove("hidden");
+    }
+    return;
+  }
+  state.original = content;
 }

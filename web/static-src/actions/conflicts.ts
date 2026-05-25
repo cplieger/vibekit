@@ -68,7 +68,7 @@ export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>
   name: "conflicts.load",
   retryable: "network",
   retry: { count: 2, delay: 300 },
-  dedupe: (args) => "conflicts:" + args,
+  dedupe: (args) => args,
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
   error: false,
 });

@@ -198,5 +198,6 @@ export const uploadAction = defineAction<UploadArgs, string[]>({
       });
     });
   },
+  success: (_args, paths) => paths.length === 1 ? "Uploaded 1 file" : `Uploaded ${String(paths.length)} files`,
   error: "Upload failed",
 });

@@ -44,8 +44,8 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
   const snap = snapshots.get(inst.name);
   if (snap === undefined) return; // not watched
   // Update last-dispatched for any transition.
-  if (inst.startedAt > snap.lastDispatchedAt) {
-    snap.lastDispatchedAt = inst.startedAt;
+  if (inst.dispatchedAt > snap.lastDispatchedAt) {
+    snap.lastDispatchedAt = inst.dispatchedAt;
   }
   switch (inst.status) {
     case "pending":

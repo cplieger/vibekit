@@ -48,7 +48,7 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
 
 /** Apply partial (per-hunk) pending change via transport. */
 export const resolvePendingPartial = transportAction<{ chatID: string; toolCallID: string; mergedText: string }>({
-  name: "editor.resolve_pending_partial",
+  name: "editor.resolve_partial",
   scope: (args) => "chat:" + args.chatID,
   retryable: "network",
   command: ({ chatID, toolCallID, mergedText }) => ({
@@ -74,7 +74,7 @@ export const suggestResolution = apiAction<{ ours: string; theirs: string; conte
 /** Fetch agent-modified line ranges for gutter highlighting. Retry on network failure. */
 export const fetchAgentLinesAction = apiAction<{ chatID: string; path: string }, { changes: Array<{ start_line: number; end_line: number }> }>({
   name: "editor.fetch_agent_lines",
-  dedupe: (args) => "agent-lines:" + args.chatID + ":" + args.path,
+  dedupe: (args) => JSON.stringify([args.chatID, args.path]),
   request: ({ chatID, path }) => ({
     method: "GET",
     path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,

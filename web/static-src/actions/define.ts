@@ -214,6 +214,7 @@ export function defineAction<TArgs, TResult>(
     const ac = new AbortController();
     const id = nextInstanceID(def.name);
     inFlight.set(id, ac);
+    const dispatchedAt = Date.now();
 
     // Create the dedupe entry up front so runOnce can populate its
     // error / cancelled fields when the original dispatch settles.
@@ -223,10 +224,10 @@ export function defineAction<TArgs, TResult>(
 
     let result: Promise<TResult | null>;
     if (scopeKey === null) {
-      result = runOnce(args, opts, ac, id, dedupeEntry);
+      result = runOnce(args, opts, ac, id, dedupeEntry, dispatchedAt);
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
-      const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry));
+      const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry, dispatchedAt));
       const tail = next.catch(() => {});
       scopeChains.set(scopeKey, tail);
       void next.finally(() => {
@@ -263,12 +264,13 @@ export function defineAction<TArgs, TResult>(
 
   /** Single dispatch lifecycle: optimistic → run (with retry) →
    *  success / error / cancelled. Always resolves (never rejects). */
-  function runOnce(
+  async function runOnce(
     args: TArgs,
     opts: DispatchOptions<TArgs, TResult>,
     ac: AbortController,
     id: string,
     dedupeEntry: DedupeEntry | null,
+    dispatchedAt: number,
   ): Promise<TResult | null> {
     // If already cancelled while queued in scope chain, short-circuit.
     if (ac.signal.aborted) {
@@ -278,7 +280,7 @@ export function defineAction<TArgs, TResult>(
       if (dedupeEntry !== null) dedupeEntry.cancelled = true;
       record({
         id, name: def.name, status: "cancelled", args,
-        startedAt: now, completedAt: now,
+        dispatchedAt, startedAt: now, completedAt: now,
       });
       inFlight.delete(id);
       opts.onSettled?.(args);
@@ -310,7 +312,7 @@ export function defineAction<TArgs, TResult>(
         if (dedupeEntry !== null) dedupeEntry.error = err;
         record({
           id, name: def.name, status: "error", args,
-          startedAt, completedAt: Date.now(), error: err,
+          dispatchedAt, startedAt, completedAt: Date.now(), error: err,
         });
         inFlight.delete(id);
         emitErrorToast(args, err, opts);
@@ -323,80 +325,79 @@ export function defineAction<TArgs, TResult>(
     // Record as pending after optimistic ran successfully.
     record({
       id, name: def.name, status: "pending", args,
-      startedAt,
+      dispatchedAt, startedAt,
     });
 
-    return runWithRetry(args, ac.signal, ctx).then(
-      (result) => {
-        // Cancellation can race success — if the signal aborted,
-        // treat as cancelled even if run() resolved. Most adapters
-        // throw on abort, but be defensive.
-        if (ac.signal.aborted) {
-          if (dedupeEntry !== null) dedupeEntry.cancelled = true;
-          record({
-            id, name: def.name, status: "cancelled", args,
-            startedAt, completedAt: Date.now(),
-          });
-          inFlight.delete(id);
-          emitCancelled(args, optOp);
-          opts.onSettled?.(args);
-          return null;
-        }
+    try {
+      const { result, attempts } = await runWithRetry(args, ac.signal, ctx);
+      // Cancellation can race success — if the signal aborted,
+      // treat as cancelled even if run() resolved. Most adapters
+      // throw on abort, but be defensive.
+      if (ac.signal.aborted) {
+        if (dedupeEntry !== null) dedupeEntry.cancelled = true;
         record({
-          id, name: def.name, status: "success", args,
-          startedAt, completedAt: Date.now(), result,
+          id, name: def.name, status: "cancelled", args,
+          dispatchedAt, startedAt, completedAt: Date.now(), attempts,
         });
         inFlight.delete(id);
-        emitSuccessToast(args, result, opts);
-        opts.onSuccess?.(result, args);
-        opts.onSettled?.(args);
-        return result;
-      },
-      (e: unknown) => {
-        const err = toActionError(e);
-        // If aborted, classify as cancelled rather than error.
-        const cancelled = ac.signal.aborted;
-        const status = cancelled ? "cancelled" : "error";
-        // Populate dedupe entry so deduped callers receive the actual
-        // outcome (real error or cancellation flag) rather than a
-        // synthetic stub.
-        if (dedupeEntry !== null) {
-          if (cancelled) dedupeEntry.cancelled = true;
-          else dedupeEntry.error = err;
-        }
-        record({
-          id, name: def.name, status, args,
-          startedAt, completedAt: Date.now(),
-          ...(cancelled ? {} : { error: err }),
-        });
-        inFlight.delete(id);
-        // Rollback the optimistic mutation regardless of cancel/error.
-        if (def.rollback !== undefined) {
-          try {
-            const rollbackErr = cancelled
-              ? { message: "cancelled", code: "cancelled" }
-              : err;
-            def.rollback(args, optOp, rollbackErr);
-          } catch (rollbackErr) {
-            console.error(`[actions] rollback for ${def.name} threw`, rollbackErr);
-          }
-        }
-        if (!cancelled) {
-          emitErrorToast(args, err, opts);
-          opts.onError?.(err, args);
-        }
+        emitCancelled(args, optOp);
         opts.onSettled?.(args);
         return null;
-      },
-    );
+      }
+      record({
+        id, name: def.name, status: "success", args,
+        dispatchedAt, startedAt, completedAt: Date.now(), result, attempts,
+      });
+      inFlight.delete(id);
+      emitSuccessToast(args, result, opts);
+      opts.onSuccess?.(result, args);
+      opts.onSettled?.(args);
+      return result;
+    } catch (e: unknown) {
+      const err = toActionError(e);
+      // If aborted, classify as cancelled rather than error.
+      const cancelled = ac.signal.aborted;
+      const status = cancelled ? "cancelled" : "error";
+      // Populate dedupe entry so deduped callers receive the actual
+      // outcome (real error or cancellation flag) rather than a
+      // synthetic stub.
+      if (dedupeEntry !== null) {
+        if (cancelled) dedupeEntry.cancelled = true;
+        else dedupeEntry.error = err;
+      }
+      record({
+        id, name: def.name, status, args,
+        dispatchedAt, startedAt, completedAt: Date.now(),
+        ...(cancelled ? {} : { error: err }),
+      });
+      inFlight.delete(id);
+      // Rollback the optimistic mutation regardless of cancel/error.
+      if (def.rollback !== undefined) {
+        try {
+          const rollbackErr = cancelled
+            ? { message: "cancelled", code: "cancelled" }
+            : err;
+          def.rollback(args, optOp, rollbackErr);
+        } catch (rollbackErr) {
+          console.error(`[actions] rollback for ${def.name} threw`, rollbackErr);
+        }
+      }
+      if (!cancelled) {
+        emitErrorToast(args, err, opts);
+        opts.onError?.(err, args);
+      }
+      opts.onSettled?.(args);
+      return null;
+    }
   }
 
   /** Run with auto-retry on retry-class errors. Each attempt re-runs
    *  def.run() with the same args + signal + ctx. Optimistic does NOT
    *  re-fire — it stays applied across retries (the rollback only
    *  fires once retries are exhausted). Backoff: delay * factor^attempt,
-   *  capped at 5000ms. Idempotency key in ctx is stable across retries. */
-  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<TResult> {
+   *  capped at 5000ms. Idempotency key in ctx is stable across retries.
+   *  Returns { result, attempts } where attempts is total run() calls. */
+  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<{ result: TResult; attempts: number }> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
     const baseDelay = cfg?.delay ?? 0;
@@ -404,9 +405,10 @@ export function defineAction<TArgs, TResult>(
     let attempt = 0;
     while (true) {
       try {
-        return await def.run(args, signal, ctx);
-      } catch (e) {
         attempt++;
+        const result = await def.run(args, signal, ctx);
+        return { result, attempts: attempt };
+      } catch (e) {
         if (signal.aborted) throw e;
         if (attempt >= maxAttempts) throw e;
         // Only retry on retry-class errors per def.retryable's

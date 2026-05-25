@@ -51,7 +51,7 @@ export function transportAction<TArgs>(
     run: async (args, signal, ctx?: ActionContext) => {
       const raw = command(args);
       const cmd: Command = ctx?.idempotencyKey !== undefined
-        ? { ...raw, payload: { ...(raw as Command).payload as Record<string, unknown> | undefined, idempotency_key: ctx.idempotencyKey } }
+        ? { ...raw, payload: { ...("payload" in raw && raw.payload != null ? raw.payload : undefined), idempotency_key: ctx.idempotencyKey } }
         : raw;
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call

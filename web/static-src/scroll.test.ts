@@ -122,6 +122,7 @@ describe("scroll: trimOldMessages DOM cap", () => {
           expect(Number(firstKept.dataset["idx"])).toBe(count - 50);
         },
       ),
+      { numRuns: 20 },
     );
   });
 

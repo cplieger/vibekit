@@ -24,7 +24,9 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.stage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
-  error: "Couldn't stage",
+  error: (args) => args.files.length === 1
+    ? `Couldn't stage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    : `Couldn't stage ${String(args.files.length)} files`,
   retryable: "network",
   retry: { count: 2, delay: 300 },
 });
@@ -34,7 +36,9 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.discard",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
-  error: "Couldn't discard",
+  error: (args) => args.files.length === 1
+    ? `Couldn't discard \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    : `Couldn't discard ${String(args.files.length)} files`,
   // Destructive: timed-out discard may have succeeded server-side
   retryable: false,
 });
@@ -44,7 +48,9 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
-  error: "Couldn't unstage",
+  error: (args) => args.files.length === 1
+    ? `Couldn't unstage \u201c${args.files[0]!.length > 40 ? args.files[0]!.slice(0, 37) + "\u2026" : args.files[0]!}\u201d`
+    : `Couldn't unstage ${String(args.files.length)} files`,
   retryable: "network",
   retry: { count: 2, delay: 300 },
 });
@@ -53,6 +59,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
   name: "git.pull",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
+  success: "Pulled",
   error: "Pull failed",
   retryable: "network",
   retry: { count: 2, delay: 300 },
@@ -62,6 +69,7 @@ export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
+  success: "Pushed",
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
   retryable: false,
@@ -92,7 +100,12 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
   name: "git.commit",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
-  error: "Commit failed",
+  success: "Committed",
+  error: (args) => {
+    const line = args.message.split("\n")[0] ?? "";
+    const short = line.length > 40 ? line.slice(0, 37) + "\u2026" : line;
+    return short !== "" ? `Commit failed: \u201c${short}\u201d` : "Commit failed";
+  },
   // Not retryable: a timed-out commit may have succeeded server-side;
   // retrying would create a duplicate commit.
   retryable: false,
@@ -101,7 +114,7 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
   name: "git.generate_message",
   scope: (args) => "git:" + args.repo,
-  dedupe: (args) => "gen-msg:" + args.repo,
+  dedupe: (args) => args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
   retryable: "network",

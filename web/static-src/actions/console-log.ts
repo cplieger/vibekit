@@ -30,6 +30,7 @@ export function initActionConsoleLog(): () => void {
     // browser console. Status / code are surfaced inline so a quick
     // scan in DevTools reveals classification without expanding.
     const meta: string[] = [duration];
+    if (inst.attempts !== undefined && inst.attempts > 1) meta.push(`${String(inst.attempts)} attempts`);
     if (inst.error.status !== undefined) meta.push(`HTTP ${String(inst.error.status)}`);
     if (inst.error.code !== undefined) meta.push(inst.error.code);
     console.error(

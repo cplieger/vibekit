@@ -22,10 +22,12 @@ function makeInstance(over: Partial<ActionInstance> = {}): ActionInstance {
     name: over.name ?? "t.action",
     status: over.status ?? "error",
     args: over.args ?? {},
+    dispatchedAt: over.dispatchedAt ?? 1000,
     startedAt: over.startedAt ?? 1000,
     completedAt: over.completedAt ?? 1042,
     ...(over.result !== undefined ? { result: over.result } : {}),
     ...(over.error !== undefined ? { error: over.error } : {}),
+    ...(over.attempts !== undefined ? { attempts: over.attempts } : {}),
   } as ActionInstance;
 }
 
