@@ -16,7 +16,7 @@ vi.mock("./toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
 }));
 
-import { patchSettings } from "./persist.js";
+import { patchSettings, initSettingsTracking, __testResetTracking } from "./persist.js";
 
 describe("patchSettings debounce coalescing", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -26,6 +26,11 @@ describe("patchSettings debounce coalescing", () => {
     vi.clearAllMocks();
     fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
     vi.stubGlobal("fetch", fetchSpy);
+    // Reset the dedup tracker so tests don't bleed state between
+    // each other. Without this, patchSettings({last_model: "claude"})
+    // in test N+1 would be filtered out as a duplicate of test N's
+    // value.
+    __testResetTracking();
   });
 
   afterEach(() => {
@@ -72,6 +77,11 @@ describe("patchSettings debounce coalescing", () => {
     const iterations = 50;
     for (let iter = 0; iter < iterations; iter++) {
       fetchSpy.mockClear();
+      // Each iteration is an independent batch; reset the dedup
+      // tracker so values from prior iterations don't filter out
+      // patches in this one.
+      __testResetTracking();
+      // Generate random patches.
       const keys = ["auto_update", "debug_logs", "last_model"] as const;
       const patches: Record<string, unknown>[] = [];
       const count = 1 + Math.floor(Math.random() * 5);
@@ -103,5 +113,82 @@ describe("patchSettings debounce coalescing", () => {
       const [, init] = calls[0]!;
       expect(JSON.parse(init.body as string)).toEqual(expected);
     }
+  });
+});
+
+describe("patchSettings no-op dedup", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
+    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
+    // Simulate the bootstrap fire from onSelectionChange: same git_repo
+    // value the server already has.
+    patchSettings({ git_repo: "homelab" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
+    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
+    // git_repo unchanged, last_model changed.
+    patchSettings({ git_repo: "homelab" });
+    patchSettings({ last_model: "gemini" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ last_model: "gemini" });
+  });
+
+  it("the second identical patch in a session is also filtered", async () => {
+    patchSettings({ last_model: "claude" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockClear();
+    patchSettings({ last_model: "claude" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("PATCHes again when the value changes back after a different value", async () => {
+    initSettingsTracking({ last_model: "claude" });
+    patchSettings({ last_model: "gemini" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockClear();
+    // Round-tripping back to "claude" IS a change (current is "gemini").
+    patchSettings({ last_model: "claude" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ last_model: "claude" });
+  });
+
+  it("array-valued settings dedup correctly", async () => {
+    initSettingsTracking({ trust_tools: ["a", "b", "c"] });
+    patchSettings({ trust_tools: ["a", "b", "c"] });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // Different order is treated as different (we use deterministic JSON).
+    patchSettings({ trust_tools: ["c", "b", "a"] });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ trust_tools: ["c", "b", "a"] });
+  });
+
+  it("does not fire showSaving when every key in the patch is filtered", async () => {
+    initSettingsTracking({ git_repo: "homelab" });
+    const { showSaving } = await import("./save-indicator.js");
+    patchSettings({ git_repo: "homelab" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(showSaving).not.toHaveBeenCalled();
   });
 });

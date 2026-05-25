@@ -85,8 +85,17 @@ func TestCmd(t *testing.T) {
 	if cmd.Dir != "/tmp" {
 		t.Errorf("Cmd.Dir = %q, want /tmp", cmd.Dir)
 	}
-	if cmd.Args[0] != "git" || cmd.Args[1] != "status" {
-		t.Errorf("Cmd.Args = %v, want [git status]", cmd.Args)
+	// Args now include the prepended -c protocol.ext.allow=never
+	// hardening flags. Shape: [git -c protocol.ext.allow=never status].
+	wantArgs := []string{"git", "-c", "protocol.ext.allow=never", "status"}
+	if len(cmd.Args) != len(wantArgs) {
+		t.Errorf("Cmd.Args length = %d, want %d (%v)", len(cmd.Args), len(wantArgs), cmd.Args)
+	} else {
+		for i, w := range wantArgs {
+			if cmd.Args[i] != w {
+				t.Errorf("Cmd.Args[%d] = %q, want %q", i, cmd.Args[i], w)
+			}
+		}
 	}
 
 	// Verify hardening env vars are set.
@@ -98,14 +107,17 @@ func TestCmd(t *testing.T) {
 		}
 	}
 
+	// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are NOT pinned to
+	// /dev/null any more — they need to be loadable so the forge
+	// CLI's credential.helper line in ~/.gitconfig works for HTTPS
+	// clones of private repos. The ext:: hardening moved to a
+	// command-line -c flag (verified above), which beats gitconfig.
 	wantEnv := map[string]string{
 		"GIT_TERMINAL_PROMPT":    "0",
 		"GIT_ASKPASS":            "",
 		"SSH_ASKPASS":            "",
 		"GIT_PROTOCOL_FROM_USER": "0",
 		"GIT_CONFIG_COUNT":       "",
-		"GIT_CONFIG_GLOBAL":      "/dev/null",
-		"GIT_CONFIG_SYSTEM":      "/dev/null",
 		"GIT_CONFIG_PARAMETERS":  "",
 	}
 	for k, want := range wantEnv {
@@ -114,6 +126,13 @@ func TestCmd(t *testing.T) {
 			t.Errorf("env %s not set", k)
 		} else if got != want {
 			t.Errorf("env %s = %q, want %q", k, got, want)
+		}
+	}
+	// Explicitly verify the gitconfig file vars are NOT pinned:
+	// loading them is required so credential helpers work.
+	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		if got, ok := envMap[k]; ok {
+			t.Errorf("env %s = %q must not be set by Cmd (would disable credential helpers from ~/.gitconfig)", k, got)
 		}
 	}
 }

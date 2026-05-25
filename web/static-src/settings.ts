@@ -15,7 +15,7 @@ import { initTools, loadToolsList } from "./tools.js";
 import {
   restoreNotifications,
 } from "./notify.js";
-import { loadSettings, patchSettings } from "./persist.js";
+import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
 import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
 import { applyTheme, getSystemTheme, initThemeToggle } from "./theme.js";
@@ -48,6 +48,12 @@ export { loadSettings } from "./persist.js";
  *  localStorage-based UI (shell, file browser, editor tabs, theme). */
 export async function syncSettings(): Promise<AppSettings> {
   const s = await loadSettings();
+  // Seed the dedup tracker BEFORE any code path can fire patchSettings().
+  // The bootstrap subscription fires (e.g. repo-picker.onSelectionChange)
+  // would otherwise re-PATCH /api/settings with values it just loaded
+  // from /api/settings, triggering the "Saving..." animation on every
+  // page reload.
+  initSettingsTracking(s);
   restoreNotifications(s);
   return s;
 }
