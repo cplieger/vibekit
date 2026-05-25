@@ -32,6 +32,8 @@ export interface RemoveRuleArgs {
 export const addRuleAction = apiAction<AddRuleArgs, unknown>({
   name: "permissions.add_rule",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
+  scope: "permissions",
   request: ({ pattern, mode, priority }) => ({
     method: "POST",
     path: "/api/permissions/commands",
@@ -62,6 +64,7 @@ export const addRuleAction = apiAction<AddRuleArgs, unknown>({
 export const removeRuleAction = apiAction<RemoveRuleArgs, void>({
   name: "permissions.remove_rule",
   retryable: "network",
+  scope: "permissions",
   request: ({ pattern }) => ({
     method: "DELETE",
     path: `/api/permissions/commands?pattern=${encodeURIComponent(pattern)}`,

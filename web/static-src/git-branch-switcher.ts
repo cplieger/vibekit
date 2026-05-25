@@ -79,7 +79,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
         row.textContent = b.name;
         if (b.current) row.setAttribute("data-tooltip", "Current branch");
         row.addEventListener("click", () => {
-          void doCheckout(repo, b.name, false).finally(() => closePopover());
+          void doCheckout(repo, b.name, false);
         });
         list.appendChild(row);
         popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", row));
@@ -95,7 +95,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     e.preventDefault();
     const name = createInput.value.trim();
     if (name === "") return;
-    void doCheckout(repo, name, true).finally(() => closePopover());
+    void doCheckout(repo, name, true);
   });
 
   // Close on outside click + Escape.
@@ -155,10 +155,13 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
   const anchor = activeAnchor;
-  const res = await checkoutBranch.dispatch(
+  await checkoutBranch.dispatch(
     anchor ? { repo, branch, create, anchorEl: anchor } : { repo, branch, create },
+    {
+      onSuccess: () => {
+        void import("./git-changes-tab.js").then((m) => m.refreshChanges());
+      },
+      onSettled: () => closePopover(),
+    },
   );
-  if (res === null) return; // toast already fired
-  const { refreshChanges } = await import("./git-changes-tab.js");
-  void refreshChanges();
 }

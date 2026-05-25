@@ -226,6 +226,7 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
 });

@@ -64,7 +64,8 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
  *  silently so a network hiccup doesn't surface an error toast. */
 export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>({
   name: "conflicts.load",
-  retryable: false,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
   error: false,
 });

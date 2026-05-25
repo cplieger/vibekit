@@ -63,6 +63,7 @@ export const fetchAgentLinesAction = apiAction<{ chatID: string; path: string },
     path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
   }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: false,
 });
 

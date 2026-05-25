@@ -149,7 +149,10 @@ describe("resolveActivePending", () => {
     const { resolveActivePending } = await import("./editor-pending.js");
     await resolveActivePending("accept");
 
-    expect(mockDispatch).toHaveBeenCalledWith({ chatID: "chat1", toolCallID: "tc1", action: "accept" });
+    expect(mockDispatch).toHaveBeenCalledWith(
+      { chatID: "chat1", toolCallID: "tc1", action: "accept" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onSettled: expect.any(Function) }),
+    );
   });
 
   it("closes tab on success", async () => {

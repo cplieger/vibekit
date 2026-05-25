@@ -67,6 +67,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
     body: { action: "rename", path: joinPath(dir, original), name: newName },
   }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Couldn't rename",
 });
 
@@ -177,6 +178,8 @@ export interface UploadArgs {
 export const uploadAction = defineAction<UploadArgs, string[]>({
   name: "files.upload",
   retryable: "network",
+  // retry intentionally omitted: XHR-based multipart upload cannot safely
+  // retry after partial byte transmission without data-resend implications.
   run: (args, signal) => {
     return new Promise<string[]>((resolve, reject) => {
       uploadFiles({

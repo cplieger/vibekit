@@ -77,13 +77,14 @@ export function mergeTangent(): void {
   const session = getActive();
   if (session === undefined || session.is_tangent !== true) return;
   const parentID = session.parent_chat_id;
-  void mergeTangentAction.dispatch(session.id).then((result) => {
-    if (result === null) return;
-    if (parentID !== undefined && parentID !== "") {
-      void loadList().then(() => {
-        activateChatView(parentID);
-      });
-    }
+  void mergeTangentAction.dispatch(session.id, {
+    onSuccess: () => {
+      if (parentID !== undefined && parentID !== "") {
+        void loadList().then(() => {
+          activateChatView(parentID);
+        });
+      }
+    },
   });
 }
 

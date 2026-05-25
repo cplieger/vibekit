@@ -33,6 +33,7 @@ function rollbackRemovePR(_args: PRArgs, op: unknown): void {
 /** Merge a pull request. */
 export const mergePRAction = apiAction<PRArgs, unknown>({
   name: "git.merge_pr",
+  scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
@@ -44,6 +45,7 @@ export const mergePRAction = apiAction<PRArgs, unknown>({
 /** Close a pull request without merging. */
 export const closePRAction = apiAction<PRArgs, unknown>({
   name: "git.close_pr",
+  scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
@@ -60,4 +62,5 @@ export const refreshPRsAction = defineAction<void, void>({
   },
   error: "Couldn't refresh PRs",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
 });

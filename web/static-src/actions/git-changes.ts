@@ -22,6 +22,7 @@ export interface GitRepoFilesArgs extends GitRepoArgs {
 /** Stage files (used for both "stage all" and single-file stage). */
 export const stage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.stage",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   error: "Couldn't stage",
   retryable: "network",
@@ -30,6 +31,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
 /** Discard files (used for both "discard all" and single-file discard). */
 export const discard = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.discard",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   error: "Couldn't discard",
   // Destructive: timed-out discard may have succeeded server-side
@@ -39,6 +41,7 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
 /** Unstage a file. */
 export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   name: "git.unstage",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   error: "Couldn't unstage",
   retryable: "network",
@@ -46,6 +49,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
 
 export const pull = apiAction<{ repo: string }, unknown>({
   name: "git.pull",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   error: "Pull failed",
   retryable: "network",
@@ -53,6 +57,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
 
 export const push = apiAction<{ repo: string }, unknown>({
   name: "git.push",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
@@ -61,6 +66,7 @@ export const push = apiAction<{ repo: string }, unknown>({
 
 export const stash = apiAction<{ repo: string }, unknown>({
   name: "git.stash",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   error: "Stash failed",
   retryable: "network",
@@ -68,6 +74,7 @@ export const stash = apiAction<{ repo: string }, unknown>({
 
 export const stashPop = apiAction<{ repo: string }, unknown>({
   name: "git.stash_pop",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   error: "Stash pop failed",
   // Not retryable: a timed-out stash pop may have succeeded server-side.
@@ -76,6 +83,7 @@ export const stashPop = apiAction<{ repo: string }, unknown>({
 
 export const commit = apiAction<{ repo: string; message: string }, unknown>({
   name: "git.commit",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
   error: "Commit failed",
   // Not retryable: a timed-out commit may have succeeded server-side;
@@ -85,6 +93,7 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
 
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
   name: "git.generate_message",
+  scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
   retryable: "network",

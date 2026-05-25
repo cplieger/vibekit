@@ -10,12 +10,14 @@ interface CheckoutArgs {
 
 export const checkoutBranch = apiAction<CheckoutArgs, void>({
   name: "git.checkout_branch",
+  scope: (args) => "git:" + args.repo,
   request: ({ repo, branch, create }) => ({
     method: "POST",
     path: "/api/git/checkout",
     body: { repo, branch, create },
   }),
   retryable: "network",
+  retry: { count: 2, delay: 300 },
   error: "Branch checkout failed",
   optimistic: (args) => {
     if (!args.anchorEl) return undefined;

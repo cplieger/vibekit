@@ -24,6 +24,8 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
 
 export const loadToolsListAction = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
   name: "tools.load_list",
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
   request: () => ({ method: "GET", path: "/api/tools" }),
   error: false,
 });

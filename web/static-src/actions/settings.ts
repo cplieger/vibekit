@@ -18,6 +18,8 @@ import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 export const saveSteeringAction = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
+  scope: "settings",
   request: ({ content }) => ({
     method: "PUT",
     path: "/api/steering",
@@ -77,6 +79,7 @@ interface KiroSettingOp {
 
 export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
   name: "settings.set_kiro_setting",
+  scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
   // settings saves are user-initiated (cheap to redo manually).
   request: ({ key, value }) => ({
@@ -121,6 +124,7 @@ interface PatchAppOp {
 
 export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
   name: "settings.patch",
+  scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
   // settings saves are user-initiated (cheap to redo manually).
   request: ({ body }) => ({

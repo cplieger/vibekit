@@ -14,6 +14,7 @@ export interface ToggleArgs {
 export const toggleServer = apiAction<ToggleArgs, void>({
   name: "mcp.toggle_server",
   retryable: "network",
+  scope: (args) => "mcp:" + args.id,
   request: ({ id, enabled }) => ({
     method: "PATCH",
     path: `/api/mcp/${encodeURIComponent(id)}`,
@@ -40,6 +41,8 @@ export interface DeleteArgs {
 export const deleteServer = apiAction<DeleteArgs, void>({
   name: "mcp.delete_server",
   retryable: "network",
+  retry: { count: 2, delay: 300 },
+  scope: (args) => "mcp:" + args.id,
   request: ({ id }) => ({
     method: "DELETE",
     path: `/api/mcp/${encodeURIComponent(id)}`,
@@ -78,6 +81,7 @@ export interface SaveArgs {
 
 export const saveServer = apiAction<SaveArgs, Server>({
   name: "mcp.save_server",
+  scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
     method: id === "" ? "POST" : "PUT",
     path: id === "" ? "/api/mcp" : `/api/mcp/${encodeURIComponent(id)}`,

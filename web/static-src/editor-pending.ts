@@ -22,15 +22,13 @@ export async function resolveActivePending(action: "accept" | "reject"): Promise
   const path = state.path;
   const unbindAccept = bindLoadingState("chat.resolve_pending_change", $.editorPendingAcceptBtn);
   const unbindReject = bindLoadingState("chat.resolve_pending_change", $.editorPendingRejectBtn);
-  try {
-    const result = await resolvePendingChangeAction.dispatch(
-      { chatID, toolCallID, action },
-    );
-    if (result !== null) closeFile(path);
-  } finally {
-    unbindAccept();
-    unbindReject();
-  }
+  await resolvePendingChangeAction.dispatch(
+    { chatID, toolCallID, action },
+    {
+      onSuccess: () => closeFile(path),
+      onSettled: () => { unbindAccept(); unbindReject(); },
+    },
+  );
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */
