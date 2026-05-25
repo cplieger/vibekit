@@ -95,6 +95,7 @@ class PromptInputController {
     $.sendBtn.innerHTML = STATE_ICON[k];
     const tooltip = this.state.kind === "blocked" ? this.state.reason : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
+    $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("busy", k === "busy");
     $.sendBtn.classList.toggle("queued", k === "queued");
     $.sendBtn.classList.toggle("blocked", k === "blocked");

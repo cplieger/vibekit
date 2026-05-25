@@ -32,21 +32,26 @@ import type {
  *  the raw ActionDefinition in that `command` replaces `run`. The
  *  result is `void` because transport.send does not return a payload
  *  (the response arrives later via SSE events). */
-export interface TransportActionDefinition<TArgs>
-  extends Omit<ActionDefinition<TArgs, void>, "run"> {
+export interface TransportActionDefinition<TArgs, TOp = unknown>
+  extends Omit<ActionDefinition<TArgs, void, TOp>, "run"> {
   /** Build the typed command (or untyped Command for legacy intents)
    *  for this dispatch. Re-evaluated per-dispatch with current args. */
   command: (args: TArgs) => TypedCommand | Command;
 }
 
-/** Build an Action from a transport.send command descriptor. The run()
- *  implementation calls transport.send and throws ActionError on
- *  !r.ok so the dispatcher's error branch fires consistently. */
-export function transportAction<TArgs>(
-  def: TransportActionDefinition<TArgs>,
+/**
+ * Build an Action from a transport.send command descriptor. The generated
+ * `run()` calls transport.send and throws {@link ActionError} on `!r.ok`,
+ * so the dispatcher's error branch (toast + rollback) fires consistently.
+ *
+ * @param def - Transport action definition where `command` replaces `run`.
+ * @returns An {@link Action} backed by the SSE transport bridge.
+ */
+export function transportAction<TArgs, TOp = unknown>(
+  def: TransportActionDefinition<TArgs, TOp>,
 ): Action<TArgs, void> {
   const { command, ...rest } = def;
-  return defineAction<TArgs, void>({
+  return defineAction<TArgs, void, TOp>({
     ...rest,
     run: async (args, signal, ctx?: ActionContext) => {
       const raw = command(args);

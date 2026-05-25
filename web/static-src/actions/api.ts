@@ -47,21 +47,26 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 /** Caller-facing shape of an apiAction definition. Differs from the
  *  raw ActionDefinition in that `request` replaces `run`. */
-export interface ApiActionDefinition<TArgs, TResult>
-  extends Omit<ActionDefinition<TArgs, TResult>, "run"> {
+export interface ApiActionDefinition<TArgs, TResult, TOp = unknown>
+  extends Omit<ActionDefinition<TArgs, TResult, TOp>, "run"> {
   /** HTTP request descriptor. Re-evaluated for each dispatch with the
    *  current args (so paths can interpolate args). */
   request: (args: TArgs) => RequestSpec;
 }
 
-/** Build an Action from an HTTP request descriptor. The run()
- *  implementation handles fetch + non-ok status + JSON decode and
- *  throws ActionError on failure. */
-export function apiAction<TArgs, TResult = unknown>(
-  def: ApiActionDefinition<TArgs, TResult>,
+/**
+ * Build an Action from an HTTP request descriptor. The generated `run()`
+ * handles fetch, non-ok status parsing, JSON decode, timeout/abort
+ * classification, and throws {@link ActionError} on failure.
+ *
+ * @param def - API action definition where `request` replaces `run`.
+ * @returns An {@link Action} backed by fetch with full lifecycle support.
+ */
+export function apiAction<TArgs, TResult = unknown, TOp = unknown>(
+  def: ApiActionDefinition<TArgs, TResult, TOp>,
 ): Action<TArgs, TResult> {
   const { request, ...rest } = def;
-  return defineAction<TArgs, TResult>({
+  return defineAction<TArgs, TResult, TOp>({
     ...rest,
     run: async (args, signal, ctx) => {
       const spec = request(args);

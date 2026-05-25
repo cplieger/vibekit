@@ -77,7 +77,7 @@ export interface ActionContext {
   readonly idempotencyKey?: string;
 }
 
-export interface ActionDefinition<TArgs, TResult> {
+export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
   /** Stable identifier, e.g. "chat.delete", "files.create".
    *  Used in the registry log + as a default toast prefix. */
   readonly name: string;
@@ -92,11 +92,17 @@ export interface ActionDefinition<TArgs, TResult> {
   /** Optional optimistic mutation. Runs synchronously before run().
    *  Return any state you need to undo the mutation in rollback().
    *  If run() succeeds, the optimistic mutation stays. If it fails,
-   *  rollback() is called with the OptimisticOp. */
-  optimistic?: (args: TArgs) => OptimisticOp | undefined;
+   *  rollback() is called with the returned value.
+   *
+   *  The return type is linked to rollback's `op` parameter via TOp
+   *  (3rd type param). Specify TOp to get compile-time safety between
+   *  optimistic and rollback without needing asOp<T>() casts. */
+  optimistic?: (args: TArgs) => TOp | undefined;
 
-  /** Undo the optimistic mutation. Called only if run() throws. */
-  rollback?: (args: TArgs, op: OptimisticOp | undefined, err: ActionErrorLike) => void;
+  /** Undo the optimistic mutation. Called only if run() throws.
+   *  The `op` parameter is typed as TOp when the 3rd type param is
+   *  specified, eliminating the need for asOp<T>() casts. */
+  rollback?: (args: TArgs, op: TOp | undefined, err: ActionErrorLike) => void;
 
   /** Toast on success. Default: no toast (success is usually obvious
    *  from UI updates). Pass a string or function to enable. */

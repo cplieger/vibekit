@@ -346,9 +346,9 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
         payload: {
           text, message_id: messageID, agent, model,
           active_file: activeFile,
-          open_files: openFiles as string[],
+          open_files: openFiles,
           attachments: (attachments !== undefined && attachments.length > 0)
-            ? (attachments as unknown[]) : undefined,
+            ? attachments : undefined,
           // Only include the key if the framework provided one (avoids
           // sending `idempotency_key: undefined` which serializes inconsistently).
           ...(ctx?.idempotencyKey !== undefined ? { idempotency_key: ctx.idempotencyKey } : {}),

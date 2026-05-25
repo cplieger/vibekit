@@ -43,7 +43,6 @@ import type {
   ActionDefinition,
   ActionErrorLike,
   DispatchOptions,
-  OptimisticOp,
   ToastSpec,
 } from "./types.js";
 
@@ -152,8 +151,30 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export function defineAction<TArgs, TResult>(
-  def: ActionDefinition<TArgs, TResult>,
+/**
+ * Create an action from a declarative definition. The returned action
+ * manages the full lifecycle: optimistic UI → run (with optional retry)
+ * → success/error/cancel, including toast emission, registry recording,
+ * scope serialization, and dedupe collapsing.
+ *
+ * @param def - Declarative action definition (name + run are required;
+ *   all other fields opt into framework features).
+ * @returns An {@link Action} whose `dispatch()` executes the lifecycle
+ *   and `cancel()` aborts all in-flight instances.
+ *
+ * @example
+ * ```ts
+ * const deleteChat = defineAction<string, void>({
+ *   name: "chat.delete",
+ *   run: (id, signal) => fetch(`/api/chats/${id}`, { method: "DELETE", signal }),
+ *   error: "Couldn't delete chat",
+ *   retryable: "network",
+ * });
+ * await deleteChat.dispatch(chatId);
+ * ```
+ */
+export function defineAction<TArgs, TResult, TOp = unknown>(
+  def: ActionDefinition<TArgs, TResult, TOp>,
 ): Action<TArgs, TResult> {
   // Track in-flight controllers so action.cancel() can abort them.
   const inFlight = new Map<string, AbortController>();
@@ -300,7 +321,7 @@ export function defineAction<TArgs, TResult>(
       ? { instanceID: id, idempotencyKey: idemKey }
       : { instanceID: id };
 
-    let optOp: OptimisticOp | undefined;
+    let optOp: TOp | undefined;
     if (def.optimistic !== undefined) {
       try {
         optOp = def.optimistic(args);
@@ -496,7 +517,7 @@ export function defineAction<TArgs, TResult>(
 
   function emitCancelled(
     args: TArgs,
-    optOp: OptimisticOp | undefined,
+    optOp: TOp | undefined,
   ): void {
     if (def.rollback !== undefined) {
       try {

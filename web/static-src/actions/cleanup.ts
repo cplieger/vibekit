@@ -35,13 +35,16 @@ export function _registerAction<TArgs, TResult>(action: Action<TArgs, TResult>):
   installBeforeunloadOnce();
 }
 
-/** Register a cleanup function to run on page unload (or test invoke).
- *  Use this for raw fetch controllers, timer chains, polling loops,
- *  or any in-flight work outside the action framework that should
- *  abort on navigation.
+/**
+ * Register a cleanup function to run on page unload (or test invoke).
+ * Use this for raw fetch controllers, timer chains, polling loops,
+ * or any in-flight work outside the action framework that should
+ * abort on navigation.
  *
- *  Returns an unregister function so a module that re-initializes can
- *  detach its old hook. */
+ * @param fn - Idempotent teardown callback (abort controllers, clear timers).
+ * @returns An unregister function; call it when the module re-initializes
+ *   to detach the stale hook.
+ */
 export function registerCleanup(fn: () => void): () => void {
   cleanupHooks.add(fn);
   installBeforeunloadOnce();

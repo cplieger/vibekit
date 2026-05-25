@@ -47,7 +47,21 @@ export interface DebounceOptions {
   readonly leading?: boolean;
 }
 
-/** Wrap an action with a debounce timer. */
+/**
+ * Wrap an action with a debounce timer so rapid calls coalesce into a
+ * single dispatch after a quiet window.
+ *
+ * @param action - The action to debounce.
+ * @param opts - Debounce configuration (wait duration, leading/trailing edge).
+ * @returns A callable with `.flush()`, `.cancel()`, and `.isPending()` methods.
+ *
+ * @example
+ * ```ts
+ * const search = debouncedDispatch(searchAction, { wait: 300 });
+ * inputEl.addEventListener("input", () => search(inputEl.value));
+ * inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") search.flush(); });
+ * ```
+ */
 export function debouncedDispatch<TArgs, TResult>(
   action: Action<TArgs, TResult>,
   opts: DebounceOptions,

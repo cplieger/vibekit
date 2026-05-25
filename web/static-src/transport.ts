@@ -63,7 +63,7 @@ export interface Command {
 // The wire format is unchanged (JSON.stringify produces the same output).
 
 export type TypedCommand =
-  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: string[] } }
+  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: readonly unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: readonly string[] } }
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
@@ -276,7 +276,7 @@ class TransportController {
 
   // --- POST /api/command ---
 
-  async send(cmd: Command, opts?: SendOptions): Promise<SendResult> {
+  async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
     const requestID = newRequestID();
     const timeoutMs = opts?.timeoutMs ?? 15 * 60 * 1000;
     const ctrl = new AbortController();
@@ -295,7 +295,7 @@ class TransportController {
           type: cmd.type,
           request_id: requestID,
           chat_id: cmd.chat_id ?? "",
-          payload: cmd.payload ?? {},
+          payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
         }),
       });
       if (r.ok) return { ok: true, status: r.status };
@@ -358,5 +358,5 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
 }
 
 export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
-  return instance.send(cmd as Command, opts);
+  return instance.send(cmd, opts);
 }

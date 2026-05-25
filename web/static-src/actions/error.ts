@@ -9,6 +9,16 @@
 
 import type { ActionErrorLike } from "./types.js";
 
+/**
+ * Structured error thrown from an action's `run()` to signal a typed failure.
+ * Carries optional HTTP status and server-side error code for downstream
+ * classification (retry eligibility, toast formatting, telemetry).
+ *
+ * @example
+ * ```ts
+ * throw new ActionError("Server rejected", { status: 409, code: "conflict" });
+ * ```
+ */
 export class ActionError extends Error implements ActionErrorLike {
   readonly status?: number;
   readonly code?: string;

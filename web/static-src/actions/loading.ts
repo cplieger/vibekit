@@ -46,6 +46,13 @@ export interface BindLoadingOptions {
  * Bind a button/input element's disabled / aria-busy state to a named
  * action's pending count.
  *
+ * @param actionName - Registry action name to observe (e.g. "git.commit").
+ * @param el - The disableable element to manage.
+ * @param opts - Optional configuration for aria-busy, CSS class, and
+ *   disabled-state preservation.
+ * @returns An unsubscribe function that restores the element and detaches
+ *   the registry listener.
+ *
  * **Limitation (preserveDisabled):** External mutations to `el.disabled`
  * DURING the pending phase are overwritten on completion. Set the desired
  * disabled state AFTER the action completes if needed.

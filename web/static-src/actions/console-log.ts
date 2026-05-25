@@ -15,9 +15,12 @@ import { subscribe } from "./registry.js";
 
 let unsubscribe: (() => void) | null = null;
 
-/** Subscribe to the registry and live-log action errors to the
- *  browser console. Idempotent — calling twice replaces the previous
- *  subscription. Returns a teardown fn. */
+/**
+ * Subscribe to the registry and live-log action errors to the browser
+ * console. Idempotent — calling twice replaces the previous subscription.
+ *
+ * @returns A teardown function that unsubscribes the logger.
+ */
 export function initActionConsoleLog(): () => void {
   unsubscribe?.();
   const unsub = subscribe((inst) => {

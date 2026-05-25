@@ -68,10 +68,18 @@ const registryListener: RegistryListener = (inst: ActionInstance): void => {
   }
 };
 
-/** Get a live, mutable snapshot of an action's status. The returned
- *  object updates in-place as the action's lifecycle progresses; do
- *  NOT mutate it externally. Subscribe via `subscribeToActions` for
- *  push notifications when the snapshot changes. */
+/**
+ * Get a live, mutable snapshot of an action's status. The returned
+ * object updates in-place as the action's lifecycle progresses; do
+ * NOT mutate it externally.
+ *
+ * First call for a given name lazily installs a registry listener.
+ * Subsequent calls return the cached (same-reference) snapshot.
+ *
+ * @param name - Action name to observe (e.g. "settings.patch").
+ * @returns A live {@link ActionStatus} snapshot (pending count, last
+ *   error/success, timestamps).
+ */
 export function actionStatus(name: string): ActionStatus {
   let snap = snapshots.get(name);
   if (snap === undefined) {
