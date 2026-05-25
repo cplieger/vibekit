@@ -180,6 +180,71 @@ export const listFiles = apiAction<void, FileEntry[]>({
 });
 ```
 
+## Auto-retry with backoff
+
+For idempotent actions whose users would prefer transient failures to
+recover silently, set `retry: { count, delay, factor? }` alongside
+`retryable`:
+
+```ts
+export const fetchModels = apiAction<void, ModelInfo[]>({
+  name: "models.list",
+  retryable: "network",
+  retry: { count: 2, delay: 300 },   // 300ms then 600ms before surfacing
+  request: () => ({ method: "GET", path: "/api/models" }),
+});
+```
+
+The retry chain re-runs `run()` only — `optimistic()` does NOT re-fire,
+its mutation persists across retries. The toast (and its Retry button)
+only appear once auto-retry is exhausted. Backoff is `delay × factor^n`
+capped at 5s, with `factor` defaulting to 2 (exponential).
+
+`action.cancel()` aborts the retry chain mid-backoff; queued retries
+unwind cleanly.
+
+## Mutation scopes (serialization)
+
+When two dispatches target the same resource and shouldn't run in
+parallel (e.g. two settings PATCHes that race their dedup tracker, two
+git operations on the same repo), give the action a `scope`:
+
+```ts
+// Static scope: ALL dispatches of this action serialize through one queue.
+export const patchSettings = apiAction<Patch, void>({
+  name: "settings.patch",
+  scope: "settings",
+  request: (p) => ({ method: "PATCH", path: "/api/settings", body: p }),
+});
+
+// Function scope: one queue PER resource. Different repos run in parallel.
+export const gitPull = apiAction<{ repo: string }, void>({
+  name: "git.pull",
+  scope: (args) => `git:${args.repo}`,
+  request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
+});
+```
+
+Two actions sharing the same `scope` string serialize against each
+other, not just within one action — useful when add/remove/patch
+actions on the same data model must follow each other strictly.
+
+## Per-dispatch callbacks
+
+`DispatchOptions` accepts `onSuccess` / `onError` / `onSettled` for
+callsite-specific reactions without bloating the action definition:
+
+```ts
+const result = await saveDraftAction.dispatch(draft, {
+  onSuccess: () => editor.focus(),
+  onError:   () => editor.markDirty(),
+  onSettled: () => closeProgressDialog(),
+});
+```
+
+Callbacks fire AFTER the action-level toast emission. `onSettled`
+fires for success, error, AND cancellation (similar to TanStack Query).
+
 ## Naming convention
 
 Use `<area>.<verb>` with lowercase + underscores or hyphens:

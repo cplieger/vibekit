@@ -90,6 +90,37 @@ export interface ActionDefinition<TArgs, TResult> {
    *
    *  Suppressed when `error: false` (no toast renders at all). */
   retryable?: "network" | "always" | false;
+
+  /** Auto-retry transient failures BEFORE surfacing the error toast.
+   *  Each attempt re-runs the action's `run()` (NOT optimistic — the
+   *  optimistic mutation persists across retries). Only fires when
+   *  the error matches `retryable`'s classifier ('network' or 'always').
+   *
+   *  Defaults to no auto-retry (count: 0). When set, errors that the
+   *  retry would catch are silently re-tried up to `count` times with
+   *  exponential backoff (delay × factor^n, capped at 5s) before the
+   *  user sees a toast. The Retry button (if `retryable` is set) still
+   *  appears once auto-retry is exhausted.
+   *
+   *  Example: `retry: { count: 2, delay: 300 }` — total ~900ms latency
+   *  budget for transient blips, invisible to the user when successful. */
+  retry?: {
+    readonly count: number;        // additional attempts beyond the first
+    readonly delay: number;        // ms before first retry
+    readonly factor?: number;      // multiplier per retry (default 2)
+  };
+
+  /** When two dispatches share the same scope, the second waits for
+   *  the first to finish (success / error / cancel) before its
+   *  optimistic + run begin. Without scope, dispatches run in parallel.
+   *
+   *  Use cases: serialize git mutations on the same repo, settings
+   *  patches that share state, batch-delete operations. Default: no
+   *  scope (parallel dispatches allowed).
+   *
+   *  Scope can be a static string (one queue for the whole action) or
+   *  a function of args (per-resource queue, e.g. per-repo, per-chatID). */
+  scope?: string | ((args: TArgs) => string);
 }
 
 /** A registered action, returned by defineAction(). Can be dispatched
@@ -101,7 +132,7 @@ export interface Action<TArgs, TResult> {
   /** Run the action. Resolves to the result on success or null on
    *  failure or cancellation. The toast (if configured) has already
    *  fired by the time dispatch resolves. */
-  dispatch(args: TArgs, opts?: DispatchOptions): Promise<TResult | null>;
+  dispatch(args: TArgs, opts?: DispatchOptions<TArgs, TResult>): Promise<TResult | null>;
 
   /** Cancel all in-flight instances. Each instance moves to status
    *  "cancelled" and run()'s signal aborts. Rollback IS called on
@@ -110,13 +141,25 @@ export interface Action<TArgs, TResult> {
 }
 
 /** Per-dispatch overrides. */
-export interface DispatchOptions {
+export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
   /** Suppress the success toast for this call. Errors still toast. */
   readonly silent?: boolean;
   /** Override the success toast message for this call. */
   readonly successMessage?: string;
   /** Override the error toast prefix for this call. */
   readonly errorPrefix?: string;
+  /** Per-call success callback. Fires after the action-level success
+   *  toast (if any). Receives the resolved value. Useful when a
+   *  specific callsite needs to react (focus an input, scroll, etc.)
+   *  without changing the action definition. */
+  readonly onSuccess?: (result: TResult, args: TArgs) => void;
+  /** Per-call error callback. Fires after the action-level error
+   *  toast (if any). Useful for callsite-specific recovery UI. */
+  readonly onError?: (err: ActionErrorLike, args: TArgs) => void;
+  /** Per-call settled callback. Fires for both success and error
+   *  AND on cancellation. Useful for clearing per-call loading
+   *  state that bindLoadingState doesn't cover. */
+  readonly onSettled?: (args: TArgs) => void;
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client
