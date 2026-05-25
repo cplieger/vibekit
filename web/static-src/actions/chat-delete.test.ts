@@ -19,6 +19,7 @@ import { setSessions, get, setActive, getSessions, setFrozen } from "../store.js
 import { deleteChat, archiveChat, discardTangent } from "./chat.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import type { Session } from "../types.js";
 
 const mockSend = vi.mocked(transportSend);
@@ -42,6 +43,7 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   vi.clearAllMocks();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);

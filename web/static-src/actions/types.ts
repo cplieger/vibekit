@@ -87,6 +87,16 @@ export interface RetryConfig {
   readonly factor?: number;
 }
 
+/** Info passed to the per-dispatch `onRetryAttempt` callback. */
+export interface RetryAttemptInfo {
+  /** Current attempt number (2 = first retry, 3 = second retry). */
+  readonly attempt: number;
+  /** Maximum total attempts (initial + retries). */
+  readonly maxAttempts: number;
+  /** The error from the previous attempt that triggered this retry. */
+  readonly error: ActionErrorLike;
+}
+
 export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
   /** Stable identifier, e.g. "chat.delete", "files.create".
    *  Used in the registry log + as a default toast prefix. */
@@ -269,6 +279,10 @@ export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
    *  AND on cancellation. Useful for clearing per-call loading
    *  state that bindLoadingState doesn't cover. */
   readonly onSettled?: (args: TArgs) => void;
+  /** Per-call retry attempt callback. Fires before each retry attempt
+   *  (not the initial attempt). Receives attempt info including the
+   *  error that triggered the retry. */
+  readonly onRetryAttempt?: (info: RetryAttemptInfo, args: TArgs) => void;
 }
 
 /** A request descriptor used by apiAction(). Mirrors the api-client

@@ -15,12 +15,14 @@ vi.mock("../api-client.js", () => ({
 import { apiAction } from "./api.js";
 import { IDEMPOTENCY_HEADER, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

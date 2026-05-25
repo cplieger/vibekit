@@ -348,6 +348,15 @@ export function bindDisabledPattern(
       if (disposed) return;
       disposed = true;
       for (const u of unsubs) u();
+      // Restore element state if still mid-pending to avoid leaving
+      // stale disabled / aria-busy / pendingClass on teardown.
+      if (wasPending) {
+        let manualDisabled: boolean;
+        try { manualDisabled = disabledWhen(); } catch { manualDisabled = false; }
+        el.disabled = manualDisabled;
+        if (ariaBusy) el.removeAttribute("aria-busy");
+        if (pendingClass) el.classList.remove(pendingClass);
+      }
     },
   };
 }

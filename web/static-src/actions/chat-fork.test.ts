@@ -14,6 +14,7 @@ import { setSessions, get, setActive } from "../store.js";
 import { forkChat } from "./chat.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import type { Session } from "../types.js";
 
 const mockSend = vi.mocked(transportSend);
@@ -35,6 +36,7 @@ function makeSession(id: string): Session {
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   vi.clearAllMocks();
   setSessions([makeSession("parent-1")]);
   setActive("parent-1");

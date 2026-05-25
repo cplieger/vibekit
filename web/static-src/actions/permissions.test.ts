@@ -14,6 +14,7 @@ vi.mock("../api-client.js", () => ({
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { addRule, removeRule, type CommandRule } from "./permissions.js";
 
 const mockFetch = vi.fn();
@@ -28,6 +29,7 @@ function makeRules(): CommandRule[] {
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

@@ -7,13 +7,15 @@ vi.mock("../toast.js", () => ({
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
-import { actionStatus, _resetForTest as resetStatus } from "./action-status.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { actionStatus, _resetForTest as resetActionStatus } from "./action-status.js";
 import { ActionError } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
-  resetStatus();
+  resetCleanup();
+  resetActionStatus();
 });
 
 describe("actionStatus", () => {

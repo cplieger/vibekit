@@ -31,6 +31,7 @@ vi.mock("../api-client.js", () => ({
 import { checkoutBranch } from "./git-branch.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockFetch = vi.fn();
 
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

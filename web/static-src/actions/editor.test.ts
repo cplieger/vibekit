@@ -23,6 +23,7 @@ vi.mock("../editor-types.js", () => ({
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { send as transportSend } from "../transport.js";
 
 const mockFetch = vi.fn();
@@ -31,6 +32,7 @@ const mockSend = vi.mocked(transportSend);
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

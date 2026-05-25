@@ -44,18 +44,19 @@ import type {
   ActionErrorLike,
   ActionInstance,
   DispatchOptions,
+  RetryAttemptInfo,
   ToastSpec,
 } from "./types.js";
 
 
 let instanceCounter = 0;
 
-/** Invoke a callback safely — errors are caught and logged without
+/** Invoke a lifecycle hook safely — errors are caught and logged without
  *  disrupting the dispatch lifecycle. Eliminates repetitive try/catch
  *  blocks throughout runOnce (8+ occurrences → 1 helper). */
-function safeCallback(name: string, label: string, fn: () => void): void {
+function invokeLifecycleHook(actionName: string, hookName: string, fn: () => void): void {
   try { fn(); } catch (e) {
-    console.error(`[actions] ${label} callback for ${name} threw`, e);
+    console.error(`[actions] ${hookName} callback for ${actionName} threw`, e);
   }
 }
 
@@ -233,6 +234,10 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   // instances from inFlight so isInflight reflects cancellation
   // immediately rather than waiting for the scope chain to advance.
   const started = new Set<string>();
+  // Per-instance scope-skip resolvers. When cancel() fires for a
+  // scope-queued instance, it triggers the resolver so the scope chain
+  // tail resolves immediately (unblocking subsequent entries).
+  const scopeSkipResolvers = new Map<string, () => void>();
   // Track active dedupe keys for this action so cancel() can eagerly
   // clear them from the module-level dedupeInflight map. Without this,
   // a cancel() + immediate re-dispatch with the same dedupe key would
@@ -257,28 +262,28 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         // runOnce when the original dispatch settles.
         const shared = entry.promise;
         if (shared === undefined) {
-          if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+          if (opts.onSettled) invokeLifecycleHook(def.name, "onSettled", () => opts.onSettled!(args));
           return Promise.resolve(null);
         }
         return (shared as Promise<TResult | null>).then(
           (v) => {
             if (v !== null) {
-              if (opts.onSuccess) safeCallback(def.name, "onSuccess", () => opts.onSuccess!(v, args));
+              if (opts.onSuccess) invokeLifecycleHook(def.name, "onSuccess", () => opts.onSuccess!(v, args));
             } else if (entry.error !== undefined) {
               const capturedErr = entry.error;
-              if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(capturedErr, args));
+              if (opts.onError) invokeLifecycleHook(def.name, "onError", () => opts.onError!(capturedErr, args));
             } else if (entry.cancelled === true) {
               // Original was cancelled — fire onCancel (not onError).
-              if (opts.onCancel) safeCallback(def.name, "onCancel", () => opts.onCancel!(args));
+              if (opts.onCancel) invokeLifecycleHook(def.name, "onCancel", () => opts.onCancel!(args));
             } else {
-              if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!({ message: "deduped dispatch did not succeed", code: "dedupe" }, args));
+              if (opts.onError) invokeLifecycleHook(def.name, "onError", () => opts.onError!({ message: "deduped dispatch did not succeed", code: "dedupe" }, args));
             }
-            if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+            if (opts.onSettled) invokeLifecycleHook(def.name, "onSettled", () => opts.onSettled!(args));
             return v;
           },
           () => {
             // Defensive: runOnce never rejects, but guarantee onSettled fires.
-            if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+            if (opts.onSettled) invokeLifecycleHook(def.name, "onSettled", () => opts.onSettled!(args));
             return null;
           },
         );
@@ -314,9 +319,19 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     } else {
       const prev = scopeChains.get(scopeKey) ?? Promise.resolve();
       const next = prev.then(() => runOnce(args, opts, ac, id, dedupeEntry, dedupeKey, dispatchedAt));
-      const tail = next.catch(NOOP);
+      // The tail is what subsequent scope entries wait on. It resolves
+      // when either: (a) next settles (normal path), or (b) cancel()
+      // triggers the skip resolver (cancelled-while-queued path).
+      let tailResolve!: () => void;
+      const tail = new Promise<void>((r) => { tailResolve = r; });
+      scopeSkipResolvers.set(id, tailResolve);
+      void next.then(tailResolve, tailResolve);
       scopeChains.set(scopeKey, tail);
+      // Cleanup: delete the scope chain entry when this is the last
+      // entry. Use next.finally (not tail.then) to preserve the same
+      // microtick timing as the original code.
       void next.finally(() => {
+        scopeSkipResolvers.delete(id);
         if (scopeChains.get(scopeKey) === tail) scopeChains.delete(scopeKey);
       }).catch(NOOP);
       result = next;
@@ -395,7 +410,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     const settle = (): void => {
       inFlight.delete(id);
       started.delete(id);
-      if (opts.onSettled) safeCallback(def.name, "onSettled", () => opts.onSettled!(args));
+      if (opts.onSettled) invokeLifecycleHook(def.name, "onSettled", () => opts.onSettled!(args));
     };
 
     // If already cancelled while queued in scope chain, short-circuit.
@@ -409,7 +424,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         id, name: def.name, status: "cancelled", args,
         dispatchedAt, startedAt: now, completedAt: now,
       });
-      if (opts.onCancel) safeCallback(def.name, "onCancel", () => opts.onCancel!(args));
+      if (opts.onCancel) invokeLifecycleHook(def.name, "onCancel", () => opts.onCancel!(args));
       settle();
       return null;
     }
@@ -448,7 +463,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           dispatchedAt, startedAt, completedAt: Date.now(), error: err,
         });
         emitErrorToast(args, err, opts);
-        if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(err, args));
+        if (opts.onError) invokeLifecycleHook(def.name, "onError", () => opts.onError!(err, args));
         settle();
         return null;
       }
@@ -461,7 +476,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     });
 
     try {
-      const { result, attempts } = await runWithRetry(args, ac.signal, ctx);
+      const { result, attempts } = await runWithRetry(args, ac.signal, ctx, opts.onRetryAttempt);
       // Cancellation can race success — if the signal aborted,
       // treat as cancelled even if run() resolved. Most adapters
       // throw on abort, but be defensive.
@@ -479,7 +494,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
             console.error(`[actions] rollback (cancellation) for ${def.name} threw`, e);
           }
         }
-        if (opts.onCancel) safeCallback(def.name, "onCancel", () => opts.onCancel!(args));
+        if (opts.onCancel) invokeLifecycleHook(def.name, "onCancel", () => opts.onCancel!(args));
         settle();
         return null;
       }
@@ -492,7 +507,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       // onto this (now-settled) promise.
       clearDedupe(dedupeKey, dedupeEntry);
       emitSuccessToast(args, result, opts);
-      if (opts.onSuccess) safeCallback(def.name, "onSuccess", () => opts.onSuccess!(result, args));
+      if (opts.onSuccess) invokeLifecycleHook(def.name, "onSuccess", () => opts.onSuccess!(result, args));
       settle();
       return result;
     } catch (e: unknown) {
@@ -531,9 +546,9 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       }
       if (!cancelled) {
         emitErrorToast(args, err, opts);
-        if (opts.onError) safeCallback(def.name, "onError", () => opts.onError!(err, args));
+        if (opts.onError) invokeLifecycleHook(def.name, "onError", () => opts.onError!(err, args));
       } else {
-        if (opts.onCancel) safeCallback(def.name, "onCancel", () => opts.onCancel!(args));
+        if (opts.onCancel) invokeLifecycleHook(def.name, "onCancel", () => opts.onCancel!(args));
       }
       settle();
       return null;
@@ -548,16 +563,14 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
    *  Returns { result, attempts } where attempts is total run() calls.
    *  On failure, attaches `_attempts` to the thrown error so the caller
    *  can record the count in the registry. */
-  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<{ result: TResult; attempts: number }> {
+  async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext, onRetryAttempt?: (info: RetryAttemptInfo, args: TArgs) => void): Promise<{ result: TResult; attempts: number }> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
     const baseDelay = cfg?.delay ?? 0;
     const factor = cfg?.factor ?? 2;
     let attempt = 0;
+    let lastRetryError: ActionErrorLike | undefined;
     while (true) {
-      // Guard: if the signal was aborted between retries (e.g. cancel()
-      // called during the backoff sleep or between loop iterations),
-      // bail immediately instead of starting another run() call.
       if (signal.aborted) {
         const abortErr = new DOMException("aborted", "AbortError");
         attachAttempts(abortErr, attempt);
@@ -565,20 +578,22 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       }
       try {
         attempt++;
+        if (attempt > 1 && onRetryAttempt !== undefined) {
+          invokeLifecycleHook(def.name, "onRetryAttempt", () => onRetryAttempt({ attempt, maxAttempts, error: lastRetryError! }, args));
+        }
         const result = await def.run(args, signal, ctx);
         return { result, attempts: attempt };
       } catch (e) {
         if (signal.aborted) { attachAttempts(e, attempt); throw e; }
         if (attempt >= maxAttempts) { attachAttempts(e, attempt); throw e; }
-        // Only retry on retry-class errors per def.retryable's
-        // classifier. Mirrors buildRetryButton's logic.
         const err = toActionError(e);
         if (!shouldRetry(err)) { attachAttempts(e, attempt); throw e; }
+        lastRetryError = err;
         const wait = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
         try {
           await sleep(wait, signal);
         } catch {
-          attachAttempts(e, attempt); throw e; // signal aborted during backoff
+          attachAttempts(e, attempt); throw e;
         }
       }
     }
@@ -707,6 +722,8 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     // (now-cancelled) promise. The async .finally() cleanup remains as
     // a safety net for the normal (non-cancel) path.
     for (const dk of activeDedupeKeys) {
+      const entry = dedupeInflight.get(dk);
+      if (entry !== undefined) entry.cancelled = true;
       dedupeInflight.delete(dk);
     }
     activeDedupeKeys.clear();
@@ -717,6 +734,13 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
       controller.abort();
       if (!started.has(id)) {
         inFlight.delete(id);
+        // Trigger the scope-skip resolver so the cancelled entry's
+        // tail resolves immediately, unblocking subsequent entries.
+        const skip = scopeSkipResolvers.get(id);
+        if (skip !== undefined) {
+          scopeSkipResolvers.delete(id);
+          skip();
+        }
       }
     }
   }

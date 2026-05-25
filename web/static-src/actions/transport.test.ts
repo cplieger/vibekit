@@ -22,12 +22,14 @@ import { send as transportSend } from "../transport.js";
 import { transportAction } from "./transport.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
 });
 
 const testAction = () =>

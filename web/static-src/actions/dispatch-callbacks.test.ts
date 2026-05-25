@@ -8,11 +8,13 @@ vi.mock("../toast.js", () => ({
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { ActionError } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
 });
 
 describe("dispatch callbacks — onSuccess", () => {

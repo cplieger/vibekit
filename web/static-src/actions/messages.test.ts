@@ -23,6 +23,7 @@ vi.mock("../chat-commands.js", () => ({
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 import { send as transportSend } from "../transport.js";
 import { sendPromptTo } from "../chat-commands.js";
@@ -34,6 +35,7 @@ const mockSendPromptTo = vi.mocked(sendPromptTo);
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

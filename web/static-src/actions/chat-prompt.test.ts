@@ -37,12 +37,14 @@ import { setThinking, enqueuePrompt } from "../store.js";
 import { sendPrompt } from "./chat.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   mockSend.mockReset();
 });
 

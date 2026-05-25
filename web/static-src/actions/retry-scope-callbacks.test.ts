@@ -15,10 +15,12 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { ActionError, toActionError } from "./error.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
 });
 
 describe("Action.isInflight", () => {
@@ -507,5 +509,71 @@ describe("isRetryClass — transient HTTP status auto-retry", () => {
     const result = await action.dispatch(undefined);
     expect(result).toBe("ok");
     expect(attempts).toBe(2);
+  });
+});
+
+describe("onRetryAttempt callback", () => {
+  it("fires before each retry attempt with correct info", async () => {
+    const retryInfo: Array<{ attempt: number; maxAttempts: number; error: string }> = [];
+    let runCount = 0;
+    const action = defineAction({
+      name: "test.on_retry_attempt",
+      retryable: "always",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        runCount++;
+        if (runCount < 3) throw new ActionError("transient", { code: "network" });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined, {
+      onRetryAttempt: (info) => {
+        retryInfo.push({ attempt: info.attempt, maxAttempts: info.maxAttempts, error: info.error.message });
+      },
+    });
+    expect(result).toBe("ok");
+    expect(retryInfo).toEqual([
+      { attempt: 2, maxAttempts: 3, error: "transient" },
+      { attempt: 3, maxAttempts: 3, error: "transient" },
+    ]);
+  });
+
+  it("does not fire on the initial attempt", async () => {
+    const retryInfo: number[] = [];
+    const action = defineAction({
+      name: "test.on_retry_no_initial",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => "ok",
+    });
+    await action.dispatch(undefined, {
+      onRetryAttempt: (info) => { retryInfo.push(info.attempt); },
+    });
+    expect(retryInfo).toEqual([]);
+  });
+
+  it("throwing in onRetryAttempt does not disrupt retry", async () => {
+    let attempts = 0;
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const action = defineAction({
+      name: "test.on_retry_throws",
+      retryable: "always",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("fail", { code: "network" });
+        return "recovered";
+      },
+    });
+    const result = await action.dispatch(undefined, {
+      onRetryAttempt: () => { throw new Error("callback exploded"); },
+    });
+    expect(result).toBe("recovered");
+    expect(attempts).toBe(2);
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
   });
 });

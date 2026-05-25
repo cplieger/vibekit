@@ -34,8 +34,8 @@ export { subscribe as subscribeToActions, pendingCount, pendingForAny } from "./
 
 // Loading-state helper: bind a button's disabled + aria-busy state
 // to a named action's pending count. Returns an unsubscribe.
-export { bindLoadingState, bindLoadingStateMulti, bindLoadingCluster } from "./loading.js";
-export type { ClusterState } from "./loading.js";
+export { bindLoadingState, bindLoadingStateMulti, bindLoadingCluster, bindDisabledPattern } from "./loading.js";
+export type { ClusterState, DisabledPatternOptions, DisabledPatternHandle } from "./loading.js";
 
 // Cleanup hooks: register raw (non-action) cleanup for fetch
 // controllers / timers; the framework auto-installs a beforeunload
@@ -59,7 +59,7 @@ export type { ActionErrorLike } from "./types.js";
 // DispatchOptions: per-dispatch overrides (silent, onSuccess, onError,
 // onSettled). External callers (settings.ts, notify.ts) pass these
 // inline; exporting the type lets helpers type-annotate the opts arg.
-export type { DispatchOptions } from "./types.js";
+export type { DispatchOptions, RetryAttemptInfo } from "./types.js";
 
 // Utility extraction types: pull TArgs / TResult from an Action without
 // manually re-declaring them. Useful in test helpers and callback typing.

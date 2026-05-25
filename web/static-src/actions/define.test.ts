@@ -18,11 +18,13 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { ActionError } from "./error.js";
 import { recentLog, _resetForTest as resetRegistry, subscribe, pendingFor } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   vi.clearAllMocks();
 });
 

@@ -494,4 +494,54 @@ describe("bindDisabledPattern — edge cases", () => {
     handle.dispose();
     document.body.removeChild(btn);
   });
+
+  it("dispose during pending restores element state (stale state rollback)", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "dp.dispose_pending",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    const handle = bindDisabledPattern(btn, {
+      actions: ["dp.dispose_pending"],
+      disabledWhen: () => false,
+      pendingClass: "loading",
+    });
+    const p = action.dispatch(undefined);
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.classList.contains("loading")).toBe(true);
+    // Dispose while pending — element should be restored
+    handle.dispose();
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    expect(btn.classList.contains("loading")).toBe(false);
+    resolve();
+    await p;
+    document.body.removeChild(btn);
+  });
+
+  it("dispose during pending respects disabledWhen for final state", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "dp.dispose_pending_dw",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    const handle = bindDisabledPattern(btn, {
+      actions: ["dp.dispose_pending_dw"],
+      disabledWhen: () => true, // form invalid
+    });
+    const p = action.dispatch(undefined);
+    expect(btn.disabled).toBe(true);
+    // Dispose while pending — disabled stays true because disabledWhen
+    handle.dispose();
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBeNull(); // aria-busy cleared
+    resolve();
+    await p;
+    document.body.removeChild(btn);
+  });
 });
