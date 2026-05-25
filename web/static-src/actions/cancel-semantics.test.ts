@@ -59,9 +59,10 @@ describe("success-race cancel: run() resolves but signal already aborted", () =>
     expect(rollback.mock.calls[0]![2]).toMatchObject({ code: "cancelled" });
   });
 
-  it("fires onSettled but NOT onSuccess or onError", async () => {
+  it("fires onCancel and onSettled but NOT onSuccess or onError", async () => {
     const onSuccess = vi.fn();
     const onError = vi.fn();
+    const onCancel = vi.fn();
     const onSettled = vi.fn();
     const action = defineAction<void, string>({
       name: "test.race_cancel_callbacks",
@@ -72,11 +73,12 @@ describe("success-race cancel: run() resolves but signal already aborted", () =>
           });
         }),
     });
-    const p = action.dispatch(undefined, { onSuccess, onError, onSettled });
+    const p = action.dispatch(undefined, { onSuccess, onError, onCancel, onSettled });
     action.cancel();
     await p;
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
 

@@ -220,6 +220,7 @@ class CommandsMenuController {
       description: opt.description ?? "",
     }));
     this.popover.classList.remove("hidden");
+    $.promptInput.setAttribute("aria-expanded", "true");
     this.popover.setAttribute("aria-label", `Options for ${command}`);
     this.popover.innerHTML = "";
     options.forEach((opt, i) => {
@@ -266,6 +267,7 @@ class CommandsMenuController {
     this.stage2Command = null;
     this.cachedItems = items;
     this.popover.classList.remove("hidden");
+    $.promptInput.setAttribute("aria-expanded", "true");
     this.popover.innerHTML = "";
     items.forEach((cmd, i) => {
       const opts: PopoverRowOpts = {
@@ -314,6 +316,7 @@ class CommandsMenuController {
     this.cachedItems = [];
     this.stage2Command = null;
     $.promptInput.removeAttribute("aria-activedescendant");
+    $.promptInput.setAttribute("aria-expanded", "false");
   }
 
   private filterAll(filter: string): PopoverItem[] {

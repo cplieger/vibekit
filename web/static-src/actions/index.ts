@@ -20,7 +20,7 @@ export { apiAction } from "./api.js";
 // classifyFetchError: normalise fetch catch-block errors into ActionError
 // with canonical code (cancelled/timeout/network). Useful in custom
 // defineAction run() implementations that call fetch directly.
-export { ActionError, hasErrorString, classifyFetchError } from "./error.js";
+export { ActionError, hasErrorString, classifyFetchError, isRetryableError } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: mcp-panels uses it to capture per-dispatch

@@ -108,7 +108,7 @@ describe("cancel mid-scope-chain across actions", () => {
       scope: "cancel-chain",
       error: false,
       run: (_args, signal) =>
-        new Promise<string>((resolve, reject) => {
+        new Promise<string>((_resolve, reject) => {
           if (signal.aborted) {
             order.push("A-already-aborted");
             reject(new DOMException("aborted", "AbortError"));

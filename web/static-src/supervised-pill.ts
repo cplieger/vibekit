@@ -44,7 +44,11 @@ class SupervisedPillController {
     this.content = this.pill.querySelector(".pill-expand-content");
     if (this.content === null) return;
 
-    makeExpandable(this.pill, this.content);
+    makeExpandable(this.pill, this.content, {
+      onExpand: () => { this.pill?.setAttribute("aria-expanded", "true"); },
+      onCollapse: () => { this.pill?.setAttribute("aria-expanded", "false"); },
+    });
+    this.pill.setAttribute("aria-expanded", "false");
     this.render();
 
     effect(() => { version.value; this.render(); });

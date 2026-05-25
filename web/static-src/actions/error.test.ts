@@ -153,7 +153,8 @@ describe("classifyFetchError", () => {
 });
 
 describe("isTransientStatus", () => {
-  it("returns true for 429, 502, 503, 504", () => {
+  it("returns true for 408, 429, 502, 503, 504", () => {
+    expect(isTransientStatus(408)).toBe(true);
     expect(isTransientStatus(429)).toBe(true);
     expect(isTransientStatus(502)).toBe(true);
     expect(isTransientStatus(503)).toBe(true);
@@ -187,6 +188,7 @@ describe("isRetryableError", () => {
   });
 
   it("returns true for transient HTTP statuses under 'network' mode", () => {
+    expect(isRetryableError({ message: "x", status: 408 }, "network")).toBe(true);
     expect(isRetryableError({ message: "x", status: 429 }, "network")).toBe(true);
     expect(isRetryableError({ message: "x", status: 502 }, "network")).toBe(true);
     expect(isRetryableError({ message: "x", status: 503 }, "network")).toBe(true);

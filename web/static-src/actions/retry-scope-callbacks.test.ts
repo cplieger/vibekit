@@ -175,7 +175,7 @@ describe("retry safety — abort guard at loop top", () => {
       name: "test.retry_abort_guard",
       retryable: "always",
       retry: { count: 3, delay: 0 },
-      run: async (_args, signal) => {
+      run: async (_args, _signal) => {
         callCount++;
         if (callCount === 1) {
           // First call fails with a retryable error, then we abort
@@ -465,6 +465,24 @@ describe("isRetryClass — transient HTTP status auto-retry", () => {
       run: async () => {
         attempts++;
         if (attempts === 1) throw new ActionError("bad gateway", { status: 502 });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
+  });
+
+  it("auto-retries on 408 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.auto_retry_408",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("request timeout", { status: 408 });
         return "ok";
       },
     });

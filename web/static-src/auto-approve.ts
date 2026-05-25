@@ -56,9 +56,11 @@ function render(): void {
   const active = session.auto_approve_crew;
   btn.classList.toggle("active", active);
   btn.setAttribute("aria-pressed", String(active));
-  btn.title = active
+  const label = active
     ? "Auto-approve subagent tools (on)"
     : "Auto-approve subagent tools (off)";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 function toggle(): void {

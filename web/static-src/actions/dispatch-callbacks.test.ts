@@ -82,6 +82,58 @@ describe("dispatch callbacks — onError", () => {
   });
 });
 
+describe("dispatch callbacks — onCancel", () => {
+  it("fires with args on cancellation", async () => {
+    const onCancel = vi.fn();
+    const action = defineAction({
+      name: "cb.oncancel",
+      run: (_args, signal) =>
+        new Promise<void>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    const p = action.dispatch("arg", { onCancel });
+    action.cancel();
+    await p;
+    expect(onCancel).toHaveBeenCalledWith("arg");
+  });
+
+  it("does not fire on success", async () => {
+    const onCancel = vi.fn();
+    const action = defineAction({ name: "cb.oncancel_ok", run: async () => "fine" });
+    await action.dispatch({}, { onCancel });
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("does not fire on error", async () => {
+    const onCancel = vi.fn();
+    const action = defineAction({
+      name: "cb.oncancel_err",
+      run: async () => { throw new ActionError("nope"); },
+    });
+    await action.dispatch({}, { onCancel });
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("fires before onSettled", async () => {
+    const order: string[] = [];
+    const action = defineAction({
+      name: "cb.oncancel_order",
+      run: (_args, signal) =>
+        new Promise<void>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    const p = action.dispatch("x", {
+      onCancel: () => order.push("onCancel"),
+      onSettled: () => order.push("onSettled"),
+    });
+    action.cancel();
+    await p;
+    expect(order).toEqual(["onCancel", "onSettled"]);
+  });
+});
+
 describe("dispatch callbacks — onSettled", () => {
   it("fires on success", async () => {
     const onSettled = vi.fn();

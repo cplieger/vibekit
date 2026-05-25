@@ -117,3 +117,124 @@ describe("a11y: focus management", () => {
     document.body.removeChild(trigger);
   });
 });
+
+describe("a11y: aria-expanded on popover triggers", () => {
+  it("commands-menu sets aria-expanded on prompt input when popover opens/closes", async () => {
+    vi.resetModules();
+    const input = document.createElement("textarea");
+    vi.doMock("./store.js", () => ({
+      getActive: () => ({
+        available_commands: [{ name: "/help", description: "Help" }],
+        available_prompts: [],
+      }),
+      getActiveId: () => "chat1",
+    }));
+    vi.doMock("./api-client.js", () => ({ apiGet: vi.fn(async () => null) }));
+    vi.doMock("./dom.js", () => ({
+      $: new Proxy({ promptInput: input }, {
+        get: (t, p) => (p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div")),
+      }),
+    }));
+    const { initCommandsMenu } = await import("./commands-menu.js");
+    initCommandsMenu();
+
+    input.value = "/";
+    input.dispatchEvent(new Event("input"));
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+
+    input.value = "hello";
+    input.dispatchEvent(new Event("input"));
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("supervised-pill sets aria-expanded on expand/collapse", async () => {
+    vi.resetModules();
+    vi.doMock("./store.js", () => ({
+      getActive: () => ({
+        id: "s1",
+        supervised_mode: true,
+        pending_changes: [],
+        messages: [],
+      }),
+      version: { value: 1 },
+    }));
+    vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => fn() }));
+    vi.doMock("./actions/chat.js", () => ({
+      setSupervised: { dispatch: vi.fn() },
+      resolveAllPending: { dispatch: vi.fn() },
+      resolvePendingChange: { dispatch: vi.fn() },
+      trustPending: { dispatch: vi.fn() },
+      clearPendingTrust: { dispatch: vi.fn() },
+    }));
+    vi.doMock("./actions/index.js", () => ({
+      bindLoadingState: () => () => {},
+      bindLoadingStateMulti: () => () => {},
+    }));
+    vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
+    vi.doMock("./pill-expand.js", () => ({
+      makeExpandable: (_pill: HTMLElement, _content: HTMLElement, opts?: { onExpand?: () => void; onCollapse?: () => void }) => {
+        _pill.addEventListener("click", () => {
+          if (_pill.classList.contains("pill-expanded")) {
+            _pill.classList.remove("pill-expanded");
+            opts?.onCollapse?.();
+          } else {
+            _pill.classList.add("pill-expanded");
+            opts?.onExpand?.();
+          }
+        });
+      },
+      collapseAll: vi.fn(),
+    }));
+
+    const pill = document.createElement("div");
+    pill.id = "supervised-pill";
+    const label = document.createElement("span");
+    label.className = "pill-label";
+    pill.appendChild(label);
+    const content = document.createElement("div");
+    content.className = "pill-expand-content";
+    pill.appendChild(content);
+    document.body.appendChild(pill);
+
+    const { initSupervisedPill } = await import("./supervised-pill.js");
+    initSupervisedPill();
+
+    expect(pill.getAttribute("aria-expanded")).toBe("false");
+
+    pill.click();
+    expect(pill.getAttribute("aria-expanded")).toBe("true");
+
+    pill.click();
+    expect(pill.getAttribute("aria-expanded")).toBe("false");
+
+    document.body.removeChild(pill);
+  });
+
+  it("auto-approve button has aria-label matching title", async () => {
+    vi.resetModules();
+    const btn = document.createElement("button");
+    btn.id = "auto-approve-crew-btn";
+    vi.doMock("./dom.js", () => ({
+      $: new Proxy({ autoApproveCrewBtn: btn }, {
+        get: (t, p) => (p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div")),
+      }),
+    }));
+    vi.doMock("./store.js", () => ({
+      getActive: () => ({
+        id: "s1",
+        auto_approve_crew: true,
+        messages: [{ event_kind: "crew" }],
+      }),
+      version: { value: 1 },
+    }));
+    vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => fn() }));
+    vi.doMock("./actions/chat.js", () => ({ setAutoApproveCrew: { dispatch: vi.fn() } }));
+    vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => {} }));
+
+    const { initAutoApprove } = await import("./auto-approve.js");
+    initAutoApprove();
+
+    expect(btn.getAttribute("aria-label")).toBe("Auto-approve subagent tools (on)");
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+});

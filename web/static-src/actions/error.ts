@@ -137,12 +137,16 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
 /** HTTP status codes that represent transient server-side conditions
  *  (rate-limiting, temporary unavailability). These qualify for retry
  *  under the "network" retryable mode because the server is expected
- *  to recover without client-side changes. */
-const TRANSIENT_STATUSES = new Set([429, 502, 503, 504]);
+ *  to recover without client-side changes.
+ *
+ *  408: server closed connection waiting for the request (keep-alive timeout)
+ *  429: rate-limited
+ *  502/503/504: upstream unavailability or gateway timeout */
+const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504]);
 
 /** True when the HTTP status code represents a transient condition
- *  eligible for retry (429 Too Many Requests, 502 Bad Gateway,
- *  503 Service Unavailable, 504 Gateway Timeout). */
+ *  eligible for retry (408 Request Timeout, 429 Too Many Requests,
+ *  502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout). */
 export function isTransientStatus(status: number | undefined): boolean {
   return status !== undefined && TRANSIENT_STATUSES.has(status);
 }

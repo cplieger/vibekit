@@ -32,6 +32,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   }
   closePopover();
   activeAnchor = anchorEl;
+  anchorEl.setAttribute("aria-expanded", "true");
 
   const pop = document.createElement("div");
   pop.className = "git-branch-popover";
@@ -121,7 +122,10 @@ function closePopover(): void {
   document.removeEventListener("keydown", arrowNavHandler);
   // Guard against focus on a detached element (anchor may have been
   // removed from the DOM during the request, e.g. git tab re-rendered).
-  if (savedAnchor?.isConnected === true) savedAnchor.focus();
+  if (savedAnchor?.isConnected === true) {
+    savedAnchor.setAttribute("aria-expanded", "false");
+    savedAnchor.focus();
+  }
 }
 
 function outsideClickHandler(e: MouseEvent): void {

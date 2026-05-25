@@ -42,7 +42,7 @@ describe("dedupe + cancel interaction", () => {
       dedupe: true,
       run: (_args, signal) => {
         runCalls++;
-        return new Promise<string>((resolve, reject) => {
+        return new Promise<string>((_resolve, reject) => {
           signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
         });
       },
