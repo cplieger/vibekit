@@ -12,21 +12,28 @@ import { registerCleanup } from "./actions/cleanup.js";
 
 registerCleanup(() => suggestResolution.cancel());
 
-/** Generation counter: incremented on each requestSuggestion dispatch
- *  so superseded dispatches can detect they were cancelled. */
-let suggestionGen = 0;
+/** Per-file generation counter so superseded dispatches can detect
+ *  they were cancelled WITHOUT invalidating other files' in-flight
+ *  suggestions. Closing file A's tab bumps only A's counter; file B's
+ *  in-flight suggestion uses B's counter and resolves correctly. */
+const suggestionGenByPath = new Map<string, number>();
+
+function bumpSuggestionGen(path: string): number {
+  const next = (suggestionGenByPath.get(path) ?? 0) + 1;
+  suggestionGenByPath.set(path, next);
+  return next;
+}
+
+function currentSuggestionGen(path: string): number {
+  return suggestionGenByPath.get(path) ?? 0;
+}
 
 /** Abort any in-flight suggestion request. If path is provided, reset
  *  loading state on THAT file; otherwise default to the active file.
  *  Called on tab close (with path) and on broader teardown (without).
  *
- *  Note: we no longer call suggestResolution.cancel() here. That call
- *  was a global kill-switch that aborted in-flight suggestions for ALL
- *  files (the framework's cancel iterates every entry in inFlight).
- *  In multi-file conflict mode that wiped suggestions on unrelated
- *  files. The suggestionGen counter + per-file state checks in
- *  requestSuggestion already discard stale results correctly; the
- *  in-flight request can complete and its result will be ignored. */
+ *  Per-file generation: bumps only the target path's counter so other
+ *  files' in-flight suggestions remain valid. */
 export function abortSuggestion(path?: string): void {
   // Reset any entries with loading: true so the UI doesn't show stale spinners.
   const targetPath = path ?? getActiveFilePath();
@@ -36,9 +43,9 @@ export function abortSuggestion(path?: string): void {
       if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
     }
   }
-  // Bump generation so any in-flight requestSuggestion for this path
-  // discards its result on resolution.
-  suggestionGen++;
+  // Bump only this path's counter so this file's in-flight requests
+  // discard their results on resolution.
+  bumpSuggestionGen(targetPath);
 }
 
 export function renderConflictModeUI(state: FileState): void {
@@ -144,8 +151,12 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (hunk === undefined) return;
   const existing = state.suggestions.get(hunk.startLine);
   if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
-  suggestResolution.cancel();
-  const myDispatchId = ++suggestionGen;
+  // Per-file generation: bump only THIS file's counter. Other files'
+  // in-flight suggestions remain valid.
+  // Note: we no longer call suggestResolution.cancel() globally — that
+  // would abort in-flight suggestions for OTHER files. The per-file
+  // gen check below discards stale results from this file only.
+  const myDispatchId = bumpSuggestionGen(state.path);
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
   const context = buildHunkContext(state.mode.conflict, hunk);
@@ -155,7 +166,10 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     context,
   };
   const resp = await suggestResolution.dispatch(body);
-  if (myDispatchId !== suggestionGen) return; // superseded by another dispatch; silently bail
+  // Stale-dispatch guard: if abortSuggestion(state.path) or another
+  // requestSuggestion on this file ran while we were awaiting, the
+  // path's gen has incremented. Bail silently.
+  if (myDispatchId !== currentSuggestionGen(state.path)) return;
   if (state.mode.kind !== "conflict") return;
   if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];

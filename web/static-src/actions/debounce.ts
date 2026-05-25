@@ -64,37 +64,28 @@ export function debouncedDispatch<TArgs, TResult>(
       // Without this guard, a cancel followed by a quick re-dispatch
       // would fire two concurrent runs of the action within `wait` ms.
       if (now - lastFiredAt < opts.wait) {
-        // Track the most-recent suppressed args so flush() can fire them.
-        // Schedule a trailing timer to fire them automatically once the
-        // cooldown expires; otherwise suppressed args would be lost
-        // when flush() isn't explicitly called.
+        // Track the most-recent suppressed args. They will fire when
+        // the existing cooldown timer expires (the timer dispatches
+        // lastArgs if any). If the cooldown timer was cleared via
+        // cancel(), schedule a fresh trailing timer here so the
+        // suppressed args still fire automatically.
         lastArgs = args;
         pending = true;
         if (timer === undefined) {
-          const remaining = opts.wait - (now - lastFiredAt);
-          timer = setTimeout(() => {
-            timer = undefined;
-            pending = false;
-            const a = lastArgs;
-            lastArgs = undefined;
-            if (a !== undefined) {
-              lastFiredAt = Date.now();
-              void action.dispatch(a);
-            }
-          }, remaining);
+          const remaining = Math.max(0, opts.wait - (now - lastFiredAt));
+          timer = setTimeout(fireTrailing, remaining);
         }
         return;
       }
-      // Leading-edge: fire immediately, then suppress until quiet.
+      // Leading-edge: fire immediately, then schedule a trailing-edge
+      // timer that will dispatch any suppressed args queued during
+      // the cooldown.
       void action.dispatch(args);
       lastFiredAt = now;
       lastArgs = undefined;
       pending = true;
       if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = undefined;
-        pending = false;
-      }, opts.wait);
+      timer = setTimeout(fireTrailing, opts.wait);
       return;
     }
     lastArgs = args;
@@ -108,6 +99,25 @@ export function debouncedDispatch<TArgs, TResult>(
       if (a !== undefined) void action.dispatch(a);
     }, opts.wait);
   }) as DebouncedDispatch<TArgs>;
+
+  // Trailing-timer callback for leading mode. Fires any args queued
+  // during the cooldown window, then resets pending state. Without
+  // this, suppressed args would only be retrievable via flush().
+  function fireTrailing(): void {
+    timer = undefined;
+    const a = lastArgs;
+    lastArgs = undefined;
+    if (a !== undefined) {
+      lastFiredAt = Date.now();
+      pending = true;
+      // Schedule a new cooldown timer after the trailing fire so
+      // subsequent calls within `wait` ms are still suppressed.
+      timer = setTimeout(fireTrailing, opts.wait);
+      void action.dispatch(a);
+    } else {
+      pending = false;
+    }
+  }
 
   fn.flush = (args?: TArgs): void => {
     if (timer !== undefined) {

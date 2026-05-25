@@ -61,6 +61,12 @@ const fetchOptionsAction = apiAction<FetchOptionsArgs, FetchOptionsResult>({
 
 const debouncedFetch = debouncedDispatch(fetchOptionsAction, { wait: 150 });
 
+// Tracks the most-recently-scheduled fetch key so the subscribeToActions
+// listener can discard out-of-order resolutions. Without this, an older
+// slow fetch (e.g. for partial='a') resolving after a newer one (partial='ab')
+// could render its stale results, overwriting correct options for 'ab'.
+let lastDispatchedKey: string | null = null;
+
 // ---------------------------------------------------------------------------
 // CommandsMenuController — encapsulates the popover lifecycle state.
 // ---------------------------------------------------------------------------
@@ -177,6 +183,12 @@ class CommandsMenuController {
   private scheduleOptions(command: string, partial: string): void {
     const chatID = getActiveId();
     if (chatID === "") return;
+    // Abort any prior in-flight fetch so out-of-order resolution
+    // can't render stale results into the popover after the user
+    // typed further. The debounce coalesces rapid same-character
+    // typing within 150ms; this aborts at the action layer.
+    fetchOptionsAction.cancel();
+    lastDispatchedKey = chatID + "::" + command + "::" + partial;
     debouncedFetch({ chatID, command, partial });
   }
 
@@ -362,19 +374,22 @@ subscribeToActions((instance) => {
   const args = instance.args as FetchOptionsArgs;
   const result = instance.result as FetchOptionsResult | undefined;
   if (args.chatID !== getActiveId()) return;
-  // Stage-2 race fix: discard results whose partial-text is no longer
-  // a prefix of the current input. Without this, an earlier slow fetch
-  // resolving after a newer one would render stale options.
+  // Exact-match guard: only the MOST-RECENTLY-dispatched key is valid.
+  // An older slow fetch resolving after a newer one is silently discarded.
+  const argsKey = args.chatID + "::" + args.command + "::" + args.partial;
+  if (argsKey !== lastDispatchedKey) return;
+  // Stale-input guard: also verify the input hasn't changed since dispatch.
+  // Without this, a result for "/cmd a" arriving after the user backspaced
+  // to "/cmd" would still render (lastDispatchedKey would still match if
+  // no further dispatch was scheduled). The cancelLoad() in blur/Escape
+  // typically catches this, but defense-in-depth.
   const currentVal = $.promptInput.value;
   const spaceIdx = currentVal.indexOf(" ");
-  if (spaceIdx === -1) return; // input no longer in stage-2 format
+  if (spaceIdx === -1) return;
   const currentCommand = currentVal.slice(0, spaceIdx);
   const currentPartial = currentVal.slice(spaceIdx + 1);
-  if (args.command !== currentCommand) return;
-  if (!currentPartial.startsWith(args.partial)) return;
-  // Always pass through to showOptions — it handles the empty-options
-  // case by closing the popover (so a previous popover with stale
-  // results is dismissed when the new query returns empty).
+  if (args.command !== currentCommand || args.partial !== currentPartial) return;
+  // showOptions handles the empty case by closing the popover.
   const options = result?.options ?? [];
   if (!Array.isArray(options)) return;
   controller.showOptions(args.command, options);

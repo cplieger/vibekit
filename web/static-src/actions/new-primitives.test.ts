@@ -314,7 +314,7 @@ describe("debouncedDispatch", () => {
     vi.useRealTimers();
   });
 
-  it("leading: true fires immediately + suppresses trailing fires within wait", async () => {
+  it("leading: true fires immediately + suppresses trailing fires within wait, but trailing-fires queued args after cooldown", async () => {
     vi.useFakeTimers();
     let runArgs: string[] = [];
     const action = defineAction<string, void>({
@@ -323,12 +323,18 @@ describe("debouncedDispatch", () => {
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
     dbg("a"); dbg("b"); dbg("c");
+    // Leading edge fires "a" immediately; "b" and "c" are suppressed.
     expect(runArgs).toEqual(["a"]);
+    // After cooldown, the trailing timer fires the most-recent
+    // suppressed args ("c"). This is leading+trailing semantics.
     await vi.advanceTimersByTimeAsync(100);
-    expect(runArgs).toEqual(["a"]);
-    // After quiet window, next call fires again.
+    expect(runArgs).toEqual(["a", "c"]);
+    // Trailing fire started a new cooldown; immediate dbg("d") suppressed.
     dbg("d");
-    expect(runArgs).toEqual(["a", "d"]);
+    expect(runArgs).toEqual(["a", "c"]);
+    // After the post-trailing cooldown, "d" fires.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runArgs).toEqual(["a", "c", "d"]);
     vi.useRealTimers();
   });
 

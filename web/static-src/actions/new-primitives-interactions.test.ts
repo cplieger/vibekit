@@ -357,3 +357,102 @@ describe("dedupe shared promise behavior", () => {
     expect(r3).toBe("done2");
   });
 });
+
+// ===========================================================================
+// 8. debouncedDispatch leading-mode trailing timer after cancel (R2 fix coverage)
+// ===========================================================================
+
+describe("debouncedDispatch leading trailing timer after cancel", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("cancel + re-dispatch within cooldown fires via trailing timer", async () => {
+    const runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce_cancel_redispatch",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100, leading: true });
+
+    dbg("a"); // fires immediately (leading)
+    expect(runArgs).toEqual(["a"]);
+
+    dbg.cancel(); // clears cooldown timer, does NOT reset lastFiredAt
+
+    // Re-dispatch within cooldown — should be suppressed but trailing timer scheduled
+    dbg("b");
+    expect(runArgs).toEqual(["a"]); // not fired yet
+
+    // Advance past remaining cooldown
+    await vi.advanceTimersByTimeAsync(100);
+    expect(runArgs).toEqual(["a", "b"]); // trailing timer fires "b"
+  });
+
+  it("multiple suppressed calls after cancel: only latest args fire", async () => {
+    const runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce_cancel_multi_suppress",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100, leading: true });
+
+    dbg("a"); // fires immediately
+    dbg.cancel();
+
+    // Multiple calls within cooldown after cancel
+    dbg("b");
+    dbg("c");
+    expect(runArgs).toEqual(["a"]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    // Only the latest ("c") should fire — lastArgs is overwritten each call
+    expect(runArgs).toEqual(["a", "c"]);
+  });
+
+  it("cancel during trailing-timer window prevents suppressed args from firing", async () => {
+    const runArgs: string[] = [];
+    const action = defineAction<string, void>({
+      name: "test.debounce_cancel_trailing_window",
+      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+    });
+    const dbg = debouncedDispatch(action, { wait: 100, leading: true });
+
+    dbg("a"); // fires immediately
+    dbg.cancel(); // clear cooldown timer
+
+    dbg("b"); // suppressed, trailing timer scheduled
+    expect(dbg.isPending()).toBe(true);
+
+    // Cancel again before trailing timer fires
+    dbg.cancel();
+    expect(dbg.isPending()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(200);
+    // "b" should NOT have fired — cancel cleared the trailing timer
+    expect(runArgs).toEqual(["a"]);
+  });
+
+  it("isPending() is true after suppression in leading mode (trailing-fire schedules new cooldown)", async () => {
+    const action = defineAction<string, void>({
+      name: "test.debounce_leading_pending",
+      run: () => Promise.resolve(),
+    });
+    const dbg = debouncedDispatch(action, { wait: 100, leading: true });
+
+    dbg("a"); // fires immediately
+    // After leading fire, pending is true (cooldown timer running)
+    expect(dbg.isPending()).toBe(true);
+
+    dbg("b"); // suppressed, queued for trailing
+    expect(dbg.isPending()).toBe(true);
+
+    // Trailing timer fires "b" at t=100, then a new cooldown starts.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(dbg.isPending()).toBe(true); // new cooldown running
+
+    // After the post-trailing cooldown expires with no queued args,
+    // pending becomes false.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(dbg.isPending()).toBe(false);
+  });
+});
