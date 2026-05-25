@@ -152,6 +152,7 @@ export const clearPendingTrustAction = transportAction<string>({
 export const forkChatAction = transportAction<{ chatID: string; tangentID: string }>({
   name: "chat.fork",
   scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   command: ({ chatID, tangentID }) => ({
     type: "fork_chat",
     chat_id: chatID,

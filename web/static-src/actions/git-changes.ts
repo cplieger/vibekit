@@ -98,6 +98,7 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
   name: "git.generate_message",
   scope: (args) => "git:" + args.repo,
+  dedupe: (args) => "gen-msg:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
   retryable: "network",

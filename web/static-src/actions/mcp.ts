@@ -86,6 +86,7 @@ export const deleteServer = apiAction<DeleteArgs, void>({
 export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
   retryable: "network",
+  dedupe: (id) => "edit:" + id,
   request: (id) => ({
     method: "GET",
     path: `/api/mcp/${encodeURIComponent(id)}`,

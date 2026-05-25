@@ -42,9 +42,8 @@ export function initChatAttach(): void {
     container: chatView,
     get overlay() { return getOverlay(); },
     onDrop: (files) => {
-      void uploadAction.dispatch({ files, targetDir: "." }).then((paths) => {
-        if (paths === null) return;
-        for (const p of paths) attachPathToActiveChat(p);
+      void uploadAction.dispatch({ files, targetDir: "." }, {
+        onSuccess: (paths) => { for (const p of paths) attachPathToActiveChat(p); },
       });
     },
   });

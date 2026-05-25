@@ -460,16 +460,17 @@ function startInlineRename(targetName: string): void {
     const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) return;
 
-    void renameFile.dispatch({ dir: state.currentPath, original, newName }).then((r) => {
-      if (r === null) {
+    void renameFile.dispatch({ dir: state.currentPath, original, newName }, {
+      onSuccess: () => {
+        // Reload the directory to rebuild rows with click handlers and
+        // correct sort order (fixes stale handler + sort-after-rename).
+        state.deselectAll();
+        updateActionButtons();
+        loadDir();
+      },
+      onError: () => {
         span.textContent = original;
-        return;
-      }
-      // Reload the directory to rebuild rows with click handlers and
-      // correct sort order (fixes stale handler + sort-after-rename).
-      state.deselectAll();
-      updateActionButtons();
-      loadDir();
+      },
     });
   };
 
@@ -494,14 +495,15 @@ function deleteSelected(): void {
   void (async () => {
     const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
     if (!ok) return;
-    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }).then((r) => {
-      if (r === null) {
+    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }, {
+      onSuccess: () => {
+        state.deselectAll();
+        updateActionButtons();
+        setTimeout(loadDir, 200);
+      },
+      onError: () => {
         loadDir();
-        return;
-      }
-      state.deselectAll();
-      updateActionButtons();
-      setTimeout(loadDir, 200);
+      },
     });
   })();
 }
@@ -534,10 +536,11 @@ function uploadViaDialog(): void {
   input.multiple = true;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
-      void uploadAction.dispatch({ files: input.files, targetDir: state.currentPath }).then((paths) => {
-        if (paths === null) return;
-        loadDir();
-        for (const p of paths) attachPathToActiveChat(p);
+      void uploadAction.dispatch({ files: input.files, targetDir: state.currentPath }, {
+        onSuccess: (paths) => {
+          loadDir();
+          for (const p of paths) attachPathToActiveChat(p);
+        },
       });
     }
   });

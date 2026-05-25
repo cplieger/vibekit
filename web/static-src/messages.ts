@@ -303,13 +303,14 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
   };
 
   const copyAndAnimate = (btn: HTMLButtonElement, text: string): void => {
-    void copyClipboard.dispatch(text, { silent: true }).then((r) => {
-      if (r !== null) {
+    void copyClipboard.dispatch(text, {
+      silent: true,
+      onSuccess: () => {
         btn.classList.add("copied");
         const prev = copyTimers.get(btn);
         if (prev !== undefined) clearTimeout(prev);
         copyTimers.set(btn, setTimeout(() => btn.classList.remove("copied"), 1500));
-      }
+      },
     });
   };
 

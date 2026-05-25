@@ -53,10 +53,11 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const targetDir = dropTargetFolder !== ""
         ? joinPath(currentPath, dropTargetFolder) : currentPath;
       dropTargetFolder = "";
-      void uploadAction.dispatch({ files, targetDir }).then((paths) => {
-        if (paths === null) return;
-        ctx.reload();
-        for (const p of paths) attachPathToActiveChat(p);
+      void uploadAction.dispatch({ files, targetDir }, {
+        onSuccess: (paths) => {
+          ctx.reload();
+          for (const p of paths) attachPathToActiveChat(p);
+        },
       });
     },
   });

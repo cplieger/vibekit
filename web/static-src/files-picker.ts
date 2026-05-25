@@ -81,11 +81,12 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  void uploadAction.dispatch({ files, targetDir: currentPath }).then((paths) => {
-    if (paths === null) return;
-    onUploadComplete?.();
-    for (const p of paths) attachPathToActiveChat(p);
-    closeModal(modal);
+  void uploadAction.dispatch({ files, targetDir: currentPath }, {
+    onSuccess: (paths) => {
+      onUploadComplete?.();
+      for (const p of paths) attachPathToActiveChat(p);
+      closeModal(modal);
+    },
   });
 }
 

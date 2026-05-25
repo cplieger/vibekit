@@ -57,18 +57,19 @@ export function forkCurrentChat(chatID: string): void {
   if (session === undefined) return;
   if (session.frozen === true) return;
   const tangentID = `tangent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  void forkChatAction.dispatch({ chatID: session.id, tangentID }).then((result) => {
-    if (result === null) {
+  void forkChatAction.dispatch({ chatID: session.id, tangentID }, {
+    onSuccess: () => {
+      void loadList().then(() => {
+        openChatTab(tangentID, `Tangent: ${session.name}`, session.agent);
+        activateChatView(tangentID);
+      });
+    },
+    onError: () => {
       // Server may have accepted the fork but the response was lost.
       // Refresh the chat list to detect server-side state mismatch.
       console.warn("[tangent] fork dispatch failed — refreshing list to detect server-side state");
       void loadList();
-      return;
-    }
-    void loadList().then(() => {
-      openChatTab(tangentID, `Tangent: ${session.name}`, session.agent);
-      activateChatView(tangentID);
-    });
+    },
   });
 }
 

@@ -96,13 +96,14 @@ class ToolsManager {
   }
 
   loadToolsList(): void {
-    void loadToolsListAction.dispatch(undefined).then((d) => {
-      if (d === null) {
+    void loadToolsListAction.dispatch(undefined, {
+      onSuccess: (d) => {
+        this.toolsData = d;
+        this.renderToolsList();
+      },
+      onError: () => {
         $.toolsList.innerHTML = '<div class="list-empty">Failed to load tools</div>';
-        return;
-      }
-      this.toolsData = d;
-      this.renderToolsList();
+      },
     });
   }
 

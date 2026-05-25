@@ -51,11 +51,11 @@ export function addEditActions(el: HTMLDivElement): void {
       sibling = sibling.previousElementSibling;
     }
     if (tag === "") return;
-    void undoEdit.dispatch({ chatID, tag, filePath }).then((r) => {
-      if (r !== null) {
+    void undoEdit.dispatch({ chatID, tag, filePath }, {
+      onSuccess: () => {
         undoBtn.classList.add("copied");
         setTimeout(() => undoBtn.classList.remove("copied"), 1500);
-      }
+      },
     });
   });
 

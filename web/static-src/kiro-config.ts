@@ -5,9 +5,8 @@
 
 import { ICON_EDIT } from "./icons.js";
 import { openFile } from "./editor-openers.js";
-import { apiGet, CancellableSlot } from "./api-client.js";
+import { apiAction } from "./actions/index.js";
 import { $ } from "./dom.js";
-import { registerCleanup } from "./actions/index.js";
 
 interface KiroConfigItem {
   name: string;
@@ -22,22 +21,27 @@ const TYPE_LABELS: Record<string, string> = {
   agent: "Custom agents",
 };
 
-const loadSlot = new CancellableSlot();
-registerCleanup(() => loadSlot.abort());
+const loadKiroConfigAction = apiAction<void, { items: KiroConfigItem[] }>({
+  name: "settings.load_kiro_config",
+  dedupe: true,
+  retryable: "network",
+  retry: { count: 2, delay: 300 },
+  request: () => ({ method: "GET", path: "/api/workspace/kiro-config" }),
+  error: false,
+});
 
 export function loadKiroConfig(): void {
-  const signal = loadSlot.start();
-  const container = $.kiroConfigList;
-  void apiGet<{ items: KiroConfigItem[] }>("/api/workspace/kiro-config", signal).then((d) => {
-    if (signal.aborted) return;
-    if (d === null) {
+  loadKiroConfigAction.cancel();
+  void loadKiroConfigAction.dispatch(undefined, {
+    onSuccess: (d) => {
+      render($.kiroConfigList, d.items);
+    },
+    onError: () => {
       const empty = document.createElement("div");
       empty.className = "list-empty";
       empty.textContent = "Failed to load config";
-      container.replaceChildren(empty);
-      return;
-    }
-    render(container, d.items);
+      $.kiroConfigList.replaceChildren(empty);
+    },
   });
 }
 

@@ -65,10 +65,10 @@ export function openChatTab(id: string, name: string, agent: string): void {
         // toast so the user knows the parent is stuck and can retry.
         // We do NOT call setLastError here — that's global and would
         // block the send button on whatever chat is currently active.
-        void discardTangentAction.dispatch(id).then((r) => {
-          if (r === null) {
+        void discardTangentAction.dispatch(id, {
+          onError: () => {
             toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
-          }
+          },
         });
         return;
       }

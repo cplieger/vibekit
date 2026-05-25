@@ -66,6 +66,7 @@ export const suggestResolution = apiAction<{ ours: string; theirs: string; conte
 /** Fetch agent-modified line ranges for gutter highlighting. Retry on network failure. */
 export const fetchAgentLinesAction = apiAction<{ chatID: string; path: string }, { changes: Array<{ start_line: number; end_line: number }> }>({
   name: "editor.fetch_agent_lines",
+  dedupe: (args) => "agent-lines:" + args.chatID + ":" + args.path,
   request: ({ chatID, path }) => ({
     method: "GET",
     path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
