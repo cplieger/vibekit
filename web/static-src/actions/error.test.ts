@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError } from "./error.js";
+import { ActionError, hasErrorString, toActionError, classifyFetchError, isTransientStatus, isRetryableError } from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -149,5 +149,65 @@ describe("classifyFetchError", () => {
     const err = classifyFetchError(42, ac.signal);
     expect(err.code).toBe("network");
     expect(err.message).toBe("network error");
+  });
+});
+
+describe("isTransientStatus", () => {
+  it("returns true for 429, 502, 503, 504", () => {
+    expect(isTransientStatus(429)).toBe(true);
+    expect(isTransientStatus(502)).toBe(true);
+    expect(isTransientStatus(503)).toBe(true);
+    expect(isTransientStatus(504)).toBe(true);
+  });
+
+  it("returns false for non-transient statuses", () => {
+    expect(isTransientStatus(200)).toBe(false);
+    expect(isTransientStatus(400)).toBe(false);
+    expect(isTransientStatus(401)).toBe(false);
+    expect(isTransientStatus(403)).toBe(false);
+    expect(isTransientStatus(404)).toBe(false);
+    expect(isTransientStatus(500)).toBe(false);
+  });
+
+  it("returns false for undefined", () => {
+    expect(isTransientStatus(undefined)).toBe(false);
+  });
+});
+
+describe("isRetryableError", () => {
+  it("returns false when mode is undefined or false", () => {
+    expect(isRetryableError({ message: "x", code: "network" }, undefined)).toBe(false);
+    expect(isRetryableError({ message: "x", code: "network" }, false)).toBe(false);
+  });
+
+  it("returns true for network/timeout codes under 'network' mode", () => {
+    expect(isRetryableError({ message: "x", code: "network" }, "network")).toBe(true);
+    expect(isRetryableError({ message: "x", code: "timeout" }, "network")).toBe(true);
+    expect(isRetryableError({ message: "x", status: 0 }, "network")).toBe(true);
+  });
+
+  it("returns true for transient HTTP statuses under 'network' mode", () => {
+    expect(isRetryableError({ message: "x", status: 429 }, "network")).toBe(true);
+    expect(isRetryableError({ message: "x", status: 502 }, "network")).toBe(true);
+    expect(isRetryableError({ message: "x", status: 503 }, "network")).toBe(true);
+    expect(isRetryableError({ message: "x", status: 504 }, "network")).toBe(true);
+  });
+
+  it("returns false for non-transient statuses under 'network' mode", () => {
+    expect(isRetryableError({ message: "x", status: 400 }, "network")).toBe(false);
+    expect(isRetryableError({ message: "x", status: 500 }, "network")).toBe(false);
+  });
+
+  it("returns true for any error under 'always' mode (except permanent)", () => {
+    expect(isRetryableError({ message: "x", code: "validation" }, "always")).toBe(true);
+    expect(isRetryableError({ message: "x", status: 500 }, "always")).toBe(true);
+  });
+
+  it("returns false for permanent codes under 'always' mode", () => {
+    expect(isRetryableError({ message: "x", code: "cancelled" }, "always")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "server_rejected" }, "always")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "send_failed" }, "always")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "clipboard" }, "always")).toBe(false);
+    expect(isRetryableError({ message: "x", code: "unsupported" }, "always")).toBe(false);
   });
 });

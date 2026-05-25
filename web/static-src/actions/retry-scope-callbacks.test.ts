@@ -96,8 +96,8 @@ describe("toActionError — error quality", () => {
 
   it("falls back to String() for non-object non-Error values", () => {
     expect(toActionError(42).message).toBe("42");
-    expect(toActionError(null).message).toBe("null");
-    expect(toActionError(undefined).message).toBe("undefined");
+    expect(toActionError(null).message).toBe("Unknown error (null thrown)");
+    expect(toActionError(undefined).message).toBe("Unknown error (undefined thrown)");
   });
 
   it("preserves ActionError fields exactly", () => {
@@ -362,5 +362,132 @@ describe("readAttempts — Proxy edge case", () => {
     expect(result).toBeNull();
     const log = recentLog();
     expect(log[0]?.status).toBe("error");
+  });
+});
+
+describe("isRetryClass — transient HTTP status auto-retry", () => {
+  it("auto-retries on 429 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.auto_retry_429",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("rate limited", { status: 429 });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
+  });
+
+  it("auto-retries on 503 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.auto_retry_503",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("unavailable", { status: 503 });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
+  });
+
+  it("does not auto-retry 404 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.no_retry_404",
+      retryable: "network",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        throw new ActionError("not found", { status: 404 });
+      },
+    });
+    await action.dispatch(undefined);
+    expect(attempts).toBe(1);
+  });
+
+  it("does not auto-retry 'unsupported' code under retryable: 'always'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.no_retry_unsupported",
+      retryable: "always",
+      retry: { count: 2, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        throw new ActionError("not supported", { code: "unsupported" });
+      },
+    });
+    await action.dispatch(undefined);
+    expect(attempts).toBe(1);
+  });
+
+  it("scope + transient retry: scoped action retries 429 then succeeds", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.scope_retry_transient",
+      scope: "s",
+      retryable: "network",
+      retry: { count: 2, delay: 0 },
+      run: async () => {
+        attempts++;
+        if (attempts <= 2) throw new ActionError("overloaded", { status: 503 });
+        return "recovered";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("recovered");
+    expect(attempts).toBe(3);
+    const log = recentLog();
+    expect(log[0]?.status).toBe("success");
+    expect(log[0]?.attempts).toBe(3);
+  });
+
+  it("auto-retries on 502 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.auto_retry_502",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("bad gateway", { status: 502 });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
+  });
+
+  it("auto-retries on 504 under retryable: 'network'", async () => {
+    let attempts = 0;
+    const action = defineAction({
+      name: "test.auto_retry_504",
+      retryable: "network",
+      retry: { count: 1, delay: 0 },
+      error: false,
+      run: async () => {
+        attempts++;
+        if (attempts === 1) throw new ActionError("gateway timeout", { status: 504 });
+        return "ok";
+      },
+    });
+    const result = await action.dispatch(undefined);
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
   });
 });

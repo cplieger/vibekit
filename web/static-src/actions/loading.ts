@@ -237,6 +237,99 @@ export function bindLoadingStateMulti(
   };
 }
 
+/** Options for `bindDisabledPattern`. */
+export interface DisabledPatternOptions {
+  /** Action names whose pending state contributes to disabled. */
+  readonly actions: readonly string[];
+  /** Manual disabled predicate. Re-evaluated on every action transition
+   *  AND when `recheck()` is called. The element is disabled when
+   *  `pending || disabledWhen()`. */
+  readonly disabledWhen: () => boolean;
+  /** CSS class to add while any action is pending (optional). */
+  readonly pendingClass?: string;
+  /** When true (default), set `aria-busy="true"` while pending. */
+  readonly ariaBusy?: boolean;
+}
+
+/** Return type of `bindDisabledPattern`. */
+export interface DisabledPatternHandle {
+  /** Force a re-evaluation of the disabled state. Call this when the
+   *  external condition (`disabledWhen`) may have changed outside of
+   *  an action transition (e.g. after form input validation). */
+  recheck(): void;
+  /** Unsubscribe and restore the element to its natural state. */
+  dispose(): void;
+}
+
+/**
+ * Declaratively bind a button's disabled state to the combination of
+ * action-pending state AND a manual predicate. Solves the common pattern:
+ *
+ *   `btn.disabled = actionPending || !formValid`
+ *
+ * without requiring the caller to manually subscribe to the registry AND
+ * re-evaluate on every form change.
+ *
+ * The element is disabled when:
+ *   - ANY of the named actions is pending, OR
+ *   - `disabledWhen()` returns true
+ *
+ * Re-evaluation happens automatically on every action state transition.
+ * For external state changes (form validation), call `handle.recheck()`.
+ *
+ * @param el - Button, input, select, or textarea to manage.
+ * @param opts - Configuration: action names + disabled predicate.
+ * @returns A handle with `recheck()` and `dispose()` methods.
+ *
+ * @example
+ * ```ts
+ * const handle = bindDisabledPattern(saveBtn, {
+ *   actions: ["settings.patch", "settings.save_steering"],
+ *   disabledWhen: () => !formValid || content === original,
+ * });
+ * // After form input changes:
+ * handle.recheck();
+ * // On teardown:
+ * handle.dispose();
+ * ```
+ */
+export function bindDisabledPattern(
+  el: HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  opts: DisabledPatternOptions,
+): DisabledPatternHandle {
+  const { actions, disabledWhen, pendingClass, ariaBusy = true } = opts;
+  let disposed = false;
+
+  const apply = (): void => {
+    if (disposed) return;
+    const pending = actions.length > 0 && pendingForAny(actions);
+    let manualDisabled: boolean;
+    try { manualDisabled = disabledWhen(); } catch { manualDisabled = false; }
+    const shouldDisable = pending || manualDisabled;
+    el.disabled = shouldDisable;
+    if (pending) {
+      if (ariaBusy) el.setAttribute("aria-busy", "true");
+      if (pendingClass) el.classList.add(pendingClass);
+    } else {
+      if (ariaBusy) el.removeAttribute("aria-busy");
+      if (pendingClass) el.classList.remove(pendingClass);
+    }
+  };
+
+  apply();
+
+  const unsubs = actions.map((name) => subscribeByName(name, apply));
+
+  return {
+    recheck(): void { apply(); },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      for (const u of unsubs) u();
+    },
+  };
+}
+
 /** Snapshot passed to the `bindLoadingCluster` onChange callback. */
 export interface ClusterState {
   /** True when at least one action in the cluster is pending. */

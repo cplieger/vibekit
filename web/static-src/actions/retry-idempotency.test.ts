@@ -128,7 +128,11 @@ describe("retryable transport actions — error code propagation", () => {
   it("server error code propagates to registry entry", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 429, error: "rate limited", code: "rate_limit" });
 
-    await resolveAllPending.dispatch({ chatID: "c1", action: "reject" });
+    const p = resolveAllPending.dispatch({ chatID: "c1", action: "reject" });
+    // 429 is transient → retries up to 2 times with 300ms delay
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(600);
+    await p;
 
     const entry = recentLog()[0]!;
     expect(entry.status).toBe("error");

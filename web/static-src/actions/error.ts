@@ -46,19 +46,29 @@ export function hasErrorString(v: unknown): v is { error: string } {
 }
 
 /** Coerce any thrown value into an ActionErrorLike snapshot. Used by
- *  the dispatcher when recording an instance to the registry. */
+ *  the dispatcher when recording an instance to the registry.
+ *
+ *  Optimised: builds result objects via direct conditional literals
+ *  instead of `{...({} | {k:v})}` spread patterns — avoids allocating
+ *  intermediate empty/single-key objects on every error conversion. */
 export function toActionError(e: unknown): ActionErrorLike {
   if (e instanceof ActionError) {
-    return {
-      message: e.message,
-      ...(e.status !== undefined ? { status: e.status } : {}),
-      ...(e.code !== undefined ? { code: e.code } : {}),
-      ...(e.cause !== undefined ? { cause: e.cause } : {}),
-    };
+    return e.status !== undefined
+      ? e.code !== undefined
+        ? e.cause !== undefined
+          ? { message: e.message, status: e.status, code: e.code, cause: e.cause }
+          : { message: e.message, status: e.status, code: e.code }
+        : e.cause !== undefined
+          ? { message: e.message, status: e.status, cause: e.cause }
+          : { message: e.message, status: e.status }
+      : e.code !== undefined
+        ? e.cause !== undefined
+          ? { message: e.message, code: e.code, cause: e.cause }
+          : { message: e.message, code: e.code }
+        : e.cause !== undefined
+          ? { message: e.message, cause: e.cause }
+          : { message: e.message };
   }
-  // DOMExceptions carry a meaningful name ('AbortError', 'TimeoutError',
-  // 'NetworkError') that downstream classifiers rely on as a canonical code.
-  // Map known names explicitly; lowercase fallback for others.
   if (e instanceof DOMException) {
     const code = e.name === "TimeoutError" ? "timeout"
                : e.name === "AbortError" ? "cancelled"
@@ -71,27 +81,29 @@ export function toActionError(e: unknown): ActionErrorLike {
     const status = typeof rawStatus === "number" ? rawStatus : undefined;
     const rawCode = "code" in e ? (e as { code: unknown }).code : undefined;
     const code = typeof rawCode === "string" ? rawCode : undefined;
-    return {
-      message: e.message,
-      ...(status !== undefined ? { status } : {}),
-      ...(code !== undefined ? { code } : {}),
-      cause: e,
-    };
+    return status !== undefined
+      ? code !== undefined
+        ? { message: e.message, status, code, cause: e }
+        : { message: e.message, status, cause: e }
+      : code !== undefined
+        ? { message: e.message, code, cause: e }
+        : { message: e.message, cause: e };
   }
-  // Plain objects with a message field (e.g. parsed JSON error bodies
-  // re-thrown without wrapping). Preserve status + code if present.
   if (typeof e === "object" && e !== null && "message" in e) {
     const obj = e as Record<string, unknown>;
     const message = typeof obj["message"] === "string" ? obj["message"] : String(obj["message"]);
     const status = typeof obj["status"] === "number" ? obj["status"] : undefined;
     const code = typeof obj["code"] === "string" ? obj["code"] : undefined;
-    return {
-      message,
-      ...(status !== undefined ? { status } : {}),
-      ...(code !== undefined ? { code } : {}),
-      cause: e,
-    };
+    return status !== undefined
+      ? code !== undefined
+        ? { message, status, code, cause: e }
+        : { message, status, cause: e }
+      : code !== undefined
+        ? { message, code, cause: e }
+        : { message, cause: e };
   }
+  if (e === null) return { message: "Unknown error (null thrown)", code: "unknown" };
+  if (e === undefined) return { message: "Unknown error (undefined thrown)", code: "unknown" };
   return { message: String(e), cause: e };
 }
 
@@ -120,4 +132,49 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
   }
   const msg = e instanceof Error ? e.message : "network error";
   return new ActionError(msg, { code: "network", cause: e });
+}
+
+/** HTTP status codes that represent transient server-side conditions
+ *  (rate-limiting, temporary unavailability). These qualify for retry
+ *  under the "network" retryable mode because the server is expected
+ *  to recover without client-side changes. */
+const TRANSIENT_STATUSES = new Set([429, 502, 503, 504]);
+
+/** True when the HTTP status code represents a transient condition
+ *  eligible for retry (429 Too Many Requests, 502 Bad Gateway,
+ *  503 Service Unavailable, 504 Gateway Timeout). */
+export function isTransientStatus(status: number | undefined): boolean {
+  return status !== undefined && TRANSIENT_STATUSES.has(status);
+}
+
+/** Codes that represent permanent failures — never retry regardless
+ *  of the retryable mode. These indicate the operation was explicitly
+ *  rejected or is semantically invalid. */
+const PERMANENT_CODES = new Set(["cancelled", "send_failed", "clipboard", "unsupported", "server_rejected"]);
+
+/**
+ * Determine whether an error qualifies for retry under the given mode.
+ *
+ * - `undefined` / `false`: never retryable.
+ * - `"network"`: retryable when the error is a network/timeout failure
+ *   (code === "network" | "timeout", status === 0, or transient HTTP status).
+ * - `"always"`: retryable for any error EXCEPT permanent failure codes.
+ *
+ * Used by:
+ *  - `runWithRetry` to decide whether to auto-retry before surfacing the error.
+ *  - `buildRetryButton` to decide whether to show the manual Retry button.
+ */
+export function isRetryableError(
+  err: ActionErrorLike,
+  mode: "network" | "always" | false | undefined,
+): boolean {
+  if (mode === undefined || mode === false) return false;
+  if (mode === "always") {
+    return !PERMANENT_CODES.has(err.code ?? "");
+  }
+  // mode === "network"
+  if (err.code === "network" || err.code === "timeout") return true;
+  if (err.status === 0) return true;
+  if (isTransientStatus(err.status)) return true;
+  return false;
 }

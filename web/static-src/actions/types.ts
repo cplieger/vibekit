@@ -260,6 +260,11 @@ export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
   /** Per-call error callback. Fires after the action-level error
    *  toast (if any). Useful for callsite-specific recovery UI. */
   readonly onError?: (err: ActionErrorLike, args: TArgs) => void;
+  /** Per-call cancellation callback. Fires when the dispatch is
+   *  cancelled (signal aborted) — BEFORE onSettled. Use this to
+   *  distinguish cancellation from error without inspecting onError's
+   *  absence. Does NOT fire on error or success. */
+  readonly onCancel?: (args: TArgs) => void;
   /** Per-call settled callback. Fires for both success and error
    *  AND on cancellation. Useful for clearing per-call loading
    *  state that bindLoadingState doesn't cover. */
