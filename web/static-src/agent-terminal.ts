@@ -102,7 +102,11 @@ function createTab(termId: string, command: string, args?: string[]): void {
   pane.dataset["termId"] = termId;
   const pre = document.createElement("pre");
   pre.className = "agent-term-output";
-  pre.setAttribute("aria-live", "polite");
+  // role="log" is implicit aria-live=off (navigable but not auto-announced).
+  // Terminals stream char-by-char; aria-live="polite" would flood screen
+  // readers. Users can navigate to the region; exit status announced
+  // separately via announceTermExit.
+  pre.setAttribute("role", "log");
   pre.setAttribute("aria-label", `Terminal output: ${label}`);
   pane.appendChild(pre);
   container.appendChild(pane);

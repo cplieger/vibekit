@@ -66,8 +66,11 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // Pure functions should complete in milliseconds.
-    testTimeout: 2000,
+    // Pure functions should complete in milliseconds. Property-based
+    // tests (fast-check 1000-iteration) need more headroom under
+    // container load — bumped from 2s to 5s. Aligns with the 10s
+    // interruptAfterTimeLimit in fc-strict-setup.ts.
+    testTimeout: 5000,
     hookTimeout: 5000,
 
     // Flag tests slower than 100ms — pure functions have no I/O.

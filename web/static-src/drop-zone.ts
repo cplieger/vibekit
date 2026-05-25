@@ -24,16 +24,32 @@ export interface DropZoneOptions {
  * Handles the dragenter/dragleave counter pattern so nested elements don't
  * cause flicker. The overlay is shown on first enter, hidden on full leave
  * or drop.
+ *
+ * A11y: announces drop-target activation via a lazily-created sr-only
+ * aria-live region. The deprecated aria-dropeffect attribute (removed in
+ * WAI-ARIA 1.2) is NOT used.
  */
 export function installDropZone(opts: DropZoneOptions): void {
   let dragCounter = 0;
+  let liveRegion: HTMLElement | null = null;
+
+  function ensureLiveRegion(): HTMLElement {
+    if (liveRegion !== null) return liveRegion;
+    const el = document.createElement("div");
+    el.className = "sr-only";
+    el.setAttribute("aria-live", "assertive");
+    el.setAttribute("aria-atomic", "true");
+    document.body.appendChild(el);
+    liveRegion = el;
+    return el;
+  }
 
   opts.container.addEventListener("dragenter", (e: DragEvent) => {
     e.preventDefault();
     dragCounter++;
     if (dragCounter === 1) {
       opts.overlay.classList.remove("hidden");
-      opts.container.setAttribute("aria-dropeffect", "copy");
+      ensureLiveRegion().textContent = "Drop target active, release to upload files";
     }
   });
 
@@ -43,7 +59,7 @@ export function installDropZone(opts: DropZoneOptions): void {
     if (dragCounter <= 0) {
       dragCounter = 0;
       opts.overlay.classList.add("hidden");
-      opts.container.removeAttribute("aria-dropeffect");
+      if (liveRegion !== null) liveRegion.textContent = "";
       opts.onDragLeave?.();
     }
   });
@@ -58,7 +74,7 @@ export function installDropZone(opts: DropZoneOptions): void {
     e.preventDefault();
     dragCounter = 0;
     opts.overlay.classList.add("hidden");
-    opts.container.removeAttribute("aria-dropeffect");
+    if (liveRegion !== null) liveRegion.textContent = "";
     if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       opts.onDrop(e.dataTransfer.files);
     }

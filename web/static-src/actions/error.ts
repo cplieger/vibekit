@@ -47,11 +47,13 @@ export function toActionError(e: unknown): ActionErrorLike {
       ...(e.cause !== undefined ? { cause: e.cause } : {}),
     };
   }
-  // DOMExceptions carry a meaningful name ('AbortError', 'TimeoutError')
-  // that downstream classifiers rely on as a code.
+  // DOMExceptions carry a meaningful name ('AbortError', 'TimeoutError',
+  // 'NetworkError') that downstream classifiers rely on as a canonical code.
+  // Map known names explicitly; lowercase fallback for others.
   if (e instanceof DOMException) {
     const code = e.name === "TimeoutError" ? "timeout"
                : e.name === "AbortError" ? "cancelled"
+               : e.name === "NetworkError" ? "network"
                : e.name.toLowerCase();
     return { message: e.message, code, cause: e };
   }

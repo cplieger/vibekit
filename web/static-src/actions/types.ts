@@ -254,13 +254,25 @@ export type RegistryListener = (instance: ActionInstance) => void;
 // ActionDefinition without manually re-declaring them.
 // ---------------------------------------------------------------------------
 
-/** Extract the TArgs type parameter from an Action. */
-export type ArgsOf<A> = A extends Action<infer T, unknown> ? T : never;
+/** @internal Extract the TArgs type parameter from an Action.
+ *
+ *  Note: uses `any` in the non-inferred slot because Action's callback
+ *  fields (onSuccess, onError, etc.) put TArgs/TResult in contravariant
+ *  positions \u2014 `unknown` would cause `Action<X, Y> extends Action<infer T, unknown>`
+ *  to fail variance and resolve to `never`. `any` bypasses variance.
+ *
+ *  Future-use scaffolding. No current external consumers. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ArgsOf<A> = A extends Action<infer T, any> ? T : never;
 
-/** Extract the TResult type parameter from an Action. */
-export type ResultOf<A> = A extends Action<unknown, infer T> ? T : never;
+/** @internal Extract the TResult type parameter from an Action.
+ *  See ArgsOf for variance rationale. Future-use scaffolding. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ResultOf<A> = A extends Action<any, infer T> ? T : never;
 
-/** Extract the Action type that a given ActionDefinition would produce. */
-export type ActionFromDef<D> = D extends ActionDefinition<infer A, infer R, unknown>
+/** @internal Extract the Action type that a given ActionDefinition would produce.
+ *  See ArgsOf for variance rationale. Future-use scaffolding. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ActionFromDef<D> = D extends ActionDefinition<infer A, infer R, any>
   ? Action<A, R>
   : never;

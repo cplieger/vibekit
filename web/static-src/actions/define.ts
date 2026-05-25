@@ -469,12 +469,24 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     }
   }
 
+  /** Codes that represent PERMANENT failures \u2014 retry would not help.
+   *  Excluded regardless of retryable mode (including 'always'). */
+  const PERMANENT_FAILURE_CODES = new Set([
+    "cancelled",
+    "send_failed",
+    "clipboard",
+    "unsupported",
+    "server_rejected",
+  ]);
+
   /** True if the error matches the action's `retryable` classifier
    *  AND so qualifies for auto-retry. Same logic that computes the
    *  manual Retry button visibility. */
   function isRetryClass(err: ActionErrorLike): boolean {
     const mode = def.retryable;
     if (mode === undefined || mode === false) return false;
+    // Permanent failures never retry, even on retryable: 'always'.
+    if (err.code !== undefined && PERMANENT_FAILURE_CODES.has(err.code)) return false;
     const isNetworkClass =
       err.status === 0 || err.code === "network" || err.code === "timeout";
     if (mode === "network") return isNetworkClass;
