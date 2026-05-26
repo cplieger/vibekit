@@ -67,7 +67,7 @@ describe("editor.resolve_partial", () => {
       expect.objectContaining({
         type: "resolve_pending_change_partial",
         chat_id: "c1",
-        payload: { tool_call_id: "tc1", merged_text: "merged" },
+        payload: expect.objectContaining({ tool_call_id: "tc1", merged_text: "merged" }),
       }),
       expect.anything(),
     );

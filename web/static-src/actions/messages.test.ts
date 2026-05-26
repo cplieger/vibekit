@@ -84,7 +84,7 @@ describe("messages.undo_edit", () => {
       expect.objectContaining({
         type: "undo_edit",
         chat_id: "c1",
-        payload: { tag: "t1", file_path: "src/utils/helper.ts" },
+        payload: expect.objectContaining({ tag: "t1", file_path: "src/utils/helper.ts" }),
       }),
       expect.anything(),
     );

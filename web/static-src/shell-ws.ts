@@ -12,6 +12,8 @@
 //     {"type":"kill"}
 // ---------------------------------------------------------------------------
 
+import { registerCleanup } from "./actions/index.js";
+
 // Reconnect backoff: 250ms → 500ms → 1s → 2s → 4s → 8s (cap).
 const RECONNECT_BASE_MS = 250;
 const RECONNECT_MAX_MS = 8000;
@@ -125,6 +127,8 @@ export class ShellWS {
     this.cancelReconnect();
     this.callbacks?.onOpen();
     this.notifySocketOpen();
+
+    registerCleanup(() => { this.cancelReconnect(); this.disconnect(); });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (e.data instanceof ArrayBuffer) {

@@ -67,5 +67,5 @@ function toggle(): void {
   const session = getActive();
   if (session === undefined) return;
   const newValue = !session.auto_approve_crew;
-  void setAutoApproveCrew.dispatch({ chatID: session.id, enabled: newValue });
+  void setAutoApproveCrew.dispatch({ chatID: session.id, enabled: newValue }, { silent: true });
 }

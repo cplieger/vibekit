@@ -8,7 +8,7 @@
 import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel, clearPendingChanges, addPendingChange } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -17,6 +17,9 @@ export const deleteChat = transportAction<string, { session: import("../types.js
   name: "chat.delete",
   networkMode: "always",
   scope: (id) => `chat:${id}`,
+  dedupe: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: (id) => ({ type: "delete_chat", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -40,6 +43,7 @@ export const deleteChat = transportAction<string, { session: import("../types.js
 export const archiveChat = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
+  dedupe: true,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -66,6 +70,9 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
 export const discardTangent = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
   name: "chat.discard_tangent",
   scope: (id) => `chat:${id}`,
+  dedupe: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -115,7 +122,7 @@ export const setSupervised = transportAction<{ chatID: string; enabled: boolean 
 
 // --- chat.resolve_all_pending ---
 
-export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }>({
+export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }, { prev: import("../types.js").PendingChange[] }>({
   name: "chat.resolve_all_pending",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -126,6 +133,18 @@ export const resolveAllPending = transportAction<{ chatID: string; action: "acce
     chat_id: chatID,
     payload: { action },
   }),
+  optimistic: ({ chatID }) => {
+    const session = get(chatID);
+    if (session === undefined) return undefined;
+    const prev = [...session.pending_changes];
+    clearPendingChanges(chatID);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined) {
+      for (const change of op.prev) addPendingChange(chatID, change);
+    }
+  },
   error: "Couldn't resolve pending changes",
 });
 
@@ -157,6 +176,7 @@ export const clearPendingTrust = transportAction<string>({
 export const forkChat = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
   name: "chat.fork",
   scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: true,
   idempotencyKey: true,
   command: ({ chatID, tangentID }) => ({
     type: "fork_chat",
@@ -187,7 +207,6 @@ export const mergeTangent = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
-  networkMode: "always",
   error: "Couldn't merge tangent",
 });
 
@@ -268,9 +287,18 @@ export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: st
 // the Action.cancel() method — `cancelTurn.cancel()` reads as
 // "abort the cancel-turn action's in-flight instances", not "cancel a turn".
 
-export const cancelTurn = transportAction<string>({
+export const cancelTurn = transportAction<string, { wasThinking: boolean }>({
   name: "chat.cancel_turn",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
+  optimistic: (chatID) => {
+    const session = get(chatID);
+    const wasThinking = session?.thinking ?? false;
+    setThinking(chatID, false);
+    return { wasThinking };
+  },
+  rollback: (chatID, op) => {
+    if (op !== undefined) setThinking(chatID, op.wasThinking);
+  },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't cancel turn",
@@ -436,6 +464,7 @@ export const respondPermission = transportAction<{ chatID: string; requestID: nu
 export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
   name: "chat.restore_checkpoint",
   scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: true,
   idempotencyKey: true,
   command: ({ chatID, tag }) => ({
     type: "restore_checkpoint",

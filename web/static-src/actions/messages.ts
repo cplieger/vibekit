@@ -41,6 +41,7 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   name: "messages.undo_edit",
   networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
+  idempotencyKey: (args) => `messages.undo_edit:${args.tag}:${args.filePath}`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, tag, filePath }) => ({
@@ -57,9 +58,9 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
  *  best-effort between calls (checked before sendPromptTo). */
 export const runPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
-  networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
-  retryable: retryNetwork,
+  idempotencyKey: (args) => `plan.run:${args.chatID}:${args.content.slice(0, 40)}`,
+  retryable: (err) => err.code === "send_failed" || retryNetwork(err),
   run: async ({ chatID, content }, signal) => {
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);

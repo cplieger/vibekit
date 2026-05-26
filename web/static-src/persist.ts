@@ -7,6 +7,7 @@
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
+import { registerCleanup } from "./actions/index.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -63,6 +64,49 @@ export function __testResetTracking(): void {
     patchTimer = undefined;
   }
 }
+
+/** Flush any pending debounced PATCH immediately (fire-and-forget). */
+function flushPendingPatch(): void {
+  if (Object.keys(patchQueue).length === 0) return;
+  const body = patchQueue;
+  const allInputs = patchInputs;
+  const resolvers = patchResolvers;
+  const rollback = patchSnapshot;
+  patchQueue = {};
+  patchSnapshot = {};
+  patchInputs = [];
+  patchResolvers = [];
+  const gen = ++patchGen;
+  let result: Record<string, unknown> | null = null;
+  void patchAppSettings.dispatch(
+    {
+      body: body as Record<string, unknown>,
+      ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
+    },
+    {
+      silent: true,
+      onSuccess: (r) => {
+        result = r as Record<string, unknown>;
+        if (gen === patchGen) showSaved();
+      },
+      onError: () => {
+        Object.assign(lastSentPatch, rollback);
+        if (gen === patchGen) showError();
+      },
+      onSettled: () => {
+        for (const resolve of resolvers) resolve(result);
+      },
+    },
+  );
+}
+
+registerCleanup(() => {
+  if (patchTimer !== undefined) {
+    clearTimeout(patchTimer);
+    patchTimer = undefined;
+    flushPendingPatch();
+  }
+});
 
 export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<Record<string, unknown> | null> {
   // Filter out keys whose value matches the last-sent value. JSON

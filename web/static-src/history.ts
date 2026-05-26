@@ -13,7 +13,7 @@ import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
-import { registerCleanup } from "./actions/index.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
 
 interface ArchivedHeader {
   id: string;
@@ -25,6 +25,7 @@ interface ArchivedHeader {
 class HistoryController {
   private tableAbortController: AbortController | null = null;
   private archivedController: AbortController | null = null;
+  private rowUnbinds: Array<() => void> = [];
 
   init(): void {
     const toggle = document.getElementById("history-toggle");
@@ -48,12 +49,16 @@ class HistoryController {
     this.tableAbortController = null;
     this.archivedController?.abort();
     this.archivedController = null;
+    for (const u of this.rowUnbinds) u();
+    this.rowUnbinds = [];
   }
 
   async loadHistoryTable(): Promise<void> {
     const container = document.getElementById("history-table");
     if (container === null) return;
     container.replaceChildren();
+    for (const u of this.rowUnbinds) u();
+    this.rowUnbinds = [];
 
     loadHistory.cancel();
     this.tableAbortController?.abort();
@@ -113,6 +118,7 @@ class HistoryController {
       delBtn.innerHTML = ICON_TRASH;
 
       row.append(nameWrap, date, delBtn);
+      this.rowUnbinds.push(bindLoadingState("chat.delete_archived", delBtn));
       container.appendChild(row);
     }
 

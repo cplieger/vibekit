@@ -181,6 +181,7 @@ describe("a11y: aria-expanded on popover triggers", () => {
     }));
     vi.doMock("./actions/index.js", () => ({
       bindLoadingState: () => () => {},
+      registerCleanup: () => {},
     }));
     vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
     vi.doMock("./pill-expand.js", () => ({

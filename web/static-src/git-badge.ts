@@ -30,6 +30,7 @@
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
 import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
+import { registerCleanup } from "./actions/index.js";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -62,6 +63,7 @@ export function initGitBadge(): void {
   onSSE("turn_ended", () => { void refreshGitBadge(); });
   onSSE("forges_changed", () => { void refreshGitBadge(); });
   pollTimer = setInterval(() => { void refreshGitBadge(); }, POLL_INTERVAL_MS);
+  registerCleanup(() => { clearInterval(pollTimer); pollTimer = undefined; });
   // First paint ASAP.
   void refreshGitBadge();
 }

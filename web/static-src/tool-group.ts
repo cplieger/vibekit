@@ -11,6 +11,7 @@
 
 import { setUserScrolledUp } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
+import { registerCleanup } from "./actions/index.js";
 
 class ToolGroupTracker {
   private currentGroup: HTMLDivElement | null = null;
@@ -75,7 +76,8 @@ class ToolGroupTracker {
     }, 1000);
   }
 
-  private stopTicker(): void {
+  /** @internal Used by registerCleanup. */
+  stopTicker(): void {
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -84,6 +86,7 @@ class ToolGroupTracker {
 }
 
 const tracker = new ToolGroupTracker();
+registerCleanup(() => { tracker.stopTicker(); });
 
 // --- Delegate exports ---
 

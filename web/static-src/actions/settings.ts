@@ -99,6 +99,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 export const loadSettings = apiAction<void, Record<string, unknown>>({
   name: "settings.load",
   dedupe: true,
+  retryable: retryNetwork,
   request: () => ({ method: "GET", path: "/api/settings" }),
   error: false,
   success: false,

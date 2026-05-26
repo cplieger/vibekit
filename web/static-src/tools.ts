@@ -93,6 +93,10 @@ class ToolsManager {
     });
 
     f.save.addEventListener("click", () => this.saveToolFromModal());
+    const unbindSave = bindLoadingState("tools.save", f.save);
+    const unbindSeed = bindLoadingState("tools.seed_mcp", f.save, { preserveDisabled: true });
+    registerCleanup(unbindSave);
+    registerCleanup(unbindSeed);
   }
 
   loadToolsList(): void {

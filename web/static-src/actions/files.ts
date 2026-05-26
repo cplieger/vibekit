@@ -22,6 +22,7 @@ export const createFile = apiAction<CreateArgs, unknown>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
+  idempotencyKey: (args) => `files.create:${args.dir}/${args.name}`,
   request: (args) => ({
     method: "POST",
     path: "/api/files/action",
@@ -37,6 +38,7 @@ export const createFolder = apiAction<CreateArgs, unknown>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
+  idempotencyKey: (args) => `files.create_folder:${args.dir}/${args.name}`,
   request: (args) => ({
     method: "POST",
     path: "/api/files/action",
@@ -50,7 +52,7 @@ export const createFolder = apiAction<CreateArgs, unknown>({
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }, unknown>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-  idempotencyKey: true,
+  idempotencyKey: (args) => `files.rename:${args.dir}/${args.original}->${args.newName}`,
   request: ({ dir, original, newName }) => ({
     method: "POST",
     path: "/api/files/action",
@@ -72,10 +74,18 @@ interface DeleteArgs {
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
+  dedupe: (args) => `files.delete:${args.names.slice().sort().join(',')}`,
   // Batch delete must NOT retry: a timeout/network error may mean some
   // items were already deleted server-side. Retrying would re-attempt
   // those deletions, causing 404s or deleting newly-created files with
   // the same name. Caller handles partial failure via loadDir() refresh.
+  //
+  // NOTE: `listEl` (HTMLElement) in args is non-serializable, which would
+  // break structuredClone if retry were enabled. This is safe because:
+  //   1. Delete is intentionally not retryable (see above).
+  //   2. `dedupe` uses a key function that only reads `names`, not `listEl`.
+  //   3. The DOM ref is only consumed by optimistic/rollback which run
+  //      synchronously on the main thread before/after run().
   run: async (args, signal) => {
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(
@@ -142,6 +152,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
 
 export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
+  retryable: retryNetwork,
   run: async (args, signal) => {
     let r: Response;
     try {

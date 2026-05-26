@@ -15,12 +15,13 @@ import {
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
 import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
 let rowBindingCleanups: Array<() => void> = [];
+registerCleanup(() => { for (const fn of rowBindingCleanups) fn(); rowBindingCleanups = []; });
 
 function buildSectionScaffold(): void {
   const section = document.getElementById("mcp-section");
@@ -179,6 +180,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
     input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
     // Pass the previous state explicitly so rollback restores correctly.
     void toggleServer.dispatch({ id: s.id, enabled: input.checked }, {
+      silent: true,
       onSuccess: () => { void refetchServers(); },
     });
   });
@@ -220,6 +222,7 @@ function renderEditBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("aria-label", `Edit ${s.name}`);
   btn.innerHTML = ICON_EDIT_14;
   btn.addEventListener("click", () => { void openEditModal(s.id); });
+  rowBindingCleanups.push(bindLoadingState("mcp.open_edit", btn));
   return btn;
 }
 

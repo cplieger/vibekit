@@ -8,6 +8,12 @@
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { truncate } from "../strings.js";
+import {
+  stageFiles, rollbackStage,
+  unstageFiles, rollbackUnstage,
+  removeFiles, rollbackRemove,
+} from "../git-changes-state.js";
+import type { StageResult, RemoveResult } from "../git-changes-state.js";
 
 // --- Wire types ---
 
@@ -22,10 +28,12 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 // --- Actions ---
 
 /** Stage files (used for both "stage all" and single-file stage). */
-export const stage = apiAction<GitRepoFilesArgs, unknown>({
+export const stage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   name: "git.stage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
+  optimistic: (args) => stageFiles(args.repo, args.files),
+  rollback: (_args, op) => rollbackStage(op),
   error: (args) => args.files.length === 1
     ? `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't stage ${String(args.files.length)} files`,
@@ -34,10 +42,12 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
-export const discard = apiAction<GitRepoFilesArgs, unknown>({
+export const discard = apiAction<GitRepoFilesArgs, unknown, RemoveResult>({
   name: "git.discard",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
+  optimistic: (args) => removeFiles(args.repo, args.files),
+  rollback: (_args, op) => rollbackRemove(op),
   error: (args) => args.files.length === 1
     ? `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't discard ${String(args.files.length)} files`,
@@ -45,10 +55,12 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
 });
 
 /** Unstage a file. */
-export const unstage = apiAction<GitRepoFilesArgs, unknown>({
+export const unstage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
+  optimistic: (args) => unstageFiles(args.repo, args.files),
+  rollback: (_args, op) => rollbackUnstage(op),
   error: (args) => args.files.length === 1
     ? `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't unstage ${String(args.files.length)} files`,
@@ -104,6 +116,7 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
     const short = truncate(line);
     return short !== "" ? `Commit failed: \u201c${short}\u201d` : "Commit failed";
   },
+  idempotencyKey: true,
   // Not retryable: a timed-out commit may have succeeded server-side;
   // retrying would create a duplicate commit.
 });

@@ -53,6 +53,7 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
   name: "editor.resolve_partial",
   networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
+  idempotencyKey: (args) => `editor.resolve_partial:${args.toolCallID}`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, toolCallID, mergedText }) => ({

@@ -31,7 +31,7 @@ import { initNotificationToggles } from "./settings-notifications.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // Shared generation counter for kiro-setting saves. Last-write-wins:
 // if two settings change in rapid succession, only the final save
@@ -133,6 +133,14 @@ function initSteeringEditor(): void {
           if (r === null) showError(); else showSaved();
         });
     }, 600);
+  });
+
+  registerCleanup(() => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+      void saveSteering.dispatch({ content: textarea.value }, { silent: true });
+    }
   });
 }
 

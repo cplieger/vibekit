@@ -1,7 +1,7 @@
 // Actions for push notification lifecycle.
 // ---------------------------------------------------------------------------
 
-import { defineAction, ActionError, apiAction } from "./index.js";
+import { defineAction, ActionError, apiAction, retryNetwork } from "./index.js";
 import { apiGet, apiPost } from "../api-client.js";
 import { urlBase64ToUint8Array } from "../push-util.js";
 
@@ -27,6 +27,7 @@ export const unsubscribePush = apiAction<{ endpoint: string }>({
  */
 export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   name: "notify.register_push",
+  retryable: retryNetwork,
   run: async (_args, signal) => {
     if (!("serviceWorker" in navigator)) {
       throw new ActionError("Service workers not supported", { code: "unsupported" });

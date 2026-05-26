@@ -18,7 +18,7 @@ import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
-import { registerCleanup } from "./actions/index.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
@@ -121,6 +121,8 @@ class PermissionsUIController {
           submit();
         }
       });
+      registerCleanup(bindLoadingState("permissions.add_rule", addBtn as HTMLButtonElement));
+      registerCleanup(bindLoadingState("permissions.remove_rule", addBtn as HTMLButtonElement, { preserveDisabled: true }));
     }
 
     void this.loadRules();

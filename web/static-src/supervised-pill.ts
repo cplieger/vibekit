@@ -23,7 +23,7 @@ import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import { setSupervised, resolveAllPending, resolvePendingChange, trustPending, clearPendingTrust } from "./actions/chat.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
 class SupervisedPillController {
@@ -146,8 +146,9 @@ class SupervisedPillController {
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
-      void setSupervised.dispatch({ chatID: this.currentChatID(), enabled });
+      void setSupervised.dispatch({ chatID: this.currentChatID(), enabled }, { silent: true });
     });
+    this.unbinds.push(bindLoadingState("chat.set_supervised", toggle));
 
     // Trusted-this-turn short-circuit.
     if (trusted) {
@@ -302,9 +303,15 @@ class SupervisedPillController {
   private currentChatID(): string {
     return getActive()?.id ?? "";
   }
+
+  dispose(): void {
+    for (const u of this.unbinds) u();
+    this.unbinds = [];
+  }
 }
 
 const controller = new SupervisedPillController();
+registerCleanup(() => { controller.dispose(); });
 
 /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
  *  element exists. No-op on a second call. */

@@ -66,6 +66,7 @@ interface DeleteArgs {
 // misleading rollback (re-inserting an already-deleted entry).
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
+  dedupe: (args) => `mcp.delete:${args.id}`,
   scope: (args) => "mcp:" + args.id,
   request: ({ id }) => ({
     method: "DELETE",

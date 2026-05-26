@@ -606,11 +606,9 @@ async function cloneRepo(url: string): Promise<void> {
   if (url === "") throw new Error("no clone URL");
   const res = await cloneRepoAction.dispatch({ url });
   if (res === null) {
-    toastError("Couldn't clone repo");
     throw new Error("clone failed");
   }
   if (res.error !== undefined && res.error !== "") {
-    toastError(`Couldn't clone repo: ${res.error}`);
     throw new Error(res.error);
   }
   await renderForgesPanel({ revalidate: false });
@@ -665,16 +663,11 @@ async function deleteAllForAccount(
   if (!ok) return;
 
   let done = 0;
-  let failed = 0;
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
     const res = await deleteLocalAction.dispatch({ repoName: repo.name });
-    if (res === null) { failed++; }
-    else if (res.error !== undefined && res.error !== "") { failed++; }
+    void res; // framework toasts on failure
     done++;
-  }
-  if (failed > 0) {
-    toastError(`Delete failed for ${String(failed)} of ${String(candidates.length)} repos`);
   }
   await renderForgesPanel({ revalidate: false });
 }
@@ -698,7 +691,6 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
     lastLocalNames.add(repo.name);
     await renderForgesPanel({ revalidate: false });
     const msg = res?.error ?? "Couldn't remove local repo";
-    toastError(msg);
     throw new Error(msg);
   }
   // Success: full re-render to sync from server truth.
