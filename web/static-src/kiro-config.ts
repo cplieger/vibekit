@@ -8,6 +8,7 @@ import { openFile } from "./editor-openers.js";
 import { defineAction, ActionError, retryNetwork } from "./actions/index.js";
 import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
+import { reconcile } from "./reconcile.js";
 
 interface KiroConfigItem {
   name: string;
@@ -15,6 +16,10 @@ interface KiroConfigItem {
   type: string;
   inclusion?: string;
 }
+
+type ConfigEntry =
+  | { kind: "label"; type: string }
+  | { kind: "item"; item: KiroConfigItem };
 
 const TYPE_LABELS: Record<string, string> = {
   steering: "Steering docs",
@@ -51,8 +56,8 @@ export function loadKiroConfig(): void {
 }
 
 function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
-  container.replaceChildren();
-
+  // Flatten groups + items into a single keyed sequence so reconcile
+  // can patch in place without rebuilding the whole list on every refresh.
   const groups = new Map<string, KiroConfigItem[]>();
   for (const item of items) {
     const g = groups.get(item.type) ?? [];
@@ -60,20 +65,37 @@ function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
     groups.set(item.type, g);
   }
 
+  const flat: ConfigEntry[] = [];
   for (const [type, group] of groups) {
-    const label = document.createElement("div");
-    label.className = "list-group-label";
-    label.textContent = TYPE_LABELS[type] ?? type;
-    container.appendChild(label);
-    for (const item of group) container.appendChild(itemRow(item));
+    flat.push({ kind: "label", type });
+    for (const item of group) flat.push({ kind: "item", item });
   }
 
-  if (container.children.length === 0) {
+  // Drop any prior non-keyed empty-state placeholder before reconcile.
+  for (const child of [...container.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+  }
+
+  if (flat.length === 0) {
+    container.replaceChildren();
     const empty = document.createElement("div");
     empty.className = "list-empty";
     empty.textContent = "No .kiro/ configuration found";
-    container.replaceChildren(empty);
+    container.appendChild(empty);
+    return;
   }
+
+  reconcile(container, flat, {
+    key: (e: ConfigEntry) => e.kind === "label" ? `label:${e.type}` : `item:${e.item.path}`,
+    mount: (e: ConfigEntry) => e.kind === "label" ? labelRow(e.type) : itemRow(e.item),
+  });
+}
+
+function labelRow(type: string): HTMLDivElement {
+  const label = document.createElement("div");
+  label.className = "list-group-label";
+  label.textContent = TYPE_LABELS[type] ?? type;
+  return label;
 }
 
 function itemRow(item: KiroConfigItem): HTMLDivElement {

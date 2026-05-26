@@ -14,6 +14,7 @@ import { escText, humanName } from "./strings.js";
 import { $ } from "./dom.js";
 import { getActive } from "./store.js";
 import { wireArrowNav } from "./arrow-nav.js";
+import { reconcile } from "./reconcile.js";
 
 /** Per-agent label + description for the picker header. The agent name
  *  from the session is the lookup key; unknown agents fall back to the
@@ -66,9 +67,14 @@ class ModelPickerController {
     }
     desc.textContent = info.description;
 
-    grid.replaceChildren();
     grid.setAttribute("role", "listbox");
     grid.setAttribute("aria-label", info.label);
+
+    // Drop any non-keyed loading placeholder before reconciling.
+    for (const child of [...grid.children]) {
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    }
+
     if (this.models.length === 0) {
       const loading = document.createElement("div");
       loading.className = "picker-btn picker-loading";
@@ -77,31 +83,43 @@ class ModelPickerController {
       loading.setAttribute("role", "option");
       grid.appendChild(loading);
     }
-    for (const m of this.models) {
-      const btn = document.createElement("button");
-      btn.className = `picker-btn${m.model_id === currentModelId ? " active" : ""}`;
-      btn.setAttribute("data-model", m.model_id);
-      btn.setAttribute("role", "option");
-      btn.setAttribute("aria-selected", m.model_id === currentModelId ? "true" : "false");
-      btn.innerHTML = `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>`
-        + `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
-      btn.addEventListener("click", () => {
-        for (const b of grid.querySelectorAll(".picker-btn")) {
-          b.classList.remove("active");
-          b.setAttribute("aria-selected", "false");
-        }
-        btn.classList.add("active");
-        btn.setAttribute("aria-selected", "true");
-        this.callback?.(m.model_id);
-      });
-      grid.appendChild(btn);
-    }
+    reconcile(grid, this.models, {
+      key: (m: ModelInfo) => m.model_id,
+      mount: (m: ModelInfo) => this.buildPickerBtn(m, currentModelId),
+      update: (el, m) => this.syncPickerBtn(el as HTMLElement, m, currentModelId),
+    });
     wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
     picker.classList.remove("hidden");
     // Focus the active model button (or first) for keyboard users.
     const focusTarget = grid.querySelector<HTMLButtonElement>(".picker-btn.active")
       ?? grid.querySelector<HTMLButtonElement>(".picker-btn:not(.picker-loading)");
     focusTarget?.focus();
+  }
+
+  private buildPickerBtn(m: ModelInfo, currentModelId: string): HTMLElement {
+    const btn = document.createElement("button");
+    btn.setAttribute("data-model", m.model_id);
+    btn.setAttribute("role", "option");
+    btn.innerHTML = `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>`
+      + `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
+    btn.addEventListener("click", () => {
+      const grid = $.modelPicker.querySelector(".picker-grid") as HTMLDivElement;
+      for (const b of grid.querySelectorAll(".picker-btn")) {
+        b.classList.remove("active");
+        b.setAttribute("aria-selected", "false");
+      }
+      btn.classList.add("active");
+      btn.setAttribute("aria-selected", "true");
+      this.callback?.(m.model_id);
+    });
+    this.syncPickerBtn(btn, m, currentModelId);
+    return btn;
+  }
+
+  private syncPickerBtn(btn: HTMLElement, m: ModelInfo, currentModelId: string): void {
+    const isCurrent = m.model_id === currentModelId;
+    btn.className = `picker-btn${isCurrent ? " active" : ""}`;
+    btn.setAttribute("aria-selected", isCurrent ? "true" : "false");
   }
 
   hide(): void {

@@ -21,6 +21,7 @@ import {
   unstage, commit as commitAction, generateCommitMessage,
 } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -232,14 +233,23 @@ function paintInner(): void {
 
   // Filter file entries by path (we keep the section if any file
   // matches OR if the search is empty).
-  const sections: HTMLElement[] = [];
+  const visibleRepos: RepoStatus[] = [];
   for (const r of lastStatusAll) {
-    const section = renderRepoSection(r);
-    if (section !== null) sections.push(section);
+    if (filterText !== "") {
+      const repoMatches = r.repo.toLowerCase().includes(filterText);
+      const anyFileMatches = r.files.some((f) => f.path.toLowerCase().includes(filterText));
+      if (!repoMatches && !anyFileMatches) continue;
+    }
+    visibleRepos.push(r);
   }
 
-  root.replaceChildren();
-  if (sections.length === 0) {
+  // Drop any prior non-keyed empty-state placeholder before reconciling.
+  for (const child of [...root.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+  }
+
+  if (visibleRepos.length === 0) {
+    reconcile(root, [] as RepoStatus[], { key: (r) => r.repo, mount: () => document.createElement("div") });
     if (filterText !== "") {
       root.innerHTML = renderEmptyState({
         icon: ICON_FILTER,
@@ -255,7 +265,23 @@ function paintInner(): void {
     }
     return;
   }
-  for (const s of sections) root.appendChild(s);
+
+  // Outer reconcile: keep section identity (and inline textareas /
+  // commit-message drafts inside) across paints. Body content is
+  // rebuilt fresh on update via renderRepoSection.
+  reconcile(root, visibleRepos, {
+    key: (r: RepoStatus) => r.repo,
+    mount: (r: RepoStatus) => {
+      const section = renderRepoSection(r);
+      return section ?? document.createElement("section");
+    },
+    update: (section: HTMLElement, r: RepoStatus) => {
+      const fresh = renderRepoSection(r);
+      if (fresh === null) return;
+      section.className = fresh.className;
+      section.replaceChildren(...Array.from(fresh.childNodes));
+    },
+  });
 }
 
 // --- Empty-state markup helpers ---

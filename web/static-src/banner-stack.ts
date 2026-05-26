@@ -13,6 +13,7 @@
 import { $ } from "./dom.js";
 import { getActiveId } from "./store.js";
 import { load, save } from "./ui-state.js";
+import { reconcile } from "./reconcile.js";
 import type { BannerLevel } from "./types.js";
 
 interface BannerEntry {
@@ -136,11 +137,17 @@ export function renderStack(): void {
     container.setAttribute("aria-label", "Notifications");
     container.setAttribute("aria-live", "polite");
   }
-  container.replaceChildren();
   const activeID = getActiveId();
+  const visible: BannerEntry[] = [];
   for (const entry of banners.values()) {
-    if (entry.chatID === activeID) container.appendChild(entry.el);
+    if (entry.chatID === activeID) visible.push(entry);
   }
+  reconcile(container, visible, {
+    key: (e: BannerEntry) => bannerKey(e.chatID, e.code),
+    // Reuse the entry-owned element so banner identity (and any
+    // ongoing transitions / focus) persists across re-renders.
+    mount: (e: BannerEntry) => e.el,
+  });
 }
 
 /** Auto-clear transient banners (rate_limit) on successful turn end. */

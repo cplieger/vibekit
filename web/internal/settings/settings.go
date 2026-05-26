@@ -1,5 +1,5 @@
 // Package settings provides a single-source-of-truth reader for
-// <configDir>/settings.json. All packages that need to extract a key
+// <configDir>/config.json. All packages that need to extract a key
 // from the user's settings file should use ReadBytes or Field rather
 // than implementing their own open+read+unmarshal pattern.
 //
@@ -20,15 +20,23 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// MaxBytes caps settings.json reads. Real settings files are well
+// MaxBytes caps config.json reads. Real settings files are well
 // under 100 KB; 1 MiB is generous headroom and matches the HTTP PUT
 // path's api.MaxJSONBody limit.
 const MaxBytes = 1 << 20
 
 // filename is the canonical settings file name.
-const filename = "settings.json"
+const filename = "config.json"
 
-// cache provides mtime-based caching for settings.json reads.
+// Filename is the on-disk basename of vibekit's primary config file
+// (vibekit-managed settings — auto_update, debug_logs, agent_ignore_files,
+// shell_policy, etc.). Distinct from kiro-cli's config.json which lives
+// under $KIRO_HOME/settings/. Exported so callers across the codebase
+// (tests, server handler, ignore reader) reference the same canonical
+// name and can't drift.
+const Filename = filename
+
+// cache provides mtime-based caching for config.json reads.
 type cache struct {
 	mtime     time.Time
 	sfGroup   singleflight.Group
@@ -119,7 +127,7 @@ func (c *cache) load() ([]byte, error) {
 	return r.data, r.err
 }
 
-// ReadBytes returns the raw settings.json content for configDir with
+// ReadBytes returns the raw config.json content for configDir with
 // mtime-based caching. Returns (nil, nil) when the file is missing
 // or configDir is empty.
 func ReadBytes(ctx context.Context, configDir string) ([]byte, error) {
@@ -132,7 +140,7 @@ func ReadBytes(ctx context.Context, configDir string) ([]byte, error) {
 	return getCache(configDir).load()
 }
 
-// Field reads settings.json, extracts the named key, and
+// Field reads config.json, extracts the named key, and
 // json-unmarshals it into the target type T. Returns the zero value
 // and false when the file is missing, the key is absent, or parsing
 // fails. Parse failures are logged at Warn level with the provided
@@ -141,7 +149,7 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 	var zero T
 	data, err := ReadBytes(ctx, configDir)
 	if err != nil {
-		slog.Warn("settings: read settings.json for "+tag, "error", err)
+		slog.Warn("settings: read config.json for "+tag, "error", err)
 		return zero, false
 	}
 	if data == nil {
@@ -149,7 +157,7 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("settings: parse settings.json for "+tag, "error", err)
+		slog.Warn("settings: parse config.json for "+tag, "error", err)
 		return zero, false
 	}
 	v, ok := raw[key]
@@ -164,14 +172,14 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 	return out, true
 }
 
-// FieldInto reads settings.json, extracts the named key, and
+// FieldInto reads config.json, extracts the named key, and
 // json-unmarshals it into the value pointed to by out. Returns true
 // on success. This is the pointer-based variant of Field for callers
 // that need to unmarshal into an existing variable.
 func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
 	data, err := ReadBytes(ctx, configDir)
 	if err != nil {
-		slog.Warn("settings: read settings.json for "+tag, "error", err)
+		slog.Warn("settings: read config.json for "+tag, "error", err)
 		return false
 	}
 	if data == nil {
@@ -179,7 +187,7 @@ func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("settings: parse settings.json for "+tag, "error", err)
+		slog.Warn("settings: parse config.json for "+tag, "error", err)
 		return false
 	}
 	v, ok := raw[key]

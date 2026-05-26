@@ -11,6 +11,7 @@
 
 import { $ } from "./dom.js";
 import { badgeForExt } from "./file-extensions.js";
+import { reconcile } from "./reconcile.js";
 
 /** One attached file. */
 export interface AttachedFile {
@@ -63,33 +64,38 @@ export function clearAttachments(): void {
 
 function renderPills(): void {
   const row = $.attachmentRow;
-  row.replaceChildren();
   if (attached.length === 0) {
+    row.replaceChildren();
     row.classList.add("hidden");
     return;
   }
   row.classList.remove("hidden");
-  for (const att of attached) {
-    const li = document.createElement("li");
-    li.className = "attachment-pill";
-    li.title = att.path;
+  reconcile(row, attached, {
+    key: (a: AttachedFile) => a.path,
+    mount: buildAttachmentPill,
+  });
+}
 
-    const icon = document.createElement("span");
-    icon.className = "attachment-icon";
-    icon.textContent = iconFor(att.name);
+function buildAttachmentPill(att: AttachedFile): HTMLElement {
+  const li = document.createElement("li");
+  li.className = "attachment-pill";
+  li.title = att.path;
 
-    const label = document.createElement("span");
-    label.className = "attachment-name";
-    label.textContent = att.name;
+  const icon = document.createElement("span");
+  icon.className = "attachment-icon";
+  icon.textContent = iconFor(att.name);
 
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "attachment-close";
-    close.textContent = "×";
-    close.setAttribute("aria-label", `Remove ${att.name}`);
-    close.addEventListener("click", () => removeAttachment(att.path));
+  const label = document.createElement("span");
+  label.className = "attachment-name";
+  label.textContent = att.name;
 
-    li.append(icon, label, close);
-    row.appendChild(li);
-  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "attachment-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", `Remove ${att.name}`);
+  close.addEventListener("click", () => removeAttachment(att.path));
+
+  li.append(icon, label, close);
+  return li;
 }

@@ -154,7 +154,7 @@ func resetCache(t *testing.T, dir string) {
 
 func writeSettings(t *testing.T, dir string, content []byte) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), content, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

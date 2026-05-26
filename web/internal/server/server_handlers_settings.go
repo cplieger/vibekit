@@ -63,7 +63,7 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join(s.configDir, "settings.json")
+	path := filepath.Join(s.configDir, settings.Filename)
 	switch r.Method {
 	case http.MethodGet:
 		data, err := os.ReadFile(path)
@@ -117,7 +117,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Atomic write via temp+fsync+rename+dir-fsync. Replaces a bare
-		// os.WriteFile so a crash mid-write cannot truncate settings.json
+		// os.WriteFile so a crash mid-write cannot truncate config.json
 		// to zero bytes (which would silently revert every preference to
 		// its consumer-side default on the next read).
 		if wErr := api.SaveBytes(path, append(pretty, '\n'), 0o644); wErr != nil {

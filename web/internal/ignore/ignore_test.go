@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// writeIgnoreSettings writes settings.json listing the given ignore files.
+// writeIgnoreSettings writes config.json listing the given ignore files.
 // Relative paths are honoured verbatim (resolved against workDir by the matcher).
 func writeIgnoreSettings(t *testing.T, dir string, files []string) {
 	t.Helper()
@@ -27,7 +27,7 @@ func writeIgnoreSettings(t *testing.T, dir string, files []string) {
 		b = append(b, ']', '}')
 		buf = b
 	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), buf, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), buf, 0o600); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
 }
@@ -448,7 +448,7 @@ func TestIgnoreMatcher_ReloadOnSettingsFileListChange(t *testing.T) {
 func TestIgnoreMatcher_InvalidSettingsSilentlyNoOp(t *testing.T) {
 	dir := t.TempDir()
 	work := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +461,7 @@ func TestIgnoreMatcher_InvalidSettingsSilentlyNoOp(t *testing.T) {
 func TestIgnoreMatcher_WrongTypeForListSilentlyNoOp(t *testing.T) {
 	dir := t.TempDir()
 	work := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte(`{"agent_ignore_files":"not-an-array"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +477,7 @@ func TestIgnoreMatcher_EmptyStringsInListDropped(t *testing.T) {
 	// stat the workdir itself and load it as an "ignore file").
 	dir := t.TempDir()
 	work := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte(`{"agent_ignore_files":["","   "]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -733,7 +733,7 @@ func writeIgnoreSettingsB(b *testing.B, dir string, files []string) {
 		bb = append(bb, ']', '}')
 		buf = bb
 	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), buf, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), buf, 0o600); err != nil {
 		b.Fatalf("write settings: %v", err)
 	}
 }

@@ -20,6 +20,7 @@ import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
+import { reconcile } from "./reconcile.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -181,18 +182,21 @@ class PermissionsUIController {
     menu.replaceChildren();
 
     const remaining = SUGGESTED_TOOLS.filter((n) => !this.currentList.includes(n));
-    for (const name of remaining) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "chip-menu-item";
-      item.textContent = name;
-      item.addEventListener("click", () => {
-        this.addTool(name);
-        menu.classList.add("hidden");
-        adder.setAttribute("aria-expanded", "false");
-      });
-      menu.appendChild(item);
-    }
+    reconcile(menu, remaining, {
+      key: (name: string) => name,
+      mount: (name: string) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "chip-menu-item";
+        item.textContent = name;
+        item.addEventListener("click", () => {
+          this.addTool(name);
+          menu.classList.add("hidden");
+          adder.setAttribute("aria-expanded", "false");
+        });
+        return item;
+      },
+    });
 
     menu.classList.remove("hidden");
     adder.setAttribute("aria-expanded", "true");

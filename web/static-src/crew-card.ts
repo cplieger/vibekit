@@ -23,6 +23,11 @@ import { sendMessage } from "./actions/crew.js";
 import { bindLoadingState } from "./actions/index.js";
 import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
 import { formatToolActivity } from "./format-tool-activity.js";
+import { reconcile } from "./reconcile.js";
+
+type CrewEntry =
+  | { kind: "sub"; sub: CrewSubagent }
+  | { kind: "pending"; ps: CrewPendingStage };
 
 const cards = new Map<string, HTMLDivElement>();
 const cardState = new WeakMap<HTMLDivElement, string>();
@@ -40,8 +45,9 @@ const crewToolEls = new Map<string, HTMLDivElement>();
 const activityEls = new Map<string, HTMLSpanElement>();
 // Per-subagent pending-approval state.
 const pendingApprovals = new Set<string>();
-// Track bindLoadingState unbind functions so they are drained on rebuild.
-const loadingUnbinds: Array<() => void> = [];
+// Track bindLoadingState unbind functions per-row so reconcile.onRemove
+// drains only orphaned rows (not all bindings on every paint).
+const rowUnbinds = new Map<string, () => void>();
 
 /** Update the collapsed-row activity line for a subagent. Called when
  *  a tool call arrives, updates, or a permission is requested. */
@@ -186,21 +192,8 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   const sig = signature(crew);
   if (cardState.get(el) === sig) return;
   cardState.set(el, sig);
-  // Drain previous bindLoadingState unbinds before rebuilding.
-  for (const fn of loadingUnbinds) fn();
-  loadingUnbinds.length = 0;
   const body = el.querySelector(".crew-body") as HTMLDivElement;
   const count = el.querySelector(".crew-count") as HTMLSpanElement;
-
-  // Capture draft input values before destroying rows.
-  const drafts = new Map<string, string>();
-  for (const input of body.querySelectorAll<HTMLInputElement>(".crew-msg-field")) {
-    const row = input.closest<HTMLDivElement>(".crew-row");
-    const sid = row?.dataset["sessionId"];
-    if (sid !== undefined && input.value !== "") drafts.set(sid, input.value);
-  }
-
-  body.replaceChildren();
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
   const done = crew.subagents.filter((s) => s.status === "terminated").length;
@@ -212,25 +205,57 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   count.textContent = countText;
   el.classList.toggle("crew-done", active === 0 && pending === 0);
 
-  for (const sub of crew.subagents) {
-    const r = buildRow(sub);
-    body.appendChild(r);
-    const tc = toolContainers.get(sub.session_id);
-    if (tc !== undefined) {
-      const expandBody = r.querySelector(".crew-row-expand") as HTMLDivElement;
-      expandBody.appendChild(tc);
-    }
-  }
-  for (const ps of crew.pending_stages ?? []) {
-    body.appendChild(buildPendingRow(ps));
-  }
+  // Reconcile rows in place. Identity preservation means in-flight
+  // input drafts in `.crew-msg-field` survive automatically — no need
+  // to capture-and-restore. Tool containers stay attached to their
+  // parent expand-body across paints.
+  const flat: CrewEntry[] = [];
+  for (const sub of crew.subagents) flat.push({ kind: "sub", sub });
+  for (const ps of crew.pending_stages ?? []) flat.push({ kind: "pending", ps });
 
-  // Restore draft input values.
-  for (const [sid, val] of drafts) {
-    const row = body.querySelector<HTMLDivElement>(`.crew-row[data-session-id="${CSS.escape(sid)}"]`);
-    const input = row?.querySelector<HTMLInputElement>(".crew-msg-field");
-    if (input !== undefined && input !== null) input.value = val;
-  }
+  reconcile(body, flat, {
+    key: (e: CrewEntry) => e.kind === "sub" ? `sub:${e.sub.session_id}` : `pending:${e.ps.name}`,
+    mount: (e: CrewEntry) => {
+      if (e.kind === "pending") return buildPendingRow(e.ps);
+      const r = buildRow(e.sub);
+      const tc = toolContainers.get(e.sub.session_id);
+      if (tc !== undefined) {
+        const expandBody = r.querySelector(".crew-row-expand") as HTMLDivElement;
+        expandBody.appendChild(tc);
+      }
+      return r;
+    },
+    update: (row: HTMLElement, e: CrewEntry) => {
+      if (e.kind === "pending") return; // pending row content is static
+      // Sync status-driven row class and the head's status-icon.
+      row.className = `crew-row crew-status-${e.sub.status}`;
+      const head = row.querySelector<HTMLElement>(":scope > .crew-row-head");
+      if (head !== null) {
+        const oldIcon = head.querySelector<HTMLElement>(":scope > .crew-icon-status");
+        if (oldIcon !== null) oldIcon.replaceWith(createStatusIcon(e.sub.status));
+      }
+      // Sync activity text (mirrors initial paint logic in buildRow).
+      const actEl = activityEls.get(e.sub.session_id);
+      if (actEl !== undefined) {
+        if (e.sub.status === "terminated") {
+          actEl.textContent = "Done";
+          actEl.classList.add("crew-activity-done");
+        } else if (pendingApprovals.has(e.sub.session_id)) {
+          actEl.textContent = "\u26a0 tool approval needed";
+        } else if (e.sub.status_msg !== undefined && e.sub.status_msg !== "") {
+          actEl.textContent = e.sub.status_msg;
+          actEl.classList.remove("crew-activity-done");
+        } else if (e.sub.status === "working") {
+          actEl.textContent = "Working\u2026";
+          actEl.classList.remove("crew-activity-done");
+        }
+      }
+    },
+    onRemove: (_: HTMLElement, key: string) => {
+      const u = rowUnbinds.get(key);
+      if (u !== undefined) { u(); rowUnbinds.delete(key); }
+    },
+  });
 }
 
 export function signature(crew: Crew): string {
@@ -355,7 +380,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
   sendBtn.setAttribute("aria-label", "Send");
-  loadingUnbinds.push(bindLoadingState("crew.send_message", sendBtn));
+  rowUnbinds.set(`sub:${sub.session_id}`, bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
     if (text === "") return;

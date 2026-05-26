@@ -279,7 +279,7 @@ func TestEvaluateShellCommand_Regressions(t *testing.T) {
 	}
 	groups := []struct {
 		name     string
-		settings string // JSON body for settings.json ("" = no file)
+		settings string // JSON body for config.json ("" = no file)
 		rules    []ruleSpec
 		cases    []testCase
 	}{
@@ -722,11 +722,11 @@ func TestCommandRules_NormalizeTrimsHandEditedPatterns(t *testing.T) {
 // --- readShellPolicy fail-closed regression tests (T1/T2/T3) ---
 
 func TestEvaluateShellCommand_WrongTypeShellPolicyFailsClosed(t *testing.T) {
-	// settings.json parses as valid JSON but shell_policy has the
+	// config.json parses as valid JSON but shell_policy has the
 	// wrong type. The inner json.Unmarshal errors; readShellPolicy
 	// must return ShellPolicySafe.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte(`{"shell_policy": 42}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -747,7 +747,7 @@ func TestEvaluateShellCommand_EmptyShellPolicyNormalisesToSafe(t *testing.T) {
 	// in place — dropping it would fall through the policy switch
 	// to the default "ask" case, breaking `ls` auto-approve.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
 		[]byte(`{"shell_policy": ""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1041,7 +1041,7 @@ func writeSettingsB(b *testing.B, body string) string {
 	b.Helper()
 	dir := b.TempDir()
 	if body != "" {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
 			b.Fatalf("write settings: %v", err)
 		}
 	}

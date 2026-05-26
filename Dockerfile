@@ -129,15 +129,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Go, Node, and all dev tools installed at runtime via setup-tools.sh.
 # /config is the single persistent volume for all container state:
 #   /config/tools/   — runtimes, Go/Node/Python binaries, caches
-#   /config/home/    — auth, ssh, gitconfig, .kiro, build cache
-#   /config/*.json   — tools.json, settings.json, mcp.json, etc.
+#   /config/home/    — auth, ssh, gitconfig, build cache
+#   /config/kiro/    — kiro-cli per-user state (auth.db, sessions, settings,
+#                      steering, agents). Pointed at via KIRO_HOME so vibekit
+#                      and kiro-cli agree on the location regardless of HOME.
+#   /config/*.json   — config.json (vibekit prefs), tools.json, mcp.json, etc.
 #   /config/chats/   — chat history
 ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/tools/node/bin:/config/tools/python/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOROOT="/config/tools/runtimes/go"
 ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/go/bin"
 ENV HOME="/config/home"
-RUN mkdir -p /config/home && chmod 777 /config/home
+ENV KIRO_HOME="/config/kiro"
+RUN mkdir -p /config/home /config/kiro && chmod 777 /config/home /config/kiro
 
 # Repoint root's pw_dir to /config/home so OpenSSH (which resolves "~"
 # via getpwuid, NOT $HOME) reads and writes ~/.ssh/known_hosts under

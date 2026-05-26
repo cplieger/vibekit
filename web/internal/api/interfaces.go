@@ -202,7 +202,7 @@ type PushService interface {
 	SetPreferences(prefs map[PushKind]bool)
 	// ReloadPreferences re-reads notification toggles from disk,
 	// deduplicating concurrent calls via singleflight. Called on SSE
-	// reconnect so externally-edited settings.json changes take effect
+	// reconnect so externally-edited config.json changes take effect
 	// without a container restart.
 	ReloadPreferences(ctx context.Context)
 	// Close cancels any in-flight pushes via context so the hub's

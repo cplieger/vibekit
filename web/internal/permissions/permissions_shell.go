@@ -45,12 +45,12 @@ func (p shellPolicy) Valid() bool {
 	return false
 }
 
-// readShellPolicy reads shell_policy from settings.json using the
+// readShellPolicy reads shell_policy from config.json using the
 // shared readSettingsRaw helper.
 func readShellPolicy(ctx context.Context, configDir string) shellPolicy {
 	raw, err := readSettingsRaw(ctx, configDir)
 	if err != nil {
-		slog.Warn("permissions: read settings.json for shell_policy", "error", err)
+		slog.Warn("permissions: read config.json for shell_policy", "error", err)
 		return policySafe
 	}
 	if raw == nil {

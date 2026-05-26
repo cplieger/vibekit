@@ -101,6 +101,12 @@ type Server struct {
 	Headers       []KeyPair `json:"headers,omitempty"`
 	DisabledTools []string  `json:"disabled_tools,omitempty"`
 	KnownTools    []string  `json:"known_tools,omitempty"`
+	// OAuthClientID is a pre-registered OAuth 2.0 client ID for HTTP-
+	// transport servers that do NOT support Dynamic Client Registration
+	// (e.g. Slack, GitHub, Figma). Forwarded to kiro-cli as `oauth.clientId`
+	// in the ACP `mcpServers` array on session/new (kiro-cli 2.3+).
+	// Empty string falls back to DCR, which is what most servers support.
+	OAuthClientID string    `json:"oauth_client_id,omitempty"`
 	CreatedAt     int64     `json:"created_at"`
 	UpdatedAt     int64     `json:"updated_at"`
 	Prewarm       bool      `json:"prewarm,omitempty"`

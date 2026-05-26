@@ -98,6 +98,7 @@ type Hub struct {
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
 	permArgsFn         func() []string
+	preBridgeSpawn     func() // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
@@ -286,6 +287,17 @@ func (h *Hub) MCPSnapshot() []api.MCPSnapshotServer {
 // Used by main.go to re-run steering.Generate() so environment.md
 // tracks the live integration set.
 func (h *Hub) SetMCPOnChange(fn func()) { h.mcpRegistry.SetOnChange(fn) }
+
+// SetPreBridgeSpawn wires a callback fired right before any kiro-cli
+// bridge starts (both fresh `session/new` and `session/load` paths in
+// getOrCreateBridge). Used to refresh `environment.md` so the latest
+// per-repo steering inventory is on disk by the time kiro-cli reads
+// it during session creation.
+//
+// The callback runs synchronously on the spawn path, so it must be
+// fast (the existing steering.Generate is bounded by the workspace
+// walk + skip-if-unchanged write — typically a few milliseconds).
+func (h *Hub) SetPreBridgeSpawn(fn func()) { h.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).

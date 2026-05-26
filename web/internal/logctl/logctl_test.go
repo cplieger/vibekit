@@ -27,7 +27,7 @@ func restoreDefaultLogger(t *testing.T) {
 
 func writeSettings(t *testing.T, dir string, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatalf("writeSettings: %v", err)
 	}
 }
@@ -93,8 +93,8 @@ func TestReadDebugFlag(t *testing.T) {
 			name: "OpenErrorNotENOENT_ReturnsFalse",
 			setup: func(t *testing.T, dir string) {
 				t.Helper()
-				if err := os.Mkdir(filepath.Join(dir, "settings.json"), 0o755); err != nil {
-					t.Fatalf("mkdir settings.json dir: %v", err)
+				if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o755); err != nil {
+					t.Fatalf("mkdir config.json dir: %v", err)
 				}
 			},
 			want:   false,
@@ -179,12 +179,12 @@ func TestInstall_WithDebugFalse_SetsInfoLevel(t *testing.T) {
 
 func TestInstall_WithMissingSettings_DefaultsToInfo(t *testing.T) {
 	restoreDefaultLogger(t)
-	dir := t.TempDir() // no settings.json written
+	dir := t.TempDir() // no config.json written
 
 	Install(dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
-		t.Errorf("after Install(no settings.json) level = %v, want %v (must not silently enable debug)", got, slog.LevelInfo)
+		t.Errorf("after Install(no config.json) level = %v, want %v (must not silently enable debug)", got, slog.LevelInfo)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestInstall_WithCorruptSettings_DefaultsToInfo(t *testing.T) {
 	Install(dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
-		t.Errorf("after Install(corrupt settings.json) level = %v, want %v (must fail safe)", got, slog.LevelInfo)
+		t.Errorf("after Install(corrupt config.json) level = %v, want %v (must fail safe)", got, slog.LevelInfo)
 	}
 }
 

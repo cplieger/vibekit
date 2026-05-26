@@ -12,6 +12,7 @@ import { saveServer, searchRegistry, type RegistrySearchResult } from "./actions
 import { subscribeToActions, bindLoadingState, debouncedDispatch, registerCleanup } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import type { DebouncedDispatch } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
 
 // --- Add / edit modal ---
 
@@ -204,19 +205,26 @@ function initSearchPanel(): void {
 
 function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | undefined, q: string): void {
   retryBtnUnbind?.(); retryBtnUnbind = null;
-  results.replaceChildren();
+  // Drop any non-keyed empty/error placeholders before reconciling.
+  for (const child of [...results.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+  }
   if (d === undefined || d === null) {
     renderSearchError(results, q);
     return;
   }
   if (d.servers.length === 0) {
+    reconcile(results, [] as RegistryEntry[], { key: (e) => e.name, mount: () => document.createElement("div") });
     const empty = document.createElement("p");
     empty.className = "mcp-empty";
     empty.textContent = `No results for "${q}".`;
     results.appendChild(empty);
     return;
   }
-  for (const entry of d.servers) results.appendChild(renderRegistryResult(entry));
+  reconcile(results, d.servers, {
+    key: (e: RegistryEntry) => e.name,
+    mount: (e: RegistryEntry) => renderRegistryResult(e),
+  });
 }
 
 function renderSearchError(results: HTMLDivElement, q: string): void {
@@ -363,6 +371,7 @@ function initRemotePanel(existing: Server | null): void {
   const name = el<HTMLInputElement>("mcp-remote-name");
   const typeSel = el<HTMLSelectElement>("mcp-remote-type");
   const url = el<HTMLInputElement>("mcp-remote-url");
+  const oauthClientID = el<HTMLInputElement>("mcp-remote-oauth-client-id");
   const headers = el<HTMLDivElement>("mcp-remote-headers");
   const errEl = el<HTMLParagraphElement>("mcp-remote-error");
   errEl.classList.add("hidden");
@@ -372,11 +381,13 @@ function initRemotePanel(existing: Server | null): void {
     name.value = existing.name;
     typeSel.value = existing.transport === "sse" ? "sse" : "http";
     url.value = existing.url ?? "";
+    oauthClientID.value = existing.oauth_client_id ?? "";
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
     typeSel.value = PANEL_MODES.remote.transport!;
     url.value = "";
+    oauthClientID.value = "";
     renderKeyPairList(headers, [], "header");
   }
 
@@ -386,13 +397,16 @@ function initRemotePanel(existing: Server | null): void {
 
   el<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
     const transport: Transport = typeSel.value === "sse" ? "sse" : "http";
-    void submitServer({
+    const body: Partial<Server> = {
       transport,
       name: name.value.trim(),
       url: url.value.trim(),
       headers: collectKeyPairs(headers),
       enabled: existing?.enabled ?? true,
-    }, errEl, el<HTMLButtonElement>("mcp-remote-save"));
+    };
+    const oauthID = oauthClientID.value.trim();
+    if (oauthID !== "") body.oauth_client_id = oauthID;
+    void submitServer(body, errEl, el<HTMLButtonElement>("mcp-remote-save"));
   };
 }
 

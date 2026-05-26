@@ -99,7 +99,7 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 	h.sse.ctrl.add(sc)
 	if lastID > 0 {
 		// Reconnect path: reload push notification preferences from
-		// disk so externally-edited settings.json changes (e.g. via
+		// disk so externally-edited config.json changes (e.g. via
 		// the settings UI while SSE was disconnected) take effect
 		// without a container restart. Deduplicated via singleflight
 		// so N simultaneous reconnects produce one disk read.

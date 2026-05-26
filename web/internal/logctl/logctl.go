@@ -11,7 +11,7 @@
 //     in translateACPEvent's default case, fs handler details,
 //     and bridge stdin/stdout sampling)
 //
-// The setting reads from <configDir>/settings.json `debug_logs`
+// The setting reads from <configDir>/config.json `debug_logs`
 // (bool). Install reads it once to pick the boot level; the handler
 // writes Info or Debug based on whatever the LevelVar says at log
 // time, so the PATCH endpoint that flips the bool also flips the
@@ -29,14 +29,14 @@ import (
 var levelVar slog.LevelVar
 
 // Install wires the shared LevelVar into slog's default logger and
-// reads the initial level from configDir/settings.json. Call exactly
+// reads the initial level from configDir/config.json. Call exactly
 // once at startup, before any other slog calls that matter.
 //
 // Parse failures (corrupt JSON, wrong type on debug_logs) fall back
 // to info level so a broken settings file never accidentally drops
 // the user into debug mode. The failure is logged at warn level
 // after the handler is wired so operators get a breadcrumb instead
-// of a silent fallback. A legitimately-missing settings.json (first
+// of a silent fallback. A legitimately-missing config.json (first
 // boot) is not an error and produces no warn.
 func Install(configDir string) {
 	on, ok := settings.Field[bool](context.Background(), configDir, "debug_logs", "debug_logs")

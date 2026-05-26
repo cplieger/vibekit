@@ -54,15 +54,18 @@ type sensitivePath struct {
 // Specific paths or path prefixes blocked from the file-editor surface.
 // Protects system-level agent config, auto-generated docs, and internal
 // state files that users should not accidentally edit from the UI.
+//
+// All kiro-cli per-user state lives under /config/kiro/ (the location
+// vibekit's entrypoint sets via KIRO_HOME).
 var sensitivePrefixes = []sensitivePath{
 	// System-level steering (base personality; must not be user-edited).
-	{Path: "/config/home/.kiro/steering/vibekit.md", IsDir: false},
+	{Path: "/config/kiro/steering/vibekit.md", IsDir: false},
 	// Auto-regenerated at startup; edits are clobbered and misleading.
-	{Path: "/config/home/.kiro/steering/environment.md", IsDir: false},
+	{Path: "/config/kiro/steering/environment.md", IsDir: false},
 	// Agent configs, session state, knowledge bases.
-	{Path: "/config/home/.kiro/agents/", IsDir: true},
-	{Path: "/config/home/.kiro/sessions/", IsDir: true},
-	{Path: "/config/home/.kiro/settings/", IsDir: true},
+	{Path: "/config/kiro/agents/", IsDir: true},
+	{Path: "/config/kiro/sessions/", IsDir: true},
+	{Path: "/config/kiro/settings/", IsDir: true},
 	{Path: "/config/home/.local/share/kiro-cli/", IsDir: true},
 	// Internal vibekit runtime state.
 	{Path: "/config/chats/", IsDir: true},
