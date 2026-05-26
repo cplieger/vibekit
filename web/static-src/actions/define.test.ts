@@ -16,8 +16,8 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { ActionError, retryNetwork, retryAlways } from "./error.js";
-import { recentLog, _resetForTest as resetRegistry, subscribe, pendingFor } from "./registry.js";
+import { ActionError, retryNetwork } from "./error.js";
+import { recentLog, _resetForTest as resetRegistry, subscribe, pendingCount } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 
@@ -392,19 +392,21 @@ describe("registry", () => {
   });
 });
 
-describe("pendingFor — public API", () => {
-  it("returns the action mid-flight, then empty after completion", async () => {
+describe("pendingCount — public API", () => {
+  it("reports 1 for the named action mid-flight, 0 after completion", async () => {
     let resolve!: () => void;
     const action = defineAction({
       name: "test.slow",
       run: () => new Promise<void>((r) => { resolve = r; }),
     });
     const p = action.dispatch({});
-    expect(pendingFor("test.slow").length).toBe(1);
-    expect(pendingFor("test.slow")[0]?.name).toBe("test.slow");
+    expect(pendingCount(["test.slow"])).toBe(1);
+    // Verify the registry log captures the action with the right name.
+    const pending = recentLog().filter((inst) => inst.status === "pending" && inst.name === "test.slow");
+    expect(pending[0]?.name).toBe("test.slow");
     resolve();
     await p;
-    expect(pendingFor("test.slow").length).toBe(0);
+    expect(pendingCount(["test.slow"])).toBe(0);
   });
 });
 
@@ -414,7 +416,7 @@ describe("defineAction — retryable error toast", () => {
     const action = defineAction({
       name: "test.retry_always",
       run: async () => { throw new ActionError("network glitch"); },
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
     });
     await action.dispatch({ id: 1 });
     expect(toast.error).toHaveBeenCalledTimes(1);
@@ -486,7 +488,7 @@ describe("defineAction — retryable error toast", () => {
       name: "test.retry_no_toast",
       run: async () => { throw new ActionError("silent"); },
       error: false,
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
     });
     await action.dispatch({});
     expect(toast.error).not.toHaveBeenCalled();

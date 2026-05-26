@@ -6,18 +6,21 @@
 // reads, cleanup, and infrastructure stay silent.
 //
 // What this test asserts:
-//   - No new `void apiPost(`, `void apiDelete(`, or
-//     `void transport.send(` calls appear outside the explicit
-//     allowlist below.
-//   - Also catches aliased transport imports: `await transportSend(`
-//     and `void transportSend(` (common when destructuring or
-//     renaming the import).
+//   - No new write-shaped calls outside the explicit allowlist:
+//       * `void apiPost(`, `void apiDelete(` (fire-and-forget mutations)
+//       * `await apiPost(`, `await apiDelete(`, `await apiPutOrError(`
+//         (callers bypassing the framework's lifecycle wrapper)
+//       * `void transport.send(`, `await transport.send(`
+//       * `void transportSend(`, `await transportSend(` (aliased imports)
+//   - GET reads (`apiGet` / `apiGetTyped`) are NOT lint-checked because
+//     they're inherently safe (read-only). Background polls and inline
+//     reads use them freely.
 //   - The allowlist consists of:
 //       * actions/*.ts (the framework + per-area action files)
 //       * api-client.ts and transport.ts (the underlying transports)
 //       * test files (*.test.ts)
 //       * specific files with documented background-poll / cleanup
-//         exceptions
+//         exceptions (BACKGROUND_ALLOWLIST below)
 //
 // If you're adding a new user-initiated mutation, declare an action
 // in actions/<area>.ts and dispatch it. See actions/index.ts (or the steering doc).
@@ -32,7 +35,8 @@ import { join, relative } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 
-/** Files where `void apiX(` or `void transport.send(` is permitted
+/** Files where a write-shaped call (`void/await apiPost/apiDelete`,
+ *  `await apiPutOrError`, `void/await transport.send`) is permitted
  *  because they're documented background paths or cleanup.
  *
  *  NOTE: Matching is by basename only (the last path segment). This
@@ -40,24 +44,12 @@ const ROOT = join(import.meta.dirname, "..");
  *  two files share a basename and only one should be allowlisted,
  *  switch to relative-path matching for that entry. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
-  // Background reads on view-open. Errors render as inline empty/error
-  // state in the panel; not user-initiated mutations.
-  "settings.ts",        // void apiGet steering content
-  "tools.ts",           // void apiGet tools list
-  "kiro-config.ts",     // void apiGet workspace kiro-config
-  "git-changes-tab.ts", // void apiGet for inline diff + recent commits expansion
-  "git-branch-switcher.ts", // void apiGet branches list when popover opens
-  "app.ts",             // void apiGet whoami at startup
-
-  // Best-effort cleanup the user already moved past.
-  "notify.ts",          // void apiPost /api/push/unsubscribe on disable
-
   // Background fan-out for revalidation; partial failure is expected.
-  "forge-auth.ts",      // apiPost in revalidateInBackground (probe per forge)
+  "forge-auth.ts",      // await apiPost in revalidateInBackground (probe per forge)
 
   // Inline dialog mutations: error surfaces in the dialog status line,
   // not via toast. Intentionally excluded from the action framework.
-  "git-prs-tab.ts",     // apiPost for PR creation + description generation (inline dialog)
+  "git-prs-tab.ts",     // await apiPost for PR creation + description generation (inline dialog)
 
   // Fire-and-forget cleanup after successful plan send.
   "plan-actions.ts",    // await apiDelete plan-draft + await apiPutOrError plan update

@@ -8,7 +8,7 @@ vi.mock("../toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
 }));
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
-import { _resetForTest as resetRegistry, pendingFor, recentLog } from "./registry.js";
+import { _resetForTest as resetRegistry, pendingCount, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 beforeEach(() => {
@@ -79,7 +79,7 @@ describe("memory leak stress — activeDedupes", () => {
   });
 });
 
-describe("memory leak stress — inFlight (via pendingFor)", () => {
+describe("memory leak stress — inFlight (via pendingCount)", () => {
   it("1000 parallel dispatches leave no pending entries", async () => {
     const action = defineAction({
       name: "stress.parallel",
@@ -93,7 +93,7 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     await Promise.all(promises);
 
     // No pending instances remain in the registry
-    expect(pendingFor("stress.parallel")).toHaveLength(0);
+    expect(pendingCount(["stress.parallel"])).toBe(0);
   });
 
   it("1000 dispatches with errors leave no pending entries", async () => {
@@ -109,7 +109,7 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     }
     await Promise.all(promises);
 
-    expect(pendingFor("stress.errors")).toHaveLength(0);
+    expect(pendingCount(["stress.errors"])).toBe(0);
   });
 
   it("100 cancelled dispatches leave no pending entries", async () => {
@@ -135,7 +135,7 @@ describe("memory leak stress — inFlight (via pendingFor)", () => {
     // requires N+1 ticks to fully drain.
     for (let i = 0; i < 110; i++) await Promise.resolve();
 
-    expect(pendingFor("stress.cancel")).toHaveLength(0);
+    expect(pendingCount(["stress.cancel"])).toBe(0);
     expect(_internalsForTest().scopeChains).toBe(0);
   });
 });
@@ -158,7 +158,7 @@ describe("memory leak stress — combined scope + dedupe", () => {
     const internals = _internalsForTest();
     expect(internals.scopeChains).toBe(0);
     expect(internals.activeDedupes).toBe(0);
-    expect(pendingFor("stress.both")).toHaveLength(0);
+    expect(pendingCount(["stress.both"])).toBe(0);
   });
 });
 
@@ -215,6 +215,6 @@ describe("memory leak stress — registry log eviction", () => {
 
     const log = recentLog();
     expect(log.length).toBeLessThanOrEqual(200);
-    expect(pendingFor("stress.growth")).toHaveLength(0);
+    expect(pendingCount(["stress.growth"])).toBe(0);
   });
 });

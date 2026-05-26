@@ -14,7 +14,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError, retryNetwork, retryAlways } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
@@ -97,7 +97,7 @@ describe("structuredClone fallback on retry toast", () => {
     const callback = vi.fn();
     const action = defineAction<{ fn: () => void; id: string }, string>({
       name: "test.retry_noncloneable",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       run: (args) => {
         attempts++;
         if (attempts === 1) throw new ActionError("fail", { status: 0 });

@@ -139,10 +139,12 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *  When unset (or returns false), errors are surfaced immediately
    *  with no retry affordance.
    *
-   *  The framework provides two presets in `error.js`:
+   *  The framework provides one preset in `error.js`:
    *    - `retryNetwork`: network/timeout/transient HTTP statuses
    *      (408, 429, 502, 503, 504). Excludes cancellation.
-   *    - `retryAlways`: any error except cancellation.
+   *
+   *  For "retry any error except cancellation", inline the lambda:
+   *    `retryable: (err) => err.code !== "cancelled"`
    *
    *  For custom logic (e.g. respect a domain-specific permanent-error
    *  code), pass a function:

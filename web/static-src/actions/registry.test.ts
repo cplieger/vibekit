@@ -1,13 +1,12 @@
 // @vitest-environment happy-dom
 // Targeted tests for registry.ts: tombstone eviction, Set-based listener
-// iteration, pendingFor/pendingCount/recentLog correctness, _resetForTest.
+// iteration, pendingCount/recentLog correctness, _resetForTest.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   record,
   subscribe,
   recentLog,
   pendingCount,
-  pendingFor,
   isPending,
   _resetForTest,
 } from "./registry.js";
@@ -210,7 +209,7 @@ describe("_resetForTest", () => {
 
     expect(recentLog()).toHaveLength(0);
     expect(pendingCount()).toBe(0);
-    expect(pendingFor("test.action")).toHaveLength(0);
+    expect(pendingCount(["test.action"])).toBe(0);
 
     // Listener should have been cleared by reset
     record(makeInstance({ id: "post", status: "pending" }));
@@ -282,15 +281,15 @@ describe("pendingByName index", () => {
     record(makeInstance({ id: "a1", name: "file.upload", status: "pending" }));
     record(makeInstance({ id: "a2", name: "file.upload", status: "pending" }));
     expect(isPending("file.upload")).toBe(true);
-    expect(pendingFor("file.upload")).toHaveLength(2);
+    expect(pendingCount(["file.upload"])).toBe(2);
 
     record(makeInstance({ id: "a1", name: "file.upload", status: "success" }));
     expect(isPending("file.upload")).toBe(true);
-    expect(pendingFor("file.upload")).toHaveLength(1);
+    expect(pendingCount(["file.upload"])).toBe(1);
 
     record(makeInstance({ id: "a2", name: "file.upload", status: "error", error: { message: "fail" } }));
     expect(isPending("file.upload")).toBe(false);
-    expect(pendingFor("file.upload")).toHaveLength(0);
+    expect(pendingCount(["file.upload"])).toBe(0);
   });
 
   it("retry (terminal→pending) re-adds to pendingByName", () => {
@@ -301,14 +300,16 @@ describe("pendingByName index", () => {
     // Retry: same id goes back to pending
     record(makeInstance({ id: "r1", name: "git.push", status: "pending" }));
     expect(isPending("git.push")).toBe(true);
-    expect(pendingFor("git.push")).toHaveLength(1);
-    expect(pendingFor("git.push")[0]!.id).toBe("r1");
+    expect(pendingCount(["git.push"])).toBe(1);
+    // Verify the registry log identifies the surviving instance correctly.
+    const pushPending = recentLog().filter((i) => i.status === "pending" && i.name === "git.push");
+    expect(pushPending[0]?.id).toBe("r1");
   });
 
   it("pending→pending re-record does not duplicate in index", () => {
     record(makeInstance({ id: "d1", name: "chat.send", status: "pending" }));
     record(makeInstance({ id: "d1", name: "chat.send", status: "pending" }));
-    expect(pendingFor("chat.send")).toHaveLength(1);
+    expect(pendingCount(["chat.send"])).toBe(1);
     expect(pendingCount()).toBe(1);
   });
 
@@ -322,7 +323,7 @@ describe("pendingByName index", () => {
     record(makeInstance({ id: "hc-overflow", name: "bulk.op", status: "pending" }));
     // The evicted entry (hc-0) should be removed from pendingByName
     expect(pendingCount()).toBe(1000);
-    const pending = pendingFor("bulk.op");
+    const pending = recentLog().filter((i) => i.status === "pending" && i.name === "bulk.op");
     expect(pending.find(e => e.id === "hc-0")).toBeUndefined();
   });
 

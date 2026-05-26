@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError, retryNetwork, retryAlways } from "./error.js";
+import { ActionError, hasErrorString, toActionError, classifyFetchError, retryNetwork } from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -239,19 +239,6 @@ describe("retryNetwork preset", () => {
       !PERMANENT.has(err.code ?? "") && retryNetwork(err);
     expect(composed({ message: "x", code: "network" })).toBe(true);
     expect(composed({ message: "x", code: "custom_permanent", status: 0 })).toBe(false);
-  });
-});
-
-describe("retryAlways preset", () => {
-  it("returns true for any error code except cancelled", () => {
-    expect(retryAlways({ message: "x", code: "validation" })).toBe(true);
-    expect(retryAlways({ message: "x", status: 500 })).toBe(true);
-    expect(retryAlways({ message: "x", code: "send_failed" })).toBe(true);
-    expect(retryAlways({ message: "x" })).toBe(true);
-  });
-
-  it("returns false for cancelled (framework concept)", () => {
-    expect(retryAlways({ message: "x", code: "cancelled" })).toBe(false);
   });
 });
 

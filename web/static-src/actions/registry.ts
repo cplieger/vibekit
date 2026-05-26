@@ -4,7 +4,7 @@
 //
 // Surface for:
 //   - Devtools / debug overlay (show recent actions)
-//   - Loading-state queries (registry.pendingFor("chat.delete"))
+//   - Loading-state queries (pendingCount(["chat.delete"]))
 //   - Future: action telemetry, replay, time-travel debugging
 //
 // Performance: eviction uses a head-pointer + tombstones instead of
@@ -26,7 +26,7 @@ const MAX_LOG_HARD = 1000;
 //            slots are null (tombstones); head tracks the first live slot.
 // idMap:     id -> { instance, index } for O(1) state-transition updates
 //            AND O(1) log-slot overwrites (no backward scan needed).
-// pendingByName: name -> Set<id> for O(1) pendingFor/pendingForAny.
+// pendingByName: name -> Set<id> for O(1) pendingCount(names).
 const log: (ActionInstance | null)[] = [];
 interface LogSlot { instance: ActionInstance; index: number }
 const idMap = new Map<string, LogSlot>();
@@ -36,7 +36,7 @@ const listeners = new Set<RegistryListener>();
 // like bindLoadingState (typically ~40 active bindings).
 const namedListeners = new Map<string, Set<RegistryListener>>();
 // Per-name pending index: maps action name → Set of instance IDs that
-// are currently pending. Enables O(1) isPending() and O(k) pendingFor()
+// are currently pending. Enables O(1) isPending() and O(k) pendingCount(names)
 // where k = pending count for that name (typically 0–2).
 const pendingByName = new Map<string, Set<string>>();
 // Incremental count of currently-pending instances. Maintained in
@@ -125,7 +125,7 @@ export function record(instance: ActionInstance): void {
       s.add(instance.id);
     }
     if (_liveCount > MAX_LOG_SIZE) {
-      // Evict the first NON-pending live entry so pendingFor() never
+      // Evict the first NON-pending live entry so pendingCount([name]) never
       // loses track of long-running actions.
       for (let i = _head; i < log.length; i++) {
         const entry = log[i];
@@ -237,7 +237,7 @@ export function recentLog(): readonly ActionInstance[] {
 }
 
 /** O(1) check: true if at least one instance of the named action is
- *  currently pending. Prefer over `pendingFor(name).length > 0` when
+ *  currently pending. Prefer over `pendingCount([name]) > 0` when
  *  you only need the boolean (avoids allocating the result array). */
 export function isPending(name: string): boolean {
   const s = pendingByName.get(name);
@@ -268,21 +268,6 @@ export function pendingCount(names?: readonly string[]): number {
     if (s !== undefined) total += s.size;
   }
   return total;
-}
-
-/** @internal Test-only: snapshot of pending instances for a given action
- *  name. Not exported from `index.ts` — registry-correctness tests use
- *  this to verify the per-name pending index. Production code uses
- *  `pendingCount` or `bindLoadingState` instead. */
-export function pendingFor(name: string): readonly ActionInstance[] {
-  const ids = pendingByName.get(name);
-  if (ids === undefined || ids.size === 0) return [];
-  const result: ActionInstance[] = [];
-  for (const id of ids) {
-    const entry = idMap.get(id);
-    if (entry !== undefined) result.push(entry.instance);
-  }
-  return result;
 }
 
 /** Test-only: clear log + listeners. */

@@ -9,7 +9,6 @@
 //   - classifyFetchError: normalize fetch catch-block errors (used by action
 //                         defs that call fetch directly)
 //   - retryNetwork      : preset classifier — network/timeout/transient HTTP
-//   - retryAlways       : preset classifier — any error except cancellation
 //
 // Internal:
 //   - toActionError: coerce thrown values into ActionErrorLike (used by define.ts)
@@ -131,10 +130,10 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
 }
 
 // ---------------------------------------------------------------------------
-// Retry classifier presets.
+// Retry classifier preset.
 //
-// Action defs pass one of these (or a custom function) as `retryable`.
-// The presets only encode framework concepts — they do NOT know about
+// Action defs pass a function (or this preset) as `retryable`.
+// The preset only encodes framework concepts — it does NOT know about
 // app-specific permanent codes. App-aware filtering is composable:
 //
 //   import { retryNetwork } from "./actions/index.js";
@@ -143,6 +142,9 @@ export function classifyFetchError(e: unknown, signal: AbortSignal): ActionError
 //     retryable: (err) => !PERMANENT.has(err.code ?? "") && retryNetwork(err),
 //     ...
 //   });
+//
+// For "retry any error except cancellation", inline the lambda directly:
+//   retryable: (err) => err.code !== "cancelled"
 // ---------------------------------------------------------------------------
 
 /** HTTP statuses that represent transient server-side conditions:
@@ -163,17 +165,4 @@ export function retryNetwork(err: ActionErrorLike): boolean {
   if (err.status === 0) return true;
   if (err.status !== undefined && TRANSIENT_STATUSES.has(err.status)) return true;
   return false;
-}
-
-/**
- * Retry classifier preset: matches any error EXCEPT cancellation.
- *
- * Use this for fully idempotent actions where retrying is always safe.
- * For actions that may throw domain-specific permanent codes (e.g.
- * `send_failed`, `clipboard`), compose a custom classifier:
- *
- *   `retryable: (err) => err.code !== "send_failed" && retryAlways(err)`
- */
-export function retryAlways(err: ActionErrorLike): boolean {
-  return err.code !== "cancelled";
 }

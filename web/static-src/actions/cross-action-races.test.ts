@@ -11,7 +11,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError, retryNetwork, retryAlways } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
@@ -33,7 +33,7 @@ describe("dedupe + retry interaction", () => {
     const action = defineAction<string, string>({
       name: "test.dedupe_retry",
       dedupe: true,
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 50 },
       error: false,
       run: () => {
@@ -110,7 +110,7 @@ describe("dedupe + retry interaction", () => {
     const action = defineAction<string, string>({
       name: "test.dedupe_cleanup",
       dedupe: true,
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },
@@ -349,7 +349,7 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     const retrier = defineAction<void, string>({
       name: "test.retry_cb_order",
       scope: "retry-cb",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 30 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },
@@ -601,7 +601,7 @@ describe("retry + cancel race at success boundary", () => {
     let attempt = 0;
     const action = defineAction<void, string>({
       name: "test.cancel_mid_backoff",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 3, delay: 100 },
       error: false,
       run: () => {
@@ -629,7 +629,7 @@ describe("retry + cancel race at success boundary", () => {
   it("registry records cancelled (not error) when cancel arrives during retry", async () => {
     const action = defineAction<void, string>({
       name: "test.cancel_retry_registry",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 50 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },

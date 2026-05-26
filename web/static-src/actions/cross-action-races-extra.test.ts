@@ -16,7 +16,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError, retryNetwork, retryAlways } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
@@ -115,7 +115,7 @@ describe("optimistic persistence across retries", () => {
 
     const action = defineAction<string, string, string>({
       name: "test.opt_retry_rollback",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 50 },
       error: false,
       optimistic: (args) => `snap-${args}`,
@@ -167,7 +167,7 @@ describe("optimistic persistence across retries", () => {
 
     const action = defineAction<void, string>({
       name: "test.opt_once",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
       optimistic: () => { optimisticCount++; return undefined; },
@@ -495,7 +495,7 @@ describe("idempotency key stability across retries", () => {
     const action = defineAction<void, string>({
       name: "test.idem_retry",
       idempotencyKey: true,
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 20 },
       error: false,
       run: (_args, _signal, ctx) => {
@@ -543,12 +543,12 @@ describe("retryable composition (custom permanent codes)", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("'cancelled' code does not retry under retryAlways (framework-level)", async () => {
+  it("'cancelled' code does not retry under app-defined retry-everything-except-cancelled", async () => {
     let attempt = 0;
 
     const action = defineAction<void, string>({
       name: "test.cancelled_no_retry",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 3, delay: 50 },
       error: false,
       run: () => {
@@ -560,13 +560,13 @@ describe("retryable composition (custom permanent codes)", () => {
     const p = action.dispatch();
     await p;
 
-    expect(attempt).toBe(1); // retryAlways excludes cancelled (framework concept)
+    expect(attempt).toBe(1);
   });
 
   it("composed classifier filters app-specific permanent codes", async () => {
     const APP_PERMANENT = new Set(["server_rejected", "send_failed", "clipboard", "unsupported"]);
     const retryAppSafe = (err: { code?: string; status?: number; message: string }): boolean =>
-      !APP_PERMANENT.has(err.code ?? "") && retryAlways(err);
+      !APP_PERMANENT.has(err.code ?? "") && err.code !== "cancelled";
 
     let attempt = 0;
     const action = defineAction<void, string>({
@@ -589,7 +589,7 @@ describe("retryable composition (custom permanent codes)", () => {
   it("composed classifier still retries non-permanent errors", async () => {
     const APP_PERMANENT = new Set(["server_rejected"]);
     const retryAppSafe = (err: { code?: string; status?: number; message: string }): boolean =>
-      !APP_PERMANENT.has(err.code ?? "") && retryAlways(err);
+      !APP_PERMANENT.has(err.code ?? "") && err.code !== "cancelled";
 
     let attempt = 0;
     const action = defineAction<void, string>({
@@ -634,7 +634,7 @@ describe("registry attempts field", () => {
   it("records correct attempts count after retries exhaust", async () => {
     const action = defineAction<void, string>({
       name: "test.attempts_exhaust",
-      retryable: retryAlways,
+      retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 10 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },
