@@ -33,7 +33,7 @@
 // ---------------------------------------------------------------------------
 
 import { error as toastError, success as toastSuccess } from "../toast.js";
-import { toActionError, isRetryableError } from "./error.js";
+import { toActionError } from "./error.js";
 import { record } from "./registry.js";
 import { _registerAction } from "./cleanup.js";
 import type {
@@ -196,6 +196,30 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Wait for the browser to come back online, or for the signal to abort.
+ *  Resolves immediately when navigator.onLine is already true. Used by
+ *  runWithRetry when the action's networkMode is "online" (default) so
+ *  retries pause during connectivity loss instead of burning through the
+ *  retry budget against a dead network. */
+function waitForOnline(signal: AbortSignal): Promise<void> {
+  if (typeof navigator === "undefined" || navigator.onLine) return Promise.resolve();
+  if (signal.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+  return new Promise<void>((resolve, reject) => {
+    const onOnline = (): void => { cleanup(); resolve(); };
+    const onAbort = (): void => { cleanup(); reject(new DOMException("aborted", "AbortError")); };
+    function cleanup(): void {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", onOnline);
+      }
+      signal.removeEventListener("abort", onAbort);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", onOnline, { once: true });
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** Attach attempt count to a thrown error so the catch block in runOnce
  *  can record it in the registry. Uses a non-enumerable property to avoid
  *  polluting serialization. Safe against frozen/sealed objects — silently
@@ -241,7 +265,7 @@ function readAttempts(e: unknown): number | undefined {
  *     await fetch(`/api/chats/${id}`, { method: "DELETE", signal });
  *   },
  *   error: "Couldn't delete chat",
- *   retryable: "network",
+ *   retryable: retryNetwork,
  * });
  * await deleteChat.dispatch(chatId);
  * ```
@@ -527,7 +551,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
           id, name: def.name, status: "error", args,
           dispatchedAt, startedAt, completedAt: Date.now(), error: err,
         });
-        emitErrorToast(args, err, opts);
+        emitErrorToast(args, err);
         if (opts.onError) safeInvoke(def.name, "onError", () => opts.onError!(err, args));
         settle();
         return null;
@@ -606,7 +630,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         }
       }
       if (!cancelled) {
-        emitErrorToast(args, err, opts);
+        emitErrorToast(args, err);
         if (opts.onError) safeInvoke(def.name, "onError", () => opts.onError!(err, args));
       }
       return null;
@@ -618,18 +642,25 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   /** Run with auto-retry on retry-class errors. Each attempt re-runs
    *  def.run() with the same args + signal + ctx. Optimistic does NOT
    *  re-fire — it stays applied across retries (the rollback only
-   *  fires once retries are exhausted). Backoff: delay * factor^attempt,
-   *  capped at 5000ms. Idempotency key in ctx is stable across retries.
+   *  fires once retries are exhausted).
+   *
+   *  Backoff: when `delay` is a number, `delay × factor^(attempt-1)`,
+   *  capped at 5000ms. When `delay` is a function, full control.
+   *
+   *  When `networkMode === "online"` (the default), the retry loop
+   *  awaits `navigator.onLine === true` before each backoff sleep.
+   *  Idempotency key in ctx is stable across retries.
+   *
    *  Returns { result, attempts } where attempts is total run() calls.
    *  On failure, attaches `_attempts` to the thrown error so the caller
    *  can record the count in the registry. */
   async function runWithRetry(args: TArgs, signal: AbortSignal, ctx: ActionContext): Promise<{ result: TResult; attempts: number }> {
     const cfg = def.retry;
     const maxAttempts = (cfg?.count ?? 0) + 1;
-    const baseDelay = cfg?.delay ?? 0;
+    const baseDelay = cfg?.delay;
     const factor = cfg?.factor ?? 2;
+    const networkMode = def.networkMode ?? "online";
     let attempt = 0;
-    let nextDelay = Math.min(baseDelay, 5000);
     while (true) {
       if (signal.aborted) {
         const abortErr = new DOMException("aborted", "AbortError");
@@ -645,10 +676,33 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
         if (attempt >= maxAttempts) { attachAttempts(e, attempt); throw e; }
         const err = toActionError(e);
         if (!shouldRetry(err)) { attachAttempts(e, attempt); throw e; }
-        // Compute delay for backoff; capped at 5s.
-        nextDelay = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
+
+        // Pause until online when networkMode is "online" (default).
+        // Skipped for "always" mode (retry against dead network anyway).
+        if (networkMode === "online") {
+          try {
+            await waitForOnline(signal);
+          } catch {
+            const abortErr = new DOMException("aborted", "AbortError");
+            attachAttempts(abortErr, attempt);
+            throw abortErr;
+          }
+        }
+
+        // Compute delay: function form gets full control; number form
+        // applies exponential backoff capped at 5s.
+        let delayMs: number;
+        if (typeof baseDelay === "function") {
+          try { delayMs = baseDelay(attempt, err); }
+          catch { delayMs = 0; }  // Defensive: bad delay fn → fire immediately
+        } else if (typeof baseDelay === "number") {
+          delayMs = Math.min(baseDelay * Math.pow(factor, attempt - 1), 5000);
+        } else {
+          delayMs = 0;
+        }
+
         try {
-          await sleep(nextDelay, signal);
+          await sleep(delayMs, signal);
         } catch {
           // Sleep was aborted — throw a proper AbortError rather than
           // re-throwing the stale run() error `e`. The caller checks
@@ -663,12 +717,14 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   }
 
   /** True if the error matches the action's `retryable` classifier
-   *  AND so qualifies for auto-retry. Delegates to the shared
-   *  isRetryableError() in error.ts so auto-retry and the manual
-   *  Retry button use identical classification (including transient
-   *  HTTP statuses like 429/503). */
+   *  AND so qualifies for auto-retry. Also gates the manual Retry
+   *  button visibility — the same classifier drives both surfaces.
+   *  Defensive: a classifier that throws is treated as "no retry" so
+   *  a buggy classifier can't keep retrying forever. */
   function shouldRetry(err: ActionErrorLike): boolean {
-    return isRetryableError(err, def.retryable);
+    if (def.retryable === undefined) return false;
+    try { return def.retryable(err); }
+    catch { return false; }
   }
 
   function emitSuccessToast(
@@ -690,7 +746,6 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
   function emitErrorToast(
     args: TArgs,
     err: ActionErrorLike,
-    opts: DispatchOptions<TArgs, TResult>,
   ): void {
     // Errors are user-facing by default; only `error: false` in the
     // definition suppresses, never the silent flag.
@@ -702,9 +757,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
     const retry = buildRetryButton(args, err);
     try {
       let msg: string;
-      if (opts.errorPrefix !== undefined) {
-        msg = `${opts.errorPrefix}: ${err.message}`;
-      } else if (typeof spec === "string") {
+      if (typeof spec === "string") {
         msg = `${spec}: ${err.message}`;
       } else if (typeof spec === "function") {
         msg = spec(args, err);

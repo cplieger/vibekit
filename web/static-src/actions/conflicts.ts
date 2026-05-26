@@ -1,7 +1,7 @@
 // Actions for conflict-resolution user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { defineAction, apiAction, ActionError, classifyFetchError } from "./index.js";
+import { defineAction, apiAction, ActionError, classifyFetchError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { withTimeout } from "../api-client.js";
 import type { Conflict } from "../conflicts.js";
@@ -35,7 +35,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
  *  "Could not load file content for conflict diff". */
 export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   name: "conflicts.open_diff",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: { count: 1, delay: 500 },
   dedupe: true,
   run: async (args, signal) => {
@@ -59,7 +59,7 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
  *  silently so a network hiccup doesn't surface an error toast. */
 export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   name: "conflicts.load",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: (args) => args,
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),

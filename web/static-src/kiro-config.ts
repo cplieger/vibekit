@@ -5,8 +5,7 @@
 
 import { ICON_EDIT } from "./icons.js";
 import { openFile } from "./editor-openers.js";
-import { defineAction } from "./actions/index.js";
-import { ActionError } from "./actions/index.js";
+import { defineAction, ActionError, retryNetwork } from "./actions/index.js";
 import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 
@@ -25,7 +24,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 const loadKiroConfigAction = defineAction<void, { items: KiroConfigItem[] }>({
   name: "settings.load_kiro_config",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: { count: 2, delay: 300 },
   run: async (_args, signal) => {
     const data = await apiGet<{ items: KiroConfigItem[] }>("/api/workspace/kiro-config", signal);

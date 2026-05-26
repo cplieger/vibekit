@@ -305,7 +305,6 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
 const fetchRestorePreviewAction = apiAction<{ chatID: string; tag: string }, { files?: string[] }>({
   name: "checkpoint.preview",
   scope: ({ chatID }) => `chat:${chatID}`,
-  retryable: false,
   request: ({ chatID, tag }) => ({
     method: "GET",
     path: `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`,

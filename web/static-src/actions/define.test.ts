@@ -16,7 +16,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork, retryAlways } from "./error.js";
 import { recentLog, _resetForTest as resetRegistry, subscribe, pendingFor } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
@@ -159,18 +159,6 @@ describe("defineAction — error path", () => {
     });
     await action.dispatch({});
     expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("dispatch({ errorPrefix }) overrides the error prefix", async () => {
-    const action = defineAction({
-      name: "test.fail",
-      run: async () => {
-        throw new ActionError("nope");
-      },
-      error: "Default",
-    });
-    await action.dispatch({}, { errorPrefix: "Per-call" });
-    expect(toast.error).toHaveBeenCalledWith("Per-call: nope", undefined);
   });
 
   it("normalises non-ActionError throws", async () => {
@@ -426,7 +414,7 @@ describe("defineAction — retryable error toast", () => {
     const action = defineAction({
       name: "test.retry_always",
       run: async () => { throw new ActionError("network glitch"); },
-      retryable: "always",
+      retryable: retryAlways,
     });
     await action.dispatch({ id: 1 });
     expect(toast.error).toHaveBeenCalledTimes(1);
@@ -439,7 +427,7 @@ describe("defineAction — retryable error toast", () => {
     const a1 = defineAction({
       name: "test.retry_net_status0",
       run: async () => { throw new ActionError("fetch failed", { status: 0 }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await a1.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeDefined();
@@ -448,7 +436,7 @@ describe("defineAction — retryable error toast", () => {
     const a2 = defineAction({
       name: "test.retry_net_timeout",
       run: async () => { throw new ActionError("Request timed out", { code: "timeout" }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await a2.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeDefined();
@@ -458,7 +446,7 @@ describe("defineAction — retryable error toast", () => {
     const action = defineAction({
       name: "test.retry_net_4xx",
       run: async () => { throw new ActionError("not found", { status: 404 }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await action.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeUndefined();
@@ -482,7 +470,7 @@ describe("defineAction — retryable error toast", () => {
         if (attempts === 1) throw new ActionError("first", { status: 0 });
         return "ok";
       },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     const result = await action.dispatch({ msg: "hello" });
     expect(result).toBeNull();  // first attempt failed
@@ -498,7 +486,7 @@ describe("defineAction — retryable error toast", () => {
       name: "test.retry_no_toast",
       run: async () => { throw new ActionError("silent"); },
       error: false,
-      retryable: "always",
+      retryable: retryAlways,
     });
     await action.dispatch({});
     expect(toast.error).not.toHaveBeenCalled();
@@ -512,7 +500,7 @@ describe("defineAction — retryable error toast", () => {
         lastArgs = args;
         throw new ActionError("fail", { status: 0 });
       },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     const args = { count: 1 };
     await action.dispatch(args);
@@ -536,7 +524,7 @@ describe("defineAction — retryable error toast", () => {
         lastArgs = args;
         throw new ActionError("fail", { status: 0 });
       },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     const args = { el, label: "Save" };
     await action.dispatch(args);

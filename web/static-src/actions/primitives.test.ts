@@ -3,6 +3,7 @@
 // framework: idempotency keys, pendingCount,
 // request deduplication, debouncedDispatch.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { retryNetwork } from "./error.js";
 
 vi.mock("../toast.js", () => ({
   info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
@@ -85,7 +86,7 @@ describe("idempotencyKey", () => {
     const action = apiAction<void, unknown>({
       name: "test.idem.retry",
       idempotencyKey: true,
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 50 },
       request: () => ({ method: "POST", path: "/api/x", body: {} }),
     });

@@ -3,7 +3,7 @@
 // and are intentionally excluded.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
 import type { PRRemoveResult } from "../git-prs-state.js";
@@ -44,7 +44,6 @@ export const mergePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   rollback: rollbackRemovePR,
   error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
   // Not retryable: a timed-out merge may have succeeded server-side.
-  retryable: false,
 });
 
 /** Close a pull request without merging. */
@@ -56,7 +55,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   rollback: rollbackRemovePR,
   error: (args) => `Couldn't close PR #${String(args.pr_number)}`,
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
@@ -77,6 +76,6 @@ export const refreshPRs = defineAction<void, void>({
     }
   },
   error: "Couldn't refresh PRs",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });

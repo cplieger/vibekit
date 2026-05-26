@@ -2,7 +2,7 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { routeForPath } from "../editor-types.js";
@@ -18,7 +18,7 @@ import { routeForPath } from "../editor-types.js";
 export const saveFile = apiAction<{ path: string; content: string }, { ok?: boolean; error?: string }>({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
-  retryable: "network",
+  retryable: retryNetwork,
   request: ({ path, content }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
@@ -51,8 +51,9 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
 /** Apply partial (per-hunk) pending change via transport. */
 export const resolvePendingPartial = transportAction<{ chatID: string; toolCallID: string; mergedText: string }>({
   name: "editor.resolve_partial",
+  networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, toolCallID, mergedText }) => ({
     type: "resolve_pending_change_partial",
@@ -82,7 +83,7 @@ export const fetchAgentLines = apiAction<{ chatID: string; path: string }, { cha
     method: "GET",
     path: `/api/file-changes?chat_id=${encodeURIComponent(chatID)}&path=${encodeURIComponent(path)}`,
   }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: false,
 });
@@ -90,7 +91,7 @@ export const fetchAgentLines = apiAction<{ chatID: string; path: string }, { cha
 /** Fetch git diff sources for the editor diff view. Toast on failure. */
 export const loadDiff = defineAction<{ path: string; repo: string; ref: string }, { oldContent: string; newContent: string; error: string }>({
   name: "editor.load_diff",
-  retryable: "network",
+  retryable: retryNetwork,
   run: async ({ path, repo, ref }, signal) => {
     const { apiGet } = await import("../api-client.js");
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";

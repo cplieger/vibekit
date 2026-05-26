@@ -5,7 +5,7 @@
 // clear pending trust.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
@@ -15,8 +15,8 @@ import { send as transportSend } from "../transport.js";
 
 export const deleteChat = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.delete",
+  networkMode: "always",
   scope: (id) => `chat:${id}`,
-  retryable: false,
   command: (id) => ({ type: "delete_chat", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -41,7 +41,7 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
@@ -66,7 +66,6 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
 export const discardTangent = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
   name: "chat.discard_tangent",
   scope: (id) => `chat:${id}`,
-  retryable: false,
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -91,6 +90,7 @@ export const discardTangent = transportAction<string, { session: import("../type
 
 export const setSupervised = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_supervised",
+  networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
     type: "set_supervised_mode",
@@ -107,7 +107,7 @@ export const setSupervised = transportAction<{ chatID: string; enabled: boolean 
   rollback: ({ chatID }, op) => {
     if (op !== undefined) setSupervisedMode(chatID, op.prev);
   },
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't update supervised mode",
 });
@@ -119,7 +119,7 @@ export const resolveAllPending = transportAction<{ chatID: string; action: "acce
   name: "chat.resolve_all_pending",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, action }) => ({
     type: "resolve_all_pending_changes",
@@ -133,9 +133,10 @@ export const resolveAllPending = transportAction<{ chatID: string; action: "acce
 
 export const trustPending = transportAction<string>({
   name: "chat.trust_pending",
+  networkMode: "always",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't trust pending changes",
 });
@@ -146,7 +147,7 @@ export const clearPendingTrust = transportAction<string>({
   name: "chat.clear_pending_trust",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't clear pending trust",
 });
@@ -171,7 +172,7 @@ export const forkChat = transportAction<{ chatID: string; tangentID: string }, {
   rollback: ({ chatID }, op) => {
     if (op !== undefined) setFrozen(chatID, op.wasFrozen);
   },
-  retryable: "network",
+  retryable: retryNetwork,
   error: "Couldn't fork chat",
 });
 
@@ -186,7 +187,6 @@ export const mergeTangent = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
-  retryable: false,
   error: "Couldn't merge tangent",
 });
 
@@ -210,7 +210,7 @@ export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boo
   rollback: ({ chatID }, op) => {
     if (op !== undefined) storeSetAutoApproveCrew(chatID, op.prev);
   },
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't update auto-approve",
 });
@@ -221,7 +221,7 @@ export const restoreChat = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
   scope: (id) => `chat:${id}`,
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
@@ -239,7 +239,6 @@ export const restoreChat = apiAction<string, { ok: boolean }>({
 export const deleteArchivedChat = apiAction<string, unknown>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
-  retryable: false,
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,
@@ -252,7 +251,7 @@ export const deleteArchivedChat = apiAction<string, unknown>({
 export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
   dedupe: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
@@ -271,7 +270,7 @@ export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: st
 export const cancelTurn = transportAction<string>({
   name: "chat.cancel_turn",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't cancel turn",
 });
@@ -286,7 +285,7 @@ export const cancelTurn = transportAction<string>({
 export const switchModel = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
@@ -396,6 +395,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
 
 export const resolvePendingChange = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_pending_change",
+  networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   command: ({ chatID, toolCallID, action }) => ({
@@ -403,9 +403,10 @@ export const resolvePendingChange = transportAction<{ chatID: string; toolCallID
     chat_id: chatID,
     payload: { tool_call_id: toolCallID, action },
   }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't resolve change",
+  // Args-aware error message: "Failed to accept change" / "Failed to reject change".
+  error: ({ action }) => `Failed to ${action} change`,
 });
 
 // --- chat.respond_permission ---
@@ -419,7 +420,7 @@ export const respondPermission = transportAction<{ chatID: string; requestID: nu
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, requestID, optionID }) => ({
     type: "permission_response",
@@ -440,7 +441,7 @@ export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }
     chat_id: chatID,
     payload: { tag },
   }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't restore checkpoint",
 });

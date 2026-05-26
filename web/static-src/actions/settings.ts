@@ -9,14 +9,14 @@
 // dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 
 // --- Steering save ---
 
 export const saveSteering = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: "settings",
   request: ({ content }) => ({
@@ -31,7 +31,7 @@ export const saveSteering = apiAction<{ content: string }, unknown>({
 
 export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
-  retryable: "network",
+  retryable: retryNetwork,
   request: () => ({ method: "POST", path: "/api/logout" }),
   optimistic: ({ emailEl, stAuthEl }) => {
     const prev = emailEl.textContent ?? "";

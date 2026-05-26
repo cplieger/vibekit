@@ -17,7 +17,7 @@ import { transportAction } from "./transport.js";
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -43,7 +43,7 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
     let attempts = 0;
     const action = defineAction<void, string>({
       name: "test.abort_no_retry",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 3, delay: 100 },
       error: false,
       run: async (_args, signal) => {
@@ -74,7 +74,7 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
     let attempts = 0;
     const action = defineAction<void, string>({
       name: "test.abort_error_no_retry",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 3, delay: 100 },
       error: false,
       run: async (_args, signal) => {

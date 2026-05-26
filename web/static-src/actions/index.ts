@@ -21,7 +21,9 @@ export { apiAction } from "./api.js";
 // classifyFetchError: normalise fetch catch-block errors into ActionError
 // with canonical code (cancelled/timeout/network); used by action defs
 // (conflicts.ts, files.ts) that call fetch directly outside apiAction.
-export { ActionError, hasErrorString, classifyFetchError } from "./error.js";
+// retryNetwork / retryAlways: preset retry classifiers consumed by action
+// defs as the `retryable` field. Custom classifiers compose with these.
+export { ActionError, hasErrorString, classifyFetchError, retryNetwork, retryAlways } from "./error.js";
 
 // Registry surface for non-action consumers:
 //   - subscribeToActions: 4 consumers — mcp-panels (capture per-dispatch

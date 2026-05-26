@@ -1,7 +1,7 @@
 // Actions for git branch operations: checkout, create.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { truncate } from "../strings.js";
 
@@ -24,7 +24,7 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
     path: "/api/git/checkout",
     body: { repo, branch, create },
   }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: (args) => `Couldn't check out \u201c${truncate(args.branch)}\u201d`,
 });

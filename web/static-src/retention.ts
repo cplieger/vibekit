@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { fetchKiroSetting } from "./api-client.js";
-import { defineAction } from "./actions/index.js";
+import { defineAction, retryNetwork } from "./actions/index.js";
 
 let retentionDays = 1;
 const listeners = new Set<() => void>();
@@ -16,7 +16,7 @@ const listeners = new Set<() => void>();
 const refreshRetentionAction = defineAction<void, number>({
   name: "settings.refresh_retention",
   dedupe: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: { count: 2, delay: 300 },
   run: async (_args, signal) => {
     return fetchKiroSetting(

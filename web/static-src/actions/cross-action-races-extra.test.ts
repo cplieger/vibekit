@@ -16,7 +16,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork, retryAlways } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
@@ -115,7 +115,7 @@ describe("optimistic persistence across retries", () => {
 
     const action = defineAction<string, string, string>({
       name: "test.opt_retry_rollback",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 2, delay: 50 },
       error: false,
       optimistic: (args) => `snap-${args}`,
@@ -142,7 +142,7 @@ describe("optimistic persistence across retries", () => {
 
     const action = defineAction<string, string, string>({
       name: "test.opt_retry_success",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 30 },
       optimistic: (args) => `snap-${args}`,
       rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
@@ -167,7 +167,7 @@ describe("optimistic persistence across retries", () => {
 
     const action = defineAction<void, string>({
       name: "test.opt_once",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 1, delay: 20 },
       error: false,
       optimistic: () => { optimisticCount++; return undefined; },
@@ -372,7 +372,7 @@ describe("retry + dedupe + scope triple interaction", () => {
       name: "test.triple",
       dedupe: true,
       scope: "triple",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 1, delay: 40 },
       error: false,
       run: () => {
@@ -405,7 +405,7 @@ describe("retry + dedupe + scope triple interaction", () => {
       name: "test.triple_diff",
       dedupe: true,
       scope: "triple-diff",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 1, delay: 20 },
       run: (args) => {
         order.push(`run-${args}`);
@@ -495,7 +495,7 @@ describe("idempotency key stability across retries", () => {
     const action = defineAction<void, string>({
       name: "test.idem_retry",
       idempotencyKey: true,
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 2, delay: 20 },
       error: false,
       run: (_args, _signal, ctx) => {
@@ -536,19 +536,19 @@ describe("idempotency key stability across retries", () => {
 });
 
 // ===========================================================================
-// 9. Permanent failure codes bypass retry
+// 9. retryable: composition with custom permanent-code filters
 // ===========================================================================
 
-describe("permanent failure codes bypass retry", () => {
+describe("retryable composition (custom permanent codes)", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("'cancelled' code does not retry even with retryable: 'always'", async () => {
+  it("'cancelled' code does not retry under retryAlways (framework-level)", async () => {
     let attempt = 0;
 
     const action = defineAction<void, string>({
-      name: "test.perm_cancelled",
-      retryable: "always",
+      name: "test.cancelled_no_retry",
+      retryable: retryAlways,
       retry: { count: 3, delay: 50 },
       error: false,
       run: () => {
@@ -560,15 +560,18 @@ describe("permanent failure codes bypass retry", () => {
     const p = action.dispatch();
     await p;
 
-    expect(attempt).toBe(1); // no retries
+    expect(attempt).toBe(1); // retryAlways excludes cancelled (framework concept)
   });
 
-  it("'server_rejected' code does not retry", async () => {
-    let attempt = 0;
+  it("composed classifier filters app-specific permanent codes", async () => {
+    const APP_PERMANENT = new Set(["server_rejected", "send_failed", "clipboard", "unsupported"]);
+    const retryAppSafe = (err: { code?: string; status?: number; message: string }): boolean =>
+      !APP_PERMANENT.has(err.code ?? "") && retryAlways(err);
 
+    let attempt = 0;
     const action = defineAction<void, string>({
-      name: "test.perm_rejected",
-      retryable: "always",
+      name: "test.app_perm_rejected",
+      retryable: retryAppSafe,
       retry: { count: 3, delay: 50 },
       error: false,
       run: () => {
@@ -583,24 +586,28 @@ describe("permanent failure codes bypass retry", () => {
     expect(attempt).toBe(1);
   });
 
-  it("'send_failed' code does not retry", async () => {
-    let attempt = 0;
+  it("composed classifier still retries non-permanent errors", async () => {
+    const APP_PERMANENT = new Set(["server_rejected"]);
+    const retryAppSafe = (err: { code?: string; status?: number; message: string }): boolean =>
+      !APP_PERMANENT.has(err.code ?? "") && retryAlways(err);
 
+    let attempt = 0;
     const action = defineAction<void, string>({
-      name: "test.perm_send_failed",
-      retryable: "always",
-      retry: { count: 3, delay: 50 },
+      name: "test.app_perm_validation",
+      retryable: retryAppSafe,
+      retry: { count: 2, delay: 0 },
       error: false,
       run: () => {
         attempt++;
-        throw new ActionError("send failed", { code: "send_failed" });
+        throw new ActionError("transient", { code: "validation" });
       },
     });
 
     const p = action.dispatch();
+    await vi.runAllTimersAsync();
     await p;
 
-    expect(attempt).toBe(1);
+    expect(attempt).toBe(3); // 1 initial + 2 retries
   });
 });
 
@@ -627,7 +634,7 @@ describe("registry attempts field", () => {
   it("records correct attempts count after retries exhaust", async () => {
     const action = defineAction<void, string>({
       name: "test.attempts_exhaust",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 2, delay: 10 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },
@@ -647,7 +654,7 @@ describe("registry attempts field", () => {
     let attempt = 0;
     const action = defineAction<void, string>({
       name: "test.attempts_recover",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 10 },
       run: () => {
         attempt++;

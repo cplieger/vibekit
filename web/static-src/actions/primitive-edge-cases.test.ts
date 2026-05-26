@@ -14,7 +14,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork, retryAlways } from "./error.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
@@ -97,7 +97,7 @@ describe("structuredClone fallback on retry toast", () => {
     const callback = vi.fn();
     const action = defineAction<{ fn: () => void; id: string }, string>({
       name: "test.retry_noncloneable",
-      retryable: "always",
+      retryable: retryAlways,
       run: (args) => {
         attempts++;
         if (attempts === 1) throw new ActionError("fail", { status: 0 });
@@ -132,7 +132,7 @@ describe("structuredClone fallback on retry toast", () => {
 
     const action = defineAction<{ el: Record<string, unknown> }, string>({
       name: "test.retry_circular",
-      retryable: "network",
+      retryable: retryNetwork,
       run: (args) => {
         attempts++;
         if (attempts === 1) throw new ActionError("timeout", { code: "network" });
@@ -309,7 +309,7 @@ describe("abort during retry backoff (signal fires mid-sleep)", () => {
     let attempts = 0;
     const action = defineAction<void, string>({
       name: "test.retry_abort_backoff",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 3, delay: 500 },
       error: false,
       run: () => {
@@ -341,7 +341,7 @@ describe("abort during retry backoff (signal fires mid-sleep)", () => {
     let attempts = 0;
     const action = defineAction<void, string>({
       name: "test.retry_abort_between",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 5, delay: 100 },
       error: false,
       run: () => {

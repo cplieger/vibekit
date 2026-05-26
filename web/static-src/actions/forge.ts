@@ -4,7 +4,7 @@
 // action.dispatch() calls with button progress and aggregate toast.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
@@ -30,7 +30,7 @@ interface SignOutArgs {
 export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   dedupe: true,
-  retryable: "network",
+  retryable: retryNetwork,
   request: () => ({
     method: "POST",
     path: "/api/forges/oauth/github/start",
@@ -44,7 +44,6 @@ export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
  *  retrying would hit 404 and surface a misleading error toast. */
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
-  retryable: false,
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
@@ -58,7 +57,7 @@ export const signOut = apiAction<SignOutArgs, void>({
 export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: ({ url }) => ({
     method: "POST",
@@ -79,7 +78,6 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
   }),
   error: false,
   // Not retryable: a timed-out delete may have succeeded server-side.
-  retryable: false,
 });
 
 // --- PAT connect ---
@@ -95,7 +93,7 @@ interface ConnectPATArgs {
 export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
   name: "forge.connect_pat",
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: ({ kind, host, token }) => ({
     method: "POST",

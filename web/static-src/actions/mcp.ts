@@ -1,7 +1,7 @@
 // MCP actions: user-initiated mutations for the MCP integrations UI.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
 
@@ -36,7 +36,7 @@ interface ToggleArgs {
 
 export const toggleServer = apiAction<ToggleArgs, void, Server>({
   name: "mcp.toggle_server",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
   request: ({ id, enabled }) => ({
@@ -66,7 +66,6 @@ interface DeleteArgs {
 // misleading rollback (re-inserting an already-deleted entry).
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
-  retryable: false,
   scope: (args) => "mcp:" + args.id,
   request: ({ id }) => ({
     method: "DELETE",
@@ -88,7 +87,7 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
 
 export const openEdit = apiAction<string, Server>({
   name: "mcp.open_edit",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: (id) => id,
   request: (id) => ({
@@ -109,7 +108,7 @@ interface SaveArgs {
 export const saveServer = apiAction<SaveArgs, Server>({
   name: "mcp.save_server",
   idempotencyKey: true,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
@@ -128,7 +127,7 @@ interface SearchRegistryArgs {
 
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: (args) => args.q,
   request: ({ q }) => ({

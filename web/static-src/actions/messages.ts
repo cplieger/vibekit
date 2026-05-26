@@ -2,7 +2,7 @@
 // Actions: messages, plan, clipboard (ui.copy_clipboard).
 // ---------------------------------------------------------------------------
 
-import { defineAction, apiAction, ActionError } from "./index.js";
+import { defineAction, apiAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
 import { sendPromptTo } from "../chat-commands.js";
@@ -10,6 +10,7 @@ import { sendPromptTo } from "../chat-commands.js";
 /** Copy text to clipboard with success/error toast. */
 export const copyClipboard = defineAction<string, void>({
   name: "ui.copy_clipboard",
+  networkMode: "always",
   run: async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -31,15 +32,16 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
     body: { error: errorText.slice(0, 2000), context },
   }),
   error: "Couldn't explain error",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
 /** Undo a single file edit via checkpoint restore. */
 export const undoEdit = transportAction<{ chatID: string; tag: string; filePath: string }>({
   name: "messages.undo_edit",
+  networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, tag, filePath }) => ({
     type: "undo_edit",
@@ -55,8 +57,9 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
  *  best-effort between calls (checked before sendPromptTo). */
 export const runPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
+  networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
-  retryable: "network",
+  retryable: retryNetwork,
   run: async ({ chatID, content }, signal) => {
     if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);

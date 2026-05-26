@@ -109,31 +109,75 @@ casts needed for typed undo state.
 Auto-retry transient failures BEFORE surfacing the error toast:
 
 ```ts
-import { RETRY_STANDARD } from "./actions/index.js";
+import { RETRY_STANDARD, retryNetwork } from "./actions/index.js";
 
 export const stageFile = apiAction<string, void>({
   name: "git.stage",
   request: (path) => ({ method: "POST", path: "/api/git/stage", body: { path } }),
-  retryable: "network",     // only retry network/timeout/transient HTTP
-  retry: RETRY_STANDARD,    // 2 retries, 300ms initial delay, exponential backoff
+  retryable: retryNetwork,    // classifier function — when to retry
+  retry: RETRY_STANDARD,      // 2 retries, 300ms initial delay, exponential backoff
   error: "Couldn't stage",
 });
 ```
 
-Custom config: `retry: { count: 3, delay: 200, factor: 2 }`. Backoff
-is `delay × factor^attempt`, capped at 5s. Idempotency keys (if set)
+`retryable` accepts a classifier function `(err) => boolean`. The framework
+ships two presets:
+
+- **`retryNetwork`** — retries network/timeout failures (codes `"network"`,
+  `"timeout"`, status `0`) and transient HTTP statuses (408, 429, 502, 503, 504).
+  Always excludes cancellation. Use this for the common "retry transient
+  failures" case.
+- **`retryAlways`** — retries any error except cancellation. Use only for
+  fully idempotent operations.
+
+For domain-specific permanent codes that should never retry (e.g. `send_failed`,
+`clipboard`, `unsupported`), compose your own classifier:
+
+```ts
+const PERMANENT = new Set(["send_failed", "clipboard", "unsupported"]);
+const retrySafe = (err) => !PERMANENT.has(err.code ?? "") && retryNetwork(err);
+```
+
+`retry` config:
+
+```ts
+retry: {
+  count: 2,                           // additional attempts beyond the first
+  delay: 300,                         // ms before each retry, exponential backoff
+  factor: 2,                          // backoff multiplier (default 2)
+}
+
+// Or function form for full control (e.g. respecting Retry-After headers):
+retry: {
+  count: 3,
+  delay: (attempt, err) => {
+    const ra = (err.cause as Response | undefined)?.headers?.get("retry-after");
+    return ra !== null ? parseInt(ra) * 1000 : 1000 * 2 ** attempt;
+  },
+}
+```
+
+Backoff is `delay × factor^(attempt-1)`, capped at 5s. Idempotency keys (if set)
 are stable across retries so the server can dedupe.
 
-`retryable: "network"` retries: codes `"network"`/`"timeout"`,
-`status: 0`, and HTTP `408/429/502/503/504`. Permanent codes
-(`cancelled`, `send_failed`, `clipboard`, `unsupported`,
-`server_rejected`) are never retried.
+When auto-retry exhausts, the error toast also gets a manual Retry button
+(re-dispatches with the original args).
 
-`retryable: "always"` retries any error except permanent codes — use
-only for fully idempotent operations.
+### Network-aware retry
 
-When auto-retry exhausts, the error toast also gets a manual Retry
-button (re-dispatches with the original args).
+By default, the retry loop pauses while the browser is offline (`navigator.onLine === false`)
+and resumes when an `online` event fires (or when the dispatch is cancelled).
+This prevents the framework from burning through retries against a dead network
+and gives a smooth resume when connectivity returns.
+
+```ts
+networkMode: "online"   // default — pause-on-offline
+networkMode: "always"   // retry regardless of network state
+```
+
+The first attempt always runs immediately; only the wait BEFORE retries is
+gated. Set `networkMode: "always"` for actions that target the local origin
+or where offline detection is unreliable.
 
 ## Scope (serialization)
 
@@ -200,11 +244,18 @@ For custom keys: `idempotencyKey: (args) => "clone:" + args.url`.
 ```ts
 await action.dispatch(args, {
   silent: true,                    // suppress success toast
-  errorPrefix: "Per-call prefix",  // override error toast prefix
   onSuccess: (result, args) => {…},
   onError: (err, args) => {…},
   onSettled: (args) => {…},        // success OR error OR cancellation
 });
+```
+
+For per-call message variants, use a function on the action def's
+`error` or `success` field instead — the formatting belongs in the
+action def where args are typed:
+
+```ts
+error: ({ action }) => `Failed to ${action} change`,
 ```
 
 ## Cancellation

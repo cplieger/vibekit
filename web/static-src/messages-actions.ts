@@ -130,10 +130,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
-  void resolvePendingChange.dispatch(
-    { chatID, toolCallID, action },
-    { errorPrefix: `Failed to ${action} change` },
-  );
+  void resolvePendingChange.dispatch({ chatID, toolCallID, action });
 }
 
 /** Locate the tool card whose data-file-path matches `path`. */

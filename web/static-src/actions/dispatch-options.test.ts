@@ -13,7 +13,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
@@ -36,7 +36,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     let attempts = 0;
     const action = defineAction<{ id: string }, string>({
       name: "test.retry_recovers",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 100 },
       run: () => {
         attempts++;
@@ -58,7 +58,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     let attempts = 0;
     const action = defineAction<void, void>({
       name: "test.retry_exhausts",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 50 },
       error: false,
       run: () => {
@@ -79,7 +79,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     let attempts = 0;
     const action = defineAction<void, void>({
       name: "test.retry_skips_4xx",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 3, delay: 50 },
       error: false,
       run: () => {
@@ -97,7 +97,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     const start = Date.now();
     const action = defineAction<void, void>({
       name: "test.retry_backoff",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 100 },
       error: false,
       run: () => {
@@ -120,7 +120,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     const start = Date.now();
     const action = defineAction<void, void>({
       name: "test.retry_linear",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 100, factor: 1 },
       error: false,
       run: () => {
@@ -141,7 +141,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     let attempts = 0;
     const action = defineAction<void, void>({
       name: "test.retry_cancel_mid_backoff",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 5, delay: 1000 },
       error: false,
       run: () => {
@@ -164,7 +164,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     let attempts = 0;
     const action = defineAction<void, string>({
       name: "test.no_auto_retry",
-      retryable: "network",
+      retryable: retryNetwork,
       run: () => {
         attempts++;
         return Promise.reject(new ActionError("fail", { code: "network" }));

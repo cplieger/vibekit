@@ -1,7 +1,7 @@
 // Actions for the file browser: create, delete, rename, upload.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString } from "./index.js";
+import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
@@ -21,7 +21,7 @@ export const createFile = apiAction<CreateArgs, unknown>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
-  retryable: "network",
+  retryable: retryNetwork,
   request: (args) => ({
     method: "POST",
     path: "/api/files/action",
@@ -36,7 +36,7 @@ export const createFolder = apiAction<CreateArgs, unknown>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
-  retryable: "network",
+  retryable: retryNetwork,
   request: (args) => ({
     method: "POST",
     path: "/api/files/action",
@@ -56,7 +56,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
     path: "/api/files/action",
     body: { action: "rename", path: joinPath(dir, original), name: newName },
   }),
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: (args) => `Couldn't rename \u201c${truncate(args.original)}\u201d`,
 });
@@ -76,7 +76,6 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   // items were already deleted server-side. Retrying would re-attempt
   // those deletions, causing 404s or deleting newly-created files with
   // the same name. Caller handles partial failure via loadDir() refresh.
-  retryable: false,
   run: async (args, signal) => {
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(
@@ -143,7 +142,6 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
 
 export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
-  retryable: false, // zip downloads aren't great for retry semantics
   run: async (args, signal) => {
     let r: Response;
     try {

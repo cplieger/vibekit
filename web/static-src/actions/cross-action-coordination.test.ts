@@ -11,7 +11,7 @@ vi.mock("../toast.js", () => ({
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog, isPending } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork, retryAlways } from "./error.js";
 
 beforeEach(() => {
   resetDefine();
@@ -35,7 +35,7 @@ describe("two retry-configured actions in the same scope", () => {
     const actionA = defineAction<void, string>({
       name: "test.scope_retry_A",
       scope: "shared",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 2, delay: 100 },
       error: false,
       run: () => {
@@ -48,7 +48,7 @@ describe("two retry-configured actions in the same scope", () => {
     const actionB = defineAction<void, string>({
       name: "test.scope_retry_B",
       scope: "shared",
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 1, delay: 50 },
       error: false,
       run: () => {
@@ -91,7 +91,7 @@ describe("two retry-configured actions in the same scope", () => {
     const actionA = defineAction<void, string>({
       name: "test.scope_retry_exhaust_A",
       scope: "shared",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 1, delay: 50 },
       error: false,
       run: () => {
@@ -223,7 +223,7 @@ describe("cancellation during retry unblocks queued action", () => {
     const actionA = defineAction<void, string>({
       name: "test.cancel_retry_A",
       scope: "cancel-scope",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 5, delay: 100 },
       error: false,
       run: () => {
@@ -271,7 +271,7 @@ describe("cancellation during retry unblocks queued action", () => {
     const actionA = defineAction<void, string>({
       name: "test.cancel_isolation_A",
       scope: "iso-scope",
-      retryable: "always",
+      retryable: retryAlways,
       retry: { count: 2, delay: 100 },
       error: false,
       run: () => { throw new ActionError("fail", { status: 500 }); },
@@ -325,7 +325,7 @@ describe("retry button re-dispatch respects scope", () => {
     const actionA = defineAction<void, string>({
       name: "test.retry_scope_A",
       scope: "retry-scope",
-      retryable: "always",
+      retryable: retryAlways,
       error: false,
       run: () => {
         attemptA++;

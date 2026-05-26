@@ -68,7 +68,7 @@ import { applyShareTarget } from "./share-target.js";
 import "./handlers/index.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
-import { initConsoleLog, subscribeToActions, pendingCount } from "./actions/index.js";
+import { subscribeToActions, pendingCount } from "./actions/index.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
@@ -166,7 +166,20 @@ function init(): void {
   // Action-framework global: live-log every action error to the
   // browser console so failures are visible in DevTools regardless of
   // toast policy (suppressed-toast actions still get logged).
-  initConsoleLog();
+  // Inlined from a former actions/console-log.ts module — single boot
+  // wiring, not worth a separate module.
+  subscribeToActions((inst) => {
+    if (inst.status !== "error" || inst.error === undefined) return;
+    const meta: string[] = [];
+    if (inst.completedAt !== undefined) meta.push(`${String(inst.completedAt - inst.startedAt)}ms`);
+    if (inst.attempts !== undefined && inst.attempts > 1) meta.push(`${String(inst.attempts)} attempts`);
+    if (inst.error.status !== undefined) meta.push(`HTTP ${String(inst.error.status)}`);
+    if (inst.error.code !== undefined) meta.push(inst.error.code);
+    console.error(
+      `[action] ${inst.name} failed (${meta.join(", ")}): ${inst.error.message}`,
+      inst.error,
+    );
+  });
 
   // Global progress indicator: toggle a CSS class on the 2px top
   // stripe whenever any action is in-flight. Edge-only toggling

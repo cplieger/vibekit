@@ -19,7 +19,7 @@ import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { debouncedDispatch } from "./debounce.js";
 import { transportAction } from "./transport.js";
 import { send as transportSend } from "../transport.js";
-import { ActionError } from "./error.js";
+import { ActionError, retryNetwork } from "./error.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -78,7 +78,7 @@ describe("dedupe + retry interaction", () => {
     const action = defineAction<{ q: string }, string>({
       name: "test.dedupe_retry",
       dedupe: true,
-      retryable: "network",
+      retryable: retryNetwork,
       retry: { count: 1, delay: 50 },
       run: () => {
         attempt++;

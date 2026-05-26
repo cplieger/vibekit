@@ -5,7 +5,7 @@
 // `error` field are surfaced as ActionError so the framework toasts them.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { truncate } from "../strings.js";
 
@@ -29,7 +29,7 @@ export const stage = apiAction<GitRepoFilesArgs, unknown>({
   error: (args) => args.files.length === 1
     ? `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't stage ${String(args.files.length)} files`,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
@@ -42,7 +42,6 @@ export const discard = apiAction<GitRepoFilesArgs, unknown>({
     ? `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't discard ${String(args.files.length)} files`,
   // Destructive: timed-out discard may have succeeded server-side
-  retryable: false,
 });
 
 /** Unstage a file. */
@@ -53,7 +52,7 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown>({
   error: (args) => args.files.length === 1
     ? `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
     : `Couldn't unstage ${String(args.files.length)} files`,
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
@@ -63,7 +62,7 @@ export const pull = apiAction<{ repo: string }, unknown>({
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   success: (args) => args.repo !== "" ? `Pulled ${args.repo}` : "Pulled",
   error: "Pull failed",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
@@ -74,7 +73,6 @@ export const push = apiAction<{ repo: string }, unknown>({
   success: (args) => args.repo !== "" ? `Pushed ${args.repo}` : "Pushed",
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
-  retryable: false,
 });
 
 // TODO: Add idempotencyKey back once the server reads the Idempotency-Key header
@@ -86,7 +84,6 @@ export const stash = apiAction<{ repo: string }, unknown>({
   error: "Stash failed",
   // Not retryable: without server-side idempotency, a timed-out stash that
   // succeeded would create a duplicate stash on retry.
-  retryable: false,
 });
 
 export const stashPop = apiAction<{ repo: string }, unknown>({
@@ -95,7 +92,6 @@ export const stashPop = apiAction<{ repo: string }, unknown>({
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   error: "Stash pop failed",
   // Not retryable: a timed-out stash pop may have succeeded server-side.
-  retryable: false,
 });
 
 export const commit = apiAction<{ repo: string; message: string }, unknown>({
@@ -110,7 +106,6 @@ export const commit = apiAction<{ repo: string; message: string }, unknown>({
   },
   // Not retryable: a timed-out commit may have succeeded server-side;
   // retrying would create a duplicate commit.
-  retryable: false,
 });
 
 export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
@@ -119,6 +114,6 @@ export const generateCommitMessage = apiAction<{ repo: string }, { message?: str
   dedupe: (args) => args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   error: "Couldn't generate commit message",
-  retryable: "network",
+  retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });

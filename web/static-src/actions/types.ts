@@ -81,9 +81,13 @@ export interface ActionContext {
 export interface RetryConfig {
   /** Additional attempts beyond the first (e.g. 2 = up to 3 total). */
   readonly count: number;
-  /** Milliseconds before the first retry. */
-  readonly delay: number;
-  /** Backoff multiplier per retry (default 2). */
+  /** Milliseconds before each retry. Number form: exponential backoff via
+   *  `delay × factor^(attempt-1)`, capped at 5s. Function form: full
+   *  control — receives the attempt number (1-indexed; 1 = first retry)
+   *  and the error that triggered this retry, returns the wait in ms.
+   *  Useful for respecting `Retry-After` headers from 429 responses. */
+  readonly delay: number | ((attempt: number, err: ActionErrorLike) => number);
+  /** Backoff multiplier per retry. Default 2. Ignored when `delay` is a function. */
   readonly factor?: number;
 }
 
@@ -127,34 +131,53 @@ export interface ActionDefinition<TArgs, TResult, TOp = unknown> {
    *  that surface errors via banner or inline). */
   error?: ToastSpec<TArgs, ActionErrorLike>;
 
-  /** When set, the error toast renders a "Retry" button that re-dispatches
-   *  the action with the same args.
+  /** Classify whether an error qualifies for retry. When set, errors
+   *  matching the classifier:
+   *    - Trigger auto-retry (when `retry` is also set), and
+   *    - Render a Retry button on the error toast.
    *
-   *    "network": only show retry for network/timeout failures
-   *               (status === 0 or code === "timeout") — safest default
-   *               since 4xx/5xx may indicate a permanent rejection
-   *               that re-dispatching won't fix.
-   *    "always":  always show retry on error (use only for fully
-   *               idempotent actions).
-   *    false / undefined (default): no retry button.
+   *  When unset (or returns false), errors are surfaced immediately
+   *  with no retry affordance.
    *
-   *  Suppressed when `error: false` (no toast renders at all). */
-  retryable?: "network" | "always" | false;
+   *  The framework provides two presets in `error.js`:
+   *    - `retryNetwork`: network/timeout/transient HTTP statuses
+   *      (408, 429, 502, 503, 504). Excludes cancellation.
+   *    - `retryAlways`: any error except cancellation.
+   *
+   *  For custom logic (e.g. respect a domain-specific permanent-error
+   *  code), pass a function:
+   *    `retryable: (err) => err.code !== "send_failed" && retryNetwork(err)`
+   *
+   *  Suppressed when `error: false` (no toast renders, so no button). */
+  retryable?: (err: ActionErrorLike) => boolean;
 
   /** Auto-retry transient failures BEFORE surfacing the error toast.
-   *  Each attempt re-runs the action's `run()` (NOT optimistic — the
-   *  optimistic mutation persists across retries). Only fires when
-   *  the error matches `retryable`'s classifier ('network' or 'always').
+   *  Each attempt re-runs `run()` (NOT optimistic — the optimistic
+   *  mutation persists across retries). Only fires when `retryable`
+   *  returns true for the error.
    *
-   *  Defaults to no auto-retry (count: 0). When set, errors that the
-   *  retry would catch are silently re-tried up to `count` times with
-   *  exponential backoff (delay × factor^n, capped at 5s) before the
+   *  Defaults to no auto-retry (count: 0). When set, qualifying errors
+   *  are silently re-tried up to `count` times with backoff before the
    *  user sees a toast. The Retry button (if `retryable` is set) still
    *  appears once auto-retry is exhausted.
    *
    *  Example: `retry: { count: 2, delay: 300 }` — total ~900ms latency
    *  budget for transient blips, invisible to the user when successful. */
   retry?: RetryConfig;
+
+  /** Auto-retry behavior when offline. Default `"online"`: retries pause
+   *  while `navigator.onLine === false` and resume on the next `online`
+   *  event (or when the dispatch is cancelled). Prevents the framework
+   *  from burning through retries against a dead network and triggers
+   *  a smooth resumption when connectivity returns.
+   *
+   *  Set to `"always"` to retry regardless of network state — appropriate
+   *  for actions that target the local origin or where offline detection
+   *  is unreliable.
+   *
+   *  Note: this only gates the WAIT before each retry. The first attempt
+   *  always runs immediately so that fast-path successes aren't delayed. */
+  networkMode?: "online" | "always";
 
   /** When two dispatches share the same scope, the second waits for
    *  the first to finish (success / error / cancel) before its
@@ -231,8 +254,6 @@ export interface Action<TArgs, TResult> {
 export interface DispatchOptions<TArgs = unknown, TResult = unknown> {
   /** Suppress the success toast for this call. Errors still toast. */
   readonly silent?: boolean;
-  /** Override the error toast prefix for this call. */
-  readonly errorPrefix?: string;
   /** Per-call success callback. Fires after the action-level success
    *  toast (if any). Receives the resolved value. Useful when a
    *  specific callsite needs to react (focus an input, scroll, etc.)
