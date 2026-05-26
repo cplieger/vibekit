@@ -31,7 +31,8 @@ The framework handles:
 - Cancellation via `AbortController`.
 - Action log in the registry for devtools / loading-state queries.
 
-See `web/static-src/actions/README.md` for the full guide.
+See JSDoc in `web/static-src/actions/index.ts` and the action def files
+(`actions/chat.ts`, `actions/files.ts`, etc.) for live examples.
 
 A regression test (`actions/lint.test.ts`) catches new
 `void apiPost(...)` / `void transport.send(...)` calls outside the

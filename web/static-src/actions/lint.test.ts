@@ -20,7 +20,7 @@
 //         exceptions
 //
 // If you're adding a new user-initiated mutation, declare an action
-// in actions/<area>.ts and dispatch it. See actions/README.md.
+// in actions/<area>.ts and dispatch it. See actions/index.ts (or the steering doc).
 // If you're adding a legitimate background poll or cleanup that
 // must remain silent, add the file to the BACKGROUND_ALLOWLIST
 // below with a one-line comment explaining why.
@@ -115,7 +115,7 @@ describe("action framework — regression guard", () => {
     if (violations.length > 0) {
       const message = [
         "User-initiated mutations must go through the actions framework.",
-        "See web/static-src/actions/README.md.",
+        "See web/static-src/actions/index.ts.",
         "If this is a legitimate background poll, add the file to BACKGROUND_ALLOWLIST in actions/lint.test.ts.",
         "",
         "Violations:",
