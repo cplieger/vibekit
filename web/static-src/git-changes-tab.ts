@@ -192,6 +192,15 @@ function paintInner(): void {
 
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
+  // Build per-repo path index for finer pruning of expandedDiffPaths.
+  // Without this, renamed/deleted files leave stale `repo\0path` keys
+  // behind that grow the Set unboundedly over edit cycles.
+  const activePathsByRepo = new Map<string, Set<string>>();
+  for (const r of lastStatusAll) {
+    const paths = new Set<string>();
+    for (const f of r.files) paths.add(f.path);
+    activePathsByRepo.set(r.repo, paths);
+  }
   for (const k of userCollapsedRepos) if (!activeRepos.has(k)) userCollapsedRepos.delete(k);
   for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
   for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
@@ -199,7 +208,11 @@ function paintInner(): void {
     const nulIdx = k.indexOf("\0");
     if (nulIdx === -1) { expandedDiffPaths.delete(k); continue; }
     const repo = k.slice(0, nulIdx);
-    if (!activeRepos.has(repo)) expandedDiffPaths.delete(k);
+    const path = k.slice(nulIdx + 1);
+    const repoPaths = activePathsByRepo.get(repo);
+    if (repoPaths === undefined || !repoPaths.has(path)) {
+      expandedDiffPaths.delete(k);
+    }
   }
 
   // Bug 1: Capture current commit messages before destroying DOM.
@@ -320,7 +333,7 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
       ev.stopPropagation();
       void import("./git-branch-switcher.js").then(({ openBranchSwitcher }) => {
         openBranchSwitcher(r.repo, chip);
-      });
+      }).catch(() => {});
       return;
     }
     const open = section.classList.toggle("expanded");
@@ -426,7 +439,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stageAllBtn);
-  bindingCleanups.push(bindLoadingState("git.stage", stageAllBtn));
+  bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
 
   const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
   discardAllBtn.addEventListener("click", () => {
@@ -453,7 +466,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     })();
   });
   bar.appendChild(discardAllBtn);
-  bindingCleanups.push(bindLoadingState("git.discard", discardAllBtn));
+  bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
 
   const sep = document.createElement("span");
   sep.className = "action-bar-sep";
@@ -468,7 +481,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(pullBtn);
-  bindingCleanups.push(bindLoadingState("git.pull", pullBtn));
+  bindingCleanups.push(bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn));
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
@@ -486,7 +499,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pushBtn);
-    bindingCleanups.push(bindLoadingState("git.push", pushBtn));
+    bindingCleanups.push(bindLoadingState(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn));
   }
 
   const stashBtn = btn("Stash", "Stash uncommitted changes");
@@ -497,7 +510,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stashBtn);
-  bindingCleanups.push(bindLoadingState("git.stash", stashBtn));
+  bindingCleanups.push(bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn));
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
@@ -508,7 +521,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pop);
-    bindingCleanups.push(bindLoadingState("git.stash_pop", pop));
+    bindingCleanups.push(bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop));
   }
 
   return bar;
@@ -836,7 +849,7 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
       const { openNewPRForRepo } = await import("./git-prs-tab.js");
       setGitTab("prs");
       await openNewPRForRepo(r.repo, r.branch);
-    })();
+    })().catch(() => {});
   });
   hint.appendChild(btn);
   return hint;

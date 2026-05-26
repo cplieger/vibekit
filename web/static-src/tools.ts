@@ -6,11 +6,11 @@
 // singleton instance, preserving the existing public API.
 // ---------------------------------------------------------------------------
 
-import { closeModal, RollingOutput } from "./modals.js";
+import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
-import { installTools, saveTools, seedMcp, loadToolsListAction } from "./actions/tools.js";
+import { installTools, saveTools, seedMcp, loadTools as loadToolsAction } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
 
@@ -78,7 +78,7 @@ class ToolsManager {
   private editingTool: { cat: string; name: string } | null = null;
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
-    loadToolsListAction.cancel();
+    loadToolsAction.cancel();
   }
 
   init(): void {
@@ -93,16 +93,21 @@ class ToolsManager {
     });
 
     f.save.addEventListener("click", () => this.saveToolFromModal());
+    const unbindSave = bindLoadingState("tools.save", f.save);
+    const unbindSeed = bindLoadingState("tools.seed_mcp", f.save, { preserveDisabled: true });
+    registerCleanup(unbindSave);
+    registerCleanup(unbindSeed);
   }
 
   loadToolsList(): void {
-    void loadToolsListAction.dispatch(undefined).then((d) => {
-      if (d === null) {
+    void loadToolsAction.dispatch(undefined, {
+      onSuccess: (d) => {
+        this.toolsData = d;
+        this.renderToolsList();
+      },
+      onError: () => {
         $.toolsList.innerHTML = '<div class="list-empty">Failed to load tools</div>';
-        return;
-      }
-      this.toolsData = d;
-      this.renderToolsList();
+      },
     });
   }
 
@@ -169,10 +174,12 @@ class ToolsManager {
     actions.className = "list-row-actions";
     const editBtn = document.createElement("button");
     editBtn.className = "list-row-btn"; editBtn.setAttribute("data-tooltip", "Edit");
+    editBtn.setAttribute("aria-label", `Edit ${name}`);
     editBtn.innerHTML = ICON_EDIT;
     editBtn.addEventListener("click", () => this.openToolModal(sec, name));
     const delBtn = document.createElement("button");
     delBtn.className = "list-row-btn"; delBtn.setAttribute("data-tooltip", "Delete");
+    delBtn.setAttribute("aria-label", `Delete ${name}`);
     delBtn.innerHTML = ICON_CLOSE;
     delBtn.addEventListener("click", () => {
       void (async () => {
@@ -220,7 +227,7 @@ class ToolsManager {
       f.version.value = ""; f.install.value = ""; f.binaries.value = ""; f.pkg.value = "";
     }
     this.updateToolFormVisibility();
-    $.toolModal.classList.remove("hidden");
+    openModal($.toolModal);
   }
 
   private saveToolFromModal(): void {

@@ -14,7 +14,7 @@
 import type { PlanEntry } from "./types.js";
 import { apiPutOrError, apiDelete } from "./api-client.js";
 import { showBanner } from "./banner-stack.js";
-import { runPlanAction } from "./actions/messages.js";
+import { runPlan as runPlanAction } from "./actions/messages.js";
 
 /** Serialize a plan into markdown suitable for the draft file + prompt
  *  body. High-priority items are marked inline so the agent sees them. */

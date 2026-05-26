@@ -5,9 +5,9 @@
 // Fetch calls go through api-client.ts for consistent error handling.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
-import { patchAppSettingsAction } from "./actions/settings.js";
+import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
+import { registerCleanup } from "./actions/index.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -31,6 +31,7 @@ export interface AppSettings {
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
+let patchSnapshot: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchGen = 0;
 let patchResolvers: Array<(r: Record<string, unknown> | null) => void> = [];
@@ -55,6 +56,7 @@ export function initSettingsTracking(s: AppSettings): void {
 export function __testResetTracking(): void {
   lastSentPatch = {};
   patchQueue = {};
+  patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
   if (patchTimer !== undefined) {
@@ -62,6 +64,49 @@ export function __testResetTracking(): void {
     patchTimer = undefined;
   }
 }
+
+/** Flush any pending debounced PATCH immediately (fire-and-forget). */
+function flushPendingPatch(): void {
+  if (Object.keys(patchQueue).length === 0) return;
+  const body = patchQueue;
+  const allInputs = patchInputs;
+  const resolvers = patchResolvers;
+  const rollback = patchSnapshot;
+  patchQueue = {};
+  patchSnapshot = {};
+  patchInputs = [];
+  patchResolvers = [];
+  const gen = ++patchGen;
+  let result: Record<string, unknown> | null = null;
+  void patchAppSettings.dispatch(
+    {
+      body: body as Record<string, unknown>,
+      ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
+    },
+    {
+      silent: true,
+      onSuccess: (r) => {
+        result = r as Record<string, unknown>;
+        if (gen === patchGen) showSaved();
+      },
+      onError: () => {
+        Object.assign(lastSentPatch, rollback);
+        if (gen === patchGen) showError();
+      },
+      onSettled: () => {
+        for (const resolve of resolvers) resolve(result);
+      },
+    },
+  );
+}
+
+registerCleanup(() => {
+  if (patchTimer !== undefined) {
+    clearTimeout(patchTimer);
+    patchTimer = undefined;
+    flushPendingPatch();
+  }
+});
 
 export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<Record<string, unknown> | null> {
   // Filter out keys whose value matches the last-sent value. JSON
@@ -72,6 +117,9 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
   const changed: Partial<AppSettings> = {};
   for (const k of Object.keys(patch) as Array<keyof AppSettings>) {
     if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
+      if (!(k in patchSnapshot)) {
+        Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
+      }
       Object.assign(changed, { [k]: patch[k] });
       Object.assign(lastSentPatch, { [k]: patch[k] });
     }
@@ -93,27 +141,38 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     const body = patchQueue;
     const allInputs = patchInputs;
     const resolvers = patchResolvers;
+    const rollback = patchSnapshot;
     patchQueue = {};
+    patchSnapshot = {};
     patchInputs = [];
     patchResolvers = [];
     const gen = ++patchGen;
-    void patchAppSettingsAction.dispatch(
+    let result: Record<string, unknown> | null = null;
+    void patchAppSettings.dispatch(
       {
         body: body as Record<string, unknown>,
         ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
       },
-      { silent: true },
-    ).then((r) => {
-      if (gen === patchGen) {
-        if (r === null) showError(); else showSaved();
-      }
-      for (const resolve of resolvers) resolve(r as Record<string, unknown> | null);
-    });
+      {
+        silent: true,
+        onSuccess: (r) => {
+          result = r as Record<string, unknown>;
+          if (gen === patchGen) showSaved();
+        },
+        onError: () => {
+          Object.assign(lastSentPatch, rollback);
+          if (gen === patchGen) showError();
+        },
+        onSettled: () => {
+          for (const resolve of resolvers) resolve(result);
+        },
+      },
+    );
   }, 300);
   return p;
 }
 
 export async function loadSettings(): Promise<AppSettings> {
-  const s = await apiGet<AppSettings>("/api/settings");
-  return s ?? {};
+  const s = await loadSettingsAction.dispatch(undefined);
+  return (s as AppSettings) ?? {};
 }

@@ -195,14 +195,18 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   // When skipRepos is true (optimistic updates), skip the local-repos
   // fetch so the caller's in-memory mutation isn't overwritten.
   if (opts.skipRepos !== true) {
-    await Promise.all([
+    const [localNames, reposByForge] = await Promise.all([
       refreshLocalNames(),
       refreshReposByForge(data.forges),
     ]);
+    if (myGen !== renderGen) return;
+    lastLocalNames = localNames;
+    lastReposByForge = reposByForge;
   } else {
-    await refreshReposByForge(data.forges);
+    const reposByForge = await refreshReposByForge(data.forges);
+    if (myGen !== renderGen) return;
+    lastReposByForge = reposByForge;
   }
-  if (myGen !== renderGen) return;
 
   paintForgesData(root, data);
 
@@ -214,13 +218,12 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   }
 }
 
-async function refreshLocalNames(signal?: AbortSignal): Promise<void> {
+async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string>> {
   const r = await apiGet<LocalReposResponse>("/api/git/repos", signal);
-  if (signal?.aborted) return;
-  lastLocalNames = new Set((r?.repos ?? []).filter((n) => n !== "."));
+  return new Set((r?.repos ?? []).filter((n) => n !== "."));
 }
 
-async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSignal): Promise<void> {
+async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSignal): Promise<Record<string, Repo[]>> {
   const map: Record<string, Repo[]> = {};
   await Promise.all(
     forges.filter((f) => f.connected).map(async (f) => {
@@ -231,8 +234,7 @@ async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSign
       map[f.id] = r?.repos ?? [];
     }),
   );
-  if (signal?.aborted) return;
-  lastReposByForge = map;
+  return map;
 }
 
 /** Re-probe every connected account in parallel; on completion, re-fetch
@@ -243,6 +245,7 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
   revalidateController?.abort();
   revalidateController = new AbortController();
   const signal = revalidateController.signal;
+  const myGen = renderGen;
   await Promise.allSettled(
     ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {}, signal)),
   );
@@ -250,11 +253,14 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
   if (data != null && document.body.contains(root)) {
-    await Promise.all([
+    const [localNames, reposByForge] = await Promise.all([
       refreshLocalNames(signal),
       refreshReposByForge(data.forges, signal),
     ]);
     if (signal.aborted) return;
+    if (myGen !== renderGen) return;
+    lastLocalNames = localNames;
+    lastReposByForge = reposByForge;
     // Defer re-paint if a forge slot is open (user is mid-interaction).
     if (root.querySelector("[data-forge-slot][data-mode]") !== null) {
       pendingRevalidate = { root, data };
@@ -600,11 +606,9 @@ async function cloneRepo(url: string): Promise<void> {
   if (url === "") throw new Error("no clone URL");
   const res = await cloneRepoAction.dispatch({ url });
   if (res === null) {
-    toastError("Couldn't clone repo");
     throw new Error("clone failed");
   }
   if (res.error !== undefined && res.error !== "") {
-    toastError(`Couldn't clone repo: ${res.error}`);
     throw new Error(res.error);
   }
   await renderForgesPanel({ revalidate: false });
@@ -659,16 +663,11 @@ async function deleteAllForAccount(
   if (!ok) return;
 
   let done = 0;
-  let failed = 0;
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
     const res = await deleteLocalAction.dispatch({ repoName: repo.name });
-    if (res === null) { failed++; }
-    else if (res.error !== undefined && res.error !== "") { failed++; }
+    void res; // framework toasts on failure
     done++;
-  }
-  if (failed > 0) {
-    toastError(`Delete failed for ${String(failed)} of ${String(candidates.length)} repos`);
   }
   await renderForgesPanel({ revalidate: false });
 }
@@ -692,7 +691,6 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
     lastLocalNames.add(repo.name);
     await renderForgesPanel({ revalidate: false });
     const msg = res?.error ?? "Couldn't remove local repo";
-    toastError(msg);
     throw new Error(msg);
   }
   // Success: full re-render to sync from server truth.
@@ -799,7 +797,7 @@ async function startGitHubDeviceFlow(host: HTMLElement): Promise<void> {
   }
   pollStopped = false;
   setStatus(host, "Contacting GitHub…");
-  const start = await startDeviceFlow.dispatch({});
+  const start = await startDeviceFlow.dispatch(undefined);
   if (start === null) {
     setStatus(host, "Failed to start device flow.", "err");
     return;
@@ -1029,11 +1027,4 @@ function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""
   div.className = `forge-card-status ${kind}`;
   div.textContent = text;
   host.appendChild(div);
-}
-
-/** Public entry point: initialize the forge connection panel.
- *  Alias for renderForgesPanel — kept under this name because
- *  settings.ts imports it that way at boot. */
-export function initForgeAuth(): Promise<void> {
-  return renderForgesPanel();
 }

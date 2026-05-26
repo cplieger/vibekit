@@ -22,12 +22,14 @@ import { send as transportSend } from "../transport.js";
 import { transportAction } from "./transport.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
 });
 
 const testAction = () =>
@@ -86,5 +88,26 @@ describe("transportAction error classification", () => {
     await promise;
     const log = recentLog();
     expect(log[0]?.status).toBe("cancelled");
+  });
+});
+
+describe("transportAction frozen command (FF1 fix)", () => {
+  it("dispatching with a frozen command object does NOT throw", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const frozenCmd = Object.freeze({ type: "cancel" as const, chat_id: "c1" });
+    const action = transportAction<void>({
+      name: "test.frozen_cmd",
+      idempotencyKey: true,
+      command: () => frozenCmd,
+      error: "Frozen failed",
+    });
+    // Should not throw — the spread operator creates a new object
+    // rather than mutating the frozen original.
+    await action.dispatch(undefined);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const sent = mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } };
+    expect(sent.payload?.idempotency_key).toEqual(expect.any(String));
+    // Original frozen object must remain unchanged
+    expect(frozenCmd).not.toHaveProperty("payload");
   });
 });

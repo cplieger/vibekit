@@ -75,17 +75,20 @@ function makeCopyButton(text: string): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "code-act-btn";
   btn.setAttribute("data-tooltip", "Copy");
+  btn.setAttribute("aria-label", "Copy");
   btn.replaceChildren(iconEl(ICON_COPY));
   let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
     void import("./actions/messages.js").then(({ copyClipboard }) =>
-      copyClipboard.dispatch(text, { silent: true }).then((r) => {
-        if (r === null) return;
-        btn.textContent = "✓";
-        clearTimeout(timer);
-        timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+      copyClipboard.dispatch(text, {
+        silent: true,
+        onSuccess: () => {
+          btn.textContent = "✓";
+          clearTimeout(timer);
+          timer = setTimeout(() => { btn.replaceChildren(iconEl(ICON_COPY)); }, 1500);
+        },
       }),
-    );
+    ).catch(() => {});
   });
   return btn;
 }
@@ -96,9 +99,11 @@ function makeRunButton(text: string): HTMLButtonElement {
   btn.replaceChildren(iconEl(ICON_PLAY));
   if (shellRunCb === null) {
     btn.setAttribute("data-tooltip", "Shell not available");
+    btn.setAttribute("aria-label", "Shell not available");
     btn.disabled = true;
   } else {
     btn.setAttribute("data-tooltip", "Run in shell");
+    btn.setAttribute("aria-label", "Run in shell");
     btn.addEventListener("click", () => { shellRunCb?.(text.trim()); });
   }
   return btn;

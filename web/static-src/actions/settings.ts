@@ -9,15 +9,16 @@
 // dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
-import { asOp } from "./op.js";
-import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
+import { apiAction, retryNetwork } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 
 // --- Steering save ---
 
-export const saveSteeringAction = apiAction<{ content: string }, unknown>({
+export const saveSteering = apiAction<{ content: string }, unknown>({
   name: "settings.save_steering",
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  scope: "settings",
   request: ({ content }) => ({
     method: "PUT",
     path: "/api/steering",
@@ -28,32 +29,20 @@ export const saveSteeringAction = apiAction<{ content: string }, unknown>({
 
 // --- Logout ---
 
-export const logoutAction = defineAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown>({
+export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
   name: "settings.logout",
-  // Null-checks on emailEl/stAuthEl aren't needed: optimistic runs synchronously
-  // with dispatch, so DOM refs are guaranteed valid at call time.
+  retryable: retryNetwork,
+  request: () => ({ method: "POST", path: "/api/logout" }),
   optimistic: ({ emailEl, stAuthEl }) => {
     const prev = emailEl.textContent ?? "";
     emailEl.textContent = "";
     stAuthEl.textContent = "not signed in";
     return prev;
   },
-  // run() intentionally ignores args — DOM refs are only for optimistic/rollback.
-  // The framework passes the full args object; we destructure to nothing.
-  run: async (_args, signal) => {
-    const r = await fetch("/api/logout", { method: "POST", signal: withTimeout(signal, API_TIMEOUT_MS) });
-    if (!r.ok) {
-      const body = await r.text().catch(() => "");
-      let msg = `HTTP ${String(r.status)}`;
-      try { const j = JSON.parse(body) as { error?: string }; if (j.error !== undefined && j.error !== "") msg = j.error; } catch { /* */ }
-      throw new ActionError(msg, { status: r.status });
-    }
-    return {};
-  },
   rollback: ({ emailEl, stAuthEl }, op) => {
-    const prev = op as string;
-    emailEl.textContent = prev;
-    stAuthEl.textContent = prev !== "" ? "signed in" : "not signed in";
+    if (op === undefined) return;
+    emailEl.textContent = op;
+    stAuthEl.textContent = op !== "" ? "signed in" : "not signed in";
   },
   error: "Couldn't log out",
 });
@@ -75,8 +64,9 @@ interface KiroSettingOp {
   prevValue?: string;
 }
 
-export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
+export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
   name: "settings.set_kiro_setting",
+  scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
   // settings saves are user-initiated (cheap to redo manually).
   request: ({ key, value }) => ({
@@ -84,7 +74,7 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  optimistic: ({ input, previousValue }): KiroSettingOp => {
+  optimistic: ({ input, previousValue }) => {
     if (input.type === "checkbox") {
       return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
     }
@@ -94,15 +84,25 @@ export const setKiroSettingAction = apiAction<KiroSettingArgs, unknown>({
     return { prevValue: previousValue ?? input.defaultValue };
   },
   rollback: ({ input }, op) => {
-    const o = asOp<KiroSettingOp>(op);
-    if (o === undefined) return;
-    if (o.prevChecked !== undefined) {
-      input.checked = o.prevChecked;
-    } else if (o.prevValue !== undefined) {
-      input.value = o.prevValue;
+    if (op === undefined) return;
+    if (op.prevChecked !== undefined) {
+      input.checked = op.prevChecked;
+    } else if (op.prevValue !== undefined) {
+      input.value = op.prevValue;
     }
   },
   error: "Couldn't save setting",
+});
+
+// --- Load settings (deduped fetch for SSE-triggered reconcile) ---
+
+export const loadSettings = apiAction<void, Record<string, unknown>>({
+  name: "settings.load",
+  dedupe: true,
+  retryable: retryNetwork,
+  request: () => ({ method: "GET", path: "/api/settings" }),
+  error: false,
+  success: false,
 });
 
 // --- Patch app settings (debug_logs, etc.) ---
@@ -119,8 +119,9 @@ interface PatchAppOp {
   inputs: { el: HTMLInputElement; prevChecked: boolean; prevValue: string }[];
 }
 
-export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
+export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
   name: "settings.patch",
+  scope: "settings",
   // Not retryable: args contain DOM refs that become stale on retry, and
   // settings saves are user-initiated (cheap to redo manually).
   request: ({ body }) => ({
@@ -128,7 +129,7 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     path: "/api/settings",
     body,
   }),
-  optimistic: ({ inputs }): PatchAppOp => {
+  optimistic: ({ inputs }) => {
     const list = inputs ?? [];
     return {
       inputs: list.map((el) => ({
@@ -139,9 +140,8 @@ export const patchAppSettingsAction = apiAction<PatchAppArgs, unknown>({
     };
   },
   rollback: (_args, op) => {
-    const o = asOp<PatchAppOp>(op);
-    if (o === undefined) return;
-    for (const { el, prevChecked, prevValue } of o.inputs) {
+    if (op === undefined) return;
+    for (const { el, prevChecked, prevValue } of op.inputs) {
       if (el.type === "checkbox") {
         el.checked = prevChecked;
       } else {

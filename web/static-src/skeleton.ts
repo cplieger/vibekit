@@ -44,25 +44,6 @@ export function chatSkeleton(): HTMLDivElement {
   return wrap;
 }
 
-/** Build a skeleton for the git panel (branch bar + file rows). */
-export function gitSkeleton(): HTMLDivElement {
-  const wrap = document.createElement("div");
-  wrap.className = "skeleton-git-group";
-  wrap.setAttribute("aria-hidden", "true");
-  const bar = document.createElement("div");
-  bar.className = "skeleton skeleton-git-row";
-  bar.style.width = "60%";
-  wrap.appendChild(bar);
-  const widths = ["75%", "60%", "85%", "55%"];
-  for (let i = 0; i < 4; i++) {
-    const row = document.createElement("div");
-    row.className = "skeleton skeleton-git-row";
-    row.style.width = widths[i]!;
-    wrap.appendChild(row);
-  }
-  return wrap;
-}
-
 /** Build a small skeleton for the "loading more" indicator at the top of messages. */
 export function loadMoreSkeleton(): HTMLDivElement {
   const wrap = document.createElement("div");

@@ -314,6 +314,7 @@ function showView(tab: TabSpec): void {
 
 function renderDOM(): void {
   const list = $.tabList;
+  if (!list.hasAttribute("role")) list.setAttribute("role", "tablist");
 
   const existing = new Map<string, HTMLElement>();
   for (const el of [...list.children]) {
@@ -424,15 +425,17 @@ function attachTabInteraction(el: HTMLElement, id: string): void {
         closeTab(id);
         break;
       case "ArrowDown":
+      case "ArrowRight":
       case "ArrowUp":
+      case "ArrowLeft":
       case "Home":
       case "End": {
         e.preventDefault();
         const tabs = [...(el.parentElement?.children ?? [])] as HTMLElement[];
         const i = tabs.indexOf(el);
         let target: HTMLElement | undefined;
-        if (e.key === "ArrowDown") target = tabs[i + 1];
-        else if (e.key === "ArrowUp") target = tabs[i - 1];
+        if (e.key === "ArrowDown" || e.key === "ArrowRight") target = tabs[i + 1] ?? tabs[0];
+        else if (e.key === "ArrowUp" || e.key === "ArrowLeft") target = tabs[i - 1] ?? tabs[tabs.length - 1];
         else if (e.key === "Home") target = tabs[0];
         else target = tabs[tabs.length - 1];
         target?.focus();

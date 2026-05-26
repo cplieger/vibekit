@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { pendingFor } from "./actions/index.js";
+import { hasErrorString } from "./actions/index.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -22,23 +22,14 @@ export interface UploadOptions {
 
 // NOTE: Only one upload at a time is supported. The progress bar is a
 // singleton DOM element shared across browser upload and chat drop.
-// Concurrent uploads would corrupt the progress display. Callers should
-// check pendingFor('files.upload').length > 0 before dispatching.
+// Concurrent uploads would corrupt the progress display. Serialization
+// is enforced by scope: "upload" on the action definition, which queues
+// subsequent dispatches until the current upload completes.
 
 export function uploadFiles(opts: UploadOptions): void {
   // If already cancelled, bail out before showing any progress UI.
   if (opts.signal?.aborted) {
     opts.onError?.("Upload cancelled");
-    return;
-  }
-
-  // > 1 because the current dispatch is already recorded as pending by the
-  // framework before run() executes; we only reject if a *different* upload
-  // is also in flight. This relies on the action framework incrementing the
-  // pending count synchronously before invoking run(), which is guaranteed
-  // by defineAction's dispatch implementation.
-  if (pendingFor("files.upload").length > 1) {
-    opts.onError?.("Another upload is already in progress");
     return;
   }
 
@@ -52,6 +43,11 @@ export function uploadFiles(opts: UploadOptions): void {
   const cancelBtn = $.uploadProgressCancel;
 
   progress.classList.remove("upload-closed");
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", "0");
+  progress.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
   fill.style.width = "0%";
   label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
 
@@ -77,6 +73,7 @@ export function uploadFiles(opts: UploadOptions): void {
       const pct = Math.round((e.loaded / e.total) * 100);
       fill.style.width = `${String(pct)}%`;
       label.textContent = `Uploading... ${String(pct)}%`;
+      progress.setAttribute("aria-valuenow", String(pct));
     }
   });
   xhr.addEventListener("load", () => {
@@ -105,8 +102,8 @@ export function uploadFiles(opts: UploadOptions): void {
     } else {
       let msg = `Upload failed (${String(xhr.status)})`;
       try {
-        const body = JSON.parse(xhr.responseText) as { error?: string };
-        if (typeof body.error === "string") msg = body.error;
+        const body: unknown = JSON.parse(xhr.responseText);
+        if (hasErrorString(body)) msg = body.error;
       } catch { /* ignore */ }
       label.textContent = msg;
       setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);

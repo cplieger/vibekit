@@ -153,12 +153,23 @@ func stderrAttr(stderr *bytes.Buffer) []any {
 // goroutine. Ownership transfers atomically: after the go statement,
 // the reap goroutine is the sole owner of ctx cancellation, cmd.Wait,
 // stderrBuf reads, and the waitDone close.
+//
+// stdoutDone is closed by the scanner goroutine after it finishes
+// reading the stdout pipe (URL found, scanner error, or EOF). The reap
+// goroutine waits on this channel before calling cmd.Wait — per Go's
+// exec.Cmd docs, "it is incorrect to call Wait before all reads from
+// the pipe have completed" because Wait closes the pipe and races a
+// concurrent reader. Without this gate, fast-exiting subprocesses
+// (e.g. tests using a `cat + exit` fake CLI on a slow CI runner)
+// could see Wait close the pipe before the scanner reads anything,
+// surfacing as `read |0: file already closed` errors.
 type loginReap struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	cmd       *exec.Cmd
-	stderrBuf *bytes.Buffer
-	waitDone  chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cmd        *exec.Cmd
+	stderrBuf  *bytes.Buffer
+	stdoutDone <-chan struct{}
+	waitDone   chan struct{}
 }
 
 // lineRing holds the first N and last N lines pushed into it, capping

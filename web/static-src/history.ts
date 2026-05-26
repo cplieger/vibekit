@@ -3,7 +3,7 @@
 // History table opened from the toolbar (#history-btn). Restoring a chat
 // loads its messages into a new tab. Deletion is permanent (server-side).
 //
-// Uses loadHistoryAction / deleteArchivedChatAction from actions/chat.ts
+// Uses loadHistory / deleteArchivedChat from actions/chat.ts
 // for the table view, and raw apiGet for the lightweight sidebar fetch
 // (no toast on failure — sidebar is background UI).
 // ---------------------------------------------------------------------------
@@ -12,8 +12,8 @@ import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH } from "./icons.js";
-import { deleteArchivedChatAction, loadHistoryAction } from "./actions/chat.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
 
 interface ArchivedHeader {
   id: string;
@@ -25,6 +25,7 @@ interface ArchivedHeader {
 class HistoryController {
   private tableAbortController: AbortController | null = null;
   private archivedController: AbortController | null = null;
+  private rowUnbinds: Array<() => void> = [];
 
   init(): void {
     const toggle = document.getElementById("history-toggle");
@@ -43,27 +44,37 @@ class HistoryController {
   }
 
   teardown(): void {
-    loadHistoryAction.cancel();
+    loadHistory.cancel();
     this.tableAbortController?.abort();
     this.tableAbortController = null;
     this.archivedController?.abort();
     this.archivedController = null;
+    for (const u of this.rowUnbinds) u();
+    this.rowUnbinds = [];
   }
 
   async loadHistoryTable(): Promise<void> {
     const container = document.getElementById("history-table");
     if (container === null) return;
     container.replaceChildren();
+    for (const u of this.rowUnbinds) u();
+    this.rowUnbinds = [];
 
-    loadHistoryAction.cancel();
+    loadHistory.cancel();
     this.tableAbortController?.abort();
     this.tableAbortController = new AbortController();
     const { signal } = this.tableAbortController;
 
-    const d = await loadHistoryAction.dispatch(undefined);
+    const d = await loadHistory.dispatch(undefined);
     if (signal.aborted) return;
     // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
-    if (d === null) return;
+    if (d === null) {
+      const err = document.createElement("div");
+      err.className = "list-empty";
+      err.textContent = "Failed to load history. Check your connection and try again.";
+      container.appendChild(err);
+      return;
+    }
     const chats = d.chats ?? [];
     if (chats.length === 0) {
       const empty = document.createElement("div");
@@ -107,6 +118,7 @@ class HistoryController {
       delBtn.innerHTML = ICON_TRASH;
 
       row.append(nameWrap, date, delBtn);
+      this.rowUnbinds.push(bindLoadingState("chat.delete_archived", delBtn));
       container.appendChild(row);
     }
 
@@ -132,7 +144,7 @@ class HistoryController {
           empty.textContent = "No archived chats.";
           container.appendChild(empty);
         }
-        void deleteArchivedChatAction.dispatch(chatId);
+        void deleteArchivedChat.dispatch(chatId);
       }
     }, { signal });
   }

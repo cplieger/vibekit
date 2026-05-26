@@ -11,8 +11,7 @@
 
 import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
-import { registerCleanup } from "./actions/cleanup.js";
-import { bindLoadingState } from "./actions/index.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
@@ -33,15 +32,16 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   }
   closePopover();
   activeAnchor = anchorEl;
+  anchorEl.setAttribute("aria-expanded", "true");
 
   const pop = document.createElement("div");
   pop.className = "git-branch-popover";
   pop.setAttribute("role", "menu");
   pop.innerHTML = `
-    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off">
-    <div class="git-branch-popover-list" role="none">Loading…</div>
+    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off" aria-label="Filter branches">
+    <div class="git-branch-popover-list" role="group" aria-label="Branches">Loading…</div>
     <form class="git-branch-popover-create">
-      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off">
+      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off" aria-label="New branch name">
     </form>
   `;
   document.body.appendChild(pop);
@@ -79,7 +79,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
         row.textContent = b.name;
         if (b.current) row.setAttribute("data-tooltip", "Current branch");
         row.addEventListener("click", () => {
-          void doCheckout(repo, b.name, false).finally(() => closePopover());
+          void doCheckout(repo, b.name, false);
         });
         list.appendChild(row);
         popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", row));
@@ -95,13 +95,15 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     e.preventDefault();
     const name = createInput.value.trim();
     if (name === "") return;
-    void doCheckout(repo, name, true).finally(() => closePopover());
+    void doCheckout(repo, name, true);
   });
+  popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
 
-  // Close on outside click + Escape.
+  // Close on outside click + Escape + arrow nav.
   setTimeout(() => {
     document.addEventListener("click", outsideClickHandler);
     document.addEventListener("keydown", escapeHandler);
+    document.addEventListener("keydown", arrowNavHandler);
   }, 0);
 }
 
@@ -117,7 +119,13 @@ function closePopover(): void {
   activeAnchor = null;
   document.removeEventListener("click", outsideClickHandler);
   document.removeEventListener("keydown", escapeHandler);
-  savedAnchor?.focus();
+  document.removeEventListener("keydown", arrowNavHandler);
+  // Guard against focus on a detached element (anchor may have been
+  // removed from the DOM during the request, e.g. git tab re-rendered).
+  if (savedAnchor?.isConnected === true) {
+    savedAnchor.setAttribute("aria-expanded", "false");
+    savedAnchor.focus();
+  }
 }
 
 function outsideClickHandler(e: MouseEvent): void {
@@ -131,6 +139,19 @@ function outsideClickHandler(e: MouseEvent): void {
 
 function escapeHandler(e: KeyboardEvent): void {
   if (e.key === "Escape") closePopover();
+}
+
+function arrowNavHandler(e: KeyboardEvent): void {
+  if (openPopover === null) return;
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...openPopover.querySelectorAll<HTMLButtonElement>(".git-branch-popover-row")];
+  if (rows.length === 0) return;
+  e.preventDefault();
+  const current = rows.indexOf(document.activeElement as HTMLButtonElement);
+  let next: number;
+  if (e.key === "ArrowDown") next = current < rows.length - 1 ? current + 1 : 0;
+  else next = current > 0 ? current - 1 : rows.length - 1;
+  rows[next]!.focus();
 }
 
 function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
@@ -154,11 +175,29 @@ function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {
+  // Capture anchor + optimistic state in the closure (not in action args)
+  // so structuredClone-on-retry never sees the DOM element. The action
+  // is purely data-driven; UI mutation is the caller's responsibility.
   const anchor = activeAnchor;
-  const res = await checkoutBranch.dispatch(
-    anchor ? { repo, branch, create, anchorEl: anchor } : { repo, branch, create },
+  const prevText = anchor?.textContent ?? "";
+  if (anchor !== null) {
+    anchor.textContent = branch;
+  }
+  await checkoutBranch.dispatch(
+    { repo, branch, create },
+    {
+      onSuccess: () => {
+        void import("./git-changes-tab.js")
+          .then((m) => m.refreshChanges())
+          .catch((e) => console.error("[git-branch] refresh import failed", e));
+      },
+      onError: () => {
+        // Restore the previous label if the anchor is still in the DOM.
+        if (anchor?.isConnected === true) {
+          anchor.textContent = prevText;
+        }
+      },
+      onSettled: () => closePopover(),
+    },
   );
-  if (res === null) return; // toast already fired
-  const { refreshChanges } = await import("./git-changes-tab.js");
-  void refreshChanges();
 }

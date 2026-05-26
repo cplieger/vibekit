@@ -193,6 +193,8 @@ function buildHeader(
 
   const toggle = document.createElement("button");
   toggle.className = "tool-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-label", "Toggle tool details");
   toggle.innerHTML = ICON_CHEVRON_DOWN;
   header.appendChild(toggle);
 
@@ -237,9 +239,11 @@ function wireToggle(el: HTMLElement): void {
     if (d.classList.contains("collapsed")) {
       d.classList.remove("collapsed");
       b.innerHTML = ICON_CHEVRON_UP;
+      b.setAttribute("aria-expanded", "true");
     } else {
       d.classList.add("collapsed");
       b.innerHTML = ICON_CHEVRON_DOWN;
+      b.setAttribute("aria-expanded", "false");
       setUserScrolledUp(true);
     }
   });

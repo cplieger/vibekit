@@ -2,7 +2,7 @@
 // cleanup hooks. Wired to window.beforeunload so navigation away
 // from the page (or tab close) aborts everything cleanly.
 //
-// Cleanup hooks must be idempotent. cancelAllPending is allowed to fire
+// Cleanup hooks must be idempotent. Cancellation is allowed to fire
 // multiple times (e.g., cancelled navigation followed by confirmed
 // navigation). Aborting an already-aborted controller is a no-op by spec;
 // ensure your hook has equivalent semantics.
@@ -16,32 +16,39 @@
 //      msgControllers in store.ts, browserFetchHolder in files.ts,
 //      pollGitHubDevice timer chain) call registerCleanup(fn) at
 //      init time. The fn is invoked on global cleanup.
-//
-// Test-only: cancelAllPending() is exported so tests can invoke it
-// directly without dispatching a beforeunload event. _resetForTest
-// clears the registries.
 // ---------------------------------------------------------------------------
 
 import type { Action } from "./types.js";
 
-const trackedActions = new Set<Action<unknown, unknown>>();
+/** Minimal shape needed for cleanup — avoids variance-unsafe casts.
+ *  cancel() here means "abort in-flight requests for this action",
+ *  not "perform a domain-level cancel operation". */
+interface Cancellable {
+  readonly name: string;
+  cancel(): void;
+}
+
+const trackedActions = new Set<Cancellable>();
 const cleanupHooks = new Set<() => void>();
 let beforeunloadInstalled = false;
 
 /** Internal: register an Action so cancelAllPending() can iterate it.
  *  Called from defineAction(); not part of the public API. */
 export function _registerAction<TArgs, TResult>(action: Action<TArgs, TResult>): void {
-  trackedActions.add(action as Action<unknown, unknown>);
+  trackedActions.add(action);
   installBeforeunloadOnce();
 }
 
-/** Register a cleanup function to run on page unload (or test invoke).
- *  Use this for raw fetch controllers, timer chains, polling loops,
- *  or any in-flight work outside the action framework that should
- *  abort on navigation.
+/**
+ * Register a cleanup function to run on page unload (or test invoke).
+ * Use this for raw fetch controllers, timer chains, polling loops,
+ * or any in-flight work outside the action framework that should
+ * abort on navigation.
  *
- *  Returns an unregister function so a module that re-initializes can
- *  detach its old hook. */
+ * @param fn - Idempotent teardown callback (abort controllers, clear timers).
+ * @returns An unregister function; call it when the module re-initializes
+ *   to detach the stale hook.
+ */
 export function registerCleanup(fn: () => void): () => void {
   cleanupHooks.add(fn);
   installBeforeunloadOnce();
@@ -50,9 +57,12 @@ export function registerCleanup(fn: () => void): () => void {
 
 /** Cancel every in-flight action + run every cleanup hook. Errors from
  *  individual hooks are caught + logged; one bad hook does not stop
- *  the rest from running. */
-export function cancelAllPending(): void {
-  for (const action of [...trackedActions]) {
+ *  the rest from running. Internal — invoked by the beforeunload handler
+ *  installed via installBeforeunloadOnce(). */
+function cancelAllPending(): void {
+  // trackedActions is safe to iterate directly: action.cancel() does
+  // not modify the Set (only _registerAction adds, _resetForTest clears).
+  for (const action of trackedActions) {
     try {
       action.cancel();
     } catch (e) {
@@ -70,6 +80,9 @@ export function cancelAllPending(): void {
   }
 }
 
+/** Install the beforeunload listener exactly once. Called lazily on
+ *  first action registration or cleanup hook registration. Uses
+ *  beforeunload (not pagehide) so abort fires before navigation. */
 function installBeforeunloadOnce(): void {
   if (beforeunloadInstalled) return;
   beforeunloadInstalled = true;
@@ -79,6 +92,11 @@ function installBeforeunloadOnce(): void {
     // aborted client-side. pagehide is fired too late on most browsers.
     window.addEventListener("beforeunload", cancelAllPending);
   }
+}
+
+/** Test-only: invoke the same cleanup logic that beforeunload runs. */
+export function _cancelAllForTest(): void {
+  cancelAllPending();
 }
 
 /** Test-only: clear both registries + uninstall the listener. */

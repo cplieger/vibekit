@@ -3,7 +3,7 @@
 // overflow "⋯" trigger. No new dependencies — pure DOM and a single
 // outside-click + Escape handler.
 //
-// TODO: Wire into git toolbar — currently only imported by its own test.
+// TODO(git-toolbar): Wire into git toolbar — currently only imported by tests.
 //
 // Items are passed in declaratively so different surfaces can share
 // the component (today: git toolbar; future: repo-picker row menu,
@@ -41,6 +41,7 @@ export function openOverflowMenu(
   const root = document.createElement("div");
   root.className = "overflow-menu";
   root.setAttribute("role", "menu");
+  root.setAttribute("aria-label", "Actions");
 
   for (const item of items) {
     const btn = document.createElement("button");
@@ -109,6 +110,7 @@ export function openOverflowMenu(
 
   document.addEventListener("scroll", onScrollOrResize, true);
   window.addEventListener("resize", onScrollOrResize);
+  trigger.setAttribute("aria-haspopup", "menu");
   trigger.setAttribute("aria-expanded", "true");
 
   const cleanup = (): void => {
@@ -136,6 +138,7 @@ export function closeOverflowMenu(): void {
   const o = opened;
   opened = null;
   o.cleanup();
+  o.trigger.focus();
 }
 
 /** Test seam: report whether a menu is currently open. */

@@ -13,9 +13,8 @@
 
 import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
-import { apiGet } from "./api-client.js";
 import type { AvailableCommand } from "./types.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { apiAction, debouncedDispatch, registerCleanup, subscribeToActions } from "./actions/index.js";
 
 interface OptionEntry {
   label: string;
@@ -35,6 +34,40 @@ interface PopoverRowOpts {
 }
 
 // ---------------------------------------------------------------------------
+// Stage-2 fetch action: debounced option lookup for arg completion.
+// ---------------------------------------------------------------------------
+
+interface FetchOptionsArgs {
+  chatID: string;
+  command: string;
+  partial: string;
+}
+
+interface FetchOptionsResult {
+  options: OptionEntry[];
+}
+
+const fetchOptionsAction = apiAction<FetchOptionsArgs, FetchOptionsResult>({
+  name: "commands.fetchOptions",
+  request: ({ chatID, command, partial }) => ({
+    method: "GET",
+    path: `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
+      + `&command=${encodeURIComponent(command)}`
+      + `&partial=${encodeURIComponent(partial)}`,
+  }),
+  error: false,
+  dedupe: (args) => args.chatID + ":" + args.command + ":" + args.partial,
+});
+
+const debouncedFetch = debouncedDispatch(fetchOptionsAction, { wait: 150 });
+
+// Tracks the most-recently-scheduled fetch key so the subscribeToActions
+// listener can discard out-of-order resolutions. Without this, an older
+// slow fetch (e.g. for partial='a') resolving after a newer one (partial='ab')
+// could render its stale results, overwriting correct options for 'ab'.
+let lastDispatchedKey: string | null = null;
+
+// ---------------------------------------------------------------------------
 // CommandsMenuController — encapsulates the popover lifecycle state.
 // ---------------------------------------------------------------------------
 
@@ -42,8 +75,6 @@ class CommandsMenuController {
   private popover: HTMLDivElement | null = null;
   private isOpen = false;
   private selectedIndex = 0;
-  private optionsTimer: ReturnType<typeof setTimeout> | undefined;
-  private optionsAbort: AbortController | undefined;
   private cachedItems: PopoverItem[] = [];
   private blurTimer: ReturnType<typeof setTimeout> | undefined;
   /** Tracks whether the popover is showing stage-2 (arg completion). */
@@ -65,13 +96,13 @@ class CommandsMenuController {
       const val = input.value;
       if (!val.startsWith("/")) {
         this.closePopover();
-        this.cancelOptions();
+        debouncedFetch.cancel();
         return;
       }
       const spaceIdx = val.indexOf(" ");
       if (spaceIdx === -1) {
         // Stage 1: command picker.
-        this.cancelOptions();
+        debouncedFetch.cancel();
         this.openPopover(val);
       } else {
         // Stage 2: arg completion.
@@ -83,6 +114,18 @@ class CommandsMenuController {
     });
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
+      // Flush pending debounce on Enter even if popover hasn't opened yet,
+      // but ONLY if the current input is still in stage-2 format. If the
+      // user typed `/cmd arg` then deleted back to `/cmd`, the pending
+      // debounce holds stale args — flushing them would render irrelevant
+      // options. Cancel instead in that case.
+      if (e.key === "Enter" && !this.isOpen && debouncedFetch.isPending()) {
+        if (input.value.indexOf(" ") === -1) {
+          debouncedFetch.cancel();
+        } else {
+          debouncedFetch.flush();
+        }
+      }
       if (!this.isOpen) return;
       const items = this.cachedItems;
       switch (e.key) {
@@ -116,7 +159,7 @@ class CommandsMenuController {
           e.stopPropagation();
           e.stopImmediatePropagation();
           this.closePopover();
-          this.cancelOptions();
+          this.cancelLoad();
           break;
       }
     });
@@ -124,7 +167,7 @@ class CommandsMenuController {
     input.addEventListener("focus", () => { this.clearBlurTimer(); });
 
     input.addEventListener("blur", () => {
-      this.blurTimer = setTimeout(() => { this.closePopover(); this.cancelOptions(); }, 120);
+      this.blurTimer = setTimeout(() => { this.closePopover(); this.cancelLoad(); }, 120);
     });
   }
 
@@ -138,43 +181,32 @@ class CommandsMenuController {
   // --- Stage 2: arg completion ---
 
   private scheduleOptions(command: string, partial: string): void {
-    this.cancelOptions();
-    this.optionsTimer = setTimeout(() => {
-      void this.fetchOptions(command, partial);
-    }, 150);
-  }
-
-  private cancelOptions(): void {
-    if (this.optionsTimer !== undefined) {
-      clearTimeout(this.optionsTimer);
-      this.optionsTimer = undefined;
-    }
-    if (this.optionsAbort !== undefined) {
-      this.optionsAbort.abort();
-      this.optionsAbort = undefined;
-    }
+    const chatID = getActiveId();
+    if (chatID === "") return;
+    // Abort any prior in-flight fetch so out-of-order resolution
+    // can't render stale results into the popover after the user
+    // typed further. The debounce coalesces rapid same-character
+    // typing within 150ms; this aborts at the action layer.
+    fetchOptionsAction.cancel();
+    lastDispatchedKey = chatID + "::" + command + "::" + partial;
+    debouncedFetch({ chatID, command, partial });
   }
 
   /** Public hook for global cleanup. */
-  cancelLoad(): void { this.cancelOptions(); }
+  cancelLoad(): void { debouncedFetch.cancel(); fetchOptionsAction.cancel(); }
 
-  private async fetchOptions(command: string, partial: string): Promise<void> {
+  /**
+   * Called by the action's onSuccess callback to render options.
+   * Kept as a method so the controller instance is accessible.
+   */
+  showOptions(command: string, options: OptionEntry[]): void {
     const chatID = getActiveId();
     if (chatID === "") return;
-    this.optionsAbort = new AbortController();
-    const myCtrl = this.optionsAbort;
-    const signal = AbortSignal.any([myCtrl.signal, AbortSignal.timeout(5000)]);
-    const url = `/api/slash/options?chat_id=${encodeURIComponent(chatID)}`
-      + `&command=${encodeURIComponent(command)}`
-      + `&partial=${encodeURIComponent(partial)}`;
-    const d = await apiGet<{ options: OptionEntry[] }>(url, signal);
-    if (myCtrl !== this.optionsAbort) return; // stale
-    if (chatID !== getActiveId()) return;
-    if (d === null || !Array.isArray(d.options) || d.options.length === 0) {
+    if (options.length === 0) {
       this.closePopover();
       return;
     }
-    this.openOptionsPopover(command, d.options);
+    this.openOptionsPopover(command, options);
   }
 
   private openOptionsPopover(command: string, options: OptionEntry[]): void {
@@ -188,6 +220,7 @@ class CommandsMenuController {
       description: opt.description ?? "",
     }));
     this.popover.classList.remove("hidden");
+    $.promptInput.setAttribute("aria-expanded", "true");
     this.popover.setAttribute("aria-label", `Options for ${command}`);
     this.popover.innerHTML = "";
     options.forEach((opt, i) => {
@@ -234,6 +267,7 @@ class CommandsMenuController {
     this.stage2Command = null;
     this.cachedItems = items;
     this.popover.classList.remove("hidden");
+    $.promptInput.setAttribute("aria-expanded", "true");
     this.popover.innerHTML = "";
     items.forEach((cmd, i) => {
       const opts: PopoverRowOpts = {
@@ -244,6 +278,7 @@ class CommandsMenuController {
       };
       if (cmd.isPrompt === true) opts.badge = "prompt";
       const row = buildPopoverRow(opts);
+      row.id = `cmd-opt-${i}`;
       this.popover?.appendChild(row);
     });
     this.renderSelection();
@@ -261,7 +296,17 @@ class CommandsMenuController {
   private renderSelection(): void {
     if (this.popover === null) return;
     const rows = this.popover.querySelectorAll<HTMLButtonElement>(".commands-popover-row");
-    rows.forEach((r, i) => r.classList.toggle("selected", i === this.selectedIndex));
+    let activeId = "";
+    rows.forEach((r, i) => {
+      const selected = i === this.selectedIndex;
+      r.classList.toggle("selected", selected);
+      r.setAttribute("aria-selected", String(selected));
+      if (selected) activeId = r.id || `cmd-opt-${i}`;
+    });
+    // Communicate active option to screen readers via aria-activedescendant.
+    if (activeId !== "") {
+      $.promptInput.setAttribute("aria-activedescendant", activeId);
+    }
   }
 
   private closePopover(): void {
@@ -270,6 +315,8 @@ class CommandsMenuController {
     this.isOpen = false;
     this.cachedItems = [];
     this.stage2Command = null;
+    $.promptInput.removeAttribute("aria-activedescendant");
+    $.promptInput.setAttribute("aria-expanded", "false");
   }
 
   private filterAll(filter: string): PopoverItem[] {
@@ -336,6 +383,32 @@ function buildPopoverRow(opts: PopoverRowOpts): HTMLButtonElement {
 
 const controller = new CommandsMenuController();
 registerCleanup(() => controller.cancelLoad());
+
+subscribeToActions((instance) => {
+  if (instance.name !== "commands.fetchOptions" || instance.status !== "success") return;
+  const args = instance.args as FetchOptionsArgs;
+  const result = instance.result as FetchOptionsResult | undefined;
+  if (args.chatID !== getActiveId()) return;
+  // Exact-match guard: only the MOST-RECENTLY-dispatched key is valid.
+  // An older slow fetch resolving after a newer one is silently discarded.
+  const argsKey = args.chatID + "::" + args.command + "::" + args.partial;
+  if (argsKey !== lastDispatchedKey) return;
+  // Stale-input guard: also verify the input hasn't changed since dispatch.
+  // Without this, a result for "/cmd a" arriving after the user backspaced
+  // to "/cmd" would still render (lastDispatchedKey would still match if
+  // no further dispatch was scheduled). The cancelLoad() in blur/Escape
+  // typically catches this, but defense-in-depth.
+  const currentVal = $.promptInput.value;
+  const spaceIdx = currentVal.indexOf(" ");
+  if (spaceIdx === -1) return;
+  const currentCommand = currentVal.slice(0, spaceIdx);
+  const currentPartial = currentVal.slice(spaceIdx + 1);
+  if (args.command !== currentCommand || args.partial !== currentPartial) return;
+  // showOptions handles the empty case by closing the popover.
+  const options = result?.options ?? [];
+  if (!Array.isArray(options)) return;
+  controller.showOptions(args.command, options);
+});
 
 export function initCommandsMenu(): void {
   controller.init();

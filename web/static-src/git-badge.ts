@@ -27,9 +27,10 @@
 // which is fine: it gets refreshed on every navigation.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
+import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
+import { registerCleanup } from "./actions/index.js";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -62,6 +63,7 @@ export function initGitBadge(): void {
   onSSE("turn_ended", () => { void refreshGitBadge(); });
   onSSE("forges_changed", () => { void refreshGitBadge(); });
   pollTimer = setInterval(() => { void refreshGitBadge(); }, POLL_INTERVAL_MS);
+  registerCleanup(() => { clearInterval(pollTimer); pollTimer = undefined; });
   // First paint ASAP.
   void refreshGitBadge();
 }
@@ -69,10 +71,9 @@ export function initGitBadge(): void {
 /** Recompute the badge state from current server data. Safe to call
  *  often — coalesces by short-circuiting if nothing visible changed. */
 export async function refreshGitBadge(): Promise<void> {
-  const [statusRes, forgesRes] = await Promise.all([
-    apiGet<StatusAllResponse>("/api/git/status-all").catch(() => null),
-    apiGet<ForgesListResponse>("/api/forges").catch(() => null),
-  ]);
+  const result = await refreshGitBadgeAction.dispatch(undefined);
+  const statusRes = result?.status ?? null;
+  const forgesRes = result?.forges ?? null;
 
   const state = deriveState(statusRes, forgesRes);
   const tooltip = deriveTooltip(state, statusRes, forgesRes);
@@ -80,7 +81,7 @@ export async function refreshGitBadge(): Promise<void> {
 }
 
 /** @internal Pure derivation for testing. */
-export function deriveState(
+function deriveState(
   status: StatusAllResponse | null,
   forges: ForgesListResponse | null,
 ): BadgeState {
@@ -110,7 +111,7 @@ export function deriveState(
 }
 
 /** @internal Tooltip text derived from the same data. */
-export function deriveTooltip(
+function deriveTooltip(
   state: BadgeState,
   status: StatusAllResponse | null,
   forges: ForgesListResponse | null,
@@ -161,16 +162,4 @@ function applyBadge(state: BadgeState, tooltip: string): void {
   // "Toggle git" label.
   const btn = el.parentElement;
   if (btn !== null) btn.setAttribute("data-tooltip", tooltip);
-}
-
-/** @internal Test helpers — direct state inspection without DOM. */
-export function __testCurrentState(): BadgeState { return lastState; }
-export function __testCurrentTooltip(): string { return lastTooltip; }
-export function __testReset(): void {
-  if (pollTimer !== undefined) {
-    clearInterval(pollTimer);
-    pollTimer = undefined;
-  }
-  lastState = "none";
-  lastTooltip = "";
 }

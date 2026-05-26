@@ -19,14 +19,16 @@ vi.mock("./store.js", () => ({
   get: () => ({ pending_changes: [{ tool_call_id: "tc1", path: "foo.ts", kind: "edit" }] }),
 }));
 
-const mockDispatch = vi.fn();
+const { mockDispatch, mockPartialDispatch } = vi.hoisted(() => ({
+  mockDispatch: vi.fn(),
+  mockPartialDispatch: vi.fn(),
+}));
 vi.mock("./actions/chat.js", () => ({
-  resolvePendingChangeAction: { dispatch: (...args: unknown[]) => mockDispatch(...args) },
+  resolvePendingChange: { dispatch: mockDispatch },
 }));
 
-const mockPartialDispatch = vi.fn();
 vi.mock("./actions/editor.js", () => ({
-  resolvePendingPartial: { dispatch: (...args: unknown[]) => mockPartialDispatch(...args) },
+  resolvePendingPartial: { dispatch: mockPartialDispatch },
 }));
 
 vi.mock("./actions/index.js", () => ({
@@ -138,7 +140,7 @@ describe("resolveActivePending", () => {
   it("disables buttons during dispatch via bindLoadingState", async () => {
     // The function calls bindLoadingState which returns an unbind.
     // We verify dispatch is called with the correct args.
-    const { fileStates, getActiveFilePath } = await import("./editor-types.js");
+    const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
     fileStates.set(path, makeState([]) as any);
     (fileStates.get(path) as any).path = path;
@@ -149,7 +151,10 @@ describe("resolveActivePending", () => {
     const { resolveActivePending } = await import("./editor-pending.js");
     await resolveActivePending("accept");
 
-    expect(mockDispatch).toHaveBeenCalledWith({ chatID: "chat1", toolCallID: "tc1", action: "accept" });
+    expect(mockDispatch).toHaveBeenCalledWith(
+      { chatID: "chat1", toolCallID: "tc1", action: "accept" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onSettled: expect.any(Function) }),
+    );
   });
 
   it("closes tab on success", async () => {

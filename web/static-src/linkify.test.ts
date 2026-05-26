@@ -146,13 +146,13 @@ describe("PATH_RX property-based tests", () => {
         while ((m = PATH_RX.exec(input)) !== null) matches.push(m);
         // If any match captures exactly our path, the lookahead failed to reject
         // (the suffix char should prevent matching at that exact boundary)
+        let violated = false;
         for (const match of matches) {
-          if (match.index === 1) {
-            // Match started at our path position — it should NOT end exactly at path end
-            // because the lookahead char would block it
-            expect(match[1]).not.toBe(path);
+          if (match.index === 1 && match[1] === path) {
+            violated = true;
           }
         }
+        expect(violated).toBe(false);
       }),
       { numRuns: 200 },
     );

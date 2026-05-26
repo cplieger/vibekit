@@ -68,6 +68,9 @@ export function confirm(
     if (d.open) d.close();
     d.showModal();
     const release = trapFocus(d);
+    // WAI-ARIA alertdialog: focus the least-destructive action so
+    // keyboard users don't accidentally confirm a dangerous operation.
+    if (variant === "destructive") cancelBtn.focus();
     const ac = new AbortController();
     const { signal } = ac;
     prevResolve = resolve;

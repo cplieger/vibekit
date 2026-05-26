@@ -18,8 +18,8 @@ import type { PermissionMode, AppSettings } from "./persist.js";
 import { el } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
-import { registerCleanup } from "./actions/cleanup.js";
-import { addRuleAction, removeRuleAction, type CommandRule } from "./actions/permissions.js";
+import { registerCleanup, bindLoadingState } from "./actions/index.js";
+import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -70,12 +70,17 @@ class PermissionsUIController {
     }
 
     const adder = el("trust-list-add");
+    adder.setAttribute("aria-label", "Add trusted tool");
+    adder.setAttribute("aria-expanded", "false");
     adder.addEventListener("click", () => this.toggleMenu());
 
     const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
       const t = e.target as Node;
-      if (!adder.contains(t) && !menu.contains(t)) menu.classList.add("hidden");
+      if (!adder.contains(t) && !menu.contains(t)) {
+        menu.classList.add("hidden");
+        adder.setAttribute("aria-expanded", "false");
+      }
     });
 
     this.renderEditor();
@@ -116,6 +121,8 @@ class PermissionsUIController {
           submit();
         }
       });
+      registerCleanup(bindLoadingState("permissions.add_rule", addBtn as HTMLButtonElement));
+      registerCleanup(bindLoadingState("permissions.remove_rule", addBtn as HTMLButtonElement, { preserveDisabled: true }));
     }
 
     void this.loadRules();
@@ -165,8 +172,10 @@ class PermissionsUIController {
 
   private toggleMenu(): void {
     const menu = el<HTMLDivElement>("trust-list-menu");
+    const adder = el("trust-list-add");
     if (!menu.classList.contains("hidden")) {
       menu.classList.add("hidden");
+      adder.setAttribute("aria-expanded", "false");
       return;
     }
     menu.replaceChildren();
@@ -180,11 +189,13 @@ class PermissionsUIController {
       item.addEventListener("click", () => {
         this.addTool(name);
         menu.classList.add("hidden");
+        adder.setAttribute("aria-expanded", "false");
       });
       menu.appendChild(item);
     }
 
     menu.classList.remove("hidden");
+    adder.setAttribute("aria-expanded", "true");
   }
 
   // --- Private: command rules ---
@@ -249,13 +260,25 @@ class PermissionsUIController {
 
   private async removeRule(pattern: string): Promise<void> {
     if (!this.commandRules.some((e) => e.pattern === pattern)) return;
-    await removeRuleAction.dispatch({ pattern, rules: this.commandRules, setRules: this.setRules });
+    await removeRule.dispatch({
+      pattern,
+      rules: this.commandRules,
+      setRules: this.setRules,
+      getCurrentRules: () => this.commandRules,
+    });
   }
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
     if (clean === "") return;
-    await addRuleAction.dispatch({ pattern: clean, mode, priority, rules: this.commandRules, setRules: this.setRules });
+    await addRule.dispatch({
+      pattern: clean,
+      mode,
+      priority,
+      rules: this.commandRules,
+      setRules: this.setRules,
+      getCurrentRules: () => this.commandRules,
+    });
   }
 
   // --- Private: agent ignore files ---

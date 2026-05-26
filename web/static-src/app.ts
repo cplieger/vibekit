@@ -65,14 +65,10 @@ import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import { applyShareTarget } from "./share-target.js";
 
-import "./handlers/chat.js";
-import "./handlers/messages.js";
-import "./handlers/turn.js";
+import "./handlers/index.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
-import { cancelTurnAction } from "./actions/chat.js";
-import { initActionConsoleLog } from "./actions/index.js";
-import "./handlers/system.js";
-import "./handlers/pending.js";
+import { cancelTurn } from "./actions/chat.js";
+import { subscribeToActions, pendingCount } from "./actions/index.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
@@ -140,7 +136,7 @@ function init(): void {
   initTangent();
   // Wire toolbar history button. Hidden when retention is 0 (no archive).
   $.historyBtn.addEventListener("click", () => {
-    void import("./history.js").then(({ showHistoryView }) => showHistoryView());
+    void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
   });
   // Sync history button visibility with retention setting.
   const syncHistoryBtn = (): void => {
@@ -170,7 +166,43 @@ function init(): void {
   // Action-framework global: live-log every action error to the
   // browser console so failures are visible in DevTools regardless of
   // toast policy (suppressed-toast actions still get logged).
-  initActionConsoleLog();
+  // Inlined from a former actions/console-log.ts module — single boot
+  // wiring, not worth a separate module.
+  subscribeToActions((inst) => {
+    if (inst.status !== "error" || inst.error === undefined) return;
+    const meta: string[] = [];
+    if (inst.completedAt !== undefined) meta.push(`${String(inst.completedAt - inst.startedAt)}ms`);
+    if (inst.attempts !== undefined && inst.attempts > 1) meta.push(`${String(inst.attempts)} attempts`);
+    if (inst.error.status !== undefined) meta.push(`HTTP ${String(inst.error.status)}`);
+    if (inst.error.code !== undefined) meta.push(inst.error.code);
+    console.error(
+      `[action] ${inst.name} failed (${meta.join(", ")}): ${inst.error.message}`,
+      inst.error,
+    );
+  });
+
+  // Global progress indicator: toggle a CSS class on the 2px top
+  // stripe whenever any action is in-flight. Edge-only toggling
+  // (0→N and N→0) avoids flicker from rapid intermediate changes.
+  // The falling edge is debounced by 200ms so very-fast actions
+  // (0→1→0 within a single frame) still produce a visible flash.
+  const progressEl = document.getElementById("global-progress");
+  if (progressEl !== null) {
+    let wasActive = false;
+    let offTimer: ReturnType<typeof setTimeout> | undefined;
+    subscribeToActions(() => {
+      const active = pendingCount() > 0;
+      if (active !== wasActive) {
+        wasActive = active;
+        if (active) {
+          if (offTimer !== undefined) { clearTimeout(offTimer); offTimer = undefined; }
+          progressEl.classList.add("active");
+        } else {
+          offTimer = setTimeout(() => { offTimer = undefined; progressEl.classList.remove("active"); }, 200);
+        }
+      }
+    });
+  }
 
   void checkAuthAndStart();
 }
@@ -315,7 +347,7 @@ function setupInput(): void {
     // Cancel the active chat's in-flight turn. No-op if nothing running.
     if (getActiveId() === "") return;
     if (!isThinking(getActiveId())) return;
-    void cancelTurnAction.dispatch(getActiveId());
+    void cancelTurn.dispatch(getActiveId());
   });
 
   const doCreate = guardAction(() => {
@@ -381,10 +413,10 @@ function applyRoute(route: Route): void {
       break;
     case "file":     openFile(route.path, route.line); break;
     case "history":
-      void import("./history.js").then(({ showHistoryView }) => showHistoryView());
+      void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
       break;
     case "follow":
-      void import("./follow.js").then(({ showFollowView }) => showFollowView());
+      void import("./follow.js").then(({ showFollowView }) => showFollowView()).catch(() => {});
       break;
   }
 }

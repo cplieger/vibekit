@@ -29,6 +29,22 @@ const X_HTML =
 /** WeakMap to track pending reset timers per button. */
 const resetTimers = new WeakMap<HTMLButtonElement, ReturnType<typeof setTimeout>>();
 
+/** Lazily-created live region for announcing async button outcomes. */
+let liveRegion: HTMLElement | null = null;
+
+function announce(message: string): void {
+  if (liveRegion === null) {
+    liveRegion = document.createElement("span");
+    liveRegion.className = "sr-only";
+    liveRegion.setAttribute("aria-live", "polite");
+    liveRegion.setAttribute("aria-atomic", "true");
+    document.body.appendChild(liveRegion);
+  }
+  // Clear then set to ensure re-announcement of identical messages.
+  liveRegion.textContent = "";
+  setTimeout(() => { liveRegion!.textContent = message; }, 50);
+}
+
 export interface AsyncFeedbackOptions {
   /** Override the post-completion glyph hold (ms). Default 1200. */
   resetMs?: number;
@@ -90,6 +106,7 @@ export async function withAsyncFeedback(
   btn.innerHTML = ok ? CHECK_HTML : X_HTML;
   if (origAriaBusy === null) btn.removeAttribute("aria-busy");
   else btn.setAttribute("aria-busy", origAriaBusy);
+  announce(ok ? "Action completed" : "Action failed");
 
   const reset = opts.resetMs ?? RESET_MS;
   const timerId = setTimeout(() => {

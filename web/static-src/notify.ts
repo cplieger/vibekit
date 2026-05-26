@@ -4,10 +4,9 @@
 // Each device auto-prompts for browser permission when enabled globally.
 // ---------------------------------------------------------------------------
 
-import { apiPost } from "./api-client.js";
 import { isIOS, isStandalone } from "./platform.js";
-import { registerPushAction } from "./actions/notify.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerPush, unsubscribePush } from "./actions/notify.js";
+import { registerCleanup } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
 // NotifyController: owns all notification/push state as instance fields.
@@ -32,7 +31,7 @@ class NotifyController {
 
   /** Public hook for global cleanup. */
   cancelPush(): void {
-    registerPushAction.cancel();
+    registerPush.cancel();
   }
 
   constructor() {
@@ -105,7 +104,7 @@ class NotifyController {
   }
 
   unregisterPush(): void {
-    registerPushAction.cancel();
+    registerPush.cancel();
     this.pushState = { kind: "idle" };
     if (this.swRegistration === null) return;
     const reg = this.swRegistration;
@@ -114,7 +113,7 @@ class NotifyController {
       if (sub === null) return;
       const endpoint = sub.endpoint;
       sub.unsubscribe().catch(() => {});
-      void apiPost("/api/push/unsubscribe", { endpoint });
+      void unsubscribePush.dispatch({ endpoint });
     }).catch(() => {});
     reg.unregister().catch(() => {});
   }
@@ -134,7 +133,7 @@ class NotifyController {
   private async registerPushViaAction(silent = false): Promise<void> {
     if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
     this.pushState = { kind: "registering" };
-    const reg = await registerPushAction.dispatch(undefined, silent ? { silent: true } : undefined);
+    const reg = await registerPush.dispatch(undefined, silent ? { silent: true } : undefined);
     if (reg !== null) {
       this.swRegistration = reg;
       this.pushState = { kind: "registered", registration: reg };

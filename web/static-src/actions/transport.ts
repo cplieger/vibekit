@@ -24,6 +24,7 @@ import { defineAction } from "./define.js";
 import { ActionError } from "./error.js";
 import type {
   Action,
+  ActionContext,
   ActionDefinition,
 } from "./types.js";
 
@@ -31,28 +32,43 @@ import type {
  *  the raw ActionDefinition in that `command` replaces `run`. The
  *  result is `void` because transport.send does not return a payload
  *  (the response arrives later via SSE events). */
-export interface TransportActionDefinition<TArgs>
-  extends Omit<ActionDefinition<TArgs, void>, "run"> {
+interface TransportActionDefinition<TArgs, TOp = unknown>
+  extends Omit<ActionDefinition<TArgs, void, TOp>, "run"> {
   /** Build the typed command (or untyped Command for legacy intents)
    *  for this dispatch. Re-evaluated per-dispatch with current args. */
   command: (args: TArgs) => TypedCommand | Command;
 }
 
-/** Build an Action from a transport.send command descriptor. The run()
- *  implementation calls transport.send and throws ActionError on
- *  !r.ok so the dispatcher's error branch fires consistently. */
-export function transportAction<TArgs>(
-  def: TransportActionDefinition<TArgs>,
+/**
+ * Build an Action from a transport.send command descriptor. The generated
+ * `run()` calls transport.send and throws {@link ActionError} on `!r.ok`,
+ * so the dispatcher's error branch (toast + rollback) fires consistently.
+ *
+ * @param def - Transport action definition where `command` replaces `run`.
+ * @returns An {@link Action} backed by the SSE transport bridge.
+ */
+export function transportAction<TArgs, TOp = unknown>(
+  def: TransportActionDefinition<TArgs, TOp>,
 ): Action<TArgs, void> {
   const { command, ...rest } = def;
-  return defineAction<TArgs, void>({
+  return defineAction<TArgs, void, TOp>({
     ...rest,
-    run: async (args, signal) => {
-      const cmd = command(args);
+    run: async (args, signal, ctx?: ActionContext) => {
+      const raw = command(args);
+      let cmd: TypedCommand | Command;
+      if (ctx?.idempotencyKey !== undefined) {
+        const base: Record<string, unknown> = "payload" in raw && raw.payload != null
+          ? { ...(raw.payload as Record<string, unknown>) }
+          : {};
+        base["idempotency_key"] = ctx.idempotencyKey;
+        cmd = { type: raw.type, ...("chat_id" in raw ? { chat_id: raw.chat_id } : {}), payload: base };
+      } else {
+        cmd = raw;
+      }
       // reportSendState: false — the action framework owns the error
       // surface via toast. Letting transport.send also call
       // setLastError would block the prompt send button for actions
-      // unrelated to prompt sending (e.g. permission_response).
+      // unrelated to prompt sending (e.g. respond_permission).
       const r = await transportSend(cmd, { signal, reportSendState: false });
       if (!r.ok) {
         if (signal.aborted || r.code === "cancelled") {
@@ -64,9 +80,9 @@ export function transportAction<TArgs>(
         if (r.code === "network") {
           throw new ActionError(r.error ?? "network error", { status: r.status, code: "network" });
         }
-        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
-          status: r.status,
-        });
+        const errOpts: { status: number; code?: string } = { status: r.status };
+        if (r.code !== undefined) errOpts.code = r.code;
+        throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
       }
       return undefined;
     },

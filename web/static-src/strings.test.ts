@@ -1,7 +1,7 @@
 // Unit tests for strings.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { escText, escAttr, humanName } from "./strings.js";
+import { escText, escAttr, humanName, truncate } from "./strings.js";
 
 describe("escText", () => {
   it("passes through plain text unchanged", () => {
@@ -139,5 +139,29 @@ describe("escAttr property-based invariants", () => {
       }),
       { numRuns: 500 },
     );
+  });
+});
+
+describe("truncate", () => {
+  it("returns short strings unchanged", () => {
+    expect(truncate("hello")).toBe("hello");
+  });
+
+  it("returns exactly-max-length strings unchanged", () => {
+    const s = "a".repeat(40);
+    expect(truncate(s)).toBe(s);
+  });
+
+  it("truncates strings longer than max with ellipsis", () => {
+    const s = "a".repeat(41);
+    expect(truncate(s)).toBe("a".repeat(37) + "\u2026");
+  });
+
+  it("respects custom max parameter", () => {
+    expect(truncate("abcdefghij", 7)).toBe("abcd\u2026");
+  });
+
+  it("handles empty string", () => {
+    expect(truncate("")).toBe("");
   });
 });

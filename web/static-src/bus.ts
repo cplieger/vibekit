@@ -81,33 +81,61 @@ export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends voi
 
 type AnyHandler = (...args: unknown[]) => void;
 
-const sseHandlers = new Map<string, Set<AnyHandler>>();
-const busHandlers = new Map<string, Set<AnyHandler>>();
+/** Snapshot-cached handler set. Rebuilds the iteration array only when
+ *  the set is mutated (add/delete), not on every dispatch. Preserves
+ *  the guarantee that handlers unsubscribed during iteration still fire
+ *  (they were in the snapshot at dispatch time). */
+interface HandlerSlot {
+  set: Set<AnyHandler>;
+  snapshot: AnyHandler[];
+  dirty: boolean;
+}
+
+function getSlot(map: Map<string, HandlerSlot>, key: string): HandlerSlot {
+  let slot = map.get(key);
+  if (slot === undefined) {
+    slot = { set: new Set(), snapshot: [], dirty: false };
+    map.set(key, slot);
+  }
+  return slot;
+}
+
+function addHandler(map: Map<string, HandlerSlot>, key: string, fn: AnyHandler): () => void {
+  const slot = getSlot(map, key);
+  slot.set.add(fn);
+  slot.dirty = true;
+  return (): void => { slot.set.delete(fn); slot.dirty = true; };
+}
+
+function getSnapshot(slot: HandlerSlot): AnyHandler[] {
+  if (slot.dirty) {
+    slot.snapshot = Array.from(slot.set);
+    slot.dirty = false;
+  }
+  return slot.snapshot;
+}
+
+const sseHandlers = new Map<string, HandlerSlot>();
+const busHandlers = new Map<string, HandlerSlot>();
 
 /** Subscribe to an SSE event with a typed payload. Returns an unsubscribe
  *  function. */
 export function onSSE<K extends keyof SSEPayloads>(
   type: K, fn: SSEHandler<K>,
 ): () => void {
-  let set = sseHandlers.get(type as string);
-  if (set === undefined) {
-    set = new Set();
-    sseHandlers.set(type as string, set);
-  }
-  set.add(fn as AnyHandler);
-  return (): void => { set.delete(fn as AnyHandler); };
+  return addHandler(sseHandlers, type as string, fn as AnyHandler);
 }
 
 /** Route an incoming SSE event to all onSSE handlers registered for its
  *  type. Called by transport.ts when an event arrives. */
 export function dispatch(evt: ServerEvent): void {
-  const set = sseHandlers.get(evt.type);
-  if (set === undefined) return;
+  const slot = sseHandlers.get(evt.type);
+  if (slot === undefined) return;
+  const fns = getSnapshot(slot);
   const chatID = evt.chat_id ?? "";
-  const fns = [...set];
-  for (const fn of fns) {
+  for (let i = 0; i < fns.length; i++) {
     try {
-      fn(chatID, evt.payload);
+      fns[i]!(chatID, evt.payload);
     } catch (e) {
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }
@@ -151,13 +179,7 @@ export type BusHandler<K extends keyof BusPayloads> = BusPayloads[K] extends voi
 export function onBus<K extends keyof BusPayloads>(
   event: K, fn: BusHandler<K>,
 ): () => void {
-  let set = busHandlers.get(event);
-  if (set === undefined) {
-    set = new Set();
-    busHandlers.set(event, set);
-  }
-  set.add(fn as AnyHandler);
-  return (): void => { set.delete(fn as AnyHandler); };
+  return addHandler(busHandlers, event, fn as AnyHandler);
 }
 
 /** Emit a typed bus event. */
@@ -165,12 +187,12 @@ export function emitBus<K extends keyof BusPayloads>(
   ...args: BusPayloads[K] extends void ? [event: K] : [event: K, payload: BusPayloads[K]]
 ): void {
   const [event, ...rest] = args;
-  const set = busHandlers.get(event);
-  if (set === undefined) return;
-  const fns = [...set];
-  for (const fn of fns) {
+  const slot = busHandlers.get(event);
+  if (slot === undefined) return;
+  const fns = getSnapshot(slot);
+  for (let i = 0; i < fns.length; i++) {
     try {
-      fn(...rest);
+      fns[i]!(...rest);
     } catch (e) {
       console.error(`[bus] handler error for "${event}":`, e);
     }

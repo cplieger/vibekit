@@ -7,7 +7,7 @@ import { wireArrowNav } from "./arrow-nav.js";
 
 export type GitTab = "changes" | "prs" | "sources";
 
-export const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
+const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
 
 let activeTab: GitTab = "changes";
 type Listener = (tab: GitTab) => void;

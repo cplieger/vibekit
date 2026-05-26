@@ -21,7 +21,7 @@ import {
   sortEntries, initEditablePath, FetchDirOpts,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { createFile, createFolder, renameFile, deleteFilesBatch, uploadAction, downloadFiles } from "./actions/files.js";
+import { createFile, createFolder, renameFile, deleteFilesBatch, upload, downloadFiles } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
@@ -117,13 +117,15 @@ export function initFileBrowser(): void {
     reload: loadDir,
   });
 
-  // Auto-disable buttons while their respective actions are in flight.
-  bindLoadingState("files.upload", $.fbUpload, { preserveDisabled: true });
-  bindLoadingState("files.create_file", $.fbNewFile, { preserveDisabled: true });
-  bindLoadingState("files.create_folder", $.fbNewFolder, { preserveDisabled: true });
-  bindLoadingState("files.download", $.fbDownload, { preserveDisabled: true });
-  bindLoadingState("files.rename", $.fbRename, { preserveDisabled: true });
-  bindLoadingState("files.delete", $.fbDelete, { preserveDisabled: true });
+  // Auto-disable buttons while any mutually-exclusive file operation is
+  // in flight. Prevents races (e.g. rename + delete on the same selection).
+  const fileOps = ["files.upload", "files.create_file", "files.create_folder", "files.rename", "files.delete"] as const;
+  bindLoadingState(fileOps, $.fbUpload, { preserveDisabled: true });
+  bindLoadingState(fileOps, $.fbNewFile, { preserveDisabled: true });
+  bindLoadingState(fileOps, $.fbNewFolder, { preserveDisabled: true });
+  bindLoadingState(["files.download"], $.fbDownload, { preserveDisabled: true });
+  bindLoadingState(fileOps, $.fbRename, { preserveDisabled: true });
+  bindLoadingState(fileOps, $.fbDelete, { preserveDisabled: true });
 
   // Escape deselects all.
   onBus(BUS_KEYS_ESCAPE, () => {
@@ -166,6 +168,7 @@ export { loadDir as loadFileBrowser };
 // --- Path input ---
 
 function initPathInput(): void {
+  $.fbPath.setAttribute("aria-label", "File browser path");
   initEditablePath($.fbPath, {
     onNavigate: (target) => navigate(target),
     getDisplayPath: () => displayPath(state.currentPath),
@@ -277,6 +280,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
     const sorted = sortEntries(state.entries);
     state.sortedNames = sorted.map((e) => e.name);
 
+    $.fbList.setAttribute("role", "list");
     const frag = document.createDocumentFragment();
     if (state.currentPath !== ".") frag.appendChild(parentRow());
     for (const entry of sorted) frag.appendChild(entryRow(entry));
@@ -328,6 +332,7 @@ function parentRow(): HTMLDivElement {
 function entryRow(entry: FileEntry): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "fb-row";
+  row.setAttribute("role", "listitem");
   row.dataset["name"] = entry.name;
   row.dataset["isDir"] = String(entry.isDir);
 
@@ -404,10 +409,8 @@ function createEntry(action: "touch" | "mkdir", name: string): void {
   void actionFn.dispatch({
     dir: state.currentPath,
     name,
-  }).then(async (r) => {
-    if (r === null) return;
-    await loadDirAsync();
-    startInlineRename(name);
+  }, {
+    onSuccess: () => { void loadDirAsync().then(() => startInlineRename(name)); },
   });
 }
 
@@ -460,16 +463,17 @@ function startInlineRename(targetName: string): void {
     const span = restore(newName !== "" ? newName : original);
     if (newName === "" || newName === original) return;
 
-    void renameFile.dispatch({ dir: state.currentPath, original, newName }).then((r) => {
-      if (r === null) {
+    void renameFile.dispatch({ dir: state.currentPath, original, newName }, {
+      onSuccess: () => {
+        // Reload the directory to rebuild rows with click handlers and
+        // correct sort order (fixes stale handler + sort-after-rename).
+        state.deselectAll();
+        updateActionButtons();
+        loadDir();
+      },
+      onError: () => {
         span.textContent = original;
-        return;
-      }
-      // Reload the directory to rebuild rows with click handlers and
-      // correct sort order (fixes stale handler + sort-after-rename).
-      state.deselectAll();
-      updateActionButtons();
-      loadDir();
+      },
     });
   };
 
@@ -494,14 +498,15 @@ function deleteSelected(): void {
   void (async () => {
     const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
     if (!ok) return;
-    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }).then((r) => {
-      if (r === null) {
+    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }, {
+      onSuccess: () => {
+        state.deselectAll();
+        updateActionButtons();
+        setTimeout(loadDir, 200);
+      },
+      onError: () => {
         loadDir();
-        return;
-      }
-      state.deselectAll();
-      updateActionButtons();
-      setTimeout(loadDir, 200);
+      },
     });
   })();
 }
@@ -534,10 +539,11 @@ function uploadViaDialog(): void {
   input.multiple = true;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
-      void uploadAction.dispatch({ files: input.files, targetDir: state.currentPath }).then((paths) => {
-        if (paths === null) return;
-        loadDir();
-        for (const p of paths) attachPathToActiveChat(p);
+      void upload.dispatch({ files: input.files, targetDir: state.currentPath }, {
+        onSuccess: (paths) => {
+          loadDir();
+          for (const p of paths) attachPathToActiveChat(p);
+        },
       });
     }
   });

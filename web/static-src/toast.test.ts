@@ -31,13 +31,8 @@ function flushRaf(): void {
   vi.advanceTimersByTime(20);
 }
 
-// Simulate the transitionend event used by dismiss() to clean up.
-function endTransitions(): void {
-  for (const t of toasts()) {
-    t.dispatchEvent(new Event("transitionend", { bubbles: true }));
-    Object.defineProperty(new Event("transitionend"), "target", { value: t });
-  }
-}
+// endTransitions helper removed — was unused. If needed in future,
+// dispatch transitionend on each .vk-toast element.
 
 describe("toast — basic rendering", () => {
   it("info creates a toast with vk-toast-info class", async () => {

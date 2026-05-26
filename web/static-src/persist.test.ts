@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
-  apiPatch: vi.fn(() => Promise.resolve(undefined)),
   withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
   API_TIMEOUT_MS: 30000,
 }));
@@ -133,18 +132,18 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
-    // Simulate the bootstrap fire from onSelectionChange: same git_repo
+    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
+    // Simulate the bootstrap fire from onSelectionChange: same shell_policy
     // value the server already has.
-    patchSettings({ git_repo: "homelab" });
+    patchSettings({ shell_policy: "safe_commands" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking({ git_repo: "homelab", last_model: "claude" });
-    // git_repo unchanged, last_model changed.
-    patchSettings({ git_repo: "homelab" });
+    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
+    // shell_policy unchanged, last_model changed.
+    patchSettings({ shell_policy: "safe_commands" });
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -185,10 +184,24 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking({ git_repo: "homelab" });
+    initSettingsTracking({ shell_policy: "safe_commands" });
     const { showSaving } = await import("./save-indicator.js");
-    patchSettings({ git_repo: "homelab" });
+    patchSettings({ shell_policy: "safe_commands" });
     await vi.advanceTimersByTimeAsync(350);
     expect(showSaving).not.toHaveBeenCalled();
+  });
+
+  it("resolvers fire even when showSaved throws (try/finally guarantee)", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.mocked(showSaved).mockImplementation(() => { throw new Error("indicator boom"); });
+    const p = patchSettings({ last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+    // The promise should still resolve (resolvers fire in finally block).
+    const result = await p;
+    expect(result).not.toBeUndefined();
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
+    vi.mocked(showSaved).mockReset();
   });
 });

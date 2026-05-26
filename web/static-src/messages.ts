@@ -48,8 +48,7 @@ import {
 import { formatToolActivity } from "./format-tool-activity.js";
 
 export { getScrollEl, scrollToBottom, setLoadMore };
-export { showPermissionDialog, hidePermission } from "./permission.js";
-export { appendToSubAgent } from "./subagent.js";
+export { showPermissionDialog } from "./permission.js";
 export { setShellRunCallback } from "./code-blocks.js";
 
 const messagesEl = $.messages;
@@ -303,13 +302,14 @@ function addTurnActions(el: HTMLDivElement, pipeline: StreamingRenderPipeline): 
   };
 
   const copyAndAnimate = (btn: HTMLButtonElement, text: string): void => {
-    void copyClipboard.dispatch(text, { silent: true }).then((r) => {
-      if (r !== null) {
+    void copyClipboard.dispatch(text, {
+      silent: true,
+      onSuccess: () => {
         btn.classList.add("copied");
         const prev = copyTimers.get(btn);
         if (prev !== undefined) clearTimeout(prev);
         copyTimers.set(btn, setTimeout(() => btn.classList.remove("copied"), 1500));
-      }
+      },
     });
   };
 
@@ -664,9 +664,6 @@ export function addBoundaryDivider(kind: BoundaryKind, label: string): void {
   scroll();
 }
 
-// Re-export for external consumers (conflicts.ts).
-export { refreshConflictBadges } from "./messages-shared.js";
-
 // Wire bus subscriptions for pending-change actions.
 initMessageActions();
 
@@ -702,7 +699,7 @@ export function prependMessages(msgs: Message[]): void {
  *  because it manages streaming state, scroll, and tool-group side effects
  *  that are inherently imperative — but it shares the event-rendering logic
  *  via EVENT_BOUNDARY_META (see buildEventDOM). */
-export function buildReplayMessage(frag: DocumentFragment, m: Message): void {
+function buildReplayMessage(frag: DocumentFragment, m: Message): void {
   switch (m.role) {
     case "user":
       frag.appendChild(buildUserReplay(m.content ?? ""));
@@ -762,7 +759,7 @@ function buildAssistantReplay(frag: DocumentFragment, m: Message): void {
  *  events via EVENT_BOUNDARY_META, plus special cases (inbox, crew).
  *  Returns null for "crew" when crew data is missing (caller falls through
  *  to a generic system message). */
-export function buildEventDOM(m: Message): HTMLElement | null {
+function buildEventDOM(m: Message): HTMLElement | null {
   // Boundary-style events: look up the meta table.
   if (m.event_kind !== undefined) {
     const meta = EVENT_BOUNDARY_META[m.event_kind];

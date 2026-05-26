@@ -15,9 +15,9 @@ vi.mock("../store.js", () => ({
   getSessions: () => mockGetSessions(),
   getActiveId: () => mockGetActiveId(),
   get: vi.fn(),
-  setThinking: (...args: unknown[]) => mockSetThinking(...args),
+  setThinking: mockSetThinking,
   loadList: () => mockLoadList(),
-  loadMessages: (...args: unknown[]) => mockLoadMessages(...args),
+  loadMessages: mockLoadMessages,
   setAvailableCommands: vi.fn(),
   setCurrentMode: vi.fn(),
   clearMsgIndex: vi.fn(),
@@ -30,8 +30,8 @@ const mockHasTab = vi.fn(() => true);
 const mockGetOpenTabIDs = vi.fn(() => [] as string[]);
 
 vi.mock("../tabs.js", () => ({
-  closeTab: (...args: unknown[]) => mockCloseTab(...args),
-  hasTab: (...args: unknown[]) => mockHasTab(...args),
+  closeTab: mockCloseTab,
+  hasTab: mockHasTab,
   getOpenTabIDs: () => mockGetOpenTabIDs(),
 }));
 

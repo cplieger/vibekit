@@ -354,6 +354,7 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   sendBtn.className = "crew-msg-send";
   sendBtn.textContent = "\u2191";
   sendBtn.setAttribute("data-tooltip", "Send");
+  sendBtn.setAttribute("aria-label", "Send");
   loadingUnbinds.push(bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
@@ -362,8 +363,11 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
     if (chatID === "") return;
     const saved = input.value;
     input.value = "";
-    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }).then((result) => {
-      if (result === null) input.value = saved;
+    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }, {
+      onError: () => {
+        // Only restore if the user hasn't typed new content since dispatch.
+        if (input.value === "") input.value = saved;
+      },
     });
   };
   sendBtn.addEventListener("click", doSend);
@@ -448,8 +452,6 @@ function getOrCreateToolContainer(
   return container;
 }
 
-
-export { formatToolActivity } from "./format-tool-activity.js";
 
 /** Update the activity line when a tool call completes. Called from
  *  messages.ts updateToolCall after propagating to the crew-row clone. */

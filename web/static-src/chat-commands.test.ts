@@ -1,6 +1,17 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const { mockSendPromptDispatch, mockSwitchModelDispatch } = vi.hoisted(() => ({
+  mockSendPromptDispatch: vi.fn(),
+  mockSwitchModelDispatch: vi.fn(),
+}));
+
+vi.mock("./actions/chat.js", () => ({
+  sendPrompt: { dispatch: mockSendPromptDispatch },
+  switchModel: { dispatch: mockSwitchModelDispatch },
+  resolvePendingChange: { dispatch: vi.fn() },
+}));
+
 vi.mock("./store.js", () => ({
   get: vi.fn(() => ({ model: "claude" })),
   setThinking: vi.fn(),
@@ -26,7 +37,6 @@ vi.mock("./attachments.js", () => ({ takeAttachments: vi.fn(() => []), addAttach
 
 import { sendPromptTo, switchModel } from "./chat-commands.js";
 import * as store from "./store.js";
-import * as transport from "./transport.js";
 import * as attachments from "./attachments.js";
 
 beforeEach(() => {
@@ -35,33 +45,32 @@ beforeEach(() => {
 
 describe("sendPromptTo", () => {
   it("returns 'sent' on 2xx and calls setThinking(id, true)", async () => {
-    vi.mocked(transport.send).mockResolvedValue({ ok: true, status: 200 });
+    mockSendPromptDispatch.mockResolvedValue("sent");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("sent");
-    expect(store.setThinking).toHaveBeenCalledWith("chat1", true);
-    expect(store.setThinking).toHaveBeenCalledTimes(1);
+    expect(mockSendPromptDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      chatID: "chat1", text: "hello",
+    }));
   });
 
   it("returns 'queued' on 409 and enqueues prompt", async () => {
-    vi.mocked(transport.send).mockResolvedValue({ ok: false, status: 409 });
+    mockSendPromptDispatch.mockResolvedValue("queued");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
-    expect(store.enqueuePrompt).toHaveBeenCalledWith("chat1", "hello", []);
   });
 
   it("returns 'queued' on 409 with attachments and calls setLastQueuedAttachments", async () => {
-    vi.mocked(transport.send).mockResolvedValue({ ok: false, status: 409 });
+    mockSendPromptDispatch.mockResolvedValue("queued");
     vi.mocked(attachments.takeAttachments).mockReturnValueOnce([{ path: "foo", name: "foo" }]);
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
     expect(store.setLastQueuedAttachments).toHaveBeenCalledWith("chat1", [{ path: "foo", name: "foo" }]);
   });
 
-  it("returns 'failed' on 500 and clears thinking", async () => {
-    vi.mocked(transport.send).mockResolvedValue({ ok: false, status: 500 });
+  it("returns 'failed' on null result (action error)", async () => {
+    mockSendPromptDispatch.mockResolvedValue(null);
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("failed");
-    expect(store.setThinking).toHaveBeenCalledWith("chat1", false);
   });
 });
 
@@ -69,16 +78,13 @@ describe("switchModel", () => {
   it("returns false immediately for empty chatID", async () => {
     const result = await switchModel("", "gpt-4");
     expect(result).toBe(false);
-    expect(transport.send).not.toHaveBeenCalled();
+    expect(mockSwitchModelDispatch).not.toHaveBeenCalled();
   });
 
   it("returns true on successful switch", async () => {
-    vi.mocked(transport.send).mockResolvedValue({ ok: true, status: 200 });
+    mockSwitchModelDispatch.mockResolvedValue(true);
     const result = await switchModel("chat1", "gpt-4");
     expect(result).toBe(true);
-    // B2 fix: switchModelAction no longer touches thinking state —
-    // it's owned by sendPromptAction; the model switcher button uses
-    // bindLoadingState for its own indicator.
-    expect(store.setThinking).not.toHaveBeenCalled();
+    expect(mockSwitchModelDispatch).toHaveBeenCalledWith({ chatID: "chat1", model: "gpt-4" });
   });
 });

@@ -73,6 +73,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       const cb = makeEl("input") as HTMLInputElement;
       cb.type = "checkbox";
       cb.disabled = true;
+      cb.setAttribute("aria-label", "Task item");
       data.nodes[++data.index] = parent.appendChild(cb);
       return;
     }

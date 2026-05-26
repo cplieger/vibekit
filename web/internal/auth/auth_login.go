@@ -200,7 +200,17 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// drains the pipe, kiro-cli blocks on a full 64 KiB buffer and
 	// wedges until the 16-minute hard cap fires. Keep draining in
 	// the background so the child can make forward progress.
-	go scanLoginOutputWithDrain(stdout, urlCh)
+	//
+	// stdoutDone is closed when the scanner+drain goroutine has
+	// returned (URL found + drain to EOF, or scanner error). The
+	// reap goroutine waits on this before calling cmd.Wait so the
+	// pipe isn't closed mid-read. See loginReap doc for the
+	// underlying Go runtime requirement.
+	stdoutDone := make(chan struct{})
+	go func() {
+		defer close(stdoutDone)
+		scanLoginOutputWithDrain(stdout, urlCh)
+	}()
 
 	// Transfer loginSem ownership to the reap goroutine: any
 	// pre-reap return path above this point releases via the
@@ -221,11 +231,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// here so FDs are reclaimed before the handler returns.
 	waitDone := make(chan struct{})
 	go h.reapLoginProcess(loginReap{
-		ctx:       ctx,
-		cancel:    cancel,
-		cmd:       cmd,
-		stderrBuf: &stderrBuf,
-		waitDone:  waitDone,
+		ctx:        ctx,
+		cancel:     cancel,
+		cmd:        cmd,
+		stderrBuf:  &stderrBuf,
+		stdoutDone: stdoutDone,
+		waitDone:   waitDone,
 	})
 
 	select {
@@ -297,6 +308,14 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		case <-killOnDeadline:
 		}
 	}()
+	// Wait for the scanner+drain goroutine to finish reading stdout
+	// before calling cmd.Wait. Wait closes the pipe as it returns
+	// (per Go's exec.Cmd contract), and a concurrent reader sees
+	// "file already closed". The drain goroutine reads until EOF,
+	// which only happens after the subprocess exits and closes its
+	// write end — so this gate doesn't extend lifetime in the normal
+	// path, just orders the FD close after the read completes.
+	<-r.stdoutDone
 	werr := r.cmd.Wait()
 	close(killOnDeadline)
 	// If we somehow raced the watcher goroutine (cmd.Wait returned

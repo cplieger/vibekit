@@ -8,7 +8,7 @@ import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import { undoEdit } from "./actions/messages.js";
-import { resolvePendingChangeAction } from "./actions/chat.js";
+import { resolvePendingChange } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 
 /** Accumulated bindLoadingState unsubscribers — cleared on chat switch. */
@@ -51,11 +51,11 @@ export function addEditActions(el: HTMLDivElement): void {
       sibling = sibling.previousElementSibling;
     }
     if (tag === "") return;
-    void undoEdit.dispatch({ chatID, tag, filePath }).then((r) => {
-      if (r !== null) {
+    void undoEdit.dispatch({ chatID, tag, filePath }, {
+      onSuccess: () => {
         undoBtn.classList.add("copied");
         setTimeout(() => undoBtn.classList.remove("copied"), 1500);
-      }
+      },
     });
   });
 
@@ -76,10 +76,6 @@ export function addEditActions(el: HTMLDivElement): void {
     if (chatID !== "") m.renderConflictChip(row, chatID, filePath);
   }).catch(() => {});
 }
-
-/** Re-decorate any tool-edit action rows pointing at `path` with a
- *  freshly-landed conflict chip. */
-export { refreshConflictBadges } from "./messages-shared.js";
 
 /** Add Accept / Reject / Diff buttons to a tool card whose write is
  *  staged under Supervised mode. */
@@ -125,8 +121,8 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
   acceptBtn.setAttribute("aria-label", "Accept change");
   acceptBtn.addEventListener("click", () => { resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "accept"); });
 
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
-  actionBindUnbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+  actionBindUnbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
+  actionBindUnbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
 
   row.append(diffBtn, rejectBtn, acceptBtn);
   row.dataset["path"] = path;
@@ -134,10 +130,7 @@ function addPendingActions(el: HTMLDivElement, toolCallID: string, chatID: strin
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
-  void resolvePendingChangeAction.dispatch(
-    { chatID, toolCallID, action },
-    { errorPrefix: `Failed to ${action} change` },
-  );
+  void resolvePendingChange.dispatch({ chatID, toolCallID, action });
 }
 
 /** Locate the tool card whose data-file-path matches `path`. */

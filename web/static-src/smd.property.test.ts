@@ -55,8 +55,8 @@ const markdownLike = fc.oneof(
   fc.tuple(fc.constantFrom("*", "**", "_", "__", "~~"), fc.lorem({ maxCount: 2 }))
     .map(([m, t]) => m + t + m),
   // Code fences (possibly unclosed)
-  fc.tuple(fc.constantFrom("```", "````"), fc.constantFrom("", "js", "ts"), fc.lorem({ maxCount: 3 }))
-    .map(([f, lang, body]) => f + lang + "\n" + body + "\n" + (Math.random() > 0.3 ? f : "") + "\n"),
+  fc.tuple(fc.constantFrom("```", "````"), fc.constantFrom("", "js", "ts"), fc.lorem({ maxCount: 3 }), fc.boolean())
+    .map(([f, lang, body, closed]) => f + lang + "\n" + body + "\n" + (closed ? f : "") + "\n"),
   // Inline code
   fc.lorem({ maxCount: 2 }).map((t) => "`" + t + "`"),
   // Blockquotes

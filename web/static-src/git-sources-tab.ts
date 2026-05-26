@@ -29,6 +29,8 @@ export async function refreshSources(): Promise<void> {
   if (root.querySelector("#forges-panel") === null) {
     const inner = document.createElement("div");
     inner.id = "forges-panel";
+    inner.setAttribute("role", "region");
+    inner.setAttribute("aria-label", "Connected forges");
     root.replaceChildren(inner);
   }
   await renderForgesPanel();

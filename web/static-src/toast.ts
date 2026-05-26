@@ -35,7 +35,7 @@
 // error surface.
 // ---------------------------------------------------------------------------
 
-export type ToastLevel = "info" | "success" | "error";
+type ToastLevel = "info" | "success" | "error";
 
 const MAX_VISIBLE = 3;
 const DURATION_DEFAULT_MS = 4000;
@@ -57,7 +57,7 @@ interface ToastEntry {
  *  dismissed and may return a Promise (rejections are logged but
  *  not surfaced — the caller is responsible for showing a fresh
  *  toast on a re-failure). */
-export interface ToastRetry {
+interface ToastRetry {
   readonly label?: string;
   readonly onClick: () => void | Promise<void>;
 }
@@ -191,6 +191,7 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
   // tabindex so keyboard users can Tab to the toast and read/dismiss
   // it. Without this, the toast is unreachable via keyboard.
   el.setAttribute("tabindex", "0");
+  el.setAttribute("aria-label", `${level} notification: ${message}. Click to dismiss.`);
   // Errors are interruptive; everything else is polite. The container's
   // aria-live wins for screen reader announcement, but role=alert on
   // the individual error toast also signals importance to a11y trees
@@ -216,6 +217,7 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
     retryBtn.type = "button";
     retryBtn.className = "vk-toast-retry";
     retryBtn.textContent = retry.label ?? "Retry";
+    retryBtn.setAttribute("aria-label", retry.label ?? "Retry action");
     retryBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       // Capture before dismissing in case onClick throws.

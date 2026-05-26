@@ -7,11 +7,13 @@ vi.mock("../toast.js", () => ({
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { downloadFiles } from "./files.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   vi.clearAllMocks();
 });
 

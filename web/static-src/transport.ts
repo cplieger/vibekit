@@ -26,7 +26,7 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup, hasErrorString } from "./actions/index.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -55,7 +55,7 @@ type CommandType =
 export interface Command {
   type: CommandType;
   chat_id?: string;
-  payload?: unknown;
+  payload?: Record<string, unknown>;
 }
 
 // --- Typed command discriminated union ---
@@ -63,7 +63,7 @@ export interface Command {
 // The wire format is unchanged (JSON.stringify produces the same output).
 
 export type TypedCommand =
-  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: string[] } }
+  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: readonly unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: readonly string[] } }
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
@@ -83,9 +83,9 @@ export type TypedCommand =
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };
 
-export const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
+const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
 
-export interface SendResult {
+interface SendResult {
   ok: boolean;
   /** HTTP status. 0 for non-HTTP failures (timeout, network). */
   status: number;
@@ -95,7 +95,7 @@ export interface SendResult {
   code?: string;
 }
 
-export interface SendOptions {
+interface SendOptions {
   /** Caller-supplied signal for cancellation (e.g. on tab close or chat delete). */
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */
@@ -276,7 +276,7 @@ class TransportController {
 
   // --- POST /api/command ---
 
-  async send(cmd: Command, opts?: SendOptions): Promise<SendResult> {
+  async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
     const requestID = newRequestID();
     const timeoutMs = opts?.timeoutMs ?? 15 * 60 * 1000;
     const ctrl = new AbortController();
@@ -295,15 +295,15 @@ class TransportController {
           type: cmd.type,
           request_id: requestID,
           chat_id: cmd.chat_id ?? "",
-          payload: cmd.payload ?? {},
+          payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
         }),
       });
       if (r.ok) return { ok: true, status: r.status };
 
       let errMsg = `HTTP ${String(r.status)}`;
       try {
-        const d = (await r.json()) as { error?: string };
-        if (d.error !== undefined) errMsg = d.error;
+        const d: unknown = await r.json();
+        if (hasErrorString(d)) errMsg = d.error;
       } catch { /* non-JSON */ }
       // 409 is a queue signal — never reported via setLastError.
       // Otherwise honour the caller's reportSendState preference
@@ -358,5 +358,5 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
 }
 
 export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
-  return instance.send(cmd as Command, opts);
+  return instance.send(cmd, opts);
 }

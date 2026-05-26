@@ -11,6 +11,7 @@
 
 import { setUserScrolledUp } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
+import { registerCleanup } from "./actions/index.js";
 
 class ToolGroupTracker {
   private currentGroup: HTMLDivElement | null = null;
@@ -29,8 +30,17 @@ class ToolGroupTracker {
       group.className = "tool-group";
       const header = document.createElement("div");
       header.className = "tool-group-header";
+      header.setAttribute("role", "button");
+      header.setAttribute("tabindex", "0");
+      header.setAttribute("aria-expanded", "true");
       header.innerHTML = '<span class="tool-group-count"></span>';
       header.addEventListener("click", () => onHeaderClick(group, header));
+      header.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onHeaderClick(group, header);
+        }
+      });
       group.appendChild(header);
       mount(group);
       this.currentGroup = group;
@@ -66,7 +76,8 @@ class ToolGroupTracker {
     }, 1000);
   }
 
-  private stopTicker(): void {
+  /** @internal Used by registerCleanup. */
+  stopTicker(): void {
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -75,6 +86,7 @@ class ToolGroupTracker {
 }
 
 const tracker = new ToolGroupTracker();
+registerCleanup(() => { tracker.stopTicker(); });
 
 // --- Delegate exports ---
 
@@ -229,8 +241,9 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
   const wasAuto = group.classList.contains("tool-group-auto-collapsed");
   if (wasAuto) group.classList.remove("tool-group-auto-collapsed");
   group.classList.toggle("tool-group-collapsed");
-  updateHeader(group);
   const collapsedNow = group.classList.contains("tool-group-collapsed");
+  _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
+  updateHeader(group);
   if (!collapsedNow || wasAuto) setUserScrolledUp(true);
 }
 
@@ -245,6 +258,8 @@ export function maybeCollapseGroup(el: HTMLElement): void {
     if ((c as HTMLElement).dataset["startMs"] !== undefined) return;
   }
   group.classList.add("tool-group-auto-collapsed");
+  const header = group.querySelector(".tool-group-header") as HTMLElement | null;
+  header?.setAttribute("aria-expanded", "false");
   updateHeader(group);
 }
 

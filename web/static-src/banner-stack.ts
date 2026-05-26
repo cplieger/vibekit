@@ -67,7 +67,7 @@ export function showBanner(
   }
   const el = document.createElement("div");
   el.className = `banner banner-${level}`;
-  el.setAttribute("role", "alert");
+  el.setAttribute("role", level === "error" ? "alert" : "status");
   const msg = document.createElement("span");
   msg.className = "banner-msg";
   msg.textContent = message;
@@ -132,6 +132,10 @@ export function clearBannersForChat(chatID: string): void {
 /** Re-render: show only banners for the active chat. */
 export function renderStack(): void {
   const container = $.bannerStack;
+  if (!container.hasAttribute("aria-label")) {
+    container.setAttribute("aria-label", "Notifications");
+    container.setAttribute("aria-live", "polite");
+  }
   container.replaceChildren();
   const activeID = getActiveId();
   for (const entry of banners.values()) {

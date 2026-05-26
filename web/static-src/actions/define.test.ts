@@ -16,13 +16,15 @@ vi.mock("../toast.js", () => ({
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { ActionError } from "./error.js";
-import { recentLog, _resetForTest as resetRegistry, subscribe, pendingFor } from "./registry.js";
+import { ActionError, retryNetwork } from "./error.js";
+import { recentLog, _resetForTest as resetRegistry, subscribe, pendingCount } from "./registry.js";
+import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
   resetDefine();
   resetRegistry();
+  resetCleanup();
   vi.clearAllMocks();
 });
 
@@ -96,16 +98,6 @@ describe("defineAction — happy path", () => {
     await action.dispatch({}, { silent: true });
     expect(toast.success).not.toHaveBeenCalled();
   });
-
-  it("dispatch({ successMessage }) overrides the success toast", async () => {
-    const action = defineAction({
-      name: "test.custom_success",
-      run: async () => "x",
-      success: "Default",
-    });
-    await action.dispatch({}, { successMessage: "Custom" });
-    expect(toast.success).toHaveBeenCalledWith("Custom");
-  });
 });
 
 describe("defineAction — error path", () => {
@@ -169,18 +161,6 @@ describe("defineAction — error path", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("dispatch({ errorPrefix }) overrides the error prefix", async () => {
-    const action = defineAction({
-      name: "test.fail",
-      run: async () => {
-        throw new ActionError("nope");
-      },
-      error: "Default",
-    });
-    await action.dispatch({}, { errorPrefix: "Per-call" });
-    expect(toast.error).toHaveBeenCalledWith("Per-call: nope", undefined);
-  });
-
   it("normalises non-ActionError throws", async () => {
     const action = defineAction({
       name: "test.weird",
@@ -212,7 +192,7 @@ describe("defineAction — optimistic + rollback", () => {
     expect(order).toEqual(["opt", "run"]);
   });
 
-  it("rollback receives the OptimisticOp on error", async () => {
+  it("rollback receives the TOp on error", async () => {
     const rollback = vi.fn();
     const action = defineAction({
       name: "test.rollback",
@@ -412,19 +392,21 @@ describe("registry", () => {
   });
 });
 
-describe("pendingFor — public API", () => {
-  it("returns the action mid-flight, then empty after completion", async () => {
+describe("pendingCount — public API", () => {
+  it("reports 1 for the named action mid-flight, 0 after completion", async () => {
     let resolve!: () => void;
     const action = defineAction({
       name: "test.slow",
       run: () => new Promise<void>((r) => { resolve = r; }),
     });
     const p = action.dispatch({});
-    expect(pendingFor("test.slow").length).toBe(1);
-    expect(pendingFor("test.slow")[0]?.name).toBe("test.slow");
+    expect(pendingCount(["test.slow"])).toBe(1);
+    // Verify the registry log captures the action with the right name.
+    const pending = recentLog().filter((inst) => inst.status === "pending" && inst.name === "test.slow");
+    expect(pending[0]?.name).toBe("test.slow");
     resolve();
     await p;
-    expect(pendingFor("test.slow").length).toBe(0);
+    expect(pendingCount(["test.slow"])).toBe(0);
   });
 });
 
@@ -434,7 +416,7 @@ describe("defineAction — retryable error toast", () => {
     const action = defineAction({
       name: "test.retry_always",
       run: async () => { throw new ActionError("network glitch"); },
-      retryable: "always",
+      retryable: (err) => err.code !== "cancelled",
     });
     await action.dispatch({ id: 1 });
     expect(toast.error).toHaveBeenCalledTimes(1);
@@ -447,7 +429,7 @@ describe("defineAction — retryable error toast", () => {
     const a1 = defineAction({
       name: "test.retry_net_status0",
       run: async () => { throw new ActionError("fetch failed", { status: 0 }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await a1.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeDefined();
@@ -456,7 +438,7 @@ describe("defineAction — retryable error toast", () => {
     const a2 = defineAction({
       name: "test.retry_net_timeout",
       run: async () => { throw new ActionError("Request timed out", { code: "timeout" }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await a2.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeDefined();
@@ -466,7 +448,7 @@ describe("defineAction — retryable error toast", () => {
     const action = defineAction({
       name: "test.retry_net_4xx",
       run: async () => { throw new ActionError("not found", { status: 404 }); },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     await action.dispatch({});
     expect(vi.mocked(toast.error).mock.calls[0]?.[1]).toBeUndefined();
@@ -490,7 +472,7 @@ describe("defineAction — retryable error toast", () => {
         if (attempts === 1) throw new ActionError("first", { status: 0 });
         return "ok";
       },
-      retryable: "network",
+      retryable: retryNetwork,
     });
     const result = await action.dispatch({ msg: "hello" });
     expect(result).toBeNull();  // first attempt failed
@@ -498,8 +480,7 @@ describe("defineAction — retryable error toast", () => {
     expect(retryFn).toBeDefined();
     retryFn();
     // Wait for the re-dispatch to complete.
-    await new Promise<void>((r) => setTimeout(r, 0));
-    expect(attempts).toBe(2);
+    await vi.waitFor(() => { expect(attempts).toBe(2); });
   });
 
   it("retry suppressed when error: false (no toast at all)", async () => {
@@ -507,9 +488,57 @@ describe("defineAction — retryable error toast", () => {
       name: "test.retry_no_toast",
       run: async () => { throw new ActionError("silent"); },
       error: false,
-      retryable: "always",
+      retryable: (err) => err.code !== "cancelled",
     });
     await action.dispatch({});
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("retry button uses a snapshot of args — post-dispatch mutations don't corrupt retry", async () => {
+    let lastArgs: { count: number } | undefined;
+    const action = defineAction<{ count: number }, string>({
+      name: "test.retry_stale_args",
+      run: async (args) => {
+        lastArgs = args;
+        throw new ActionError("fail", { status: 0 });
+      },
+      retryable: retryNetwork,
+    });
+    const args = { count: 1 };
+    await action.dispatch(args);
+    // Mutate args AFTER dispatch — should NOT affect the retry payload.
+    args.count = 999;
+    const retryFn = vi.mocked(toast.error).mock.calls[0]?.[1]?.onClick as () => void;
+    expect(retryFn).toBeDefined();
+    retryFn();
+    await vi.waitFor(() => { expect(lastArgs).toBeDefined(); });
+    // Retry should use the snapshot (count: 1), not the mutated value.
+    expect(lastArgs!.count).toBe(1);
+  });
+
+  it("retry button uses shallow copy when structuredClone fails (DOM refs)", async () => {
+    // Simulate args with non-cloneable values (functions, DOM-like objects)
+    const el = { tagName: "BUTTON", focus: () => {} };
+    let lastArgs: { el: typeof el; label: string } | undefined;
+    const action = defineAction<{ el: typeof el; label: string }, string>({
+      name: "test.retry_dom_args",
+      run: async (args) => {
+        lastArgs = args;
+        throw new ActionError("fail", { status: 0 });
+      },
+      retryable: retryNetwork,
+    });
+    const args = { el, label: "Save" };
+    await action.dispatch(args);
+    // Mutate a top-level property — shallow copy should isolate this.
+    args.label = "MUTATED";
+    const retryFn = vi.mocked(toast.error).mock.calls[0]?.[1]?.onClick as () => void;
+    expect(retryFn).toBeDefined();
+    retryFn();
+    await vi.waitFor(() => { expect(lastArgs).toBeDefined(); });
+    // Shallow copy preserves the original label.
+    expect(lastArgs!.label).toBe("Save");
+    // DOM ref is the same object (shallow copy, not deep).
+    expect(lastArgs!.el).toBe(el);
   });
 });

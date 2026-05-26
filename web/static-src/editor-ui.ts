@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
-import { fetchAgentLinesAction } from "./actions/editor.js";
+import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
 import {
@@ -49,6 +49,13 @@ export async function fetchAgentLines(path: string): Promise<void> {
   if (state !== undefined && state.loaded) {
     rebuildGutter(state.current);
   }
+}
+
+/** Clear cached agent-line data for a path. Called when a file is
+ *  closed so the per-file Maps don't grow unbounded over a session. */
+export function clearAgentLineCache(path: string): void {
+  agentLineCache.delete(path);
+  agentLineSetCache.delete(path);
 }
 
 // --- Show/hide mode helpers ---
@@ -123,6 +130,7 @@ export function renderEditModeUI(state: FileState): void {
   const isModified = state.current !== state.original;
   $.editorDiffBtn.classList.toggle("hidden", isPlanDraft || !isModified);
   $.editorDiffBtn.setAttribute("data-tooltip", "View diff vs saved");
+  $.editorDiffBtn.setAttribute("aria-label", "View diff vs saved");
   const editing = state.mode.kind === "edit" && state.mode.editing;
   if (editing) {
     $.editorContent.value = state.current;

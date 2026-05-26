@@ -43,15 +43,10 @@ import type { FileState } from "./editor-types.js";
 // Consumers that import from editor-core.ts continue to work.
 
 export {
-  fileStates, setActiveFilePath,
-  freshState, isPendingPath, parsePendingPath, isPlanDraftPath,
-  routeForPath, pendingDiffSource, gitDiffSource, getCachedDiff,
-  getActiveFilePath, getOpenFilePaths, getDirtyEditorPaths,
+  isPendingPath, parsePendingPath, isPlanDraftPath,
+  routeForPath, getDirtyEditorPaths,
 } from "./editor-types.js";
-export type { FileMode, FileState } from "./editor-types.js";
-
-// Re-export closeEditorFile from editor-openers (editor-pending.ts imports closeFile from editor-types)
-export { closeEditorFile } from "./editor-openers.js";
+export type { FileState } from "./editor-types.js";
 
 export function initEditor(): void {
   $.editorEditBtn.addEventListener("click", startEditing);
@@ -69,7 +64,7 @@ export function initEditor(): void {
   $.editorPendingAcceptBtn.addEventListener("click", () => { void resolveActivePending("accept"); });
   $.editorPendingRejectBtn.addEventListener("click", () => { void resolveActivePending("reject"); });
   $.editorPendingApplyPartialBtn.addEventListener("click", () => { void applyActivePendingPartial(); });
-  bindLoadingState("editor.resolve_pending_partial", $.editorPendingApplyPartialBtn);
+  bindLoadingState("editor.resolve_partial", $.editorPendingApplyPartialBtn);
   $.editorPendingDiscussBtn.addEventListener("click", () => { openDiscussPromptForActive(); });
 
   onBus(BUS_PENDING_RESOLVED, (p) => {
@@ -194,38 +189,45 @@ function saveFile(): void {
   const state = fileStates.get(getActiveFilePath());
   if (state === undefined) return;
   const content = $.editorContent.value;
-  void saveFileAction.dispatch({ path: state.path, content }).then((d) => {
-    if (d === null) return; // cancelled (e.g. page unload) — bail silently
-    if (d.error !== undefined) {
+  void saveFileAction.dispatch({ path: state.path, content }, {
+    onError: (e) => {
       if (getActiveFilePath() === state.path) {
-        $.editorError.textContent = d.error;
+        $.editorError.textContent = e.message || "Save failed";
         $.editorError.classList.remove("hidden");
       }
-      return;
-    }
-    state.original = content;
-    // Don't overwrite state.current — user may have edited during save.
-    // Re-derive button state from live values; guard against file switch.
-    if (getActiveFilePath() === state.path) {
-      $.editorSaveBtn.disabled = state.current === state.original;
-    }
-    $.editorError.classList.add("hidden");
-    if (getActiveFilePath() === state.path) {
-      if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-        state.mode = { kind: "edit", editing: false };
-        renderEditModeUI(state);
+    },
+    onSuccess: (d) => {
+      if (d.error !== undefined) {
+        if (getActiveFilePath() === state.path) {
+          $.editorError.textContent = d.error;
+          $.editorError.classList.remove("hidden");
+        }
+        return;
       }
-      if (state.returnToGitDiff !== null) {
-        const { ref, repo } = state.returnToGitDiff;
-        state.returnToGitDiff = null;
-        state.mode = {
-          kind: "diff",
-          diffSource: gitDiffSource(ref, "", content),
-        };
-        state.pendingHunkCount = null;
-        void fetchGitDiffSources(state, repo, ref);
+      state.original = content;
+      // Don't overwrite state.current — user may have edited during save.
+      // Re-derive button state from live values; guard against file switch.
+      if (getActiveFilePath() === state.path) {
+        $.editorSaveBtn.disabled = state.current === state.original;
       }
-    }
+      $.editorError.classList.add("hidden");
+      if (getActiveFilePath() === state.path) {
+        if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
+          state.mode = { kind: "edit", editing: false };
+          renderEditModeUI(state);
+        }
+        if (state.returnToGitDiff !== null) {
+          const { ref, repo } = state.returnToGitDiff;
+          state.returnToGitDiff = null;
+          state.mode = {
+            kind: "diff",
+            diffSource: gitDiffSource(ref, "", content),
+          };
+          state.pendingHunkCount = null;
+          void fetchGitDiffSources(state, repo, ref);
+        }
+      }
+    },
   });
 }
 
@@ -238,5 +240,12 @@ async function sendActivePlan(): Promise<void> {
   if (chatID === "") return;
   const content = state.current; // capture before await
   const result = await sendPlanAction.dispatch({ chatID, content });
-  if (result !== null) state.original = content;
+  if (result === null) {
+    if (getActiveFilePath() === state.path) {
+      $.editorError.textContent = "Couldn't send plan";
+      $.editorError.classList.remove("hidden");
+    }
+    return;
+  }
+  state.original = content;
 }

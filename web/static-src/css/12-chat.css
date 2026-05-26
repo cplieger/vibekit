@@ -3,7 +3,7 @@
    Chat Area
    ========================================================================== */
 
-[id="chat-area"] { display: flex; flex-direction: column; height: 100%; overflow: hidden; container: chat-area / inline-size; }
+[id="chat-area"] { position: relative; display: flex; flex-direction: column; height: 100%; overflow: hidden; container: chat-area / inline-size; }
 
 .mobile-only {
   display: none;
@@ -29,4 +29,24 @@
   color: var(--c-text-primary); margin-inline-end: auto;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   padding-inline-start: var(--sp-2);
+}
+
+/* Global progress indicator: 2px stripe at the top of chat-area.
+   Visible when any action is in-flight (pendingCount > 0). */
+.global-progress {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px; z-index: 11;
+  background: var(--c-accent, #9046ff);
+  opacity: 0; transform: scaleX(0);
+  transform-origin: left;
+  transition: opacity 0.15s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+.global-progress.active {
+  opacity: 1; transform: scaleX(1);
+  animation: progress-pulse 1.5s ease-in-out infinite;
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
 }

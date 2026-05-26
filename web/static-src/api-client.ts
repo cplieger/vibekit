@@ -9,7 +9,7 @@
 // served by transport.ts's `send()` function. Keep the two separate.
 // ---------------------------------------------------------------------------
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
 
 export const API_TIMEOUT_MS = 30_000;
 
@@ -24,6 +24,11 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
     : AbortSignal.timeout(ms);
 }
 
+/** Internal fetch wrapper shared by apiGet/apiPost/apiDelete.
+ *  Applies a timeout signal (via withTimeout), logs failures centrally,
+ *  and returns null on any non-2xx or network error — callers never see
+ *  exceptions. DELETE and 204 responses return an empty object cast to T
+ *  (truthy marker) since there's no body to parse. */
 async function request<T>(
   method: string, path: string, body?: unknown, signal?: AbortSignal,
 ): Promise<T | null> {
@@ -60,16 +65,6 @@ export function apiPost<T>(path: string, body?: unknown, signal?: AbortSignal): 
   return request<T>("POST", path, body, signal);
 }
 
-/** PUT `body` as JSON to `path`, return parsed JSON response or null. */
-export function apiPut<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T | null> {
-  return request<T>("PUT", path, body, signal);
-}
-
-/** PATCH `body` as JSON to `path`, return parsed JSON response or null. */
-export function apiPatch<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T | null> {
-  return request<T>("PATCH", path, body, signal);
-}
-
 /** DELETE `path`. Returns true on success, false on failure. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
   const result = await request<object>("DELETE", path, undefined, signal);
@@ -82,7 +77,7 @@ export async function apiDelete(path: string, signal?: AbortSignal): Promise<boo
  *  the server's JSON body (empty string if the body didn't include one).
  *  Used by forms that need to surface specific failure reasons (400
  *  validation errors, 409 conflicts) inline instead of silently failing. */
-export interface ApiResult<T> {
+interface ApiResult<T> {
   ok: boolean;
   status: number;
   data: T | null;
@@ -92,17 +87,18 @@ export interface ApiResult<T> {
 // --- Typed decoder hook ---
 //
 // Re-export the Decoder<T> type from validators.ts so callers don't
-// need a second import. The typed helpers below run an optional
-// decoder on the parsed JSON before returning; on decoder throw, the
-// error is logged with the structured path and the helper returns
-// null (`apiGetTyped`/`apiPostTyped`) or an error envelope
-// (`apiGetTypedRaw`).
-//
-// Pattern ported from apps/subflux/internal/server/static-src/api-client.ts.
+// need a second import. The typed helper below runs a decoder on the
+// parsed JSON before returning; on decoder throw, the error is logged
+// and the helper returns null.
 
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
 
+/** Fetch + decode variant: runs the response through a Decoder<T>
+ *  after parsing JSON. Returns a full ApiResult envelope so callers
+ *  can distinguish network errors (status 0), HTTP errors (4xx/5xx),
+ *  and decoder failures (shape mismatch) without try/catch. Used by
+ *  apiGetTyped for type-safe API consumption. */
 async function requestTyped<T>(
   method: string, path: string, decoder: Decoder<T>, body?: unknown, signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
@@ -148,20 +144,11 @@ export async function apiGetTyped<T>(path: string, decoder: Decoder<T>, signal?:
   return r.data;
 }
 
-/** POST `body` as JSON, validate the response with `decoder`. See
- *  `apiGetTyped` for null/error semantics. */
-export async function apiPostTyped<T>(path: string, body: unknown, decoder: Decoder<T>, signal?: AbortSignal): Promise<T | null> {
-  const r = await requestTyped<T>("POST", path, decoder, body, signal);
-  return r.data;
-}
+import { hasErrorString } from "./actions/index.js";
 
-/** GET variant that surfaces the full ApiResult (status + error). Use
- *  when the caller must distinguish "decoder threw" from "server
- *  returned 4xx" or needs the status code. */
-export function apiGetTypedRaw<T>(path: string, decoder: Decoder<T>, signal?: AbortSignal): Promise<ApiResult<T>> {
-  return requestTyped<T>("GET", path, decoder, undefined, signal);
-}
-
+/** Fetch variant that extracts the server's `error` field from non-2xx
+ *  JSON responses. Used by apiPutOrError for forms that need to surface
+ *  specific server validation messages (400, 409) inline. */
 async function requestWithError<T>(
   method: string, path: string, body: unknown, signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
@@ -178,10 +165,7 @@ async function requestWithError<T>(
       try { parsed = JSON.parse(raw); } catch { /* non-JSON body */ }
     }
     if (!r.ok) {
-      const err = (typeof parsed === "object" && parsed !== null
-        && "error" in parsed && typeof (parsed as { error: unknown }).error === "string")
-        ? (parsed as { error: string }).error
-        : `HTTP ${String(r.status)}`;
+      const err = hasErrorString(parsed) ? parsed.error : `HTTP ${String(r.status)}`;
       console.warn("api: non-ok", method, path, r.status, err);
       return { ok: false, status: r.status, data: null, error: err };
     }
@@ -195,13 +179,8 @@ async function requestWithError<T>(
   }
 }
 
-/** POST variant that surfaces error details. Use when the UI must show
- *  the server's validation message; otherwise prefer apiPost. */
-export function apiPostOrError<T>(path: string, body: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {
-  return requestWithError<T>("POST", path, body, signal);
-}
-
-/** PUT variant that surfaces error details. */
+/** PUT variant that surfaces error details. Use when the UI must show
+ *  the server's validation message; otherwise prefer apiAction. */
 export function apiPutOrError<T>(path: string, body: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {
   return requestWithError<T>("PUT", path, body, signal);
 }

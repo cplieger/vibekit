@@ -9,7 +9,7 @@
 import { $ } from "./dom.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
-import { setAutoApproveCrewAction } from "./actions/chat.js";
+import { setAutoApproveCrew } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { Session } from "./types.js";
 
@@ -56,14 +56,16 @@ function render(): void {
   const active = session.auto_approve_crew;
   btn.classList.toggle("active", active);
   btn.setAttribute("aria-pressed", String(active));
-  btn.title = active
+  const label = active
     ? "Auto-approve subagent tools (on)"
     : "Auto-approve subagent tools (off)";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 function toggle(): void {
   const session = getActive();
   if (session === undefined) return;
   const newValue = !session.auto_approve_crew;
-  void setAutoApproveCrewAction.dispatch({ chatID: session.id, enabled: newValue });
+  void setAutoApproveCrew.dispatch({ chatID: session.id, enabled: newValue }, { silent: true });
 }

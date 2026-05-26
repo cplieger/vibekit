@@ -5,16 +5,21 @@
 // clear pending trust.
 // ---------------------------------------------------------------------------
 
-import { apiAction, transportAction, defineAction, ActionError } from "./index.js";
-import { asOp } from "./op.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel } from "../store.js";
+import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
+import { transportAction } from "./transport.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel, clearPendingChanges, addPendingChange } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
 
-export const deleteChatAction = transportAction<string>({
+export const deleteChat = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.delete",
-  retryable: false,
+  networkMode: "always",
+  scope: (id) => `chat:${id}`,
+  dedupe: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: (id) => ({ type: "delete_chat", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -28,17 +33,20 @@ export const deleteChatAction = transportAction<string>({
   // remove it, causing a brief flicker. Full correctness would require server-side
   // dedup + ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
-    if (o !== undefined) reinsertSession(o.session, o.atIndex);
+    if (op !== undefined) reinsertSession(op.session, op.atIndex);
   },
   error: "Couldn't delete chat",
 });
 
 // --- chat.archive ---
 
-export const archiveChatAction = apiAction<string, unknown>({
+export const archiveChat = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
   name: "chat.archive",
-  retryable: "network",
+  scope: (id) => `chat:${id}`,
+  dedupe: true,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
     path: `/api/chats/${encodeURIComponent(id)}/archive`,
@@ -51,8 +59,7 @@ export const archiveChatAction = apiAction<string, unknown>({
     return { session, atIndex };
   },
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number }>(op);
-    if (o !== undefined) reinsertSession(o.session, o.atIndex);
+    if (op !== undefined) reinsertSession(op.session, op.atIndex);
   },
   success: false,
   error: "Couldn't archive chat",
@@ -60,9 +67,12 @@ export const archiveChatAction = apiAction<string, unknown>({
 
 // --- chat.discard_tangent ---
 
-export const discardTangentAction = transportAction<string>({
+export const discardTangent = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
   name: "chat.discard_tangent",
-  retryable: false,
+  scope: (id) => `chat:${id}`,
+  dedupe: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: (id) => ({ type: "discard_tangent", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
@@ -74,10 +84,9 @@ export const discardTangentAction = transportAction<string>({
     return { session, atIndex, parentID };
   },
   rollback: (_id, op) => {
-    const o = asOp<{ session: import("../types.js").Session; atIndex: number; parentID?: string }>(op);
-    if (o !== undefined) {
-      reinsertSession(o.session, o.atIndex);
-      if (o.parentID !== undefined) setFrozen(o.parentID, true);
+    if (op !== undefined) {
+      reinsertSession(op.session, op.atIndex);
+      if (op.parentID !== undefined) setFrozen(op.parentID, true);
     }
   },
   // Caller (chat.ts onClose) fires a richer manual toast on failure.
@@ -86,8 +95,10 @@ export const discardTangentAction = transportAction<string>({
 
 // --- chat.set_supervised ---
 
-export const setSupervisedAction = transportAction<{ chatID: string; enabled: boolean }>({
+export const setSupervised = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_supervised",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
     type: "set_supervised_mode",
     chat_id: chatID,
@@ -101,49 +112,72 @@ export const setSupervisedAction = transportAction<{ chatID: string; enabled: bo
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: boolean }>(op);
-    if (o !== undefined) setSupervisedMode(chatID, o.prev);
+    if (op !== undefined) setSupervisedMode(chatID, op.prev);
   },
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   error: "Couldn't update supervised mode",
 });
 
 
 // --- chat.resolve_all_pending ---
 
-export const resolveAllPendingAction = transportAction<{ chatID: string; action: "accept" | "reject" }>({
+export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }, { prev: import("../types.js").PendingChange[] }>({
   name: "chat.resolve_all_pending",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: ({ chatID, action }) => ({
     type: "resolve_all_pending_changes",
     chat_id: chatID,
     payload: { action },
   }),
-  retryable: "network",
+  optimistic: ({ chatID }) => {
+    const session = get(chatID);
+    if (session === undefined) return undefined;
+    const prev = [...session.pending_changes];
+    clearPendingChanges(chatID);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined) {
+      for (const change of op.prev) addPendingChange(chatID, change);
+    }
+  },
   error: "Couldn't resolve pending changes",
 });
 
 // --- chat.trust_pending ---
 
-export const trustPendingAction = transportAction<string>({
+export const trustPending = transportAction<string>({
   name: "chat.trust_pending",
+  networkMode: "always",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   error: "Couldn't trust pending changes",
 });
 
 // --- chat.clear_pending_trust ---
 
-export const clearPendingTrustAction = transportAction<string>({
+export const clearPendingTrust = transportAction<string>({
   name: "chat.clear_pending_trust",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   error: "Couldn't clear pending trust",
 });
 
 // --- chat.fork ---
 
-export const forkChatAction = transportAction<{ chatID: string; tangentID: string }>({
+export const forkChat = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
   name: "chat.fork",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: true,
+  idempotencyKey: true,
   command: ({ chatID, tangentID }) => ({
     type: "fork_chat",
     chat_id: chatID,
@@ -156,27 +190,31 @@ export const forkChatAction = transportAction<{ chatID: string; tangentID: strin
     return { chatID, wasFrozen };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined && op !== null && typeof op === "object" && "wasFrozen" in op) {
-      const { wasFrozen } = op as { wasFrozen: boolean };
-      setFrozen(chatID, wasFrozen);
-    }
+    if (op !== undefined) setFrozen(chatID, op.wasFrozen);
   },
-  retryable: "network",
+  retryable: retryNetwork,
   error: "Couldn't fork chat",
 });
 
 // --- chat.merge_tangent ---
+// Not retryable: merge deletes the tangent server-side. If the first
+// attempt succeeded but the response timed out, a retry would hit 404
+// (tangent already gone). Showing a Retry button would mislead the user
+// into thinking the merge failed when it actually succeeded. The tangent
+// deletion broadcasts SSE chat_deleted so listeners reconcile state.
 
-export const mergeTangentAction = transportAction<string>({
+export const mergeTangent = transportAction<string>({
   name: "chat.merge_tangent",
+  scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
   error: "Couldn't merge tangent",
 });
 
 // --- chat.set_auto_approve_crew ---
 
-export const setAutoApproveCrewAction = transportAction<{ chatID: string; enabled: boolean }>({
+export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
   name: "chat.set_auto_approve_crew",
+  scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
     type: "set_auto_approve_crew",
     chat_id: chatID,
@@ -186,21 +224,25 @@ export const setAutoApproveCrewAction = transportAction<{ chatID: string; enable
     const session = get(chatID);
     if (session === undefined) return undefined;
     const prev = session.auto_approve_crew;
-    setAutoApproveCrew(chatID, enabled);
+    storeSetAutoApproveCrew(chatID, enabled);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: boolean }>(op);
-    if (o !== undefined) setAutoApproveCrew(chatID, o.prev);
+    if (op !== undefined) storeSetAutoApproveCrew(chatID, op.prev);
   },
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   error: "Couldn't update auto-approve",
 });
 
 // --- chat.restore ---
 
-export const restoreChatAction = apiAction<string, { ok: boolean }>({
+export const restoreChat = apiAction<string, { ok: boolean }>({
   name: "chat.restore",
+  scope: (id) => `chat:${id}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: (id) => ({
     method: "POST",
     path: "/api/chats/archived",
@@ -210,10 +252,13 @@ export const restoreChatAction = apiAction<string, { ok: boolean }>({
 });
 
 // --- chat.delete_archived ---
+// No auto-retry and no manual Retry button: DELETE is destructive. If the
+// first attempt succeeds but the response times out, a retry would hit 404
+// and surface a misleading error toast.
 
-export const deleteArchivedChatAction = apiAction<string, unknown>({
+export const deleteArchivedChat = apiAction<string, unknown>({
   name: "chat.delete_archived",
-  retryable: "network",
+  scope: (id) => `chat:${id}`,
   request: (id) => ({
     method: "DELETE",
     path: `/api/chats/archived/${encodeURIComponent(id)}`,
@@ -223,19 +268,40 @@ export const deleteArchivedChatAction = apiAction<string, unknown>({
 
 // --- chat.load_history ---
 
-export const loadHistoryAction = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
+export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
   name: "chat.load_history",
-  retryable: "network",
+  dedupe: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/chats/archived" }),
   error: "Couldn't load chat history",
 });
 
-// --- chat.cancel ---
+// --- chat.cancel_turn ---
+//
+// No scope: cancel must fire immediately, not queue behind an in-flight
+// sendPrompt in the same chat. Cancel is naturally idempotent
+// server-side (the server ignores it if no turn is active).
+//
+// Named "chat.cancel_turn" (not "chat.cancel") to avoid confusion with
+// the Action.cancel() method — `cancelTurn.cancel()` reads as
+// "abort the cancel-turn action's in-flight instances", not "cancel a turn".
 
-export const cancelTurnAction = transportAction<string>({
-  name: "chat.cancel",
+export const cancelTurn = transportAction<string, { wasThinking: boolean }>({
+  name: "chat.cancel_turn",
   command: (chatID) => ({ type: "cancel", chat_id: chatID }),
-  error: "Couldn't cancel",
+  optimistic: (chatID) => {
+    const session = get(chatID);
+    const wasThinking = session?.thinking ?? false;
+    setThinking(chatID, false);
+    return { wasThinking };
+  },
+  rollback: (chatID, op) => {
+    if (op !== undefined) setThinking(chatID, op.wasThinking);
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't cancel turn",
 });
 
 // --- chat.switch_model ---
@@ -245,9 +311,11 @@ export const cancelTurnAction = transportAction<string>({
 //
 // On failure, rollback restores the previous model via setModel(). bindLoadingState handles the spinner.
 
-export const switchModelAction = defineAction<{ chatID: string; model: string }, boolean>({
+export const switchModel = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
   name: "chat.switch_model",
-  retryable: "network",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
     if (session === undefined) return undefined;
@@ -256,18 +324,22 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    const o = asOp<{ prev: string }>(op);
-    if (o !== undefined) setModel(chatID, o.prev);
+    if (op !== undefined) setModel(chatID, op.prev);
   },
   run: async ({ chatID, model }, signal) => {
-    // Don't touch thinking state — it's owned by sendPromptAction and
+    // Don't touch thinking state — it's owned by sendPrompt and
     // bindLoadingState on the model switcher button handles the UI indicator.
     const r = await transportSend(
       { type: "switch_model", chat_id: chatID, payload: { model } },
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, { status: r.status });
+      if (signal.aborted || r.code === "cancelled") {
+        throw new ActionError("cancelled", { code: "cancelled" });
+      }
+      const errOpts: { status: number; code?: string } = { status: r.status };
+      if (r.code !== undefined) errOpts.code = r.code;
+      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
     }
     return true;
   },
@@ -286,7 +358,7 @@ export const switchModelAction = defineAction<{ chatID: string; model: string },
 // reportSendState defaults to true here so setLastError fires; we
 // don't want a toast on top.
 
-export interface SendPromptArgs {
+interface SendPromptArgs {
   chatID: string;
   text: string;
   messageID: string;
@@ -297,17 +369,18 @@ export interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
-export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">({
+export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
   name: "chat.send_prompt",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   optimistic: ({ chatID }) => {
     setThinking(chatID, true);
     return { chatID };
   },
   rollback: (_args, op) => {
-    const o = asOp<{ chatID: string }>(op);
-    if (o !== undefined) setThinking(o.chatID, false);
+    if (op !== undefined) setThinking(op.chatID, false);
   },
-  run: async (args, signal) => {
+  run: async (args, signal, ctx) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
     const r = await transportSend(
       {
@@ -315,9 +388,12 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
         payload: {
           text, message_id: messageID, agent, model,
           active_file: activeFile,
-          open_files: openFiles as string[],
+          open_files: openFiles,
           attachments: (attachments !== undefined && attachments.length > 0)
-            ? (attachments as unknown[]) : undefined,
+            ? attachments : undefined,
+          // Only include the key if the framework provided one (avoids
+          // sending `idempotency_key: undefined` which serializes inconsistently).
+          ...(ctx?.idempotencyKey !== undefined ? { idempotency_key: ctx.idempotencyKey } : {}),
         },
       },
       { signal, reportSendState: true },  // send-state IS the error surface
@@ -336,29 +412,45 @@ export const sendPromptAction = defineAction<SendPromptArgs, "sent" | "queued">(
       enqueuePrompt(chatID, text, attachments);
       return "queued";
     }
-    throw new ActionError(r.error ?? "send failed", { status: r.status });
+    throw new ActionError(r.error ?? "send failed", {
+      status: r.status,
+      ...(r.code !== undefined ? { code: r.code } : {}),
+    });
   },
   error: false,  // send-state.ts (blocked send button) is the surface
 });
 
 // --- chat.resolve_pending_change ---
 
-export const resolvePendingChangeAction = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
+export const resolvePendingChange = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
   name: "chat.resolve_pending_change",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
   command: ({ chatID, toolCallID, action }) => ({
     type: "resolve_pending_change",
     chat_id: chatID,
     payload: { tool_call_id: toolCallID, action },
   }),
-  retryable: "network",
-  error: "Couldn't resolve change",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  // Args-aware error message: "Failed to accept change" / "Failed to reject change".
+  error: ({ action }) => `Failed to ${action} change`,
 });
 
-// --- chat.permission_response ---
+// --- chat.respond_permission ---
+// Scope is per-request (not per-chat): two pending permission requests in
+// the same chat are independent and should fire in parallel. Serializing
+// them behind the chat scope would delay the second response until the
+// first round-trips, which feels sluggish when the agent is waiting on
+// multiple permissions simultaneously.
 
-export const permissionResponseAction = transportAction<{ chatID: string; requestID: number; optionID: string }>({
-  name: "chat.permission_response",
-  retryable: "network",
+export const respondPermission = transportAction<{ chatID: string; requestID: number; optionID: string }>({
+  name: "chat.respond_permission",
+  scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   command: ({ chatID, requestID, optionID }) => ({
     type: "permission_response",
     chat_id: chatID,
@@ -369,12 +461,17 @@ export const permissionResponseAction = transportAction<{ chatID: string; reques
 
 // --- chat.restore_checkpoint ---
 
-export const restoreCheckpointAction = transportAction<{ chatID: string; tag: string }>({
+export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
   name: "chat.restore_checkpoint",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: true,
+  idempotencyKey: true,
   command: ({ chatID, tag }) => ({
     type: "restore_checkpoint",
     chat_id: chatID,
     payload: { tag },
   }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   error: "Couldn't restore checkpoint",
 });

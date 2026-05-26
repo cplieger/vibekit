@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("bindLoadingState", () => {
+describe("bindLoadingState — single name", () => {
   it("toggles disabled while action is pending", async () => {
     let resolveRun: (value: string) => void;
     const action = defineAction({
@@ -257,4 +257,444 @@ describe("bindLoadingState", () => {
     await p;
     expect(btn.disabled).toBe(false); // still not affected
   });
+
+  it("auto-disposes when element is removed from DOM mid-pending", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.bind_autodispose",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    const unbind = bindLoadingState("test.bind_autodispose", btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.isConnected).toBe(true);
+    // Remove element from DOM
+    btn.remove();
+    expect(btn.isConnected).toBe(false);
+    // Complete the action — the binding should auto-dispose on the
+    // success transition (sees el disconnected) and NOT restore disabled.
+    resolveRun!();
+    await p;
+    // After auto-dispose, the element stays disabled (no restore).
+    // Note: unbind() is a no-op after auto-dispose.
+    expect(btn.disabled).toBe(true);
+    unbind(); // cleanup
+  });
 });
+
+describe("bindLoadingState — multi-name", () => {
+  it("disables while ANY named action is pending", async () => {
+    let resolve1!: () => void;
+    let resolve2!: () => void;
+    const a1 = defineAction({
+      name: "test.multi1",
+      run: () => new Promise<void>((r) => { resolve1 = r; }),
+    });
+    const a2 = defineAction({
+      name: "test.multi2",
+      run: () => new Promise<void>((r) => { resolve2 = r; }),
+    });
+    const btn = document.createElement("button");
+    bindLoadingState(["test.multi1", "test.multi2"], btn);
+    expect(btn.disabled).toBe(false);
+    const p1 = a1.dispatch({});
+    expect(btn.disabled).toBe(true);
+    const p2 = a2.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve1();
+    await p1;
+    // Still disabled because a2 is pending
+    expect(btn.disabled).toBe(true);
+    resolve2();
+    await p2;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("returns no-op for empty actionNames", () => {
+    const btn = document.createElement("button");
+    const unbind = bindLoadingState([], btn);
+    expect(typeof unbind).toBe("function");
+    unbind(); // should not throw
+  });
+
+  it("delegates to bindLoadingState for single-name array", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_single",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    bindLoadingState(["test.multi_single"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve();
+    await p;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("auto-disposes when element is removed from DOM", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_dispose",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState(["test.multi_dispose", "test.multi_other"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    btn.remove();
+    resolve();
+    await p;
+    // Auto-disposed: element stays disabled (no restore)
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("unsubscribe mid-pending restores element state", async () => {
+    let resolve!: () => void;
+    const action = defineAction({
+      name: "test.multi_unsub",
+      run: () => new Promise<void>((r) => { resolve = r; }),
+    });
+    const btn = document.createElement("button");
+    const unbind = bindLoadingState(["test.multi_unsub"], btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    unbind();
+    expect(btn.disabled).toBe(false);
+    resolve();
+    await p;
+  });
+});
+
+describe("bindLoadingState — focus restore", () => {
+  it("restores focus to button when user has not moved focus elsewhere", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_restore",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.focus_restore", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    // Button disabled → focus moves to body
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // Focus restored because user didn't move it elsewhere
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("does NOT steal focus back when user moved focus to another element", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_no_steal",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    bindLoadingState("test.focus_no_steal", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    // User explicitly moves focus to another element during pending
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    resolveRun!();
+    await p;
+    // Focus should NOT be stolen back to btn
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+});
+
+describe("bindLoadingState — focus restore edge cases", () => {
+  it("does NOT restore focus when preserveDisabled keeps element disabled (baseDisabled=true)", async () => {
+    // Scenario: button is disabled by validation at the time the action
+    // starts. hadFocus is false because a disabled button can't receive
+    // focus in real browsers. After action completes, preserveDisabled
+    // restores disabled=true and focus is NOT touched.
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.focus_preserve_disabled",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    btn.disabled = true;
+    bindLoadingState("test.focus_preserve_disabled", btn, { preserveDisabled: true });
+    other.focus();
+    expect(document.activeElement).toBe(other);
+    // Dispatch while button is disabled — hadFocus should be false
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    // Button stays disabled (preserveDisabled restores baseDisabled=true)
+    expect(btn.disabled).toBe(true);
+    // Focus stays on other — not stolen to btn
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+
+  it("restores focus after error (not just success)", async () => {
+    const action = defineAction({
+      name: "test.focus_on_error",
+      run: async () => { throw new Error("boom"); },
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.focus_on_error", btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    await action.dispatch({});
+    // Focus restored even though action errored
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+});
+
+describe("bindLoadingState — multi-name focus restore", () => {
+  it("restores focus when all actions complete", async () => {
+    let resolve1!: () => void;
+    let resolve2!: () => void;
+    const a1 = defineAction({
+      name: "test.multi_focus1",
+      run: () => new Promise<void>((r) => { resolve1 = r; }),
+    });
+    const a2 = defineAction({
+      name: "test.multi_focus2",
+      run: () => new Promise<void>((r) => { resolve2 = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState(["test.multi_focus1", "test.multi_focus2"], btn);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p1 = a1.dispatch({});
+    const p2 = a2.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolve1();
+    await p1;
+    // Still pending (a2), focus not yet restored
+    expect(btn.disabled).toBe(true);
+    resolve2();
+    await p2;
+    // All done — focus restored
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("does NOT steal focus when user moved elsewhere", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.multi_focus_no_steal",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    const other = document.createElement("input");
+    document.body.appendChild(btn);
+    document.body.appendChild(other);
+    bindLoadingState(["test.multi_focus_no_steal"], btn);
+    btn.focus();
+    const p = action.dispatch({});
+    other.focus();
+    resolveRun!();
+    await p;
+    expect(document.activeElement).toBe(other);
+    btn.remove();
+    other.remove();
+  });
+});
+
+describe("bindLoadingState — disabledFn", () => {
+  it("uses disabledFn to resolve disabled state on completion", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn1",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    let formValid = true;
+    const btn = document.createElement("button");
+    bindLoadingState("test.disabledfn1", btn, { disabledFn: () => !formValid });
+    expect(btn.disabled).toBe(false);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true); // pending
+    // External validation changes during pending
+    formValid = false;
+    resolveRun!();
+    await p;
+    // disabledFn re-evaluated: !formValid = true → stays disabled
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("disabledFn returning false enables button after action completes", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn2",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    bindLoadingState("test.disabledfn2", btn, { disabledFn: () => false });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    resolveRun!();
+    await p;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("disabledFn takes precedence over preserveDisabled", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn3",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    btn.disabled = true;
+    // Both set: disabledFn wins
+    bindLoadingState("test.disabledfn3", btn, {
+      preserveDisabled: true,
+      disabledFn: () => false,
+    });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true); // pending
+    resolveRun!();
+    await p;
+    // disabledFn returns false → enabled (ignores preserveDisabled snapshot)
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("disabledFn works with bindLoadingState", async () => {
+    let resolve1!: () => void;
+    const a1 = defineAction({
+      name: "test.multi_dfn1",
+      run: () => new Promise<void>((r) => { resolve1 = r; }),
+    });
+    let externalDisabled = false;
+    const btn = document.createElement("button");
+    bindLoadingState(["test.multi_dfn1", "test.multi_dfn2"], btn, {
+      disabledFn: () => externalDisabled,
+    });
+    expect(btn.disabled).toBe(false);
+    const p = a1.dispatch({});
+    expect(btn.disabled).toBe(true);
+    externalDisabled = true;
+    resolve1();
+    await p;
+    // disabledFn returns true → stays disabled
+    expect(btn.disabled).toBe(true);
+  });
+});
+
+describe("bindLoadingState — disabledFn edge cases", () => {
+  it("recovers gracefully when disabledFn throws on completion", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_throw",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.disabledfn_throw", btn, {
+      pendingClass: "loading",
+      disabledFn: () => { throw new Error("validation exploded"); },
+    });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains("loading")).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    resolveRun!();
+    await p;
+    // disabledFn threw → falls back to false (element re-enabled)
+    expect(btn.disabled).toBe(false);
+    // aria-busy and pendingClass still cleaned up despite the throw
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    expect(btn.classList.contains("loading")).toBe(false);
+    btn.remove();
+  });
+
+  it("disabledFn throwing does not prevent focus restore", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_throw_focus",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    let shouldThrow = false;
+    bindLoadingState("test.disabledfn_throw_focus", btn, {
+      disabledFn: () => { if (shouldThrow) throw new Error("boom"); return false; },
+    });
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    shouldThrow = true;
+    resolveRun!();
+    await p;
+    // Falls back to false → button enabled → focus restored
+    expect(btn.disabled).toBe(false);
+    expect(document.activeElement).toBe(btn);
+    btn.remove();
+  });
+
+  it("disabledFn returning true suppresses focus restore", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.disabledfn_no_focus",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState("test.disabledfn_no_focus", btn, {
+      disabledFn: () => true,
+    });
+    btn.focus();
+    const focusSpy = vi.spyOn(btn, "focus");
+    const p = action.dispatch({});
+    resolveRun!();
+    await p;
+    // disabledFn returns true → button stays disabled → focus NOT restored
+    expect(btn.disabled).toBe(true);
+    expect(focusSpy).not.toHaveBeenCalled();
+    btn.remove();
+  });
+
+  it("disabledFn throwing in bindLoadingState recovers gracefully", async () => {
+    let resolveRun: () => void;
+    const action = defineAction({
+      name: "test.multi_dfn_throw",
+      run: () => new Promise<void>((r) => { resolveRun = r; }),
+    });
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    bindLoadingState(["test.multi_dfn_throw", "test.multi_dfn_other"], btn, {
+      pendingClass: "spin",
+      disabledFn: () => { throw new Error("kaboom"); },
+    });
+    const p = action.dispatch({});
+    expect(btn.disabled).toBe(true);
+    expect(btn.classList.contains("spin")).toBe(true);
+    resolveRun!();
+    await p;
+    // Falls back to false on throw
+    expect(btn.disabled).toBe(false);
+    expect(btn.classList.contains("spin")).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    btn.remove();
+  });
+});
+

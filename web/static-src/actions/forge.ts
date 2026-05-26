@@ -4,32 +4,33 @@
 // action.dispatch() calls with button progress and aggregate toast.
 // ---------------------------------------------------------------------------
 
-import { apiAction } from "./index.js";
+import { apiAction, retryNetwork } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
 // --- Types local to this slice ---
 
-export interface CloneArgs {
+interface CloneArgs {
   url: string;
 }
 
-export interface DeleteLocalArgs {
+interface DeleteLocalArgs {
   repoName: string;
 }
 
-export interface SignOutArgs {
+interface SignOutArgs {
   forgeId: string;
 }
-
-export interface StartDeviceFlowArgs {}
 
 // --- Actions ---
 
 /** Start the GitHub OAuth device flow. Returns the device flow
  *  response on success or null on failure. Error toast suppressed —
  *  the callsite renders inline status instead. */
-export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
+export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
   name: "forge.start_device_flow",
+  dedupe: true,
+  retryable: retryNetwork,
   request: () => ({
     method: "POST",
     path: "/api/forges/oauth/github/start",
@@ -38,7 +39,9 @@ export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse
   error: false,
 });
 
-/** Sign out of a forge account (delete the token). */
+/** Sign out of a forge account (delete the token).
+ *  Not retryable: a timed-out DELETE may have succeeded server-side;
+ *  retrying would hit 404 and surface a misleading error toast. */
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
   request: ({ forgeId }) => ({
@@ -53,6 +56,9 @@ export const signOut = apiAction<SignOutArgs, void>({
  *  aggregates). */
 export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: ({ url }) => ({
     method: "POST",
     path: "/api/git/clone",
@@ -72,12 +78,11 @@ export const deleteLocal = apiAction<DeleteLocalArgs, { status?: string; error?:
   }),
   error: false,
   // Not retryable: a timed-out delete may have succeeded server-side.
-  retryable: false,
 });
 
 // --- PAT connect ---
 
-export interface ConnectPATArgs {
+interface ConnectPATArgs {
   kind: ForgeKind;
   host: string;
   token: string;
@@ -87,6 +92,9 @@ export interface ConnectPATArgs {
  *  form renders inline error status. */
 export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: string }>({
   name: "forge.connect_pat",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
   request: ({ kind, host, token }) => ({
     method: "POST",
     path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,

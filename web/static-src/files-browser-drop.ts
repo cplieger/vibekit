@@ -7,7 +7,7 @@ import { $ } from "./dom.js";
 import { type FileEntry, joinPath } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { installDropZone } from "./drop-zone.js";
-import { uploadAction } from "./actions/files.js";
+import { upload } from "./actions/files.js";
 
 export interface DragDropContext {
   getCurrentPath: () => string;
@@ -53,10 +53,11 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const targetDir = dropTargetFolder !== ""
         ? joinPath(currentPath, dropTargetFolder) : currentPath;
       dropTargetFolder = "";
-      void uploadAction.dispatch({ files, targetDir }).then((paths) => {
-        if (paths === null) return;
-        ctx.reload();
-        for (const p of paths) attachPathToActiveChat(p);
+      void upload.dispatch({ files, targetDir }, {
+        onSuccess: (paths) => {
+          ctx.reload();
+          for (const p of paths) attachPathToActiveChat(p);
+        },
       });
     },
   });

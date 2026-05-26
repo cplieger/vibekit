@@ -23,7 +23,8 @@
 
 import { initGitTabs, onGitTabChange, getGitTab } from "./git-tabs.js";
 import { initChangesTab, refreshChanges } from "./git-changes-tab.js";
-import { initPRsTab, refreshPRs } from "./git-prs-tab.js";
+import { initPRsTab } from "./git-prs-tab.js";
+import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
@@ -47,7 +48,7 @@ export function initGitPanel(): void {
       onConnectForge: () => { void (async () => {
         const { setGitTab } = await import("./git-tabs.js");
         setGitTab("sources");
-      })(); },
+      })().catch(() => {}); },
       // Authenticate-gh CTA: deferred for now (the new multi-repo
       // model handles auth via per-forge "Add account" buttons in
       // the Sources tab; the legacy `gh auth login` device-flow
@@ -55,7 +56,7 @@ export function initGitPanel(): void {
       onAuthenticateGh: () => { void (async () => {
         const { setGitTab } = await import("./git-tabs.js");
         setGitTab("sources");
-      })(); },
+      })().catch(() => {}); },
     });
 
     // When the user switches into a tab, run a fresh fetch so they
@@ -63,7 +64,7 @@ export function initGitPanel(): void {
     onGitTabChange((tab) => {
       switch (tab) {
         case "changes": void refreshChanges(); break;
-        case "prs":     void refreshPRs().catch(() => {}); break;
+        case "prs":     void refreshPRs.dispatch(undefined); break;
         case "sources": void refreshSources(); break;
       }
     });
@@ -73,7 +74,7 @@ export function initGitPanel(): void {
     // ended a turn, etc.) sees fresh state.
     switch (getGitTab()) {
       case "changes": void refreshChanges(); break;
-      case "prs":     void refreshPRs().catch(() => {}); break;
+      case "prs":     void refreshPRs.dispatch(undefined); break;
       case "sources": void refreshSources(); break;
     }
   }
@@ -85,12 +86,6 @@ export function initGitPanel(): void {
 export function loadGitRepos(): void {
   initGitPanel();
 }
-
-/** No-op compatibility export for settings.ts which used to call
- *  syncGitRepo on boot to restore the active repo from server-side
- *  AppSettings. There's no active repo any more, so this does
- *  nothing — kept until the import is cleaned out of settings.ts. */
-export function syncGitRepo(_repo: string): void { /* no-op */ }
 
 /** Refresh the changes-tab view. Used by handlers/turn.ts when the
  *  agent finishes a turn that touched files. Also kicks the sidebar

@@ -116,6 +116,38 @@ describe("dispatch (SSE routing)", () => {
       consoleSpy.mockRestore();
     }
   });
+
+  it("handler that unsubscribes a later handler does not skip it", () => {
+    const h2 = vi.fn();
+    let unsub2: () => void;
+    const h1 = vi.fn(() => { unsub2(); });
+    const unsub1 = onSSE("forges_changed", h1);
+    unsub2 = onSSE("forges_changed", h2);
+    try {
+      dispatch({ type: "forges_changed", chat_id: "" });
+      expect(h1).toHaveBeenCalledTimes(1);
+      expect(h2).toHaveBeenCalledTimes(1);
+    } finally {
+      unsub1();
+      unsub2!();
+    }
+  });
+
+  it("handler that unsubscribes itself does not affect others", () => {
+    const h2 = vi.fn();
+    let unsub1: () => void;
+    const h1 = vi.fn(() => { unsub1(); });
+    unsub1 = onSSE("forges_changed", h1);
+    const unsub2 = onSSE("forges_changed", h2);
+    try {
+      dispatch({ type: "forges_changed", chat_id: "" });
+      expect(h1).toHaveBeenCalledTimes(1);
+      expect(h2).toHaveBeenCalledTimes(1);
+    } finally {
+      unsub1();
+      unsub2();
+    }
+  });
 });
 
 describe("onBus / emitBus (typed cross-module bus)", () => {
@@ -201,6 +233,38 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
       unsub2();
       unsub3();
       consoleSpy.mockRestore();
+    }
+  });
+
+  it("handler that unsubscribes a later handler does not skip it", () => {
+    const h2 = vi.fn();
+    let unsub2: () => void;
+    const h1 = vi.fn(() => { unsub2(); });
+    const unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
+    unsub2 = onBus(BUS_KEYS_ESCAPE, h2);
+    try {
+      emitBus(BUS_KEYS_ESCAPE);
+      expect(h1).toHaveBeenCalledTimes(1);
+      expect(h2).toHaveBeenCalledTimes(1);
+    } finally {
+      unsub1();
+      unsub2!();
+    }
+  });
+
+  it("handler that unsubscribes itself does not affect others", () => {
+    const h2 = vi.fn();
+    let unsub1: () => void;
+    const h1 = vi.fn(() => { unsub1(); });
+    unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
+    const unsub2 = onBus(BUS_KEYS_ESCAPE, h2);
+    try {
+      emitBus(BUS_KEYS_ESCAPE);
+      expect(h1).toHaveBeenCalledTimes(1);
+      expect(h2).toHaveBeenCalledTimes(1);
+    } finally {
+      unsub1();
+      unsub2();
     }
   });
 });

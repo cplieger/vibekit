@@ -43,7 +43,7 @@ type Listener = (tab: SettingsTab) => void;
 const listeners = new Set<Listener>();
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
-export function onTabChange(fn: Listener): () => void {
+function onTabChange(fn: Listener): () => void {
   listeners.add(fn);
   fn(activeTab);
   return (): void => { listeners.delete(fn); };
@@ -67,11 +67,18 @@ export function initSettingsTabs(): void {
   const bar = $.settingsTabBar;
   const select = $.settingsTabSelect;
 
+  bar.setAttribute("role", "tablist");
+  bar.setAttribute("aria-label", "Settings sections");
+
   // Desktop: render pill buttons. The HTML has them declared statically;
   // here we just attach click handlers and mark the initial one active.
   for (const tab of TABS) {
     const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${tab}"]`);
     if (btn === null) continue;
+    btn.setAttribute("role", "tab");
+    btn.id = `settings-tab-${tab}`;
+    btn.setAttribute("aria-label", TAB_LABELS[tab]);
+    btn.setAttribute("aria-controls", `settings-panel-${tab}`);
     btn.addEventListener("click", () => setSettingsTab(tab));
   }
 
@@ -90,11 +97,17 @@ export function initSettingsTabs(): void {
       const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${t}"]`);
       btn?.classList.toggle("active", t === tab);
       btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
+      btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
     }
     select.value = tab;
     const swap = (): void => {
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
-        panel.classList.toggle("hidden", panel.dataset["settingsPanel"] !== tab);
+        const panelTab = panel.dataset["settingsPanel"] as string;
+        const isActive = panelTab === tab;
+        panel.classList.toggle("hidden", !isActive);
+        panel.setAttribute("role", "tabpanel");
+        panel.id = `settings-panel-${panelTab}`;
+        panel.setAttribute("aria-labelledby", `settings-tab-${panelTab}`);
       }
     };
     maybeViewTransition(swap);

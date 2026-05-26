@@ -66,8 +66,11 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // Pure functions should complete in milliseconds.
-    testTimeout: 2000,
+    // Pure functions should complete in milliseconds. Property-based
+    // tests (fast-check 1000-iteration) need more headroom under
+    // container load — bumped from 2s to 5s. Aligns with the 10s
+    // interruptAfterTimeLimit in fc-strict-setup.ts.
+    testTimeout: 5000,
     hookTimeout: 5000,
 
     // Flag tests slower than 100ms — pure functions have no I/O.
@@ -150,11 +153,13 @@ export default defineConfig({
     },
 
     // Persistent file system module cache between reruns.
-    // Cache path redirected out of node_modules (which is a read-only symlink
-    // to the shared WSL install at /usr/local/lib/vitest-deps/).
-    experimental: {
-      fsModuleCache: true,
-      fsModuleCachePath: ".vitest-cache",
-    },
+    // DISABLED: the experimental fsModuleCache causes intermittent parse
+    // failures when the cache is corrupted by interrupted runs or
+    // concurrent vitest invocations. The ~0.5s speedup is not worth the
+    // flake rate. Re-evaluate when vitest stabilises this feature.
+    // experimental: {
+    //   fsModuleCache: true,
+    //   fsModuleCachePath: ".vitest-cache",
+    // },
   },
 });

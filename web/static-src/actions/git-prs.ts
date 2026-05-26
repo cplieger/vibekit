@@ -3,7 +3,8 @@
 // and are intentionally excluded.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction } from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
 import type { PRRemoveResult } from "../git-prs-state.js";
 
@@ -16,48 +17,67 @@ interface PRArgs {
   pr_number: number;
 }
 
+/** Build the API path for a PR action (merge/close). */
 function prPath(args: PRArgs, action: string): string {
   return `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.owner)}/${encodeURIComponent(args.name)}/prs/${args.pr_number}/${action}`;
 }
 
+/** Optimistically remove a PR from the UI groups. Returns the undo
+ *  state needed by rollbackRemovePR, or undefined if the PR wasn't found. */
 function optimisticRemovePR(args: PRArgs): PRRemoveResult | undefined {
   return removePRFromGroups(args.forge_id, args.owner, args.name, args.pr_number);
 }
 
-function rollbackRemovePR(_args: PRArgs, op: unknown): void {
-  if (op !== undefined) reinsertPRInGroups(op as PRRemoveResult);
+/** Rollback: re-insert the PR into its original group position. */
+function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
+  if (op !== undefined) reinsertPRInGroups(op);
 }
 
 // --- Actions ---
 
 /** Merge a pull request. */
-export const mergePRAction = apiAction<PRArgs, unknown>({
+export const mergePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.merge_pr",
+  scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
+  dedupe: true,
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
-  error: "Merge failed",
+  error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
   // Not retryable: a timed-out merge may have succeeded server-side.
-  retryable: false,
 });
 
 /** Close a pull request without merging. */
-export const closePRAction = apiAction<PRArgs, unknown>({
+export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   name: "git.close_pr",
+  scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
+  dedupe: true,
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
-  error: "Couldn't close PR",
-  retryable: "network",
+  error: (args) => `Couldn't close PR #${String(args.pr_number)}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
 });
 
 /** Refresh all PRs across connected forges. */
-export const refreshPRsAction = defineAction<void, void>({
+export const refreshPRs = defineAction<void, void>({
   name: "git.refresh_prs",
+  dedupe: true,
   run: async (_args, signal) => {
     const { refreshPRs } = await import("../git-prs-tab.js");
-    await refreshPRs(signal);
+    try {
+      await refreshPRs(signal);
+    } catch (e) {
+      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      throw new ActionError(
+        e instanceof Error ? e.message : "network error",
+        { code: "network", cause: e },
+      );
+    }
   },
   error: "Couldn't refresh PRs",
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
 });

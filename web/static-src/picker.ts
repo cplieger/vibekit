@@ -13,6 +13,7 @@ import type { ModelInfo } from "./types.js";
 import { escText, humanName } from "./strings.js";
 import { $ } from "./dom.js";
 import { getActive } from "./store.js";
+import { wireArrowNav } from "./arrow-nav.js";
 
 /** Per-agent label + description for the picker header. The agent name
  *  from the session is the lookup key; unknown agents fall back to the
@@ -51,6 +52,7 @@ class ModelPickerController {
     const info = AGENT_INFO[agent ?? ""] ?? AGENT_INFO[""]!;
     this.callback = onSelect;
     this.currentId = currentModelId;
+    picker.setAttribute("aria-label", info.label);
 
     const svg = label.querySelector("svg");
     const svgHtml = svg !== null ? svg.outerHTML + " " : "";
@@ -65,27 +67,41 @@ class ModelPickerController {
     desc.textContent = info.description;
 
     grid.replaceChildren();
+    grid.setAttribute("role", "listbox");
+    grid.setAttribute("aria-label", info.label);
     if (this.models.length === 0) {
       const loading = document.createElement("div");
       loading.className = "picker-btn picker-loading";
       loading.textContent = "Loading models…";
       loading.setAttribute("aria-busy", "true");
+      loading.setAttribute("role", "option");
       grid.appendChild(loading);
     }
     for (const m of this.models) {
       const btn = document.createElement("button");
       btn.className = `picker-btn${m.model_id === currentModelId ? " active" : ""}`;
       btn.setAttribute("data-model", m.model_id);
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", m.model_id === currentModelId ? "true" : "false");
       btn.innerHTML = `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>`
         + `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
       btn.addEventListener("click", () => {
-        for (const b of grid.querySelectorAll(".picker-btn")) b.classList.remove("active");
+        for (const b of grid.querySelectorAll(".picker-btn")) {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        }
         btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
         this.callback?.(m.model_id);
       });
       grid.appendChild(btn);
     }
+    wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
     picker.classList.remove("hidden");
+    // Focus the active model button (or first) for keyboard users.
+    const focusTarget = grid.querySelector<HTMLButtonElement>(".picker-btn.active")
+      ?? grid.querySelector<HTMLButtonElement>(".picker-btn:not(.picker-loading)");
+    focusTarget?.focus();
   }
 
   hide(): void {
@@ -111,7 +127,9 @@ class ModelPickerController {
 
     if (overrideModelId !== undefined) {
       for (const btn of grid.querySelectorAll(".picker-btn")) {
-        btn.classList.toggle("active", btn.getAttribute("data-model") === overrideModelId);
+        const isActive = btn.getAttribute("data-model") === overrideModelId;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
       }
       this.currentId = overrideModelId;
       return;

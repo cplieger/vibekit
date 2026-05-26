@@ -19,8 +19,8 @@ function visibleState(): string | null {
 }
 
 describe("git-status-banner", () => {
-  let onConnectForge: ReturnType<typeof vi.fn>;
-  let onAuthenticateGh: ReturnType<typeof vi.fn>;
+  let onConnectForge: () => void;
+  let onAuthenticateGh: () => void;
 
   beforeEach(() => {
     setupDOM();

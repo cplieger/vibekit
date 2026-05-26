@@ -8,24 +8,51 @@ import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath, fileStates } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
 
 registerCleanup(() => suggestResolution.cancel());
 
-/** Generation counter: incremented on each requestSuggestion dispatch
- *  so superseded dispatches can detect they were cancelled. */
-let suggestionGen = 0;
+/** Per-file generation counter so superseded dispatches can detect
+ *  they were cancelled WITHOUT invalidating other files' in-flight
+ *  suggestions. Closing file A's tab bumps only A's counter; file B's
+ *  in-flight suggestion uses B's counter and resolves correctly. */
+const suggestionGenByPath = new Map<string, number>();
 
-/** Abort any in-flight suggestion request (called on tab close). */
-export function abortSuggestion(): void {
+function bumpSuggestionGen(path: string): number {
+  const next = (suggestionGenByPath.get(path) ?? 0) + 1;
+  suggestionGenByPath.set(path, next);
+  return next;
+}
+
+function currentSuggestionGen(path: string): number {
+  return suggestionGenByPath.get(path) ?? 0;
+}
+
+/** Clean up per-file generation tracking when a file is closed. Called
+ *  from closeEditorFile so the suggestionGenByPath Map doesn't grow
+ *  unbounded over a long session with many files opened/closed. */
+export function clearSuggestionState(path: string): void {
+  suggestionGenByPath.delete(path);
+}
+
+/** Abort any in-flight suggestion request. If path is provided, reset
+ *  loading state on THAT file; otherwise default to the active file.
+ *  Called on tab close (with path) and on broader teardown (without).
+ *
+ *  Per-file generation: bumps only the target path's counter so other
+ *  files' in-flight suggestions remain valid. */
+export function abortSuggestion(path?: string): void {
   // Reset any entries with loading: true so the UI doesn't show stale spinners.
-  const state = fileStates.get(getActiveFilePath());
+  const targetPath = path ?? getActiveFilePath();
+  const state = fileStates.get(targetPath);
   if (state !== undefined) {
     for (const [key, entry] of state.suggestions) {
       if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
     }
   }
-  suggestResolution.cancel();
+  // Bump only this path's counter so this file's in-flight requests
+  // discard their results on resolution.
+  bumpSuggestionGen(targetPath);
 }
 
 export function renderConflictModeUI(state: FileState): void {
@@ -131,8 +158,12 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (hunk === undefined) return;
   const existing = state.suggestions.get(hunk.startLine);
   if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
-  suggestResolution.cancel();
-  const myDispatchId = ++suggestionGen;
+  // Per-file generation: bump only THIS file's counter. Other files'
+  // in-flight suggestions remain valid.
+  // Note: we no longer call suggestResolution.cancel() globally — that
+  // would abort in-flight suggestions for OTHER files. The per-file
+  // gen check below discards stale results from this file only.
+  const myDispatchId = bumpSuggestionGen(state.path);
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
   const context = buildHunkContext(state.mode.conflict, hunk);
@@ -142,7 +173,10 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     context,
   };
   const resp = await suggestResolution.dispatch(body);
-  if (myDispatchId !== suggestionGen) return; // superseded by another dispatch; silently bail
+  // Stale-dispatch guard: if abortSuggestion(state.path) or another
+  // requestSuggestion on this file ran while we were awaiting, the
+  // path's gen has incremented. Bail silently.
+  if (myDispatchId !== currentSuggestionGen(state.path)) return;
   if (state.mode.kind !== "conflict") return;
   if (getActiveFilePath() !== state.path) return; // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];

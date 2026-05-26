@@ -1,9 +1,8 @@
 // Actions for conflict-resolution user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { defineAction } from "./define.js";
-import { apiAction } from "./api.js";
-import { ActionError } from "./error.js";
+import { defineAction, apiAction, ActionError, classifyFetchError, retryNetwork } from "./index.js";
+import { RETRY_STANDARD } from "./types.js";
 import { withTimeout } from "../api-client.js";
 import type { Conflict } from "../conflicts.js";
 
@@ -15,26 +14,20 @@ interface OpenDiffArgs {
   otherChat: string;
 }
 
+/** Fetch a single blob by SHA. Uses raw fetch because the response is
+ *  plain text (not JSON), which apiAction's executeRequest doesn't
+ *  support. Error classification is handled via classifyFetchError. */
 async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Promise<string> {
   if (sha === "") return "";
+  const path = `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`;
+  let resp: Response;
   try {
-    const resp = await fetch(
-      `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`,
-      { signal: withTimeout(signal, 15_000) },
-    );
-    if (!resp.ok) throw new ActionError("server returned non-ok", { status: resp.status });
-    return await resp.text();
+    resp = await fetch(path, { signal: withTimeout(signal, 15_000) });
   } catch (e) {
-    if (e instanceof ActionError) throw e;
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-    // Any DOMException (AbortError/TimeoutError) from the derived
-    // timeout signal means the 15 s budget expired — the caller's
-    // signal is still live so this is a timeout, not a user cancel.
-    if (e instanceof DOMException) {
-      throw new ActionError("Request timed out", { code: "timeout", cause: e });
-    }
-    throw new ActionError("network error", { cause: e });
+    throw classifyFetchError(e, signal);
   }
+  if (!resp.ok) throw new ActionError("server returned non-ok", { status: resp.status });
+  return resp.text();
 }
 
 /** Open a side-by-side diff for a conflict chip. Fetches both blobs
@@ -42,7 +35,9 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
  *  "Could not load file content for conflict diff". */
 export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   name: "conflicts.open_diff",
-  retryable: "network",
+  retryable: retryNetwork,
+  retry: { count: 1, delay: 500 },
+  dedupe: true,
   run: async (args, signal) => {
     const [expected, actual] = await Promise.all([
       fetchBlob(args.chatID, args.expectedSha, signal),
@@ -62,9 +57,11 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
 
 /** Fetch past conflicts for a chat. Background best-effort — fails
  *  silently so a network hiccup doesn't surface an error toast. */
-export const loadConflictsAction = apiAction<string, { conflicts?: Conflict[] }>({
+export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   name: "conflicts.load",
-  retryable: false,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  dedupe: (args) => args,
   request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
   error: false,
 });

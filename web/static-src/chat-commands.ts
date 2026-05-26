@@ -35,7 +35,7 @@ import { newMessageID } from "./transport.js";
 import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import { takeAttachments, addAttachment } from "./attachments.js";
-import { switchModelAction, resolvePendingChangeAction, sendPromptAction } from "./actions/chat.js";
+import { switchModel as switchModelAction, resolvePendingChange as resolvePendingChangeAction, sendPrompt as sendPromptAction } from "./actions/chat.js";
 import { setLastQueuedAttachments } from "./store.js";
 
 /** Options for the low-level prompt sender. */
@@ -54,7 +54,7 @@ export interface SendPromptOpts {
 export async function sendPromptTo(
   chatID: string, text: string, opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
-  const attachments = opts.attachments !== undefined ? [...opts.attachments] as unknown[] : takeAttachments();
+  const attachments = opts.attachments !== undefined ? [...opts.attachments] : takeAttachments();
   const result = await sendPromptAction.dispatch({
     chatID, text,
     messageID: newMessageID(),

@@ -4,7 +4,7 @@
 
 import { onSSE } from "../bus.js";
 import { setThinking, setWorkingLabel, get, getActiveId, dequeuePrompt, peekQueuedAttachments } from "../store.js";
-import { apiGet } from "../api-client.js";
+import { apiAction } from "../actions/index.js";
 import {
   notifyIfHidden, setBadge, isAgentFinishedEnabled, isPermissionNeededEnabled,
 } from "../notify.js";
@@ -16,8 +16,14 @@ import {
   showBanner, onTurnEnded,
 } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
-import { permissionResponseAction, restoreCheckpointAction } from "../actions/chat.js";
+import { respondPermission, restoreCheckpoint } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
+
+/** Notify the user and set the badge if the page is hidden. */
+function notifyAndBadge(title: string, body: string): void {
+  notifyIfHidden(title, body);
+  if (document.visibilityState === "hidden") setBadge(1);
+}
 
 /** Drain one queued prompt, restoring any attachments that were saved
  *  alongside it so they flow through the next sendPromptTo call. */
@@ -29,7 +35,7 @@ function drainQueuedPromptWithAttachments(chatID: string): void {
   void sendPromptTo(chatID, text, {
     ...(session?.agent !== undefined && session.agent !== "" && { agent: session.agent }),
     ...(session?.model !== undefined && session.model !== "" && { model: session.model }),
-    ...(attachments.length > 0 && { attachments: attachments as unknown[] }),
+    ...(attachments.length > 0 && { attachments }),
   });
 }
 
@@ -37,10 +43,24 @@ function drainQueuedPromptWithAttachments(chatID: string): void {
  *  on SSE reconnect replay (events arrive within milliseconds). */
 const _lastNotifyMs = new Map<string, number>();
 const _NOTIFY_STALE_MS = 10_000;
+/** Hard cap: if the map exceeds this size, prune aggressively. Prevents
+ *  unbounded growth when many chats fire turn_ended without pruning
+ *  (e.g. notifications disabled so the notify path is skipped). */
+const _NOTIFY_MAP_CAP = 200;
 
 function _pruneNotifyMap(now: number): void {
   for (const [k, v] of _lastNotifyMs) {
     if (now - v > _NOTIFY_STALE_MS) _lastNotifyMs.delete(k);
+  }
+  // Hard cap: if still over limit after stale pruning, drop oldest entries.
+  if (_lastNotifyMs.size > _NOTIFY_MAP_CAP) {
+    const excess = _lastNotifyMs.size - _NOTIFY_MAP_CAP;
+    let dropped = 0;
+    for (const k of _lastNotifyMs.keys()) {
+      if (dropped >= excess) break;
+      _lastNotifyMs.delete(k);
+      dropped++;
+    }
   }
 }
 
@@ -57,25 +77,32 @@ onSSE("turn_ended", (chatID, p) => {
   refreshGitBadge();
   drainQueuedPromptWithAttachments(chatID);
 
+  // Prune stale entries unconditionally to prevent unbounded growth
+  // when notifications are disabled (the notify path below is the only
+  // consumer but may be skipped).
+  const now = Date.now();
+  _pruneNotifyMap(now);
+
   const stopReason = p.stop_reason;
   if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
     // Dedup: skip notification if we already notified for this chat
     // within the last 2s (SSE reconnect replay fires duplicates in
     // rapid succession).
-    const now = Date.now();
     const last = _lastNotifyMs.get(chatID) ?? 0;
     if (now - last > 2000) {
       _lastNotifyMs.set(chatID, now);
-      _pruneNotifyMap(now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
-      notifyIfHidden("Vibekit", `${name}: Agent finished`);
-      if (document.visibilityState === "hidden") setBadge(1);
+      notifyAndBadge("Vibekit", `${name}: Agent finished`);
     }
   }
 
   // --- DOM rendering: only for the active chat ---
   if (chatID !== getActiveId()) return;
+
+  // Single DOM lookup shared by both turn-summary and file-changes rendering.
+  const msgsEl = document.getElementById("messages");
+  if (msgsEl === null) return;
 
   // Render turn summary (credits + elapsed time).
   const credits = p.credits_delta;
@@ -96,10 +123,7 @@ onSSE("turn_ended", (chatID, p) => {
     }
     const summaryText = parts.join(" · ");
 
-    const container = document.getElementById("messages");
-    const msgs = container !== null
-      ? container.querySelectorAll(".message.assistant")
-      : [];
+    const msgs = msgsEl.querySelectorAll(".message.assistant");
     const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
     const actionsRow = lastMsg?.nextElementSibling;
     if (actionsRow !== null
@@ -125,10 +149,11 @@ onSSE("turn_ended", (chatID, p) => {
   // Render file-change summary banner if files were modified.
   const changedFiles = p.changed_files;
   if (changedFiles !== undefined && Object.keys(changedFiles).length > 0) {
-    const count = Object.keys(changedFiles).length;
+    const entries = Object.values(changedFiles);
+    const count = entries.length;
     let added = 0;
     let removed = 0;
-    for (const f of Object.values(changedFiles)) {
+    for (const f of entries) {
       added += f.lines_added;
       removed += f.lines_removed;
     }
@@ -140,24 +165,17 @@ onSSE("turn_ended", (chatID, p) => {
     banner.setAttribute("role", "note");
     banner.setAttribute("data-chat-entry", "");
     banner.textContent = parts.join(" · ");
-    const msgsEl = document.getElementById("messages");
-    if (msgsEl !== null) {
-      // Dedup: skip if a turn-file-changes already exists as the last entry
-      const existing = msgsEl.lastElementChild;
-      if (!(existing !== null && existing.classList.contains("turn-file-changes"))) {
-        const lastChild = msgsEl.lastElementChild;
-        if (lastChild !== null) {
-          lastChild.insertAdjacentElement("afterend", banner);
-        }
-      }
+    // Dedup: skip if a turn-file-changes already exists as the last entry
+    const lastChild = msgsEl.lastElementChild;
+    if (lastChild !== null && !lastChild.classList.contains("turn-file-changes")) {
+      lastChild.insertAdjacentElement("afterend", banner);
     }
   }
 });
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
-    notifyIfHidden("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
-    if (document.visibilityState === "hidden") setBadge(1);
+    notifyAndBadge("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
   }
   // Mark the subagent row as having a pending approval.
   const subSid = p.sub_session_id;
@@ -175,11 +193,11 @@ onSSE("permission_needed", (chatID, p) => {
     p.options,
     (optionID: string) => {
       // Clear the pending-approval indicator only after successful dispatch.
-      void permissionResponseAction.dispatch({
+      void respondPermission.dispatch({
         chatID,
         requestID: p.request_id,
         optionID,
-      }).then((result) => {
+      }).then((result: unknown) => {
         if (result === null) return;
         if (subSid !== undefined && subSid !== "") {
           setSubagentPendingApproval(subSid, false);
@@ -277,18 +295,29 @@ async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
       "Discard and restore",
     );
     if (!ok) return;
-  } else if (!(await confirmRestore())) {
+  } else if (!(await confirmDestructive("Restore to this checkpoint? Current file changes will be reverted.", "Restore"))) {
     return;
   }
-  void restoreCheckpointAction.dispatch({ chatID, tag });
+  void restoreCheckpoint.dispatch({ chatID, tag });
 }
+
+/** Action for fetching restore preview (best-effort, no toast). */
+const fetchRestorePreviewAction = apiAction<{ chatID: string; tag: string }, { files?: string[] }>({
+  name: "checkpoint.preview",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  request: ({ chatID, tag }) => ({
+    method: "GET",
+    path: `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`,
+  }),
+  success: false,
+  error: false,
+});
 
 async function fetchRestorePreview(chatID: string, tag: string): Promise<string[]> {
   // Best-effort: network failure or a server without preview
   // support (older build) falls through to the normal confirm
   // dialog so restores never get wedged by the advisory step.
-  const url = `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`;
-  const resp = await apiGet<{ files?: string[] }>(url);
+  const resp = await fetchRestorePreviewAction.dispatch({ chatID, tag });
   return resp?.files ?? [];
 }
 
@@ -297,11 +326,6 @@ async function intersectDirty(preview: string[]): Promise<string[]> {
   const { getDirtyEditorPaths } = await import("../editor-core.js");
   const dirty = new Set(getDirtyEditorPaths());
   return preview.filter((p) => dirty.has(p));
-}
-
-async function confirmRestore(): Promise<boolean> {
-  const { confirm: confirmDialog } = await import("../confirm.js");
-  return confirmDialog("Restore to this checkpoint? Current file changes will be reverted.", "Restore", "destructive");
 }
 
 async function confirmDestructive(msg: string, btn: string): Promise<boolean> {

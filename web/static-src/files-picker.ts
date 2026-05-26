@@ -8,13 +8,12 @@
 // folder, then auto-attaches the uploaded paths.
 // ---------------------------------------------------------------------------
 
-import { closeModal } from "./modals.js";
+import { closeModal, openModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FetchDirOpts } from "./files-shared.js";
-export type { FileEntry } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
-import { uploadAction } from "./actions/files.js";
+import { upload } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 let currentPath = ".";
@@ -32,7 +31,7 @@ export function openFilePicker(preUploadFiles?: FileList, startPath = "."): void
   selected.clear();
   loadDir();
   syncAttachBtn();
-  el<HTMLDivElement>("filepicker-modal").classList.remove("hidden");
+  openModal(el<HTMLDivElement>("filepicker-modal"));
   if (preUploadFiles !== undefined && preUploadFiles.length > 0) {
     performUpload(preUploadFiles);
   }
@@ -81,11 +80,12 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  void uploadAction.dispatch({ files, targetDir: currentPath }).then((paths) => {
-    if (paths === null) return;
-    onUploadComplete?.();
-    for (const p of paths) attachPathToActiveChat(p);
-    closeModal(modal);
+  void upload.dispatch({ files, targetDir: currentPath }, {
+    onSuccess: (paths) => {
+      onUploadComplete?.();
+      for (const p of paths) attachPathToActiveChat(p);
+      closeModal(modal);
+    },
   });
 }
 
@@ -161,6 +161,7 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
   check.type = "checkbox";
   check.className = "fb-check";
   check.checked = selected.has(name);
+  check.setAttribute("aria-label", `Select ${name}`);
   check.addEventListener("change", () => {
     if (check.checked) selected.add(name);
     else selected.delete(name);

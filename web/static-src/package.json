@@ -1,6 +1,7 @@
 {
   "type": "module",
   "scripts": {
+    "pretest": "rm -rf node_modules/.vite",
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",

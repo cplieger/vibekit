@@ -21,7 +21,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePRAction, closePRAction, refreshPRsAction } from "./actions/git-prs.js";
+import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
@@ -68,9 +68,6 @@ registerCleanup(() => refreshController?.abort());
 // --- Accessors for optimistic mutations (wired via git-prs-state) ---
 // removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
 // to break the circular dependency with actions/git-prs.ts.
-// Re-export the type for any downstream consumers.
-export type { PRRemoveResult } from "./git-prs-state.js";
-
 // --- Public API ---
 
 let prsInited = false;
@@ -100,7 +97,7 @@ export function initPRsTab(): void {
 
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
-  onSSE("forges_changed", () => { void refreshPRs().catch(() => {}); });
+  onSSE("forges_changed", () => { void refreshPRsAction.dispatch(undefined); });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
@@ -407,7 +404,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
       if (!ok) return;
       await withAsyncFeedback(merge, async () => {
-        const res = await mergePRAction.dispatch({
+        const res = await mergePR.dispatch({
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");
@@ -426,7 +423,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
       const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
       if (!ok) return;
       await withAsyncFeedback(close, async () => {
-        const res = await closePRAction.dispatch({
+        const res = await closePR.dispatch({
           forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
         });
         if (res === null) throw new Error("failed");

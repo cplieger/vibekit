@@ -25,10 +25,16 @@ onSSE("chat_deleted", (_chatID, p) => {
     // only path that removes the stale tab.
     if (hasTab(p.id)) closeTab(p.id, { skipOnClose: true });
     removeChat(p.id);
-    void import("../conflicts.js").then((m) => m.clearConflicts(p.id));
+    void import("../conflicts.js").then(
+      (m) => m.clearConflicts(p.id),
+      (e) => console.warn("[handlers/chat] clearConflicts import failed", e),
+    );
     // Drop any banners for the deleted chat — otherwise their
     // BannerEntry objects + dismissed_banners localStorage entries
     // accumulate over a long session.
-    void import("../banner-stack.js").then((m) => m.clearBannersForChat(p.id));
+    void import("../banner-stack.js").then(
+      (m) => m.clearBannersForChat(p.id),
+      (e) => console.warn("[handlers/chat] clearBannersForChat import failed", e),
+    );
   }
 });

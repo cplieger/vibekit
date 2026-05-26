@@ -32,15 +32,14 @@ const mockPeekQueuedAttachments = vi.fn(() => []);
 const mockGet = vi.fn(() => undefined);
 
 vi.mock("../store.js", () => ({
-  get: (...args: unknown[]) => mockGet(...args),
+  get: mockGet,
   getActiveId: () => mockGetActiveId(),
-  setThinking: (...args: unknown[]) => mockSetThinking(...args),
+  setThinking: mockSetThinking,
   setWorkingLabel: vi.fn(),
-  dequeuePrompt: (...args: unknown[]) => mockDequeuePrompt(...args),
-  peekQueuedAttachments: (...args: unknown[]) => mockPeekQueuedAttachments(...args),
+  dequeuePrompt: mockDequeuePrompt,
+  peekQueuedAttachments: mockPeekQueuedAttachments,
 }));
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
-vi.mock("../api-client.js", () => ({ apiGet: vi.fn() }));
 
 const { ERROR_ROUTES } = await import("./turn.js");
 

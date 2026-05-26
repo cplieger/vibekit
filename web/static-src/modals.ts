@@ -6,8 +6,12 @@ import { $, el } from "./dom.js";
 import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
 import { isSafeUrl } from "./utils-url.js";
-import { registerCleanup } from "./actions/cleanup.js";
+import { registerCleanup } from "./actions/index.js";
+import { trapFocus } from "./focus-trap.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
+
+/** Active focus-trap release functions keyed by modal element. */
+const modalTraps = new WeakMap<HTMLElement, () => void>();
 
 export function closeModal(modal: HTMLDivElement): void {
   if (modal === $.loginModal) {
@@ -16,6 +20,8 @@ export function closeModal(modal: HTMLDivElement): void {
     loginPollUnregister?.();
     loginPollUnregister = null;
   }
+  const release = modalTraps.get(modal);
+  if (release) { release(); modalTraps.delete(modal); }
   modal.classList.add("hidden");
 }
 
@@ -35,6 +41,13 @@ function setupOverlayClose(modal: HTMLDivElement): void {
 export function initAllModals(): void {
   for (const overlay of document.querySelectorAll(".modal-overlay")) {
     const modal = overlay as HTMLDivElement;
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("role", "dialog");
+    // Link dialog to its title for screen reader announcement.
+    const titleEl = modal.querySelector("[id$='-modal-title'], [id$='-title']");
+    if (titleEl !== null && titleEl.id !== "") {
+      modal.setAttribute("aria-labelledby", titleEl.id);
+    }
     setupOverlayClose(modal);
     // Wire close buttons: any button inside .modal-header-row that has aria-label="Close".
     for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
@@ -77,7 +90,7 @@ export class RollingOutput {
     const modal = el<HTMLDivElement>(this.modalId);
     const body = modal.querySelector(".subagent-modal-body, pre") as HTMLPreElement;
     if (body !== null) { body.textContent = this.full; body.scrollTop = body.scrollHeight; }
-    modal.classList.remove("hidden");
+    openModal(modal);
   }
 }
 
@@ -90,6 +103,13 @@ export function closeTopModal(): boolean {
   return true;
 }
 
+/** Open a modal with focus trap. Prefer this over raw classList manipulation. */
+export function openModal(modal: HTMLDivElement): void {
+  modal.classList.remove("hidden");
+  const release = trapFocus(modal);
+  modalTraps.set(modal, release);
+}
+
 // showConfirm removed — use confirm() from "./confirm.js" instead.
 // The static #confirm-modal element in index.html has also been
 // removed; confirm.ts creates its own <dialog> on demand.
@@ -99,7 +119,7 @@ let loginPollAbort: AbortController | null = null;
 let loginPollUnregister: (() => void) | null = null;
 
 export function showLoginModal(): void {
-  $.loginModal.classList.remove("hidden");
+  openModal($.loginModal);
 }
 
 export function hideLoginModal(): void {

@@ -22,8 +22,8 @@ import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
-import { setSupervisedAction, resolveAllPendingAction, resolvePendingChangeAction, trustPendingAction, clearPendingTrustAction } from "./actions/chat.js";
-import { bindLoadingState } from "./actions/index.js";
+import { setSupervised, resolveAllPending, resolvePendingChange, trustPending, clearPendingTrust } from "./actions/chat.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
 class SupervisedPillController {
@@ -44,7 +44,11 @@ class SupervisedPillController {
     this.content = this.pill.querySelector(".pill-expand-content");
     if (this.content === null) return;
 
-    makeExpandable(this.pill, this.content);
+    makeExpandable(this.pill, this.content, {
+      onExpand: () => { this.pill?.setAttribute("aria-expanded", "true"); },
+      onCollapse: () => { this.pill?.setAttribute("aria-expanded", "false"); },
+    });
+    this.pill.setAttribute("aria-expanded", "false");
     this.render();
 
     effect(() => { version.value; this.render(); });
@@ -105,8 +109,8 @@ class SupervisedPillController {
     const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
     const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
     const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
-    if (acceptAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", acceptAllBtn));
-    if (rejectAllBtn) this.unbinds.push(bindLoadingState("chat.resolve_all_pending", rejectAllBtn));
+    if (acceptAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn));
+    if (rejectAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn));
     if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
     if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
   }
@@ -142,8 +146,9 @@ class SupervisedPillController {
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
-      void setSupervisedAction.dispatch({ chatID: this.currentChatID(), enabled });
+      void setSupervised.dispatch({ chatID: this.currentChatID(), enabled }, { silent: true });
     });
+    this.unbinds.push(bindLoadingState("chat.set_supervised", toggle));
 
     // Trusted-this-turn short-circuit.
     if (trusted) {
@@ -268,39 +273,45 @@ class SupervisedPillController {
     acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
     actionsSpan.appendChild(acceptBtn);
 
-    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", acceptBtn));
-    this.unbinds.push(bindLoadingState("chat.resolve_pending_change", rejectBtn));
+    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
+    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
 
     li.appendChild(actionsSpan);
     return li;
   }
 
   private resolveOne(toolCallID: string, action: "accept" | "reject"): void {
-    void resolvePendingChangeAction.dispatch({ chatID: this.currentChatID(), toolCallID, action });
+    void resolvePendingChange.dispatch({ chatID: this.currentChatID(), toolCallID, action });
   }
 
   private bulkResolve(action: "accept" | "reject"): void {
-    void resolveAllPendingAction.dispatch({ chatID: this.currentChatID(), action });
+    void resolveAllPending.dispatch({ chatID: this.currentChatID(), action });
   }
 
   /** Post trust_pending_changes. The server sets perTurnTrust,
    *  accepts every staged op immediately, and broadcasts
    *  pending_trust_enabled so the pill flips. */
   private trustRemaining(): void {
-    void trustPendingAction.dispatch(this.currentChatID());
+    void trustPending.dispatch(this.currentChatID());
   }
 
   /** Post clear_pending_trust. Mirror of trustRemaining. */
   private stopTrusting(): void {
-    void clearPendingTrustAction.dispatch(this.currentChatID());
+    void clearPendingTrust.dispatch(this.currentChatID());
   }
 
   private currentChatID(): string {
     return getActive()?.id ?? "";
   }
+
+  dispose(): void {
+    for (const u of this.unbinds) u();
+    this.unbinds = [];
+  }
 }
 
 const controller = new SupervisedPillController();
+registerCleanup(() => { controller.dispose(); });
 
 /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
  *  element exists. No-op on a second call. */

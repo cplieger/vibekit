@@ -9,7 +9,7 @@ import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./
 import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
-import { switchModel } from "./chat-commands.js";
+import { switchModel } from "./actions/chat.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { setCurrentModel, setLastModel } from "./session-context.js";
 import {
@@ -61,28 +61,33 @@ class ModelSwitchController {
   private renderCondensedList(): void {
     const list = $.modelSwitchList;
     list.replaceChildren();
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Available models");
     const session = getActive();
     if (session === undefined) return;
     const current = session.model;
     for (const m of getCachedModels()) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = m.model_id === current
+      const opt = document.createElement("div");
+      opt.className = m.model_id === current
         ? "pill-model-item active" : "pill-model-item";
-      btn.dataset["model"] = m.model_id;
+      opt.dataset["model"] = m.model_id;
+      opt.setAttribute("role", "option");
+      opt.setAttribute("aria-selected", m.model_id === current ? "true" : "false");
+      const label = humanName(m.model_name || m.model_id);
+      opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
       const name = document.createElement("span");
-      name.textContent = humanName(m.model_name || m.model_id);
+      name.textContent = label;
       const meta = document.createElement("span");
       meta.className = "pill-model-meta";
       meta.textContent = `${String(m.rate_multiplier)}x`;
-      btn.append(name, meta);
-      btn.addEventListener("click", (e: MouseEvent) => {
+      opt.append(name, meta);
+      opt.addEventListener("click", (e: MouseEvent) => {
         e.stopPropagation();
         collapseAll();
         if (m.model_id === current) return;
         this.requestModelSwitch(m.model_id);
       });
-      list.appendChild(btn);
+      list.appendChild(opt);
     }
     wireArrowNav(list, ".pill-model-item");
   }
@@ -110,15 +115,15 @@ class ModelSwitchController {
     applyLocalModel(modelID);
   }
 
-  private async fire(chatID: string, modelID: string): Promise<void> {
+  private fire(chatID: string, modelID: string): void {
     this.queueState = { status: "switching", modelID };
-    try {
-      await switchModel(chatID, modelID);
-    } finally {
-      if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
-        this.queueState = { status: "idle" };
-      }
-    }
+    void switchModel.dispatch({ chatID, model: modelID }, {
+      onSettled: () => {
+        if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
+          this.queueState = { status: "idle" };
+        }
+      },
+    });
   }
 
   private enqueue(modelID: string): void {

@@ -33,7 +33,7 @@ import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { error as toastError } from "./toast.js";
-import { deleteChatAction, archiveChatAction, discardTangentAction, restoreChatAction } from "./actions/chat.js";
+import { deleteChat as deleteChatAction, archiveChat as archiveChatAction, discardTangent, restoreChat } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -65,10 +65,10 @@ export function openChatTab(id: string, name: string, agent: string): void {
         // toast so the user knows the parent is stuck and can retry.
         // We do NOT call setLastError here — that's global and would
         // block the send button on whatever chat is currently active.
-        void discardTangentAction.dispatch(id).then((r) => {
-          if (r === null) {
+        void discardTangent.dispatch(id, {
+          onError: () => {
             toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
-          }
+          },
         });
         return;
       }
@@ -114,7 +114,7 @@ export function activateChatView(id: string): void {
   // Prefetch conflict records so badges on historical tool calls
   // are present as soon as the messages render. Dynamic import
   // keeps the conflicts module lazy — most chats never see one.
-  void import("./conflicts.js").then((m) => m.loadConflictsFor(id));
+  void import("./conflicts.js").then((m) => m.loadConflictsFor(id)).catch(() => {});
 
   const session = get(id);
   if (session === undefined) return;
@@ -267,24 +267,8 @@ export function attachPathToActiveChat(path: string): void {
 
 /** User-triggered chat deletion. Optimistic: store is updated
  *  immediately; SSE chat_deleted is a no-op (already removed). */
-export function deleteChat(id: string): void {
+function deleteChat(id: string): void {
   void deleteChatAction.dispatch(id);
-}
-
-/** Export a chat as a downloadable JSON file. Caller must guarantee
- *  `id` is non-empty; the toolbar button disables itself when no chat
- *  is active so this is an invariant at the UI boundary. */
-export function exportChat(id: string): void {
-  if (id === "") return;
-  const a = document.createElement("a");
-  a.href = `/api/chats/${encodeURIComponent(id)}/export`;
-  a.download = `${id}.json`;
-  a.rel = "noopener";
-  // Some browsers (Firefox, WebKit) silently ignore click() on
-  // detached anchors. Append, click, remove.
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 /** Restore an archived chat. Opens a tab and activates it after the
@@ -296,14 +280,16 @@ export function exportChat(id: string): void {
  *  on the conversation they just resurrected instead of having to
  *  find it in the sidebar. */
 export function restoreArchivedChat(id: string): void {
-  void restoreChatAction.dispatch(id).then((d) => {
-    if (d === null || d.ok !== true) return;
-    void loadList().then(() => {
-      const s = get(id);
-      if (s === undefined) return;
-      openChatTab(s.id, s.name, s.agent);
-      activateChatView(s.id);
-    });
+  void restoreChat.dispatch(id, {
+    onSuccess: (d) => {
+      if (d.ok !== true) return;
+      void loadList().then(() => {
+        const s = get(id);
+        if (s === undefined) return;
+        openChatTab(s.id, s.name, s.agent);
+        activateChatView(s.id);
+      });
+    },
   });
 }
 

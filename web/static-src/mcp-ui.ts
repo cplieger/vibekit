@@ -4,7 +4,7 @@
 
 import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { closeModal } from "./modals.js";
+import { closeModal, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
@@ -15,10 +15,13 @@ import {
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
 import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
+let rowBindingCleanups: Array<() => void> = [];
+registerCleanup(() => { for (const fn of rowBindingCleanups) fn(); rowBindingCleanups = []; });
 
 function buildSectionScaffold(): void {
   const section = document.getElementById("mcp-section");
@@ -65,6 +68,8 @@ function renderSection(): void {
 
 function renderRows(): void {
   if (sectionBody === null) return;
+  for (const fn of rowBindingCleanups) fn();
+  rowBindingCleanups = [];
   sectionBody.replaceChildren();
 
   if (configured.length === 0) {
@@ -129,19 +134,24 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
 function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
   const dot = document.createElement("span");
   dot.className = "mcp-dot";
+  dot.setAttribute("role", "img");
   if (!s.enabled) {
     dot.classList.add("disabled");
     dot.title = "Disabled";
+    dot.setAttribute("aria-label", `${s.name}: disabled`);
   } else if (st === undefined) {
     dot.classList.add("idle");
     dot.title = "Not yet connected — start a chat to initialise";
+    dot.setAttribute("aria-label", `${s.name}: idle`);
   } else {
     const meta = STATUS_META[st.state] ?? STATUS_META.idle;
     dot.classList.add(meta.css);
     if (st.state === "failed" && st.error !== "") {
       dot.title = `Failed to initialise: ${st.error}`;
+      dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
     } else {
       dot.title = meta.title;
+      dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
     }
   }
   return dot;
@@ -167,14 +177,17 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
   input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
   input.addEventListener("change", () => {
     // input.checked is already the NEW value (browser flipped it).
+    input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
     // Pass the previous state explicitly so rollback restores correctly.
-    void toggleServer.dispatch({ id: s.id, enabled: input.checked }).then((r) => {
-      if (r !== null) void refetchServers();
+    void toggleServer.dispatch({ id: s.id, enabled: input.checked }, {
+      silent: true,
+      onSuccess: () => { void refetchServers(); },
     });
   });
   const slider = document.createElement("span");
   slider.className = "toggle-slider";
   label.append(input, slider);
+  rowBindingCleanups.push(bindLoadingState("mcp.toggle_server", input));
   return label;
 }
 
@@ -209,6 +222,7 @@ function renderEditBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("aria-label", `Edit ${s.name}`);
   btn.innerHTML = ICON_EDIT_14;
   btn.addEventListener("click", () => { void openEditModal(s.id); });
+  rowBindingCleanups.push(bindLoadingState("mcp.open_edit", btn));
   return btn;
 }
 
@@ -219,6 +233,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("data-tooltip", "Remove");
   btn.setAttribute("aria-label", `Remove ${s.name}`);
   btn.innerHTML = ICON_TRASH_14;
+  rowBindingCleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(
@@ -227,8 +242,8 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
         "destructive",
       );
       if (!ok) return;
-      void deleteServer.dispatch({ id: s.id }).then((r) => {
-        if (r !== null) void refetchServers();
+      void deleteServer.dispatch({ id: s.id }, {
+        onSuccess: () => { void refetchServers(); },
       });
     })();
   });
@@ -240,7 +255,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
 function openAddModal(): void {
   setEditing({ id: "" });
   initModal({ mode: "search", server: null });
-  $.mcpModal.classList.remove("hidden");
+  openModal($.mcpModal);
 }
 
 async function openEditModal(id: string): Promise<void> {
@@ -249,7 +264,7 @@ async function openEditModal(id: string): Promise<void> {
   setEditing({ id });
   const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";
   initModal({ mode, server: s });
-  $.mcpModal.classList.remove("hidden");
+  openModal($.mcpModal);
 }
 
 // --- Init ---
@@ -260,6 +275,19 @@ export function initMCP(): void {
 
   const close = el<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => { cleanupModal(); closeModal($.mcpModal); });
+
+  // Hook into Escape and overlay-dismiss paths: closeModal toggles the
+  // 'hidden' class on the modal element. Watch for that transition and
+  // call cleanupModal regardless of which code path closed the modal.
+  // (cleanupModal is idempotent so the close-button path is harmless.)
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.attributeName === "class" && $.mcpModal.classList.contains("hidden")) {
+        cleanupModal();
+      }
+    }
+  });
+  observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
 
   onSSE("mcp_config_changed", () => { void refetchServers(); });
   onSSE("mcp_connected", (_chat, p) => {

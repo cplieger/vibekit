@@ -59,14 +59,16 @@ onSSE("tool_call_update", (chatID, p) => {
 onSSE("subagent_activity", (_chatID, p) => {
   if (p === undefined) return;
   const sid = p.sub_session_id;
-  const evt = p.event as Record<string, unknown> | undefined;
-  if (sid === undefined || sid === "" || evt === undefined) return;
+  if (typeof sid !== "string" || sid === "") return;
+  const evt = p.event;
+  if (evt === null || evt === undefined || typeof evt !== "object") return;
+  const e = evt as Record<string, unknown>;
   // Extract a human-readable label from the activity event. kiro-cli
   // sends various shapes; we look for common fields in priority order.
   const label =
-    (typeof evt["label"] === "string" ? evt["label"] : "") ||
-    (typeof evt["title"] === "string" ? evt["title"] : "") ||
-    (typeof evt["tool_name"] === "string" ? evt["tool_name"] : "") ||
-    (typeof evt["status"] === "string" ? evt["status"] : "");
+    (typeof e["label"] === "string" ? e["label"] : "") ||
+    (typeof e["title"] === "string" ? e["title"] : "") ||
+    (typeof e["tool_name"] === "string" ? e["tool_name"] : "") ||
+    (typeof e["status"] === "string" ? e["status"] : "");
   if (label !== "") setSubagentActivity(sid, label);
 });

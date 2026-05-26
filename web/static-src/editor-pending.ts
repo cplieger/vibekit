@@ -5,7 +5,7 @@
 import { $ } from "./dom.js";
 import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
-import { resolvePendingChangeAction } from "./actions/chat.js";
+import { resolvePendingChange } from "./actions/chat.js";
 import { resolvePendingPartial } from "./actions/editor.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { FileState } from "./editor-types.js";
@@ -20,17 +20,15 @@ export async function resolveActivePending(action: "accept" | "reject"): Promise
   const { chatID, toolCallID } = parsePendingPath(state.path);
   if (chatID === "" || toolCallID === "") return;
   const path = state.path;
-  const unbindAccept = bindLoadingState("chat.resolve_pending_change", $.editorPendingAcceptBtn);
-  const unbindReject = bindLoadingState("chat.resolve_pending_change", $.editorPendingRejectBtn);
-  try {
-    const result = await resolvePendingChangeAction.dispatch(
-      { chatID, toolCallID, action },
-    );
-    if (result !== null) closeFile(path);
-  } finally {
-    unbindAccept();
-    unbindReject();
-  }
+  const unbindAccept = bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], $.editorPendingAcceptBtn);
+  const unbindReject = bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], $.editorPendingRejectBtn);
+  await resolvePendingChange.dispatch(
+    { chatID, toolCallID, action },
+    {
+      onSuccess: () => closeFile(path),
+      onSettled: () => { unbindAccept(); unbindReject(); },
+    },
+  );
 }
 
 /** Refresh the per-hunk Apply-selected toolbar button state. */
@@ -66,14 +64,16 @@ export async function applyActivePendingPartial(): Promise<void> {
   const merged = buildPartialMergeText(state, state.pendingHunkDecisions);
   const approxBytes = merged.length * 4;
   if (approxBytes > 4 * 1024 * 1024) {
-    const { showBanner } = await import("./banner-stack.js");
-    showBanner(
-      chatID,
-      "partial-merge-too-large",
-      "Merged result is too large (>4 MiB). Reject more hunks or use Accept for the full change.",
-      "warning",
-      true,
-    );
+    try {
+      const { showBanner } = await import("./banner-stack.js");
+      showBanner(
+        chatID,
+        "partial-merge-too-large",
+        "Merged result is too large (>4 MiB). Reject more hunks or use Accept for the full change.",
+        "warning",
+        true,
+      );
+    } catch { /* chunk load failure — silently skip banner */ }
     return;
   }
   const path = state.path;
