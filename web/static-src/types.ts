@@ -133,8 +133,6 @@ export interface Session {
   auto_approve_crew: boolean;
   available_modes: SessionMode[];
   available_models: SessionModel[];
-  available_commands: AvailableCommand[];
-  available_prompts: AvailableCommand[];
   usage: Usage;
   messages: Message[];
   message_count: number;
@@ -145,8 +143,6 @@ export interface Session {
   supervised_mode?: boolean;
   trusted_this_turn?: boolean;
   pending_changes: PendingChange[];
-  frozen?: boolean;
-  is_tangent?: boolean;
   parent_chat_id?: string;
   compaction_watermark?: string;
   oldest_checkpoint_tag?: string;

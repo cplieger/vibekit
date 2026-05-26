@@ -17,12 +17,12 @@ const (
 	methodCommandsOptions = api.MethodCommandsOptions
 )
 
-// RegisterSlashRoutes wires the slash-command REST endpoints into mux.
-// Called from the composition layer (server.go) via the Hub interface.
+// RegisterSlashRoutes wires the slash-command execute endpoint into mux.
+// The /api/slash/options endpoint (typeahead completion) was removed
+// when the slash-command popover UI was stripped.
 func RegisterSlashRoutes(mux *http.ServeMux, deps Dependencies) {
 	sh := &slashHandler{deps: deps}
 	mux.HandleFunc("/api/slash/execute", sh.handleExecute)
-	mux.HandleFunc("/api/slash/options", sh.handleOptions)
 }
 
 // slashHandler holds dependencies for the slash REST endpoints.

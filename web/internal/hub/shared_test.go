@@ -36,7 +36,6 @@ func (h *Hub) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 // mergeLastExchange is a test helper delegating to the command package.
 func (h *Hub) mergeLastExchange(ctx context.Context, targetChatID api.ChatID, msgs []api.Message) bool {
-	return command.MergeLastExchange(h, ctx, targetChatID, msgs)
 }
 
 // postCmd POSTs a typed ClientCommand to handleCommand and returns the recorder.

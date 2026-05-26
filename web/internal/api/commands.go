@@ -28,9 +28,10 @@ const (
 	CmdSetAutoApproveCrew       CommandType = "set_auto_approve_crew"
 	CmdRestoreCheckpoint        CommandType = "restore_checkpoint"
 	CmdUndoEdit                 CommandType = "undo_edit"
-	CmdForkChat                 CommandType = "fork_chat"
-	CmdMergeTangent             CommandType = "merge_tangent"
-	CmdDiscardTangent           CommandType = "discard_tangent"
+	CmdRewindChat               CommandType = "rewind_chat"
+	CmdPromoteRewindChat        CommandType = "promote_rewind_chat"
+	CmdDiscardRewindChat        CommandType = "discard_rewind_chat"
+	CmdSetEffort                CommandType = "set_effort"
 	CmdCreateHook               CommandType = "create_hook"
 	CmdResolvePendingChange     CommandType = "resolve_pending_change"
 	CmdResolvePendingPartial    CommandType = "resolve_pending_change_partial"
@@ -127,10 +128,16 @@ type MessageSubagentCommand struct {
 	Text         string `json:"text"`
 }
 
-// ForkChatCommand is the payload for type="fork_chat".
-// Creates a tangent (side conversation) from the current chat.
-type ForkChatCommand struct {
-	TangentID string `json:"tangent_id"` // client-generated id for the tangent chat
+// RewindChatCommand is the payload for type="rewind_chat".
+// Creates a new chat branched from a specific turn of the current chat.
+type RewindChatCommand struct {
+	TurnIndex int `json:"turn_index"` // 0-based index into parent's messages array
+}
+
+// SetEffortCommand is the payload for type="set_effort".
+// Applies a reasoning effort level to the active session.
+type SetEffortCommand struct {
+	Level string `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
 }
 
 // MergeTangentCommand has no payload beyond the envelope's chat_id.

@@ -18,7 +18,6 @@ vi.mock("../store.js", () => ({
   setThinking: mockSetThinking,
   loadList: () => mockLoadList(),
   loadMessages: mockLoadMessages,
-  setAvailableCommands: vi.fn(),
   setCurrentMode: vi.fn(),
   clearMsgIndex: vi.fn(),
   invalidateSession: vi.fn(),

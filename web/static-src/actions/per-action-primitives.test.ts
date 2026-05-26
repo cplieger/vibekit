@@ -33,7 +33,6 @@ vi.mock("../store.js", () => ({
   setSupervisedMode: vi.fn(),
   setAutoApproveCrew: vi.fn(),
   setModel: vi.fn(),
-  setFrozen: vi.fn(),
   enqueuePrompt: vi.fn(),
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),

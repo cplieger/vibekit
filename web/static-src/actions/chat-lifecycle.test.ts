@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 // Tests for chat.ts actions: setSupervised, setAutoApproveCrew, switchModel,
-// cancelTurn, restoreChat, loadHistory, deleteArchivedChat, mergeTangent,
 // resolvePendingChange, respondPermission, restoreCheckpoint.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -31,7 +30,6 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
     id, name: "test", agent: "", model: "claude-4",
     acp_session_id: "", current_mode_id: "",
     available_modes: [], available_models: [],
-    available_commands: [], available_prompts: [],
     auto_approve_crew: false, supervised_mode: false,
     pending_changes: [],
     usage: { context_pct: 0, context_size: 0, credits: 0, turn_count: 0, last_turn_ms: 0, has_real_data: false },
@@ -160,18 +158,6 @@ describe("chat.load_history", () => {
   });
 });
 
-describe("chat.merge_tangent", () => {
-  it("sends merge_tangent command and is not retryable", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { mergeTangent } = await import("./chat.js");
-    await mergeTangent.dispatch("c1");
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "merge_tangent", chat_id: "c1" }),
-      expect.anything(),
-    );
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("merge tangent"), undefined);
-  });
-});
 
 describe("chat.resolve_pending_change", () => {
   it("sends resolve_pending_change with tool_call_id and action", async () => {

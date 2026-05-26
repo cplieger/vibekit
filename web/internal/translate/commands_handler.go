@@ -25,19 +25,8 @@ func (t *Translator) HandleCommandsAvailable(ctx context.Context, chatID api.Cha
 		return
 	}
 
-	toolsCount := len(p.Tools)
-	mcpRunning := 0
-	mcpTotal := len(p.MCPServers)
-	for _, s := range p.MCPServers {
-		if s.Status == "running" {
-			mcpRunning++
-		}
-	}
-
-	out := FilterCommands(p.Commands, toolsCount, mcpRunning, mcpTotal)
-
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventCommandsUpdated, chatID, api.CommandsUpdatedPayload{
-		Commands: toAvailableCommands(out),
+		Commands: toAvailableCommands(p.Commands),
 		Prompts:  toAvailableCommands(p.Prompts),
 	}))
 	t.deps.MCPSignalReady()

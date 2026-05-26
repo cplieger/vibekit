@@ -180,9 +180,9 @@ func TestTranslateCommands_FiltersBrowserIncompatibleEntries(t *testing.T) {
 			got = append(got, name)
 		}
 	}
-	// Only /compact and /knowledge should survive.
-	if len(got) != 2 {
-		t.Errorf("got %v, want only [/compact /knowledge]", got)
+	// FilterCommands is now a no-op; all commands pass through.
+	if len(got) != 6 {
+		t.Errorf("got %v, want all 6 commands (filter is no-op)", got)
 	}
 }
 

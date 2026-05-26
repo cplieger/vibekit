@@ -131,34 +131,6 @@ describe("a11y: focus management", () => {
 });
 
 describe("a11y: aria-expanded on popover triggers", () => {
-  it("commands-menu sets aria-expanded on prompt input when popover opens/closes", async () => {
-    vi.resetModules();
-    vi.doUnmock("./actions/index.js");
-    const input = document.createElement("textarea");
-    vi.doMock("./store.js", () => ({
-      getActive: () => ({
-        available_commands: [{ name: "/help", description: "Help" }],
-        available_prompts: [],
-      }),
-      getActiveId: () => "chat1",
-    }));
-    vi.doMock("./api-client.js", () => ({ apiGet: vi.fn(async () => null) }));
-    vi.doMock("./dom.js", () => ({
-      $: new Proxy({ promptInput: input }, {
-        get: (t, p) => (p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div")),
-      }),
-    }));
-    const { initCommandsMenu } = await import("./commands-menu.js");
-    initCommandsMenu();
-
-    input.value = "/";
-    input.dispatchEvent(new Event("input"));
-    expect(input.getAttribute("aria-expanded")).toBe("true");
-
-    input.value = "hello";
-    input.dispatchEvent(new Event("input"));
-    expect(input.getAttribute("aria-expanded")).toBe("false");
-  });
 
   it("supervised-pill sets aria-expanded on expand/collapse", async () => {
     vi.resetModules();

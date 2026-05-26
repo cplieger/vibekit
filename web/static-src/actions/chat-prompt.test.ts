@@ -24,7 +24,6 @@ vi.mock("../store.js", () => ({
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
-  setFrozen: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({

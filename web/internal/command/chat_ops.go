@@ -60,15 +60,16 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
 }
 
-// CmdDeleteChat removes a chat and cascades to tangent children.
+// CmdDeleteChat removes a chat and cascades to rewind children.
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
-	var tangentChildren []string
-	tangentList := deps.ChatStore().List(ctx)
-	for i := range tangentList {
-		hdr := &tangentList[i]
-		if hdr.IsTangent && hdr.ParentChatID == cmd.ChatID {
-			tangentChildren = append(tangentChildren, hdr.ID)
+	// Delete any rewind children (chats whose parent_chat_id points here).
+	var childChats []string
+	chatList := deps.ChatStore().List(ctx)
+	for i := range chatList {
+		hdr := &chatList[i]
+		if hdr.ParentChatID == cmd.ChatID {
+			childChats = append(childChats, hdr.ID)
 		}
 	}
 
@@ -78,15 +79,15 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		return
 	}
 
-	for _, tangentID := range tangentChildren {
-		deps.CleanupChatState(ctx, api.ChatID(tangentID))
-		if err := deps.ChatStore().Delete(ctx, api.ChatID(tangentID)); err != nil {
-			slog.Error("delete chat: cascade tangent",
-				"parent", cmd.ChatID, "tangent", tangentID, keyError, err)
+	for _, childID := range childChats {
+		deps.CleanupChatState(ctx, api.ChatID(childID))
+		if err := deps.ChatStore().Delete(ctx, api.ChatID(childID)); err != nil {
+			slog.Error("delete chat: cascade child",
+				"parent", cmd.ChatID, "child", childID, keyError, err)
 		}
 	}
 
-	slog.Info("chat deleted", "chat_id", cmd.ChatID, "cascade_tangents", len(tangentChildren))
+	slog.Info("chat deleted", "chat_id", cmd.ChatID, "cascade_children", len(childChats))
 	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
 }
 
