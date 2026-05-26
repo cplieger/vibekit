@@ -30,7 +30,7 @@
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
 import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
-import { registerCleanup } from "./actions/index.js";
+import { pollAction } from "./actions/index.js";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -53,19 +53,28 @@ interface ConfiguredForge {
 }
 interface ForgesListResponse { forges: ConfiguredForge[] }
 
-let pollTimer: ReturnType<typeof setInterval> | undefined;
+let started = false;
 let lastState: BadgeState = "none";
 let lastTooltip = "";
 
 /** Wire SSE listeners + start the poll. Idempotent. */
 export function initGitBadge(): void {
-  if (pollTimer !== undefined) return;
+  if (started) return;
+  started = true;
   onSSE("turn_ended", () => { void refreshGitBadge(); });
   onSSE("forges_changed", () => { void refreshGitBadge(); });
-  pollTimer = setInterval(() => { void refreshGitBadge(); }, POLL_INTERVAL_MS);
-  registerCleanup(() => { clearInterval(pollTimer); pollTimer = undefined; });
-  // First paint ASAP.
-  void refreshGitBadge();
+  // pollAction handles cleanup, pause-when-hidden (no need to refresh
+  // the badge when the user can't see it), and refresh-on-focus (instant
+  // freshness when the user returns to the tab). The action's result is
+  // projected to the DOM via onSuccess.
+  pollAction(refreshGitBadgeAction, undefined, {
+    interval: POLL_INTERVAL_MS,
+    onSuccess: ({ status, forges }) => {
+      const state = deriveState(status ?? null, forges ?? null);
+      const tooltip = deriveTooltip(state, status ?? null, forges ?? null);
+      applyBadge(state, tooltip);
+    },
+  });
 }
 
 /** Recompute the badge state from current server data. Safe to call

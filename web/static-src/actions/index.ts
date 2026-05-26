@@ -50,6 +50,13 @@ export { registerCleanup } from "./cleanup.js";
 export { debouncedDispatch } from "./debounce.js";
 export type { DebouncedDispatch } from "./debounce.js";
 
+// Polling helper: dispatch an action at a fixed interval with
+// pause-when-hidden, focus refresh, and backoff-on-error built in.
+// Replaces hand-rolled setInterval patterns. Used by git-badge,
+// app-status, etc.
+export { pollAction } from "./poll.js";
+export type { PollOptions } from "./poll.js";
+
 // One type used by external callers (mcp-panels narrows the registry
 // listener arg). The rest of the framework's types stay internal.
 export type { ActionErrorLike } from "./types.js";
