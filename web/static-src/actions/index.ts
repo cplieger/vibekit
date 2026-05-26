@@ -44,26 +44,12 @@ export { bindLoadingState } from "./loading.js";
 // listener that drains everything.
 export { registerCleanup } from "./cleanup.js";
 
-// Live console logger: subscribes to the registry and emits
-// console.error for every action that fails. Wired once at app init.
-export { initConsoleLog } from "./console-log.js";
-
 // Debounce helper: wrap an action so rapid calls coalesce into a
 // single dispatch after a quiet window. Used by typeahead search and
 // slash-command option fetches.
 export { debouncedDispatch } from "./debounce.js";
 export type { DebouncedDispatch } from "./debounce.js";
 
-// Standard retry config constant: eliminates `retry: { count: 2, delay: 300 }`
-// repetition across action definitions.
-export { RETRY_STANDARD } from "./types.js";
-
-// Type exports — consumed by callers that type-annotate their action
-// variables. Kept minimal: only types that callers reference explicitly
-// in production code outside actions/. Inferred types (DispatchOptions,
-// ActionDefinition, ActionContext, RetryConfig) are NOT exported because
-// callers get them through type inference on the factory signatures.
-export type {
-  Action,             // 9 prod consumers (type-annotate action variables)
-  ActionErrorLike,    // mcp-panels narrows the registry listener arg
-} from "./types.js";
+// One type used by external callers (mcp-panels narrows the registry
+// listener arg). The rest of the framework's types stay internal.
+export type { ActionErrorLike } from "./types.js";

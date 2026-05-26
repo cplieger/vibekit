@@ -180,13 +180,14 @@ export const forkChat = transportAction<{ chatID: string; tangentID: string }, {
 // Not retryable: merge deletes the tangent server-side. If the first
 // attempt succeeded but the response timed out, a retry would hit 404
 // (tangent already gone). Showing a Retry button would mislead the user
-// into thinking the merge failed when it actually succeeded. The SSE
-// stream will confirm the merge via a tangent_merged event.
+// into thinking the merge failed when it actually succeeded. The tangent
+// deletion broadcasts SSE chat_deleted so listeners reconcile state.
 
 export const mergeTangent = transportAction<string>({
   name: "chat.merge_tangent",
   scope: (chatID) => `chat:${chatID}`,
   command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
+  networkMode: "always",
   error: "Couldn't merge tangent",
 });
 
