@@ -240,7 +240,7 @@
 }
 
 .turn-actions:hover,
-.message.assistant:hover + .turn-actions {
+.msg-wrap-assistant:hover .turn-actions {
   opacity: 1;
 }
 
@@ -350,6 +350,18 @@
 
 .checkpoint-restore:hover {
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+}
+
+.checkpoint-rewind {
+  order: 2; flex-shrink: 0;
+  font-size: var(--fs-xs); color: var(--c-text-secondary);
+  background: none; border: 1px solid var(--c-border);
+  border-radius: 4px; padding: 2px var(--sp-2);
+  cursor: pointer; transition: background var(--dur-micro) var(--ease-micro), border-color var(--dur-micro);
+}
+
+.checkpoint-rewind:hover {
+  background: var(--c-bg-tertiary); border-color: var(--c-text-tertiary);
 }
 
 /* File-change summary banner after a turn */

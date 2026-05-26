@@ -68,6 +68,8 @@ func TestSafeKiroSetting(t *testing.T) {
 		{"hooks.showStatus", "hooks.showStatus"},
 		{"compaction.excludeContextWindowPercent", "compaction.excludeContextWindowPercent"},
 		{"compaction.excludeMessages", "compaction.excludeMessages"},
+		// kiro-cli 2.1+: load MCP tools on demand via tool_search.
+		{"toolSearch.enabled", "toolSearch.enabled"},
 		// Rejected settings
 		{"chat.defaultModel", ""},
 		{"api.timeout", ""},

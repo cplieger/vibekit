@@ -13,6 +13,7 @@
   <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167.png">
   <link rel="manifest" href="/manifest.json">
   <title>Vibekit for Kiro</title>
+  <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/vendor/xterm/xterm.css">
 </head>
@@ -370,6 +371,26 @@
                 <div>
                   <span class="section-option-label">kiro-cli telemetry</span>
                   <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not vibekit). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect vibekit's own operation.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-tool-search" aria-label="Load MCP tools on demand">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Load MCP tools on demand</span>
+                  <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves significant context tokens for users with 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Recommended only when you actually feel the context squeeze — for small MCP setups it adds latency without benefit.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-auto-update-kiro" aria-label="Auto-update kiro-cli" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Auto-update kiro-cli</span>
+                  <p class="section-hint">When on (default), kiro-cli checks for updates on every session start and silently updates itself when a newer version is available. Turn off to pin the current version — useful if a new release introduces a regression you want to avoid until it's fixed.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -908,6 +929,10 @@
         </label>
         <label class="tool-form-label">URL
           <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
+        </label>
+        <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
+          <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
+          <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
         </label>
         <div class="mcp-form-section">
           <div class="mcp-form-section-head">

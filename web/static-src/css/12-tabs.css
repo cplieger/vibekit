@@ -1,0 +1,7 @@
+
+.tab.tab-rewind-child { margin-inline-start: 1rem; }
+.tab.tab-rewind-child .tab-name::before { content: "↳ "; color: var(--c-text-tertiary); }
+
+.tab-context-menu { position: fixed; z-index: 999; background: var(--c-bg-secondary); border: 1px solid var(--c-border); border-radius: var(--r); padding: var(--sp-1); box-shadow: 0 4px 12px oklch(0% 0 0deg / 25%); }
+.tab-context-item { display: block; width: 100%; padding: var(--sp-1) var(--sp-3); border: none; background: none; color: var(--c-text-primary); font-size: var(--fs-sm); cursor: pointer; text-align: left; border-radius: calc(var(--r) / 2); }
+.tab-context-item:hover { background: var(--c-bg-tertiary); }

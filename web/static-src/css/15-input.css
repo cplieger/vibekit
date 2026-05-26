@@ -476,6 +476,27 @@
 
 .pill-model-meta { color: var(--c-text-tertiary); font-size: var(--fs-xs); }
 
+/* Effort row: pinned at the top of the model expand list. Five tier
+ * buttons in a horizontal row with a label. */
+.effort-row {
+  display: flex; align-items: center; gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2); margin-block-end: var(--sp-1);
+  border-bottom: 1px solid var(--c-border);
+}
+.effort-label {
+  font-size: var(--fs-xs); color: var(--c-text-tertiary);
+  margin-inline-end: var(--sp-1); white-space: nowrap;
+}
+.effort-btn {
+  font-size: var(--fs-xs); padding: 0.125rem var(--sp-1);
+  border: 1px solid var(--c-border); border-radius: var(--r);
+  background: transparent; color: var(--c-text-secondary);
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--dur-micro), border-color var(--dur-micro);
+}
+.effort-btn:hover { background: var(--c-bg-tertiary); border-color: var(--c-text-tertiary); }
+.effort-btn.active { background: var(--c-accent-subtle); border-color: var(--c-accent); color: var(--c-accent); }
+
 /* Status dot expand: the dot lives in the sidebar footer at the very
  * bottom of the viewport, so growing downward pushes off-screen. Pop
  * upward instead, with the dot's status colour as a subtle left-border
