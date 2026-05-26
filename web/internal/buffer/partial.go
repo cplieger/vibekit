@@ -111,11 +111,11 @@ func (pw *PartialWriter) writeOnce(_ context.Context, snap PartialSnapshot) erro
 
 // PartialSnapshot is the JSON shape written to .partial files.
 type PartialSnapshot struct {
-	MessageID   string         `json:"message_id"`
-	Content     string         `json:"content"`
-	ToolCalls   []api.ToolCall `json:"tool_calls,omitempty"`
-	IsReasoning bool           `json:"is_reasoning,omitempty"`
-	Ts          int64          `json:"ts"`
+	MessageID string         `json:"message_id"`
+	Content   string         `json:"content"`
+	Reasoning string         `json:"reasoning,omitempty"`
+	ToolCalls []api.ToolCall `json:"tool_calls,omitempty"`
+	Ts        int64          `json:"ts"`
 }
 
 // PartialPath returns the path for a chat's partial recovery file.
@@ -127,9 +127,14 @@ func PartialPath(configDir string, chatID api.ChatID) string {
 }
 
 // RecoverPartialSnapshot parses a partial file's bytes into a snapshot.
+// A snapshot with empty Content is still recoverable when Reasoning is
+// non-empty (a turn that was entirely reasoning at crash time).
 func RecoverPartialSnapshot(data []byte) (PartialSnapshot, bool) {
 	var snap PartialSnapshot
-	if json.Unmarshal(data, &snap) != nil || snap.Content == "" {
+	if json.Unmarshal(data, &snap) != nil {
+		return PartialSnapshot{}, false
+	}
+	if snap.Content == "" && snap.Reasoning == "" {
 		return PartialSnapshot{}, false
 	}
 	return snap, true

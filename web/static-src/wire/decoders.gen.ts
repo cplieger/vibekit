@@ -67,10 +67,6 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (supervisedMode !== undefined) out.supervised_mode = supervisedMode;
   const autoApproveCrew = optBool(o, "auto_approve_crew", "$.chat_header");
   if (autoApproveCrew !== undefined) out.auto_approve_crew = autoApproveCrew;
-  const frozen = optBool(o, "frozen", "$.chat_header");
-  if (frozen !== undefined) out.frozen = frozen;
-  const isTangent = optBool(o, "is_tangent", "$.chat_header");
-  if (isTangent !== undefined) out.is_tangent = isTangent;
   return out;
 };
 
@@ -272,8 +268,8 @@ export const decodeMessage: Decoder<Message> = (v) => {
   if (o["crew"] !== undefined) out.crew = decodeCrew(o["crew"]);
   const content = optStr(o, "content", "$.message");
   if (content !== undefined) out.content = content;
-  const operationType = optStr(o, "operation_type", "$.message");
-  if (operationType !== undefined) out.operation_type = operationType;
+  const reasoning = optStr(o, "reasoning", "$.message");
+  if (reasoning !== undefined) out.reasoning = reasoning;
   if (o["event_kind"] !== undefined) out.event_kind = reqOneOf(o, "event_kind", EVENT_KINDS, "$.message");
   if (o["tool_calls"] !== undefined) out.tool_calls = decodeArray(o["tool_calls"], decodeToolCall, "$.message.tool_calls");
   if (o["plan"] !== undefined) out.plan = decodeArray(o["plan"], decodePlanEntry, "$.message.plan");
@@ -286,6 +282,8 @@ export const decodeMessageChunkPayload: Decoder<MessageChunkPayload> = (v) => {
     message_id: reqStr(o, "message_id", "$.message_chunk_payload"),
     delta: reqStr(o, "delta", "$.message_chunk_payload"),
   };
+  const isReasoning = optBool(o, "is_reasoning", "$.message_chunk_payload");
+  if (isReasoning !== undefined) out.is_reasoning = isReasoning;
   return out;
 };
 

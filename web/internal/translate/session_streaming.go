@@ -19,7 +19,10 @@ import (
 const maxBufferBytes = 32 << 20
 
 // HandleAssistantChunk streams a text delta to clients and accumulates
-// it for later persistence.
+// it for later persistence. Reasoning chunks (isReasoning=true) flow
+// into buf.Reasoning; regular content chunks flow into buf.Content.
+// The IsReasoning flag is forwarded on the SSE so the client routes
+// each delta to the correct bubble (reasoning details vs content).
 func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID, raw json.RawMessage, isReasoning bool) {
 	var chunk ACPChunkWire
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != ContentTypeText || chunk.Content.Text == "" {
@@ -29,25 +32,27 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	if !buf.Started {
 		buf.Started = true
 		buf.MessageID = t.deps.NewMessageID()
-		buf.IsReasoning = isReasoning
 		t.deps.OpenPartialFile(chatID, buf)
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
 			api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 	}
-	buf.IsReasoning = isReasoning
-	if buf.Content.Len()+len(chunk.Content.Text) > maxBufferBytes {
+	totalLen := buf.Content.Len() + buf.Reasoning.Len()
+	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
 		// Defense-in-depth: cap the buffer so a pathological turn
 		// (e.g. agent cats a huge file) cannot OOM the container.
 		// Silently drop further content; the turn will still end
 		// normally via turn_ended and the truncated message is
-		// persisted. The user sees the message cut off — better
-		// than a dead container.
+		// persisted.
 		return
 	}
-	buf.Content.WriteString(chunk.Content.Text)
+	if isReasoning {
+		buf.Reasoning.WriteString(chunk.Content.Text)
+	} else {
+		buf.Content.WriteString(chunk.Content.Text)
+	}
 	buf.WritePartial(ctx)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
-		api.MessageChunkPayload{MessageID: buf.MessageID, Delta: chunk.Content.Text}))
+		api.MessageChunkPayload{MessageID: buf.MessageID, Delta: chunk.Content.Text, IsReasoning: isReasoning}))
 }
 
 // HandleToolCall adds a tool call to the current assistant message

@@ -80,7 +80,12 @@ describe("message_chunk", () => {
 
   it("appends chunk delta to store", () => {
     fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hello" });
-    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "hello");
+    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "hello", false);
+  });
+
+  it("forwards is_reasoning flag for reasoning chunks", () => {
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "thinking", is_reasoning: true });
+    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "thinking", true);
   });
 
   it("skips undefined payload", () => {

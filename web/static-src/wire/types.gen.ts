@@ -55,8 +55,6 @@ export interface ChatHeader {
   message_count: number;
   supervised_mode?: boolean;
   auto_approve_crew?: boolean;
-  frozen?: boolean;
-  is_tangent?: boolean;
 }
 
 export interface Check {
@@ -172,7 +170,7 @@ export interface Message {
   id: string;
   role: Role;
   content?: string;
-  operation_type?: string;
+  reasoning?: string;
   event_kind?: EventKind;
   tool_calls?: ToolCall[];
   plan?: PlanEntry[];
@@ -182,6 +180,7 @@ export interface Message {
 export interface MessageChunkPayload {
   message_id: string;
   delta: string;
+  is_reasoning?: boolean;
 }
 
 export interface MeteringItem {

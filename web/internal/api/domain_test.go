@@ -93,8 +93,6 @@ func TestChatHeader_copies_boolean_and_tangent_fields(t *testing.T) {
 		ParentChatID:    "parent-1",
 		SupervisedMode:  true,
 		AutoApproveCrew: true,
-		Frozen:          true,
-		IsTangent:       true,
 	}
 
 	h := c.Header()
@@ -104,12 +102,6 @@ func TestChatHeader_copies_boolean_and_tangent_fields(t *testing.T) {
 	}
 	if !h.AutoApproveCrew {
 		t.Error("AutoApproveCrew not copied to header")
-	}
-	if !h.Frozen {
-		t.Error("Frozen not copied to header")
-	}
-	if !h.IsTangent {
-		t.Error("IsTangent not copied to header")
 	}
 	if h.ParentChatID != "parent-1" {
 		t.Errorf("ParentChatID = %q, want parent-1", h.ParentChatID)
