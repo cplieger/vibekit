@@ -1,94 +1,175 @@
 // ---------------------------------------------------------------------------
-// Markdown rendering for chat bubbles, history replay, and any other
-// surface that renders markdown to DOM. One append-only streaming parser
-// (smd-parser) backs both the live-streaming path and the one-shot path.
+// Markdown rendering — three surfaces, one parser.
 //
-//   - Streaming assistant messages use `MarkdownRenderer`. Each write()
-//     feeds only the delta to the parser; already-mounted DOM nodes are
-//     never touched. New text fragments are wrapped in
-//     `<span data-vk-stream>` so CSS fades each chunk in once on mount.
+// Streaming (live assistant turn):
+//   const r = createMarkdownStream(bubble);
+//   r.writeDelta("Hello "); r.writeDelta("world"); r.end();
+//   → blocks decorate (code-block highlight, path linkify) AND animate
+//     (data-vk-block-enter for the per-block fade) as they complete.
+//   → large flushes (e.g. a 50KB code block dumped at once) are split
+//     across tasks via MessageChannel so they don't block the main
+//     thread; r.end() drains synchronously.
 //
-//   - Non-streaming contexts (history replay, previews) use
-//     `renderMarkdown(md)` — the same parser in non-animate mode.
+// Replay (chat-switch, history scrollback):
+//   renderMarkdownInto(bubble, fullMarkdown);
+//   → blocks decorate but DON'T animate (the user has seen this before).
 //
-// Decoration (inline file-path linkify + code-block syntax highlighting
-// + copy/run buttons) is a post-process pass on the already-produced DOM.
-// The streaming path runs it at finalize; the one-shot path wraps it in
-// renderBubble. Neither path does an innerHTML swap after streaming.
+// Structural string output (tests, previews):
+//   const html = renderMarkdown(md);
+//   → no decoration, no animation. Pure parser output.
+//
+// All three paths use the same smd-parser; the only differences are
+// (a) the per-block hook installed on the renderer and (b) whether
+// large writes get yielded across tasks.
 // ---------------------------------------------------------------------------
 
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
-import { domRenderer, unwrapStreamSpans } from "./smd-renderer.js";
+import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks } from "./code-blocks.js";
 
-// ---------------------------------------------------------------------------
-// Streaming renderer — for live assistant bubbles.
-// ---------------------------------------------------------------------------
+/** Markdown re-parse throttle while streaming. 200ms is the sweet
+ *  spot from vibekit-ui.md (Vercel ai-chatbot pattern). */
+const FLUSH_INTERVAL_MS = 200;
 
-/** Lifecycle wrapper around a single assistant `<div class="message
- *  assistant streaming">`. Each write() receives the FULL raw
- *  markdown-so-far; the renderer parses only the delta vs. the
- *  previous call and appends DOM nodes at the current parse position.
- *
- *  Input invariant: raw markdown is strictly append-only. kiro-cli's
- *  streaming respects this; any violation throws so callers get a
- *  clear signal rather than silent retroactive DOM rebuilds. */
-export class MarkdownRenderer {
-  private lastRaw = "";
-  private parser: Parser;
+/** Maximum bytes parsed per task slice. Tuned so a single slice
+ *  completes in well under a frame budget on a slow device. Large
+ *  flushes are split into N slices yielded across tasks. */
+const PARSE_SLICE_BYTES = 4096;
 
-  constructor(private readonly el: HTMLElement) {
-    this.parser = parser(domRenderer(el, true));
-  }
-
-  /** Feed the latest raw markdown. Called on every debounced flush
-   *  from messages.ts. */
-  write(rawMarkdown: string): void {
-    if (rawMarkdown === this.lastRaw) return;
-    if (!rawMarkdown.startsWith(this.lastRaw)) {
-      throw new Error("MarkdownRenderer.write: input is not append-only");
-    }
-    parser_write(this.parser, rawMarkdown.slice(this.lastRaw.length));
-    this.lastRaw = rawMarkdown;
-  }
-
-  /** Close the stream. Parser finalizes pending tokens, the per-chunk
-   *  fade-in spans are unwrapped (merged into their parents via
-   *  Node.normalize), and decoration (linkify + code-block highlight
-   *  + copy buttons) runs in-place. No innerHTML swap. */
-  finalize(): void {
-    parser_end(this.parser);
-    unwrapStreamSpans(this.el);
-    linkifyPaths(this.el);
-    decorateCodeBlocks(this.el);
-  }
-
-  get element(): HTMLElement { return this.el; }
+/** Task-yielding scheduler. MessageChannel.postMessage is the
+ *  cheapest way to yield to the browser between tasks (browsers
+ *  schedule it as a fresh macro-task, allowing paint between
+ *  callbacks). React's scheduler uses the same trick. */
+const yieldChannel = new MessageChannel();
+let yieldQueue: Array<() => void> = [];
+yieldChannel.port1.onmessage = () => {
+  const fns = yieldQueue;
+  yieldQueue = [];
+  for (const fn of fns) fn();
+};
+function nextTick(fn: () => void): void {
+  const wasEmpty = yieldQueue.length === 0;
+  yieldQueue.push(fn);
+  if (wasEmpty) yieldChannel.port2.postMessage(null);
 }
 
-// ---------------------------------------------------------------------------
-// One-shot rendering — for history replay, tool outputs, previews.
-// ---------------------------------------------------------------------------
+/** Decorate a freshly-completed block. Idempotent. */
+function decorate(block: HTMLElement): void {
+  if (block.tagName === "PRE") {
+    if (block.parentElement !== null) decorateCodeBlocks(block.parentElement);
+    return;
+  }
+  linkifyPaths(block);
+}
 
-/** Render markdown synchronously to an HTML string. Uses the same
- *  parser as the streaming path, in non-animate mode (no fade-in
- *  spans). */
-export function renderMarkdown(md: string): string {
-  const el = document.createElement("div");
-  const p = parser(domRenderer(el, false));
+/** Decorate + tag for the per-block entry animation. */
+function decorateAndAnimate(block: HTMLElement): void {
+  decorate(block);
+  block.setAttribute("data-vk-block-enter", "");
+}
+
+export interface MarkdownStream {
+  /** Append a markdown fragment. Parser sees the cumulative effect via
+   *  the internal flush; large flushes yield across tasks. Returns
+   *  immediately; parsing may complete asynchronously. */
+  writeDelta(delta: string): void;
+  /** Finalize the stream: flush + drain any pending tasks
+   *  synchronously, then end the parser. Idempotent — safe to call
+   *  multiple times; subsequent calls are no-ops. */
+  end(): void;
+}
+
+/** Streaming markdown renderer for live assistant bubbles. Owns its
+ *  own write buffer, 200ms flush schedule, and per-block decoration +
+ *  animation hooks. Large writes split across tasks. */
+export function createMarkdownStream(el: HTMLElement): MarkdownStream {
+  const p: Parser = parser(domRenderer(el, { onBlockComplete: decorateAndAnimate }));
+  let buffer = "";
+  let pendingParse = "";       // text queued for chunked parsing
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  let draining = false;
+  let ended = false;
+
+  const drain = (): void => {
+    if (pendingParse === "") {
+      draining = false;
+      return;
+    }
+    const sliceEnd = Math.min(PARSE_SLICE_BYTES, pendingParse.length);
+    const slice = pendingParse.slice(0, sliceEnd);
+    pendingParse = pendingParse.slice(sliceEnd);
+    parser_write(p, slice);
+    if (pendingParse !== "") nextTick(drain);
+    else draining = false;
+  };
+
+  const flush = (): void => {
+    if (buffer === "") return;
+    pendingParse += buffer;
+    buffer = "";
+    if (flushTimer !== undefined) {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+    }
+    if (!draining) {
+      draining = true;
+      drain();
+    }
+  };
+
+  return {
+    writeDelta(delta: string): void {
+      if (ended || delta === "") return;
+      buffer += delta;
+      if (flushTimer === undefined) {
+        flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
+      }
+    },
+    end(): void {
+      if (ended) return;
+      ended = true;
+      // Move any unflushed buffered text into pendingParse.
+      if (buffer !== "") {
+        pendingParse += buffer;
+        buffer = "";
+      }
+      if (flushTimer !== undefined) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
+      // Drain everything synchronously — end() is a "complete now"
+      // contract from the caller's perspective. Yielding only applies
+      // during normal streaming.
+      while (pendingParse !== "") {
+        const sliceEnd = Math.min(PARSE_SLICE_BYTES, pendingParse.length);
+        parser_write(p, pendingParse.slice(0, sliceEnd));
+        pendingParse = pendingParse.slice(sliceEnd);
+      }
+      draining = false;
+      parser_end(p);
+    },
+  };
+}
+
+/** Replay-path render: parse the full markdown into `el` with
+ *  decoration but no entry animation. Synchronous — replay paths
+ *  aren't time-critical (they happen on chat-switch, not in the
+ *  streaming hot path). */
+export function renderMarkdownInto(el: HTMLElement, md: string): void {
+  const p = parser(domRenderer(el, { onBlockComplete: decorate }));
   parser_write(p, md);
   parser_end(p);
-  return el.innerHTML;
 }
 
-/** Render markdown into an existing element and apply decoration in
- *  place. For history replay — write() on a fresh MarkdownRenderer
- *  would over-engineer this path since no streaming is happening. */
-export function renderBubble(el: HTMLElement, md: string): void {
-  el.dataset["raw"] = md;
-  el.innerHTML = renderMarkdown(md);
-  linkifyPaths(el);
-  decorateCodeBlocks(el);
+/** Pure parser output — no decoration, no animation. Used by tests,
+ *  hover previews, and any other surface that wants the structural
+ *  HTML without the decoration overlay. */
+export function renderMarkdown(md: string): string {
+  const tmp = document.createElement("div");
+  const p = parser(domRenderer(tmp));
+  parser_write(p, md);
+  parser_end(p);
+  return tmp.innerHTML;
 }

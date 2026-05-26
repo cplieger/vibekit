@@ -40,6 +40,12 @@
 
 @keyframes vk-breathe    { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
 
+/* Streaming caret blink: pure opacity step so it doesn't interpolate
+ * (smooth fades would distract from the type-streaming feel).
+ * `jump-none` 2 steps == on/off, avoids the trailing extra-step that
+ * `jump-end` produces. */
+@keyframes vk-stream-caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0.2 } }
+
 @keyframes vk-ping {
   0% { transform: scale(1); opacity: 0.6 }
   15% { transform: scale(2.5); opacity: 0 }

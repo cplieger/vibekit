@@ -17,6 +17,8 @@ import {
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
+import { signal, effect } from "./signals.js";
+import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 
 // --- Types ---
@@ -91,16 +93,30 @@ interface State {
 const state: State = { tabs: [], active: "" };
 const callbacks: Callbacks = { onActivate: null, onEmpty: null };
 const internal: Internal = { emptyTimer: null, vtPending: null, renderQueued: false };
+
+/** Reactive version counter. Effects subscribed via `tabsEffect()` re-run
+ *  on every emit(). State is mutated in place; this counter is the
+ *  signal those mutations trip. */
+const stateVersion = signal(0);
 type Subscriber = (s: State) => void;
-const subscribers = new Set<Subscriber>();
+
+/** All registered module-level effects. Tracked so _resetForTest can
+ *  dispose them and start fresh; production never disposes. */
+const moduleEffects: Array<() => void> = [];
 
 function emit(): void {
-  for (const fn of subscribers) fn(state);
+  stateVersion.value = stateVersion.peek() + 1;
 }
 
-function subscribe(fn: Subscriber): () => void {
-  subscribers.add(fn);
-  return (): void => { subscribers.delete(fn); };
+/** Register an effect that re-runs on every state mutation. The callback
+ *  receives the current State by reference (mutations are visible). */
+function tabsEffect(fn: Subscriber): () => void {
+  const cleanup = effect(() => {
+    stateVersion.value; // subscribe
+    fn(state);
+  });
+  moduleEffects.push(cleanup);
+  return cleanup;
 }
 
 // --- Public API ---
@@ -136,6 +152,17 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const tab = state.tabs[idx]!;
+
+  // Check if this tab has rewind children. If so, ask the user.
+  const children = state.tabs.filter((t) => {
+    const s = storeGet(t.id);
+    return s !== undefined && s.parent_chat_id === id;
+  });
+  if (children.length > 0 && !opts?.skipOnClose) {
+    showRewindChildPrompt(id, children.map((t) => t.id), opts);
+    return;
+  }
+
   if (!opts?.skipOnClose) tab.onClose?.();
   state.tabs.splice(idx, 1);
 
@@ -154,6 +181,55 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   } else {
     emit();
   }
+}
+
+/** Show a popup asking the user what to do with rewind children when
+ *  their parent tab is closed. "Keep" promotes them to top-level;
+ *  "Discard" closes them alongside the parent. */
+function showRewindChildPrompt(
+  parentId: string,
+  childIds: string[],
+  opts?: { skipOnClose?: boolean },
+): void {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const card = document.createElement("div");
+  card.className = "modal-card";
+  card.innerHTML = `
+    <p style="margin:0 0 var(--sp-3)">This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. What would you like to do?</p>
+    <div style="display:flex;gap:var(--sp-2);justify-content:flex-end">
+      <button class="btn-secondary" data-action="keep">Keep branches</button>
+      <button class="btn-danger" data-action="discard">Discard all</button>
+      <button class="btn-ghost" data-action="cancel">Cancel</button>
+    </div>
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  card.addEventListener("click", (e) => {
+    const action = (e.target as HTMLElement).dataset["action"];
+    if (!action) return;
+    overlay.remove();
+    if (action === "cancel") return;
+    if (action === "keep") {
+      // Promote all children (clear parent_chat_id via server command).
+      for (const cid of childIds) {
+        void import("./transport.js").then(({ send }) => {
+          send({ type: "promote_rewind_chat", chat_id: cid, request_id: `promote-${Date.now()}` } as any);
+        });
+      }
+    } else {
+      // Discard children: dispatch server-side delete for each, then close tabs.
+      for (const cid of childIds) {
+        void import("./transport.js").then(({ send }) => {
+          send({ type: "discard_rewind_chat", chat_id: cid, request_id: `discard-${Date.now()}` } as any);
+        });
+        closeTab(cid, { skipOnClose: true });
+      }
+    }
+    // Now close the parent.
+    closeTab(parentId, { ...opts, skipOnClose: false });
+  });
 }
 
 export function renameTab(id: string, name: string): void {
@@ -208,10 +284,13 @@ function scheduleEmpty(): void {
 }
 
 /** Register module-level subscribers. Extracted into a function so
- *  _resetForTest can re-register them after clearing the subscriber set. */
+ *  _resetForTest can re-register them after clearing the subscriber set.
+ *  Effects defer their work until state has tabs — this matches the
+ *  old subscribe-based pattern where callbacks only fired on emit
+ *  (i.e. after at least one openTab call). */
 function registerModuleSubscribers(): void {
   // Clear empty timer on any activation.
-  subscribe(() => {
+  tabsEffect(() => {
     if (state.active !== "" && internal.emptyTimer !== null) {
       clearTimeout(internal.emptyTimer);
       internal.emptyTimer = null;
@@ -219,7 +298,8 @@ function registerModuleSubscribers(): void {
   });
 
   // Persistence.
-  subscribe(() => {
+  tabsEffect(() => {
+    if (state.tabs.length === 0 && state.active === "") return;
     uiState.save({
       tab_order: state.tabs.map((t) => t.id),
       active_view: state.active,
@@ -227,21 +307,21 @@ function registerModuleSubscribers(): void {
   });
 
   // View / route sync.
-  subscribe((s) => {
+  tabsEffect((s) => {
+    if (s.tabs.length === 0 && s.active === "") return;
     const active = s.tabs.find((t) => t.id === s.active);
     if (active !== undefined) showView(active);
     else syncSidebarButtons(null);
   });
 
   // DOM rendering.
-  subscribe(() => {
+  tabsEffect(() => {
+    if (state.tabs.length === 0 && state.active === "") return;
     if (internal.renderQueued) return;
     internal.renderQueued = true;
     requestAnimationFrame(() => { internal.renderQueued = false; renderDOM(); });
   });
 }
-
-registerModuleSubscribers();
 
 /** Restore tabs to match saved order and active ID. Called once at startup
  *  after modules have registered their tabs. */
@@ -359,6 +439,9 @@ function renderDOM(): void {
     el.classList.toggle("active", tab.id === state.active);
     el.setAttribute("aria-selected", tab.id === state.active ? "true" : "false");
     el.tabIndex = tab.id === state.active ? 0 : -1;
+    // Rewind child indent: chats with parent_chat_id render indented.
+    const session = storeGet(tab.id);
+    el.classList.toggle("tab-rewind-child", session?.parent_chat_id !== undefined && session.parent_chat_id !== "");
     prev = el;
   }
 }
@@ -392,6 +475,33 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   el.append(icon, name, statusDot, close);
   attachTabInteraction(el, tab.id);
+
+  // Right-click "Promote" for rewind children.
+  el.addEventListener("contextmenu", (e) => {
+    const s = storeGet(tab.id);
+    if (s === undefined || !s.parent_chat_id) return;
+    e.preventDefault();
+    const menu = document.createElement("div");
+    menu.className = "tab-context-menu";
+    menu.style.position = "absolute";
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+    const btn = document.createElement("button");
+    btn.textContent = "Promote (replace original)";
+    btn.className = "tab-context-item";
+    btn.addEventListener("click", () => {
+      menu.remove();
+      void import("./transport.js").then(({ send }) => {
+        send({ type: "promote_rewind_chat", chat_id: s.id, request_id: `promote-${Date.now()}` } as any);
+      });
+    });
+    menu.appendChild(btn);
+    document.body.appendChild(menu);
+    const dismiss = (): void => { menu.remove(); document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escDismiss); };
+    const escDismiss = (ev: KeyboardEvent): void => { if (ev.key === "Escape") dismiss(); };
+    setTimeout(() => { document.addEventListener("pointerdown", dismiss); document.addEventListener("keydown", escDismiss); }, 0);
+  });
+
   return el;
 }
 
@@ -526,8 +636,17 @@ export function _resetForTest(): void {
   internal.emptyTimer = null;
   internal.vtPending = null;
   internal.renderQueued = false;
-  subscribers.clear();
-  // Re-register module-level subscribers so tests observe the same
-  // side-effects (persistence, view sync, DOM render) as production.
+  // Dispose existing module effects and re-register so tests observe
+  // the same side-effects (persistence, view sync, DOM render) as
+  // production.
+  for (const c of moduleEffects) c();
+  moduleEffects.length = 0;
   registerModuleSubscribers();
 }
+
+
+// Register module-level effects after all module declarations are
+// initialized — effect() bodies run synchronously on subscribe, so
+// they must run AFTER ACTIVE_BTN, syncSidebarButtons, renderDOM, and
+// showView are defined further down the file.
+registerModuleSubscribers();
