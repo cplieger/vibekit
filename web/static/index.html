@@ -272,7 +272,7 @@
 
             <div class="page-section" id="general-about-section">
               <h3 class="section-title">About</h3>
-              <p class="section-hint">The pair of versions this session is running. Both update on their own schedules; upstream kiro-cli ships roughly weekly, Vibekit tracks its own release cadence.</p>
+              <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Vibekit release, so both move together when a new image is built.</p>
               <dl class="about-grid">
                 <dt>Vibekit</dt>
                 <dd id="about-vibekit">—</dd>
@@ -381,16 +381,6 @@
                 <div>
                   <span class="section-option-label">Load MCP tools on demand</span>
                   <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves significant context tokens for users with 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Recommended only when you actually feel the context squeeze — for small MCP setups it adds latency without benefit.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-auto-update-kiro" aria-label="Auto-update kiro-cli" checked>
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <span class="section-option-label">Auto-update kiro-cli</span>
-                  <p class="section-hint">When on (default), kiro-cli checks for updates on every session start and silently updates itself when a newer version is available. Turn off to pin the current version — useful if a new release introduces a regression you want to avoid until it's fixed.</p>
                 </div>
               </div>
               <div class="section-option">

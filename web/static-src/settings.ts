@@ -237,7 +237,6 @@ const experimentalFlags: readonly {
   { key: "hooks.showStatus",      inputID: "flag-hooks-status" },
   { key: "telemetry.enabled",     inputID: "flag-telemetry" },
   { key: "toolSearch.enabled",    inputID: "flag-tool-search" },
-  { key: "app.disableAutoupdates", inputID: "flag-auto-update-kiro", inverted: true },
 ];
 
 function initExperimentalToggles(): void {

@@ -31,7 +31,6 @@ var allowedKiroSettings = map[string]settingMeta{
 	"hooks.showStatus":                       {Kind: settingBool},
 	"telemetry.enabled":                      {Kind: settingBool},
 	"toolSearch.enabled":                     {Kind: settingBool},
-	"app.disableAutoupdates":                 {Kind: settingBool},
 	"compaction.excludeContextWindowPercent": {Kind: settingInt},
 	"compaction.excludeMessages":             {Kind: settingInt},
 	"cleanup.periodDays":                     {Kind: settingInt},
