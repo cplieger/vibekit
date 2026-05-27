@@ -476,7 +476,6 @@ import {
   getReasoningSig,
   clearReasoningSig,
   ensureToolCallSig,
-  getToolCallSig,
   clearToolCallSig,
   ensureCrewSig,
   getCrewSig,

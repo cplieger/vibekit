@@ -11,10 +11,10 @@ import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => {},
-    end_token: () => {},
-    add_text: () => {},
-    set_attr: () => {},
+    add_token: () => { /* noop */ },
+    end_token: () => { /* noop */ },
+    add_text: () => { /* noop */ },
+    set_attr: () => { /* noop */ },
   };
 }
 

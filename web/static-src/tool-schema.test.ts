@@ -65,7 +65,7 @@ describe("mcpToolInfo (property-based)", () => {
   // Arbitrary for valid server/tool name segments: starts with alnum, rest is alnum/underscore/dot/dash.
   // Exclude double-underscore sequences since those are the separator in the mcp__ format.
   const nameSegment = fc
-    .stringMatching(/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,20}$/)
+    .stringMatching(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,20}$/)
     .filter((s) => !s.includes("__"));
 
   it("round-trips underscore variant: mcp__<server>__<tool>", () => {

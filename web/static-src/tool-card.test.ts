@@ -19,13 +19,13 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 // Mock editor-openers.ts to avoid its transitive DOM dependencies.
 vi.mock("./editor-openers.js", () => ({
-  openFile: () => {},
-  openFileDiff: () => {},
+  openFile: () => { /* noop */ },
+  openFileDiff: () => { /* noop */ },
 }));
 
 // Mock tool-group.ts to avoid its transitive DOM dependencies.
 vi.mock("./tool-group.js", () => ({
-  trackInProgress: () => {},
+  trackInProgress: () => { /* noop */ },
 }));
 
 const { extractSubtitle, mcpHue } = await import("./tool-card.js");

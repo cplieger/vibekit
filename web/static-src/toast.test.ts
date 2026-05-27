@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import type * as ToastModule from "./toast.js";
+
 // Each test re-imports the module to reset its module-level state.
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -20,7 +22,7 @@ function toasts(): NodeListOf<Element> {
   return document.querySelectorAll(".vk-toast");
 }
 
-async function loadToast(): Promise<typeof import("./toast.js")> {
+async function loadToast(): Promise<typeof ToastModule> {
   return await import("./toast.js");
 }
 

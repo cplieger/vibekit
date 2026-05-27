@@ -28,10 +28,10 @@ import type { Parser, Token } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => {},
-    end_token: () => {},
-    add_text: () => {},
-    set_attr: () => {},
+    add_token: () => { /* noop */ },
+    end_token: () => { /* noop */ },
+    add_text: () => { /* noop */ },
+    set_attr: () => { /* noop */ },
   };
 }
 
@@ -242,8 +242,8 @@ describe("smd parser property: structural invariants", () => {
           end_token: () => {
             depth--;
           },
-          add_text: () => {},
-          set_attr: () => {},
+          add_text: () => { /* noop */ },
+          set_attr: () => { /* noop */ },
         },
       };
     }
