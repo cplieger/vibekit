@@ -332,11 +332,11 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   }
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     return;
   }
   if (data === null || data === undefined) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     return;
   }
   const [localNames, reposByForge] = await Promise.all([
@@ -344,7 +344,7 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
     refreshReposByForge(data.forges, signal),
   ]);
   if (signal.aborted) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     return;
   }
   if (myGen !== renderGen) {
@@ -1136,7 +1136,7 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
       device_code: deviceCode,
     });
     if (pollStopped) {
-      // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+       
       return;
     }
     if (res === null) {

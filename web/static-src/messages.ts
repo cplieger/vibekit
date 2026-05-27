@@ -953,11 +953,11 @@ const toolSpec: ReconcileSpec<ToolCall> = {
  *  Idempotent: safe to call repeatedly with the same tc. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
   if (tc.status !== undefined) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
   if (tc.title !== undefined) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     applyTitleUpdate(el, tc.title);
   }
   if (tc.output !== undefined && tc.output !== "") {
@@ -1005,7 +1005,7 @@ function mirrorToolUpdateToCrew(tc: ToolCall): void {
     if (tc.status === "completed" || tc.status === "failed") {
       onCrewToolCompleted(tc.sub_session_id);
     } else if (tc.title !== undefined) {
-      // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+       
       setSubagentActivity(tc.sub_session_id, formatToolActivity(tc.title));
     }
   }
@@ -1341,7 +1341,7 @@ function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement
   let icon = "";
   for (const meta of Object.values(EVENT_BOUNDARY_META)) {
     if (meta?.boundary === kind) {
-      // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+       
       icon = meta.icon;
       break;
     }
@@ -1456,7 +1456,7 @@ function attachTurnActions(el: HTMLDivElement): void {
   // below the bubble + tool group + plan (the natural reading order).
   // Reuses the wrap captured at the top for the markdown lookup.
   if (wrap !== null && wrap !== undefined) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     wrap.appendChild(row);
   } else {
     el.insertAdjacentElement("afterend", row);

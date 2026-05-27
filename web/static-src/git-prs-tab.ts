@@ -149,7 +149,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
     ),
   );
   if (signal.aborted) {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     return;
   }
   for (const { forge, res } of repoResults) {

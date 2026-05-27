@@ -98,11 +98,11 @@ describe("idempotencyKey", () => {
     await p;
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
     const k1 = (fetchSpy.mock.calls[0]?.[1])!.headers as Record<string, string>;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
     const k2 = (fetchSpy.mock.calls[1]?.[1])!.headers as Record<string, string>;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
     const k3 = (fetchSpy.mock.calls[2]?.[1])!.headers as Record<string, string>;
     expect(k1[IDEMPOTENCY_HEADER]).toBe(k2[IDEMPOTENCY_HEADER]);
     expect(k2[IDEMPOTENCY_HEADER]).toBe(k3[IDEMPOTENCY_HEADER]);

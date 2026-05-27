@@ -157,7 +157,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   void import("./messages-shared.js")
     .then((m) => {
       m.refreshConflictBadges(chatID, c.path!);
-    }) // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    })  
     .catch((e: unknown) => {
       console.warn("[conflicts] badge refresh failed", e);
     });

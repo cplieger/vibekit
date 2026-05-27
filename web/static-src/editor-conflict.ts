@@ -223,7 +223,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     return;
   }
   if (state.mode.kind !== "conflict") {
-    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+     
     return;
   }
   if (getActiveFilePath() !== state.path) {

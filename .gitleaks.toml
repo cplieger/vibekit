@@ -1,0 +1,7 @@
+title = "vibekit gitleaks config"
+
+[allowlist]
+description = "Test VAPID keys (generated for testing, not real secrets)"
+paths = [
+  '''web/internal/push/routes_test\.go''',
+]
