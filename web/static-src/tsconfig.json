@@ -4,7 +4,11 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "outDir": "../static",
     "rootDir": ".",
     "declaration": false,
@@ -36,5 +40,11 @@
     "vendor-types/*.d.ts",
     "**/*.test.ts"
   ],
-  "exclude": ["vitest.config.ts", "fc-strict-setup.ts"]
+  "exclude": [
+    "vitest.config.ts",
+    "fc-strict-setup.ts",
+    "**/*.test.ts",
+    "**/*.fuzz.test.ts",
+    "**/*.property.test.ts"
+  ]
 }
