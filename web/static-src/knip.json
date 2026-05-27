@@ -1,11 +1,7 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "app.ts",
-    "sw.ts",
-    "**/*.test.ts",
-    "**/*.fuzz.test.ts",
-    "**/*.property.test.ts"
+    "app.ts", "sw.ts", "theme-init.ts", "**/*.test.ts", "**/*.fuzz.test.ts", "**/*.property.test.ts"
   ],
   "project": [
     "**/*.ts",
@@ -13,9 +9,49 @@
     "!node_modules/**"
   ],
   "ignoreDependencies": [
-    "xterm"
+    "eslint",
+    "prettier",
+    "typescript-eslint",
+    "@eslint/js",
+    "@vitest/coverage-v8"
   ],
+  "ignoreBinaries": [
+    "tsgo"
+  ],
+  "ignoreMembers": [
+    "active",
+    "addPendingPermission",
+    "appendChunk",
+    "appendMessage",
+    "clearPendingPermissions",
+    "dequeuePrompt",
+    "element",
+    "enqueuePrompt",
+    "finalize",
+    "getText",
+    "isThinking",
+    "loadList",
+    "loadMessages",
+    "queuedPrompt",
+    "removeChat",
+    "removePendingPermission",
+    "setActive",
+    "setAvailableCommands",
+    "setCurrentMode",
+    "setQueuedPrompt",
+    "setThinking",
+    "setWorkingLabel",
+    "subscribe",
+    "upsertHeader",
+    "upsertMessage",
+    "upsertToolCall"
+  ],
+  "treatConfigHintsAsErrors": true,
+  "includeEntryExports": true,
   "typescript": {
     "config": ["tsconfig.json", "tsconfig.sw.json", "tsconfig.node.json"]
+  },
+  "ignoreIssues": {
+    "smd.ts": ["exports", "types", "enumMembers", "namespaceMembers", "duplicates"]
   }
 }
