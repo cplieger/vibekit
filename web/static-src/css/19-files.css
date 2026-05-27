@@ -1,3 +1,4 @@
+
 /* ==========================================================================
    File Browser
    ========================================================================== */
@@ -122,8 +123,8 @@
   border-radius: var(--r);
   cursor: pointer;
   transition:
-    background-color var(--dur-fast),
-    color var(--dur-fast);
+    background-color var(--dur-quick),
+    color var(--dur-quick);
 
   &:hover {
     background: var(--c-bg-hover);

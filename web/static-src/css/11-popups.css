@@ -1,3 +1,4 @@
+
 /* ==========================================================================
    Popups (shared)
    ========================================================================== */
@@ -110,13 +111,13 @@
  * ephemeral notification. */
 .vk-toast-error {
   background: var(--c-red);
-  color: white;
+  color: #fff;
   border-color: transparent;
 }
 
 .vk-toast-success {
   background: var(--c-green);
-  color: white;
+  color: #fff;
   border-color: transparent;
 }
 
