@@ -8,6 +8,15 @@
 // their own modules but use this helper instead of redefining it.
 // ---------------------------------------------------------------------------
 
+
+// Augment Document with conditionally-available APIs that TypeScript's
+// lib.dom.d.ts declares as always-present but aren't in all browsers.
+declare global {
+  interface Document {
+    startViewTransition?: ((callback: () => void) => { finished: Promise<void> }) | undefined;
+  }
+}
+
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
@@ -535,7 +544,6 @@ export const $ = new Elements();
  *  Falls back to calling `fn()` directly. Catches ready/finished
  *  rejections (expected when the transition is skipped). */
 export function maybeViewTransition(fn: () => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (document.startViewTransition) {
     const t = document.startViewTransition(fn);
     t.ready.catch(() => {
