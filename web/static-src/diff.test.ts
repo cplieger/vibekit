@@ -239,7 +239,9 @@ describe("stats", () => {
 describe("lineDiff property-based invariants", () => {
   /** Helper: count lines in a string (matching splitLines logic). */
   function countLines(s: string): number {
-    if (s === "") {return 0;}
+    if (s === "") {
+      return 0;
+    }
     return s.split("\n").length;
   }
 
@@ -247,7 +249,9 @@ describe("lineDiff property-based invariants", () => {
   function reconstructNew(lines: DiffLine[]): string {
     const parts: string[] = [];
     for (const l of lines) {
-      if (l.kind === "add" || l.kind === "ctx") {parts.push(l.text);}
+      if (l.kind === "add" || l.kind === "ctx") {
+        parts.push(l.text);
+      }
     }
     return parts.length === 0 ? "" : parts.join("\n");
   }

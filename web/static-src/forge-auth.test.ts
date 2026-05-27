@@ -244,7 +244,7 @@ describe("forge-auth: 4-section layout", () => {
       expect(svg, `${k} badge should contain an svg`).not.toBeNull();
       expect(svg!.getAttribute("viewBox")).toBe("0 0 24 24");
       // No leftover letter text inside the badge.
-      expect(badge!.textContent?.trim() ?? "").toBe("");  
+      expect(badge!.textContent?.trim() ?? "").toBe("");
     }
   });
 
@@ -369,8 +369,8 @@ describe("forge-auth: 4-section layout", () => {
       ([path]) => typeof path === "string" && path.includes("/probe"),
     );
     expect(probeCalls.length).toBe(2);
-    expect(probeCalls.some(([p]) => (p).includes("github%3Agithub.com"))).toBe(true);
-    expect(probeCalls.some(([p]) => (p).includes("codeberg%3Acodeberg.org"))).toBe(true);
+    expect(probeCalls.some(([p]) => p.includes("github%3Agithub.com"))).toBe(true);
+    expect(probeCalls.some(([p]) => p.includes("codeberg%3Acodeberg.org"))).toBe(true);
   });
 
   it("does not probe disconnected accounts on page open", async () => {

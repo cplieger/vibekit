@@ -77,10 +77,10 @@ describe("crew.sendMessage", () => {
     const log: string[] = [];
     mockSend.mockImplementation(async (cmd) => {
       const payload = (cmd as Record<string, unknown>)["payload"] as Record<string, string>;
-       
+
       log.push(`start:${payload["text"]}`);
       await new Promise<void>((r) => setTimeout(r, 50));
-       
+
       log.push(`end:${payload["text"]}`);
       return { ok: true, status: 200 };
     });
@@ -97,10 +97,10 @@ describe("crew.sendMessage", () => {
     const log: string[] = [];
     mockSend.mockImplementation(async (cmd) => {
       const payload = (cmd as Record<string, unknown>)["payload"] as Record<string, string>;
-       
+
       log.push(`start:${payload["text"]}`);
       await new Promise<void>((r) => setTimeout(r, 50));
-       
+
       log.push(`end:${payload["text"]}`);
       return { ok: true, status: 200 };
     });

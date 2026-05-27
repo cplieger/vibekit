@@ -29,7 +29,9 @@ export function createStore<M>(): Store<M> {
 
   function notifySubs(key: string, value: unknown): void {
     const cbs = subscribers[key];
-    if (!cbs) {return;}
+    if (!cbs) {
+      return;
+    }
     for (const cb of cbs) {
       try {
         cb(value);
@@ -40,14 +42,18 @@ export function createStore<M>(): Store<M> {
   }
 
   function get<K extends keyof M & string>(key: K): M[K] {
-    if (tracking) {tracking.add(key);}
+    if (tracking) {
+      tracking.add(key);
+    }
     return state[key] as M[K];
   }
 
   function set<K extends keyof M & string>(key: K, value: M[K]): void {
     const prev = state[key];
     state[key] = value;
-    if (prev === value) {return;}
+    if (prev === value) {
+      return;
+    }
     if (batchDepth > 0) {
       pendingKeys ??= new Map();
       pendingKeys.set(key, value);
@@ -61,7 +67,9 @@ export function createStore<M>(): Store<M> {
     subscribers[key].push(cb as Callback);
     return () => {
       const arr = subscribers[key];
-      if (arr) {subscribers[key] = arr.filter((c) => c !== cb);}
+      if (arr) {
+        subscribers[key] = arr.filter((c) => c !== cb);
+      }
     };
   }
 
@@ -74,7 +82,9 @@ export function createStore<M>(): Store<M> {
       if (batchDepth === 0 && pendingKeys) {
         const p = pendingKeys;
         pendingKeys = null;
-        for (const [k, v] of p) {notifySubs(k, v);}
+        for (const [k, v] of p) {
+          notifySubs(k, v);
+        }
       }
     }
   }
@@ -85,8 +95,12 @@ export function createStore<M>(): Store<M> {
     let disposed = false;
 
     const run = (): void => {
-      if (disposed) {return;}
-      for (const u of unsubs) {u();}
+      if (disposed) {
+        return;
+      }
+      for (const u of unsubs) {
+        u();
+      }
       unsubs = [];
       if (cleanup) {
         cleanup();
@@ -110,7 +124,9 @@ export function createStore<M>(): Store<M> {
     run();
     return () => {
       disposed = true;
-      for (const u of unsubs) {u();}
+      for (const u of unsubs) {
+        u();
+      }
       unsubs = [];
       if (cleanup) {
         cleanup();

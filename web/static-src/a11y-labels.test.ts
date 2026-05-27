@@ -145,7 +145,11 @@ describe("a11y: aria-expanded on popover triggers", () => {
       activeVersion: { value: 1 },
       messagesVersion: { value: 1 },
     }));
-    vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => { fn(); } }));
+    vi.doMock("./signals.js", () => ({
+      effect: (fn: () => void) => {
+        fn();
+      },
+    }));
     vi.doMock("./actions/chat.js", () => ({
       setSupervised: { dispatch: vi.fn() },
       resolveAllPending: { dispatch: vi.fn() },
@@ -154,8 +158,12 @@ describe("a11y: aria-expanded on popover triggers", () => {
       clearPendingTrust: { dispatch: vi.fn() },
     }));
     vi.doMock("./actions/index.js", () => ({
-      bindLoadingState: () => () => { /* noop */ },
-      registerCleanup: () => { /* noop */ },
+      bindLoadingState: () => () => {
+        /* noop */
+      },
+      registerCleanup: () => {
+        /* noop */
+      },
     }));
     vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
     vi.doMock("./pill-expand.js", () => ({
@@ -225,9 +233,17 @@ describe("a11y: aria-expanded on popover triggers", () => {
       activeVersion: { value: 1 },
       messagesVersion: { value: 1 },
     }));
-    vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => { fn(); } }));
+    vi.doMock("./signals.js", () => ({
+      effect: (fn: () => void) => {
+        fn();
+      },
+    }));
     vi.doMock("./actions/chat.js", () => ({ setAutoApproveCrew: { dispatch: vi.fn() } }));
-    vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => { /* noop */ } }));
+    vi.doMock("./actions/index.js", () => ({
+      bindLoadingState: () => () => {
+        /* noop */
+      },
+    }));
 
     const { initAutoApprove } = await import("./auto-approve.js");
     initAutoApprove();
@@ -243,8 +259,19 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     vi.mock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
     );
-    vi.mock("./editor-openers.js", () => ({ openFile: () => { /* noop */ }, openFileDiff: () => { /* noop */ } }));
-    vi.mock("./tool-group.js", () => ({ trackInProgress: () => { /* noop */ } }));
+    vi.mock("./editor-openers.js", () => ({
+      openFile: () => {
+        /* noop */
+      },
+      openFileDiff: () => {
+        /* noop */
+      },
+    }));
+    vi.mock("./tool-group.js", () => ({
+      trackInProgress: () => {
+        /* noop */
+      },
+    }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({
@@ -267,8 +294,19 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     vi.mock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
     );
-    vi.mock("./editor-openers.js", () => ({ openFile: () => { /* noop */ }, openFileDiff: () => { /* noop */ } }));
-    vi.mock("./tool-group.js", () => ({ trackInProgress: () => { /* noop */ } }));
+    vi.mock("./editor-openers.js", () => ({
+      openFile: () => {
+        /* noop */
+      },
+      openFileDiff: () => {
+        /* noop */
+      },
+    }));
+    vi.mock("./tool-group.js", () => ({
+      trackInProgress: () => {
+        /* noop */
+      },
+    }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({

@@ -69,7 +69,7 @@ describe("registerPush", () => {
   it("throws when serviceWorker not supported", async () => {
     // Delete the property so `"serviceWorker" in navigator` is false
     const orig = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
-     
+
     delete (navigator as unknown as Record<string, unknown>)["serviceWorker"];
     try {
       const result = await registerPush.dispatch(undefined);
@@ -78,7 +78,9 @@ describe("registerPush", () => {
       expect(log[0]?.status).toBe("error");
       expect(log[0]?.error?.code).toBe("unsupported");
     } finally {
-      if (orig) {Object.defineProperty(navigator, "serviceWorker", orig);}
+      if (orig) {
+        Object.defineProperty(navigator, "serviceWorker", orig);
+      }
     }
   });
 

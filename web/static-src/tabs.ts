@@ -242,7 +242,7 @@ function showRewindChildPrompt(
             type: "promote_rewind_chat",
             chat_id: cid,
             request_id: `promote-${Date.now()}`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any);
         });
       }
@@ -255,7 +255,7 @@ function showRewindChildPrompt(
             type: "discard_rewind_chat",
             chat_id: cid,
             request_id: `discard-${Date.now()}`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any);
         });
         closeTab(cid, { skipOnClose: true });
@@ -610,7 +610,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
           type: "promote_rewind_chat",
           chat_id: s.id,
           request_id: `promote-${Date.now()}`,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
       });
     });

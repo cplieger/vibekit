@@ -83,7 +83,9 @@ describe("tools.run_diagnostics", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
         ),
     );
     const p1 = runDiagnostics.dispatch(undefined);
@@ -99,7 +101,9 @@ describe("tools.load", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
         ),
     );
     const p1 = loadTools.dispatch(undefined);

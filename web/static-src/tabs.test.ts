@@ -71,9 +71,13 @@ describe("openTab", () => {
     },
   ])("$desc", ({ tabs, expectActive, expectHas }) => {
     expect.assertions(1 + expectHas.length);
-    for (const id of tabs) {openTab(makeTab(id));}
+    for (const id of tabs) {
+      openTab(makeTab(id));
+    }
     expect(getActiveTabId()).toBe(expectActive);
-    for (const id of expectHas) {expect(hasTab(id)).toBe(true);}
+    for (const id of expectHas) {
+      expect(hasTab(id)).toBe(true);
+    }
   });
 });
 
@@ -126,12 +130,18 @@ describe("closeTab", () => {
     },
   ])("$desc", ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
     expect.assertions(1 + expectHas.length + expectGone.length);
-    for (const id of setup) {openTab(makeTab(id));}
+    for (const id of setup) {
+      openTab(makeTab(id));
+    }
     activateTab(activate);
     closeTab(close);
     expect(getActiveTabId()).toBe(expectActive);
-    for (const id of expectHas) {expect(hasTab(id)).toBe(true);}
-    for (const id of expectGone) {expect(hasTab(id)).toBe(false);}
+    for (const id of expectHas) {
+      expect(hasTab(id)).toBe(true);
+    }
+    for (const id of expectGone) {
+      expect(hasTab(id)).toBe(false);
+    }
   });
 });
 
@@ -152,7 +162,9 @@ describe("activateTab", () => {
     },
   ])("$desc", ({ setup, target, expectActive }) => {
     expect.assertions(1);
-    for (const id of setup) {openTab(makeTab(id));}
+    for (const id of setup) {
+      openTab(makeTab(id));
+    }
     activateTab(target);
     expect(getActiveTabId()).toBe(expectActive);
   });

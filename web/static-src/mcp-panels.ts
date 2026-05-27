@@ -282,7 +282,8 @@ function renderSearchResults(
       child.remove();
     }
   }
-  if (d === undefined || d === null) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (d === undefined || d === null) {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     renderSearchError(results, q);
     return;
   }

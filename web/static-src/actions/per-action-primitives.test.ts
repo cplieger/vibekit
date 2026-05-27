@@ -142,10 +142,9 @@ describe("forge.start_device_flow — dedupe", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(
-            () => { r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 })); },
-            50,
-          ),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 }));
+          }, 50),
         ),
     );
     const { startDeviceFlow } = await import("./forge.js");
@@ -264,7 +263,9 @@ describe("chat.load_history — dedupe + retry", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({ chats: [] }), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+          }, 50),
         ),
     );
     const { loadHistory } = await import("./chat.js");
@@ -359,10 +360,9 @@ describe("git.generate_message — dedupe", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(
-            () => { r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 })); },
-            50,
-          ),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 }));
+          }, 50),
         ),
     );
     const { generateCommitMessage } = await import("./git-changes.js");
@@ -379,7 +379,9 @@ describe("git.generate_message — dedupe", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({ message: "m" }), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ message: "m" }), { status: 200 }));
+          }, 50),
         ),
     );
     const { generateCommitMessage } = await import("./git-changes.js");
@@ -431,9 +433,9 @@ describe("files.download — abort handling", () => {
     mockFetch.mockImplementation(
       (_url: string, opts: RequestInit) =>
         new Promise((_resolve, reject) => {
-          opts.signal!.addEventListener("abort", () =>
-            { reject(new DOMException("aborted", "AbortError")); },
-          );
+          opts.signal!.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     );
     const { downloadFiles } = await import("./files.js");

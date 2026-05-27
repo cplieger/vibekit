@@ -66,7 +66,7 @@ export function abortSuggestion(path?: string): void {
 }
 
 export function renderConflictModeUI(state: FileState): void {
-  if (state.mode.kind !== "conflict") {  
+  if (state.mode.kind !== "conflict") {
     state.mode = { kind: "conflict", conflict: parseConflicts(state.current), editing: true };
   }
   $.editorContent.value = state.current;
@@ -83,7 +83,7 @@ export function renderConflictModeUI(state: FileState): void {
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
   overlay.replaceChildren();
-  if (state.mode.kind !== "conflict" || state.mode.conflict.hunks.length === 0) {  
+  if (state.mode.kind !== "conflict" || state.mode.conflict.hunks.length === 0) {
     overlay.classList.add("hidden");
     return;
   }
@@ -167,7 +167,7 @@ function resolveBtn(label: string, onClick: () => void): HTMLButtonElement {
 }
 
 function applyResolution(state: FileState, hunkIndex: number, resolution: Resolution): void {
-  if (state.mode.kind !== "conflict") {  
+  if (state.mode.kind !== "conflict") {
     return;
   }
   const newContent = resolveHunk(state.mode.conflict, hunkIndex, resolution);
@@ -187,7 +187,7 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
 }
 
 async function requestSuggestion(state: FileState, hunkIndex: number): Promise<void> {
-  if (state.mode.kind !== "conflict") {  
+  if (state.mode.kind !== "conflict") {
     return;
   }
   const hunk = state.mode.conflict.hunks[hunkIndex];
@@ -222,7 +222,8 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (myDispatchId !== currentSuggestionGen(state.path)) {
     return;
   }
-  if (state.mode.kind !== "conflict") { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (state.mode.kind !== "conflict") {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   if (getActiveFilePath() !== state.path) {
@@ -246,7 +247,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
 }
 
 function acceptSuggestion(state: FileState, hunkIndex: number): void {
-  if (state.mode.kind !== "conflict") {  
+  if (state.mode.kind !== "conflict") {
     return;
   }
   const hunk = state.mode.conflict.hunks[hunkIndex];

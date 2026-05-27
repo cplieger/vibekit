@@ -134,7 +134,9 @@ function safeStringify(args: unknown): string {
     return `@@sym${String(symbolId(args))}`;
   }
   try {
-    return JSON.stringify(args, (_key, value: unknown) => (value === undefined ? "__undef__" : value));
+    return JSON.stringify(args, (_key, value: unknown) =>
+      value === undefined ? "__undef__" : value,
+    );
   } catch {
     // eslint-disable-next-line @typescript-eslint/no-base-to-string -- fallback for non-serializable args
     return String(args);

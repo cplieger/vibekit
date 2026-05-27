@@ -185,7 +185,7 @@ jobs:
             find web/static -name "*.html" -print0 \
               | xargs -0 --no-run-if-empty \
                 "$WEB/node_modules/.bin/html-validate" --config .web-lint/.htmlvalidate.json
-            find web/static -name "*.css" -print0 \
+            find web/static-src/css -name "*.css" -print0 \
               | xargs -0 --no-run-if-empty \
                 "$WEB/node_modules/.bin/stylelint" --config .web-lint/.stylelintrc.json --config-basedir "$WEB"
           ) || { echo "Lint web (HTML/CSS)" >> /tmp/_ci_failures; exit 1; }

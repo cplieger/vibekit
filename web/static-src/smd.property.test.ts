@@ -28,10 +28,18 @@ import type { Parser, Token } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => { /* noop */ },
-    end_token: () => { /* noop */ },
-    add_text: () => { /* noop */ },
-    set_attr: () => { /* noop */ },
+    add_token: () => {
+      /* noop */
+    },
+    end_token: () => {
+      /* noop */
+    },
+    add_text: () => {
+      /* noop */
+    },
+    set_attr: () => {
+      /* noop */
+    },
   };
 }
 
@@ -145,13 +153,19 @@ describe("smd parser property: structural invariants", () => {
           for (const chunk of chunks) {
             parser_write(p, chunk);
             // len must never go negative during parsing
-            if (p.len < 0) {return false;}
+            if (p.len < 0) {
+              return false;
+            }
           }
           parser_end(p);
           // Root DOCUMENT token always at index 0
-          if (p.tokens[0] !== DOCUMENT) {return false;}
+          if (p.tokens[0] !== DOCUMENT) {
+            return false;
+          }
           // len must remain non-negative
-          if (p.len < 0) {return false;}
+          if (p.len < 0) {
+            return false;
+          }
           return true;
         },
       ),
@@ -167,7 +181,9 @@ describe("smd parser property: structural invariants", () => {
         const p: Parser = parser(nullRenderer());
         for (const ch of doc) {
           parser_write(p, ch);
-          if (p.len < 0) {return false;}
+          if (p.len < 0) {
+            return false;
+          }
         }
         parser_end(p);
         return p.tokens[0] === DOCUMENT && p.len >= 0;
@@ -237,13 +253,19 @@ describe("smd parser property: structural invariants", () => {
           data: null,
           add_token: () => {
             depth++;
-            if (depth > maxDepth) {maxDepth = depth;}
+            if (depth > maxDepth) {
+              maxDepth = depth;
+            }
           },
           end_token: () => {
             depth--;
           },
-          add_text: () => { /* noop */ },
-          set_attr: () => { /* noop */ },
+          add_text: () => {
+            /* noop */
+          },
+          set_attr: () => {
+            /* noop */
+          },
         },
       };
     }
@@ -280,7 +302,9 @@ describe("smd parser property: structural invariants", () => {
           let cursor = 0;
           for (let i = 1; i < chunks.length; i++) {
             cursor += chunks[i - 1]!.length;
-            if (cursor < 2 || doc.slice(cursor - 2, cursor) !== "\n\n") {return true;}
+            if (cursor < 2 || doc.slice(cursor - 2, cursor) !== "\n\n") {
+              return true;
+            }
           }
 
           const SAFE_MAX_DEPTH = TOKEN_ARRAY_CAP - 3;
@@ -288,7 +312,9 @@ describe("smd parser property: structural invariants", () => {
           const pp1: Parser = parser(probe1.renderer);
           parser_write(pp1, doc);
           parser_end(pp1);
-          if (probe1.maxDepth() >= SAFE_MAX_DEPTH) {return true;}
+          if (probe1.maxDepth() >= SAFE_MAX_DEPTH) {
+            return true;
+          }
 
           const probe2 = depthTrackingRenderer();
           const pp2: Parser = parser(probe2.renderer);
@@ -296,7 +322,9 @@ describe("smd parser property: structural invariants", () => {
             parser_write(pp2, chunk);
           }
           parser_end(pp2);
-          if (probe2.maxDepth() >= SAFE_MAX_DEPTH) {return true;}
+          if (probe2.maxDepth() >= SAFE_MAX_DEPTH) {
+            return true;
+          }
 
           // Single pass
           const rec1 = recordingRenderer();
@@ -351,18 +379,32 @@ describe("smd parser property: structural invariants", () => {
           }
 
           function treesEqual(a: TokenNode[], b: TokenNode[]): boolean {
-            if (a.length !== b.length) {return false;}
+            if (a.length !== b.length) {
+              return false;
+            }
             for (let i = 0; i < a.length; i++) {
               const na = a[i]!;
               const nb = b[i]!;
-              if (na.type !== nb.type) {return false;}
-              if (na.text !== nb.text) {return false;}
-              if (na.attrs.length !== nb.attrs.length) {return false;}
-              for (let j = 0; j < na.attrs.length; j++) {
-                if (na.attrs[j]!.attr !== nb.attrs[j]!.attr) {return false;}
-                if (na.attrs[j]!.value !== nb.attrs[j]!.value) {return false;}
+              if (na.type !== nb.type) {
+                return false;
               }
-              if (!treesEqual(na.children, nb.children)) {return false;}
+              if (na.text !== nb.text) {
+                return false;
+              }
+              if (na.attrs.length !== nb.attrs.length) {
+                return false;
+              }
+              for (let j = 0; j < na.attrs.length; j++) {
+                if (na.attrs[j]!.attr !== nb.attrs[j]!.attr) {
+                  return false;
+                }
+                if (na.attrs[j]!.value !== nb.attrs[j]!.value) {
+                  return false;
+                }
+              }
+              if (!treesEqual(na.children, nb.children)) {
+                return false;
+              }
             }
             return true;
           }

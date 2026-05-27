@@ -126,7 +126,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
       scope: "cancel-scope",
       run: async (_args, signal) => {
         await Promise.resolve();
-        if (signal.aborted) {throw new DOMException("aborted", "AbortError");}
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return "ok";
       },
     });
@@ -141,7 +143,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
     // Drain microtasks: tail resolution is deferred through prev for
     // cross-action race prevention. The chain of N cancelled entries
     // requires N+1 ticks to fully drain.
-    for (let i = 0; i < 110; i++) {await Promise.resolve();}
+    for (let i = 0; i < 110; i++) {
+      await Promise.resolve();
+    }
 
     expect(pendingCount(["stress.cancel"])).toBe(0);
     expect(_internalsForTest().scopeChains).toBe(0);

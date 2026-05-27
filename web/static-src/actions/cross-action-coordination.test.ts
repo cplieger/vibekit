@@ -48,7 +48,9 @@ describe("two retry-configured actions in the same scope", () => {
       error: false,
       run: () => {
         attemptA++;
-        if (attemptA < 3) {throw new ActionError("net", { code: "network" });}
+        if (attemptA < 3) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("A-done");
       },
     });
@@ -215,7 +217,7 @@ describe("onSuccess → dispatch chain with same scope", () => {
 
     await p;
     // Await the chained dispatch directly
-     
+
     await chainedPromise;
 
     expect(dispatchCount).toBe(1); // onSuccess fired exactly once
@@ -310,7 +312,9 @@ describe("cancellation during retry unblocks queued action", () => {
       error: false,
       run: () =>
         new Promise<string>((r) => {
-          resolveB = () => { r("B-ok"); };
+          resolveB = () => {
+            r("B-ok");
+          };
         }),
     });
 
@@ -356,7 +360,9 @@ describe("retry button re-dispatch respects scope", () => {
       scope: "retry-scope",
       run: () =>
         new Promise<string>((r) => {
-          resolveOccupant = () => { r("occ-done"); };
+          resolveOccupant = () => {
+            r("occ-done");
+          };
         }),
     });
 

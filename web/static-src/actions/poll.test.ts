@@ -46,7 +46,7 @@ describe("pollAction — basic scheduling", () => {
     const stop = pollAction(action, undefined, { interval: 1000 });
 
     // Immediate dispatch.
-     
+
     await vi.runAllTicks();
     await Promise.resolve();
     await Promise.resolve();
@@ -189,14 +189,14 @@ describe("pollAction — refreshOnFocus", () => {
 
     vi.useFakeTimers();
     const stop = pollAction(action, undefined, { interval: 10_000, refreshOnFocus: true });
-     
+
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1);
 
     // Trigger focus before the interval elapses.
     window.dispatchEvent(new Event("focus"));
-     
+
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(2);
@@ -214,13 +214,13 @@ describe("pollAction — refreshOnFocus", () => {
 
     vi.useFakeTimers();
     const stop = pollAction(action, undefined, { interval: 10_000, refreshOnFocus: false });
-     
+
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1);
 
     window.dispatchEvent(new Event("focus"));
-     
+
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1); // no refresh
@@ -253,7 +253,7 @@ describe("pollAction — backoffOnError", () => {
     });
 
     // Drain initial dispatch + scheduled timer microtasks.
-     
+
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     const after1 = count;
@@ -292,7 +292,6 @@ describe("pollAction — backoffOnError", () => {
       backoffOnError: { factor: 10, max: 500 },
     });
 
-     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBeGreaterThanOrEqual(1);
@@ -315,7 +314,9 @@ describe("pollAction — backoffOnError", () => {
       name: "test.poll.reset",
       run: async () => {
         count++;
-        if (fail) {throw new Error("fail");}
+        if (fail) {
+          throw new Error("fail");
+        }
         return count;
       },
       error: false,

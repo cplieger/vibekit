@@ -115,7 +115,9 @@ describe("dispatch (SSE routing)", () => {
     const unsub1 = onSSE("forges_changed", h1);
     const unsub2 = onSSE("forges_changed", throwing);
     const unsub3 = onSSE("forges_changed", h3);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => { /* noop */ });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      /* noop */
+    });
     try {
       dispatch({ type: "forges_changed", chat_id: "" });
       expect(h1).toHaveBeenCalledTimes(1);
@@ -240,7 +242,9 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
     const unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
     const unsub2 = onBus(BUS_KEYS_ESCAPE, throwing);
     const unsub3 = onBus(BUS_KEYS_ESCAPE, h3);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => { /* noop */ });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      /* noop */
+    });
     try {
       emitBus(BUS_KEYS_ESCAPE);
       expect(h1).toHaveBeenCalledTimes(1);

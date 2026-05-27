@@ -90,7 +90,9 @@ describe("dedupe + retry interaction", () => {
       error: false,
       run: () => {
         attempt++;
-        if (attempt < 3) {throw new ActionError("timeout", { code: "network" });}
+        if (attempt < 3) {
+          throw new ActionError("timeout", { code: "network" });
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -214,9 +216,9 @@ describe("onError → dispatch chain in same scope", () => {
 
     await p0;
     // Await the chained dispatches directly
-     
+
     await chainP1;
-     
+
     await chainP2;
 
     expect(order).toEqual(["flaky-fail", "flaky-ok-1", "flaky-ok-2"]);
@@ -239,7 +241,9 @@ describe("cancel during scope-queued wait", () => {
       scope: "q-cancel",
       run: () =>
         new Promise<string>((r) => {
-          resolveOccupant = () => { r("occ"); };
+          resolveOccupant = () => {
+            r("occ");
+          };
         }),
     });
 
@@ -297,7 +301,9 @@ describe("cancel during scope-queued wait", () => {
       scope: "q-cancel-cb",
       run: () =>
         new Promise<string>((r) => {
-          resolveOccupant = () => { r("occ"); };
+          resolveOccupant = () => {
+            r("occ");
+          };
         }),
     });
 
@@ -335,7 +341,9 @@ describe("cancel during scope-queued wait", () => {
       scope: "q-cancel-reg",
       run: () =>
         new Promise<string>((r) => {
-          resolveOccupant = () => { r("occ"); };
+          resolveOccupant = () => {
+            r("occ");
+          };
         }),
     });
 
@@ -435,7 +443,9 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
       retry: { count: 1, delay: 20 },
       run: () => {
         attempt++;
-        if (attempt < 2) {throw new ActionError("net", { code: "network" });}
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });
@@ -479,7 +489,9 @@ describe("dedupe + cancel interaction", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
@@ -512,7 +524,9 @@ describe("dedupe + cancel interaction", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
@@ -627,7 +641,7 @@ describe("onSuccess re-dispatch with dedupe", () => {
     });
 
     // Await the chained dispatch directly
-     
+
     const chainedResult = await chainedPromise;
 
     expect(runCount).toBe(2); // Two separate runs
@@ -720,7 +734,9 @@ describe("scope + optimistic + cancel interaction", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
@@ -745,7 +761,9 @@ describe("scope + optimistic + cancel interaction", () => {
       scope: "opt-cancel-q",
       run: () =>
         new Promise<string>((r) => {
-          resolveOccupant = () => { r("occ"); };
+          resolveOccupant = () => {
+            r("occ");
+          };
         }),
     });
 

@@ -50,7 +50,9 @@ describe("forge.start_device_flow", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
         ),
     );
     const { startDeviceFlow } = await import("./forge.js");

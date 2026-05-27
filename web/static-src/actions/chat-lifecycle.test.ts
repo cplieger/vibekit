@@ -166,7 +166,9 @@ describe("chat.load_history", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => { r(new Response(JSON.stringify({ chats: [] }), { status: 200 })); }, 50),
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+          }, 50),
         ),
     );
     const { loadHistory } = await import("./chat.js");

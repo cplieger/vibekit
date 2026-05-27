@@ -17,7 +17,9 @@ describe("collectKeyPairs", () => {
     const valIn = document.createElement("input");
     valIn.className = "mcp-pair-value";
     valIn.value = value;
-    if (secret) {valIn.dataset["secret"] = "true";}
+    if (secret) {
+      valIn.dataset["secret"] = "true";
+    }
     row.append(nameIn, valIn);
     return row;
   }

@@ -153,7 +153,9 @@ describe("git-status-banner", () => {
   });
 
   it("clear is a no-op when the key isn't active", () => {
-    expect(() => { clearBanner("forge-auth-failed"); }).not.toThrow();
+    expect(() => {
+      clearBanner("forge-auth-failed");
+    }).not.toThrow();
     expect(visibleState()).toBeNull();
   });
 

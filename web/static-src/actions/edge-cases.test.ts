@@ -61,7 +61,13 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
         // but run() throws a network error (not AbortError).
         if (attempts === 1) {
           await new Promise<void>((resolve) => {
-            signal.addEventListener("abort", () => { resolve(); }, { once: true });
+            signal.addEventListener(
+              "abort",
+              () => {
+                resolve();
+              },
+              { once: true },
+            );
           });
           throw new ActionError("network error", { code: "network" });
         }

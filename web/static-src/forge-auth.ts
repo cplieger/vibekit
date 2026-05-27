@@ -331,17 +331,20 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
     return;
   }
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
-  if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (signal.aborted) {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
-  if (data === null || data === undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (data === null || data === undefined) {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   const [localNames, reposByForge] = await Promise.all([
     refreshLocalNames(signal),
     refreshReposByForge(data.forges, signal),
   ]);
-  if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (signal.aborted) {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   if (myGen !== renderGen) {
@@ -1132,7 +1135,8 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
     const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", {
       device_code: deviceCode,
     });
-    if (pollStopped) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    if (pollStopped) {
+      // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       return;
     }
     if (res === null) {

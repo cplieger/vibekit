@@ -112,7 +112,9 @@ describe("scroll: trimOldMessages DOM cap", () => {
         const children = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
         const excess = children.length - 50;
         if (excess > 0) {
-          for (let i = 0; i < excess; i++) {children[i]!.remove();}
+          for (let i = 0; i < excess; i++) {
+            children[i]!.remove();
+          }
         }
         // After trim: exactly 50 remain
         const remaining = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
@@ -136,7 +138,9 @@ describe("scroll: trimOldMessages DOM cap", () => {
     }
     const children = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
     const excess = children.length - 50;
-    for (let i = 0; i < excess; i++) {children[i]!.remove();}
+    for (let i = 0; i < excess; i++) {
+      children[i]!.remove();
+    }
     // Indicator still present
     expect(document.getElementById("load-more-indicator")).not.toBeNull();
     // 50 messages remain

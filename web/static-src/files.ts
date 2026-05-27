@@ -666,7 +666,8 @@ function downloadSelected(): void {
   // NOTE: No double-click guard here — the anchor-click approach is
   // idempotent (browser deduplicates rapid same-URL downloads). If this
   // ever becomes an issue, disable the button briefly via setTimeout.
-  if (names.length === 1 && state.entryMap.get(names[0]!)?.isDir !== true) { // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  if (names.length === 1 && state.entryMap.get(names[0]!)?.isDir !== true) {
+    // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const a = document.createElement("a");
     a.href = `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, names[0]!))}`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     a.download = names[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion

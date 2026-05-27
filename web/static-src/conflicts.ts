@@ -155,7 +155,9 @@ onSSE("conflict_detected", (chatID, payload) => {
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
   void import("./messages-shared.js")
-    .then((m) => { m.refreshConflictBadges(chatID, c.path!); }) // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    .then((m) => {
+      m.refreshConflictBadges(chatID, c.path!);
+    }) // eslint-disable-line @typescript-eslint/no-non-null-assertion
     .catch((e: unknown) => {
       console.warn("[conflicts] badge refresh failed", e);
     });

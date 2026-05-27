@@ -46,7 +46,9 @@ describe("cross-action scope serialization after cancel", () => {
       error: false,
       run: (_args, signal) => {
         order.push("B-start");
-        if (signal.aborted) {throw new DOMException("aborted", "AbortError");}
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("B");
       },
     });
@@ -108,7 +110,9 @@ describe("cross-action scope serialization after cancel", () => {
       error: false,
       run: (_args, signal) => {
         order.push("B-start");
-        if (signal.aborted) {throw new DOMException("aborted", "AbortError");}
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("B");
       },
     });

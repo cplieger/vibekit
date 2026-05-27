@@ -1,439 +1,756 @@
 @layer components {
-[id="sidebar"] {
-  background: var(--c-bg-secondary); border-inline-end: 1px solid var(--c-border);
-  display: flex; flex-direction: column;
-  padding-bottom: env(safe-area-inset-bottom, 0);
-  position: fixed; top: 0; bottom: 0; left: 0; width: var(--sidebar-w); z-index: 2;
-}
+  [id="sidebar"] {
+    background: var(--c-bg-secondary);
+    border-inline-end: 1px solid var(--c-border);
+    display: flex;
+    flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--sidebar-w);
+    z-index: 2;
+  }
 
-.sidebar-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: env(safe-area-inset-top, 0) var(--sp-4) 0;
-  min-height: calc(3.25rem + env(safe-area-inset-top, 0));
-  border-block-end: 1px solid var(--c-border); flex-shrink: 0;
-}
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: env(safe-area-inset-top, 0) var(--sp-4) 0;
+    min-height: calc(3.25rem + env(safe-area-inset-top, 0));
+    border-block-end: 1px solid var(--c-border);
+    flex-shrink: 0;
+  }
 
-.logo {
-  display: flex; align-items: center; gap: var(--sp-2); color: var(--c-accent);
-  cursor: default; user-select: none;
-}
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    color: var(--c-accent);
+    cursor: default;
+    user-select: none;
+  }
 
-.logo h1 {
-  font-size: var(--fs-lg); font-weight: var(--fw-semibold);
-  transition: color var(--dur-enter) var(--ease-enter);
-}
+  .logo h1 {
+    font-size: var(--fs-lg);
+    font-weight: var(--fw-semibold);
+    transition: color var(--dur-enter) var(--ease-enter);
+  }
 
-.logo-subtitle {
-  font-size: var(--fs-sm); font-weight: var(--fw-normal);
-  color: var(--c-text-tertiary); margin-left: 0.15em;
-}
+  .logo-subtitle {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-normal);
+    color: var(--c-text-tertiary);
+    margin-left: 0.15em;
+  }
 
-.logo:hover h1 {
-  /* Lighter purple in dark mode, darker purple in light mode — never
+  .logo:hover h1 {
+    /* Lighter purple in dark mode, darker purple in light mode — never
      white/black, so it stays branded. */
-  color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
-}
+    color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
+  }
 
-.logo-icon {
-  border-radius: var(--r); flex-shrink: 0;
-  transform-origin: center;
-  transition: transform var(--dur-enter) var(--ease-enter);
-}
+  .logo-icon {
+    border-radius: var(--r);
+    flex-shrink: 0;
+    transform-origin: center;
+    transition: transform var(--dur-enter) var(--ease-enter);
+  }
 
-.logo:hover .logo-icon {
-  /* Two infinite animations with coprime durations so position +
+  .logo:hover .logo-icon {
+    /* Two infinite animations with coprime durations so position +
      rotation never repeat at the same time: feels randomized without
      JS. Rotation direction correlates with horizontal motion (right =
      clockwise, left = anti-clockwise) to sell "hovering/flying". */
-  animation:
-    ghost-float 3.7s cubic-bezier(0.45, 0, 0.55, 1) infinite,
-    ghost-tilt 2.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
+    animation:
+      ghost-float 3.7s cubic-bezier(0.45, 0, 0.55, 1) infinite,
+      ghost-tilt 2.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
 
-@keyframes ghost-float {
-  /* Figure-8 in the X axis plus a gentle bob in Y. 12 keyframes keeps
+  @keyframes ghost-float {
+    /* Figure-8 in the X axis plus a gentle bob in Y. 12 keyframes keeps
      the motion continuous — no perceptible stops. */
-  0%   { transform: translate(0,     0); }
-  8%   { transform: translate(1px,  -1.5px); }
-  17%  { transform: translate(2px,  -3px); }
-  25%  { transform: translate(2.5px,-2px); }
-  33%  { transform: translate(1px,  -0.5px); }
-  42%  { transform: translate(0,    -1.5px); }
-  50%  { transform: translate(-1px, -3.5px); }
-  58%  { transform: translate(-2.5px,-2.5px); }
-  67%  { transform: translate(-2px, -1px); }
-  75%  { transform: translate(-1px, -2px); }
-  83%  { transform: translate(0,    -3px); }
-  92%  { transform: translate(0.5px,-1px); }
-  100% { transform: translate(0,     0); }
-}
+    0% {
+      transform: translate(0, 0);
+    }
+    8% {
+      transform: translate(1px, -1.5px);
+    }
+    17% {
+      transform: translate(2px, -3px);
+    }
+    25% {
+      transform: translate(2.5px, -2px);
+    }
+    33% {
+      transform: translate(1px, -0.5px);
+    }
+    42% {
+      transform: translate(0, -1.5px);
+    }
+    50% {
+      transform: translate(-1px, -3.5px);
+    }
+    58% {
+      transform: translate(-2.5px, -2.5px);
+    }
+    67% {
+      transform: translate(-2px, -1px);
+    }
+    75% {
+      transform: translate(-1px, -2px);
+    }
+    83% {
+      transform: translate(0, -3px);
+    }
+    92% {
+      transform: translate(0.5px, -1px);
+    }
+    100% {
+      transform: translate(0, 0);
+    }
+  }
 
-@keyframes ghost-tilt {
-  /* Right-leaning (clockwise) when the ghost is moving right; the
+  @keyframes ghost-tilt {
+    /* Right-leaning (clockwise) when the ghost is moving right; the
      offset against ghost-float's timing keeps the coupling organic. */
-  0%   { rotate: 0deg; }
-  12%  { rotate: 7deg; }
-  25%  { rotate: 9deg; }
-  50%  { rotate: -2deg; }
-  62%  { rotate: -8deg; }
-  75%  { rotate: -9deg; }
-  88%  { rotate: 2deg; }
-  100% { rotate: 0deg; }
-}
+    0% {
+      rotate: 0deg;
+    }
+    12% {
+      rotate: 7deg;
+    }
+    25% {
+      rotate: 9deg;
+    }
+    50% {
+      rotate: -2deg;
+    }
+    62% {
+      rotate: -8deg;
+    }
+    75% {
+      rotate: -9deg;
+    }
+    88% {
+      rotate: 2deg;
+    }
+    100% {
+      rotate: 0deg;
+    }
+  }
 
-.sidebar-header-actions { display: flex; align-items: center; gap: var(--sp-1); margin-inline-end: -0.5rem; }
+  .sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-inline-end: -0.5rem;
+  }
 
-/* settings-btn svg rules moved to end of file (specificity ordering) */
+  /* settings-btn svg rules moved to end of file (specificity ordering) */
 
-.sidebar-actions {
-  display: flex; gap: var(--sp-1); margin: var(--sp-2); padding: 0.125rem;
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
-  border-radius: var(--r); flex-shrink: 0;
+  .sidebar-actions {
+    display: flex;
+    gap: var(--sp-1);
+    margin: var(--sp-2);
+    padding: 0.125rem;
+    background: var(--c-bg-secondary);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    flex-shrink: 0;
 
-  /* Separator between build and plan: a vertical line positioned in the
+    /* Separator between build and plan: a vertical line positioned in the
      gap via ::before on the second child. Pixel-perfect because it's
      straight 1px, not the border of a rounded button. */
-  position: relative;
-}
+    position: relative;
+  }
 
-.sidebar-action-btn {
-  flex: 1 1 0; min-width: 0;
-  display: flex; align-items: center; gap: var(--sp-2);
-  justify-content: center;
-  padding: var(--sp-2) var(--sp-3); border-radius: calc(var(--r) - 0.125rem);
-  border: none; background: transparent;
-  color: var(--c-text-primary); font-size: var(--fs-sm);
-  cursor: pointer; white-space: nowrap;
-  min-height: var(--btn-h);
-  transition: background var(--dur-micro), color var(--dur-micro) var(--ease-micro);
-  position: relative;
+  .sidebar-action-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    justify-content: center;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: calc(var(--r) - 0.125rem);
+    border: none;
+    background: transparent;
+    color: var(--c-text-primary);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: var(--btn-h);
+    transition:
+      background var(--dur-micro),
+      color var(--dur-micro) var(--ease-micro);
+    position: relative;
 
-  &:hover { background: var(--c-bg-tertiary); color: var(--c-accent); }
-  & svg { flex-shrink: 0; }
-}
+    &:hover {
+      background: var(--c-bg-tertiary);
+      color: var(--c-accent);
+    }
+    & svg {
+      flex-shrink: 0;
+    }
+  }
 
-.sidebar-action-btn + .sidebar-action-btn::before {
-  content: "";
-  position: absolute;
-  inset-block: 0.25rem;
-  inset-inline-start: calc(var(--sp-1) / -2);
-  width: 1px;
-  background: var(--c-border);
-  pointer-events: none;
-}
+  .sidebar-action-btn + .sidebar-action-btn::before {
+    content: "";
+    position: absolute;
+    inset-block: 0.25rem;
+    inset-inline-start: calc(var(--sp-1) / -2);
+    width: 1px;
+    background: var(--c-border);
+    pointer-events: none;
+  }
 
-[id="tab-list"] {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain;
-  padding: var(--sp-1); min-height: 0;
-  display: flex; flex-direction: column; gap: 0.125rem;
+  [id="tab-list"] {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--sp-1);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
 
-  /* During drag: prevent text selection on iOS/iPadOS which ignores
+    /* During drag: prevent text selection on iOS/iPadOS which ignores
    * JS-set user-select on document.body. The .dragging class is added
    * by startDrag in tabs.ts. -webkit-touch-callout covers the long-
    * press context menu that iOS shows before user-select kicks in. */
-  &.dragging {
-    user-select: none;
-    -webkit-touch-callout: none; /* stylelint-disable-line property-no-vendor-prefix */
+    &.dragging {
+      user-select: none;
+      -webkit-touch-callout: none; /* stylelint-disable-line property-no-vendor-prefix */
+    }
   }
-}
 
-.tab {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r); cursor: pointer;
-  font-size: var(--fs-sm); color: var(--c-text-primary);
-  min-height: var(--btn-h);
-  transition: background var(--dur-micro), opacity var(--dur-micro), transform var(--dur-micro) var(--ease-standard);
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r);
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    color: var(--c-text-primary);
+    min-height: var(--btn-h);
+    transition:
+      background var(--dur-micro),
+      opacity var(--dur-micro),
+      transform var(--dur-micro) var(--ease-standard);
 
-  &.entering { animation: vk-slide-in-x var(--dur-micro) var(--ease-standard); }
-  &.exiting { animation: slide-out 0.18s ease-in forwards; pointer-events: none; overflow: hidden; }
-  &:hover { background: var(--c-bg-hover); }
-  &.active { background: var(--c-bg-tertiary); border-inline-start: 2px solid var(--c-accent); padding-inline-start: calc(var(--sp-3) - 2px); }
-  &.active:hover { background: var(--c-bg-hover); }
-  &.dragging { background: var(--c-accent-subtle); outline: 1px solid var(--c-accent); }
-  & :where(.tab-icon) { cursor: grab; }
-  &:where(.dragging) :where(.tab-icon) { cursor: grabbing; }
+    &.entering {
+      animation: vk-slide-in-x var(--dur-micro) var(--ease-standard);
+    }
+    &.exiting {
+      animation: slide-out 0.18s ease-in forwards;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    &:hover {
+      background: var(--c-bg-hover);
+    }
+    &.active {
+      background: var(--c-bg-tertiary);
+      border-inline-start: 2px solid var(--c-accent);
+      padding-inline-start: calc(var(--sp-3) - 2px);
+    }
+    &.active:hover {
+      background: var(--c-bg-hover);
+    }
+    &.dragging {
+      background: var(--c-accent-subtle);
+      outline: 1px solid var(--c-accent);
+    }
+    & :where(.tab-icon) {
+      cursor: grab;
+    }
+    &:where(.dragging) :where(.tab-icon) {
+      cursor: grabbing;
+    }
 
-  &.tab-drag-placeholder {
-    overflow: hidden; opacity: 0; margin: -0.0625rem 0; border: 0;
-    height: 0 !important; padding: 0 !important; /* stylelint-disable-line declaration-no-important */
-    min-height: 0;
+    &.tab-drag-placeholder {
+      overflow: hidden;
+      opacity: 0;
+      margin: -0.0625rem 0;
+      border: 0;
+      height: 0 !important;
+      padding: 0 !important; /* stylelint-disable-line declaration-no-important */
+      min-height: 0;
+    }
+    &.drag-landing {
+      visibility: hidden;
+    }
   }
-  &.drag-landing { visibility: hidden; }
-}
 
-
-@keyframes slide-out {
-  /* Collapse height + margins alongside the fade so sibling tabs slide
+  @keyframes slide-out {
+    /* Collapse height + margins alongside the fade so sibling tabs slide
      up smoothly instead of jumping at animationend. Using max-height
      with a known upper bound lets the browser interpolate height even
      though the computed height is "auto" at rest. */
-  0%   { opacity: 1; transform: translateX(0); max-height: 3rem; margin: 0; padding-block: var(--sp-2); border-width: 1px; }
-  40%  { opacity: 0; transform: translateX(-0.75rem); max-height: 3rem; margin: 0; padding-block: var(--sp-2); }
-  100% { opacity: 0; transform: translateX(-0.75rem); max-height: 0; margin: 0; padding-block: 0; border-width: 0; }
-}
+    0% {
+      opacity: 1;
+      transform: translateX(0);
+      max-height: 3rem;
+      margin: 0;
+      padding-block: var(--sp-2);
+      border-width: 1px;
+    }
+    40% {
+      opacity: 0;
+      transform: translateX(-0.75rem);
+      max-height: 3rem;
+      margin: 0;
+      padding-block: var(--sp-2);
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(-0.75rem);
+      max-height: 0;
+      margin: 0;
+      padding-block: 0;
+      border-width: 0;
+    }
+  }
 
-.tab-drag-ghost {
-  position: fixed; z-index: 9999; pointer-events: none;
-  background: var(--c-accent-subtle); outline: 1px solid var(--c-accent);
-  border-radius: var(--r); box-shadow: 0 0.5rem 1.25rem oklch(0% 0 0deg / 25%);
-  opacity: 0.92;
+  .tab-drag-ghost {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    background: var(--c-accent-subtle);
+    outline: 1px solid var(--c-accent);
+    border-radius: var(--r);
+    box-shadow: 0 0.5rem 1.25rem oklch(0% 0 0deg / 25%);
+    opacity: 0.92;
 
-  /* Floating effect: gentle vertical bob + slight left/right rotation,
+    /* Floating effect: gentle vertical bob + slight left/right rotation,
    * no horizontal translation. The ghost's absolute top position is
    * driven by JS from the pointer; the animation layers a purely
    * visual "hovering" wobble on top, applied as a translate+rotate
    * via transform so it doesn't fight the JS-managed top/left. */
-  animation: tab-drag-float 2.2s ease-in-out infinite;
-  transform-origin: center;
-  will-change: transform;
-}
+    animation: tab-drag-float 2.2s ease-in-out infinite;
+    transform-origin: center;
+    will-change: transform;
+  }
 
-@keyframes tab-drag-float {
-  0%, 100% { transform: translateY(0) rotate(-1.2deg); }
-  50%      { transform: translateY(-3px) rotate(1.2deg); }
-}
+  @keyframes tab-drag-float {
+    0%,
+    100% {
+      transform: translateY(0) rotate(-1.2deg);
+    }
+    50% {
+      transform: translateY(-3px) rotate(1.2deg);
+    }
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  .tab-drag-ghost { animation: none; }
-}
+  @media (prefers-reduced-motion: reduce) {
+    .tab-drag-ghost {
+      animation: none;
+    }
+  }
 
-.tab-drag-indicator {
-  border-radius: var(--r);
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--c-accent) 40%, transparent);
-  animation: drag-gap-open var(--dur-micro) var(--ease-standard) forwards;
-  height: 0; opacity: 0;
-  user-select: none;
-}
+  .tab-drag-indicator {
+    border-radius: var(--r);
+    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--c-accent) 40%, transparent);
+    animation: drag-gap-open var(--dur-micro) var(--ease-standard) forwards;
+    height: 0;
+    opacity: 0;
+    user-select: none;
+  }
 
-@keyframes drag-gap-open {
-  from { height: 0; opacity: 0; }
-  to { height: var(--btn-h); opacity: 1; }
-}
+  @keyframes drag-gap-open {
+    from {
+      height: 0;
+      opacity: 0;
+    }
+    to {
+      height: var(--btn-h);
+      opacity: 1;
+    }
+  }
 
-.tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; user-select: none; }
+  .tab-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
 
-.tab-icon {
-  flex-shrink: 0; color: var(--c-text-primary);
-  display: flex; align-items: center;
-}
+  .tab-icon {
+    flex-shrink: 0;
+    color: var(--c-text-primary);
+    display: flex;
+    align-items: center;
+  }
 
-.tab-close {
-  background: none; border: none; color: var(--c-text-tertiary);
-  cursor: pointer; padding: var(--sp-1);
-  flex-shrink: 0; border-radius: var(--r);
-  line-height: 0; width: 1.5rem; height: 1.5rem;
-  display: flex; align-items: center; justify-content: center;
-  transition: background var(--dur-micro), color var(--dur-micro) var(--ease-micro);
-  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
-}
+  .tab-close {
+    background: none;
+    border: none;
+    color: var(--c-text-tertiary);
+    cursor: pointer;
+    padding: var(--sp-1);
+    flex-shrink: 0;
+    border-radius: var(--r);
+    line-height: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      background var(--dur-micro),
+      color var(--dur-micro) var(--ease-micro);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-.tab-close:hover { color: var(--c-text-primary); background: var(--c-bg-hover); }
+  .tab-close:hover {
+    color: var(--c-text-primary);
+    background: var(--c-bg-hover);
+  }
 
-/* Sidebar footer */
-.sidebar-footer {
-  flex-shrink: 0;
-  padding: 0 var(--sp-4);
-  display: flex; align-items: center; gap: var(--sp-3);
-  height: 3.4375rem;
-}
+  /* Sidebar footer */
+  .sidebar-footer {
+    flex-shrink: 0;
+    padding: 0 var(--sp-4);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    height: 3.4375rem;
+  }
 
-.sidebar-email {
-  font-size: var(--fs-sm); color: var(--c-text-primary);
-  font-weight: var(--fw-medium); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-  text-decoration: none; min-width: 0; flex: 1;
-  line-height: normal;
-}
+  .sidebar-email {
+    font-size: var(--fs-sm);
+    color: var(--c-text-primary);
+    font-weight: var(--fw-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
+    min-width: 0;
+    flex: 1;
+    line-height: normal;
+  }
 
-.sidebar-email:hover { color: var(--c-text-secondary); }
+  .sidebar-email:hover {
+    color: var(--c-text-secondary);
+  }
 
-.sidebar-footer-actions {
-  display: flex; align-items: center; gap: 0.125rem; margin-inline-start: auto; flex-shrink: 0;
-}
+  .sidebar-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    margin-inline-start: auto;
+    flex-shrink: 0;
+  }
 
-/* Popup opening upward (from footer/input) */
-.popup.popup-up {
-  inset: auto 0 calc(100% + 0.25rem) auto;
-}
+  /* Popup opening upward (from footer/input) */
+  .popup.popup-up {
+    inset: auto 0 calc(100% + 0.25rem) auto;
+  }
 
-.popup.popup-up-left {
-  inset: auto auto calc(100% + 0.25rem) 0;
-}
+  .popup.popup-up-left {
+    inset: auto auto calc(100% + 0.25rem) 0;
+  }
 
-/* Hover popups with fade */
-.popup-hover { pointer-events: none; opacity: 0; transition: opacity var(--dur-micro) var(--ease-micro); }
+  /* Hover popups with fade */
+  .popup-hover {
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-micro) var(--ease-micro);
+  }
 
-.popup-anchor:hover > .popup-hover { pointer-events: auto; opacity: 1; }
+  .popup-anchor:hover > .popup-hover {
+    pointer-events: auto;
+    opacity: 1;
+  }
 
-.status-dot {
-  /* Status dot is a <button> but it must look like a tiny circle, NOT a pill.
+  .status-dot {
+    /* Status dot is a <button> but it must look like a tiny circle, NOT a pill.
    * The .pill-expandable class (added for expand-on-click behaviour) must not
    * drag in button chrome. Override aggressively: zero padding, no border, no
    * background. Size + shape come from width/height + border-radius. */
-  all: unset;
-  width: 0.5rem; height: 0.5rem; border-radius: 50%;
-  background: var(--c-yellow); flex-shrink: 0;
-  position: relative; anchor-name: --status-dot;
-  cursor: pointer;
-  box-sizing: border-box;
+    all: unset;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--c-yellow);
+    flex-shrink: 0;
+    position: relative;
+    anchor-name: --status-dot;
+    cursor: pointer;
+    box-sizing: border-box;
 
-  /* Connecting (default/yellow): gentle breathing pulse */
-  animation: vk-breathe 2s ease-in-out infinite;
+    /* Connecting (default/yellow): gentle breathing pulse */
+    animation: vk-breathe 2s ease-in-out infinite;
 
-  /* Connected (green): infrequent ripple ping */
-  &.connected {
-    background: var(--c-green);
-    animation: none;
+    /* Connected (green): infrequent ripple ping */
+    &.connected {
+      background: var(--c-green);
+      animation: none;
+    }
+
+    &.connected::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: var(--c-green);
+      animation: vk-ping 4s ease-out infinite;
+    }
+
+    /* Disconnected (red): static, no animation */
+    &.error {
+      background: var(--c-red);
+      animation: none;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--c-accent);
+      outline-offset: 3px;
+    }
   }
 
-  &.connected::after {
-    content: ""; position: absolute; inset: 0;
-    border-radius: 50%; background: var(--c-green);
-    animation: vk-ping 4s ease-out infinite;
+  /* User button + popup */
+  .popup-anchor {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
   }
 
-  /* Disconnected (red): static, no animation */
-  &.error { background: var(--c-red); animation: none; }
+  .icon-btn {
+    background: none;
+    border: none;
+    color: var(--c-text-primary);
+    cursor: pointer;
+    padding: var(--sp-2);
+    border-radius: var(--r);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    line-height: 0;
+    transition:
+      background var(--dur-micro),
+      color var(--dur-micro) var(--ease-micro);
 
-  &:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 3px; }
-}
+    &:where(:disabled) {
+      opacity: 0.3;
+      cursor: default;
+    }
+    &:where(:disabled:hover) {
+      background: none;
+    }
+    &:where(.danger) {
+      color: var(--c-red);
+    }
+    &:where(.danger:hover) {
+      background: color-mix(in srgb, var(--c-red) 15%, transparent);
+    }
+    &.active {
+      color: var(--c-accent);
+    }
+    &:hover {
+      background: var(--c-bg-tertiary);
+    }
+  }
 
+  .sidebar-close-only {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--c-text-primary);
+    cursor: pointer;
+    padding: var(--sp-2);
+    border-radius: var(--r);
+    line-height: 0;
+    transition: background var(--dur-micro) var(--ease-micro);
+  }
 
+  .sidebar-close-only:hover {
+    background: var(--c-bg-tertiary);
+  }
 
-/* User button + popup */
-.popup-anchor { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
-
-.icon-btn {
-  background: none; border: none; color: var(--c-text-primary);
-  cursor: pointer; padding: var(--sp-2); border-radius: var(--r);
-  display: flex; align-items: center; flex-shrink: 0; line-height: 0;
-  transition: background var(--dur-micro), color var(--dur-micro) var(--ease-micro);
-
-  &:where(:disabled) { opacity: 0.3; cursor: default; }
-  &:where(:disabled:hover) { background: none; }
-  &:where(.danger) { color: var(--c-red); }
-  &:where(.danger:hover) { background: color-mix(in srgb, var(--c-red) 15%, transparent); }
-  &.active { color: var(--c-accent); }
-  &:hover { background: var(--c-bg-tertiary); }
-}
-
-.sidebar-close-only {
-  display: none; background: none; border: none; color: var(--c-text-primary);
-  cursor: pointer; padding: var(--sp-2); border-radius: var(--r);
-  line-height: 0; transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.sidebar-close-only:hover { background: var(--c-bg-tertiary); }
-
-/* Theme toggle: sun/moon vertical slide transition (subflux pattern).
+  /* Theme toggle: sun/moon vertical slide transition (subflux pattern).
  * Both SVGs are always in the DOM; .hidden controls which is visible.
  * On toggle, the outgoing icon slides down (.theme-setting), then the
  * incoming icon appears below and slides up (removal of .theme-rising).
  * A warm/cool inset glow on the button sells the sun/moon metaphor. */
-[id="theme-btn"] {
-  overflow: hidden;
-  transition: box-shadow 0.35s var(--ease-standard);
-}
+  [id="theme-btn"] {
+    overflow: hidden;
+    transition: box-shadow 0.35s var(--ease-standard);
+  }
 
-[id="theme-btn"] svg {
-  display: inline-block;
-  transition: translate 0.35s var(--ease-enter), opacity 0.25s var(--ease-enter);
-}
+  [id="theme-btn"] svg {
+    display: inline-block;
+    transition:
+      translate 0.35s var(--ease-enter),
+      opacity 0.25s var(--ease-enter);
+  }
 
-[id="theme-btn"] svg.theme-setting {
-  translate: 0 2rem;
-  opacity: 0;
-  transition: translate 0.25s var(--ease-exit), opacity 0.2s var(--ease-exit);
-}
+  [id="theme-btn"] svg.theme-setting {
+    translate: 0 2rem;
+    opacity: 0;
+    transition:
+      translate 0.25s var(--ease-exit),
+      opacity 0.2s var(--ease-exit);
+  }
 
-[id="theme-btn"] svg.theme-rising {
-  translate: 0 -2rem;
-  opacity: 0;
-}
+  [id="theme-btn"] svg.theme-rising {
+    translate: 0 -2rem;
+    opacity: 0;
+  }
 
-[id="theme-btn"].glow-sun {
-  box-shadow: inset 0 -0.35rem 0.75rem oklch(82% 0.16 85deg / 50%);
-}
+  [id="theme-btn"].glow-sun {
+    box-shadow: inset 0 -0.35rem 0.75rem oklch(82% 0.16 85deg / 50%);
+  }
 
-[id="theme-btn"].glow-moon {
-  box-shadow: inset 0 -0.35rem 0.75rem oklch(80% 0.05 260deg / 30%);
-}
+  [id="theme-btn"].glow-moon {
+    box-shadow: inset 0 -0.35rem 0.75rem oklch(80% 0.05 260deg / 30%);
+  }
 
-.sidebar-header-btns { display: flex; align-items: center; gap: var(--sp-1); }
+  .sidebar-header-btns {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+  }
 
-[id="user-popup"] { min-width: 15rem; max-height: none; z-index: 200; }
+  [id="user-popup"] {
+    min-width: 15rem;
+    max-height: none;
+    z-index: 200;
+  }
 
-.popup-body { padding: var(--sp-3); }
+  .popup-body {
+    padding: var(--sp-3);
+  }
 
-.popup-email {
-  font-size: var(--fs-sm); color: var(--c-text-primary);
-  font-weight: var(--fw-medium); padding: 0 var(--sp-1); word-break: break-all;
-}
+  .popup-email {
+    font-size: var(--fs-sm);
+    color: var(--c-text-primary);
+    font-weight: var(--fw-medium);
+    padding: 0 var(--sp-1);
+    word-break: break-all;
+  }
 
+  .popup-link {
+    display: block;
+    text-align: center;
+    padding: var(--sp-2);
+    font-size: var(--fs-sm);
+    color: var(--c-accent);
+    text-decoration: none;
+    border-radius: var(--r);
+  }
 
-.popup-link {
-  display: block; text-align: center; padding: var(--sp-2);
-  font-size: var(--fs-sm); color: var(--c-accent);
-  text-decoration: none; border-radius: var(--r);
-}
+  .popup-link:hover {
+    background: var(--c-bg-tertiary);
+  }
 
-.popup-link:hover { background: var(--c-bg-tertiary); }
+  .popup-steering {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
 
-.popup-steering { display: flex; flex-direction: column; gap: var(--sp-1); }
+  .steering-textarea {
+    background: var(--c-bg-primary);
+    color: var(--c-text-primary);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    padding: var(--sp-2);
+    font-size: var(--fs-sm);
+    font-family: var(--font-sans);
+    resize: vertical;
+    min-height: 3rem;
+    max-height: 7.5rem;
+  }
 
-.steering-textarea {
-  background: var(--c-bg-primary); color: var(--c-text-primary);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  padding: var(--sp-2); font-size: var(--fs-sm); font-family: var(--font-sans);
-  resize: vertical; min-height: 3rem; max-height: 7.5rem;
-}
+  .steering-save {
+    align-self: flex-end;
+    padding: var(--sp-1) var(--sp-3);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--c-text-secondary);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+  }
 
-.steering-save {
-  align-self: flex-end; padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  background: transparent; color: var(--c-text-secondary);
-  font-size: var(--fs-xs); cursor: pointer;
-}
+  .steering-save:hover {
+    background: var(--c-bg-tertiary);
+    color: var(--c-text-primary);
+  }
 
-.steering-save:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
+  .steering-save.saved {
+    color: var(--c-green);
+    border-color: var(--c-green);
+  }
 
-.steering-save.saved { color: var(--c-green); border-color: var(--c-green); }
+  /* Auth section in user popup */
+  .auth-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
 
-/* Auth section in user popup */
-.auth-options { display: flex; flex-direction: column; gap: var(--sp-1); }
+  .auth-btn {
+    width: 100%;
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--c-text-secondary);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    text-align: center;
 
-.auth-btn {
-  width: 100%; padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  background: transparent; color: var(--c-text-secondary);
-  font-size: var(--fs-sm); cursor: pointer; text-align: center;
+    &:hover {
+      background: var(--c-bg-tertiary);
+      color: var(--c-text-primary);
+    }
+  }
 
-  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
-}
+  .auth-btn-danger {
+    color: var(--c-red);
+    border-color: var(--c-red);
 
-.auth-btn-danger {
-  color: var(--c-red); border-color: var(--c-red);
+    &:hover {
+      background: color-mix(in srgb, var(--c-red) 10%, transparent);
+    }
+  }
 
-  &:hover { background: color-mix(in srgb, var(--c-red) 10%, transparent); }
-}
+  .auth-btn-accent {
+    color: var(--c-accent);
+    border-color: var(--c-accent);
 
-.auth-btn-accent {
-  color: var(--c-accent); border-color: var(--c-accent);
+    &:hover {
+      background: var(--c-accent-subtle);
+    }
+  }
 
-  &:hover { background: var(--c-accent-subtle); }
-}
+  .auth-input {
+    width: 100%;
+    padding: var(--sp-2);
+    margin-block-start: var(--sp-1);
+    background: var(--c-bg-primary);
+    color: var(--c-text-primary);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    font-size: var(--fs-sm);
+    font-family: var(--font-sans);
+  }
 
-.auth-input {
-  width: 100%; padding: var(--sp-2); margin-block-start: var(--sp-1);
-  background: var(--c-bg-primary); color: var(--c-text-primary);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  font-size: var(--fs-sm); font-family: var(--font-sans);
-}
-
-.auth-status {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  margin-block-start: var(--sp-2); white-space: pre-wrap; word-break: break-all;
-}
+  .auth-status {
+    font-size: var(--fs-xs);
+    color: var(--c-text-tertiary);
+    margin-block-start: var(--sp-2);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
 }

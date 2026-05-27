@@ -161,7 +161,9 @@ describe("optimistic persistence across retries", () => {
       },
       run: () => {
         attempt++;
-        if (attempt < 3) {throw new ActionError("net", { code: "network" });}
+        if (attempt < 3) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -213,7 +215,9 @@ describe("cancel + success race in dedupe", () => {
       error: false,
       run: (_args, signal) => {
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         });
       },
     });
@@ -261,12 +265,14 @@ describe("cancel + success race in dedupe", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
     const p1 = action.dispatch("k");
-     
+
     action.dispatch("k"); // deduped
     action.cancel();
     await p1;
@@ -313,7 +319,9 @@ describe("onSettled re-dispatch with dedupe", () => {
       error: false,
       run: () => {
         runCount++;
-        if (runCount === 1) {throw new ActionError("fail");}
+        if (runCount === 1) {
+          throw new ActionError("fail");
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -416,7 +424,9 @@ describe("retry + dedupe + scope triple interaction", () => {
       error: false,
       run: () => {
         attempt++;
-        if (attempt < 2) {throw new ActionError("net", { code: "network" });}
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });
@@ -474,7 +484,9 @@ describe("rapid cancel + re-dispatch", () => {
       error: false,
       run: (_args, signal) => {
         signalAborted.push(signal.aborted);
-        if (signal.aborted) {throw new DOMException("aborted", "AbortError");}
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("ok");
       },
     });
@@ -502,7 +514,9 @@ describe("rapid cancel + re-dispatch", () => {
       scope: "rapid",
       error: false,
       run: (n, signal) => {
-        if (signal.aborted) {throw new DOMException("aborted", "AbortError");}
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         order.push(`run-${String(n)}`);
         return Promise.resolve(`done-${String(n)}`);
       },
@@ -720,7 +734,9 @@ describe("registry attempts field", () => {
       retry: { count: 2, delay: 10 },
       run: () => {
         attempt++;
-        if (attempt < 2) {throw new ActionError("net", { code: "network" });}
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });

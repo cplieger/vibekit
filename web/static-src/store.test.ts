@@ -97,7 +97,9 @@ describe("Store idempotency (property-based)", () => {
       fc.property(fc.array(arbMessage(), { minLength: 1, maxLength: 20 }), (msgs) => {
         resetStore("chat-1");
         const unique = msgs.map((m, i) => ({ ...m, id: `msg-${String(i)}` }));
-        for (const m of unique) {appendMessage("chat-1", m);}
+        for (const m of unique) {
+          appendMessage("chat-1", m);
+        }
         const session = get("chat-1")!;
         expect(session.messages).toHaveLength(unique.length);
       }),
@@ -156,7 +158,9 @@ describe("Store idempotency (property-based)", () => {
       fc.property(fc.array(arbPendingChange(), { minLength: 1, maxLength: 10 }), (changes) => {
         resetStore("chat-1");
         const unique = changes.map((c, i) => ({ ...c, tool_call_id: `tc-${String(i)}` }));
-        for (const c of unique) {addPendingChange("chat-1", c);}
+        for (const c of unique) {
+          addPendingChange("chat-1", c);
+        }
         const session = get("chat-1")!;
         expect(session.pending_changes).toHaveLength(unique.length);
       }),
@@ -301,7 +305,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 20 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) {enqueuePrompt("chat-1", text);}
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           const dequeued: string[] = [];
           let next = dequeuePrompt("chat-1");
           while (next !== undefined) {
@@ -331,7 +337,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) {enqueuePrompt("chat-1", text);}
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           setQueuedPrompt("chat-1", undefined);
           expect(queuedPrompt("chat-1")).toBeUndefined();
           expect(dequeuePrompt("chat-1")).toBeUndefined();
@@ -348,7 +356,9 @@ describe("Store queue operations (property-based)", () => {
         fc.string({ minLength: 1, maxLength: 50 }),
         (items, replacement) => {
           resetStore("chat-1");
-          for (const text of items) {enqueuePrompt("chat-1", text);}
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           setQueuedPrompt("chat-1", replacement);
           expect(queuedPrompt("chat-1")).toBe(replacement);
           expect(dequeuePrompt("chat-1")).toBe(replacement);
@@ -365,7 +375,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) {enqueuePrompt("chat-1", text);}
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           if (items.length > 0) {
             expect(queuedPrompt("chat-1")).toBe(items[0]);
             expect(queuedPrompt("chat-1")).toBe(items[0]);

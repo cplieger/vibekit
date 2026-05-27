@@ -57,9 +57,7 @@ export function transportAction<TArgs, TOp = unknown>(
       let cmd: TypedCommand | Command;
       if (ctx?.idempotencyKey !== undefined) {
         const base: Record<string, unknown> =
-          "payload" in raw
-            ? { ...(raw.payload as Record<string, unknown>) }
-            : {};
+          "payload" in raw ? { ...(raw.payload as Record<string, unknown>) } : {};
         base["idempotency_key"] = ctx.idempotencyKey;
         cmd = {
           type: raw.type,

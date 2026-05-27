@@ -79,7 +79,9 @@ describe("forge.cloneRepo retry", () => {
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
-      if (attempt < 3) {return Promise.reject(new TypeError("Failed to fetch"));}
+      if (attempt < 3) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
       return Promise.resolve(new Response('{"output":"ok"}', { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -101,7 +103,9 @@ describe("forge.cloneRepo retry", () => {
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
-      if (attempt < 3) {return Promise.reject(new TypeError("Failed to fetch"));}
+      if (attempt < 3) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
       return Promise.resolve(new Response("{}", { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -112,9 +116,9 @@ describe("forge.cloneRepo retry", () => {
     await p;
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const key1 = (fetchSpy.mock.calls[0]![1]!).headers as Record<string, string>;
-    const key2 = (fetchSpy.mock.calls[1]![1]!).headers as Record<string, string>;
-    const key3 = (fetchSpy.mock.calls[2]![1]!).headers as Record<string, string>;
+    const key1 = fetchSpy.mock.calls[0]![1]!.headers as Record<string, string>;
+    const key2 = fetchSpy.mock.calls[1]![1]!.headers as Record<string, string>;
+    const key3 = fetchSpy.mock.calls[2]![1]!.headers as Record<string, string>;
     expect(key1[IDEMPOTENCY_HEADER]).toBeDefined();
     expect(key1[IDEMPOTENCY_HEADER]).toBe(key2[IDEMPOTENCY_HEADER]);
     expect(key2[IDEMPOTENCY_HEADER]).toBe(key3[IDEMPOTENCY_HEADER]);
@@ -146,7 +150,9 @@ describe("forge.connectPAT retry", () => {
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
-      if (attempt < 3) {return Promise.reject(new TypeError("Failed to fetch"));}
+      if (attempt < 3) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
       return Promise.resolve(new Response('{"status":"ok"}', { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -160,9 +166,9 @@ describe("forge.connectPAT retry", () => {
     expect(result).toEqual({ status: "ok" });
 
     // Idempotency key reused
-    const key1 = (fetchSpy.mock.calls[0]![1]!).headers as Record<string, string>;
-    const key2 = (fetchSpy.mock.calls[1]![1]!).headers as Record<string, string>;
-    const key3 = (fetchSpy.mock.calls[2]![1]!).headers as Record<string, string>;
+    const key1 = fetchSpy.mock.calls[0]![1]!.headers as Record<string, string>;
+    const key2 = fetchSpy.mock.calls[1]![1]!.headers as Record<string, string>;
+    const key3 = fetchSpy.mock.calls[2]![1]!.headers as Record<string, string>;
     expect(key1[IDEMPOTENCY_HEADER]).toBe(key2[IDEMPOTENCY_HEADER]);
     expect(key2[IDEMPOTENCY_HEADER]).toBe(key3[IDEMPOTENCY_HEADER]);
   });
@@ -205,7 +211,9 @@ describe("forge.startDeviceFlow retry", () => {
     let attempt = 0;
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
-      if (attempt === 1) {return Promise.reject(new TypeError("Failed to fetch"));}
+      if (attempt === 1) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
       return Promise.resolve(new Response('{"device_code":"abc"}', { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);

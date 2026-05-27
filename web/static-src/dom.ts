@@ -11,7 +11,8 @@
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
-export function el<T extends HTMLElement>(id: string): T { // eslint-disable-line @typescript-eslint/no-unnecessary-type-parameters
+export function el<T extends HTMLElement>(id: string): T {
+  // eslint-disable-line @typescript-eslint/no-unnecessary-type-parameters
   const e = document.getElementById(id);
   if (e === null) {
     throw new Error(`Missing element: #${id}`);
@@ -534,8 +535,9 @@ export const $ = new Elements();
  *  Falls back to calling `fn()` directly. Catches ready/finished
  *  rejections (expected when the transition is skipped). */
 export function maybeViewTransition(fn: () => void): void {
-  if (document.startViewTransition) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-    const t = document.startViewTransition(fn);  
+  if (document.startViewTransition) {
+    // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    const t = document.startViewTransition(fn);
     t.ready.catch(() => {
       /* noop */
     });

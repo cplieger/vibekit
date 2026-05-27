@@ -48,17 +48,16 @@ vi.mock("../transport.js", () => ({ send: vi.fn() }));
 const { ERROR_ROUTES } = await import("./turn.js");
 
 describe("ERROR_ROUTES", () => {
-  const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] =
-    [
-      ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
-      ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],
-      ["model_not_found", { surface: "banner", level: "warning", dismissible: true }],
-      ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
-      ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
-      ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
-      ["bridge_start_failed", { surface: "send-error", level: "error", dismissible: false }],
-      ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
-    ];
+  const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] = [
+    ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
+    ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],
+    ["model_not_found", { surface: "banner", level: "warning", dismissible: true }],
+    ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
+    ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
+    ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
+    ["bridge_start_failed", { surface: "send-error", level: "error", dismissible: false }],
+    ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
+  ];
 
   it.each(expectedRoutes)("routes %s correctly", (code, expected) => {
     const route = ERROR_ROUTES[code];

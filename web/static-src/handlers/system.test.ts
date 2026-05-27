@@ -55,7 +55,9 @@ await import("./system.js");
 
 function fireGap(): void {
   const handler = busHandlers.get("transport:gap");
-  if (handler) {handler({});}
+  if (handler) {
+    handler({});
+  }
 }
 
 describe("BUS_TRANSPORT_GAP handler", () => {

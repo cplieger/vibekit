@@ -285,7 +285,9 @@ describe("defineAction — cancellation", () => {
       name: "test.cancel_status",
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
         }),
     });
     const p = action.dispatch({});
@@ -304,7 +306,9 @@ describe("defineAction — cancellation", () => {
       rollback,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
         }),
     });
     const p = action.dispatch({});
@@ -318,7 +322,9 @@ describe("defineAction — cancellation", () => {
       name: "test.cancel_no_toast",
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
         }),
       error: "Should not appear",
     });
@@ -484,7 +490,9 @@ describe("defineAction — retryable error toast", () => {
       name: "test.retry_redispatch",
       run: async () => {
         attempts += 1;
-        if (attempts === 1) {throw new ActionError("first", { status: 0 });}
+        if (attempts === 1) {
+          throw new ActionError("first", { status: 0 });
+        }
         return "ok";
       },
       retryable: retryNetwork,

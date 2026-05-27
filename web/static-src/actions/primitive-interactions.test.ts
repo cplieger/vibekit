@@ -47,7 +47,9 @@ describe("dedupe + cancel interaction", () => {
       run: (_args, signal) => {
         runCalls++;
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         });
       },
     });
@@ -86,7 +88,9 @@ describe("dedupe + retry interaction", () => {
       retry: { count: 1, delay: 50 },
       run: () => {
         attempt++;
-        if (attempt === 1) {throw new ActionError("network fail", { code: "network" });}
+        if (attempt === 1) {
+          throw new ActionError("network fail", { code: "network" });
+        }
         return Promise.resolve("success");
       },
     });
@@ -140,7 +144,7 @@ describe("scope + dedupe combined", () => {
 describe("scope with undefined arg value", () => {
   it("scope key 'chat:undefined' serializes dispatches with chatID=undefined together", async () => {
     // Document: 'chat:' + undefined === 'chat:undefined'
-     
+
     expect("chat:" + undefined).toBe("chat:undefined");
 
     let callCount = 0;
@@ -148,13 +152,15 @@ describe("scope with undefined arg value", () => {
 
     const action = defineAction<{ chatID: string | undefined }, string>({
       name: "test.scope_undefined",
-       
+
       scope: (args) => "chat:" + args.chatID,
       run: () => {
         callCount++;
         if (callCount === 1) {
           return new Promise<string>((r) => {
-            resolveFirst = () => { r("first"); };
+            resolveFirst = () => {
+              r("first");
+            };
           });
         }
         return Promise.resolve("second");
@@ -285,7 +291,7 @@ describe("debouncedDispatch leading flush", () => {
     expect(runArgs).toEqual(["a"]);
 
     // flush() during leading mode now fires the most-recent suppressed args
-     
+
     dbg.flush();
     expect(runArgs).toEqual(["a", "b"]);
 
@@ -313,7 +319,7 @@ describe("debouncedDispatch leading flush", () => {
     dbg("b"); // suppressed
 
     // flush with explicit args always fires
-     
+
     dbg.flush("z");
     expect(runArgs).toContain("z");
   });

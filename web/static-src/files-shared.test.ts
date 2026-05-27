@@ -112,7 +112,8 @@ describe("isSafeUrl", () => {
   ];
 
   for (const [url, desc] of unsafe) {
-    it(`blocks unsafe URL (${desc}): "${url.replace(/[\x00-\x1f]/g, "·")}"`, () => { // eslint-disable-line no-control-regex
+    it(`blocks unsafe URL (${desc}): "${url.replace(/[\x00-\x1f]/g, "·")}"`, () => {
+      // eslint-disable-line no-control-regex
       expect(isSafeUrl(url)).toBe(false);
     });
   }

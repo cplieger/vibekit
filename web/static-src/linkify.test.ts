@@ -188,7 +188,9 @@ describe("PATH_RX property-based tests", () => {
         PATH_RX.lastIndex = 0;
         const matches: RegExpExecArray[] = [];
         let m: RegExpExecArray | null;
-        while ((m = PATH_RX.exec(input)) !== null) {matches.push(m);}
+        while ((m = PATH_RX.exec(input)) !== null) {
+          matches.push(m);
+        }
         // If any match captures exactly our path, the lookahead failed to reject
         // (the suffix char should prevent matching at that exact boundary)
         let violated = false;

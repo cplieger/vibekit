@@ -59,7 +59,9 @@ describe("retryable transport actions — idempotency key across retries", () =>
     let attempt = 0;
     mockSend.mockImplementation(async () => {
       attempt++;
-      if (attempt < 3) {return { ok: false, status: 0, error: "network", code: "network" };}
+      if (attempt < 3) {
+        return { ok: false, status: 0, error: "network", code: "network" };
+      }
       return { ok: true, status: 200 };
     });
 
@@ -84,7 +86,9 @@ describe("retryable transport actions — idempotency key across retries", () =>
     let attempt = 0;
     mockSend.mockImplementation(async () => {
       attempt++;
-      if (attempt < 3) {return { ok: false, status: 0, error: "timeout", code: "timeout" };}
+      if (attempt < 3) {
+        return { ok: false, status: 0, error: "timeout", code: "timeout" };
+      }
       return { ok: true, status: 200 };
     });
 
@@ -105,7 +109,9 @@ describe("retryable transport actions — idempotency key across retries", () =>
     let attempt = 0;
     mockSend.mockImplementation(async () => {
       attempt++;
-      if (attempt < 2) {return { ok: false, status: 0, error: "network", code: "network" };}
+      if (attempt < 2) {
+        return { ok: false, status: 0, error: "network", code: "network" };
+      }
       return { ok: true, status: 200 };
     });
 
@@ -126,7 +132,9 @@ describe("retryable transport actions — idempotency key across retries", () =>
     let attempt = 0;
     mockSend.mockImplementation(async () => {
       attempt++;
-      if (attempt < 2) {return { ok: false, status: 0, error: "network", code: "network" };}
+      if (attempt < 2) {
+        return { ok: false, status: 0, error: "network", code: "network" };
+      }
       return { ok: true, status: 200 };
     });
 
@@ -187,7 +195,9 @@ describe("retryable transport actions — error code propagation", () => {
     let attempt = 0;
     mockSend.mockImplementation(async () => {
       attempt++;
-      if (attempt === 1) {return { ok: false, status: 0, error: "timed out", code: "timeout" };}
+      if (attempt === 1) {
+        return { ok: false, status: 0, error: "timed out", code: "timeout" };
+      }
       return { ok: true, status: 200 };
     });
 

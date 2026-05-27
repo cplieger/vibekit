@@ -40,7 +40,11 @@ describe("dedupe with undefined args", () => {
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => setTimeout(() => { r("ok"); }, 10));
+        return new Promise<string>((r) =>
+          setTimeout(() => {
+            r("ok");
+          }, 10),
+        );
       },
     });
 
@@ -76,11 +80,15 @@ describe("dedupe with undefined args", () => {
     let runCalls = 0;
     const action = defineAction<{ chatID?: string | undefined }, string>({
       name: "test.dedupe_fn_undefined_field",
-       
+
       dedupe: (args) => `chat:${args.chatID}`,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => setTimeout(() => { r("done"); }, 5));
+        return new Promise<string>((r) =>
+          setTimeout(() => {
+            r("done");
+          }, 5),
+        );
       },
     });
 
@@ -105,7 +113,9 @@ describe("structuredClone fallback on retry toast", () => {
       retryable: (err) => err.code !== "cancelled",
       run: (args) => {
         attempts++;
-        if (attempts === 1) {throw new ActionError("fail", { status: 0 });}
+        if (attempts === 1) {
+          throw new ActionError("fail", { status: 0 });
+        }
         args.fn();
         return Promise.resolve("ok");
       },
@@ -142,7 +152,9 @@ describe("structuredClone fallback on retry toast", () => {
       retryable: retryNetwork,
       run: (args) => {
         attempts++;
-        if (attempts === 1) {throw new ActionError("timeout", { code: "network" });}
+        if (attempts === 1) {
+          throw new ActionError("timeout", { code: "network" });
+        }
         return Promise.resolve(args.el["name"] as string);
       },
     });
@@ -178,8 +190,12 @@ describe("cancel after dedupe entry created but before runOnce starts", () => {
       run: (args, signal) => {
         runCalls++;
         return new Promise<string>((resolve, reject) => {
-          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
-          setTimeout(() => { resolve("result-" + args.id); }, 50);
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+          setTimeout(() => {
+            resolve("result-" + args.id);
+          }, 50);
         });
       },
     });
@@ -238,7 +254,9 @@ describe("scope + cancel interaction", () => {
         runCalls++;
         if (runCalls === 1) {
           return new Promise<string>((r) => {
-            resolveFirst = () => { r("A"); };
+            resolveFirst = () => {
+              r("A");
+            };
           });
         }
         return Promise.resolve(args.tag);
@@ -287,7 +305,9 @@ describe("scope + cancel interaction", () => {
         log.push(args.tag);
         if (args.tag === "A") {
           return new Promise<void>((r) => {
-            resolveFirst = () => { r(); };
+            resolveFirst = () => {
+              r();
+            };
           });
         }
         return Promise.resolve();

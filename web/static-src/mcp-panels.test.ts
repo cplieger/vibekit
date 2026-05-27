@@ -11,15 +11,25 @@ vi.mock("./dom.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
 }));
-vi.mock("./modals.js", () => ({ closeModal: () => { /* noop */ } }));
+vi.mock("./modals.js", () => ({
+  closeModal: () => {
+    /* noop */
+  },
+}));
 vi.mock("./mcp-state.js", () => ({
-  refetchServers: async () => { /* noop */ },
+  refetchServers: async () => {
+    /* noop */
+  },
   configured: [],
   SECRET_MASK: "***",
 }));
 vi.mock("./mcp-pairs.js", () => ({
-  renderKeyPairList: () => { /* noop */ },
-  appendKeyPair: () => { /* noop */ },
+  renderKeyPairList: () => {
+    /* noop */
+  },
+  appendKeyPair: () => {
+    /* noop */
+  },
   collectKeyPairs: () => [],
 }));
 vi.mock(import("./icons.js"), async (importOriginal) => {
@@ -63,16 +73,15 @@ describe("simplifyName", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractNpxPackage", () => {
-  const stub = (args: string[]): Server =>
-    ({
-      id: "x",
-      name: "x",
-      transport: "stdio",
-      enabled: true,
-      args,
-      created_at: 0,
-      updated_at: 0,
-    });
+  const stub = (args: string[]): Server => ({
+    id: "x",
+    name: "x",
+    transport: "stdio",
+    enabled: true,
+    args,
+    created_at: 0,
+    updated_at: 0,
+  });
 
   const cases: { label: string; args: string[]; expected: string }[] = [
     { label: "typical npx args", args: ["-y", "@scope/pkg"], expected: "@scope/pkg" },
@@ -254,7 +263,9 @@ describe("simplifyName property", () => {
       fc.property(
         fc.string({ minLength: 1 }).filter((s) => {
           // Must have alphanumeric content AND not simplify to "server" naturally
-          if (!/[A-Za-z0-9]/.test(s)) {return false;}
+          if (!/[A-Za-z0-9]/.test(s)) {
+            return false;
+          }
           const afterSlash = s.slice(s.lastIndexOf("/") + 1);
           const cleaned = afterSlash
             .replace(/[^A-Za-z0-9_-]/g, "-")

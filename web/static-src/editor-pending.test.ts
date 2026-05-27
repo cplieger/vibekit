@@ -32,7 +32,9 @@ vi.mock("./actions/editor.js", () => ({
 }));
 
 vi.mock("./actions/index.js", () => ({
-  bindLoadingState: () => () => { /* noop */ },
+  bindLoadingState: () => () => {
+    /* noop */
+  },
 }));
 
 vi.mock("./bus.js", () => ({

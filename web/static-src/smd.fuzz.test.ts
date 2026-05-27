@@ -11,10 +11,18 @@ import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => { /* noop */ },
-    end_token: () => { /* noop */ },
-    add_text: () => { /* noop */ },
-    set_attr: () => { /* noop */ },
+    add_token: () => {
+      /* noop */
+    },
+    end_token: () => {
+      /* noop */
+    },
+    add_text: () => {
+      /* noop */
+    },
+    set_attr: () => {
+      /* noop */
+    },
   };
 }
 
@@ -46,9 +54,13 @@ describe("smd parser_write fuzz", () => {
             const splitAt = pos + (raw % (input.length - pos + 1));
             const chunk = input.slice(pos, splitAt);
             parser_write(p, chunk);
-            if (p.len < 0) {return false;}
+            if (p.len < 0) {
+              return false;
+            }
             pos = splitAt;
-            if (pos >= input.length) {break;}
+            if (pos >= input.length) {
+              break;
+            }
           }
           if (pos < input.length) {
             parser_write(p, input.slice(pos));
@@ -80,7 +92,9 @@ describe("smd parser_write fuzz", () => {
           const p = parser(nullRenderer());
           for (const chunk of chunks) {
             parser_write(p, chunk);
-            if (p.len < 0) {return false;}
+            if (p.len < 0) {
+              return false;
+            }
           }
           parser_end(p);
           return p.tokens[0] === DOCUMENT && p.len >= 0;

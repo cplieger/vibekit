@@ -47,7 +47,7 @@ describe("idempotencyKey", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBeDefined();
     expect(typeof headers[IDEMPOTENCY_HEADER]).toBe("string");
-    expect((headers[IDEMPOTENCY_HEADER]!).length).toBeGreaterThan(5);
+    expect(headers[IDEMPOTENCY_HEADER]!.length).toBeGreaterThan(5);
 
     vi.unstubAllGlobals();
   });
@@ -99,11 +99,11 @@ describe("idempotencyKey", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
-    const k1 = (fetchSpy.mock.calls[0]?.[1]!).headers as Record<string, string>;
+    const k1 = (fetchSpy.mock.calls[0]?.[1])!.headers as Record<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
-    const k2 = (fetchSpy.mock.calls[1]?.[1]!).headers as Record<string, string>;
+    const k2 = (fetchSpy.mock.calls[1]?.[1])!.headers as Record<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
-    const k3 = (fetchSpy.mock.calls[2]?.[1]!).headers as Record<string, string>;
+    const k3 = (fetchSpy.mock.calls[2]?.[1])!.headers as Record<string, string>;
     expect(k1[IDEMPOTENCY_HEADER]).toBe(k2[IDEMPOTENCY_HEADER]);
     expect(k2[IDEMPOTENCY_HEADER]).toBe(k3[IDEMPOTENCY_HEADER]);
 
@@ -138,7 +138,9 @@ describe("idempotencyKey", () => {
       name: "test.idem.ctx",
       idempotencyKey: true,
       run: (_args, _signal, ctx) => {
-        if (ctx?.idempotencyKey !== undefined) {seen.push(ctx.idempotencyKey);}
+        if (ctx?.idempotencyKey !== undefined) {
+          seen.push(ctx.idempotencyKey);
+        }
         return Promise.resolve();
       },
     });
@@ -328,7 +330,7 @@ describe("debouncedDispatch", () => {
     const dbg = debouncedDispatch(action, { wait: 1000 });
     dbg("a");
     dbg("b");
-     
+
     dbg.flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(runArgs).toEqual(["b"]);

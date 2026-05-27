@@ -32,7 +32,9 @@ const spec: ReconcileSpec<Item> = { key: (i) => i.id, mount, update };
 function rendered(parent: ParentNode): string[] {
   const out: string[] = [];
   for (let n = parent.firstChild; n !== null; n = n.nextSibling) {
-    if (n.nodeType === 1) {out.push((n as HTMLElement).textContent ?? "");}
+    if (n.nodeType === 1) {
+      out.push((n as HTMLElement).textContent ?? "");
+    }
   }
   return out;
 }
@@ -40,7 +42,9 @@ function rendered(parent: ParentNode): string[] {
 function snapshotRefs(parent: ParentNode): HTMLElement[] {
   const out: HTMLElement[] = [];
   for (let n = parent.firstChild; n !== null; n = n.nextSibling) {
-    if (n.nodeType === 1) {out.push(n as HTMLElement);}
+    if (n.nodeType === 1) {
+      out.push(n as HTMLElement);
+    }
   }
   return out;
 }
@@ -372,7 +376,9 @@ describe("reconcile: nested usage", () => {
       },
       update: (sec, s) => {
         const ul = sec.querySelector("ul");
-        if (ul !== null) {reconcile(ul, s.rows, renderRow);}
+        if (ul !== null) {
+          reconcile(ul, s.rows, renderRow);
+        }
       },
     };
 

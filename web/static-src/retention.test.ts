@@ -32,7 +32,9 @@ describe("retention", () => {
     let callCount = 0;
     mockFetchKiroSetting.mockImplementation(async () => {
       callCount++;
-      if (callCount === 1) {return 7;}
+      if (callCount === 1) {
+        return 7;
+      }
       return 30;
     });
 
@@ -52,7 +54,9 @@ describe("retention", () => {
   it("abort during fetch does NOT update retentionDays", async () => {
     mockFetchKiroSetting.mockImplementation(async (_key, _parse, _fallback, signal) => {
       // Simulate abort during fetch
-      if (signal?.aborted) {throw new DOMException("Aborted", "AbortError");}
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       return null; // returning null means the dispatch result is null → no update
     });
 

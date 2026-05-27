@@ -109,7 +109,8 @@ class ModelSwitchController {
         .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings")) // eslint-disable-line @typescript-eslint/no-explicit-any
         .then((settings) => {
           const me = (settings as any)?.model_effort; // eslint-disable-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-          if (me?.effort && me?.last_model === getActive()?.model) { // eslint-disable-line @typescript-eslint/no-unsafe-member-access
+          if (me?.effort && me?.last_model === getActive()?.model) {
+            // eslint-disable-line @typescript-eslint/no-unsafe-member-access
             this.currentEffort = me.effort; // eslint-disable-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
             if (this.effortRow !== null) {
               for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
@@ -164,7 +165,8 @@ class ModelSwitchController {
     }
     // Dispatch to server (applies to active session).
     void import("./transport.js").then(({ send }) => {
-      void send({ // eslint-disable-line @typescript-eslint/no-unsafe-argument
+      void send({
+        // eslint-disable-line @typescript-eslint/no-unsafe-argument
         type: "set_effort",
         chat_id: session.id,
         request_id: `effort-${Date.now()}`,

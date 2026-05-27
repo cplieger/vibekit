@@ -43,7 +43,9 @@ describe("defineAction retry { count, delay, factor }", () => {
       retry: { count: 2, delay: 100 },
       run: () => {
         attempts++;
-        if (attempts < 3) {throw new ActionError("flaky", { code: "network" });}
+        if (attempts < 3) {
+          throw new ActionError("flaky", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });
@@ -257,7 +259,9 @@ describe("defineAction scope (serial dispatch)", () => {
       error: false,
       run: async (args) => {
         log.push(`run:${args.tag}`);
-        if (args.fail) {throw new ActionError("nope");}
+        if (args.fail) {
+          throw new ActionError("nope");
+        }
       },
     });
 
@@ -346,7 +350,9 @@ describe("DispatchOptions onSuccess / onError / onSettled", () => {
       name: "test.cb_cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => { reject(new Error("cancelled")); });
+          signal.addEventListener("abort", () => {
+            reject(new Error("cancelled"));
+          });
         }),
     });
     const onSuccess = vi.fn();

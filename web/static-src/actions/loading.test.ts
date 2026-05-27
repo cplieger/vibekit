@@ -737,7 +737,9 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     let shouldThrow = false;
     bindLoadingState("test.disabledfn_throw_focus", btn, {
       disabledFn: () => {
-        if (shouldThrow) {throw new Error("boom");}
+        if (shouldThrow) {
+          throw new Error("boom");
+        }
         return false;
       },
     });

@@ -85,7 +85,9 @@ describe("helpers", () => {
 
   it("decodeArray returns mapped values and reports per-index path", () => {
     const out = decodeArray([1, 2, 3], (v) => {
-      if (typeof v !== "number") {throw new TypeError("not number");}
+      if (typeof v !== "number") {
+        throw new TypeError("not number");
+      }
       return v * 2;
     });
     expect(out).toEqual([2, 4, 6]);
@@ -94,7 +96,9 @@ describe("helpers", () => {
       decodeArray(
         [1, "bad", 3],
         (v) => {
-          if (typeof v !== "number") {throw new TypeError("not number");}
+          if (typeof v !== "number") {
+            throw new TypeError("not number");
+          }
           return v;
         },
         "$.list",
@@ -104,7 +108,9 @@ describe("helpers", () => {
 
   it("decodeRecord iterates entries with path-aware errors", () => {
     const out = decodeRecord({ a: 1, b: 2 }, (v) => {
-      if (typeof v !== "number") {throw new TypeError("not number");}
+      if (typeof v !== "number") {
+        throw new TypeError("not number");
+      }
       return v + 1;
     });
     expect(out).toEqual({ a: 2, b: 3 });
@@ -113,7 +119,9 @@ describe("helpers", () => {
       decodeRecord(
         { a: 1, b: "x" },
         (v) => {
-          if (typeof v !== "number") {throw new TypeError("not number");}
+          if (typeof v !== "number") {
+            throw new TypeError("not number");
+          }
           return v;
         },
         "$.map",

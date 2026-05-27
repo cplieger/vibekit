@@ -400,10 +400,12 @@ function tokenize(code: string, lang: string): Token[] {
       (cc === 46 /* . */ && i + 1 < len && isDigitCode(code.charCodeAt(i + 1)))
     ) {
       let j = i;
-      if (cc === 48 /* 0 */ && j + 1 < len && /[xXoObB]/.test(code[j + 1]!)) { // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      if (cc === 48 /* 0 */ && j + 1 < len && /[xXoObB]/.test(code[j + 1]!)) {
+        // eslint-disable-line @typescript-eslint/no-non-null-assertion
         j += 2;
       }
-      while (j < len && /[\d.a-fA-F_eE+-]/.test(code[j]!)) { // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      while (j < len && /[\d.a-fA-F_eE+-]/.test(code[j]!)) {
+        // eslint-disable-line @typescript-eslint/no-non-null-assertion
         j++;
       }
       tokens.push({ type: "number", value: code.substring(i, j) });
