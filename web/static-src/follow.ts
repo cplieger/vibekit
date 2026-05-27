@@ -349,9 +349,11 @@ class FollowController {
 
     if (resp === null || resp.error !== undefined) {
       const msg = resp?.error ?? "File not available";
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- defensive check
-      view.querySelector(".follow-code")!.innerHTML =
-        `<div class="follow-error">${escText(msg)}<br><code>${escText(path)}</code></div>`;
+      const codeEl = view.querySelector(".follow-code");
+      if (codeEl) {
+        codeEl.innerHTML =
+          `<div class="follow-error">${escText(msg)}<br><code>${escText(path)}</code></div>`;
+      }
       return;
     }
 

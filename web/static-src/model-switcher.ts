@@ -108,11 +108,11 @@ class ModelSwitchController {
       void import("./api-client.js")
         .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings")) // eslint-disable-line @typescript-eslint/no-explicit-any
         .then((settings) => {
-          const me = (settings as any)?.model_effort; // eslint-disable-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- defensive check
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- defensive check
-          if (me?.effort && me?.last_model === getActive()?.model) {
-            this.currentEffort = me.effort; // eslint-disable-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+          const me = (settings as Record<string, unknown> | null)?.model_effort as
+            | { effort?: string; last_model?: string }
+            | undefined;
+          if (me?.effort && me.last_model === getActive()?.model) {
+            this.currentEffort = me.effort;
             if (this.effortRow !== null) {
               for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
                 btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);

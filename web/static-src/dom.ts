@@ -11,7 +11,7 @@
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- defensive check
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- caller uses T for inference: el<HTMLInputElement>("id")
 export function el<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
   if (e === null) {
