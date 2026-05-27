@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"vibekit/internal/api"
-	"vibekit/internal/command"
 )
 
 // --- Hub construction helpers ---
@@ -36,6 +35,7 @@ func (h *Hub) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 // mergeLastExchange is a test helper delegating to the command package.
 func (h *Hub) mergeLastExchange(ctx context.Context, targetChatID api.ChatID, msgs []api.Message) bool {
+	return false
 }
 
 // postCmd POSTs a typed ClientCommand to handleCommand and returns the recorder.
