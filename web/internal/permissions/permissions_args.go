@@ -26,7 +26,7 @@ func (m mode) Valid() bool {
 	return false
 }
 
-// maxToolNameLen caps hand-edited settings.json entries to avoid
+// maxToolNameLen caps hand-edited config.json entries to avoid
 // pathological CLI-arg blow-up. Real kiro-cli tool names are well
 // under 20 chars, but MCP-namespaced tools follow the
 // `mcp__<server>__<tool>` shape where both components are
@@ -44,7 +44,7 @@ type settings struct {
 }
 
 // readSettingsRaw is the shared I/O + parse path for all permission
-// readers. It returns the parsed top-level keys from settings.json.
+// readers. It returns the parsed top-level keys from config.json.
 // Callers apply their own fail-mode policy to the returned error.
 func readSettingsRaw(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
 	data, err := cfgsettings.ReadBytes(ctx, configDir)
@@ -93,7 +93,7 @@ func Args(ctx context.Context, configDir string) []string {
 func read(ctx context.Context, configDir string) settings {
 	raw, err := readSettingsRaw(ctx, configDir)
 	if err != nil {
-		slog.Warn("permissions: read settings.json", "error", err)
+		slog.Warn("permissions: read config.json", "error", err)
 		return settings{Mode: modeTrustAll}
 	}
 	if raw == nil {
@@ -119,7 +119,7 @@ func read(ctx context.Context, configDir string) settings {
 }
 
 // cleanList trims whitespace, drops empty strings, dedups, and filters to
-// sane tool-name characters. Defensive against hand-edited settings.json.
+// sane tool-name characters. Defensive against hand-edited config.json.
 func cleanList(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))

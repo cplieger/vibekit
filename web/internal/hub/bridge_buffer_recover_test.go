@@ -90,16 +90,15 @@ func TestRecoverPartials_ValidSnapshot_AppendsMessageAndInterruptedEvent(t *test
 	}
 }
 
-func TestRecoverPartials_ReasoningSnapshot_SetsOperationType(t *testing.T) {
+func TestRecoverPartials_ReasoningSnapshot_PopulatesReasoningField(t *testing.T) {
 	t.Parallel()
 	cfg := t.TempDir()
 	h, cs := newHubWithConfigDir(t, cfg)
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	writePartialFile(t, cfg, "c1", buffer.PartialSnapshot{
-		MessageID:   "m-r",
-		Content:     "let me think...",
-		IsReasoning: true,
+		MessageID: "m-r",
+		Reasoning: "let me think...",
 	})
 
 	h.RecoverPartials()
@@ -108,8 +107,11 @@ func TestRecoverPartials_ReasoningSnapshot_SetsOperationType(t *testing.T) {
 	if len(c.Messages) < 1 {
 		t.Fatal("no messages recovered")
 	}
-	if c.Messages[0].OperationType != api.OperationTypeReasoning {
-		t.Errorf("OperationType = %q, want %q", c.Messages[0].OperationType, api.OperationTypeReasoning)
+	if c.Messages[0].Reasoning != "let me think..." {
+		t.Errorf("Reasoning = %q, want %q", c.Messages[0].Reasoning, "let me think...")
+	}
+	if c.Messages[0].Content != "" {
+		t.Errorf("Content = %q, want empty", c.Messages[0].Content)
 	}
 }
 

@@ -15,14 +15,15 @@ import (
 const (
 	methodCommandsExecute = api.MethodCommandsExecute
 	methodCommandsOptions = api.MethodCommandsOptions
+	keyCommand            = "command"
 )
 
-// RegisterSlashRoutes wires the slash-command REST endpoints into mux.
-// Called from the composition layer (server.go) via the Hub interface.
+// RegisterSlashRoutes wires the slash-command execute endpoint into mux.
+// The /api/slash/options endpoint (typeahead completion) was removed
+// when the slash-command popover UI was stripped.
 func RegisterSlashRoutes(mux *http.ServeMux, deps Dependencies) {
 	sh := &slashHandler{deps: deps}
 	mux.HandleFunc("/api/slash/execute", sh.handleExecute)
-	mux.HandleFunc("/api/slash/options", sh.handleOptions)
 }
 
 // slashHandler holds dependencies for the slash REST endpoints.
@@ -63,7 +64,7 @@ func (sh *slashHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	cmd := strings.TrimPrefix(req.Command, "/")
 
 	resp, err := b.Call(r.Context(), methodCommandsExecute, SessionParams(b, map[string]any{
-		"command": cmd,
+		keyCommand: cmd,
 	}))
 	if err != nil {
 		api.InternalError(w, err)
@@ -75,46 +76,4 @@ func (sh *slashHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.Ok(w)
-}
-
-// GET /api/slash/options?chat_id=X&command=Y&partial=Z
-func (sh *slashHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
-		return
-	}
-	chatID := r.URL.Query().Get("chat_id")
-	command := r.URL.Query().Get("command")
-	partial := r.URL.Query().Get("partial")
-	if chatID == "" || command == "" {
-		api.BadRequest(w, "chat_id and command are required")
-		return
-	}
-	if !validChatID(api.ChatID(chatID)) {
-		api.BadRequest(w, "invalid chat_id")
-		return
-	}
-
-	b := sh.deps.GetBridge(api.ChatID(chatID))
-	if b == nil {
-		api.WriteJSON(w, map[string]any{keyOptions: []any{}})
-		return
-	}
-
-	cmd := strings.TrimPrefix(command, "/")
-
-	resp, err := b.Call(r.Context(), methodCommandsOptions, SessionParams(b, map[string]any{
-		"command": cmd,
-		"partial": partial,
-	}))
-	if err != nil {
-		api.WriteJSON(w, map[string]any{keyOptions: []any{}})
-		return
-	}
-
-	if resp.Result != nil {
-		api.WriteRawJSON(w, resp.Result)
-		return
-	}
-	api.WriteJSON(w, map[string]any{keyOptions: []any{}})
 }

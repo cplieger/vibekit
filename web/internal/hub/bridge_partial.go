@@ -84,10 +84,8 @@ func (h *Hub) RecoverPartials() {
 			Role:      api.RoleAssistant,
 			Ts:        snap.Ts,
 			Content:   snap.Content,
+			Reasoning: snap.Reasoning,
 			ToolCalls: snap.ToolCalls,
-		}
-		if snap.IsReasoning {
-			msg.OperationType = api.OperationTypeReasoning
 		}
 		if err := h.chatStore.AppendMessage(ctx, cid, &msg); err != nil {
 			slog.Warn("partial recovery: append failed", "chat_id", chatID, "error", err)

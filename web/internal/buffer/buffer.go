@@ -15,6 +15,12 @@ import (
 
 // Buffer accumulates streaming deltas per chat until turn_ended
 // writes the finalized assistant message to the chat file.
+//
+// Content and Reasoning are sibling streams that both fill during a
+// single turn — extended-thinking models emit reasoning ("Thinking…")
+// deltas alongside the regular response. The translator routes each
+// chunk to the appropriate builder based on the upstream IsReasoning
+// flag.
 type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
@@ -22,9 +28,9 @@ type Buffer struct {
 	Partial        PartialWriter
 	MessageID      string
 	Content        strings.Builder
+	Reasoning      strings.Builder
 	ToolCalls      []api.ToolCall
 	Started        bool
-	IsReasoning    bool
 }
 
 // TrackFileChanges accumulates per-file change stats from tool call diffs.
@@ -85,12 +91,12 @@ func (buf *Buffer) MarkCancelledToolsFailed() []api.ToolCall {
 
 // WritePartial rewrites the partial file with the current buffer state.
 func (buf *Buffer) WritePartial(ctx context.Context) {
-	buf.Partial.Write(ctx, PartialSnapshot{
-		MessageID:   buf.MessageID,
-		Content:     buf.Content.String(),
-		ToolCalls:   buf.ToolCalls,
-		IsReasoning: buf.IsReasoning,
-		Ts:          time.Now().UnixMilli(),
+	buf.Partial.Write(ctx, &PartialSnapshot{
+		MessageID: buf.MessageID,
+		Content:   buf.Content.String(),
+		Reasoning: buf.Reasoning.String(),
+		ToolCalls: buf.ToolCalls,
+		Ts:        time.Now().UnixMilli(),
 	})
 }
 

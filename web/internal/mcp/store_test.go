@@ -821,3 +821,138 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 		t.Errorf("corrupt file disappeared despite rename failure: %v", err)
 	}
 }
+
+
+// ---------------------------------------------------------------------------
+// OAuth client ID (kiro-cli 2.3+): pre-registered client_id for HTTP MCP
+// servers that don't support DCR.
+// ---------------------------------------------------------------------------
+
+func TestACPServers_HTTPWithOAuthClientID(t *testing.T) {
+	s := newTestStore(t)
+	_, _ = s.Create(context.Background(), &Server{
+		Transport:     TransportHTTP,
+		Name:          "slack",
+		URL:           "https://slack.example/mcp",
+		OAuthClientID: "abc123",
+		Enabled:       true,
+	})
+	acp := s.ACPServers(context.Background())
+	if len(acp) != 1 {
+		t.Fatalf("len = %d", len(acp))
+	}
+	j, err := json.Marshal(acp[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(j)
+	// Wire shape: nested object {oauth: {clientId: "..."}} per kiro-cli's
+	// MCP server config schema.
+	if !strings.Contains(got, `"oauth":{"clientId":"abc123"}`) {
+		t.Errorf("expected nested oauth.clientId in wire shape, got %s", got)
+	}
+}
+
+func TestACPServers_HTTPWithoutOAuthClientID_OmitsField(t *testing.T) {
+	s := newTestStore(t)
+	_, _ = s.Create(context.Background(), &Server{
+		Transport: TransportHTTP, Name: "linear", URL: "https://linear.example/mcp",
+		Enabled: true,
+	})
+	acp := s.ACPServers(context.Background())
+	j, err := json.Marshal(acp[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(j)
+	if strings.Contains(got, `"oauth"`) {
+		t.Errorf("oauth field should be omitted when empty, got %s", got)
+	}
+}
+
+func TestUpdate_PreservesOAuthClientID(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.Create(context.Background(), &Server{
+		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		OAuthClientID: "abc123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Update keeps the OAuthClientID — it's a non-secret config value
+	// that round-trips verbatim (no SecretMask treatment).
+	updated, err := s.Update(context.Background(), created.ID, &Server{
+		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		OAuthClientID: "abc123", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.OAuthClientID != "abc123" {
+		t.Errorf("OAuthClientID = %q, want abc123", updated.OAuthClientID)
+	}
+}
+
+func TestUpdate_ChangesOAuthClientID(t *testing.T) {
+	s := newTestStore(t)
+	created, _ := s.Create(context.Background(), &Server{
+		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		OAuthClientID: "old-id", Enabled: true,
+	})
+	updated, err := s.Update(context.Background(), created.ID, &Server{
+		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		OAuthClientID: "new-id", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.OAuthClientID != "new-id" {
+		t.Errorf("OAuthClientID = %q, want new-id", updated.OAuthClientID)
+	}
+}
+
+func TestCreate_RejectsOAuthClientIDOnStdio(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.Create(context.Background(), &Server{
+		Transport: TransportStdio, Name: "x", Command: "true",
+		OAuthClientID: "should-not-work",
+		Enabled:       true,
+	})
+	if err == nil {
+		t.Fatal("expected validation error for OAuthClientID on stdio transport")
+	}
+	if !strings.Contains(err.Error(), "oauth_client_id") {
+		t.Errorf("error should mention oauth_client_id, got: %v", err)
+	}
+}
+
+func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.Create(context.Background(), &Server{
+		Transport:     TransportHTTP,
+		Name:          "x",
+		URL:           "https://example.com/mcp",
+		OAuthClientID: strings.Repeat("a", 1024),
+		Enabled:       true,
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized OAuthClientID")
+	}
+	if !strings.Contains(err.Error(), "oauth_client_id too long") {
+		t.Errorf("error should mention size limit, got: %v", err)
+	}
+}
+
+func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.Create(context.Background(), &Server{
+		Transport:     TransportHTTP,
+		Name:          "x",
+		URL:           "https://example.com/mcp",
+		OAuthClientID: "abc\x00def",
+		Enabled:       true,
+	})
+	if err == nil {
+		t.Fatal("expected error for control char in OAuthClientID")
+	}
+}

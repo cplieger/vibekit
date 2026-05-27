@@ -1,6 +1,7 @@
 package steering
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -455,10 +456,15 @@ func TestCustomPath_UsesHome(t *testing.T) {
 
 func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	t.Setenv("HOME", "")
+	t.Setenv("KIRO_HOME", "")
 	os.Unsetenv("HOME")
+	os.Unsetenv("KIRO_HOME")
 	g := New("/some/work", "/some/config")
-	if got := g.CustomPath(); got != "/tmp/custom-steering.md" {
-		t.Errorf("CustomPath() with no HOME = %q, want /tmp/custom-steering.md", got)
+	// With both KIRO_HOME and HOME unset, KiroHome() falls back to a
+	// relative ".kiro" — same fallback kiro-cli uses internally so the
+	// two stay aligned even on stripped local-dev shells.
+	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
+		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)
 	}
 }
 
@@ -578,5 +584,192 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	}
 	if !strings.Contains(s, "## Capabilities") {
 		t.Errorf("steering file truncated under concurrency; no Capabilities section:\n%s", s)
+	}
+}
+
+
+// ---------------------------------------------------------------------------
+// Per-repo steering inventory: frontmatter parser + grouped renderer.
+// ---------------------------------------------------------------------------
+
+func TestParseSteeringFrontmatter(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want Doc
+	}{
+		{
+			name: "no frontmatter defaults to always",
+			in:   "# Title\n\nBody.\n",
+			want: Doc{Inclusion: "always"},
+		},
+		{
+			name: "explicit always",
+			in:   "---\ninclusion: always\n---\nbody",
+			want: Doc{Inclusion: "always"},
+		},
+		{
+			name: "fileMatch with pattern",
+			in:   "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
+			want: Doc{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
+		},
+		{
+			name: "manual",
+			in:   "---\ninclusion: manual\ndescription: Incident runbook\n---\n",
+			want: Doc{Inclusion: "manual", Description: "Incident runbook"},
+		},
+		{
+			name: "unknown inclusion falls back to always",
+			in:   "---\ninclusion: bogus\n---\n",
+			want: Doc{Inclusion: "always"},
+		},
+		{
+			name: "single-quoted values",
+			in:   "---\ninclusion: 'fileMatch'\nfileMatchPattern: 'cmd/*.go'\n---\n",
+			want: Doc{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
+		},
+		{
+			name: "missing closing fence falls back to always",
+			in:   "---\ninclusion: fileMatch\nbody without closing\n",
+			want: Doc{Inclusion: "always"},
+		},
+		{
+			name: "empty file",
+			in:   "",
+			want: Doc{Inclusion: "always"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseSteeringFrontmatter([]byte(tc.in))
+			if got != tc.want {
+				t.Errorf("parseSteeringFrontmatter() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	steering := filepath.Join(dir, ".kiro", "steering")
+	if err := os.MkdirAll(steering, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three files, three trigger types.
+	files := map[string]string{
+		"architecture.md": "---\ninclusion: always\ndescription: Arch overview\n---\nbody",
+		"go-layout.md":    "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\n---\nbody",
+		"runbook.md":      "---\ninclusion: manual\n---\nbody",
+		"plain.md":        "no frontmatter\n", // defaults to always
+	}
+	for n, c := range files {
+		if err := os.WriteFile(filepath.Join(steering, n), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	docs := findRepoDocs(dir)
+	if len(docs) != 4 {
+		t.Fatalf("got %d docs, want 4", len(docs))
+	}
+	byName := map[string]Doc{}
+	for _, d := range docs {
+		byName[d.Filename] = d
+	}
+	if d := byName["architecture.md"]; d.Inclusion != "always" || d.Description != "Arch overview" {
+		t.Errorf("architecture.md = %+v", d)
+	}
+	if d := byName["go-layout.md"]; d.Inclusion != "fileMatch" || d.FileMatch != "internal/**/*.go" {
+		t.Errorf("go-layout.md = %+v", d)
+	}
+	if d := byName["runbook.md"]; d.Inclusion != "manual" {
+		t.Errorf("runbook.md = %+v", d)
+	}
+	if d := byName["plain.md"]; d.Inclusion != "always" {
+		t.Errorf("plain.md = %+v (no frontmatter should default to always)", d)
+	}
+}
+
+func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
+	dir := t.TempDir()
+	docs := findRepoDocs(dir)
+	if docs != nil {
+		t.Errorf("expected nil, got %+v", docs)
+	}
+}
+
+func TestFindRepoDocs_CapAt20(t *testing.T) {
+	dir := t.TempDir()
+	steering := filepath.Join(dir, ".kiro", "steering")
+	if err := os.MkdirAll(steering, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 25 files; expect 20 returned.
+	for i := range 25 {
+		name := fmt.Sprintf("doc-%02d.md", i)
+		if err := os.WriteFile(filepath.Join(steering, name), []byte("body"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	docs := findRepoDocs(dir)
+	if len(docs) != 20 {
+		t.Errorf("got %d docs, want 20 (capped)", len(docs))
+	}
+}
+
+func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "myrepo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	steering := filepath.Join(repoDir, ".kiro", "steering")
+	if err := os.MkdirAll(steering, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(steering, "always.md"),
+		[]byte("---\ninclusion: always\ndescription: Always-on doc\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(steering, "go-files.md"),
+		[]byte("---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\ndescription: Go conventions\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(steering, "incident.md"),
+		[]byte("---\ninclusion: manual\ndescription: On-call runbook\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	writeWorkspace(&b, dir)
+	out := b.String()
+	checks := []string{
+		"Always-loaded steering",
+		"File-match steering",
+		"Manual steering",
+		"`myrepo/.kiro/steering/always.md` — Always-on doc",
+		"`myrepo/.kiro/steering/go-files.md` (matches `**/*.go`) — Go conventions",
+		"`myrepo/.kiro/steering/incident.md` — On-call runbook",
+		"Per-repo .kiro protocol",
+		"NOT auto-loaded",
+		"routing table",
+	}
+	for _, want := range checks {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "myrepo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Repo exists but has no .kiro/steering/.
+	var b strings.Builder
+	writeWorkspace(&b, dir)
+	out := b.String()
+	if strings.Contains(out, "Per-repo .kiro protocol") {
+		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
 	}
 }

@@ -5,7 +5,12 @@ package api
 // over-the-wire shapes the store, hub, bridge, and push packages
 // operate on.
 
-import "encoding/json"
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+)
 
 // SecretMask is the placeholder value returned for every secret on
 // public reads. Clients send this unchanged on update to keep the
@@ -20,6 +25,39 @@ const DefaultChatName = "New conversation"
 // rename boundaries. All code paths that set Chat.Name should enforce
 // this limit.
 const MaxChatNameBytes = 512
+
+// NewChatID generates a fresh UUIDv7 chat identifier. Time-ordered,
+// globally unique, standard format. Used by rewind_chat to create
+// server-generated chat IDs (unlike the original tangent flow where
+// the client generated the ID).
+func NewChatID() ChatID {
+	return ChatID(newUUIDv7())
+}
+
+func newUUIDv7() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	ms := uint64(time.Now().UnixMilli())
+	b[0] = byte(ms >> 40) //nolint:gosec // intentional truncation
+	b[1] = byte(ms >> 32) //nolint:gosec // intentional truncation
+	b[2] = byte(ms >> 24) //nolint:gosec // intentional truncation
+	b[3] = byte(ms >> 16) //nolint:gosec // intentional truncation
+	b[4] = byte(ms >> 8)  //nolint:gosec // intentional truncation
+	b[5] = byte(ms)       //nolint:gosec // intentional truncation
+	b[6] = (b[6] & 0x0F) | 0x70
+	b[8] = (b[8] & 0x3F) | 0x80
+	var buf [36]byte
+	hex.Encode(buf[0:8], b[0:4])
+	buf[8] = '-'
+	hex.Encode(buf[9:13], b[4:6])
+	buf[13] = '-'
+	hex.Encode(buf[14:18], b[6:8])
+	buf[18] = '-'
+	hex.Encode(buf[19:23], b[8:10])
+	buf[23] = '-'
+	hex.Encode(buf[24:36], b[10:16])
+	return string(buf[:])
+}
 
 // ErrMsgUtilityUnavailable is the canonical error message returned when
 // the utility bridge (LLM prompt function) is not wired. Used by both
@@ -78,9 +116,6 @@ const (
 	EventCompactFailed EventKind = "compaction_failed"
 	EventInbox         EventKind = "inbox" // subagent-to-parent message
 )
-
-// OperationTypeReasoning distinguishes reasoning content segments.
-const OperationTypeReasoning = "Reasoning"
 
 // ToolKind identifies the category of a tool invocation. Values are
 // assigned by kiro-cli and flow through the ACP protocol unchanged.
@@ -241,15 +276,19 @@ type CrewPendingStage struct {
 type Message struct {
 	// Crew is populated only for EventKind=crew messages; holds the
 	// latest subagent snapshot from kiro-cli's list_update stream.
-	Crew          *Crew       `json:"crew,omitempty"`
-	ID            string      `json:"id"`
-	Role          Role        `json:"role"`
-	Content       string      `json:"content,omitempty"`
-	OperationType string      `json:"operation_type,omitempty"` // "" (Say), "Reasoning", "Print"
-	EventKind     EventKind   `json:"event_kind,omitempty"`
-	ToolCalls     []ToolCall  `json:"tool_calls,omitempty"`
-	Plan          []PlanEntry `json:"plan,omitempty"`
-	Ts            int64       `json:"ts"`
+	Crew    *Crew  `json:"crew,omitempty"`
+	ID      string `json:"id"`
+	Role    Role   `json:"role"`
+	Content string `json:"content,omitempty"`
+	// Reasoning is the agent's "thinking" trace for this turn —
+	// extended-thinking models emit it as a parallel stream alongside
+	// Content. Persisted on the same message so the one-message-per-turn
+	// invariant holds; rendered above the content bubble in the UI.
+	Reasoning string      `json:"reasoning,omitempty"`
+	EventKind EventKind   `json:"event_kind,omitempty"`
+	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	Plan      []PlanEntry `json:"plan,omitempty"`
+	Ts        int64       `json:"ts"`
 }
 
 // Usage is a chat's last-known context and billing snapshot.
@@ -332,8 +371,13 @@ type Chat struct {
 	// decided to emit it.
 	SupervisedMode  bool `json:"supervised_mode,omitempty"`
 	AutoApproveCrew bool `json:"auto_approve_crew,omitempty"`
-	Frozen          bool `json:"frozen,omitempty"`
-	IsTangent       bool `json:"is_tangent,omitempty"`
+	// RewindFromTurn records which turn index this chat was rewound
+	// from. Zero when not a rewind chat. Used by the sidebar to show
+	// "rewind from turn N" label.
+	RewindFromTurn int `json:"rewind_from_turn,omitempty"`
+	// MessageCount is the persisted message count (may differ from
+	// len(Messages) during pagination).
+	MessageCount int `json:"message_count"`
 }
 
 // Header returns the chat's metadata without messages. Used for list
@@ -354,8 +398,6 @@ func (c *Chat) Header() ChatHeader {
 		MessageCount:        len(c.Messages),
 		SupervisedMode:      c.SupervisedMode,
 		AutoApproveCrew:     c.AutoApproveCrew,
-		Frozen:              c.Frozen,
-		IsTangent:           c.IsTangent,
 		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
 		OldestCheckpointTag: c.OldestCheckpointTag,
@@ -385,6 +427,4 @@ type ChatHeader struct {
 	MessageCount        int            `json:"message_count"`
 	SupervisedMode      bool           `json:"supervised_mode,omitempty"`
 	AutoApproveCrew     bool           `json:"auto_approve_crew,omitempty"`
-	Frozen              bool           `json:"frozen,omitempty"`
-	IsTangent           bool           `json:"is_tangent,omitempty"`
 }

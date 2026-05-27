@@ -39,6 +39,8 @@ import {
   connectPAT,
 } from "./actions/forge.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { signal, effect } from "./signals.js";
+import { reconcile, type ReconcileSpec } from "./reconcile.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -70,22 +72,50 @@ const expandOnNextPaint: Set<string> = new Set();
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
 /** Per-render cleanup: unbind functions from bindLoadingState on sign-out
- *  buttons. Drained at the top of each paintForgesData call. */
+ *  buttons. Drained at the top of each paintIntoRoot call. */
 let signOutUnbinds: Array<() => void> = [];
 
 /** Per-render cleanup: unbind functions from bindLoadingState on PAT
- *  form submit buttons. Drained at the top of each paintForgesData call. */
+ *  form submit buttons. Drained at the top of each paintIntoRoot call. */
 let patFormUnbinds: Array<() => void> = [];
 
-/** Deferred revalidation data: when a forge slot is open (user is
- *  interacting with an add-account pane), we defer the re-paint to
- *  avoid disrupting the form. Stored here and flushed when the slot
- *  closes via closeSlot(). */
-let pendingRevalidate: { root: HTMLElement; data: ForgesListResponse } | null = null;
+/** True when the last /api/forges fetch failed; the effect renders an
+ *  error UI with a Retry button instead of the kind sections. */
+let lastForgesError = false;
+
+/** Last-known forges payload. Effect paints from this when non-null
+ *  and `lastForgesError` is false. */
+let lastForgesData: ForgesListResponse | null = null;
 
 /** Generation counter to prevent stale concurrent renderForgesPanel
  *  calls from overwriting a newer render. */
 let renderGen = 0;
+
+/** Monotonic state-version signal. Every mutation to lastForgesData /
+ *  lastReposByForge / lastLocalNames / lastForgesError bumps this; the
+ *  paint effect subscribes to it and reconciles the panel. */
+const stateVersion = signal(0);
+
+function bumpState(): void {
+  stateVersion.value = stateVersion.peek() + 1;
+}
+
+/** Lazy-initialized paint effect. First renderForgesPanel call sets it
+ *  up; subsequent calls are no-ops. The effect runs on every bumpState
+ *  and re-acquires #forges-panel each run, so tab close/reopen is
+ *  handled transparently (the next bump after re-mounting paints into
+ *  the new root). */
+let panelEffectStarted = false;
+function ensurePanelEffect(): void {
+  if (panelEffectStarted) return;
+  panelEffectStarted = true;
+  effect(() => {
+    stateVersion.value; // subscribe
+    const root = document.getElementById("forges-panel");
+    if (root === null) return;
+    paintIntoRoot(root);
+  });
+}
 
 // --- In-flight handles for cancel-on-navigate -------------------------
 
@@ -171,22 +201,15 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
   const root = document.getElementById("forges-panel");
   if (root === null) return;
 
+  ensurePanelEffect();
+
   const myGen = ++renderGen;
 
   const data = await apiGet<ForgesListResponse>("/api/forges");
   if (myGen !== renderGen) return;
   if (data === null) {
-    root.replaceChildren();
-    const errDiv = document.createElement("div");
-    errDiv.className = "forge-error";
-    errDiv.textContent = "Failed to load forges.";
-    const retryBtn = document.createElement("button");
-    retryBtn.type = "button";
-    retryBtn.className = "btn-small";
-    retryBtn.textContent = "Retry";
-    retryBtn.addEventListener("click", () => { void renderForgesPanel(); });
-    errDiv.appendChild(retryBtn);
-    root.appendChild(errDiv);
+    lastForgesError = true;
+    bumpState();
     return;
   }
 
@@ -208,12 +231,15 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
     lastReposByForge = reposByForge;
   }
 
-  paintForgesData(root, data);
+  lastForgesError = false;
+  lastForgesData = data;
+  oauthByKind = data.oauth ?? {};
+  bumpState();
 
   if (opts.revalidate !== false) {
     const ids = data.forges.filter((f) => f.connected).map((f) => f.id);
     if (ids.length > 0) {
-      void revalidateInBackground(root, ids);
+      void revalidateInBackground(ids);
     }
   }
 }
@@ -238,8 +264,11 @@ async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSign
 }
 
 /** Re-probe every connected account in parallel; on completion, re-fetch
- *  /api/forges and re-paint with the post-probe state. */
-async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise<void> {
+ *  /api/forges and bump state with the post-probe results. The paint
+ *  effect surgically reconciles the panel; an open add-account slot is
+ *  preserved as a non-keyed sibling so the user's mid-interaction is
+ *  not disrupted. */
+async function revalidateInBackground(ids: string[]): Promise<void> {
   // Cancel any prior in-flight revalidation; we always want the most
   // recent paint's state to win.
   revalidateController?.abort();
@@ -252,59 +281,105 @@ async function revalidateInBackground(root: HTMLElement, ids: string[]): Promise
   if (signal.aborted) return;
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
   if (signal.aborted) return;
-  if (data != null && document.body.contains(root)) {
-    const [localNames, reposByForge] = await Promise.all([
-      refreshLocalNames(signal),
-      refreshReposByForge(data.forges, signal),
-    ]);
-    if (signal.aborted) return;
-    if (myGen !== renderGen) return;
-    lastLocalNames = localNames;
-    lastReposByForge = reposByForge;
-    // Defer re-paint if a forge slot is open (user is mid-interaction).
-    if (root.querySelector("[data-forge-slot][data-mode]") !== null) {
-      pendingRevalidate = { root, data };
-      return;
-    }
-    paintForgesData(root, data);
-  }
+  if (data === null || data === undefined) return;
+  const [localNames, reposByForge] = await Promise.all([
+    refreshLocalNames(signal),
+    refreshReposByForge(data.forges, signal),
+  ]);
+  if (signal.aborted) return;
+  if (myGen !== renderGen) return;
+  lastLocalNames = localNames;
+  lastReposByForge = reposByForge;
+  lastForgesData = data;
+  oauthByKind = data.oauth ?? {};
+  bumpState();
 }
 
-/** Paint the data into the root element. Pure rendering — no API calls. */
-function paintForgesData(root: HTMLElement, data: ForgesListResponse): void {
+// --- Effect-driven paint ----------------------------------------------
+
+/** Called by the paint effect on every state change. Reconciles the
+ *  panel root to match the latest forges/repos/local-names state. */
+function paintIntoRoot(root: HTMLElement): void {
   // Drain per-render cleanup from previous paint.
   for (const fn of signOutUnbinds) fn();
   signOutUnbinds = [];
   for (const fn of patFormUnbinds) fn();
   patFormUnbinds = [];
 
-  // Cache OAuth availability for use in add-account pane.
-  oauthByKind = data.oauth ?? {};
-
-  // Bucket accounts by kind.
-  const byKind = new Map<ForgeKind, ConfiguredForge[]>();
-  for (const k of ALL_KINDS) byKind.set(k, []);
-  for (const f of data.forges) {
-    const list = byKind.get(f.kind);
-    if (list !== undefined) list.push(f);
+  if (lastForgesError) {
+    paintErrorState(root);
+    return;
   }
+  if (lastForgesData === null) return;
 
-  root.replaceChildren();
-  for (const kind of ALL_KINDS) {
-    if (!data.kinds.includes(kind)) continue;
-    root.appendChild(renderKindSection(kind, byKind.get(kind) ?? []));
-  }
+  // Clear any leftover error UI before reconciling kind sections.
+  const errEl = root.querySelector(":scope > .forge-error");
+  errEl?.remove();
+
+  const supportedKinds = ALL_KINDS.filter((k) => lastForgesData!.kinds.includes(k));
+  reconcile(root, supportedKinds, kindSpec);
 }
 
-/** One section per supported forge kind. */
-function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLElement {
+function paintErrorState(root: HTMLElement): void {
+  // Remove existing keyed kind sections first; the error UI stands alone.
+  for (const child of [...root.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") !== null) child.remove();
+  }
+  if (root.querySelector(":scope > .forge-error") !== null) return; // already shown
+  const errDiv = document.createElement("div");
+  errDiv.className = "forge-error";
+  errDiv.textContent = "Failed to load forges.";
+  const retryBtn = document.createElement("button");
+  retryBtn.type = "button";
+  retryBtn.className = "btn-small";
+  retryBtn.textContent = "Retry";
+  retryBtn.addEventListener("click", () => { void renderForgesPanel(); });
+  errDiv.appendChild(retryBtn);
+  root.appendChild(errDiv);
+}
+
+// --- Reconcile specs --------------------------------------------------
+
+const kindSpec: ReconcileSpec<ForgeKind> = {
+  key: (k) => k,
+  mount: (k) => buildKindSection(k),
+  update: (el, k) => updateKindSection(el, k),
+};
+
+const accountSpec: ReconcileSpec<ConfiguredForge> = {
+  key: (a) => a.id,
+  mount: (a) => {
+    const li = document.createElement("li");
+    li.className = "forge-account-row";
+    li.dataset["id"] = a.id;
+    paintAccountRow(li, a);
+    return li;
+  },
+  update: (li, a) => paintAccountRow(li, a),
+};
+
+const repoSpec: ReconcileSpec<Repo> = {
+  key: (r) => r.name,
+  mount: (r) => renderRepoRow(r),
+  update: (li, r) => {
+    const cloned = lastLocalNames.has(r.name);
+    li.querySelector(":scope > .forge-account-repo-state")?.replaceWith(renderRepoState(cloned));
+    li.querySelector(":scope > .forge-account-repo-actions")?.replaceWith(renderRepoActions(r, cloned));
+  },
+};
+
+// --- Kind section -----------------------------------------------------
+
+/** Build a fresh section element for one forge kind. The header,
+ *  account list container, and slot are static (their identity is
+ *  preserved across re-paints); the account list is reconciled on
+ *  every update. */
+function buildKindSection(kind: ForgeKind): HTMLElement {
   const section = document.createElement("section");
   section.className = "forge-kind-section";
   section.dataset["kind"] = kind;
 
-  // Header row: badge + title on the left, "+" button on the right
-  // (vertically centered). The "+" opens a unified pane offering
-  // both OAuth (when supported) and PAT — see onAddAccount.
+  // Header: badge + title + add button.
   const header = document.createElement("header");
   header.className = "forge-kind-header";
   const badge = document.createElement("span");
@@ -328,18 +403,15 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
 
   section.appendChild(header);
 
-  // Account list: only render when there are accounts. An empty list
-  // shows nothing (no "No accounts connected" filler) — the section
-  // header alone with the + button is enough invitation.
-  if (accounts.length > 0) {
-    const list = document.createElement("ul");
-    list.className = "forge-account-list";
-    for (const a of accounts) list.appendChild(renderAccountRow(a));
-    section.appendChild(list);
-  }
+  // Always present an account list container so reconcile has a
+  // deterministic mount point. Empty list renders nothing.
+  const list = document.createElement("ul");
+  list.className = "forge-account-list";
+  section.appendChild(list);
+  reconcile(list, accountsForKind(kind), accountSpec);
 
   // Inline mount point for the add-account pane (OAuth + PAT) and
-  // status messages.
+  // status messages. Non-keyed sibling — survives reconcile.
   const slot = document.createElement("div");
   slot.className = "forge-kind-slot";
   slot.dataset["forgeSlot"] = kind;
@@ -348,16 +420,46 @@ function renderKindSection(kind: ForgeKind, accounts: ConfiguredForge[]): HTMLEl
   return section;
 }
 
-/** Slim row for one connected account. */
-function renderAccountRow(a: ConfiguredForge): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "forge-account-row";
-  li.dataset["id"] = a.id;
-  if (!a.connected) li.classList.add("forge-account-row-error");
+function updateKindSection(section: HTMLElement, kind: ForgeKind): void {
+  const list = section.querySelector<HTMLElement>(":scope > .forge-account-list");
+  if (list === null) return;
+  reconcile(list, accountsForKind(kind), accountSpec);
+}
 
-  // Top row: identity (left) + actions (right). Same columns as
-  // before; just wrapped in a div so the collapsible repos footer
-  // below it stacks on its own row.
+function accountsForKind(kind: ForgeKind): ConfiguredForge[] {
+  if (lastForgesData === null) return [];
+  return lastForgesData.forges.filter((f) => f.kind === kind);
+}
+
+// --- Account row ------------------------------------------------------
+
+/** Paint or repaint the contents of one account <li>. Used both as
+ *  the spec's mount body (li freshly created, empty) and as update
+ *  (li already in DOM, may have stale children). */
+function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
+  li.classList.toggle("forge-account-row-error", !a.connected);
+
+  // Top row: identity + actions.
+  const newTop = renderAccountTopRow(a);
+  const oldTop = li.querySelector<HTMLElement>(":scope > .forge-account-row-top");
+  if (oldTop !== null) oldTop.replaceWith(newTop);
+  else li.appendChild(newTop);
+
+  // Repos details (only when connected and we have repo data).
+  const oldDetails = li.querySelector<HTMLElement>(":scope > .forge-account-repos");
+  const repos = lastReposByForge[a.id];
+  if (a.connected && repos !== undefined) {
+    if (oldDetails === null) {
+      li.appendChild(buildAccountReposDetails(a, repos));
+    } else {
+      updateAccountReposDetails(oldDetails, a, repos);
+    }
+  } else {
+    oldDetails?.remove();
+  }
+}
+
+function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   const top = document.createElement("div");
   top.className = "forge-account-row-top";
 
@@ -372,9 +474,9 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   } else {
     // No identity data yet (this is the first paint right after a
     // PAT submit / OAuth complete; the background probe hasn't
-    // populated email or username yet). Show a skeleton bar
-    // instead of falling back to the host string — the host is
-    // already shown on the meta line below.
+    // populated email or username yet). Show a skeleton bar instead
+    // of falling back to the host string — the host is already shown
+    // on the meta line below.
     primary.classList.add("skeleton", "forge-account-primary-skeleton");
     primary.setAttribute("aria-label", "Loading account identity…");
   }
@@ -419,31 +521,15 @@ function renderAccountRow(a: ConfiguredForge): HTMLElement {
   actions.appendChild(out);
 
   top.appendChild(actions);
-  li.appendChild(top);
-
-  // Collapsible repos footer. Defaults closed; freshly-added accounts
-  // open automatically (via expandOnNextPaint set populated on
-  // successful add).
-  if (a.connected) {
-    const reposEl = renderAccountRepos(a);
-    if (reposEl !== null) li.appendChild(reposEl);
-  }
-
-  return li;
+  return top;
 }
 
-/** Render the per-account collapsible list of repos accessible to
- *  this forge. Summary line: "X repos, Y cloned locally". Each repo
- *  row carries Clone / Trash / Open ↗ actions depending on its
- *  cloned state. Returns null if we have no repo data yet (still
- *  loading) so the row stays compact. */
-function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
-  const repos = lastReposByForge[a.id];
-  if (repos === undefined) return null;
-  const cloned = repos.filter((r) => lastLocalNames.has(r.name)).length;
+// --- Account repos (details) ------------------------------------------
 
+function buildAccountReposDetails(a: ConfiguredForge, repos: Repo[]): HTMLElement {
   const details = document.createElement("details");
   details.className = "forge-account-repos";
+  details.dataset["accountId"] = a.id;
   if (expandOnNextPaint.has(a.id)) {
     details.open = true;
     expandOnNextPaint.delete(a.id);
@@ -451,50 +537,13 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
 
   const summary = document.createElement("summary");
   summary.className = "forge-account-repos-summary";
-  const total = repos.length;
   summary.innerHTML = `
     <span class="forge-account-repos-chevron" aria-hidden="true">▸</span>
     <span class="forge-account-repos-icon" aria-hidden="true">${ICON_REPO}</span>
-    <span class="forge-account-repos-label">${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally</span>
+    <span class="forge-account-repos-label"></span>
   `;
-
-  // Right-aligned actions inside the summary. Click stops
-  // propagation so they don't toggle the <details>.
-  const cloneable = repos.filter((r) =>
-    !lastLocalNames.has(r.name) &&
-    typeof r.clone_url === "string" && r.clone_url !== "");
-  const cloned_repos = repos.filter((r) => lastLocalNames.has(r.name));
-
-  if (cloneable.length > 0) {
-    const cloneAllBtn = document.createElement("button");
-    cloneAllBtn.type = "button";
-    cloneAllBtn.className = "btn-small forge-account-repos-clone-all";
-    cloneAllBtn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
-    cloneAllBtn.setAttribute("data-tooltip", `Clone every uncloned repo on this account (${cloneable.length})`);
-    cloneAllBtn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
-    cloneAllBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      void withAsyncFeedback(cloneAllBtn, () => cloneAllForAccount(cloneable, cloneAllBtn));
-    });
-    summary.appendChild(cloneAllBtn);
-  }
-
-  if (cloned_repos.length > 0) {
-    const deleteAllBtn = document.createElement("button");
-    deleteAllBtn.type = "button";
-    deleteAllBtn.className = "btn-small btn-danger forge-account-repos-delete-all";
-    deleteAllBtn.innerHTML = `${ICON_TRASH}<span>${cloned_repos.length}</span>`;
-    deleteAllBtn.setAttribute("data-tooltip", `Remove every locally-cloned repo on this account (${cloned_repos.length})`);
-    deleteAllBtn.setAttribute("aria-label", `Delete ${cloned_repos.length} local clones`);
-    deleteAllBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      void withAsyncFeedback(deleteAllBtn, () => deleteAllForAccount(cloned_repos, deleteAllBtn));
-    });
-    summary.appendChild(deleteAllBtn);
-  }
-
+  setAccountSummaryLabel(summary, repos);
+  refreshAccountSummaryButtons(summary, repos);
   details.appendChild(summary);
 
   if (repos.length === 0) {
@@ -507,18 +556,122 @@ function renderAccountRepos(a: ConfiguredForge): HTMLElement | null {
 
   const list = document.createElement("ul");
   list.className = "forge-account-repos-list";
-  // Sort: cloned first, then alpha by full_name.
-  const sorted = [...repos].sort((x, y) => {
+  details.appendChild(list);
+  reconcile(list, sortRepos(repos), repoSpec);
+  return details;
+}
+
+function updateAccountReposDetails(details: HTMLElement, a: ConfiguredForge, repos: Repo[]): void {
+  if (expandOnNextPaint.has(a.id)) {
+    (details as HTMLDetailsElement).open = true;
+    expandOnNextPaint.delete(a.id);
+  }
+  const summary = details.querySelector<HTMLElement>(":scope > .forge-account-repos-summary");
+  if (summary !== null) {
+    setAccountSummaryLabel(summary, repos);
+    refreshAccountSummaryButtons(summary, repos);
+  }
+
+  // Empty-state placeholder vs list <ul>.
+  const emptyEl = details.querySelector<HTMLElement>(":scope > .forge-account-repos-empty");
+  let list = details.querySelector<HTMLElement>(":scope > .forge-account-repos-list");
+  if (repos.length === 0) {
+    list?.remove();
+    if (emptyEl === null) {
+      const none = document.createElement("div");
+      none.className = "forge-account-repos-empty";
+      none.textContent = "No repositories accessible to this account.";
+      details.appendChild(none);
+    }
+    return;
+  }
+  emptyEl?.remove();
+  if (list === null) {
+    list = document.createElement("ul");
+    list.className = "forge-account-repos-list";
+    details.appendChild(list);
+  }
+  reconcile(list, sortRepos(repos), repoSpec);
+}
+
+function sortRepos(repos: Repo[]): Repo[] {
+  // Cloned first, then alpha by full_name. Stable for surgical
+  // updates: a single repo flipping cloned-state moves between
+  // groups, but the rest stay put. Reconcile preserves identity
+  // during the move.
+  return [...repos].sort((x, y) => {
     const xc = lastLocalNames.has(x.name);
     const yc = lastLocalNames.has(y.name);
     if (xc !== yc) return xc ? -1 : 1;
     return x.full_name.localeCompare(y.full_name);
   });
-  for (const r of sorted) list.appendChild(renderRepoRow(r));
-  details.appendChild(list);
-
-  return details;
 }
+
+function setAccountSummaryLabel(summary: HTMLElement, repos: Repo[]): void {
+  const total = repos.length;
+  const cloned = repos.filter((r) => lastLocalNames.has(r.name)).length;
+  const label = summary.querySelector<HTMLElement>(".forge-account-repos-label");
+  if (label !== null) {
+    label.textContent = `${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally`;
+  }
+}
+
+/** Rebuild cloneAll/deleteAll buttons in the summary. Skips a button
+ *  that is currently mid-async (`aria-busy="true"`) so a
+ *  withAsyncFeedback loop's textContent updates don't get clobbered;
+ *  the next bumpState after the action completes will refresh it. */
+function refreshAccountSummaryButtons(summary: HTMLElement, repos: Repo[]): void {
+  const cloneable = repos.filter((r) =>
+    !lastLocalNames.has(r.name) &&
+    typeof r.clone_url === "string" && r.clone_url !== "");
+  const clonedRepos = repos.filter((r) => lastLocalNames.has(r.name));
+
+  const oldCloneAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
+  if (oldCloneAll === null || oldCloneAll.getAttribute("aria-busy") !== "true") {
+    oldCloneAll?.remove();
+    if (cloneable.length > 0) summary.appendChild(makeCloneAllButton(cloneable));
+  }
+
+  const oldDeleteAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
+  if (oldDeleteAll === null || oldDeleteAll.getAttribute("aria-busy") !== "true") {
+    oldDeleteAll?.remove();
+    if (clonedRepos.length > 0) summary.appendChild(makeDeleteAllButton(clonedRepos));
+  }
+}
+
+function makeCloneAllButton(cloneable: Repo[]): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-small forge-account-repos-clone-all";
+  btn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
+  btn.setAttribute("data-tooltip", `Clone every uncloned repo on this account (${cloneable.length})`);
+  btn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn))
+      .then(() => bumpState());
+  });
+  return btn;
+}
+
+function makeDeleteAllButton(clonedRepos: Repo[]): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-small btn-danger forge-account-repos-delete-all";
+  btn.innerHTML = `${ICON_TRASH}<span>${clonedRepos.length}</span>`;
+  btn.setAttribute("data-tooltip", `Remove every locally-cloned repo on this account (${clonedRepos.length})`);
+  btn.setAttribute("aria-label", `Delete ${clonedRepos.length} local clones`);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn))
+      .then(() => bumpState());
+  });
+  return btn;
+}
+
+// --- Repo row ---------------------------------------------------------
 
 /** One row inside an account's collapsible repo list. */
 function renderRepoRow(repo: Repo): HTMLElement {
@@ -526,19 +679,11 @@ function renderRepoRow(repo: Repo): HTMLElement {
   li.className = "forge-account-repo-row";
   const cloned = lastLocalNames.has(repo.name);
 
-  // State indicator: pulsing green dot if cloned, globe if remote-only.
-  const state = document.createElement("span");
-  state.className = "forge-account-repo-state";
-  if (cloned) {
-    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" data-tooltip="Cloned and tracked"></span>`;
-  } else {
-    state.innerHTML = ICON_GLOBE;
-    state.setAttribute("data-tooltip", "Remote, not cloned");
-    state.setAttribute("aria-label", "Remote, not cloned");
-  }
-  li.appendChild(state);
+  li.appendChild(renderRepoState(cloned));
 
-  // Identity
+  // Identity (full_name + tags). Doesn't change between cloned-state
+  // flips so we can rebuild it on mount only — it's not part of the
+  // surgical update path.
   const idEl = document.createElement("div");
   idEl.className = "forge-account-repo-identity";
   const name = document.createElement("span");
@@ -558,7 +703,28 @@ function renderRepoRow(repo: Repo): HTMLElement {
   }
   li.appendChild(idEl);
 
-  // Actions
+  li.appendChild(renderRepoActions(repo, cloned));
+  return li;
+}
+
+/** State cell: pulsing green dot if cloned, globe if remote-only.
+ *  Pure factory — no DOM lookups. Used for both first-paint and the
+ *  spec.update path. */
+function renderRepoState(cloned: boolean): HTMLElement {
+  const state = document.createElement("span");
+  state.className = "forge-account-repo-state";
+  if (cloned) {
+    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" data-tooltip="Cloned and tracked"></span>`;
+  } else {
+    state.innerHTML = ICON_GLOBE;
+    state.setAttribute("data-tooltip", "Remote, not cloned");
+    state.setAttribute("aria-label", "Remote, not cloned");
+  }
+  return state;
+}
+
+/** Actions cell: Open ↗ + (Trash if cloned, else Clone). */
+function renderRepoActions(repo: Repo, cloned: boolean): HTMLElement {
   const actions = document.createElement("span");
   actions.className = "forge-account-repo-actions";
 
@@ -593,34 +759,34 @@ function renderRepoRow(repo: Repo): HTMLElement {
     clone.setAttribute("data-tooltip", "Clone into workspace");
     clone.setAttribute("aria-label", "Clone into workspace");
     clone.addEventListener("click", () => {
-      void withAsyncFeedback(clone, () => cloneRepo(repo.clone_url ?? ""));
+      void withAsyncFeedback(clone, () => cloneRepo(repo));
     });
     actions.appendChild(clone);
   }
 
-  li.appendChild(actions);
-  return li;
+  return actions;
 }
 
-async function cloneRepo(url: string): Promise<void> {
+// --- Action handlers (mutate state + bumpState; effect reconciles) ----
+
+async function cloneRepo(repo: Repo): Promise<void> {
+  const url = repo.clone_url ?? "";
   if (url === "") throw new Error("no clone URL");
   const res = await cloneRepoAction.dispatch({ url });
-  if (res === null) {
-    throw new Error("clone failed");
-  }
-  if (res.error !== undefined && res.error !== "") {
-    throw new Error(res.error);
-  }
-  await renderForgesPanel({ revalidate: false });
+  if (res === null) throw new Error("clone failed");
+  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+  lastLocalNames.add(repo.name);
+  bumpState();
 }
 
 /** Clone every uncloned remote repo accessible to one account.
- *  Iterates sequentially (avoids hammering the workspace's git-clone
- *  capacity and keeps failures attributable to a single repo).
- *  Visible feedback rides on the button label "Cloning N/total…".
- *  Per-repo failures don't abort the batch — partial success > none.
- *  After the batch we trigger a single renderForgesPanel so each
- *  repo row redraws with its new state. */
+ *  Iterates sequentially (avoids hammering git-clone capacity and
+ *  keeps failures attributable). Each successful clone bumps state,
+ *  which surgically updates the affected row + summary count without
+ *  rebuilding the whole panel. The cloneAll button itself is left
+ *  alone mid-loop (aria-busy guard) so withAsyncFeedback's progress
+ *  is preserved; it's refreshed after the loop via the .then() on
+ *  the click handler. */
 async function cloneAllForAccount(
   candidates: Repo[],
   btn: HTMLButtonElement,
@@ -631,19 +797,23 @@ async function cloneAllForAccount(
   for (const repo of candidates) {
     btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
     const url = repo.clone_url ?? "";
-    if (url !== "") {
-      const res = await cloneRepoAction.dispatch({ url });
-      if (res === null) { failed++; }
-      else if (res.error !== undefined && res.error !== "") { failed++; }
-    } else {
+    if (url === "") {
       failed++;
+      done++;
+      continue;
+    }
+    const res = await cloneRepoAction.dispatch({ url });
+    if (res === null || (res.error !== undefined && res.error !== "")) {
+      failed++;
+    } else {
+      lastLocalNames.add(repo.name);
+      bumpState();
     }
     done++;
   }
   if (failed > 0) {
     toastError(`Clone failed for ${String(failed)} of ${String(candidates.length)} repos`);
   }
-  await renderForgesPanel({ revalidate: false });
 }
 
 /** Remove the local copy of every cloned repo accessible to one
@@ -666,10 +836,12 @@ async function deleteAllForAccount(
   for (const repo of candidates) {
     btn.textContent = `Deleting ${done + 1}/${candidates.length}…`;
     const res = await deleteLocalAction.dispatch({ repoName: repo.name });
-    void res; // framework toasts on failure
+    if (res !== null && (res.error === undefined || res.error === "")) {
+      lastLocalNames.delete(repo.name);
+      bumpState();
+    }
     done++;
   }
-  await renderForgesPanel({ revalidate: false });
 }
 
 async function removeLocalRepo(repo: Repo): Promise<void> {
@@ -680,21 +852,19 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
   );
   if (!ok) return;
 
-  // Optimistic: flip clone state to not-cloned and re-render.
-  // skipRepos prevents refreshLocalNames from overwriting our mutation.
+  // Optimistic: flip clone state and bump; effect reconciles surgically.
   lastLocalNames.delete(repo.name);
-  await renderForgesPanel({ revalidate: false, skipRepos: true });
+  bumpState();
 
   const res = await deleteLocalAction.dispatch({ repoName: repo.name });
   if (res === null || (res.error !== undefined && res.error !== "")) {
-    // Rollback: restore clone state and re-render (full sync).
+    // Rollback.
     lastLocalNames.add(repo.name);
-    await renderForgesPanel({ revalidate: false });
+    bumpState();
     const msg = res?.error ?? "Couldn't remove local repo";
     throw new Error(msg);
   }
-  // Success: full re-render to sync from server truth.
-  await renderForgesPanel({ revalidate: false });
+  // Success: optimistic state is already correct.
 }
 
 // --- Add-account flow dispatch ---
@@ -769,12 +939,6 @@ function showAddPane(section: HTMLElement, kind: ForgeKind): void {
 function closeSlot(slot: HTMLElement): void {
   slot.replaceChildren();
   delete slot.dataset["mode"];
-  // Flush deferred revalidation paint now that the slot is closed.
-  if (pendingRevalidate !== null) {
-    const { root, data } = pendingRevalidate;
-    pendingRevalidate = null;
-    paintForgesData(root, data);
-  }
 }
 
 function slotOf(section: HTMLElement): HTMLElement {

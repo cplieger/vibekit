@@ -27,6 +27,7 @@ export interface AppSettings {
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
   shell_policy?: "no_commands" | "safe_commands" | "all_commands";
+  model_effort?: { last_model: string; effort: string };
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;

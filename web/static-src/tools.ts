@@ -13,6 +13,11 @@ import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
 import { installTools, saveTools, seedMcp, loadTools as loadToolsAction } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
+import { reconcile } from "./reconcile.js";
+
+type ToolEntry =
+  | { kind: "label"; sec: string; isBuiltin: boolean }
+  | { kind: "row"; sec: string; name: string; entry: Record<string, unknown> | undefined; isBuiltin: boolean };
 
 type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
 
@@ -127,29 +132,54 @@ class ToolsManager {
 
   private renderToolsList(): void {
     const container = $.toolsList;
-    container.replaceChildren();
     const sections = ["runtimes", "binary", "go", "npm", "pip", "cargo", "apt", "custom", "builtin"];
+
+    // Flatten groups + rows into a single keyed sequence so reconcile
+    // can patch in place across reloads (no flash of empty list).
+    const flat: ToolEntry[] = [];
     for (const sec of sections) {
       const entries = this.toolsData[sec];
       if (entries === undefined || Object.keys(entries).length === 0) continue;
-      this.renderToolGroup(container, sec, entries);
+      const isBuiltin = sec === "builtin";
+      flat.push({ kind: "label", sec, isBuiltin });
+      for (const name of Object.keys(entries).sort()) {
+        flat.push({ kind: "row", sec, name, entry: entries[name], isBuiltin });
+      }
     }
-    if (container.children.length === 0) {
-      container.innerHTML = '<div class="list-empty">No tools configured</div>';
-    }
-  }
 
-  private renderToolGroup(
-    container: HTMLDivElement, sec: string, entries: Record<string, Record<string, unknown>>,
-  ): void {
-    const isBuiltin = sec === "builtin";
-    const label = document.createElement("div");
-    label.className = "list-group-label";
-    label.textContent = isBuiltin ? "base os" : sec;
-    container.appendChild(label);
-    for (const name of Object.keys(entries).sort()) {
-      container.appendChild(this.renderToolRow(sec, name, entries[name], isBuiltin));
+    // Drop any non-keyed empty-state placeholder before reconciling.
+    for (const child of [...container.children]) {
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
     }
+
+    if (flat.length === 0) {
+      container.replaceChildren();
+      container.innerHTML = '<div class="list-empty">No tools configured</div>';
+      return;
+    }
+
+    reconcile(container, flat, {
+      key: (e: ToolEntry) => e.kind === "label" ? `label:${e.sec}` : `row:${e.sec}:${e.name}`,
+      mount: (e: ToolEntry) => {
+        if (e.kind === "label") {
+          const label = document.createElement("div");
+          label.className = "list-group-label";
+          label.textContent = e.isBuiltin ? "base os" : e.sec;
+          return label;
+        }
+        return this.renderToolRow(e.sec, e.name, e.entry, e.isBuiltin);
+      },
+      update: (row, e: ToolEntry) => {
+        if (e.kind !== "row") return;
+        // Keep version/description text in sync in case the entry changed.
+        const meta = row.querySelector(".list-row-meta") as HTMLSpanElement | null;
+        if (meta !== null) {
+          meta.textContent = e.isBuiltin
+            ? (e.entry?.["description"] as string | undefined) ?? ""
+            : (e.entry?.["version"] as string | undefined) ?? "";
+        }
+      },
+    });
   }
 
   private renderToolRow(

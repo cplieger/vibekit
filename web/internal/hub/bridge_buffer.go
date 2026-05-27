@@ -52,10 +52,8 @@ func (h *Hub) emitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, res
 			Role:      api.RoleAssistant,
 			Ts:        time.Now().UnixMilli(),
 			Content:   buf.Content.String(),
+			Reasoning: buf.Reasoning.String(),
 			ToolCalls: buf.ToolCalls,
-		}
-		if buf.IsReasoning {
-			msg.OperationType = api.OperationTypeReasoning
 		}
 		if err := h.chatStore.AppendMessage(ctx, chatID, &msg); err != nil {
 			slog.Error("persist assistant turn", "chat_id", chatID, "error", err)

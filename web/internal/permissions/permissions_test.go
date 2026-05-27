@@ -12,13 +12,13 @@ import (
 	cfgsettings "vibekit/internal/settings"
 )
 
-// writeSettings writes a settings.json file in a fresh temp dir and
+// writeSettings writes a config.json file in a fresh temp dir and
 // returns its config dir path. Keeps the tests fast and isolated.
 func writeSettings(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if body != "" {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
 			t.Fatalf("write settings: %v", err)
 		}
 	}
@@ -32,7 +32,7 @@ func TestArgs_FailModes(t *testing.T) {
 		name     string
 		settings string // JSON body; "" means no file written
 		corrupt  bool   // true → write invalid JSON directly
-		noFile   bool   // true → use TempDir with no settings.json
+		noFile   bool   // true → use TempDir with no config.json
 		want     []string
 	}{
 		{"MissingSettingsFallsOpenToTrustAll", "", false, true, []string{"--trust-all-tools"}},
@@ -53,7 +53,7 @@ func TestArgs_FailModes(t *testing.T) {
 				dir = t.TempDir()
 			case tt.corrupt:
 				dir = t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tt.settings), 0o600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.settings), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			default:
@@ -317,7 +317,7 @@ func TestSupervisedDefault(t *testing.T) {
 		name     string
 		settings string // JSON body; "" means no file written
 		useEmpty bool   // true → pass "" as configDir (empty-dir short-circuit)
-		noFile   bool   // true → use TempDir with no settings.json
+		noFile   bool   // true → use TempDir with no config.json
 		want     bool
 	}{
 		{"EmptyConfigDirReturnsFalse", "", true, false, false},
@@ -349,7 +349,7 @@ func TestSupervisedDefault(t *testing.T) {
 // --- Non-ENOENT settings read-error fail-mode (test-u8c1-5) ---
 
 func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
-	// Regression: when settings.json exists but cannot be read
+	// Regression: when config.json exists but cannot be read
 	// (here simulated by making it a directory, which returns
 	// EISDIR — a non-ENOENT error), every reader must land on
 	// its documented fail-mode. The asymmetry is deliberate:
@@ -360,7 +360,7 @@ func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
 	// silently grant shell auto-approval or disable the
 	// Supervised gate.
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "settings.json"), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -391,8 +391,8 @@ func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
 
 func TestReadSettingsBytes_EmptyConfigDirReturnsNil(t *testing.T) {
 	// Regression (ops-perm-05): empty configDir must short-circuit
-	// to (nil, nil) instead of filepath.Join("", "settings.json")
-	// → "settings.json" which would read the process's PWD. Every
+	// to (nil, nil) instead of filepath.Join("", "config.json")
+	// → "config.json" which would read the process's PWD. Every
 	// reader built on cfgsettings.ReadBytes then picks its own
 	// fallback.
 	data, err := cfgsettings.ReadBytes(context.Background(), "")

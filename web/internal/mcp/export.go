@@ -110,12 +110,19 @@ func stdioBuilder(s *Server) acpServer {
 func remoteBuilder(s *Server) acpServer {
 	entry := acpServer{
 		"type":    string(s.Transport),
-		jsonKeyName:    s.Name,
+		jsonKeyName: s.Name,
 		"url":     s.URL,
 		"headers": pairsArray(s.Headers),
 	}
 	if len(s.DisabledTools) > 0 {
 		entry["disabledTools"] = s.DisabledTools
+	}
+	// kiro-cli 2.3+ accepts a pre-registered OAuth client ID via
+	// the `oauth.clientId` field. Required for HTTP MCP servers that
+	// don't support Dynamic Client Registration (Slack, GitHub, Figma).
+	// Empty string falls back to DCR.
+	if s.OAuthClientID != "" {
+		entry["oauth"] = map[string]any{"clientId": s.OAuthClientID}
 	}
 	return entry
 }

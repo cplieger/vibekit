@@ -1,14 +1,23 @@
 // ---------------------------------------------------------------------------
-// DOM renderer with per-chunk animation hook.
+// DOM renderer for smd-parser.
 //
-// Each text fragment emitted by the parser is wrapped in a
-// `<span data-vk-stream>` so CSS can fade it in as it mounts. The
-// parser never rewrites existing DOM (append-only), so spans fade in
-// once and stay put — no flicker from re-parsing partial tokens.
+// The renderer supports two streaming concerns:
 //
-// On `finalize(animated = false)` the spans unwrap (turn-end, history
-// replay) so long messages don't carry thousands of wrapper elements
-// forever. The renderer is reusable across streams: reset via `nodes`/`index`.
+//   1. Per-block animation. When a top-level block closes (paragraph,
+//      pre/code, heading, list, blockquote, table), the renderer fires
+//      `onBlockComplete(element)`. Callers tag the element with
+//      `data-vk-block-enter` so a single CSS rule fades it in. This is
+//      cheaper and more semantic than the older per-chunk
+//      `<span data-vk-stream>` approach (which wrapped every text
+//      fragment regardless of structure).
+//
+//   2. Inline decoration. Same hook lets callers run code-block
+//      syntax highlighting + path linkification per block as it
+//      arrives, so users see colored code and clickable paths during
+//      streaming, not only after `parser_end`.
+//
+// The renderer doesn't own animation policy or decoration — it
+// exposes the structural events and lets callers decide.
 // ---------------------------------------------------------------------------
 
 import {
@@ -28,8 +37,7 @@ export type { Renderer } from "./smd-parser-types.js";
 export interface DomRendererData {
   nodes: (Element | null)[];
   index: number;
-  animate: boolean;
-  streamSpans: HTMLSpanElement[];
+  onBlockComplete: ((block: HTMLElement) => void) | undefined;
 }
 
 function makeEl(tag: string): HTMLElement {
@@ -67,7 +75,6 @@ function add_token_dom(data: DomRendererData, type: Token): void {
 
   if (type === DOCUMENT) return;
 
-  // Special cases with non-trivial logic
   switch (type) {
     case CHECKBOX: {
       const cb = makeEl("input") as HTMLInputElement;
@@ -79,10 +86,6 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     }
     case CODE_BLOCK:
     case CODE_FENCE: {
-      // <pre class="code"> ... <code>. The LANG attr (when set by the
-      // parser) lands on the <code> via set_attr_dom as class="language-X"
-      // so the existing code-blocks.ts decorator picks it up. The pre
-      // gets a plain "code" class for CSS targeting.
       const pre = parent.appendChild(makeEl("pre"));
       pre.className = "code";
       const slot = makeEl("code");
@@ -91,10 +94,6 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     }
     case LINK:
     case RAW_URL: {
-      // Match render.ts link semantics: external-safe opener with
-      // target="_blank" rel="noopener". LINK's href arrives via
-      // set_attr_dom with HREF. RAW_URL's href is the element text
-      // itself — set_attr_dom sets HREF there too for the link variant.
       const a = makeEl("a") as HTMLAnchorElement;
       a.target = "_blank";
       a.rel = "noopener";
@@ -125,27 +124,33 @@ function add_token_dom(data: DomRendererData, type: Token): void {
     }
   }
 
-  // Simple token-to-tag mapping
   const tag = TOKEN_TAG_MAP[type];
   if (tag === undefined) return;
   data.nodes[++data.index] = parent.appendChild(makeEl(tag));
 }
 
 function end_token_dom(data: DomRendererData): void {
+  const closing = data.nodes[data.index];
   data.index -= 1;
+  // If decrementing brought us back to the root (index 0), the node
+  // that just closed was a top-level block. Fire the callback so
+  // callers can decorate / animate the freshly-completed block.
+  // Code blocks are special: the "closing" node is the inner <code>,
+  // but the visible block is its <pre> parent — surface that instead.
+  if (data.index === 0 && closing !== null && closing !== undefined && data.onBlockComplete !== undefined) {
+    const tag = closing.tagName;
+    const target = tag === "CODE" && closing.parentElement?.tagName === "PRE"
+      ? closing.parentElement
+      : closing as HTMLElement;
+    data.onBlockComplete(target);
+  }
 }
 
 function add_text_dom(data: DomRendererData, text: string): void {
   const parent = data.nodes[data.index];
   if (parent === null || parent === undefined) return;
 
-  // Inside code/pre/annotation blocks, don't wrap — syntax highlighters
-  // and monospace formatting depend on seeing plain text.
   const tag = (parent as Element).tagName;
-  if (tag === "CODE" || tag === "PRE" || tag === "SCRIPT" || tag === "STYLE") {
-    parent.appendChild(document.createTextNode(text));
-    return;
-  }
 
   // IMG is void — text inside an image node is the alt text per
   // markdown syntax `![alt](url)`. Append to the alt attribute rather
@@ -156,20 +161,9 @@ function add_text_dom(data: DomRendererData, text: string): void {
     return;
   }
 
-  if (!data.animate) {
-    parent.appendChild(document.createTextNode(text));
-    return;
-  }
-
-  // Wrap every chunk of text in an animated span. The CSS animation
-  // fires once on mount (via animation-fill-mode: both). Newly-arrived
-  // chunks fade in over 200ms; already-mounted spans are never
-  // touched, so no flicker on subsequent flushes.
-  const span = document.createElement("span");
-  span.setAttribute("data-vk-stream", "");
-  span.appendChild(document.createTextNode(text));
-  parent.appendChild(span);
-  data.streamSpans.push(span);
+  // Plain text node — no per-chunk wrapper. Per-block animation handled
+  // via onBlockComplete.
+  parent.appendChild(document.createTextNode(text));
 }
 
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
@@ -177,16 +171,10 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if (node === null || node === undefined) return;
   const attrName = attr_to_html_attr(attr);
   if (attrName === "") return;
-  // Links/images: treat URLs defensively — strip javascript:/data: to
-  // match the safety posture of the rest of vibekit's markdown
-  // rendering. Same logic as render.ts's extractURL.
   if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
     (node as Element).setAttribute(attrName, "#");
     return;
   }
-  // Code-fence language: the parser emits LANG → "class" via attr_to_html_attr.
-  // highlight.js and decorateCodeBlocks expect `class="language-X"`, so prefix
-  // the raw language name here (parser emits "rust", we set "language-rust").
   if (attrName === "class" && (node as Element).tagName === "CODE") {
     (node as Element).setAttribute("class", "language-" + value);
     return;
@@ -194,10 +182,13 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   (node as Element).setAttribute(attrName, value);
 }
 
-/** Factory for a DOM renderer rooted at `el`. Set `animate: false`
- *  for historical messages (chat switch, history replay) so the
- *  animation doesn't fire on content the user already saw. */
-export function domRenderer(el: HTMLElement, animate = true): Renderer<DomRendererData> {
+/** Factory for a DOM renderer rooted at `el`. Caller can register
+ *  `onBlockComplete` to receive a callback when each top-level block
+ *  finishes (paragraph, pre/code, heading, list, blockquote, table). */
+export function domRenderer(
+  el: HTMLElement,
+  options: { onBlockComplete?: (block: HTMLElement) => void } = {},
+): Renderer<DomRendererData> {
   return {
     add_token: add_token_dom,
     end_token: end_token_dom,
@@ -206,24 +197,7 @@ export function domRenderer(el: HTMLElement, animate = true): Renderer<DomRender
     data: {
       nodes: [el],
       index: 0,
-      animate,
-      streamSpans: [],
+      onBlockComplete: options.onBlockComplete,
     },
   };
-}
-
-/** After the stream ends, unwrap the animation spans so the finalised
- *  message doesn't carry thousands of wrapper elements indefinitely.
- *  Text nodes are merged back into their parents via normalize(). */
-export function unwrapStreamSpans(root: HTMLElement, spans?: HTMLSpanElement[]): void {
-  const list = spans ?? root.querySelectorAll<HTMLSpanElement>("span[data-vk-stream]");
-  for (const span of list) {
-    const parent = span.parentNode;
-    if (parent === null) continue;
-    while (span.firstChild !== null) {
-      parent.insertBefore(span.firstChild, span);
-    }
-    parent.removeChild(span);
-  }
-  root.normalize();
 }

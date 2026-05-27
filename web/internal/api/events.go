@@ -132,10 +132,13 @@ type PermissionOption struct {
 const PermissionKindAllowOnce = "allow_once"
 
 // MessageChunkPayload is the payload for type="message_chunk" (assistant
-// streaming deltas).
+// streaming deltas). IsReasoning distinguishes reasoning deltas from
+// regular content deltas — both flow through the same SSE event but
+// land on different fields client-side (Message.Reasoning vs Content).
 type MessageChunkPayload struct {
-	MessageID string `json:"message_id"`
-	Delta     string `json:"delta"`
+	MessageID   string `json:"message_id"`
+	Delta       string `json:"delta"`
+	IsReasoning bool   `json:"is_reasoning,omitempty"`
 }
 
 // CheckpointRestoredPayload is the payload for type="checkpoint_restored".

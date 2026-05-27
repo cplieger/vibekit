@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { renderMarkdown, MarkdownRenderer } from "./markdown.js";
+import { renderMarkdown, createMarkdownStream } from "./markdown.js";
 
 // ---------------------------------------------------------------------------
 // Property-based tests: XSS invariants (testarch-b15-p1)
@@ -242,31 +242,34 @@ describe("renderMarkdown edge cases (table-driven)", () => {
 // (tarch-b14-c4-p2)
 // ---------------------------------------------------------------------------
 
-describe("MarkdownRenderer streaming/one-shot equivalence", () => {
-  it("streaming write at random split points produces same output as one-shot", () => {
+describe("createMarkdownStream streaming/one-shot equivalence", () => {
+  it("streaming writeDelta at random split points produces same output as one-shot", () => {
     fc.assert(
       fc.property(
         fc.string({ minLength: 1, maxLength: 300 }),
         fc.array(fc.double({ min: 0, max: 1, noNaN: true }), { minLength: 1, maxLength: 8 }),
         (markdown, splitPoints) => {
-          // Generate cumulative prefixes by splitting at random fractions.
+          // Generate non-decreasing delta lengths by splitting at random fractions.
           const sorted = [...splitPoints].sort((a, b) => a - b);
           const indices = sorted.map((f) => Math.floor(f * markdown.length));
-          // Always include the full string as the last prefix.
-          const prefixLengths = [...new Set([...indices, markdown.length])].sort((a, b) => a - b);
+          const cuts = [...new Set([...indices, markdown.length])].sort((a, b) => a - b);
 
-          // Streaming path: feed cumulative prefixes.
+          // Streaming path: feed deltas computed from cumulative cuts.
           const streamEl = document.createElement("div");
-          const renderer = new MarkdownRenderer(streamEl);
-          for (const len of prefixLengths) {
-            renderer.write(markdown.slice(0, len));
+          const renderer = createMarkdownStream(streamEl);
+          let lastCut = 0;
+          for (const cut of cuts) {
+            if (cut > lastCut) {
+              renderer.writeDelta(markdown.slice(lastCut, cut));
+              lastCut = cut;
+            }
           }
-          renderer.finalize();
+          renderer.end();
 
           // One-shot path.
           const oneShotHtml = renderMarkdown(markdown);
 
-          // Compare text content (ignore fade-in span wrappers that streaming adds).
+          // Compare text content.
           expect(streamEl.textContent).toBe(
             (() => {
               const tmp = document.createElement("div");
@@ -280,10 +283,83 @@ describe("MarkdownRenderer streaming/one-shot equivalence", () => {
     );
   });
 
-  it("write with non-append-only input throws", () => {
+  it("end() is idempotent — second call is a no-op", () => {
     const el = document.createElement("div");
-    const renderer = new MarkdownRenderer(el);
-    renderer.write("hello world");
-    expect(() => renderer.write("different")).toThrow("not append-only");
+    const renderer = createMarkdownStream(el);
+    renderer.writeDelta("hello world");
+    renderer.end();
+    const after = el.innerHTML;
+    renderer.end(); // should not change anything
+    expect(el.innerHTML).toBe(after);
+  });
+
+  it("writeDelta after end() is ignored", () => {
+    const el = document.createElement("div");
+    const renderer = createMarkdownStream(el);
+    renderer.writeDelta("hello");
+    renderer.end();
+    const after = el.innerHTML;
+    renderer.writeDelta(" more"); // should not change anything
+    expect(el.innerHTML).toBe(after);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Surface contracts: renderMarkdown is pure structure; renderMarkdownInto
+// decorates; createMarkdownStream decorates + animates.
+// ---------------------------------------------------------------------------
+
+import { renderMarkdownInto } from "./markdown.js";
+
+describe("markdown surface contracts", () => {
+  it("renderMarkdown returns pure structure (no decoration, no animation marker)", () => {
+    const html = renderMarkdown("```js\nconsole.log(1)\n```");
+    // Pure parser output — no .code-wrap, no .code-actions, no
+    // data-vk-block-enter.
+    expect(html).not.toContain("code-wrap");
+    expect(html).not.toContain("code-actions");
+    expect(html).not.toContain("data-vk-block-enter");
+    expect(html).toContain("<pre");
+    expect(html).toContain("<code");
+  });
+
+  it("renderMarkdown returns pure structure for paragraphs (no path linkify)", () => {
+    const html = renderMarkdown("see foo/bar.ts for details");
+    // Pure parser — bare text, no <a> linkification.
+    expect(html).not.toContain('href="');
+    expect(html).toContain("foo/bar.ts");
+  });
+
+  it("renderMarkdownInto decorates code blocks (replay path)", () => {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "```js\nconsole.log(1)\n```");
+    // Replay path runs decorateCodeBlocks: should wrap pre in
+    // .code-wrap and add .code-actions buttons.
+    expect(el.querySelector(".code-wrap")).not.toBeNull();
+    // No animation marker on replay.
+    expect(el.querySelector("[data-vk-block-enter]")).toBeNull();
+  });
+
+  it("createMarkdownStream end() decorates AND tags blocks for animation", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    r.writeDelta("```js\ncode\n```");
+    r.end();
+    // Streaming path: decoration AND entry animation marker present.
+    expect(el.querySelector(".code-wrap")).not.toBeNull();
+    expect(el.querySelector("[data-vk-block-enter]")).not.toBeNull();
+  });
+
+  it("createMarkdownStream end() is a synchronous drain", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    // Write a chunk larger than PARSE_SLICE_BYTES (4096) to force
+    // the async drain path. end() must complete the parse synchronously.
+    const big = "a".repeat(10_000);
+    r.writeDelta(big);
+    r.end();
+    // After end(), all text is parsed and rendered.
+    expect(el.textContent?.length).toBe(10_000);
   });
 });

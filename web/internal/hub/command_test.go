@@ -404,153 +404,10 @@ func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
 
 // --- Tangent commands ---
 
-func TestForkChat_CreatesAndFreezesParent(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "parent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Parent"
-		c.Agent = "kiro_default"
-		c.Model = "claude-sonnet-4.6"
-		return true
-	})
 
-	rec := postCmd(t, h, api.ClientCommand{
-		Type:      "fork_chat",
-		RequestID: "r1",
-		ChatID:    "parent",
-		Payload:   mustJSON(t, api.ForkChatCommand{TangentID: "tangent-1"}),
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
 
-	// Parent should be frozen.
-	parent, _ := cs.Get(context.Background(), "parent")
-	if !parent.Frozen {
-		t.Error("parent not frozen")
-	}
 
-	// Tangent should exist with parent's settings.
-	tangent, ok := cs.Get(context.Background(), "tangent-1")
-	if !ok {
-		t.Fatal("tangent not created")
-	}
-	if !tangent.IsTangent || tangent.ParentChatID != "parent" {
-		t.Errorf("tangent = %+v", tangent)
-	}
-	if tangent.Agent != "kiro_default" || tangent.Model != "claude-sonnet-4.6" {
-		t.Errorf("tangent agent/model = %s/%s", tangent.Agent, tangent.Model)
-	}
-}
 
-func TestForkChat_AlreadyFrozenRejects(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "parent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Parent"
-		c.Frozen = true
-		return true
-	})
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type:      "fork_chat",
-		RequestID: "r1",
-		ChatID:    "parent",
-		Payload:   mustJSON(t, api.ForkChatCommand{TangentID: "t2"}),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", rec.Code)
-	}
-}
-
-func TestMergeTangent_MergesAndUnfreezes(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "parent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Parent"
-		c.Frozen = true
-		return true
-	})
-	_ = cs.Mutate(context.Background(), "tangent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Tangent"
-		c.IsTangent = true
-		c.ParentChatID = "parent"
-		c.Messages = []api.Message{
-			{ID: "u1", Role: api.RoleUser, Content: "question"},
-			{ID: "a1", Role: api.RoleAssistant, Content: "answer"},
-		}
-		return true
-	})
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type:      "merge_tangent",
-		RequestID: "r1",
-		ChatID:    "tangent",
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
-	// Parent should be unfrozen and have the merged messages.
-	parent, _ := cs.Get(context.Background(), "parent")
-	if parent.Frozen {
-		t.Error("parent still frozen")
-	}
-	if len(parent.Messages) < 2 {
-		t.Errorf("parent messages = %d, want >= 2", len(parent.Messages))
-	}
-
-	// Tangent should be deleted.
-	if _, ok := cs.Get(context.Background(), "tangent"); ok {
-		t.Error("tangent still exists")
-	}
-}
-
-func TestDiscardTangent_DeletesAndUnfreezes(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "parent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Parent"
-		c.Frozen = true
-		return true
-	})
-	_ = cs.Mutate(context.Background(), "tangent", func(c *api.Chat, _ bool) bool {
-		c.Name = "Tangent"
-		c.IsTangent = true
-		c.ParentChatID = "parent"
-		return true
-	})
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type:      "discard_tangent",
-		RequestID: "r1",
-		ChatID:    "tangent",
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-
-	parent, _ := cs.Get(context.Background(), "parent")
-	if parent.Frozen {
-		t.Error("parent still frozen")
-	}
-	if _, ok := cs.Get(context.Background(), "tangent"); ok {
-		t.Error("tangent still exists")
-	}
-}
-
-func TestDiscardTangent_NotATangentRejects(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "regular", func(c *api.Chat, _ bool) bool {
-		c.Name = "Regular"
-		return true
-	})
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type:      "discard_tangent",
-		RequestID: "r1",
-		ChatID:    "regular",
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
 
 // --- Create hook ---
 
@@ -809,39 +666,6 @@ func TestIsEmptyTurn(t *testing.T) {
 
 // --- MergeLastExchange ---
 
-func TestMergeLastExchange(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "target", func(c *api.Chat, _ bool) bool {
-		c.Name = "Target"
-		return true
-	})
-
-	msgs := []api.Message{
-		{ID: "u1", Role: api.RoleUser, Content: "first question"},
-		{ID: "a1", Role: api.RoleAssistant, Content: "first answer"},
-		{ID: "u2", Role: api.RoleUser, Content: "second question"},
-		{ID: "a2", Role: api.RoleAssistant, Content: "second answer"},
-	}
-
-	h.mergeLastExchange(context.Background(), "target", msgs)
-
-	target, _ := cs.Get(context.Background(), "target")
-	if len(target.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(target.Messages))
-	}
-	if target.Messages[0].Content != "second question" {
-		t.Errorf("first merged = %q", target.Messages[0].Content)
-	}
-	if target.Messages[1].Content != "second answer" {
-		t.Errorf("second merged = %q", target.Messages[1].Content)
-	}
-}
-
-// --- Shell interception ---
-
-// TestPrompt_ShellInterception_HappyPath: `!printf hi` runs locally,
-// persists user + assistant messages, and emits turn_ended. Pinned so
-// the interception path stays wired end-to-end.
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	h, cs, _ := newTestHub()
 	h.lifecycle.workDir = t.TempDir()
@@ -918,26 +742,6 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 // active tangent must 409 (frozen), otherwise the shell output
 // would mutate the frozen snapshot the tangent is supposed to
 // preserve for merge.
-func TestPrompt_ShellInterception_FrozenChatRejects(t *testing.T) {
-	h, cs, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "P"
-		c.Frozen = true
-		return true
-	})
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "prompt", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (frozen parent)", rec.Code)
-	}
-}
-
-// TestShellCappedBuffer pins the 1 MiB cap on shell output and the
-// truncated flag. Without this, a runaway `!cmd` could OOM the
-// container before the 30s timeout fires.
 func TestShellCappedBuffer(t *testing.T) {
 	var b command.ShellCappedBuffer
 	// First write lands fully.
@@ -974,26 +778,6 @@ func TestShellCappedBuffer(t *testing.T) {
 // TestPrompt_FrozenChatReturns409 pins the invariant that a frozen
 // parent chat rejects prompts with 409, not 500 or silent-append.
 // Client-side tangent UX depends on this status.
-func TestPrompt_FrozenChatReturns409(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "P"
-		c.Frozen = true
-		return true
-	})
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "prompt", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (frozen)", rec.Code)
-	}
-}
-
-// TestPrompt_BusyReturns409 pins the single-in-flight-per-chat
-// invariant that drives client-side queueing in chat-commands.ts.
-// A second prompt while sb.mu is held must 409 without duplicating
-// the kiro-cli session/prompt call.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })

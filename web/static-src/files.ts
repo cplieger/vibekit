@@ -23,6 +23,12 @@ import {
 import { setOnUploadComplete } from "./files-picker.js";
 import { createFile, createFolder, renameFile, deleteFilesBatch, upload, downloadFiles } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
+
+type FbEntry =
+  | { kind: "parent" }
+  | { kind: "entry"; entry: FileEntry };
+
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
@@ -281,11 +287,29 @@ function renderList(opts: { transition?: boolean } = {}): void {
     state.sortedNames = sorted.map((e) => e.name);
 
     $.fbList.setAttribute("role", "list");
-    const frag = document.createDocumentFragment();
-    if (state.currentPath !== ".") frag.appendChild(parentRow());
-    for (const entry of sorted) frag.appendChild(entryRow(entry));
 
-    $.fbList.replaceChildren(frag);
+    const items: FbEntry[] = [];
+    if (state.currentPath !== ".") items.push({ kind: "parent" });
+    for (const entry of sorted) items.push({ kind: "entry", entry });
+
+    reconcile($.fbList, items, {
+      key: (e: FbEntry) => e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`,
+      mount: (e: FbEntry) => e.kind === "parent" ? parentRow() : entryRow(e.entry),
+      update: (row: HTMLElement, e: FbEntry) => {
+        if (e.kind !== "entry") return;
+        // Sync metadata that can change when the directory was re-fetched
+        // (size, modTime, mode). Selection state is driven by
+        // updateRowHighlights() — leave that out of update.
+        const meta = row.querySelector(".fb-meta") as HTMLSpanElement | null;
+        if (meta !== null) {
+          const parts: string[] = [];
+          if (!e.entry.isDir) parts.push(formatSize(e.entry.size));
+          parts.push(formatDate(e.entry.modTime));
+          parts.push(e.entry.mode);
+          meta.textContent = parts.join("   ·   ");
+        }
+      },
+    });
 
     updateActionButtons();
     updateRowHighlights();

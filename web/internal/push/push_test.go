@@ -520,7 +520,7 @@ func TestLoadPreferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			if tt.settings != "" {
-				if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+				if err := os.WriteFile(filepath.Join(dir, "config.json"),
 					[]byte(tt.settings), 0o644); err != nil {
 					t.Fatalf("write settings: %v", err)
 				}

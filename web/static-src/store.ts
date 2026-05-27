@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import type {
-  Session, ChatHeader, Message, Usage, ToolCall, PendingChange,
+  Session, ChatHeader, Message, Usage, ToolCall, PendingChange, Crew,
 } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
@@ -18,6 +18,114 @@ import { registerCleanup } from "./actions/index.js";
 
 // --- Reactive version counter: effects that read this re-run on mutation ---
 export const version = signal(0);
+
+/** Per-message-id streaming text signal. Created lazily on first chunk
+ *  when a message is already mounted (so reconcile doesn't re-walk the
+ *  whole list every chunk). The streaming bubble in messages.ts
+ *  subscribes to its own signal via effect(). The signal is removed
+ *  on finalize / chat-switch. */
+const streamingTextSig = new Map<string, ReturnType<typeof signal<string>>>();
+
+/** Per-message-id reasoning signal. Sibling of streamingTextSig: the
+ *  reasoning details element subscribes to this. Reasoning chunks
+ *  (chunk.is_reasoning=true) update this signal; content chunks update
+ *  streamingTextSig. Both grow in parallel during extended-thinking
+ *  turns. */
+const streamingReasoningSig = new Map<string, ReturnType<typeof signal<string>>>();
+
+/** Per-tool-call signal. Tool-card mounts subscribe to their own signal
+ *  via effect(); status / output / diff updates bypass the global
+ *  reconcile loop entirely. Created on first upsert when the tool's
+ *  parent message is already mounted. */
+const toolCallSig = new Map<string, ReturnType<typeof signal<ToolCall>>>();
+
+/** Per-crew-message signal. Crew event messages mount subscribes to
+ *  this; subsequent kiro-cli list_update snapshots fan out via the
+ *  signal without re-running the global reconcile loop. Created on
+ *  first mount in messages.ts. */
+const crewSig = new Map<string, ReturnType<typeof signal<Crew>>>();
+
+export function getStreamingSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
+  return streamingTextSig.get(messageID);
+}
+
+export function getReasoningSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
+  return streamingReasoningSig.get(messageID);
+}
+
+export function getToolCallSig(toolID: string): ReturnType<typeof signal<ToolCall>> | undefined {
+  return toolCallSig.get(toolID);
+}
+
+export function getCrewSig(messageID: string): ReturnType<typeof signal<Crew>> | undefined {
+  return crewSig.get(messageID);
+}
+
+/** Get or create the content signal for a message id. Initialized to the
+ *  current full content. */
+export function ensureStreamingSig(messageID: string, initial: string): ReturnType<typeof signal<string>> {
+  let sig = streamingTextSig.get(messageID);
+  if (sig === undefined) {
+    sig = signal(initial);
+    streamingTextSig.set(messageID, sig);
+  }
+  return sig;
+}
+
+/** Get or create the reasoning signal for a message id. Initialized to
+ *  the current full reasoning. */
+export function ensureReasoningSig(messageID: string, initial: string): ReturnType<typeof signal<string>> {
+  let sig = streamingReasoningSig.get(messageID);
+  if (sig === undefined) {
+    sig = signal(initial);
+    streamingReasoningSig.set(messageID, sig);
+  }
+  return sig;
+}
+
+/** Get or create the signal for a tool call id. Initialized to the
+ *  current ToolCall snapshot. */
+export function ensureToolCallSig(toolID: string, initial: ToolCall): ReturnType<typeof signal<ToolCall>> {
+  let sig = toolCallSig.get(toolID);
+  if (sig === undefined) {
+    sig = signal(initial);
+    toolCallSig.set(toolID, sig);
+  }
+  return sig;
+}
+
+/** Get or create the signal for a crew event message id. Initialized
+ *  to the current Crew snapshot. */
+export function ensureCrewSig(messageID: string, initial: Crew): ReturnType<typeof signal<Crew>> {
+  let sig = crewSig.get(messageID);
+  if (sig === undefined) {
+    sig = signal(initial);
+    crewSig.set(messageID, sig);
+  }
+  return sig;
+}
+
+/** Remove the content signal for a message id. */
+export function clearStreamingSig(messageID: string): void {
+  streamingTextSig.delete(messageID);
+}
+
+/** Remove the reasoning signal for a message id. */
+export function clearReasoningSig(messageID: string): void {
+  streamingReasoningSig.delete(messageID);
+}
+
+/** Remove the per-tool signal. Called when the tool's parent message
+ *  unmounts or on chat switch. */
+export function clearToolCallSig(toolID: string): void {
+  toolCallSig.delete(toolID);
+}
+
+/** Remove the per-crew signal. Called when the crew event message
+ *  unmounts or on chat switch. */
+export function clearCrewSig(messageID: string): void {
+  crewSig.delete(messageID);
+}
 
 function emit(): void { version.value = version.peek() + 1; }
 function scheduleRender(): void { batch(() => { version.value = version.peek() + 1; }); }
@@ -214,8 +322,6 @@ export async function loadList(): Promise<boolean> {
   const next: Session[] = [];
   for (const h of d.chats) {
     const existing = get(h.id);
-    const frozen = h.frozen ?? existing?.frozen;
-    const is_tangent = h.is_tangent ?? existing?.is_tangent;
     const parent_chat_id = h.parent_chat_id ?? existing?.parent_chat_id;
     const session: Session = {
       id: h.id,
@@ -226,8 +332,6 @@ export async function loadList(): Promise<boolean> {
       current_mode_id: h.current_mode_id ?? "",
       available_modes: h.available_modes ?? [],
       available_models: h.available_models ?? [],
-      available_commands: existing?.available_commands ?? [],
-      available_prompts: existing?.available_prompts ?? [],
       auto_approve_crew: h.auto_approve_crew ?? existing?.auto_approve_crew ?? false,
       supervised_mode: h.supervised_mode ?? false,
       pending_changes: existing?.pending_changes ?? [],
@@ -237,8 +341,6 @@ export async function loadList(): Promise<boolean> {
       has_more: existing !== undefined ? (existing.has_more || h.message_count > existing.messages.length) : h.message_count > 0,
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
-      ...(frozen !== undefined && { frozen }),
-      ...(is_tangent !== undefined && { is_tangent }),
       ...(parent_chat_id !== undefined && { parent_chat_id }),
       ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
       ...(existing?.trusted_this_turn !== undefined && { trusted_this_turn: existing.trusted_this_turn }),
@@ -305,20 +407,15 @@ export function upsertHeader(h: ChatHeader): void {
     else delete existing.compaction_watermark;
     if (h.oldest_checkpoint_tag !== undefined) existing.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
     else delete existing.oldest_checkpoint_tag;
-    if (h.frozen !== undefined) existing.frozen = h.frozen; else delete existing.frozen;
-    if (h.is_tangent !== undefined) existing.is_tangent = h.is_tangent; else delete existing.is_tangent;
     if (h.parent_chat_id !== undefined) existing.parent_chat_id = h.parent_chat_id; else delete existing.parent_chat_id;
   } else {
     const s: Session = {
       id: h.id, name: h.name, agent: h.agent ?? "", model: h.model ?? "",
       acp_session_id: h.acp_session_id ?? "", current_mode_id: h.current_mode_id ?? "",
       available_modes: h.available_modes ?? [], available_models: h.available_models ?? [],
-      available_commands: [], available_prompts: [],
       auto_approve_crew: h.auto_approve_crew ?? false, supervised_mode: h.supervised_mode ?? false,
       pending_changes: [], usage: h.usage, message_count: h.message_count,
       messages: [], has_more: h.message_count > 0, thinking: false, working_label: "Thinking",
-      ...(h.frozen !== undefined && { frozen: h.frozen }),
-      ...(h.is_tangent !== undefined && { is_tangent: h.is_tangent }),
       ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
     };
     if (h.compaction_watermark !== undefined) s.compaction_watermark = h.compaction_watermark;
@@ -326,16 +423,6 @@ export function upsertHeader(h: ChatHeader): void {
     _sessions.unshift(s);
     sessionIndex.set(s.id, s);
   }
-  emit();
-}
-
-export function setAvailableCommands(
-  id: string, commands: Session["available_commands"], prompts?: Session["available_prompts"],
-): void {
-  const s = get(id);
-  if (s === undefined) return;
-  s.available_commands = commands;
-  s.available_prompts = prompts ?? [];
   emit();
 }
 
@@ -393,8 +480,20 @@ export function upsertMessage(chatID: string, msg: Message): void {
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(msg.id, newIdx);
-  } else {
-    s.messages[idx] = msg;
+    emit();
+    return;
+  }
+  s.messages[idx] = msg;
+  // Crew-only update: fan out via the per-crew signal so the card
+  // re-renders without walking the entire message list. Falls back to
+  // emit() if the crew message hasn't been mounted yet (rare; the
+  // mount creates the signal so subsequent updates flow through it).
+  if (msg.event_kind === "crew" && msg.crew !== undefined) {
+    const sig = crewSig.get(msg.id);
+    if (sig !== undefined) {
+      sig.value = msg.crew;
+      return;
+    }
   }
   emit();
 }
@@ -437,13 +536,6 @@ export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
   emit();
 }
 
-export function setFrozen(chatID: string, frozen: boolean): void {
-  const s = get(chatID);
-  if (s === undefined) return;
-  if (frozen) { s.frozen = true; } else { delete s.frozen; }
-  emit();
-}
-
 /** Set session model and notify subscribers. Used by switchModel. */
 export function setModel(chatID: string, model: string): void {
   const s = get(chatID);
@@ -474,21 +566,39 @@ export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
   emit();
 }
 
-export function appendChunk(chatID: string, messageID: string, delta: string): void {
+export function appendChunk(chatID: string, messageID: string, delta: string, isReasoning: boolean): void {
   const s = get(chatID);
   if (s === undefined) return;
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
+  let isNew = false;
   if (msg === undefined) {
     msg = { id: messageID, role: "assistant", ts: Date.now(), content: "" };
     const newIdx = s.messages.length;
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
+    isNew = true;
   }
-  msg.content = (msg.content ?? "") + delta;
-  scheduleRender();
+  if (isReasoning) msg.reasoning = (msg.reasoning ?? "") + delta;
+  else msg.content = (msg.content ?? "") + delta;
+
+  // First chunk for this message: bump global so reconcile can mount
+  // the new bubble. Subsequent chunks fan out via per-message signal.
+  if (isNew) {
+    scheduleRender();
+    return;
+  }
+  if (isReasoning) {
+    const sig = streamingReasoningSig.get(messageID);
+    if (sig !== undefined) sig.value = msg.reasoning ?? "";
+    else scheduleRender();
+  } else {
+    const sig = streamingTextSig.get(messageID);
+    if (sig !== undefined) sig.value = msg.content ?? "";
+    else scheduleRender();
+  }
 }
 
 export function upsertToolCall(chatID: string, messageID: string, call: ToolCall): void {
@@ -508,9 +618,22 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
   }
   if (msg.tool_calls === undefined) msg.tool_calls = [];
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
-  if (tcIdx === -1) msg.tool_calls.push(call);
-  else msg.tool_calls[tcIdx] = call;
-  scheduleRender();
+  if (tcIdx === -1) {
+    msg.tool_calls.push(call);
+    // New tool added to existing message — bump global so reconcile
+    // mounts it. The signal is created on mount (see toolSpec.mount).
+    scheduleRender();
+    return;
+  }
+  msg.tool_calls[tcIdx] = call;
+  // Existing tool updated — fan out via per-tool signal directly.
+  // This bypasses the global reconcile loop so a 50-tool message
+  // doesn't walk all 50 on every status flip. Falls back to
+  // scheduleRender if no signal exists yet (e.g. the mount hasn't
+  // subscribed yet because reconcile is still pending).
+  const sig = toolCallSig.get(call.id);
+  if (sig !== undefined) sig.value = call;
+  else scheduleRender();
 }
 
 // --- Utilities ---

@@ -211,7 +211,7 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 	}
 }
 
-func TestThoughtChunkSetsOperationType(t *testing.T) {
+func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -232,11 +232,11 @@ func TestThoughtChunkSetsOperationType(t *testing.T) {
 	if len(c.Messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(c.Messages))
 	}
-	if c.Messages[0].OperationType != api.OperationTypeReasoning {
-		t.Errorf("operation_type = %q, want Reasoning", c.Messages[0].OperationType)
+	if c.Messages[0].Reasoning != "Let me think..." {
+		t.Errorf("Reasoning = %q, want %q", c.Messages[0].Reasoning, "Let me think...")
 	}
-	if c.Messages[0].Content != "Let me think..." {
-		t.Errorf("content = %q, want 'Let me think...'", c.Messages[0].Content)
+	if c.Messages[0].Content != "" {
+		t.Errorf("Content = %q, want empty", c.Messages[0].Content)
 	}
 }
 

@@ -130,13 +130,9 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) (frozen bool, err error) { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
-	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
-		if exists && c.Frozen {
-			frozen = true
-			return false
-		}
+	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			c.Name = api.DefaultChatName
 			c.Agent = p.Agent
@@ -161,7 +157,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
 		return true
 	})
-	return
+	return err
 }
 
 // CmdPrompt handles the prompt command.
@@ -179,23 +175,13 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 	// Shell command interception.
 	if strings.HasPrefix(p.Text, "!") {
-		if c, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok && c.Frozen {
-			d.RespondErr(w, http.StatusConflict,
-				errors.New("chat is frozen (tangent active)"))
-			return
-		}
 		HandleShellInterception(d, deps, ctx, w, cmd, &p)
 		return
 	}
 
 	// 1. Ensure the chat exists, append the user message, auto-rename.
-	frozen, err := appendUserMessage(deps, ctx, cmd.ChatID, &p)
-	if err != nil {
+	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if frozen {
-		d.RespondErr(w, http.StatusConflict, errors.New("chat is frozen (tangent active)"))
 		return
 	}
 

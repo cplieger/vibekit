@@ -21,7 +21,7 @@ func FuzzSettingsField(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte, key string) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -51,7 +51,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 

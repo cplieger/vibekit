@@ -2,10 +2,13 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
 	"vibekit/internal/api"
+	
+	"vibekit/internal/settings"
 )
 
 const contentTypeText = "text"
@@ -79,6 +82,17 @@ func (h *Hub) getOrCreateBridge(ctx context.Context, chatID api.ChatID, agentOve
 		mcpServers = h.mcpConfig.ACPServers(ctx)
 	}
 
+	// Refresh environment.md (if a hook is wired) so kiro-cli's
+	// auto-include picks up any per-repo steering docs that were
+	// added since the last bridge spawn. The skip-if-unchanged write
+	// inside steering.Generate keeps this cheap when nothing changed.
+	// This is the per-spawn freshness path; mid-session updates can't
+	// reach an already-loaded session prompt and are documented in
+	// environment.md's per-repo steering protocol section.
+	if h.preBridgeSpawn != nil {
+		h.preBridgeSpawn()
+	}
+
 	// Try to load the existing ACP session first. If that fails (kiro-cli
 	// cleaned it up, machine rebooted, etc.), fall back to a new session.
 	if chat.ACPSessionID != "" {
@@ -106,7 +120,12 @@ func (h *Hub) getOrCreateBridge(ctx context.Context, chatID api.ChatID, agentOve
 	sb.state = bridgeIdle
 	sb.mu.Unlock()
 
+	// Restore persisted effort level BEFORE starting the forward
+	// goroutine so the effort command arrives before any prompt.
+	h.restoreEffort(ctx, chatID, model, sb.bridge)
+
 	go h.forward(chatID, sb.bridge)
+
 	return sb, nil
 }
 
@@ -252,4 +271,34 @@ func (h *Hub) primeIfNeeded(ctx context.Context, chatID api.ChatID, sb *sharedBr
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)
 	}
+}
+
+// restoreEffort reads the persisted model_effort from config.json and
+// dispatches /effort to the bridge if the stored model matches.
+func (h *Hub) restoreEffort(ctx context.Context, chatID api.ChatID, model string, b api.ACPBridge) {
+	data, err := settings.ReadBytes(ctx, h.lifecycle.configDir)
+	if err != nil || data == nil {
+		return
+	}
+	var cfg struct {
+		ModelEffort struct {
+			LastModel string `json:"last_model"`
+			Effort    string `json:"effort"`
+		} `json:"model_effort"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return
+	}
+	if cfg.ModelEffort.LastModel != model || cfg.ModelEffort.Effort == "" {
+		return
+	}
+	go func() {
+		_, _ = b.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
+			"command": map[string]any{
+				"command": "effort",
+				"args":    []string{cfg.ModelEffort.Effort},
+			},
+		})
+		slog.Debug("effort restored", "chat", chatID, "model", model, "level", cfg.ModelEffort.Effort)
+	}()
 }

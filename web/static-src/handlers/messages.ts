@@ -32,7 +32,7 @@ onSSE("message_created", (chatID, m) => {
 });
 
 onSSE("message_chunk", (chatID, p) => {
-  if (p !== undefined) appendChunk(chatID, p.message_id, p.delta);
+  if (p !== undefined) appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false);
 });
 
 onSSE("message_updated", (chatID, m) => {

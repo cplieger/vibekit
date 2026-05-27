@@ -3,23 +3,25 @@ package hub
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"vibekit/internal/api"
 )
 
 // kiroSettingsPath returns the path to kiro-cli's settings file.
-// Extracted so the composition root can compute the path once and
-// inject it into hookStatusCache, making the dependency explicit
-// and testable without manipulating HOME.
+// Resolves through api.KiroHome() so vibekit and kiro-cli agree on
+// the location regardless of whether KIRO_HOME is set.
 func kiroSettingsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		// No home means no settings path. Caller handles empty string
-		// as "no overrides; fall through to defaults".
+	if api.KiroHome() == ".kiro" {
+		// Defensive fallback inside KiroHome — when both KIRO_HOME
+		// and HOME are unset, returning a relative path here means
+		// we'd read from CWD/settings/settings.json which is wrong.
+		// Caller treats empty as "no overrides; fall through to
+		// defaults".
 		return ""
 	}
-	return filepath.Join(home, ".kiro", "settings", "settings.json")
+	return api.KiroSettingsPath("settings.json")
 }
 
 // hookStatusCache caches the hooks.showStatus setting from
@@ -88,7 +90,7 @@ func (c *hookStatusCache) get() bool {
 // ~/.kiro/settings/settings.json (dotted key, not snake_case),
 // and is toggled through `kiro-cli settings hooks.showStatus …`
 // via vibekit's /api/kiro-settings endpoint. Reading from vibekit's
-// configDir would be wrong: vibekit's settings.json uses underscore
+// configDir would be wrong: vibekit's config.json uses underscore
 // keys (shell_policy, trust_tools, …) and has no entry for this
 // toggle — so the prior lookup of "hooks_show_status" against that
 // file was a permanent no-op and the Settings → General switch was

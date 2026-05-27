@@ -227,10 +227,10 @@ func (s *Service) writeLoop() {
 }
 
 // loadPreferences reads per-kind notification toggles from
-// <configDir>/settings.json and applies them. Missing file, missing
+// <configDir>/config.json and applies them. Missing file, missing
 // keys, or parse failures fall through to the default state set
 // in New via kindRegistry. Parse failures are logged at Warn level so
-// a corrupted settings.json silently reverting user toggles leaves a
+// a corrupted config.json silently reverting user toggles leaves a
 // diagnostic trail.
 func (s *Service) loadPreferences(ctx context.Context) {
 	s.mu.Lock()

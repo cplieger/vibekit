@@ -8,7 +8,7 @@ LOG="/tmp/setup-tools.log"
 mkdir -p "$TOOLS/bin" "$TOOLS/go/bin" "$TOOLS/runtimes" \
     "$TOOLS/node/bin" "$TOOLS/python/bin" "$TOOLS/lib" \
     "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
-    "$HOME/.kiro" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
+    "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
     || { printf "ERROR: failed to create required directories (is /config mounted and writable?)\n"; sleep 10; exit 1; }
 
 # Seed tools.json from bundled default if not present
@@ -52,7 +52,7 @@ KIRO_CLI_INSTALL='
 '
 
 if [ -f "$TOOLS/bin/kiro-cli" ]; then
-    AUTO_UPDATE=$(jq -r '.auto_update // true' "$CONFIG_DIR/settings.json" 2>/dev/null || echo "true")
+    AUTO_UPDATE=$(jq -r '.auto_update // true' "$CONFIG_DIR/config.json" 2>/dev/null || echo "true")
     if [ "$AUTO_UPDATE" = "true" ]; then
         printf "Tools installed, updating in background (log: %s)\n" "$LOG"
         bash /opt/vibekit/setup-tools.sh > "$LOG" 2>&1 &
@@ -93,6 +93,13 @@ if command -v kiro-cli > /dev/null 2>&1; then
     #   telemetry.enabled           — off. self-hosted tool shouldn't
     #     phone home without the user opting in. Users can flip it on
     #     from Settings → General if they want to share usage data.
+    #   toolSearch.enabled          — off, matching kiro-cli's default.
+    #     Loading MCP tools on demand saves context tokens for users
+    #     with many MCP servers but adds a round-trip per tool
+    #     discovery; the trade-off is opt-in. We seed the value
+    #     explicitly so the UI checkbox reflects the actual state
+    #     (without seeding, the get-empty fallback would show the
+    #     toggle as on while reality was off).
     #
     # chat.enableContextUsageIndicator was removed from this loop; it
     # only affects kiro-cli's own TUI prompt line, which we never
@@ -107,9 +114,14 @@ if command -v kiro-cli > /dev/null 2>&1; then
                 hooks.showStatus; do
         kiro-cli settings "$flag" true > /dev/null 2>&1 || true
     done
-    for flag in chat.enableCheckpoint telemetry.enabled; do
+    for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled; do
         kiro-cli settings "$flag" false > /dev/null 2>&1 || true
     done
+    # Enable kiro-cli self-update. kiro-cli checks for updates on every
+    # launch and silently replaces its own binary when newer is available.
+    # Safe for vibekit because we mediate everything through ACP (stable
+    # wire protocol); the user never sees kiro-cli's TUI.
+    kiro-cli settings "app.disableAutoupdates" false > /dev/null 2>&1 || true
     # Auto-cleanup old conversations after 1 day (configurable in Settings → General).
     kiro-cli settings cleanup.periodDays 1 > /dev/null 2>&1 || true
     exec /app/vibekit

@@ -1,5 +1,5 @@
 // Centralized defaults and the known-keys validation set for
-// vibekit-managed `<configDir>/settings.json`. The HTTP GET handler
+// vibekit-managed `<configDir>/config.json`. The HTTP GET handler
 // emits DefaultSettings() when the file is missing; PATCH/PUT
 // handlers call WarnUnknownKeys to surface typos and CLI/UI drift
 // without rejecting forward-compatible keys (per AUTH/SET design
@@ -12,7 +12,7 @@ package settings
 import "log/slog"
 
 // DefaultSettings returns the canonical defaults the GET /api/settings
-// handler emits when settings.json is missing or unreadable. Keep this
+// handler emits when config.json is missing or unreadable. Keep this
 // aligned with the frontend's `AppSettings` interface in
 // `static-src/persist.ts`; new top-level preferences should land in
 // both places (and in KnownKeys below).
@@ -29,7 +29,7 @@ func DefaultSettings() map[string]any {
 	}
 }
 
-// KnownKeys is the set of vibekit-managed settings.json keys. PATCH
+// KnownKeys is the set of vibekit-managed config.json keys. PATCH
 // handlers warn (but do not reject) keys outside this set so a typo
 // or stray field surfaces in operator logs without breaking forward
 // compatibility with newer frontend versions that introduce new keys
@@ -37,13 +37,14 @@ func DefaultSettings() map[string]any {
 // `AppSettings` interface grows.
 //
 // Note: kiro-cli's own settings (cleanup.periodDays, chat.enable*,
-// etc.) live in a separate file (~/.kiro/settings/settings.json) and
+// etc.) live in a separate file (~/.kiro/settings/config.json) and
 // are not part of this set.
 var KnownKeys = map[string]struct{}{
 	"agent_ignore_files":    {},
 	"auto_update":           {},
 	"debug_logs":            {},
 	"last_model":            {},
+	"model_effort":          {},
 	"notifications_enabled": {},
 	"notify_agent_finished": {},
 	"notify_permission":     {},

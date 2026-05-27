@@ -7,6 +7,7 @@
 import type { PlanEntry } from "./types.js";
 import { getActive, version } from "./store.js";
 import { effect } from "./signals.js";
+import { reconcile } from "./reconcile.js";
 import { escText } from "./strings.js";
 
 const STATUS_ICON: Record<string, string> = {
@@ -57,13 +58,23 @@ function refreshTaskList(): void {
     badge.classList.add("hidden");
   }
 
-  // Popover items.
-  items.replaceChildren();
-  for (const entry of plan) {
-    const row = document.createElement("div");
-    row.className = `task-item task-${entry.status}`;
-    const icon = STATUS_ICON[entry.status] ?? STATUS_ICON["pending"]!;
-    row.innerHTML = `<span class="task-icon">${icon}</span><span class="task-text">${escText(entry.content)}</span>`;
-    items.appendChild(row);
-  }
+  // Popover items. Key by content (status changes preserve identity);
+  // status flips into the row's class via the spec's update.
+  reconcile(items, plan, {
+    key: (e) => e.content,
+    mount: (e) => buildTaskRow(e),
+    update: (row, e) => {
+      row.className = `task-item task-${e.status}`;
+      const icon = row.querySelector(".task-icon");
+      if (icon !== null) icon.textContent = STATUS_ICON[e.status] ?? STATUS_ICON["pending"]!;
+    },
+  });
+}
+
+function buildTaskRow(entry: PlanEntry): HTMLElement {
+  const row = document.createElement("div");
+  row.className = `task-item task-${entry.status}`;
+  const icon = STATUS_ICON[entry.status] ?? STATUS_ICON["pending"]!;
+  row.innerHTML = `<span class="task-icon">${icon}</span><span class="task-text">${escText(entry.content)}</span>`;
+  return row;
 }

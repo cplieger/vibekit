@@ -52,6 +52,10 @@ const (
 	maxHeaderEntries = 32
 	disabledToolMax  = 128
 	maxDisabledTools = 256
+	// oauthClientIDMax bounds the OAuth 2.0 client_id length. Real-world
+	// client IDs are typically 20–80 chars (UUID-ish or app-id-ish);
+	// 256 leaves headroom and rejects clearly-malformed input.
+	oauthClientIDMax = 256
 )
 
 // transportValidators maps each supported transport to its validation
@@ -142,6 +146,9 @@ func validateStdio(s *Server) error {
 	if s.URL != "" || len(s.Headers) > 0 {
 		return errors.New("stdio transport cannot have url or headers")
 	}
+	if s.OAuthClientID != "" {
+		return errors.New("stdio transport cannot have oauth_client_id")
+	}
 	if len(s.Args) > maxArgs {
 		return fmt.Errorf("args: too many entries (%d, max %d)", len(s.Args), maxArgs)
 	}
@@ -179,6 +186,15 @@ func validateRemote(s *Server) error {
 	// at the boundary; users get a clean 400 pointing them at Headers.
 	if u.User != nil {
 		return errors.New("url must not contain userinfo; use Headers for auth")
+	}
+	if s.OAuthClientID != "" {
+		if len(s.OAuthClientID) > oauthClientIDMax {
+			return fmt.Errorf("oauth_client_id too long: %d bytes (max %d)",
+				len(s.OAuthClientID), oauthClientIDMax)
+		}
+		if hasCtl(s.OAuthClientID) {
+			return errors.New("oauth_client_id contains a control character")
+		}
 	}
 	return validateKeyPairs("headers", s.Headers, maxHeaderEntries, headerValueMax, true)
 }

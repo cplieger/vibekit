@@ -39,8 +39,6 @@ function makeSession(chatID: string): Session {
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    available_commands: [],
-    available_prompts: [],
     auto_approve_crew: false,
     supervised_mode: false,
     pending_changes: [],
@@ -436,5 +434,151 @@ describe("Store setLastQueuedAttachments", () => {
     setQueuedPrompt("chat-1", undefined);
     setLastQueuedAttachments("chat-1", [{ path: "x.ts" }]);
     expect(peekQueuedAttachments("chat-1")).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Per-message + per-tool + per-crew signal architecture
+// ---------------------------------------------------------------------------
+
+import {
+  appendChunk, upsertToolCall,
+  ensureStreamingSig, getStreamingSig, clearStreamingSig,
+  ensureReasoningSig, getReasoningSig, clearReasoningSig,
+  ensureToolCallSig, getToolCallSig, clearToolCallSig,
+  ensureCrewSig, getCrewSig, clearCrewSig,
+} from "./store.js";
+import type { ToolCall, Crew } from "./types.js";
+
+describe("streaming signals", () => {
+  it("appendChunk routes content vs reasoning to separate signals", () => {
+    resetStore("chat-1");
+    // First chunk creates the message + bumps global; signals are
+    // created lazily by callers (mountContentBubble / mountReasoningBlock).
+    appendChunk("chat-1", "m1", "hello", false);
+    const session = get("chat-1")!;
+    expect(session.messages[0]?.content).toBe("hello");
+    expect(session.messages[0]?.reasoning ?? "").toBe("");
+
+    // Subscribe a content signal so subsequent content chunks route here.
+    const contentSig = ensureStreamingSig("m1", "hello");
+    appendChunk("chat-1", "m1", " world", false);
+    expect(contentSig.value).toBe("hello world");
+    expect(session.messages[0]?.content).toBe("hello world");
+    expect(session.messages[0]?.reasoning ?? "").toBe("");
+
+    // Subscribe a reasoning signal; reasoning chunks route there.
+    const reasoningSig = ensureReasoningSig("m1", "");
+    appendChunk("chat-1", "m1", "let me think", true);
+    expect(reasoningSig.value).toBe("let me think");
+    expect(session.messages[0]?.reasoning).toBe("let me think");
+    expect(session.messages[0]?.content).toBe("hello world");
+
+    clearStreamingSig("m1");
+    clearReasoningSig("m1");
+  });
+
+  it("ensure*Sig returns the same signal on repeated calls", () => {
+    const a = ensureStreamingSig("m-id", "init");
+    const b = ensureStreamingSig("m-id", "ignored");
+    expect(a).toBe(b);
+    clearStreamingSig("m-id");
+  });
+
+  it("clearStreamingSig + getStreamingSig: signal is gone after clear", () => {
+    ensureStreamingSig("m-x", "x");
+    expect(getStreamingSig("m-x")).toBeDefined();
+    clearStreamingSig("m-x");
+    expect(getStreamingSig("m-x")).toBeUndefined();
+  });
+
+  it("clearReasoningSig + getReasoningSig: signal is gone after clear", () => {
+    ensureReasoningSig("m-y", "y");
+    expect(getReasoningSig("m-y")).toBeDefined();
+    clearReasoningSig("m-y");
+    expect(getReasoningSig("m-y")).toBeUndefined();
+  });
+});
+
+describe("per-tool signal", () => {
+  const baseTC = (id: string, status: ToolCall["status"]): ToolCall => ({
+    id, title: "readFile", kind: "read", status, ts: 0,
+  });
+
+  it("upsertToolCall: first add bumps global, subsequent updates fan via signal", () => {
+    resetStore("chat-1");
+    appendMessage("chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+
+    // First tool — this creates the tool array. No signal yet, so it
+    // bumps global to trigger reconcile mount.
+    upsertToolCall("chat-1", "m1", baseTC("t1", "pending"));
+
+    // Now mount-time signal subscription happens.
+    const sig = ensureToolCallSig("t1", baseTC("t1", "pending"));
+    let firedCount = 0;
+    let lastValue: ToolCall | null = null;
+    // Manually subscribe via reading sig.value in an effect-like wrapper.
+    // (Tests don't import `effect`; we use peek/value to simulate the flow.)
+    const observed: ToolCall[] = [];
+    // Update via upsertToolCall — should fire the signal directly,
+    // not via global reconcile.
+    upsertToolCall("chat-1", "m1", baseTC("t1", "completed"));
+    expect(sig.value.status).toBe("completed");
+
+    // Idle reads to satisfy the linter.
+    void firedCount; void lastValue; void observed;
+
+    clearToolCallSig("t1");
+  });
+
+  it("ensureToolCallSig is idempotent on the id", () => {
+    const a = ensureToolCallSig("t-id", baseTC("t-id", "pending"));
+    const b = ensureToolCallSig("t-id", baseTC("t-id", "completed"));
+    // Same signal — initial value preserved (b's `initial` is ignored).
+    expect(a).toBe(b);
+    expect(a.value.status).toBe("pending");
+    clearToolCallSig("t-id");
+  });
+});
+
+describe("per-crew signal", () => {
+  const sampleCrew = (label: string): Crew => ({
+    group: "g-1",
+    subagents: [
+      { sub_session_id: "s1", agent_name: "agent", initial_query: label, status: "working", agent_subtask_id: "t1" },
+    ],
+  });
+
+  it("upsertMessage on a crew event with existing signal updates via sig.value", () => {
+    resetStore("chat-1");
+    // First append the crew message via upsertMessage (idx=-1 path).
+    upsertMessage("chat-1", {
+      id: "crew-msg-1",
+      role: "event",
+      event_kind: "crew",
+      crew: sampleCrew("first"),
+      ts: 0,
+    });
+    // Subscribe a signal as the messages.ts mount would do.
+    const sig = ensureCrewSig("crew-msg-1", sampleCrew("first"));
+    // Subsequent upsertMessage with a new crew payload — should fan
+    // out via the signal (no global emit).
+    upsertMessage("chat-1", {
+      id: "crew-msg-1",
+      role: "event",
+      event_kind: "crew",
+      crew: sampleCrew("second"),
+      ts: 0,
+    });
+    expect(sig.value.subagents[0]?.initial_query).toBe("second");
+    clearCrewSig("crew-msg-1");
+  });
+
+  it("clearCrewSig + getCrewSig", () => {
+    ensureCrewSig("c-z", sampleCrew("z"));
+    expect(getCrewSig("c-z")).toBeDefined();
+    clearCrewSig("c-z");
+    expect(getCrewSig("c-z")).toBeUndefined();
   });
 });

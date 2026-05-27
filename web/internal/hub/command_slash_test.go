@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -68,42 +67,8 @@ func TestSlashExecute_NoBridgeReturns409(t *testing.T) {
 	}
 }
 
-func TestSlashOptions_RequiresGet(t *testing.T) {
-	h, _, _ := newTestHub()
-	mux := slashMux(h)
-	req := httptest.NewRequest(http.MethodPost, "/api/slash/options", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
-	}
-}
 
-func TestSlashOptions_RequiresChatIDAndCommand(t *testing.T) {
-	h, _, _ := newTestHub()
-	mux := slashMux(h)
-	req := httptest.NewRequest(http.MethodGet, "/api/slash/options?chat_id=c1", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
 
-func TestSlashOptions_NoBridgeReturnsEmpty(t *testing.T) {
-	h, _, _ := newTestHub()
-	mux := slashMux(h)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/slash/options?chat_id=c1&command=/tools", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `"options"`) {
-		t.Errorf("body = %s, want options key", rec.Body.String())
-	}
-}
 
 // TestSlashExecute_RejectsInvalidChatID pins the validChatID guard parity.
 func TestSlashExecute_RejectsInvalidChatID(t *testing.T) {
@@ -123,20 +88,6 @@ func TestSlashExecute_RejectsInvalidChatID(t *testing.T) {
 }
 
 // TestSlashOptions_RejectsInvalidChatID mirrors the execute guard.
-func TestSlashOptions_RejectsInvalidChatID(t *testing.T) {
-	h, _, _ := newTestHub()
-	mux := slashMux(h)
-	bad := []string{"../etc", "has space", "has\nnewline"}
-	for _, id := range bad {
-		u := "/api/slash/options?chat_id=" + url.QueryEscape(id) + "&command=/tools"
-		req := httptest.NewRequest(http.MethodGet, u, nil)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("chat_id=%q status=%d, want 400", id, rec.Code)
-		}
-	}
-}
 
 // TestSlashExecute_HappyPathForwardsResult pins the bridge call +
 // raw-JSON forwarding + nosniff header.
@@ -180,7 +131,7 @@ func TestSlashRegisterRoutes(t *testing.T) {
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
 	h.RegisterSlashRoutes(mux)
-	for _, path := range []string{"/api/slash/execute", "/api/slash/options"} {
+	for _, path := range []string{"/api/slash/execute"} {
 		_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, path, nil))
 		if pattern == "" {
 			t.Errorf("route %q not registered", path)

@@ -18,6 +18,8 @@ import {
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { bindLoadingState } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
+import type { ModelInfo } from "./types.js";
 
 type QueueState =
   | { status: "idle" }
@@ -60,36 +62,134 @@ class ModelSwitchController {
 
   private renderCondensedList(): void {
     const list = $.modelSwitchList;
-    list.replaceChildren();
     list.setAttribute("role", "listbox");
     list.setAttribute("aria-label", "Available models");
     const session = getActive();
-    if (session === undefined) return;
-    const current = session.model;
-    for (const m of getCachedModels()) {
-      const opt = document.createElement("div");
-      opt.className = m.model_id === current
-        ? "pill-model-item active" : "pill-model-item";
-      opt.dataset["model"] = m.model_id;
-      opt.setAttribute("role", "option");
-      opt.setAttribute("aria-selected", m.model_id === current ? "true" : "false");
-      const label = humanName(m.model_name || m.model_id);
-      opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
-      const name = document.createElement("span");
-      name.textContent = label;
-      const meta = document.createElement("span");
-      meta.className = "pill-model-meta";
-      meta.textContent = `${String(m.rate_multiplier)}x`;
-      opt.append(name, meta);
-      opt.addEventListener("click", (e: MouseEvent) => {
-        e.stopPropagation();
-        collapseAll();
-        if (m.model_id === current) return;
-        this.requestModelSwitch(m.model_id);
-      });
-      list.appendChild(opt);
+    if (session === undefined) {
+      reconcile(list, [] as ModelInfo[], { key: () => "", mount: () => document.createElement("div") });
+      return;
     }
+    const current = session.model;
+
+    // Effort row: always visible at the top. Five tier buttons.
+    // The active level is read from vibekit's config (stored in the
+    // session context); clicking dispatches set_effort.
+    this.ensureEffortRow(list);
+
+    reconcile(list, getCachedModels(), {
+      key: (m: ModelInfo) => m.model_id,
+      mount: (m: ModelInfo) => this.buildModelOption(m),
+      update: (el, m) => this.syncModelOption(el as HTMLElement, m, current),
+    });
     wireArrowNav(list, ".pill-model-item");
+  }
+
+  private effortRow: HTMLDivElement | null = null;
+  private currentEffort = "";
+  private effortLoaded = false;
+
+  private ensureEffortRow(list: HTMLElement): void {
+    // Load persisted effort on first call.
+    if (!this.effortLoaded) {
+      this.effortLoaded = true;
+      void import("./api-client.js").then(({ apiGet }) =>
+        apiGet<Record<string, any>>("/api/settings"),
+      ).then((settings) => {
+        const me = (settings as any)?.model_effort;
+        if (me?.effort && me?.last_model === getActive()?.model) {
+          this.currentEffort = me.effort;
+          if (this.effortRow !== null) {
+            for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+              btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+            }
+          }
+        }
+      });
+    }
+    if (this.effortRow === null) {
+      this.effortRow = document.createElement("div");
+      this.effortRow.className = "effort-row";
+      this.effortRow.setAttribute("aria-label", "Reasoning effort");
+      const label = document.createElement("span");
+      label.className = "effort-label";
+      label.textContent = "Effort";
+      this.effortRow.appendChild(label);
+      for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "effort-btn";
+        btn.dataset["level"] = level;
+        btn.textContent = level === "xhigh" ? "x-high" : level;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.setEffort(level);
+        });
+        this.effortRow.appendChild(btn);
+      }
+    }
+    // Sync active state.
+    for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+      btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+    }
+    // Ensure it's the first child (reconcile manages keyed children
+    // after it; the effort row is un-keyed so reconcile ignores it).
+    if (list.firstElementChild !== this.effortRow) {
+      list.prepend(this.effortRow);
+    }
+  }
+
+  private setEffort(level: string): void {
+    const session = getActive();
+    if (session === undefined) return;
+    this.currentEffort = level;
+    if (this.effortRow !== null) {
+      for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+        btn.classList.toggle("active", btn.dataset["level"] === level);
+      }
+    }
+    // Dispatch to server (applies to active session).
+    void import("./transport.js").then(({ send }) => {
+      send({
+        type: "set_effort",
+        chat_id: session.id,
+        request_id: `effort-${Date.now()}`,
+        payload: { level },
+      } as any);
+    });
+    // Persist so effort restores on next bridge spawn for this model.
+    void import("./persist.js").then(({ patchSettings }) => {
+      patchSettings({ model_effort: { last_model: session.model, effort: level } });
+    });
+  }
+
+  private buildModelOption(m: ModelInfo): HTMLElement {
+    const opt = document.createElement("div");
+    opt.dataset["model"] = m.model_id;
+    opt.setAttribute("role", "option");
+    const label = humanName(m.model_name || m.model_id);
+    opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
+    const name = document.createElement("span");
+    name.textContent = label;
+    const meta = document.createElement("span");
+    meta.className = "pill-model-meta";
+    meta.textContent = `${String(m.rate_multiplier)}x`;
+    opt.append(name, meta);
+    // Click handler reads the live "current" each time so a switch from
+    // another path (hotkey, REST sync) doesn't leave a stale handler.
+    opt.addEventListener("click", (e: MouseEvent) => {
+      e.stopPropagation();
+      collapseAll();
+      if (m.model_id === getActive()?.model) return;
+      this.requestModelSwitch(m.model_id);
+    });
+    this.syncModelOption(opt, m, getActive()?.model ?? "");
+    return opt;
+  }
+
+  private syncModelOption(opt: HTMLElement, m: ModelInfo, current: string): void {
+    const isCurrent = m.model_id === current;
+    opt.className = isCurrent ? "pill-model-item active" : "pill-model-item";
+    opt.setAttribute("aria-selected", isCurrent ? "true" : "false");
   }
 
   requestModelSwitch(modelID: string): void {

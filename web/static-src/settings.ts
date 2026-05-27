@@ -229,12 +229,15 @@ interface KiroSettingPayload { key?: string; value?: string }
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
+  inverted?: boolean;
 }[] = [
   { key: "chat.enableCheckpoint", inputID: "flag-checkpoint" },
   { key: "chat.enableTodoList",   inputID: "flag-todolist" },
   { key: "chat.enableKnowledge",  inputID: "flag-knowledge" },
   { key: "hooks.showStatus",      inputID: "flag-hooks-status" },
   { key: "telemetry.enabled",     inputID: "flag-telemetry" },
+  { key: "toolSearch.enabled",    inputID: "flag-tool-search" },
+  { key: "app.disableAutoupdates", inputID: "flag-auto-update-kiro", inverted: true },
 ];
 
 function initExperimentalToggles(): void {
@@ -250,7 +253,8 @@ function initExperimentalToggles(): void {
       const input = inputs[i] ?? null;
       if (input === null) continue;
       const v = results[i]?.value ?? "";
-      input.checked = v === "" || v === "true";
+      const isOn = v === "" || v === "true";
+      input.checked = experimentalFlags[i]!.inverted ? !isOn : isOn;
     }
   });
   for (let i = 0; i < experimentalFlags.length; i++) {
@@ -260,9 +264,12 @@ function initExperimentalToggles(): void {
     input.addEventListener("change", () => {
       showSaving();
       const gen = ++kiroSettingGen;
+      const wireValue = flag.inverted
+        ? (input.checked ? "false" : "true")
+        : (input.checked ? "true" : "false");
       void setKiroSetting.dispatch({
         key: flag.key,
-        value: input.checked ? "true" : "false",
+        value: wireValue,
         input,
       }, { silent: true })
         .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });

@@ -15,6 +15,11 @@ import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
+
+type DirEntry =
+  | { kind: "up" }
+  | { kind: "file"; name: string; isDir: boolean };
 
 let currentPath = ".";
 const selected = new Set<string>();
@@ -102,21 +107,38 @@ function loadDir(): void {
   const pathEl = el<HTMLInputElement>("filepicker-path");
   pathEl.value = displayPath(currentPath);
   pathEl.readOnly = true;
-  list.replaceChildren();
 
   void fetchDir(currentPath, pickerFetchHolder).then((d) => {
+    // Drop any prior non-keyed siblings (error row, empty placeholder)
+    // before reconciling.
+    for (const child of [...list.children]) {
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    }
+
     if (d.error !== undefined) {
       if (d.error === "stale") return;
+      // Wipe keyed children + show error row.
+      reconcile(list, [], { key: () => "", mount: () => document.createElement("div") });
       list.appendChild(errorRow(d.error, () => loadDir()));
       return;
     }
 
     const sorted = sortEntries(d.files);
+    const entries: DirEntry[] = [];
+    if (currentPath !== ".") entries.push({ kind: "up" });
+    for (const f of sorted) entries.push({ kind: "file", name: f.name, isDir: f.isDir });
 
-    if (currentPath !== ".") list.appendChild(upRow());
-    for (const f of sorted) {
-      list.appendChild(entryRow(f.name, f.isDir));
-    }
+    reconcile(list, entries, {
+      key: (e: DirEntry) => e.kind === "up" ? "__up__" : `file:${e.name}`,
+      mount: (e: DirEntry) => e.kind === "up" ? upRow() : entryRow(e.name, e.isDir),
+      update: (row, e: DirEntry) => {
+        if (e.kind === "file") {
+          // Sync checkbox state to the live `selected` set.
+          const check = row.querySelector<HTMLInputElement>(".fb-check");
+          if (check !== null) check.checked = selected.has(e.name);
+        }
+      },
+    });
 
     if (sorted.length === 0 && currentPath === ".") {
       const empty = document.createElement("div");

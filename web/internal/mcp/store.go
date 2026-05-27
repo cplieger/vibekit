@@ -92,9 +92,10 @@ const SecretMask = api.SecretMask
 // mcpServer name (must be unique across the configured set).
 type Server struct {
 	URL           string    `json:"url,omitempty"`
-	ID            ServerID  `json:"id"`
 	Name          string    `json:"name"`
 	Command       string    `json:"command,omitempty"`
+	OAuthClientID string    `json:"oauth_client_id,omitempty"`
+	ID            ServerID  `json:"id"`
 	Transport     Transport `json:"transport"`
 	Args          []string  `json:"args,omitempty"`
 	Env           []KeyPair `json:"env,omitempty"`

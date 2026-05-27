@@ -63,6 +63,7 @@
   padding: var(--sp-2) 0.75rem;
   min-height: var(--btn-h); display: flex; align-items: center;
   border-radius: var(--r);
+  font-variant-numeric: tabular-nums;
   transition: background var(--dur-micro), color var(--dur-micro) var(--ease-micro);
 }
 
@@ -226,6 +227,11 @@
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
   transition: border-color var(--dur-micro) var(--ease-micro);
 }
+
+/* Folded nested tools: kept in DOM (so reconcile tracks identity) but
+ * laid out as zero-size invisible placeholders. The user-visible
+ * content lives inside the parent .subagent-call's transcript. */
+.subagent-folded-tool { display: none; }
 
 .subagent-call:hover { border-color: var(--c-accent); }
 

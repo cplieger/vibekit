@@ -50,6 +50,11 @@ export interface Server {
   headers?: KeyPair[];
   disabled_tools?: string[];
   known_tools?: string[];
+  /** Pre-registered OAuth 2.0 client ID for HTTP servers without
+   *  Dynamic Client Registration support (Slack, GitHub, Figma).
+   *  Forwarded to kiro-cli as `oauth.clientId` on session/new
+   *  (kiro-cli 2.3+). Empty falls back to DCR. */
+  oauth_client_id?: string;
   created_at: number;
   updated_at: number;
 }

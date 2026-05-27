@@ -38,7 +38,6 @@ import { initFileBrowser, loadFileBrowser, restoreFileBrowser } from "./files.js
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
-import { initTangent } from "./tangent.js";
 import { initAwaySummary } from "./away-summary.js";
 import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
@@ -60,7 +59,7 @@ import { initAutoApprove } from "./auto-approve.js";
 import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
 import { initPromptInput } from "./prompt-input.js";
-import { initCommandsMenu } from "./commands-menu.js";
+// commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import { applyShareTarget } from "./share-target.js";
@@ -133,7 +132,6 @@ function init(): void {
   initFilePicker();
   initChatAttach();
   initTaskListPill();
-  initTangent();
   // Wire toolbar history button. Hidden when retention is 0 (no archive).
   $.historyBtn.addEventListener("click", () => {
     void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
@@ -144,7 +142,6 @@ function init(): void {
   };
   onRetentionChange(syncHistoryBtn);
   syncHistoryBtn();
-  // Fork pill visibility + click is owned by tangent.ts (initTangent).
   initAwaySummary();
   initAgentTerminals();
   initTooltips();
@@ -339,7 +336,6 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
 // ============================================================
 
 function setupInput(): void {
-  initCommandsMenu();
   initPromptInput((text: string) => {
     if (getActiveId() === "") createSession(text);
     else sendPrompt(text);

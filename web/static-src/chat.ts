@@ -20,9 +20,8 @@ import {
 } from "./tabs.js";
 import { chatSkeleton } from "./skeleton.js";
 import { showModelPicker, hideModelPicker } from "./picker.js";
-import { prependMessages, setLoadMore, scrollToBottom } from "./messages.js";
+import { mountChatView, setLoadMore, scrollToBottom } from "./messages.js";
 import { addAttachment, clearAttachments } from "./attachments.js";
-import { renderSwitch, renderUpdates } from "./renderer.js";
 import {
   setCurrentModel, getCurrentAgent, getLastModel, withAgent,
 } from "./session-context.js";
@@ -32,8 +31,7 @@ import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
-import { error as toastError } from "./toast.js";
-import { deleteChat as deleteChatAction, archiveChat as archiveChatAction, discardTangent, restoreChat } from "./actions/chat.js";
+import { deleteChat as deleteChatAction, archiveChat as archiveChatAction, restoreChat } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -52,30 +50,13 @@ export function openChatTab(id: string, name: string, agent: string): void {
     route: { kind: "chat", id },
     onShow: () => activateChatView(id),
     onClose: () => {
-      // Tangent tabs need special handling: archiving a tangent via
-      // the generic flow would leave the parent chat frozen forever
-      // (only cmdMergeTangent / cmdDiscardTangent unfreeze it). So
-      // close-X on a tangent routes through discard_tangent instead,
-      // which drops the tangent AND unfreezes the parent server-side.
-      // The normal chat_deleted broadcast still fires, so the sidebar
-      // / other devices clean up via handlers/chat.ts.
-      const s = get(id);
-      if (s?.is_tangent === true) {
-        // If discard fails, the parent chat stays frozen. Surface via
-        // toast so the user knows the parent is stuck and can retry.
-        // We do NOT call setLastError here — that's global and would
-        // block the send button on whatever chat is currently active.
-        void discardTangent.dispatch(id, {
-          onError: () => {
-            toastError("Couldn't discard tangent. Parent chat may need manual recovery.");
-          },
-        });
-        return;
-      }
+      // Rewind chats (parent_chat_id set) are just deleted on close —
+      // the parent is never frozen, so no special unfreeze needed.
       // Retention > 0: archive so the chat appears in History.
       // Retention = 0: delete permanently (no history).
       // Zero-message chats were never persisted server-side — just
       // remove locally without hitting the server.
+      const s = get(id);
       if (isRetentionEnabled()) {
         archiveChat(id);
       } else {
@@ -124,11 +105,11 @@ export function activateChatView(id: string): void {
   }
 
   if (session.message_count === 0 && session.messages.length === 0) {
-    renderSwitch(session);
+
     showModelPicker(session.model, applyLocalModel, session.agent);
   } else {
     // Hydrate messages from the server, then render.
-    renderSwitch(session);
+
     const skel = chatSkeleton();
     $.messages.appendChild(skel);
     void loadMessages(id).then((ok) => {
@@ -150,7 +131,7 @@ export function activateChatView(id: string): void {
       }
       const fresh = get(id);
       if (fresh !== undefined) {
-        renderSwitch(fresh);
+
         setupLoadMore(id);
         scrollToBottom();
       }
@@ -168,17 +149,17 @@ function setupLoadMore(chatID: string): void {
     session.has_more ? (): void => {
       const oldest = session.messages[0];
       if (oldest === undefined) return;
-      // prevCount is captured before the async loadMessages call. If another
-      // source appends messages concurrently, `added` may be slightly off.
-      // This is acceptable: the worst case is a harmless extra prepend of
-      // already-rendered messages, and setupLoadMore re-runs immediately after.
-      const prevCount = session.messages.length;
       void loadMessages(chatID, oldest.ts).then(() => {
+        // Remove the load-more skeleton — scroll.ts watches for its
+        // removal as the "load complete" signal (was previously done
+        // inside the imperative prependMessages helper).
+        document.getElementById("load-more-skeleton")?.remove();
         if (getActiveId() !== chatID) return;
         const s = get(chatID);
         if (s === undefined) return;
-        const added = s.messages.length - prevCount;
-        if (added > 0) prependMessages(s.messages.slice(0, added));
+        // Store mutations bump version; the chat-view effect re-renders
+        // and reconcile prepends the older messages at the top with
+        // identity preserved for already-mounted ones.
         setupLoadMore(chatID);
       });
     } : null,
@@ -213,8 +194,6 @@ export function createSession(initialPrompt?: string): void {
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    available_commands: [],
-    available_prompts: [],
     auto_approve_crew: false,
     pending_changes: [],
     usage: defaultUsage(),
@@ -299,14 +278,16 @@ export function createPlannerSession(): void {
   withAgent("kiro_planner", () => createSession());
 }
 
-/** Wire the effect() that drives the renderer, tab-rename
- *  reconciliation, and send-button state. */
+/** Wire the effect() that drives tab-rename reconciliation and
+ *  send-button state. Also mounts the chat view (idempotent).
+ *  The message list is rendered via mountChatView's own effect. */
 export function installStoreSubscribers(): void {
+  mountChatView();
   effect(() => {
     version.value;
     const active = getActive();
     if (active !== undefined) {
-      renderUpdates(active);
+
       refreshContextUI(active);
     }
     recomputeSendState();

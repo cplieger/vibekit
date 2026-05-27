@@ -33,13 +33,13 @@
 // Matcher is case-sensitive and operates on slash-separated paths
 // (matching what resolveInsideWorkDir produces).
 //
-// Fail mode: a transient settings.json read/parse failure (oversized,
+// Fail mode: a transient config.json read/parse failure (oversized,
 // corrupt JSON, wrong-type list) clears the in-memory ruleset,
 // effectively disabling the matcher (fail-open) until the next
 // successful read. The alternative — fail-closed block-all — would
 // lock the agent out of the workspace on any disk blip. Errors are
 // logged at slog.Warn so transient failures are visible in Loki. A
-// persistently broken settings.json surfaces as a one-time warn plus
+// persistently broken config.json surfaces as a one-time warn plus
 // all-permissive matches until fixed.
 
 package ignore
@@ -67,7 +67,7 @@ import (
 const maxIgnoreFileSize = 1 << 20
 
 // settingsFilename is the canonical filename for the user's settings.
-const settingsFilename = "settings.json"
+const settingsFilename = "config.json"
 
 // Matcher evaluates read paths against a set of ignore files
 // listed in the server settings. Patterns are re-parsed on demand
@@ -102,7 +102,7 @@ type rule struct {
 }
 
 // NewMatcher builds a matcher backed by the agent_ignore_files
-// setting in `<configDir>/settings.json`. Relative entries in the
+// setting in `<configDir>/config.json`. Relative entries in the
 // setting are resolved against workDir so users can type
 // `.gitignore` and have it pick up the workspace's top-level file.
 // Empty / missing settings produce a no-op matcher (Matches always
@@ -159,7 +159,7 @@ func (m *Matcher) Matches(rel string, isDir bool) bool {
 	return ignored
 }
 
-// refresh re-reads the file list from settings.json and re-parses
+// refresh re-reads the file list from config.json and re-parses
 // ignore files whose mtimes have advanced. Uses singleflight to
 // deduplicate concurrent refresh I/O — the first caller in a burst
 // does the work; others share its result. Uses context.Background()
@@ -174,9 +174,9 @@ func (m *Matcher) refresh() {
 	})
 }
 
-// doRefresh performs the actual refresh logic. Stats settings.json
+// doRefresh performs the actual refresh logic. Stats config.json
 // first — if its mtime hasn't advanced, the file list is reused from
-// cache (fast path: single stat). Only when settings.json changes or
+// cache (fast path: single stat). Only when config.json changes or
 // ignore-file mtimes advance does it re-read and re-parse.
 //
 // I/O (stat, read, parse) runs WITHOUT holding m.mu — the singleflight
@@ -184,7 +184,7 @@ func (m *Matcher) refresh() {
 // the final pointer swap of rules/files/mtimes, minimizing the window
 // where Matches() callers block.
 func (m *Matcher) doRefresh() {
-	// Fast path: stat settings.json. If mtime hasn't advanced, reuse
+	// Fast path: stat config.json. If mtime hasn't advanced, reuse
 	// the cached file list and only check ignore-file mtimes.
 	settingsPath := filepath.Join(m.configDir, settingsFilename)
 	settingsInfo, settingsErr := os.Stat(settingsPath)
@@ -203,7 +203,7 @@ func (m *Matcher) doRefresh() {
 	if settingsErr == nil && !cachedSettingsMTime.IsZero() &&
 		settingsInfo.ModTime().Equal(cachedSettingsMTime) &&
 		settingsInfo.Size() == cachedSettingsSize {
-		// settings.json unchanged — reuse cached file list.
+		// config.json unchanged — reuse cached file list.
 		files = cachedFiles
 		settingsChanged = false
 	}
@@ -295,11 +295,11 @@ func filesOrMTimesChangedStatic(cachedFiles []string, cachedMTimes map[string]ti
 }
 
 // readSettingFiles pulls the agent_ignore_files list out of
-// settings.json and resolves each entry against the workspace root.
+// config.json and resolves each entry against the workspace root.
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	data, err := cfgsettings.ReadBytes(ctx, m.configDir)
 	if err != nil {
-		slog.Warn("permissions: read settings.json for agent_ignore_files", "error", err)
+		slog.Warn("permissions: read config.json for agent_ignore_files", "error", err)
 		return nil
 	}
 	if data == nil {
@@ -307,7 +307,7 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("permissions: parse settings.json for agent_ignore_files", "error", err)
+		slog.Warn("permissions: parse config.json for agent_ignore_files", "error", err)
 		return nil
 	}
 	v, ok := raw["agent_ignore_files"]

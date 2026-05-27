@@ -12,6 +12,7 @@
 import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
+import { reconcile } from "./reconcile.js";
 
 interface BranchEntry { name: string; current: boolean; }
 interface BranchesResponse { branches: BranchEntry[]; current: string; }
@@ -20,6 +21,10 @@ let openPopover: HTMLDivElement | null = null;
 let activeAnchor: HTMLElement | null = null;
 let branchController: AbortController | null = null;
 let popoverBindingCleanups: Array<() => void> = [];
+/** Per-branch-row checkout-action loading-state unbinds, keyed by
+ *  branch name. Cleared via reconcile.onRemove during filter typing
+ *  and en masse via closePopover(). */
+const rowUnbinds: Map<string, () => void> = new Map();
 registerCleanup(() => branchController?.abort());
 
 /** Open the branch switcher anchored to anchorEl for repo. Idempotent
@@ -66,24 +71,47 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     }
     const render = (q: string): void => {
       const filtered = data.branches.filter((b) => b.name.toLowerCase().includes(q.toLowerCase()));
-      list.replaceChildren();
+      // Drop any non-keyed empty/error placeholder before reconciling.
+      for (const child of [...list.children]) {
+        if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      }
+      const onRemoveRow = (_: HTMLElement, key: string): void => {
+        const u = rowUnbinds.get(key);
+        if (u !== undefined) { u(); rowUnbinds.delete(key); }
+      };
       if (filtered.length === 0) {
+        reconcile(list, [] as BranchEntry[], {
+          key: (b) => b.name,
+          mount: () => document.createElement("div"),
+          onRemove: onRemoveRow,
+        });
         list.textContent = q === "" ? "No branches." : "No matching branches.";
         return;
       }
-      for (const b of filtered) {
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
-        row.setAttribute("role", "menuitem");
-        row.textContent = b.name;
-        if (b.current) row.setAttribute("data-tooltip", "Current branch");
-        row.addEventListener("click", () => {
-          void doCheckout(repo, b.name, false);
-        });
-        list.appendChild(row);
-        popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", row));
-      }
+      reconcile(list, filtered, {
+        key: (b: BranchEntry) => b.name,
+        mount: (b: BranchEntry) => {
+          const row = document.createElement("button");
+          row.type = "button";
+          row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
+          row.setAttribute("role", "menuitem");
+          row.textContent = b.name;
+          if (b.current) row.setAttribute("data-tooltip", "Current branch");
+          row.addEventListener("click", () => {
+            void doCheckout(repo, b.name, false);
+          });
+          rowUnbinds.set(b.name, bindLoadingState("git.checkout_branch", row));
+          return row;
+        },
+        update: (row, b: BranchEntry) => {
+          // current-flag may flip when the active branch changes mid-popover
+          // (e.g. the user picks a different one and the popover stays open).
+          row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
+          if (b.current) row.setAttribute("data-tooltip", "Current branch");
+          else row.removeAttribute("data-tooltip");
+        },
+        onRemove: onRemoveRow,
+      });
     };
     render("");
     filter.addEventListener("input", () => render(filter.value));

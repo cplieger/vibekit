@@ -8,7 +8,7 @@
 import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setFrozen, setModel, clearPendingChanges, addPendingChange } from "../store.js";
+import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setModel, clearPendingChanges, addPendingChange } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
@@ -63,34 +63,6 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
   },
   success: false,
   error: "Couldn't archive chat",
-});
-
-// --- chat.discard_tangent ---
-
-export const discardTangent = transportAction<string, { session: import("../types.js").Session; atIndex: number; parentID: string | undefined }>({
-  name: "chat.discard_tangent",
-  scope: (id) => `chat:${id}`,
-  dedupe: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: (id) => ({ type: "discard_tangent", chat_id: id }),
-  optimistic: (id) => {
-    const session = get(id);
-    if (session === undefined) return undefined;
-    const atIndex = indexOfSession(id);
-    const parentID = session.parent_chat_id;
-    removeChat(id);
-    if (parentID !== undefined) setFrozen(parentID, false);
-    return { session, atIndex, parentID };
-  },
-  rollback: (_id, op) => {
-    if (op !== undefined) {
-      reinsertSession(op.session, op.atIndex);
-      if (op.parentID !== undefined) setFrozen(op.parentID, true);
-    }
-  },
-  // Caller (chat.ts onClose) fires a richer manual toast on failure.
-  error: false,
 });
 
 // --- chat.set_supervised ---
@@ -169,45 +141,6 @@ export const clearPendingTrust = transportAction<string>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't clear pending trust",
-});
-
-// --- chat.fork ---
-
-export const forkChat = transportAction<{ chatID: string; tangentID: string }, { chatID: string; wasFrozen: boolean }>({
-  name: "chat.fork",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  dedupe: true,
-  idempotencyKey: true,
-  command: ({ chatID, tangentID }) => ({
-    type: "fork_chat",
-    chat_id: chatID,
-    payload: { tangent_id: tangentID },
-  }),
-  optimistic: ({ chatID }) => {
-    const session = get(chatID);
-    const wasFrozen = session?.frozen ?? false;
-    setFrozen(chatID, true);
-    return { chatID, wasFrozen };
-  },
-  rollback: ({ chatID }, op) => {
-    if (op !== undefined) setFrozen(chatID, op.wasFrozen);
-  },
-  retryable: retryNetwork,
-  error: "Couldn't fork chat",
-});
-
-// --- chat.merge_tangent ---
-// Not retryable: merge deletes the tangent server-side. If the first
-// attempt succeeded but the response timed out, a retry would hit 404
-// (tangent already gone). Showing a Retry button would mislead the user
-// into thinking the merge failed when it actually succeeded. The tangent
-// deletion broadcasts SSE chat_deleted so listeners reconcile state.
-
-export const mergeTangent = transportAction<string>({
-  name: "chat.merge_tangent",
-  scope: (chatID) => `chat:${chatID}`,
-  command: (chatID) => ({ type: "merge_tangent", chat_id: chatID }),
-  error: "Couldn't merge tangent",
 });
 
 // --- chat.set_auto_approve_crew ---

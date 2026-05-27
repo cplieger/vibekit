@@ -60,9 +60,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
 	steer.Generate()
 
-	if home, err := os.UserHomeDir(); err == nil {
-		bridge.SetSessionsDir(filepath.Join(home, ".kiro", "sessions", "cli"))
-	}
+	bridge.SetSessionsDir(api.KiroSessionsCLIDir())
 	bridge.CleanupStaleSessions(context.Background())
 
 	// Wipe legacy shadow-git checkpoint directories.
@@ -116,6 +114,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
 	h.SetMCPOnChange(func() { steer.Generate() })
+	h.SetPreBridgeSpawn(func() { steer.Generate() })
 
 	forgesManager := forgesPkg.NewManager()
 	if refreshErr := forgesManager.Refresh(context.Background()); refreshErr != nil {

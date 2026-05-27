@@ -14,7 +14,7 @@ import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setAvailableCommands, setCurrentMode, clearMsgIndex, invalidateSession,
+  setCurrentMode, clearMsgIndex, invalidateSession,
   version,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
@@ -69,17 +69,10 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   if (id !== "") void loadMessages(id);
 });
 
-// commands_updated arrives once per session after session/new, and
-// again whenever kiro-cli's available command set changes (e.g. when
-// an MCP server loads and exposes new prompts). The store copies the
-// list onto the chat so the slash-command popover can read the
-// current catalog synchronously. Payload is kiro-cli's
-// _kiro.dev/commands/available pre-filtered of terminal-only entries
-// (see translate_commands.go's handleCommandsAvailable).
-onSSE("commands_updated", (chatID, payload) => {
-  if (chatID === "") return;
-  setAvailableCommands(chatID, payload.commands, payload.prompts);
-});
+// commands_updated: no longer consumed — slash command UI stripped.
+// The SSE event still fires from the server (kiro-cli sends
+// _kiro.dev/commands/available on every session) but the client
+// are kept for now (zero-cost; removed in a follow-up cleanup).
 
 // compaction_started is advisory. The `thinking` flag is already true
 // at this point (set by the prompt send), and the completed state is

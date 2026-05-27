@@ -25,6 +25,7 @@ import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
+import { reconcile } from "./reconcile.js";
 
 // --- Types ---
 
@@ -212,6 +213,11 @@ function paintInner(): void {
   // state instead of N collapsed sections.
   const totalOpen = visible.reduce((acc, g) => acc + g.prs.length, 0);
   if (totalOpen === 0 && filterText === "") {
+    // Wipe any prior keyed sections, then show centered empty state.
+    reconcile(root, [] as RepoGroup[], { key: (g) => g.full_name, mount: () => document.createElement("div") });
+    for (const child of [...root.children]) {
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    }
     root.innerHTML = renderEmptyState({
       icon: ICON_PR_EMPTY,
       title: "All caught up",
@@ -220,8 +226,11 @@ function paintInner(): void {
     return;
   }
 
-  root.replaceChildren();
   if (visible.length === 0) {
+    reconcile(root, [] as RepoGroup[], { key: (g) => g.full_name, mount: () => document.createElement("div") });
+    for (const child of [...root.children]) {
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    }
     root.innerHTML = renderEmptyState({
       icon: ICON_FILTER,
       title: "No matching pull requests",
@@ -230,7 +239,67 @@ function paintInner(): void {
     return;
   }
 
-  for (const g of visible) root.appendChild(renderGroup(g));
+  // Drop any prior non-keyed empty-state placeholder before reconciling.
+  for (const child of [...root.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+  }
+  reconcile(root, visible, {
+    key: (g: RepoGroup) => g.full_name,
+    mount: (g: RepoGroup) => renderGroup(g),
+    update: (section: HTMLElement, g: RepoGroup) => paintGroupBody(section, g),
+  });
+}
+
+/** Refresh a kept group section's count + body content. Header
+ *  identity (and expansion state) is preserved across paints. */
+function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
+  const count = g.prs.length;
+  const countText = count === 0 ? "no open PRs" : `${count} open`;
+  const meta = section.querySelector(".git-repo-section-meta");
+  if (meta !== null) meta.textContent = countText;
+
+  const body = section.querySelector<HTMLElement>(":scope > .git-repo-section-body");
+  if (body === null) return;
+
+  // Drop any non-keyed placeholders (error / empty rows) before reconcile.
+  for (const child of [...body.children]) {
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null
+      && !child.classList.contains("git-pr-list")) child.remove();
+  }
+
+  if (g.error !== undefined && g.error !== "") {
+    body.replaceChildren();
+    const err = document.createElement("div");
+    err.className = "git-repo-row-error";
+    err.textContent = `Failed to load PRs: ${g.error}`;
+    body.appendChild(err);
+    return;
+  }
+
+  const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
+  const filtered = filterText === "" || groupMatchesFilter
+    ? g.prs
+    : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
+
+  if (filtered.length === 0) {
+    body.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "git-repo-row-empty";
+    empty.textContent = `No open pull requests on ${kindTitle(g.forge_kind)}.`;
+    body.appendChild(empty);
+    return;
+  }
+
+  let list = body.querySelector<HTMLElement>(":scope > .git-pr-list");
+  if (list === null) {
+    list = document.createElement("ul");
+    list.className = "git-pr-list";
+    body.replaceChildren(list);
+  }
+  reconcile(list, filtered, {
+    key: (pr: PR) => `${g.forge_id}:${pr.number}`,
+    mount: (pr: PR) => renderPRRow(g, pr),
+  });
 }
 
 // --- Empty-state markup helpers ---
