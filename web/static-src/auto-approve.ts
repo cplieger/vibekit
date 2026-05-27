@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { getActive, version } from "./store.js";
+import { getActive, activeVersion } from "./store.js";
 import { effect } from "./signals.js";
 import { setAutoApproveCrew } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -34,7 +34,7 @@ export function initAutoApprove(): void {
   void bindLoadingState("chat.set_auto_approve_crew", $.autoApproveCrewBtn);
 
   // Re-render on every store change (active chat switch, flag change).
-  effect(() => { version.value; render(); });
+  effect(() => { activeVersion.value; render(); });
 }
 
 function render(): void {

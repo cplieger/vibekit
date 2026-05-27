@@ -18,7 +18,7 @@
 // extend the existing .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
-import { getActive, version } from "./store.js";
+import { getActive, activeVersion } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
@@ -51,7 +51,7 @@ class SupervisedPillController {
     this.pill.setAttribute("aria-expanded", "false");
     this.render();
 
-    effect(() => { version.value; this.render(); });
+    effect(() => { activeVersion.value; this.render(); });
   }
 
   /** Render the pill in three states:
