@@ -5,6 +5,18 @@ TOOLS="$CONFIG_DIR/tools"
 MANIFEST="$CONFIG_DIR/tools.json"
 LOG="/tmp/setup-tools.log"
 
+# kiro-cli is pinned via Renovate against the public install manifest at
+# https://desktop-release.q.us-east-1.amazonaws.com/index.json. Bumping
+# either literal triggers a reinstall on next container start (see the
+# version-drift check below). The in-binary auto-update is disabled so
+# what runs always matches the version baked into the image tag and the
+# SHA we verified at install time. KIRO_CLI_SHA256 is the sha256 of the
+# x86_64-linux headless zip; on aarch64 the hash is logged but not
+# enforced (Renovate tracks one arch).
+# renovate: datasource=custom.kiro-cli depName=kiro-cli
+KIRO_CLI_VERSION="2.4.2"
+KIRO_CLI_SHA256="7f7239d814fbfbb963edc19deb661fb2060eeb2f3d91a504491307bb1821998d"
+
 mkdir -p "$TOOLS/bin" "$TOOLS/go/bin" "$TOOLS/runtimes" \
     "$TOOLS/node/bin" "$TOOLS/python/bin" "$TOOLS/lib" \
     "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
@@ -21,60 +33,126 @@ fi
 # Subsequent: background (tools already present), respects auto_update setting
 # kiro-cli is the one tool vibekit cannot launch without; it's downloaded
 # below (not baked into the image for licensing reasons, not in tools.json
-# so users can't accidentally remove it).
-# shellcheck disable=SC2016
-# SC2016: $vars inside KIRO_CLI_INSTALL are intentionally NOT expanded at
-# assignment time — the whole string is `eval`d later and references must
-# resolve in that scope ($_install_script, $HOME, $_rc).
-KIRO_CLI_INSTALL='
-  _install_script=$(mktemp)
-  if ! curl -fsSL https://cli.kiro.dev/install -o "$_install_script"; then
-    printf "ERROR: failed to download kiro-cli installer\n"
-    rm -f "$_install_script"
-    false
-  elif [ ! -s "$_install_script" ]; then
-    printf "ERROR: kiro-cli installer is empty (partial download?)\n"
-    rm -f "$_install_script"
-    false
-  else
-    bash "$_install_script"
-    _rc=$?
-    rm -f "$_install_script"
-    if [ $_rc -eq 0 ]; then
-      [ -f "$HOME/.local/bin/kiro-cli" ] && mv "$HOME/.local/bin/kiro-cli" "'"$TOOLS"'/bin/kiro-cli"
-      mv "$HOME/.local/bin/kiro-cli-chat" "'"$TOOLS"'/bin/kiro-cli-chat" 2>/dev/null
-      mv "$HOME/.local/bin/kiro-cli-term" "'"$TOOLS"'/bin/kiro-cli-term" 2>/dev/null
-      true
-    else
-      false
-    fi
-  fi
-'
+# so users can't accidentally remove it). Pinned via KIRO_CLI_VERSION /
+# KIRO_CLI_SHA256 above; Renovate keeps both in lockstep with the public
+# install manifest.
+install_kiro_cli() {
+    printf "Installing kiro-cli %s\n" "$KIRO_CLI_VERSION"
+    printf "  kiro-cli is proprietary AWS Content; by installing you accept\n"
+    printf "  the AWS Customer Agreement. License: https://kiro.dev/license/\n"
 
-if [ -f "$TOOLS/bin/kiro-cli" ]; then
+    # Direct download of the versioned zip per the docs:
+    # https://kiro.dev/docs/cli/installation/ ("With a zip file"). We pin
+    # the version (not /latest/) so a given image tag is reproducible and
+    # verify the sha256 before running install.sh.
+    local arch zip_url tmpdir zip
+    case "$(uname -m)" in
+        x86_64)  arch="x86_64-linux"  ;;
+        aarch64) arch="aarch64-linux" ;;
+        *)
+            printf "ERROR: unsupported architecture: %s\n" "$(uname -m)" >&2
+            return 1
+            ;;
+    esac
+    zip_url="https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${arch}.zip"
+
+    tmpdir=$(mktemp -d) || return 1
+    zip="$tmpdir/kirocli.zip"
+
+    if ! curl --proto '=https' --tlsv1.2 -fsSL "$zip_url" -o "$zip"; then
+        printf "ERROR: failed to download kiro-cli zip from %s\n" "$zip_url" >&2
+        rm -rf "$tmpdir"
+        return 1
+    fi
+    if [ ! -s "$zip" ]; then
+        printf "ERROR: kiro-cli zip is empty (partial download?)\n" >&2
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    # Verify SHA-256. KIRO_CLI_SHA256 is the x86_64-linux hash from the
+    # install manifest, kept in lockstep with KIRO_CLI_VERSION by Renovate.
+    # On aarch64 we log the hash for the audit trail but do not enforce.
+    local actual
+    actual=$(sha256sum "$zip" | awk '{print $1}')
+    printf "kiro-cli zip SHA-256: %s (url=%s)\n" "$actual" "$zip_url"
+    if [ "$arch" = "x86_64-linux" ]; then
+        if [ "$actual" != "$KIRO_CLI_SHA256" ]; then
+            printf "ERROR: kiro-cli SHA-256 mismatch\n" >&2
+            printf "  expected: %s\n" "$KIRO_CLI_SHA256" >&2
+            printf "  actual:   %s\n" "$actual" >&2
+            printf "  refusing install; bump KIRO_CLI_VERSION/KIRO_CLI_SHA256 together\n" >&2
+            rm -rf "$tmpdir"
+            return 1
+        fi
+        printf "kiro-cli SHA-256 verified against pinned hash\n"
+    else
+        printf "kiro-cli SHA-256 unverified on %s (no pinned hash for this arch)\n" "$arch"
+    fi
+
+    if ! unzip -q "$zip" -d "$tmpdir"; then
+        printf "ERROR: failed to extract kiro-cli zip\n" >&2
+        rm -rf "$tmpdir"
+        return 1
+    fi
+    # Suppress the installer's "Next steps / Use the command" trailer
+    # (irrelevant in a container where vibekit drives kiro-cli directly).
+    if ! "$tmpdir/kirocli/install.sh" --no-confirm > /dev/null 2>&1; then
+        if ! "$tmpdir/kirocli/install.sh" < /dev/null > /dev/null 2>&1; then
+            printf "ERROR: install.sh failed (rc=%d)\n" "$?" >&2
+            rm -rf "$tmpdir"
+            return 1
+        fi
+    fi
+    rm -rf "$tmpdir"
+
+    # The installer drops binaries in $HOME/.local/bin; move into
+    # $TOOLS/bin so the path is stable regardless of how /config is
+    # mounted across restarts.
+    if [ -f "$HOME/.local/bin/kiro-cli" ]; then
+        mv "$HOME/.local/bin/kiro-cli" "$TOOLS/bin/kiro-cli"
+    fi
+    mv "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
+    mv "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
+}
+
+# Reinstall when either the binary is missing or the on-disk version
+# drifts from KIRO_CLI_VERSION. The binary lives on the persistent
+# /config volume, so a freshly bumped image needs this drift check to
+# actually pick up the new version on restart.
+needs_kiro_cli_install() {
+    if [ ! -f "$TOOLS/bin/kiro-cli" ]; then
+        return 0
+    fi
+    local current
+    current=$("$TOOLS/bin/kiro-cli" --version 2>/dev/null | awk '{print $NF}')
+    if [ "$current" != "$KIRO_CLI_VERSION" ]; then
+        printf "kiro-cli version drift: installed=%s pinned=%s; reinstalling\n" \
+            "${current:-unknown}" "$KIRO_CLI_VERSION"
+        return 0
+    fi
+    return 1
+}
+
+if needs_kiro_cli_install; then
+    if ! install_kiro_cli; then
+        printf "WARNING: kiro-cli install failed\n"
+    fi
+    # Same boot also runs setup-tools.sh foreground so the rest of the
+    # /config/tools/ surface (gh, yq, anything user-added) is in sync
+    # with the freshly installed kiro-cli before vibekit starts.
+    if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+        printf "Installing/updating additional tools (log: %s)\n" "$LOG"
+        bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" || \
+            printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"
+    fi
+else
     AUTO_UPDATE=$(jq -r '.auto_update // true' "$CONFIG_DIR/config.json" 2>/dev/null || echo "true")
     if [ "$AUTO_UPDATE" = "true" ]; then
         printf "Tools installed, updating in background (log: %s)\n" "$LOG"
         bash /opt/vibekit/setup-tools.sh > "$LOG" 2>&1 &
     else
         printf "Tools installed, auto-update disabled\n"
-    fi
-else
-    printf "First boot: installing kiro-cli\n"
-    printf "  kiro-cli is proprietary AWS Content; by installing you accept\n"
-    printf "  the AWS Customer Agreement. License: https://kiro.dev/license/\n"
-    # Suppress the installer's "Next steps / Use the command" trailer
-    # (irrelevant in a container where vibekit drives kiro-cli directly).
-    # PIPESTATUS preserves the installer's exit code through the sed filter.
-    eval "$KIRO_CLI_INSTALL" 2>&1 \
-        | sed -e '/^Next steps:$/d' -e '/^Use the command "kiro-cli"/d'
-    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-        printf "WARNING: kiro-cli install failed\n"
-    fi
-    if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes | length > 0' "$MANIFEST" >/dev/null 2>&1; then
-        printf "First boot: installing additional tools (log: %s)\n" "$LOG"
-        bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" || \
-            printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"
     fi
 fi
 
@@ -117,11 +195,13 @@ if command -v kiro-cli > /dev/null 2>&1; then
     for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled; do
         kiro-cli settings "$flag" false > /dev/null 2>&1 || true
     done
-    # Enable kiro-cli self-update. kiro-cli checks for updates on every
-    # launch and silently replaces its own binary when newer is available.
-    # Safe for vibekit because we mediate everything through ACP (stable
-    # wire protocol); the user never sees kiro-cli's TUI.
-    kiro-cli settings "app.disableAutoupdates" false > /dev/null 2>&1 || true
+    # Disable in-binary auto-update: KIRO_CLI_VERSION above is the
+    # source of truth, kept current by Renovate against the public
+    # install manifest. Letting kiro-cli silently replace itself
+    # would invalidate the pinned SHA, break image-tag reproducibility,
+    # and bypass the version-drift reinstall path. Bumps land via
+    # Renovate PR → image rebuild → restart picks them up.
+    kiro-cli settings "app.disableAutoupdates" true > /dev/null 2>&1 || true
     # Auto-cleanup old conversations after 1 day (configurable in Settings → General).
     kiro-cli settings cleanup.periodDays 1 > /dev/null 2>&1 || true
     exec /app/vibekit
