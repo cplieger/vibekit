@@ -34,7 +34,7 @@ func NewChatID() ChatID {
 	return ChatID(newUUIDv7())
 }
 
-func newUUIDv7() string {
+func newUUIDv7() string { //nolint:gosec // G115: bit-shift truncation is intentional for UUIDv7 encoding
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	ms := uint64(time.Now().UnixMilli())

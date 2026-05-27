@@ -596,47 +596,47 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		want SteeringDoc
+		want Doc
 	}{
 		{
 			name: "no frontmatter defaults to always",
 			in:   "# Title\n\nBody.\n",
-			want: SteeringDoc{Inclusion: "always"},
+			want: Doc{Inclusion: "always"},
 		},
 		{
 			name: "explicit always",
 			in:   "---\ninclusion: always\n---\nbody",
-			want: SteeringDoc{Inclusion: "always"},
+			want: Doc{Inclusion: "always"},
 		},
 		{
 			name: "fileMatch with pattern",
 			in:   "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
-			want: SteeringDoc{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
+			want: Doc{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
 		},
 		{
 			name: "manual",
 			in:   "---\ninclusion: manual\ndescription: Incident runbook\n---\n",
-			want: SteeringDoc{Inclusion: "manual", Description: "Incident runbook"},
+			want: Doc{Inclusion: "manual", Description: "Incident runbook"},
 		},
 		{
 			name: "unknown inclusion falls back to always",
 			in:   "---\ninclusion: bogus\n---\n",
-			want: SteeringDoc{Inclusion: "always"},
+			want: Doc{Inclusion: "always"},
 		},
 		{
 			name: "single-quoted values",
 			in:   "---\ninclusion: 'fileMatch'\nfileMatchPattern: 'cmd/*.go'\n---\n",
-			want: SteeringDoc{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
+			want: Doc{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
 		},
 		{
 			name: "missing closing fence falls back to always",
 			in:   "---\ninclusion: fileMatch\nbody without closing\n",
-			want: SteeringDoc{Inclusion: "always"},
+			want: Doc{Inclusion: "always"},
 		},
 		{
 			name: "empty file",
 			in:   "",
-			want: SteeringDoc{Inclusion: "always"},
+			want: Doc{Inclusion: "always"},
 		},
 	}
 	for _, tc := range tests {
@@ -649,7 +649,7 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 	}
 }
 
-func TestFindRepoSteeringDocs_ClassifiesByFrontmatter(t *testing.T) {
+func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	steering := filepath.Join(dir, ".kiro", "steering")
 	if err := os.MkdirAll(steering, 0o755); err != nil {
@@ -667,11 +667,11 @@ func TestFindRepoSteeringDocs_ClassifiesByFrontmatter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoSteeringDocs(dir)
+	docs := findRepoDocs(dir)
 	if len(docs) != 4 {
 		t.Fatalf("got %d docs, want 4", len(docs))
 	}
-	byName := map[string]SteeringDoc{}
+	byName := map[string]Doc{}
 	for _, d := range docs {
 		byName[d.Filename] = d
 	}
@@ -689,28 +689,28 @@ func TestFindRepoSteeringDocs_ClassifiesByFrontmatter(t *testing.T) {
 	}
 }
 
-func TestFindRepoSteeringDocs_NoSteeringDir(t *testing.T) {
+func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
 	dir := t.TempDir()
-	docs := findRepoSteeringDocs(dir)
+	docs := findRepoDocs(dir)
 	if docs != nil {
 		t.Errorf("expected nil, got %+v", docs)
 	}
 }
 
-func TestFindRepoSteeringDocs_CapAt20(t *testing.T) {
+func TestFindRepoDocs_CapAt20(t *testing.T) {
 	dir := t.TempDir()
 	steering := filepath.Join(dir, ".kiro", "steering")
 	if err := os.MkdirAll(steering, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// 25 files; expect 20 returned.
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		name := fmt.Sprintf("doc-%02d.md", i)
 		if err := os.WriteFile(filepath.Join(steering, name), []byte("body"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoSteeringDocs(dir)
+	docs := findRepoDocs(dir)
 	if len(docs) != 20 {
 		t.Errorf("got %d docs, want 20 (capped)", len(docs))
 	}

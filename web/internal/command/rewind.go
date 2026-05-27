@@ -24,7 +24,7 @@ import (
 //
 // Unlike the old tangent system, the parent is NOT frozen — both
 // chats continue independently.
-func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -108,7 +108,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 // CmdPromoteRewindChat promotes a rewind chat to replace its parent.
 // Deletes the parent chat and clears the rewind's parent_chat_id so
 // it becomes a top-level chat.
-func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -151,7 +151,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 // CmdDiscardRewindChat discards a rewind chat and returns to the parent.
 // Deletes the rewind chat; the parent is unaffected (it was never frozen).
-func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -206,9 +206,9 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 
 	// Dispatch /effort via the internal slash-execute path.
 	result, err := bridge.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
-		"command": map[string]any{
-			"command": "effort",
-			"args":    []string{p.Level},
+		keyCommand: map[string]any{
+			keyCommand: "effort",
+			"args":     []string{p.Level},
 		},
 	})
 	if err != nil {

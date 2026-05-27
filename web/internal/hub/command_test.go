@@ -666,39 +666,6 @@ func TestIsEmptyTurn(t *testing.T) {
 
 // --- MergeLastExchange ---
 
-func TestMergeLastExchange(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "target", func(c *api.Chat, _ bool) bool {
-		c.Name = "Target"
-		return true
-	})
-
-	msgs := []api.Message{
-		{ID: "u1", Role: api.RoleUser, Content: "first question"},
-		{ID: "a1", Role: api.RoleAssistant, Content: "first answer"},
-		{ID: "u2", Role: api.RoleUser, Content: "second question"},
-		{ID: "a2", Role: api.RoleAssistant, Content: "second answer"},
-	}
-
-	h.mergeLastExchange(context.Background(), "target", msgs)
-
-	target, _ := cs.Get(context.Background(), "target")
-	if len(target.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(target.Messages))
-	}
-	if target.Messages[0].Content != "second question" {
-		t.Errorf("first merged = %q", target.Messages[0].Content)
-	}
-	if target.Messages[1].Content != "second answer" {
-		t.Errorf("second merged = %q", target.Messages[1].Content)
-	}
-}
-
-// --- Shell interception ---
-
-// TestPrompt_ShellInterception_HappyPath: `!printf hi` runs locally,
-// persists user + assistant messages, and emits turn_ended. Pinned so
-// the interception path stays wired end-to-end.
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	h, cs, _ := newTestHub()
 	h.lifecycle.workDir = t.TempDir()
@@ -775,25 +742,6 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 // active tangent must 409 (frozen), otherwise the shell output
 // would mutate the frozen snapshot the tangent is supposed to
 // preserve for merge.
-func TestPrompt_ShellInterception_FrozenChatRejects(t *testing.T) {
-	h, cs, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "P"
-		return true
-	})
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "prompt", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (frozen parent)", rec.Code)
-	}
-}
-
-// TestShellCappedBuffer pins the 1 MiB cap on shell output and the
-// truncated flag. Without this, a runaway `!cmd` could OOM the
-// container before the 30s timeout fires.
 func TestShellCappedBuffer(t *testing.T) {
 	var b command.ShellCappedBuffer
 	// First write lands fully.
@@ -830,25 +778,6 @@ func TestShellCappedBuffer(t *testing.T) {
 // TestPrompt_FrozenChatReturns409 pins the invariant that a frozen
 // parent chat rejects prompts with 409, not 500 or silent-append.
 // Client-side tangent UX depends on this status.
-func TestPrompt_FrozenChatReturns409(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "P"
-		return true
-	})
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "prompt", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (frozen)", rec.Code)
-	}
-}
-
-// TestPrompt_BusyReturns409 pins the single-in-flight-per-chat
-// invariant that drives client-side queueing in chat-commands.ts.
-// A second prompt while sb.mu is held must 409 without duplicating
-// the kiro-cli session/prompt call.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
