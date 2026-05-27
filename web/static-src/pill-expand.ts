@@ -77,7 +77,7 @@ function togglePill(
     collapse(pill, contentEl, opts?.onCollapse);
   } else {
     for (const other of activePills) {
-      const otherContent = other.querySelector(".pill-expand-content");
+      const otherContent = other.querySelector<HTMLElement>(".pill-expand-content");
       if (otherContent !== null) {
         collapse(other, otherContent);
       }
@@ -121,7 +121,7 @@ function collapse(pill: HTMLElement, contentEl: HTMLElement, onCollapse?: () => 
 
 export function collapseAll(): void {
   for (const pill of activePills) {
-    const contentEl = pill.querySelector(".pill-expand-content");
+    const contentEl = pill.querySelector<HTMLElement>(".pill-expand-content");
     if (contentEl !== null) {
       collapse(pill, contentEl);
     }

@@ -35,7 +35,7 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
     onDragOver: (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>(".fb-row");
       if (row !== null) {
-        const name = row.dataset.name;
+        const name = row.dataset['name'];
         const entryMap = ctx.getEntryMap();
         const entry = name !== undefined ? entryMap.get(name) : undefined;
         if (entry?.isDir === true) {

@@ -196,14 +196,14 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   let chip = existing;
   if (chip === null) {
     chip = document.createElement("button");
-    chip.type = "button";
+    (chip as HTMLButtonElement).type = "button";
     chip.className = "conflict-chip";
     chip.innerHTML = `${ICON_WARN_12}<span class="conflict-chip-label"></span>`;
     chip.addEventListener("click", () => {
       void openConflictDiff(chatID, path);
     });
     row.appendChild(chip);
-    chipUnbindMap.set(chip, bindLoadingState("conflicts.open_diff", chip));
+    chipUnbindMap.set(chip, bindLoadingState("conflicts.open_diff", chip as HTMLButtonElement));
   }
   // Refresh visible state on every call so second-drift overwrites
   // stale label/tooltip captured at first render.
@@ -212,8 +212,8 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   if (label !== null) {
     label.textContent = `Drift vs ${c.other_chat}`;
   }
-  chip.dataset.tag = c.tag;
-  chip.dataset.other = c.other_chat;
+  chip.dataset['tag'] = c.tag;
+  chip.dataset['other'] = c.other_chat;
   chip.setAttribute("aria-label", `Conflict with chat ${c.other_chat} on ${escText(path)}`);
 }
 

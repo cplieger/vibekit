@@ -53,7 +53,7 @@ export function addEditActions(el: HTMLDivElement): void {
     while (sibling !== null) {
       const btn = sibling.querySelector<HTMLElement>(".checkpoint-restore");
       if (btn !== null) {
-        tag = btn.dataset.tag ?? "";
+        tag = btn.dataset['tag'] ?? "";
         break;
       }
       sibling = sibling.previousElementSibling;

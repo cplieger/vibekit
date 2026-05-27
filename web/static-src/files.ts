@@ -491,7 +491,7 @@ function updateRowHighlights(): void {
       continue;
     }
     el.classList.toggle("fb-row-selected", state.selected.has(name));
-    const check = el.querySelector(".fb-check");
+    const check = el.querySelector<HTMLInputElement>(".fb-check");
     if (check !== null) {
       check.checked = state.selected.has(name);
     }

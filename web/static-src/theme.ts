@@ -55,7 +55,7 @@ function updateIcon(): void {
     incoming.classList.add("theme-rising");
     btn.classList.add(glowClass);
     // Force reflow so the browser sees the "rising" start state.
-    void incoming.offsetHeight;
+    void (incoming as HTMLElement).offsetHeight;
     // Remove "rising" so the transition runs from below → center.
     incoming.classList.remove("theme-rising");
     incoming.addEventListener(

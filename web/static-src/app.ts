@@ -454,11 +454,11 @@ function setupInput(): void {
   initSupervisedPill();
 
   // Expandable pills: context and status dot.
-  const ctxExpand = $.contextIndicator.querySelector(".pill-expand-content");
+  const ctxExpand = $.contextIndicator.querySelector<HTMLElement>(".pill-expand-content");
   if (ctxExpand !== null) {
     makeExpandable($.contextIndicator, ctxExpand);
   }
-  const statusExpand = $.statusDot.querySelector(".pill-expand-content");
+  const statusExpand = $.statusDot.querySelector<HTMLElement>(".pill-expand-content");
   if (statusExpand !== null) {
     makeExpandable($.statusDot, statusExpand);
   }

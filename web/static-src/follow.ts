@@ -252,7 +252,7 @@ class FollowController {
 
   private setPaused(value: boolean): void {
     this.paused = value;
-    const btn = getView().querySelector(".follow-pause-btn");
+    const btn = getView().querySelector<HTMLElement>(".follow-pause-btn");
     if (btn !== null) {
       btn.setAttribute("aria-pressed", String(this.paused));
       btn.title = this.paused ? "Resume following" : "Pause following";
@@ -475,7 +475,7 @@ class FollowController {
 
   private scrollToCurrentLine(): void {
     const view = getView();
-    const pre = view.querySelector(".follow-virtual");
+    const pre = view.querySelector<HTMLPreElement>(".follow-virtual");
     if (pre !== null) {
       this.scrollToLineVirtual(pre, this.currentLine);
     } else {

@@ -73,7 +73,7 @@ export function initAgentTerminals(): void {
       if (btn === null) {
         return;
       }
-      const id = btn.dataset.shellTab ?? "";
+      const id = btn.dataset['shellTab'] ?? "";
       switchTab(id);
     });
   }

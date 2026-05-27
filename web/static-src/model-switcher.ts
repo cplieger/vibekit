@@ -108,7 +108,7 @@ class ModelSwitchController {
       void import("./api-client.js")
         .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings")) // eslint-disable-line @typescript-eslint/no-explicit-any
         .then((settings) => {
-          const me = (settings as Record<string, unknown> | null)?.model_effort as
+          const me = (settings as Record<string, unknown> | null)?.['model_effort'] as
             | { effort?: string; last_model?: string }
             | undefined;
           if (me?.effort && me.last_model === getActive()?.model) {

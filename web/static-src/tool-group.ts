@@ -311,7 +311,7 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
 }
 
 export function maybeCollapseGroup(el: HTMLElement): void {
-  const group = el.closest(".tool-group");
+  const group = el.closest<HTMLElement>(".tool-group");
   if (group === null) {
     return;
   }
@@ -331,7 +331,7 @@ export function maybeCollapseGroup(el: HTMLElement): void {
     }
   }
   group.classList.add("tool-group-auto-collapsed");
-  const header = group.querySelector(".tool-group-header");
+  const header = group.querySelector<HTMLElement>(".tool-group-header");
   header?.setAttribute("aria-expanded", "false");
   updateHeader(group);
 }

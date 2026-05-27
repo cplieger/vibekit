@@ -51,7 +51,7 @@ class ModelPickerController {
   show(currentModelId: string, onSelect: (modelId: string) => void, agent?: string): void {
     const picker = $.modelPicker;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const grid = picker.querySelector(".picker-grid")!;
+    const grid = picker.querySelector<HTMLElement>(".picker-grid")!;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const label = picker.querySelector(".picker-label")!;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -115,7 +115,7 @@ class ModelPickerController {
       `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
     btn.addEventListener("click", () => {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const grid = $.modelPicker.querySelector(".picker-grid")!;
+      const grid = $.modelPicker.querySelector<HTMLElement>(".picker-grid")!;
       for (const b of grid.querySelectorAll(".picker-btn")) {
         b.classList.remove("active");
         b.setAttribute("aria-selected", "false");
@@ -146,7 +146,7 @@ class ModelPickerController {
       return;
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const grid = picker.querySelector(".picker-grid")!;
+    const grid = picker.querySelector<HTMLElement>(".picker-grid")!;
 
     // Read current model from store rather than relying solely on this.currentId.
     const storeModel = getActive()?.model;
