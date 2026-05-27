@@ -60,6 +60,7 @@ describe("debouncedDispatch — trailing (default)", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
     debounced("x");
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     debounced.flush();
     expect(run).toHaveBeenCalledWith("x", expect.anything(), expect.anything());
   });
@@ -68,6 +69,7 @@ describe("debouncedDispatch — trailing (default)", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
     debounced("old");
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     debounced.flush("override");
     expect(run).toHaveBeenCalledWith("override", expect.anything(), expect.anything());
   });
@@ -85,6 +87,7 @@ describe("debouncedDispatch — trailing (default)", () => {
   it("flush() is no-op when nothing pending and no args", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     debounced.flush();
     expect(run).not.toHaveBeenCalled();
   });

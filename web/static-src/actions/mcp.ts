@@ -50,6 +50,7 @@ interface ToggleArgs {
   enabled: boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const toggleServer = apiAction<ToggleArgs, void, Server>({
   name: "mcp.toggle_server",
   retryable: retryNetwork,
@@ -80,6 +81,7 @@ interface DeleteArgs {
 // No auto-retry and no manual retry: a timed-out DELETE may have
 // succeeded server-side; retrying would hit 404 and trigger a
 // misleading rollback (re-inserting an already-deleted entry).
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
   dedupe: (args) => `mcp.delete:${args.id}`,

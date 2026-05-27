@@ -25,6 +25,7 @@ export const unsubscribePush = apiAction<{ endpoint: string }>({
  * Dispatched when the user explicitly toggles notifications on.
  * Rollback: unchecks the toggle so the UI reflects reality on failure.
  */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   name: "notify.register_push",
   retryable: retryNetwork,
@@ -38,6 +39,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     }
 
     const keyData = await apiGet<{ publicKey: string }>("/api/push/vapid-key", signal);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
@@ -50,6 +52,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       userVisibleOnly: true,
       applicationServerKey: appServerKey as BufferSource,
     });
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
       try {
         await sub.unsubscribe();
@@ -70,6 +73,7 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       }
       throw e;
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
       try {
         await sub.unsubscribe();

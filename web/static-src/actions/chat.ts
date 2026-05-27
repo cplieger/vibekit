@@ -243,6 +243,7 @@ export const deleteArchivedChat = apiAction<string>({
 // --- chat.load_history ---
 
 export const loadHistory = apiAction<
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
   void,
   { chats: { id: string; name: string; summary?: string; updated_at: number }[] }
 >({

@@ -165,6 +165,7 @@ describe("defineAction — error path", () => {
     const action = defineAction({
       name: "test.weird",
       run: async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error, no-throw-literal
         throw "string";
       },
     });
@@ -284,7 +285,7 @@ describe("defineAction — cancellation", () => {
       name: "test.cancel_status",
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
         }),
     });
     const p = action.dispatch({});
@@ -303,7 +304,7 @@ describe("defineAction — cancellation", () => {
       rollback,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
         }),
     });
     const p = action.dispatch({});
@@ -317,7 +318,7 @@ describe("defineAction — cancellation", () => {
       name: "test.cancel_no_toast",
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
         }),
       error: "Should not appear",
     });
@@ -483,7 +484,7 @@ describe("defineAction — retryable error toast", () => {
       name: "test.retry_redispatch",
       run: async () => {
         attempts += 1;
-        if (attempts === 1) throw new ActionError("first", { status: 0 });
+        if (attempts === 1) {throw new ActionError("first", { status: 0 });}
         return "ok";
       },
       retryable: retryNetwork,
@@ -538,6 +539,7 @@ describe("defineAction — retryable error toast", () => {
 
   it("retry button uses shallow copy when structuredClone fails (DOM refs)", async () => {
     // Simulate args with non-cloneable values (functions, DOM-like objects)
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const el = { tagName: "BUTTON", focus: () => {} };
     let lastArgs: { el: typeof el; label: string } | undefined;
     const action = defineAction<{ el: typeof el; label: string }, string>({

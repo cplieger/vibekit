@@ -49,6 +49,7 @@ export function transportAction<TArgs, TOp = unknown>(
   def: TransportActionDefinition<TArgs, TOp>,
 ): Action<TArgs, void> {
   const { command, ...rest } = def;
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
   return defineAction<TArgs, void, TOp>({
     ...rest,
     run: async (args, signal, ctx?: ActionContext) => {
@@ -56,7 +57,7 @@ export function transportAction<TArgs, TOp = unknown>(
       let cmd: TypedCommand | Command;
       if (ctx?.idempotencyKey !== undefined) {
         const base: Record<string, unknown> =
-          "payload" in raw && raw.payload != null
+          "payload" in raw
             ? { ...(raw.payload as Record<string, unknown>) }
             : {};
         base["idempotency_key"] = ctx.idempotencyKey;

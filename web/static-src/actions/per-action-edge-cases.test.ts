@@ -18,6 +18,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -146,7 +147,7 @@ describe("settings.load", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
         ),
     );
     const { loadSettings } = await import("./settings.js");
@@ -197,8 +198,8 @@ describe("editor.send_plan", () => {
 describe("editor.load_diff", () => {
   it("fetches old and new content in parallel", async () => {
     vi.mocked(apiGet).mockImplementation(async (url: string) => {
-      if (url.includes("/api/git/show")) return { content: "old" };
-      if (url.includes("/api/file")) return { content: "new" };
+      if (url.includes("/api/git/show")) {return { content: "old" };}
+      if (url.includes("/api/file")) {return { content: "new" };}
       return null;
     });
     const { loadDiff } = await import("./editor.js");
@@ -237,7 +238,7 @@ describe("mcp.open_edit", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
         ),
     );
     const { openEdit } = await import("./mcp.js");
@@ -295,7 +296,7 @@ describe("mcp.search_registry", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({ servers: [] }), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({ servers: [] }), { status: 200 })); }, 50),
         ),
     );
     const { searchRegistry } = await import("./mcp.js");

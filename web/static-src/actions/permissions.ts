@@ -102,6 +102,7 @@ export const addRule = apiAction<
 
 export const removeRule = apiAction<
   RemoveRuleArgs,
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
   void,
   { previousRule: CommandRule | undefined; atIndex: number }
 >({

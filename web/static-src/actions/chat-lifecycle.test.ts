@@ -22,6 +22,7 @@ import { setSessions, get, setActive } from "../store.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as toast from "../toast.js";
 import type { Session } from "../types.js";
 
@@ -165,7 +166,7 @@ describe("chat.load_history", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({ chats: [] }), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({ chats: [] }), { status: 200 })); }, 50),
         ),
     );
     const { loadHistory } = await import("./chat.js");

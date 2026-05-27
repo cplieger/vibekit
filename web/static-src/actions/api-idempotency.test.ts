@@ -37,7 +37,7 @@ afterEach(() => {
 describe("apiAction — idempotency key", () => {
   it("sends Idempotency-Key header when idempotencyKey: true", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const action = apiAction<{ id: string }, unknown>({
+    const action = apiAction<{ id: string }>({
       name: "test.idem",
       request: ({ id }) => ({ method: "POST", path: `/api/${id}`, body: { x: 1 } }),
       idempotencyKey: true,
@@ -51,7 +51,8 @@ describe("apiAction — idempotency key", () => {
 
   it("does NOT send Idempotency-Key when not configured", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.no_idem",
       request: () => ({ method: "POST", path: "/api/x", body: {} }),
       error: "Failed",
@@ -63,7 +64,7 @@ describe("apiAction — idempotency key", () => {
 
   it("idempotencyKey function receives args", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    const action = apiAction<{ id: string }, unknown>({
+    const action = apiAction<{ id: string }>({
       name: "test.idem_fn",
       request: ({ id }) => ({ method: "POST", path: `/api/${id}`, body: {} }),
       idempotencyKey: (args) => `custom-${args.id}`,
@@ -78,7 +79,8 @@ describe("apiAction — idempotency key", () => {
 describe("apiAction — response edge cases", () => {
   it("handles empty body on DELETE gracefully", async () => {
     mockFetch.mockResolvedValue(new Response("", { status: 200 }));
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.empty_delete",
       request: () => ({ method: "DELETE", path: "/api/item/1" }),
       error: "Failed",
@@ -95,7 +97,8 @@ describe("apiAction — response edge cases", () => {
         headers: { "Content-Type": "text/html" },
       }),
     );
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.bad_json",
       request: () => ({ method: "GET", path: "/api/broken" }),
       error: "Parse failed",
@@ -108,7 +111,8 @@ describe("apiAction — response edge cases", () => {
 
   it("falls back to HTTP status string when error body is not JSON", async () => {
     mockFetch.mockResolvedValue(new Response("plain text error", { status: 502 }));
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.non_json_err",
       request: () => ({ method: "GET", path: "/api/down" }),
       error: "Server error",
@@ -121,7 +125,8 @@ describe("apiAction — response edge cases", () => {
 
   it("GET request does not send Content-Type or body", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ v: 1 }), { status: 200 }));
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.get_clean",
       request: () => ({ method: "GET", path: "/api/data" }),
       error: "Failed",
@@ -138,7 +143,8 @@ describe("apiAction — error code propagation", () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ error: "rate limited", code: "rate_limit" }), { status: 429 }),
     );
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.code_prop",
       request: () => ({ method: "POST", path: "/api/limited", body: {} }),
       error: false,
@@ -155,7 +161,8 @@ describe("apiAction — error code propagation", () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
     );
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.no_code",
       request: () => ({ method: "GET", path: "/api/missing" }),
       error: false,

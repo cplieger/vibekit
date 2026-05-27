@@ -127,6 +127,7 @@ describe("downloadFiles action", () => {
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(fakeBlob) }),
     );
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
     vi.spyOn(document, "createElement").mockReturnValue({
       href: "",

@@ -36,17 +36,18 @@ describe("idempotencyKey", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
 
-    const action = apiAction<{ id: string }, unknown>({
+    const action = apiAction<{ id: string }>({
       name: "test.idem.true",
       idempotencyKey: true,
       request: ({ id }) => ({ method: "POST", path: `/api/x/${id}`, body: {} }),
     });
     await action.dispatch({ id: "abc" });
-    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
+    const init = fetchSpy.mock.calls[0]?.[1]!;
     const headers = init.headers as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBeDefined();
     expect(typeof headers[IDEMPOTENCY_HEADER]).toBe("string");
-    expect((headers[IDEMPOTENCY_HEADER] as string).length).toBeGreaterThan(5);
+    expect((headers[IDEMPOTENCY_HEADER]!).length).toBeGreaterThan(5);
 
     vi.unstubAllGlobals();
   });
@@ -57,13 +58,14 @@ describe("idempotencyKey", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
 
-    const action = apiAction<{ id: string }, unknown>({
+    const action = apiAction<{ id: string }>({
       name: "test.idem.fn",
       idempotencyKey: (args) => `fixed-${args.id}`,
       request: () => ({ method: "POST", path: "/api/x", body: {} }),
     });
     await action.dispatch({ id: "abc" });
-    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
+    const init = fetchSpy.mock.calls[0]?.[1]!;
     const headers = init.headers as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBe("fixed-abc");
 
@@ -82,7 +84,8 @@ describe("idempotencyKey", () => {
     vi.stubGlobal("fetch", fetchSpy);
     vi.useFakeTimers();
 
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.idem.retry",
       idempotencyKey: true,
       retryable: retryNetwork,
@@ -95,9 +98,12 @@ describe("idempotencyKey", () => {
     await p;
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const k1 = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
-    const k2 = (fetchSpy.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>;
-    const k3 = (fetchSpy.mock.calls[2]?.[1] as RequestInit).headers as Record<string, string>;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    const k1 = (fetchSpy.mock.calls[0]?.[1]!).headers as Record<string, string>;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    const k2 = (fetchSpy.mock.calls[1]?.[1]!).headers as Record<string, string>;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain, no-unsafe-optional-chaining
+    const k3 = (fetchSpy.mock.calls[2]?.[1]!).headers as Record<string, string>;
     expect(k1[IDEMPOTENCY_HEADER]).toBe(k2[IDEMPOTENCY_HEADER]);
     expect(k2[IDEMPOTENCY_HEADER]).toBe(k3[IDEMPOTENCY_HEADER]);
 
@@ -111,12 +117,14 @@ describe("idempotencyKey", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
 
-    const action = apiAction<void, unknown>({
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
+    const action = apiAction<void>({
       name: "test.idem.none",
       request: () => ({ method: "POST", path: "/api/x", body: {} }),
     });
     await action.dispatch();
-    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
+    const init = fetchSpy.mock.calls[0]?.[1]!;
     const headers = (init.headers ?? {}) as Record<string, string>;
     expect(headers[IDEMPOTENCY_HEADER]).toBeUndefined();
 
@@ -125,11 +133,12 @@ describe("idempotencyKey", () => {
 
   it("custom defineAction can read idempotencyKey from ctx", async () => {
     const seen: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.idem.ctx",
       idempotencyKey: true,
       run: (_args, _signal, ctx) => {
-        if (ctx?.idempotencyKey !== undefined) seen.push(ctx.idempotencyKey);
+        if (ctx?.idempotencyKey !== undefined) {seen.push(ctx.idempotencyKey);}
         return Promise.resolve();
       },
     });
@@ -146,8 +155,11 @@ describe("idempotencyKey", () => {
 
 describe("pendingCount", () => {
   it("sums across all action names without arguments", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     let resolveA: () => void = () => {};
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     let resolveB: () => void = () => {};
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const a = defineAction<void, void>({
       name: "test.pc.a",
       run: () =>
@@ -155,6 +167,7 @@ describe("pendingCount", () => {
           resolveA = r;
         }),
     });
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const b = defineAction<void, void>({
       name: "test.pc.b",
       run: () =>
@@ -175,7 +188,9 @@ describe("pendingCount", () => {
   });
 
   it("with names array returns count for those actions", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     let resolveA: () => void = () => {};
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const a = defineAction<void, void>({
       name: "test.pfa.a",
       run: () =>
@@ -241,6 +256,7 @@ describe("dedupe", () => {
 
   it("dedupe entry clears after resolution; subsequent dispatch starts fresh", async () => {
     let runCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ id: string }, void>({
       name: "test.dedupe.clear",
       dedupe: true,
@@ -256,6 +272,7 @@ describe("dedupe", () => {
 
   it("dedupe with custom function key", async () => {
     let runCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ user: string; tag: string }, void>({
       name: "test.dedupe.fn",
       dedupe: (args) => `user:${args.user}`, // ignore tag
@@ -278,7 +295,8 @@ describe("dedupe", () => {
 describe("debouncedDispatch", () => {
   it("coalesces rapid calls into a single dispatch with the latest args", async () => {
     vi.useFakeTimers();
-    let runArgs: string[] = [];
+    const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce.basic",
       run: (args) => {
@@ -298,7 +316,8 @@ describe("debouncedDispatch", () => {
 
   it("flush() fires immediately with most-recent args", async () => {
     vi.useFakeTimers();
-    let runArgs: string[] = [];
+    const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce.flush",
       run: (args) => {
@@ -309,6 +328,7 @@ describe("debouncedDispatch", () => {
     const dbg = debouncedDispatch(action, { wait: 1000 });
     dbg("a");
     dbg("b");
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     dbg.flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(runArgs).toEqual(["b"]);
@@ -320,7 +340,8 @@ describe("debouncedDispatch", () => {
 
   it("cancel() drops pending dispatch", async () => {
     vi.useFakeTimers();
-    let runArgs: string[] = [];
+    const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce.cancel",
       run: (args) => {
@@ -338,7 +359,8 @@ describe("debouncedDispatch", () => {
 
   it("leading: true fires immediately + suppresses trailing fires within wait, but trailing-fires queued args after cooldown", async () => {
     vi.useFakeTimers();
-    let runArgs: string[] = [];
+    const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce.leading",
       run: (args) => {
@@ -367,6 +389,7 @@ describe("debouncedDispatch", () => {
 
   it("isPending() reflects timer state", async () => {
     vi.useFakeTimers();
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce.is_pending",
       run: () => Promise.resolve(),

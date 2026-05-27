@@ -126,6 +126,7 @@ export function pollAction<TArgs, TResult>(
     inFlight = true;
     try {
       const result = await action.dispatch(args);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: stopped can change during await
       if (stopped) {
         return;
       }

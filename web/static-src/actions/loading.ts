@@ -144,8 +144,10 @@ export function bindLoadingState(
    *  case uses the cheaper isPending() (one Map lookup); multi-name uses
    *  pendingCount(names) > 0. */
   const readPending = (): boolean =>
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
     names.length === 1 ? isPending(names[0]!) : pendingCount(names) > 0;
 
+  // eslint-disable-next-line prefer-const -- assigned after apply() which captures it in closure
   let unsubs: (() => void)[] | undefined;
 
   const apply = (): void => {
@@ -207,10 +209,8 @@ export function bindLoadingState(
   return () => {
     disposed = true;
     restore();
-    if (unsubs) {
-      for (const u of unsubs) {
-        u();
-      }
+    for (const u of unsubs) {
+      u();
     }
   };
 }

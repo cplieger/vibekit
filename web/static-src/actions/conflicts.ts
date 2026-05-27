@@ -37,6 +37,7 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
 /** Open a side-by-side diff for a conflict chip. Fetches both blobs
  *  in parallel and opens the editor in diff mode. Errors toast as
  *  "Could not load file content for conflict diff". */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   name: "conflicts.open_diff",
   retryable: retryNetwork,

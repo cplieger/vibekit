@@ -43,7 +43,7 @@ describe("defineAction retry { count, delay, factor }", () => {
       retry: { count: 2, delay: 100 },
       run: () => {
         attempts++;
-        if (attempts < 3) throw new ActionError("flaky", { code: "network" });
+        if (attempts < 3) {throw new ActionError("flaky", { code: "network" });}
         return Promise.resolve("ok");
       },
     });
@@ -59,6 +59,7 @@ describe("defineAction retry { count, delay, factor }", () => {
 
   it("returns null after exhausting retries", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.retry_exhausts",
       retryable: retryNetwork,
@@ -80,6 +81,7 @@ describe("defineAction retry { count, delay, factor }", () => {
 
   it("does NOT retry non-retry-class errors even with retry config", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.retry_skips_4xx",
       retryable: retryNetwork,
@@ -98,6 +100,7 @@ describe("defineAction retry { count, delay, factor }", () => {
   it("respects exponential backoff factor (default 2)", async () => {
     const timestamps: number[] = [];
     const start = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.retry_backoff",
       retryable: retryNetwork,
@@ -121,6 +124,7 @@ describe("defineAction retry { count, delay, factor }", () => {
   it("custom factor: 1 (linear backoff)", async () => {
     const timestamps: number[] = [];
     const start = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.retry_linear",
       retryable: retryNetwork,
@@ -142,6 +146,7 @@ describe("defineAction retry { count, delay, factor }", () => {
 
   it("aborts retry chain if action.cancel() during backoff", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.retry_cancel_mid_backoff",
       retryable: retryNetwork,
@@ -165,6 +170,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     // Without retry config, no auto-retry happens, but the toast's
     // Retry button (from `retryable: 'network'`) should still work.
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.no_auto_retry",
       retryable: retryNetwork,
@@ -211,6 +217,7 @@ describe("defineAction scope (serial dispatch)", () => {
 
   it("scope as function: per-resource queues run in parallel", async () => {
     const log: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ repo: string; tag: string }, void>({
       name: "test.scope_function",
       scope: (args) => `repo:${args.repo}`,
@@ -243,13 +250,14 @@ describe("defineAction scope (serial dispatch)", () => {
 
   it("scope queue continues after a failed dispatch", async () => {
     const log: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ tag: string; fail: boolean }, void>({
       name: "test.scope_after_fail",
       scope: "q",
       error: false,
       run: async (args) => {
         log.push(`run:${args.tag}`);
-        if (args.fail) throw new ActionError("nope");
+        if (args.fail) {throw new ActionError("nope");}
       },
     });
 
@@ -261,6 +269,7 @@ describe("defineAction scope (serial dispatch)", () => {
 
   it("scope shared across multiple actions", async () => {
     const log: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const a1 = defineAction<{ tag: string }, void>({
       name: "test.scope_share_1",
       scope: "common",
@@ -270,6 +279,7 @@ describe("defineAction scope (serial dispatch)", () => {
         log.push(`a1-end:${args.tag}`);
       },
     });
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const a2 = defineAction<{ tag: string }, void>({
       name: "test.scope_share_2",
       scope: "common",
@@ -312,6 +322,7 @@ describe("DispatchOptions onSuccess / onError / onSettled", () => {
   });
 
   it("onError fires with error + args", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ tag: string }, void>({
       name: "test.cb_error",
       error: false,
@@ -330,11 +341,12 @@ describe("DispatchOptions onSuccess / onError / onSettled", () => {
   });
 
   it("onSettled fires on cancellation; onSuccess/onError do NOT", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, void>({
       name: "test.cb_cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("cancelled")));
+          signal.addEventListener("abort", () => { reject(new Error("cancelled")); });
         }),
     });
     const onSuccess = vi.fn();
@@ -350,6 +362,7 @@ describe("DispatchOptions onSuccess / onError / onSettled", () => {
 
   it("callbacks fire in addition to action-level toast wiring", async () => {
     const { success: toastSuccess } = await import("../toast.js");
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cb_with_toast",
       success: "Saved",
@@ -363,6 +376,7 @@ describe("DispatchOptions onSuccess / onError / onSettled", () => {
 
   it("callbacks fire even when toast is silenced via opts.silent", async () => {
     const { success: toastSuccess } = await import("../toast.js");
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cb_silent",
       success: "Saved",

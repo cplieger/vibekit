@@ -41,7 +41,8 @@ export const stage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   },
   error: (args) =>
     args.files.length === 1
-      ? `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
       : `Couldn't stage ${String(args.files.length)} files`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -58,7 +59,8 @@ export const discard = apiAction<GitRepoFilesArgs, unknown, RemoveResult>({
   },
   error: (args) =>
     args.files.length === 1
-      ? `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
       : `Couldn't discard ${String(args.files.length)} files`,
   // Destructive: timed-out discard may have succeeded server-side
 });
@@ -74,7 +76,8 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   },
   error: (args) =>
     args.files.length === 1
-      ? `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
       : `Couldn't unstage ${String(args.files.length)} files`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

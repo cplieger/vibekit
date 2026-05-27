@@ -18,6 +18,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -142,7 +143,7 @@ describe("forge.start_device_flow — dedupe", () => {
       () =>
         new Promise((r) =>
           setTimeout(
-            () => r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 })),
+            () => { r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 })); },
             50,
           ),
         ),
@@ -263,7 +264,7 @@ describe("chat.load_history — dedupe + retry", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({ chats: [] }), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({ chats: [] }), { status: 200 })); }, 50),
         ),
     );
     const { loadHistory } = await import("./chat.js");
@@ -359,7 +360,7 @@ describe("git.generate_message — dedupe", () => {
       () =>
         new Promise((r) =>
           setTimeout(
-            () => r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 })),
+            () => { r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 })); },
             50,
           ),
         ),
@@ -378,7 +379,7 @@ describe("git.generate_message — dedupe", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({ message: "m" }), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({ message: "m" }), { status: 200 })); }, 50),
         ),
     );
     const { generateCommitMessage } = await import("./git-changes.js");
@@ -431,7 +432,7 @@ describe("files.download — abort handling", () => {
       (_url: string, opts: RequestInit) =>
         new Promise((_resolve, reject) => {
           opts.signal!.addEventListener("abort", () =>
-            reject(new DOMException("aborted", "AbortError")),
+            { reject(new DOMException("aborted", "AbortError")); },
           );
         }),
     );

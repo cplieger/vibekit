@@ -70,7 +70,7 @@ describe("tools.save", () => {
   it("PUTs to /api/tools with body", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const data = { mcp: { server1: { enabled: true } } };
-    await saveTools.dispatch(data as Record<string, Record<string, Record<string, unknown>>>);
+    await saveTools.dispatch(data);
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools");
     expect(opts.method).toBe("PUT");
@@ -83,7 +83,7 @@ describe("tools.run_diagnostics", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
         ),
     );
     const p1 = runDiagnostics.dispatch(undefined);
@@ -99,7 +99,7 @@ describe("tools.load", () => {
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50),
+          setTimeout(() => { r(new Response(JSON.stringify({}), { status: 200 })); }, 50),
         ),
     );
     const p1 = loadTools.dispatch(undefined);

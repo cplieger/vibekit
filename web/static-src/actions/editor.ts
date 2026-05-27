@@ -34,6 +34,7 @@ export const saveFile = apiAction<
  *  framework toast suppressed.
  *  Note: writePlanDraft is not cancellable — once started it will complete
  *  regardless of signal state. Cancellation is checked between steps. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "editor.send_plan",
   scope: (args) => "chat:" + args.chatID,

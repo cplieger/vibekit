@@ -4,6 +4,7 @@
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const installTools = apiAction<void, { output?: string; error?: string }>({
   name: "tools.install",
   scope: "tools",
@@ -24,6 +25,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
   error: "Couldn't save tool config",
 });
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const runDiagnostics = apiAction<void, { report?: string; error?: string }>({
   name: "tools.run_diagnostics",
   dedupe: true,
@@ -33,6 +35,7 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
   error: false,
 });
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const loadTools = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
   name: "tools.load",
   retryable: retryNetwork,

@@ -35,8 +35,8 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
             reject(new DOMException("aborted", "AbortError"));
             return;
           }
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-          setTimeout(() => resolve(`result-${myRun}`), 10);
+          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          setTimeout(() => { resolve(`result-${myRun}`); }, 10);
         });
       },
     });
@@ -73,8 +73,8 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
             reject(new DOMException("aborted", "AbortError"));
             return;
           }
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-          setTimeout(() => resolve(`result-${myRun}`), 10);
+          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          setTimeout(() => { resolve(`result-${myRun}`); }, 10);
         });
       },
     });
@@ -105,8 +105,8 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
             reject(new DOMException("aborted", "AbortError"));
             return;
           }
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-          setTimeout(() => resolve(`result-${runCount}`), 10);
+          signal.addEventListener("abort", () => { reject(new DOMException("aborted", "AbortError")); });
+          setTimeout(() => { resolve(`result-${runCount}`); }, 10);
         });
       },
     });

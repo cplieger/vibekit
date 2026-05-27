@@ -79,7 +79,7 @@ describe("dispatch callbacks — onError", () => {
       name: "cb.cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
         }),
     });
     const p = action.dispatch({}, { onError });
@@ -122,7 +122,7 @@ describe("dispatch callbacks — onSettled", () => {
       name: "cb.settled.cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => { reject(new Error("aborted")); });
         }),
     });
     const p = action.dispatch("c", { onSettled });

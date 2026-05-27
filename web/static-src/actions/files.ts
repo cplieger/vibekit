@@ -78,6 +78,7 @@ interface DeleteArgs {
   listEl: HTMLElement;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
@@ -142,6 +143,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     if (failed.length > 0) {
       // If all failures are network/timeout/cancelled, classify the aggregate error
       const allNetwork = failed.every((f) => f.status === 0);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
       const firstErr = failed[0]!.error;
       if (signal.aborted) {
         throw new ActionError("cancelled", { code: "cancelled" });
@@ -150,6 +152,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
       const word =
         failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
       throw new ActionError(`${word} (${names}): ${firstErr}`, {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
         status: failed[0]!.status,
         ...(allNetwork ? { code: firstErr === "Request timed out" ? "timeout" : "network" } : {}),
       });
@@ -182,6 +185,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
 
 // --- files.download ---
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
   retryable: retryNetwork,
@@ -207,6 +211,7 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
     // Trigger browser download via objectURL anchor
     const url = URL.createObjectURL(blob);
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check after async
       if (signal.aborted) {
         return;
       }

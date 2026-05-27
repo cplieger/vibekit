@@ -116,6 +116,7 @@ describe("listener iteration", () => {
     // This documents the behavioral difference from the old spread approach.
     // With Set iteration, deleting a not-yet-visited entry skips it.
     const calls: string[] = [];
+    // eslint-disable-next-line prefer-const
     let unsubB: (() => void) | undefined;
 
     subscribe(() => {
@@ -151,6 +152,7 @@ describe("listener iteration", () => {
 
   it("throwing listener does not prevent other listeners from firing", () => {
     const calls: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     subscribe(() => {

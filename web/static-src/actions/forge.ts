@@ -27,6 +27,7 @@ interface SignOutArgs {
 /** Start the GitHub OAuth device flow. Returns the device flow
  *  response on success or null on failure. Error toast suppressed —
  *  the callsite renders inline status instead. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   dedupe: true,
@@ -42,6 +43,7 @@ export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
 /** Sign out of a forge account (delete the token).
  *  Not retryable: a timed-out DELETE may have succeeded server-side;
  *  retrying would hit 404 and surface a misleading error toast. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const signOut = apiAction<SignOutArgs, void>({
   name: "forge.sign_out",
   request: ({ forgeId }) => ({

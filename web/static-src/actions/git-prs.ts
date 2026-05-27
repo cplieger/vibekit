@@ -64,6 +64,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
 });
 
 /** Refresh all PRs across connected forges. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const refreshPRs = defineAction<void, void>({
   name: "git.refresh_prs",
   dedupe: true,

@@ -35,6 +35,7 @@ interface GitBadgeData {
 
 // --- Internal fetch actions (no toast, no retry — advisory data) ---
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 const fetchStatusAll = apiAction<void, StatusAllResponse>({
   name: "git-badge.status",
   request: () => ({ method: "GET", path: "/api/git/status-all" }),
@@ -42,6 +43,7 @@ const fetchStatusAll = apiAction<void, StatusAllResponse>({
   success: false,
 });
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 const fetchForges = apiAction<void, ForgesListResponse>({
   name: "git-badge.forges",
   request: () => ({ method: "GET", path: "/api/forges" }),
@@ -52,6 +54,7 @@ const fetchForges = apiAction<void, ForgesListResponse>({
 /** Refresh git badge data. Deduped so concurrent SSE triggers collapse
  *  into one in-flight pair of fetches. Returns both responses (either
  *  may be null on failure). */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const refreshGitBadge = defineAction<void, GitBadgeData>({
   name: "git-badge.refresh",
   dedupe: true,

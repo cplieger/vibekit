@@ -34,7 +34,7 @@ export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement },
   retryable: retryNetwork,
   request: () => ({ method: "POST", path: "/api/logout" }),
   optimistic: ({ emailEl, stAuthEl }) => {
-    const prev = emailEl.textContent ?? "";
+    const prev = emailEl.textContent;
     emailEl.textContent = "";
     stAuthEl.textContent = "not signed in";
     return prev;
@@ -100,6 +100,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 
 // --- Load settings (deduped fetch for SSE-triggered reconcile) ---
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const loadSettings = apiAction<void, Record<string, unknown>>({
   name: "settings.load",
   dedupe: true,

@@ -45,9 +45,9 @@ describe("refreshGitBadge", () => {
   it("fetches both status-all and forges in parallel", async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url === "/api/git/status-all")
-        return Promise.resolve(new Response(JSON.stringify(statusResp), { status: 200 }));
+        {return Promise.resolve(new Response(JSON.stringify(statusResp), { status: 200 }));}
       if (url === "/api/forges")
-        return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
+        {return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));}
       return Promise.resolve(new Response("", { status: 404 }));
     });
 
@@ -67,8 +67,8 @@ describe("refreshGitBadge", () => {
         new Promise((r) =>
           setTimeout(() => {
             if (url === "/api/git/status-all")
-              r(new Response(JSON.stringify(statusResp), { status: 200 }));
-            else r(new Response(JSON.stringify(forgesResp), { status: 200 }));
+              {r(new Response(JSON.stringify(statusResp), { status: 200 }));}
+            else {r(new Response(JSON.stringify(forgesResp), { status: 200 }));}
           }, 10),
         ),
     );
@@ -87,7 +87,7 @@ describe("refreshGitBadge", () => {
 
   it("returns null fields when sub-fetches fail", async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url === "/api/git/status-all") return Promise.resolve(new Response("", { status: 500 }));
+      if (url === "/api/git/status-all") {return Promise.resolve(new Response("", { status: 500 }));}
       return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
     });
 

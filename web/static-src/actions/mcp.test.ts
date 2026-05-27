@@ -17,6 +17,7 @@ vi.mock("../api-client.js", () => ({
     start() {
       return new AbortController().signal;
     }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     abort() {}
   },
   apiGet: vi.fn().mockResolvedValue(null),
