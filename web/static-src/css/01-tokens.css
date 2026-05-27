@@ -180,5 +180,4 @@
     --c-term-bright-cyan: oklch(62% 0.1 200deg);
     --c-term-bright-white: oklch(92% 0.01 283deg);
   }
-
 } /* @layer tokens */
