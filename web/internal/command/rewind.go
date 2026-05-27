@@ -186,7 +186,7 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 // the running bridge's _kiro.dev/commands/execute path. Vibekit owns
 // persistence of the effort level; this command applies it to the
 // active session.
-func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return

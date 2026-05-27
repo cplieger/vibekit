@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { PlanEntry } from "./types.js";
-import { getActive, version } from "./store.js";
+import { getActive, messagesVersion } from "./store.js";
 import { effect } from "./signals.js";
 import { reconcile } from "./reconcile.js";
 import { escText } from "./strings.js";
@@ -17,7 +17,7 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 export function initTaskListPill(): void {
-  effect(() => { version.value; refreshTaskList(); });
+  effect(() => { messagesVersion.value; refreshTaskList(); });
 }
 
 function refreshTaskList(): void {

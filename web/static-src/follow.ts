@@ -19,7 +19,7 @@ import { apiGet } from "./api-client.js";
 import { escText } from "./strings.js";
 import { highlight } from "./highlight.js";
 import { openFile } from "./editor-openers.js";
-import { getActiveId, version } from "./store.js";
+import { getActiveId, activeVersion } from "./store.js";
 import { effect } from "./signals.js";
 import { profileFor } from "./tool-schema.js";
 import type { ToolLocation } from "./types.js";
@@ -74,7 +74,7 @@ class FollowController {
     onSSE("chat_deleted", (chatID) => {
       this.hasToolCall.delete(chatID);
     });
-    effect(() => { version.value; this.syncEnabled(); });
+    effect(() => { activeVersion.value; this.syncEnabled(); });
     this.syncEnabled();
   }
 

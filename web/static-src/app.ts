@@ -10,7 +10,7 @@
 import type { ServerEvent, ModelInfo } from "./types.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 import {
-  MODEL_CONTEXT_SIZES, parseContextSize, contextSizeFor, version,
+  MODEL_CONTEXT_SIZES, parseContextSize, contextSizeFor, sessionsVersion,
   getActiveId, getActive, get, getSessions, isThinking,
   loadList,
 } from "./store.js";
@@ -114,7 +114,7 @@ function init(): void {
   // overwrite whatever the REST path seeded.
   let lastModelSig = "";
   effect(() => {
-    version.value;
+    sessionsVersion.value;
     const active = getActive();
     if (active === undefined) return;
     const sig = active.id + ":" + active.available_models.map(m => m.id).join(",");
