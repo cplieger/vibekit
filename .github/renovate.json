@@ -1,59 +1,35 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:best-practices"
-  ],
+  "extends": ["config:best-practices"],
   "timezone": "Europe/Paris",
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,
-  "labels": [
-    "dependencies"
-  ],
+  "labels": ["dependencies"],
   "packageRules": [
     {
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "digest",
-        "pin"
-      ],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
       "automerge": true
     },
     {
-      "matchUpdateTypes": [
-        "major"
-      ],
+      "matchUpdateTypes": ["major"],
       "automerge": false,
-      "labels": [
-        "major-update"
-      ]
+      "labels": ["major-update"]
     },
     {
-      "matchManagers": [
-        "gomod"
-      ],
+      "matchManagers": ["gomod"],
       "groupName": "Go dependencies"
     },
     {
-      "matchPackageNames": [
-        "@typescript/native-preview"
-      ],
+      "matchPackageNames": ["@typescript/native-preview"],
       "followTag": "beta",
       "ignoreUnstable": false
     },
     {
-      "matchManagers": [
-        "npm"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
       "groupName": "npm dev dependencies",
-      "schedule": [
-        "before 6am on monday"
-      ]
+      "schedule": ["before 6am on monday"]
     }
   ],
   "customDatasources": {
@@ -69,9 +45,7 @@
     {
       "customType": "regex",
       "description": "Dockerfile ARG versions with renovate comments",
-      "managerFilePatterns": [
-        "/Dockerfile$/"
-      ],
+      "managerFilePatterns": ["/Dockerfile$/"],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\nARG\\s+\\w+=(?<currentValue>\\S+)"
       ]
@@ -79,9 +53,7 @@
     {
       "customType": "regex",
       "description": "golangci-lint version in workflows",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/.+\\.yaml$/"
-      ],
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.yaml$/"],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)(\\s+versioning=(?<versioning>[a-z-]+))?\\s*\\n\\s*VERSION=(?<currentValue>\\S+)"
       ]
@@ -89,9 +61,7 @@
     {
       "customType": "regex",
       "description": "vibekit tools.json versions",
-      "managerFilePatterns": [
-        "/tools\\.json$/"
-      ],
+      "managerFilePatterns": ["/tools\\.json$/"],
       "matchStrings": [
         "\"version\":\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"[\\s\\S]*?\"repo\":\\s*\"(?<depName>[^\"]+)\""
       ],
@@ -100,19 +70,13 @@
     {
       "customType": "regex",
       "description": "kiro-cli version + sha256 pinned in entrypoint.sh",
-      "managerFilePatterns": [
-        "/entrypoint\\.sh$/"
-      ],
+      "managerFilePatterns": ["/entrypoint\\.sh$/"],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>custom\\.kiro-cli)\\s+depName=(?<depName>[^\\s]+)\\s*\\nKIRO_CLI_VERSION=\"(?<currentValue>[^\"]+)\"\\s*\\nKIRO_CLI_SHA256=\"(?<currentDigest>[^\"]+)\""
       ],
       "versioningTemplate": "semver"
     }
   ],
-  "ignorePaths": [
-    "compose.yaml"
-  ],
-  "dependencyDashboardLabels": [
-    "renovate"
-  ]
+  "ignorePaths": ["compose.yaml"],
+  "dependencyDashboardLabels": ["renovate"]
 }
