@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"vibekit/internal/metrics"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -50,6 +51,7 @@ func (sc *sseController) add(client *sseClient) {
 	sc.mu.Lock()
 	sc.clients[client] = struct{}{}
 	sc.mu.Unlock()
+	metrics.SSEClients.Inc()
 }
 
 // remove unregisters an SSE client.
@@ -57,6 +59,7 @@ func (sc *sseController) remove(client *sseClient) {
 	sc.mu.Lock()
 	delete(sc.clients, client)
 	sc.mu.Unlock()
+	metrics.SSEClients.Dec()
 }
 
 // closeAll cancels all connected SSE clients (used during shutdown).

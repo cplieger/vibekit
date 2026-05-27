@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"vibekit/internal/metrics"
 	"maps"
 	"sync"
 	"time"
@@ -47,6 +48,7 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 	sb.mu.Lock()
 	bm.bridges[chatID] = sb
 	bm.mu.Unlock()
+	metrics.BridgeSpawns.Inc()
 	return sb, false
 }
 
