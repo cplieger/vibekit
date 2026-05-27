@@ -99,6 +99,7 @@ jobs:
 
       - name: Dead code (deadcode)
         continue-on-error: true
+        working-directory: web
         run: |
           (
             deadcode ./...
@@ -106,6 +107,7 @@ jobs:
 
       - name: Field alignment
         continue-on-error: true
+        working-directory: web
         run: |
           (
             fieldalignment ./...
@@ -113,6 +115,7 @@ jobs:
 
       - name: Unused exported symbols (punused)
         continue-on-error: true
+        working-directory: web
         run: |
           (
             punused ./...
@@ -120,6 +123,7 @@ jobs:
 
       - name: Govulncheck
         continue-on-error: true
+        working-directory: web
         run: |
           (
             govulncheck ./...
