@@ -96,6 +96,7 @@ const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
 };
 
 function add_token_dom(data: DomRendererData, type: Token): void {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const parent = data.nodes[data.index]!;
 
   if (type === DOCUMENT) {
@@ -137,6 +138,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
           tableParent = parent.appendChild(makeEl("tbody"));
           break;
         default:
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           tableParent = parent.children[1]!;
       }
       const slot = makeEl("tr");
@@ -194,6 +196,7 @@ function add_text_dom(data: DomRendererData, text: string): void {
   // than creating (ignored) child text nodes.
   if (tag === "IMG") {
     const img = parent as HTMLImageElement;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     img.alt = (img.alt ?? "") + text;
     return;
   }

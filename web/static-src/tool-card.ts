@@ -100,6 +100,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   }
 
   if (opts.diffs !== undefined && opts.diffs.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const d = opts.diffs[0]!;
     insertDiffPreview(el, d.path, {
       oldText: d.old_text ?? "",
@@ -249,7 +250,9 @@ function wireFileLink(el: HTMLElement, filePath: string): void {
 
 function wireToggle(el: HTMLElement): void {
   el.querySelector(".tool-toggle")?.addEventListener("click", () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const d = el.querySelector(".tool-details")!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const b = el.querySelector(".tool-toggle")!;
     if (d.classList.contains("collapsed")) {
       d.classList.remove("collapsed");

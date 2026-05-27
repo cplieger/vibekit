@@ -201,6 +201,7 @@ function initDiagnostics(): void {
 
   bindLoadingState("tools.run_diagnostics", btn, { pendingClass: "btn-loading" });
 
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   btn.addEventListener("click", async () => {
     status.hidden = false;
     status.textContent = "Collecting diagnostics\u2026";
@@ -282,10 +283,12 @@ function initExperimentalToggles(): void {
       }
       const v = results[i]?.value ?? "";
       const isOn = v === "" || v === "true";
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       input.checked = experimentalFlags[i]!.inverted ? !isOn : isOn;
     }
   });
   for (let i = 0; i < experimentalFlags.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const flag = experimentalFlags[i]!;
     const input = inputs[i] ?? null;
     if (input === null) {
@@ -354,6 +357,7 @@ function initCompactionSettings(): void {
   // to the action (before the change event updates the input).
   const snapshots = new Map<HTMLInputElement, string>();
   for (let i = 0; i < compactionSettings.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const s = compactionSettings[i]!;
     const input = inputs[i] ?? null;
     if (input === null || s.isBool) {
@@ -369,6 +373,7 @@ function initCompactionSettings(): void {
     ),
   ).then((results) => {
     for (let i = 0; i < compactionSettings.length; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const s = compactionSettings[i]!;
       const input = inputs[i] ?? null;
       if (input === null) {
@@ -385,6 +390,7 @@ function initCompactionSettings(): void {
     }
   });
   for (let i = 0; i < compactionSettings.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const s = compactionSettings[i]!;
     const input = inputs[i] ?? null;
     if (input === null) {

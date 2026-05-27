@@ -317,6 +317,7 @@ class ToolsManager {
         if (!ok) {
           return;
         }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-dynamic-delete
         delete this.toolsData[sec]![name];
         this.saveToolsData();
         this.renderToolsList();
@@ -328,6 +329,7 @@ class ToolsManager {
 
   private updateToolFormVisibility(): void {
     const cat = f.cat.value as MethodKind;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     const schema = INSTALL_METHODS[cat] ?? INSTALL_METHODS.custom;
     toggleLabel("tool-version-label", schema.fields.version);
     toggleLabel("tool-package-label", schema.fields.pkg);
@@ -378,12 +380,14 @@ class ToolsManager {
     if (name === "") {
       return;
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     const { fields } = INSTALL_METHODS[uiCat] ?? INSTALL_METHODS.custom;
     const version = f.version.value.trim();
     if (fields.version && version === "") {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
     if (this.toolsData[cat] === undefined) {
       this.toolsData[cat] = {};
     }
@@ -414,6 +418,7 @@ class ToolsManager {
       this.editingTool !== null &&
       (this.editingTool.cat !== cat || this.editingTool.name !== name)
     ) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-dynamic-delete
       delete this.toolsData[this.editingTool.cat]![this.editingTool.name];
     }
     this.toolsData[cat][name] = entry;

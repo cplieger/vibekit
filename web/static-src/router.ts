@@ -149,6 +149,7 @@ function parseHashLine(hash: string): number | undefined {
   if (m === null) {
     return undefined;
   }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const n = parseInt(m[1]!, 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }

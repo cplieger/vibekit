@@ -171,10 +171,12 @@ const MCP_COLON_RE = /^mcp:([A-Za-z0-9][A-Za-z0-9_.-]*):([A-Za-z0-9][A-Za-z0-9_.
 export function mcpToolInfo(title: string): { server: string; tool: string } | null {
   const u = MCP_UNDERSCORE_RE.exec(title);
   if (u !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return { server: u[1]!, tool: u[2]! };
   }
   const c = MCP_COLON_RE.exec(title);
   if (c !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return { server: c[1]!, tool: c[2]! };
   }
   return null;

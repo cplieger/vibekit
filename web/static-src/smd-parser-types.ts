@@ -150,6 +150,7 @@ export function end_tokens_to_len(p: Parser, len: number): void {
 export function end_tokens_to_indent(p: Parser, indent: number): number {
   let idx = 0;
   for (let i = 0; i <= p.len; i += 1) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     indent -= p.spaces[i]!;
     if (indent < 0) {
       break;
@@ -174,6 +175,7 @@ export function continue_or_add_list(p: Parser, list_token: Token): boolean {
   let item_idx = -1;
   for (let i = p.blockquote_idx + 1; i <= p.len; i += 1) {
     if (p.tokens[i] === LIST_ITEM) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (p.indent_len < p.spaces[i]!) {
         item_idx = -1;
         break;

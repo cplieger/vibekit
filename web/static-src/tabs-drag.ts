@@ -101,6 +101,7 @@ class TabDragController {
     el.insertAdjacentElement("afterend", this.dragIndicator);
     this.dragTargetIdx = [...(el.parentElement?.children ?? [])]
       .filter((c) => c !== el && c !== this.dragIndicator)
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       .indexOf(this.dragIndicator.nextElementSibling!);
     if (this.dragTargetIdx === -1) {
       this.dragTargetIdx = [...(el.parentElement?.children ?? [])].filter(
@@ -134,6 +135,7 @@ class TabDragController {
 
     let target = siblings.length;
     for (let i = 0; i < siblings.length; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const r = siblings[i]!.getBoundingClientRect();
       if (e.clientY < r.top + r.height / 2) {
         target = i;
@@ -159,6 +161,7 @@ class TabDragController {
     if (target >= siblings.length) {
       list.appendChild(this.dragIndicator);
     } else {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       list.insertBefore(this.dragIndicator, siblings[target]!);
     }
 

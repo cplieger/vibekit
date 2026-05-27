@@ -164,6 +164,7 @@ export function summarize(calls: HTMLElement[]): string {
     mcpServer: c.dataset["mcpServer"] ?? "",
   }));
 
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const firstKind = infos[0]!.kind;
   const allSame = infos.every((i) => i.kind === firstKind);
   if (allSame) {
@@ -199,6 +200,7 @@ export function summarizeSameKind(kind: ToolKind, infos: CallInfo[]): string {
     return summarizeMCP(infos);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const label = TOOL_KIND_LABELS[kind] ?? TOOL_KIND_LABELS.other;
   if (label.verb === "") {
     const plural = n === 1 ? label.noun : kindNoun(kind, n);
@@ -215,6 +217,7 @@ export function summarizeMCP(infos: CallInfo[]): string {
   const n = infos.length;
   const servers = new Set(infos.map((i) => i.mcpServer).filter((s) => s !== ""));
   if (servers.size === 1) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const server = infos[0]!.mcpServer;
     const titles = dedup(infos.map((i) => i.title).filter((s) => s !== ""));
     const head = `Called ${String(n)} ${server} tool${n === 1 ? "" : "s"}`;

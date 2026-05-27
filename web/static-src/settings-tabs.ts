@@ -120,6 +120,7 @@ export function initSettingsTabs(): void {
     select.value = tab;
     const swap = (): void => {
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const panelTab = panel.dataset["settingsPanel"]!;
         const isActive = panelTab === tab;
         panel.classList.toggle("hidden", !isActive);

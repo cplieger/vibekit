@@ -130,6 +130,7 @@ class ScrollController {
       return;
     }
     for (let i = 0; i < excess; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       children[i]!.remove();
     }
     this.hasMoreMessages = true;

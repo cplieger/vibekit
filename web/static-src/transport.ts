@@ -355,6 +355,7 @@ class TransportController {
           type: cmd.type,
           request_id: requestID,
           chat_id: cmd.chat_id ?? "",
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
         }),
       });

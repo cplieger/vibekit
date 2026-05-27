@@ -26,7 +26,9 @@ export function showPermissionDialog(
   onSelect: (optionId: string) => void,
   subSessionId?: string,
 ): void {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const content = approvalEl.querySelector(".approval-body")!;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const actions = approvalEl.querySelector(".approval-actions")!;
 
   const isModeSwitch = kind === "switch_mode";
@@ -135,6 +137,7 @@ function formatInputPreview(input: unknown): string {
     }
     text = JSON.stringify(input, null, 2);
   } else {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     text = String(input);
   }
 

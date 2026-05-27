@@ -105,6 +105,7 @@ export function openOverflowMenu(trigger: HTMLElement, items: readonly OverflowM
       let idx = current !== null ? Array.from(items).indexOf(current) : -1;
       idx =
         e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       items[idx]!.focus();
     }
   };

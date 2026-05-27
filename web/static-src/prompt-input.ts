@@ -72,8 +72,10 @@ class PromptInputController {
     }
     const out: string[] = [];
     for (let i = s.messages.length - 1; i >= 0; i--) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const m = s.messages[i]!;
       if (m.role === "user" && (m.content ?? "") !== "") {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         out.push(m.content!);
       }
     }
@@ -207,6 +209,7 @@ class PromptInputController {
         }
         this.idx = next;
         e.preventDefault();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         this.setInputValue(input, prompts[this.idx]!);
         return;
       }

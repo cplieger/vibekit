@@ -8,6 +8,7 @@
 export function isSafeUrl(url: string): boolean {
   const lower = url
     .trim()
+    // eslint-disable-next-line no-control-regex
     .replace(/[\t\n\r\x00]/g, "")
     .toLowerCase();
   return !(

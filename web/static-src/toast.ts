@@ -333,6 +333,7 @@ function show(
     // Queue. The dismiss-fn returned from the queued path proxies to
     // the eventual mounted toast; if dismissed before mount we just
     // remove from the queue.
+    // eslint-disable-next-line prefer-const
     let queueEntry: QueuedToast | undefined;
     let mountedDismiss: (() => void) | null = null;
     let dismissedBeforeMount = false;

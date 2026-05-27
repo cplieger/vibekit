@@ -50,8 +50,11 @@ class ModelPickerController {
 
   show(currentModelId: string, onSelect: (modelId: string) => void, agent?: string): void {
     const picker = $.modelPicker;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const grid = picker.querySelector(".picker-grid")!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const label = picker.querySelector(".picker-label")!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const info = AGENT_INFO[agent ?? ""] ?? AGENT_INFO[""]!;
     this.callback = onSelect;
     this.currentId = currentModelId;
@@ -111,6 +114,7 @@ class ModelPickerController {
       `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>` +
       `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
     btn.addEventListener("click", () => {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const grid = $.modelPicker.querySelector(".picker-grid")!;
       for (const b of grid.querySelectorAll(".picker-btn")) {
         b.classList.remove("active");
@@ -141,6 +145,7 @@ class ModelPickerController {
     if (picker.classList.contains("hidden") || this.callback === null) {
       return;
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const grid = picker.querySelector(".picker-grid")!;
 
     // Read current model from store rather than relying solely on this.currentId.

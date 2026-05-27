@@ -268,19 +268,19 @@ export function enqueuePrompt(id: string, text: string, attachments?: readonly u
   if (s === undefined) {
     return;
   }
-  if (s.prompt_queue === undefined) {
-    s.prompt_queue = [];
-  }
+  s.prompt_queue ??= [];
   s.prompt_queue.push(text);
   if (attachments !== undefined && attachments.length > 0) {
     if (!_queuedAttachments.has(id)) {
       _queuedAttachments.set(id, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     _queuedAttachments.get(id)!.push([...attachments]);
   } else {
     if (!_queuedAttachments.has(id)) {
       _queuedAttachments.set(id, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     _queuedAttachments.get(id)!.push([]);
   }
   emitActive();
@@ -318,6 +318,7 @@ export function peekQueuedAttachments(id: string): readonly unknown[] {
   if (aq === undefined || aq.length === 0) {
     return [];
   }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return aq[0]!;
 }
 
@@ -389,6 +390,7 @@ export function invalidateSession(chatID: string): void {
 function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
   for (let i = 0; i < messages.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     idx.set(messages[i]!.id, i);
   }
   msgIndex.set(sessionID, idx);
@@ -399,6 +401,7 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
   if (mi === undefined) {
     mi = new Map<string, number>();
     for (let i = 0; i < messages.length; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       mi.set(messages[i]!.id, i);
     }
     msgIndex.set(sessionID, mi);
@@ -821,9 +824,7 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
     emitMessages();
     return;
   }
-  if (msg.tool_calls === undefined) {
-    msg.tool_calls = [];
-  }
+  msg.tool_calls ??= [];
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);

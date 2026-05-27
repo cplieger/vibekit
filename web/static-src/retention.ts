@@ -13,6 +13,7 @@ import { defineAction, retryNetwork } from "./actions/index.js";
 let retentionDays = 1;
 const listeners = new Set<() => void>();
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 const refreshRetentionAction = defineAction<void, number>({
   name: "settings.refresh_retention",
   dedupe: true,

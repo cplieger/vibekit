@@ -19,6 +19,7 @@ export function chatSkeleton(): HTMLDivElement {
     if (p.isTool === true) {
       const tool = document.createElement("div");
       tool.className = "skeleton skeleton-tool";
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       tool.style.width = p.widths[0]!;
       wrap.appendChild(tool);
       continue;

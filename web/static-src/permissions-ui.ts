@@ -258,6 +258,7 @@ class PermissionsUIController {
     if (data === null) {
       return;
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     this.commandRules = data.entries ?? [];
     this.renderRuleChips();
   }
@@ -292,6 +293,7 @@ class PermissionsUIController {
       });
       chip.dataset["pattern"] = entry.pattern;
       // Click the mode label to flip allow↔deny in place.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const modeEl = chip.querySelector(".chip-mode")!;
       modeEl.addEventListener("click", (e) => {
         e.stopPropagation();

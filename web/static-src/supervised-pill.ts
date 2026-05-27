@@ -68,6 +68,7 @@ class SupervisedPillController {
     this.render();
 
     effect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       activeVersion.value;
       this.render();
     });

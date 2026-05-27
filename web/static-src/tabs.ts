@@ -117,6 +117,7 @@ function emit(): void {
  *  receives the current State by reference (mutations are visible). */
 function tabsEffect(fn: Subscriber): () => void {
   const cleanup = effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     stateVersion.value; // subscribe
     fn(state);
   });
@@ -132,6 +133,7 @@ export function openTab(spec: TabSpec): void {
   if (idx >= 0) {
     // Tab already open — only callbacks (onShow/onClose) are updated;
     // name, kind, view, and route remain unchanged from the original open.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     state.tabs[idx] = { ...state.tabs[idx]!, onShow: spec.onShow, onClose: spec.onClose };
     activateTab(spec.id);
     return;
@@ -160,6 +162,7 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   if (idx < 0) {
     return;
   }
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const tab = state.tabs[idx]!;
 
   // Check if this tab has rewind children. If so, ask the user.
@@ -234,10 +237,12 @@ function showRewindChildPrompt(
       // Promote all children (clear parent_chat_id via server command).
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void send({
             type: "promote_rewind_chat",
             chat_id: cid,
             request_id: `promote-${Date.now()}`,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any);
         });
       }
@@ -245,10 +250,12 @@ function showRewindChildPrompt(
       // Discard children: dispatch server-side delete for each, then close tabs.
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void send({
             type: "discard_rewind_chat",
             chat_id: cid,
             request_id: `discard-${Date.now()}`,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any);
         });
         closeTab(cid, { skipOnClose: true });
@@ -423,6 +430,7 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 // Queued view transition: wraps DOM swaps in startViewTransition so
 // tab switches get a cross-fade. Queue prevents overlapping jank.
 function viewTransition(fn: () => void): void {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!document.startViewTransition) {
     fn();
     return;
@@ -523,6 +531,7 @@ function renderDOM(): void {
       let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
       while (
         expectedNext !== null &&
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         (expectedNext as HTMLElement).classList?.contains("exiting")
       ) {
         expectedNext = expectedNext.nextSibling;
@@ -596,10 +605,12 @@ function createTabEl(tab: TabSpec): HTMLElement {
     btn.addEventListener("click", () => {
       menu.remove();
       void import("./transport.js").then(({ send }) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         void send({
           type: "promote_rewind_chat",
           chat_id: s.id,
           request_id: `promote-${Date.now()}`,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
       });
     });

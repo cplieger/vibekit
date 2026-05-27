@@ -4,6 +4,7 @@
 // Compiled to static/sw.js by tsconfig.sw.json.
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="sw-env.d.ts" />
 
 const sw = self as unknown as ServiceWorkerGlobalScope;

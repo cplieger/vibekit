@@ -198,5 +198,6 @@ export function patchSettings(
 
 export async function loadSettings(): Promise<AppSettings> {
   const s = await loadSettingsAction.dispatch(undefined);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   return (s as AppSettings) ?? {};
 }

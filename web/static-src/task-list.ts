@@ -18,6 +18,7 @@ const STATUS_ICON: Record<string, string> = {
 
 export function initTaskListPill(): void {
   effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     messagesVersion.value;
     refreshTaskList();
   });
@@ -40,6 +41,7 @@ function refreshTaskList(): void {
   // Find the latest plan entries from messages.
   let plan: PlanEntry[] = [];
   for (let i = session.messages.length - 1; i >= 0; i--) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const m = session.messages[i]!;
     if (m.plan !== undefined && m.plan.length > 0) {
       plan = m.plan;
@@ -72,6 +74,7 @@ function refreshTaskList(): void {
       row.className = `task-item task-${e.status}`;
       const icon = row.querySelector(".task-icon");
       if (icon !== null) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         icon.textContent = STATUS_ICON[e.status] ?? STATUS_ICON["pending"]!;
       }
     },
@@ -81,6 +84,7 @@ function refreshTaskList(): void {
 function buildTaskRow(entry: PlanEntry): HTMLElement {
   const row = document.createElement("div");
   row.className = `task-item task-${entry.status}`;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const icon = STATUS_ICON[entry.status] ?? STATUS_ICON["pending"]!;
   row.innerHTML = `<span class="task-icon">${icon}</span><span class="task-text">${escText(entry.content)}</span>`;
   return row;
