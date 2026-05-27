@@ -60,7 +60,6 @@ import {
   START,
 } from "./smd-parser-types.js";
 
-// eslint-disable-next-line complexity
 export function handleRootContext(p: Parser, char: string, pending_with_char: string): boolean {
   switch (p.pending[0]) {
     case undefined:
@@ -151,7 +150,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         p.hr_chars = 0;
       }
       // Unordered list: "* foo", "- foo", but not "_ foo"
-      if (p.pending[0] !== "_" && p.pending[1] === " ") {
+      if (!p.pending.startsWith("_") && p.pending[1] === " ") {
         continue_or_add_list(p, LIST_UNORDERED);
         add_list_item(p, 2);
         p.write(p, pending_with_char.slice(2));
@@ -195,14 +194,26 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       p.pending = pending_with_char;
       return true;
     case "+":
-      if (char !== " ") break;
+      if (char !== " ") {
+        break;
+      }
       continue_or_add_list(p, LIST_UNORDERED);
       add_list_item(p, 2);
       return true;
-    case "0": case "1": case "2": case "3": case "4":
-    case "5": case "6": case "7": case "8": case "9":
-      if (p.pending[p.pending.length - 1] === ".") {
-        if (char !== " ") break;
+    case "0":
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+    case "6":
+    case "7":
+    case "8":
+    case "9":
+      if (p.pending.endsWith(".")) {
+        if (char !== " ") {
+          break;
+        }
         if (continue_or_add_list(p, LIST_ORDERED) && p.pending !== "1.") {
           p.renderer.set_attr(p.renderer.data, START, p.pending.slice(0, -1));
         }
@@ -253,7 +264,10 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
 export function handleTable(p: Parser, char: string, pending_with_char: string): boolean {
   if (p.table_state === 1) {
     switch (char) {
-      case "-": case " ": case "|": case ":":
+      case "-":
+      case " ":
+      case "|":
+      case ":":
         p.pending = pending_with_char;
         return true;
       case "\n":
@@ -363,7 +377,7 @@ export function handleCodeFence(p: Parser, char: string, pending_with_char: stri
       p.token = NEWLINE;
       break;
     case " ":
-      if (p.pending[0] === "\n") {
+      if (p.pending.startsWith("\n")) {
         p.pending = pending_with_char;
         p.fence_end += 1;
         return;
@@ -378,10 +392,7 @@ export function handleCodeFence(p: Parser, char: string, pending_with_char: stri
 export function handleCodeInline(p: Parser, char: string, pending_with_char: string): void {
   switch (char) {
     case "`":
-      if (
-        pending_with_char.length ===
-        p.fence_start + (p.pending[0] === " " ? 1 : 0)
-      ) {
+      if (pending_with_char.length === p.fence_start + (p.pending.startsWith(" ") ? 1 : 0)) {
         add_text(p);
         end_token(p);
         p.pending = "";
@@ -410,19 +421,27 @@ export function handleCodeInline(p: Parser, char: string, pending_with_char: str
 export function handleMaybeTask(p: Parser, char: string, pending_with_char: string): boolean {
   switch (p.pending.length) {
     case 0:
-      if (char !== "[") break;
+      if (char !== "[") {
+        break;
+      }
       p.pending = pending_with_char;
       return true;
     case 1:
-      if (char !== " " && char !== "x") break;
+      if (char !== " " && char !== "x") {
+        break;
+      }
       p.pending = pending_with_char;
       return true;
     case 2:
-      if (char !== "]") break;
+      if (char !== "]") {
+        break;
+      }
       p.pending = pending_with_char;
       return true;
     case 3:
-      if (char !== " ") break;
+      if (char !== " ") {
+        break;
+      }
       p.renderer.add_token(p.renderer.data, CHECKBOX);
       if (p.pending[1] === "x") {
         p.renderer.set_attr(p.renderer.data, CHECKED, "");
@@ -501,7 +520,7 @@ export function handleMaybeEqBlock(p: Parser, char: string): void {
     p.pending = "";
   } else {
     p.token = p.tokens[p.len] as Token;
-    if (p.pending[0] === "\\") {
+    if (p.pending.startsWith("\\")) {
       p.textBuf.push("[");
     } else {
       p.textBuf.push("$");
@@ -522,10 +541,7 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
   }
   const http = "http:/";
   const https = "https:/";
-  if (
-    http[p.pending.length] === char ||
-    https[p.pending.length] === char
-  ) {
+  if (http[p.pending.length] === char || https[p.pending.length] === char) {
     p.pending = pending_with_char;
     return;
   }
@@ -544,7 +560,7 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
     }
     return true;
   }
-  if (p.pending[0] === "]" && p.pending[1] === "(") {
+  if (p.pending.startsWith("]") && p.pending[1] === "(") {
     if (char === ")") {
       const type = p.token === LINK ? HREF : SRC;
       const url = p.pending.slice(2);
@@ -576,7 +592,7 @@ export function handleMaybeBR(p: Parser, char: string, pending_with_char: string
     if (
       pending_with_char.length === 3 ||
       char === " " ||
-      (char === "/" && (pending_with_char.length === 4 || p.pending[p.pending.length - 1] === " "))
+      (char === "/" && (pending_with_char.length === 4 || p.pending.endsWith(" ")))
     ) {
       p.pending = pending_with_char;
       return true;
@@ -597,11 +613,12 @@ export function handleMaybeBR(p: Parser, char: string, pending_with_char: string
   return true;
 }
 
-// eslint-disable-next-line complexity
 export function handleCommon(p: Parser, char: string, pending_with_char: string): boolean {
   switch (p.pending[0]) {
     case "\\":
-      if (p.token === IMAGE || p.token === EQUATION_BLOCK || p.token === EQUATION_INLINE) break;
+      if (p.token === IMAGE || p.token === EQUATION_BLOCK || p.token === EQUATION_INLINE) {
+        break;
+      }
       switch (char) {
         case "(":
           add_text(p);
@@ -618,9 +635,11 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         default: {
           const cc = char.charCodeAt(0);
           p.pending = "";
-          p.textBuf.push(is_digit(cc) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122)
-            ? pending_with_char
-            : char);
+          p.textBuf.push(
+            is_digit(cc) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122)
+              ? pending_with_char
+              : char,
+          );
           return true;
         }
       }
@@ -630,8 +649,12 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         case EQUATION_BLOCK:
         case EQUATION_INLINE:
           break;
-        case HEADING_1: case HEADING_2: case HEADING_3:
-        case HEADING_4: case HEADING_5: case HEADING_6:
+        case HEADING_1:
+        case HEADING_2:
+        case HEADING_3:
+        case HEADING_4:
+        case HEADING_5:
+        case HEADING_6:
           add_text(p);
           end_tokens_to_len(p, p.blockquote_idx);
           p.blockquote_idx = 0;
@@ -654,7 +677,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "`":
-      if (p.token === IMAGE) break;
+      if (p.token === IMAGE) {
+        break;
+      }
       if (char === "`") {
         p.fence_start += 1;
         p.pending = pending_with_char;
@@ -663,7 +688,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         add_text(p);
         add_token(p, CODE_INLINE);
         p.textBuf.length = 0;
-        if (char !== " " && char !== "\n") p.textBuf.push(char);
+        if (char !== " " && char !== "\n") {
+          p.textBuf.push(char);
+        }
         p.pending = "";
       }
       return true;
@@ -674,7 +701,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         p.token === EQUATION_BLOCK ||
         p.token === EQUATION_INLINE ||
         p.token === STRONG_AST
-      ) break;
+      ) {
+        break;
+      }
       const symbol = p.pending[0] as string;
       const isUnd = symbol === "_";
       const italic = isUnd ? ITALIC_UND : ITALIC_AST;

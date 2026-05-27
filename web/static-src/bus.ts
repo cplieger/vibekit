@@ -13,12 +13,25 @@
 // ---------------------------------------------------------------------------
 
 import type {
-  ServerEvent, ChatHeader, Message, MessageChunkPayload, ToolCall,
-  TurnEndedPayload, PermissionNeeded, ErrorPayload, ConnectedPayload,
-  MCPConnectedPayload, MCPOAuthPayload, MCPFailedPayload, MCPDisconnectedPayload,
+  ServerEvent,
+  ChatHeader,
+  Message,
+  MessageChunkPayload,
+  ToolCall,
+  TurnEndedPayload,
+  PermissionNeeded,
+  ErrorPayload,
+  ConnectedPayload,
+  MCPConnectedPayload,
+  MCPOAuthPayload,
+  MCPFailedPayload,
+  MCPDisconnectedPayload,
   AvailableCommand,
-  PendingChangeAddedPayload, PendingChangeResolvedPayload, PendingChangesClearedPayload,
-  PendingTrustEnabledPayload, PendingTrustClearedPayload,
+  PendingChangeAddedPayload,
+  PendingChangeResolvedPayload,
+  PendingChangesClearedPayload,
+  PendingTrustEnabledPayload,
+  PendingTrustClearedPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -47,7 +60,10 @@ export interface SSEPayloads {
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
-  readonly commands_updated: { readonly commands: AvailableCommand[]; readonly prompts?: AvailableCommand[] };
+  readonly commands_updated: {
+    readonly commands: AvailableCommand[];
+    readonly prompts?: AvailableCommand[];
+  };
   readonly mode_changed: { readonly mode_id: string };
   readonly compaction_started: void;
   readonly working_label: { readonly label: string };
@@ -55,7 +71,11 @@ export interface SSEPayloads {
   /** Reserved for future crew-card auto-refresh; currently unused. */
   readonly session_list_updated: { readonly sessions: unknown[] };
   readonly steering_loaded: { readonly documents: string[] };
-  readonly terminal_created: { readonly terminal_id: string; readonly command: string; readonly args?: string[] };
+  readonly terminal_created: {
+    readonly terminal_id: string;
+    readonly command: string;
+    readonly args?: string[];
+  };
   readonly terminal_output: { readonly terminal_id: string; readonly data: string };
   readonly terminal_exited: { readonly terminal_id: string; readonly exit_code: number };
   readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
@@ -104,7 +124,10 @@ function addHandler(map: Map<string, HandlerSlot>, key: string, fn: AnyHandler):
   const slot = getSlot(map, key);
   slot.set.add(fn);
   slot.dirty = true;
-  return (): void => { slot.set.delete(fn); slot.dirty = true; };
+  return (): void => {
+    slot.set.delete(fn);
+    slot.dirty = true;
+  };
 }
 
 function getSnapshot(slot: HandlerSlot): AnyHandler[] {
@@ -120,22 +143,22 @@ const busHandlers = new Map<string, HandlerSlot>();
 
 /** Subscribe to an SSE event with a typed payload. Returns an unsubscribe
  *  function. */
-export function onSSE<K extends keyof SSEPayloads>(
-  type: K, fn: SSEHandler<K>,
-): () => void {
-  return addHandler(sseHandlers, type as string, fn as AnyHandler);
+export function onSSE<K extends keyof SSEPayloads>(type: K, fn: SSEHandler<K>): () => void {
+  return addHandler(sseHandlers, type, fn as AnyHandler);
 }
 
 /** Route an incoming SSE event to all onSSE handlers registered for its
  *  type. Called by transport.ts when an event arrives. */
 export function dispatch(evt: ServerEvent): void {
   const slot = sseHandlers.get(evt.type);
-  if (slot === undefined) return;
+  if (slot === undefined) {
+    return;
+  }
   const fns = getSnapshot(slot);
   const chatID = evt.chat_id ?? "";
-  for (let i = 0; i < fns.length; i++) {
+  for (const fn of fns) {
     try {
-      fns[i]!(chatID, evt.payload);
+      fn(chatID, evt.payload);
     } catch (e) {
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }
@@ -176,9 +199,7 @@ export type BusHandler<K extends keyof BusPayloads> = BusPayloads[K] extends voi
   : (payload: BusPayloads[K]) => void;
 
 /** Subscribe to a typed bus event. Returns an unsubscribe function. */
-export function onBus<K extends keyof BusPayloads>(
-  event: K, fn: BusHandler<K>,
-): () => void {
+export function onBus<K extends keyof BusPayloads>(event: K, fn: BusHandler<K>): () => void {
   return addHandler(busHandlers, event, fn as AnyHandler);
 }
 
@@ -188,11 +209,13 @@ export function emitBus<K extends keyof BusPayloads>(
 ): void {
   const [event, ...rest] = args;
   const slot = busHandlers.get(event);
-  if (slot === undefined) return;
+  if (slot === undefined) {
+    return;
+  }
   const fns = getSnapshot(slot);
-  for (let i = 0; i < fns.length; i++) {
+  for (const fn of fns) {
     try {
-      fns[i]!(...rest);
+      fn(...rest);
     } catch (e) {
       console.error(`[bus] handler error for "${event}":`, e);
     }
@@ -223,7 +246,7 @@ export function registerSSEDecoder<K extends keyof SSEPayloads>(
   type: K,
   decoder: Decoder<SSEPayloads[K]>,
 ): void {
-  sseDecoders.set(type, decoder as Decoder<unknown>);
+  sseDecoders.set(type, decoder);
 }
 
 /** Returns the registered decoder for `type`, or undefined if none.

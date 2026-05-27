@@ -36,19 +36,16 @@
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 import { defineAction, IDEMPOTENCY_HEADER } from "./define.js";
 import { ActionError, classifyFetchError, hasErrorString } from "./error.js";
-import type {
-  Action,
-  ActionContext,
-  ActionDefinition,
-  RequestSpec,
-} from "./types.js";
+import type { Action, ActionContext, ActionDefinition, RequestSpec } from "./types.js";
 
 const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
 
 /** Caller-facing shape of an apiAction definition. Differs from the
  *  raw ActionDefinition in that `request` replaces `run`. */
-interface ApiActionDefinition<TArgs, TResult, TOp = unknown>
-  extends Omit<ActionDefinition<TArgs, TResult, TOp>, "run"> {
+interface ApiActionDefinition<TArgs, TResult, TOp = unknown> extends Omit<
+  ActionDefinition<TArgs, TResult, TOp>,
+  "run"
+> {
   /** HTTP request descriptor. Re-evaluated for each dispatch with the
    *  current args (so paths can interpolate args). */
   request: (args: TArgs) => RequestSpec;
@@ -114,20 +111,23 @@ async function executeRequest<T>(
     let serverCode: string | undefined;
     try {
       const body: unknown = await r.json();
-      if (hasErrorString(body)) serverError = body.error;
+      if (hasErrorString(body)) {
+        serverError = body.error;
+      }
       if (typeof body === "object" && body !== null && "code" in body) {
         const code = (body as Record<"code", unknown>).code;
-        if (typeof code === "string") serverCode = code;
+        if (typeof code === "string") {
+          serverCode = code;
+        }
       }
     } catch {
       // Body wasn't JSON or parse failed — leave serverError empty.
     }
     const opts: { status: number; code?: string } = { status: r.status };
-    if (serverCode !== undefined) opts.code = serverCode;
-    throw new ActionError(
-      serverError !== "" ? serverError : `HTTP ${String(r.status)}`,
-      opts,
-    );
+    if (serverCode !== undefined) {
+      opts.code = serverCode;
+    }
+    throw new ActionError(serverError !== "" ? serverError : `HTTP ${String(r.status)}`, opts);
   }
   // 204 No Content: no body to parse, regardless of method.
   if (r.status === 204) {
@@ -151,9 +151,9 @@ async function executeRequest<T>(
   try {
     return JSON.parse(text) as T;
   } catch (e) {
-    throw new ActionError(
-      `response not JSON: ${e instanceof Error ? e.message : String(e)}`,
-      { status: r.status, cause: e },
-    );
+    throw new ActionError(`response not JSON: ${e instanceof Error ? e.message : String(e)}`, {
+      status: r.status,
+      cause: e,
+    });
   }
 }

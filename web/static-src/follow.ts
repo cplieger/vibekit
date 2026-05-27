@@ -13,7 +13,13 @@
 import { $ } from "./dom.js";
 import { onSSE } from "./bus.js";
 import {
-  openTab, closeTab, hasTab, activateTab, getActiveTabId, setOnActivate, TAB_VIEWS,
+  openTab,
+  closeTab,
+  hasTab,
+  activateTab,
+  getActiveTabId,
+  setOnActivate,
+  TAB_VIEWS,
 } from "./tabs.js";
 import { apiGet } from "./api-client.js";
 import { escText } from "./strings.js";
@@ -55,8 +61,12 @@ class FollowController {
   private poolSize = 0;
 
   init(): void {
-    $.followAlongBtn.addEventListener("click", () => { this.toggle(); });
-    setOnActivate((id) => { this.onTabChanged(id); });
+    $.followAlongBtn.addEventListener("click", () => {
+      this.toggle();
+    });
+    setOnActivate((id) => {
+      this.onTabChanged(id);
+    });
 
     onSSE("tool_call", (chatID, p) => {
       this.markToolCall(chatID);
@@ -74,7 +84,10 @@ class FollowController {
     onSSE("chat_deleted", (chatID) => {
       this.hasToolCall.delete(chatID);
     });
-    effect(() => { activeVersion.value; this.syncEnabled(); });
+    effect(() => {
+      activeVersion.value;
+      this.syncEnabled();
+    });
     this.syncEnabled();
   }
 
@@ -111,22 +124,28 @@ class FollowController {
   // --- Internal ---
 
   private markToolCall(chatID: string): void {
-    if (this.hasToolCall.has(chatID)) return;
+    if (this.hasToolCall.has(chatID)) {
+      return;
+    }
     this.hasToolCall.add(chatID);
-    if (getActiveId() === chatID) this.syncEnabled();
+    if (getActiveId() === chatID) {
+      this.syncEnabled();
+    }
   }
 
   private syncEnabled(): void {
     const active = getActiveId();
     const ready = active !== "" && this.hasToolCall.has(active);
-    ($.followAlongBtn as HTMLButtonElement).disabled = !ready;
+    $.followAlongBtn.disabled = !ready;
     if (!ready && this.enabled) {
       this.toggle();
     }
   }
 
   private onTabChanged(activeId: string): void {
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      return;
+    }
     if (activeId === TAB_ID) {
       if (this.paused && !this.manualPause) {
         this.setPaused(false);
@@ -139,7 +158,9 @@ class FollowController {
         }
       }
     } else {
-      if (!this.paused) this.setPaused(true);
+      if (!this.paused) {
+        this.setPaused(true);
+      }
     }
   }
 
@@ -163,7 +184,9 @@ class FollowController {
         kind: "follow",
         view: TAB_VIEWS.follow,
         route: { kind: "follow" },
-        onClose: () => { this.onFollowTabClosed(); },
+        onClose: () => {
+          this.onFollowTabClosed();
+        },
       });
     }
     activateTab(TAB_ID);
@@ -171,7 +194,9 @@ class FollowController {
   }
 
   private closeFollowTab(): void {
-    if (hasTab(TAB_ID)) closeTab(TAB_ID);
+    if (hasTab(TAB_ID)) {
+      closeTab(TAB_ID);
+    }
     this.loadController?.abort();
     this.loadController = null;
     this.currentPath = "";
@@ -184,7 +209,9 @@ class FollowController {
   }
 
   private handleLocations(locations: ToolLocation[] | undefined, kind?: string): void {
-    if (!this.enabled || locations === undefined || locations.length === 0) return;
+    if (!this.enabled || locations === undefined || locations.length === 0) {
+      return;
+    }
     const loc = locations[0]!;
     const isWrite = profileFor("", kind ?? "").writesFile;
 
@@ -198,13 +225,17 @@ class FollowController {
   }
 
   private applyLocation(path: string, line: number, forceReload = false): void {
-    if (!forceReload && path === this.currentPath && line === this.currentLine) return;
+    if (!forceReload && path === this.currentPath && line === this.currentLine) {
+      return;
+    }
 
     const pathChanged = path !== this.currentPath || forceReload;
     this.currentPath = path;
     this.currentLine = line;
 
-    if (!hasTab(TAB_ID)) this.openFollowTab();
+    if (!hasTab(TAB_ID)) {
+      this.openFollowTab();
+    }
     // Note: no need to activate the tab here — activateTab() returns
     // early when the tab is already active, and we only want to
     // surface the follow tab if it isn't already shown (handled by
@@ -221,7 +252,7 @@ class FollowController {
 
   private setPaused(value: boolean): void {
     this.paused = value;
-    const btn = getView().querySelector(".follow-pause-btn") as HTMLButtonElement | null;
+    const btn = getView().querySelector(".follow-pause-btn");
     if (btn !== null) {
       btn.setAttribute("aria-pressed", String(this.paused));
       btn.title = this.paused ? "Resume following" : "Pause following";
@@ -246,41 +277,48 @@ class FollowController {
   }
 
   private openCurrentInEditor(): void {
-    if (this.currentPath === "") return;
+    if (this.currentPath === "") {
+      return;
+    }
     openFile(this.currentPath, this.currentLine > 0 ? this.currentLine : undefined);
   }
 
   private updateTabName(name: string): void {
     const tabEl = document.querySelector(`[data-tab-id="${TAB_ID}"] .tab-name`);
-    if (tabEl !== null) tabEl.textContent = name;
+    if (tabEl !== null) {
+      tabEl.textContent = name;
+    }
   }
 
   // --- Rendering ---
 
   private renderWaiting(): void {
-    getView().innerHTML = `<div class="follow-waiting">`
-      + `<span class="follow-waiting-text">Waiting for agent activity...</span></div>`;
+    getView().innerHTML =
+      `<div class="follow-waiting">` +
+      `<span class="follow-waiting-text">Waiting for agent activity...</span></div>`;
   }
 
   private renderHeader(path: string): string {
-    return `<div class="follow-header">`
-      + `<span class="follow-path" title="${escText(path)}">${escText(path)}</span>`
-      + `<button class="follow-open-btn" type="button" `
-      + `title="Open in editor" aria-label="Open in editor">`
-      + `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" `
-      + `stroke="currentColor" stroke-width="2" stroke-linecap="round" `
-      + `stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 `
-      + `01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/>`
-      + `<line x1="10" y1="14" x2="21" y2="3"/></svg></button>`
-      + `<button class="follow-pause-btn" type="button" `
-      + `title="${this.paused ? "Resume following" : "Pause following"}" `
-      + `aria-label="Toggle pause" aria-pressed="${String(this.paused)}">`
-      + `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" `
-      + `stroke="none"><rect class="follow-pause-icon" x="6" y="4" width="4" `
-      + `height="16" rx="1"/><rect class="follow-pause-icon" x="14" y="4" `
-      + `width="4" height="16" rx="1"/>`
-      + `<polygon class="follow-play-icon" points="6,4 20,12 6,20"/>`
-      + `</svg></button></div>`;
+    return (
+      `<div class="follow-header">` +
+      `<span class="follow-path" title="${escText(path)}">${escText(path)}</span>` +
+      `<button class="follow-open-btn" type="button" ` +
+      `title="Open in editor" aria-label="Open in editor">` +
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ` +
+      `stroke="currentColor" stroke-width="2" stroke-linecap="round" ` +
+      `stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 ` +
+      `01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/>` +
+      `<line x1="10" y1="14" x2="21" y2="3"/></svg></button>` +
+      `<button class="follow-pause-btn" type="button" ` +
+      `title="${this.paused ? "Resume following" : "Pause following"}" ` +
+      `aria-label="Toggle pause" aria-pressed="${String(this.paused)}">` +
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" ` +
+      `stroke="none"><rect class="follow-pause-icon" x="6" y="4" width="4" ` +
+      `height="16" rx="1"/><rect class="follow-pause-icon" x="14" y="4" ` +
+      `width="4" height="16" rx="1"/>` +
+      `<polygon class="follow-play-icon" points="6,4 20,12 6,20"/>` +
+      `</svg></button></div>`
+    );
   }
 
   private async loadFile(path: string, line: number): Promise<void> {
@@ -290,20 +328,24 @@ class FollowController {
     this.loadController = new AbortController();
     const { signal } = this.loadController;
 
-    view.innerHTML = this.renderHeader(path)
-      + `<div class="follow-code"><div class="follow-skeleton">`
-      + `<div class="skeleton skeleton-follow-line" style="width:60%"></div>`
-      + `<div class="skeleton skeleton-follow-line" style="width:80%"></div>`
-      + `<div class="skeleton skeleton-follow-line" style="width:45%"></div>`
-      + `<div class="skeleton skeleton-follow-line" style="width:70%"></div>`
-      + `<div class="skeleton skeleton-follow-line" style="width:55%"></div>`
-      + `</div></div>`;
+    view.innerHTML =
+      this.renderHeader(path) +
+      `<div class="follow-code"><div class="follow-skeleton">` +
+      `<div class="skeleton skeleton-follow-line" style="width:60%"></div>` +
+      `<div class="skeleton skeleton-follow-line" style="width:80%"></div>` +
+      `<div class="skeleton skeleton-follow-line" style="width:45%"></div>` +
+      `<div class="skeleton skeleton-follow-line" style="width:70%"></div>` +
+      `<div class="skeleton skeleton-follow-line" style="width:55%"></div>` +
+      `</div></div>`;
     this.wireHeaderButtons(view);
 
     const resp = await apiGet<{ content?: string; error?: string }>(
-      `/api/file?path=${encodeURIComponent(path)}`, signal,
+      `/api/file?path=${encodeURIComponent(path)}`,
+      signal,
     );
-    if (gen !== this.loadGeneration || this.currentPath !== path) return;
+    if (gen !== this.loadGeneration || this.currentPath !== path) {
+      return;
+    }
 
     if (resp === null || resp.error !== undefined) {
       const msg = resp?.error ?? "File not available";
@@ -317,7 +359,9 @@ class FollowController {
     this.filePath = path;
 
     const codeWrap = view.querySelector(".follow-code");
-    if (codeWrap === null) return;
+    if (codeWrap === null) {
+      return;
+    }
 
     // For small files (≤200 lines), render all at once (no virtualisation overhead).
     if (this.lines.length <= 200) {
@@ -328,9 +372,10 @@ class FollowController {
         const active = lineNum === line ? " follow-active-line" : "";
         const gutter = String(lineNum).padStart(gutterWidth, " ");
         const highlighted = highlight(this.lines[i] ?? "", basename(path));
-        html += `<div class="follow-line${active}" data-line="${String(lineNum)}">`
-          + `<span class="follow-gutter">${gutter}</span>`
-          + `<span class="follow-text">${highlighted}</span></div>`;
+        html +=
+          `<div class="follow-line${active}" data-line="${String(lineNum)}">` +
+          `<span class="follow-gutter">${gutter}</span>` +
+          `<span class="follow-text">${highlighted}</span></div>`;
       }
       codeWrap.innerHTML = `<pre class="follow-pre"><code>${html}</code></pre>`;
       scrollToLine(line);
@@ -339,7 +384,7 @@ class FollowController {
 
     // Virtualised rendering for large files.
     codeWrap.innerHTML = `<pre class="follow-pre follow-virtual"><code></code></pre>`;
-    const pre = codeWrap.querySelector(".follow-pre") as HTMLPreElement;
+    const pre = codeWrap.querySelector(".follow-pre")!;
 
     // Reset pool for new file
     this.rowPool = [];
@@ -355,7 +400,9 @@ class FollowController {
 
     // Attach scroll handler for virtual rendering.
     // NOTE: No need to remove old handler — pre is freshly created each loadFile call.
-    this.scrollHandler = () => { this.renderWindow(pre); };
+    this.scrollHandler = () => {
+      this.renderWindow(pre);
+    };
     pre.style.overflow = "auto";
     pre.addEventListener("scroll", this.scrollHandler);
 
@@ -365,8 +412,11 @@ class FollowController {
 
   private renderWindow(pre: HTMLPreElement): void {
     const win = computeVirtualWindow(
-      this.lines.length, this.lineHeight,
-      pre.scrollTop, pre.clientHeight, this.bufferLines,
+      this.lines.length,
+      this.lineHeight,
+      pre.scrollTop,
+      pre.clientHeight,
+      this.bufferLines,
     );
     const startLine = win.startLine;
     const endLine = win.endLine;
@@ -412,7 +462,9 @@ class FollowController {
   }
 
   private scrollToLineVirtual(pre: HTMLPreElement, line: number): void {
-    if (line <= 0) return;
+    if (line <= 0) {
+      return;
+    }
     pre.scrollTop = computeScrollTarget(line, this.lineHeight, pre.clientHeight);
     // Re-render after scroll position change.
     this.renderWindow(pre);
@@ -420,7 +472,7 @@ class FollowController {
 
   private scrollToCurrentLine(): void {
     const view = getView();
-    const pre = view.querySelector(".follow-virtual") as HTMLPreElement | null;
+    const pre = view.querySelector(".follow-virtual");
     if (pre !== null) {
       this.scrollToLineVirtual(pre, this.currentLine);
     } else {
@@ -429,10 +481,12 @@ class FollowController {
   }
 
   private wireHeaderButtons(view: HTMLElement): void {
-    view.querySelector(".follow-pause-btn")
-      ?.addEventListener("click", () => { this.togglePause(); });
-    view.querySelector(".follow-open-btn")
-      ?.addEventListener("click", () => { this.openCurrentInEditor(); });
+    view.querySelector(".follow-pause-btn")?.addEventListener("click", () => {
+      this.togglePause();
+    });
+    view.querySelector(".follow-open-btn")?.addEventListener("click", () => {
+      this.openCurrentInEditor();
+    });
   }
 }
 
@@ -448,8 +502,10 @@ export interface VirtualWindow {
 }
 
 export function computeVirtualWindow(
-  totalLines: number, lineHeight: number,
-  scrollTop: number, viewportHeight: number,
+  totalLines: number,
+  lineHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
   bufferLines: number,
 ): VirtualWindow {
   const startLine = Math.max(0, Math.floor(scrollTop / lineHeight) - bufferLines);
@@ -465,7 +521,9 @@ export function computeVirtualWindow(
 }
 
 export function computeScrollTarget(
-  line: number, lineHeight: number, viewportHeight: number,
+  line: number,
+  lineHeight: number,
+  viewportHeight: number,
 ): number {
   const targetTop = (line - 1) * lineHeight;
   return Math.max(0, targetTop - viewportHeight / 2);
@@ -485,7 +543,9 @@ function getView(): HTMLDivElement {
 }
 
 function scrollToLine(line: number): void {
-  if (line <= 0) return;
+  if (line <= 0) {
+    return;
+  }
   const view = getView();
   view.querySelector(".follow-active-line")?.classList.remove("follow-active-line");
   const target = view.querySelector(`[data-line="${String(line)}"]`);
@@ -500,7 +560,9 @@ function scrollToLine(line: number): void {
 // ---------------------------------------------------------------------------
 
 const instance = new FollowController();
-registerCleanup(() => instance.cancelLoad());
+registerCleanup(() => {
+  instance.cancelLoad();
+});
 
 export function initFollowAlong(): void {
   instance.init();

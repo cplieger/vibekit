@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -28,7 +31,10 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
         runCount++;
         const myRun = runCount;
         return new Promise<string>((resolve, reject) => {
-          if (signal.aborted) { reject(new DOMException("aborted", "AbortError")); return; }
+          if (signal.aborted) {
+            reject(new DOMException("aborted", "AbortError"));
+            return;
+          }
           signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
           setTimeout(() => resolve(`result-${myRun}`), 10);
         });
@@ -63,7 +69,10 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
         runCount++;
         const myRun = runCount;
         return new Promise<string>((resolve, reject) => {
-          if (signal.aborted) { reject(new DOMException("aborted", "AbortError")); return; }
+          if (signal.aborted) {
+            reject(new DOMException("aborted", "AbortError"));
+            return;
+          }
           signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
           setTimeout(() => resolve(`result-${myRun}`), 10);
         });
@@ -92,7 +101,10 @@ describe("dedupe + cancel + immediate re-dispatch race", () => {
       run: (_args, signal) => {
         runCount++;
         return new Promise<string>((resolve, reject) => {
-          if (signal.aborted) { reject(new DOMException("aborted", "AbortError")); return; }
+          if (signal.aborted) {
+            reject(new DOMException("aborted", "AbortError"));
+            return;
+          }
           signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
           setTimeout(() => resolve(`result-${runCount}`), 10);
         });

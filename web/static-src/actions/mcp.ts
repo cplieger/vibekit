@@ -3,28 +3,44 @@
 
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
-import { type Server, updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
+import {
+  type Server,
+  updateConfiguredEntry,
+  removeConfiguredEntry,
+  insertConfiguredEntry,
+} from "../mcp-state.js";
 
 /** Result shape from the registry search endpoint. */
 export interface RegistrySearchResult {
-  servers: Array<{
+  servers: {
     name: string;
     title?: string;
     description?: string;
     version?: string;
     repository?: string;
-    packages?: Array<{
+    packages?: {
       registry_type: string;
       identifier: string;
       version?: string;
-      env_vars?: Array<{ name: string; description?: string; required?: boolean; secret?: boolean }>;
-    }>;
-    remotes?: Array<{
+      env_vars?: {
+        name: string;
+        description?: string;
+        required?: boolean;
+        secret?: boolean;
+      }[];
+    }[];
+    remotes?: {
       type: string;
       url: string;
-      headers?: Array<{ name: string; description?: string; value?: string; required?: boolean; secret?: boolean }>;
-    }>;
-  }>;
+      headers?: {
+        name: string;
+        description?: string;
+        value?: string;
+        required?: boolean;
+        secret?: boolean;
+      }[];
+    }[];
+  }[];
 }
 
 // --- mcp.toggle_server ---

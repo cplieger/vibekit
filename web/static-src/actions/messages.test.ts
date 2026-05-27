@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -51,7 +54,9 @@ describe("ui.copy_clipboard", () => {
   });
 
   it("toasts error when clipboard unavailable", async () => {
-    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
     const { copyClipboard } = await import("./messages.js");
     const r = await copyClipboard.dispatch("x");
     expect(r).toBeNull();
@@ -62,9 +67,14 @@ describe("ui.copy_clipboard", () => {
 
 describe("messages.explain_error", () => {
   it("POSTs to /api/utility/explain-error with truncated error text", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ output: "explanation" }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ output: "explanation" }), { status: 200 }),
+    );
     const { explainError } = await import("./messages.js");
-    const r = await explainError.dispatch({ errorText: "TypeError: x is not a function", context: "tool call" });
+    const r = await explainError.dispatch({
+      errorText: "TypeError: x is not a function",
+      context: "tool call",
+    });
     expect(r).toEqual({ output: "explanation" });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/utility/explain-error");

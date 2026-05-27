@@ -273,8 +273,7 @@
       border-radius: var(--r);
       overflow-x: auto;
       margin: var(--sp-2) 0;
-      font-family:
-        "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+      font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
       font-feature-settings:
         "calt" 1,
         "liga" 1;
@@ -464,7 +463,9 @@
   transition: color var(--dur-micro) var(--ease-micro);
 }
 
-.reasoning-summary:hover { color: var(--c-text-secondary); }
+.reasoning-summary:hover {
+  color: var(--c-text-secondary);
+}
 
 .reasoning-body {
   max-height: 300px;

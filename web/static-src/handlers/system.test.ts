@@ -44,7 +44,9 @@ vi.mock("../auto-approve.js", () => ({ clearCrewCache: vi.fn() }));
 const busHandlers = new Map<string, Function>();
 vi.mock("../bus.js", () => ({
   onSSE: vi.fn(),
-  onBus: vi.fn((event: string, handler: Function) => { busHandlers.set(event, handler); }),
+  onBus: vi.fn((event: string, handler: Function) => {
+    busHandlers.set(event, handler);
+  }),
   BUS_TRANSPORT_GAP: "transport:gap",
 }));
 

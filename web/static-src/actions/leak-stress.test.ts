@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, pendingCount, recentLog } from "./registry.js";
@@ -63,7 +66,10 @@ describe("memory leak stress — activeDedupes", () => {
     const action = defineAction({
       name: "stress.dedupe",
       dedupe: true,
-      run: async (args: { v: number }) => { callCount++; return args.v; },
+      run: async (args: { v: number }) => {
+        callCount++;
+        return args.v;
+      },
     });
 
     // All dispatches with same args should dedupe to one in-flight
@@ -100,7 +106,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
     const action = defineAction({
       name: "stress.errors",
       error: false, // suppress toast
-      run: async () => { throw new Error("fail"); },
+      run: async () => {
+        throw new Error("fail");
+      },
     });
 
     const promises: Promise<unknown>[] = [];

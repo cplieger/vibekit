@@ -10,7 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
@@ -40,7 +43,9 @@ describe("dedupe + scope combined behavior", () => {
       scope: "ds",
       run: () => {
         runCount++;
-        return new Promise<string>((r) => { resolveRun = r; });
+        return new Promise<string>((r) => {
+          resolveRun = r;
+        });
       },
     });
 
@@ -106,8 +111,12 @@ describe("dedupe + scope combined behavior", () => {
 // ===========================================================================
 
 describe("optimistic persistence across retries", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("rollback fires exactly once after all retries exhaust", async () => {
     const rollbackCalls: string[] = [];
@@ -119,7 +128,9 @@ describe("optimistic persistence across retries", () => {
       retry: { count: 2, delay: 50 },
       error: false,
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       run: () => {
         attempt++;
         throw new ActionError("fail", { status: 500 });
@@ -128,7 +139,7 @@ describe("optimistic persistence across retries", () => {
 
     const p = action.dispatch("x");
     // Advance through retries
-    await vi.advanceTimersByTimeAsync(50);  // retry 1
+    await vi.advanceTimersByTimeAsync(50); // retry 1
     await vi.advanceTimersByTimeAsync(100); // retry 2
     await p;
 
@@ -145,7 +156,9 @@ describe("optimistic persistence across retries", () => {
       retryable: retryNetwork,
       retry: { count: 2, delay: 30 },
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       run: () => {
         attempt++;
         if (attempt < 3) throw new ActionError("net", { code: "network" });
@@ -170,8 +183,13 @@ describe("optimistic persistence across retries", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
-      optimistic: () => { optimisticCount++; return undefined; },
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      optimistic: () => {
+        optimisticCount++;
+        return undefined;
+      },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();
@@ -206,8 +224,16 @@ describe("cancel + success race in dedupe", () => {
     const onError2 = vi.fn();
     const onSettled2 = vi.fn();
 
-    const p1 = action.dispatch("k", { onSuccess: onSuccess1, onError: onError1, onSettled: onSettled1 });
-    const p2 = action.dispatch("k", { onSuccess: onSuccess2, onError: onError2, onSettled: onSettled2 });
+    const p1 = action.dispatch("k", {
+      onSuccess: onSuccess1,
+      onError: onError1,
+      onSettled: onSettled1,
+    });
+    const p2 = action.dispatch("k", {
+      onSuccess: onSuccess2,
+      onError: onError2,
+      onSettled: onSettled2,
+    });
 
     // Cancel before resolving — signal aborts, run rejects with AbortError
     action.cancel();
@@ -315,7 +341,9 @@ describe("scope chain after optimistic throw", () => {
       name: "test.opt_throw",
       scope: "opt-throw",
       error: false,
-      optimistic: () => { throw new Error("optimistic boom"); },
+      optimistic: () => {
+        throw new Error("optimistic boom");
+      },
       run: () => Promise.resolve("never"),
     });
 
@@ -344,7 +372,9 @@ describe("scope chain after optimistic throw", () => {
       name: "test.opt_throw_drain",
       scope: "opt-throw-drain",
       error: false,
-      optimistic: () => { throw new Error("boom"); },
+      optimistic: () => {
+        throw new Error("boom");
+      },
       run: () => Promise.resolve("never"),
     });
 
@@ -362,8 +392,12 @@ describe("scope chain after optimistic throw", () => {
 // ===========================================================================
 
 describe("retry + dedupe + scope triple interaction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("deduped dispatch in scope with retry: single run, retries, both callers get result", async () => {
     let attempt = 0;
@@ -486,8 +520,12 @@ describe("rapid cancel + re-dispatch", () => {
 // ===========================================================================
 
 describe("idempotency key stability across retries", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("same idempotency key is passed to all retry attempts", async () => {
     const keys: (string | undefined)[] = [];
@@ -540,8 +578,12 @@ describe("idempotency key stability across retries", () => {
 // ===========================================================================
 
 describe("retryable composition (custom permanent codes)", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("'cancelled' code does not retry under app-defined retry-everything-except-cancelled", async () => {
     let attempt = 0;
@@ -616,8 +658,12 @@ describe("retryable composition (custom permanent codes)", () => {
 // ===========================================================================
 
 describe("registry attempts field", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("records attempts=1 when no retry occurs", async () => {
     const action = defineAction<void, string>({
@@ -637,7 +683,9 @@ describe("registry attempts field", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 10 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();

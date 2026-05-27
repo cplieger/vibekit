@@ -45,14 +45,14 @@ const ROOT = join(import.meta.dirname, "..");
  *  switch to relative-path matching for that entry. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
   // Background fan-out for revalidation; partial failure is expected.
-  "forge-auth.ts",      // await apiPost in revalidateInBackground (probe per forge)
+  "forge-auth.ts", // await apiPost in revalidateInBackground (probe per forge)
 
   // Inline dialog mutations: error surfaces in the dialog status line,
   // not via toast. Intentionally excluded from the action framework.
-  "git-prs-tab.ts",     // await apiPost for PR creation + description generation (inline dialog)
+  "git-prs-tab.ts", // await apiPost for PR creation + description generation (inline dialog)
 
   // Fire-and-forget cleanup after successful plan send.
-  "plan-actions.ts",    // await apiDelete plan-draft + await apiPutOrError plan update
+  "plan-actions.ts", // await apiDelete plan-draft + await apiPutOrError plan update
 ]);
 
 /** Regex for forbidden patterns. Each match is a regression candidate.

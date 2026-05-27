@@ -12,7 +12,10 @@ import { signal, effect } from "./signals.js";
 // rendered DOM against a string list.
 // ---------------------------------------------------------------------------
 
-interface Item { id: string; label: string }
+interface Item {
+  id: string;
+  label: string;
+}
 
 function mount(item: Item): HTMLElement {
   const li = document.createElement("li");
@@ -55,7 +58,14 @@ describe("reconcile: empty cases", () => {
 
   it("populated parent + empty items → all removed", () => {
     const ul = makeUL();
-    reconcile(ul, [{ id: "a", label: "A" }, { id: "b", label: "B" }], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "B"]);
     reconcile(ul, [], spec);
     expect(ul.children.length).toBe(0);
@@ -63,11 +73,15 @@ describe("reconcile: empty cases", () => {
 
   it("empty parent + items → all mounted in order", () => {
     const ul = makeUL();
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "B", "C"]);
   });
 });
@@ -89,9 +103,23 @@ describe("reconcile: identity preservation", () => {
 
   it("update mutates in place; identity preserved", () => {
     const ul = makeUL();
-    reconcile(ul, [{ id: "a", label: "A" }, { id: "b", label: "B" }], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      spec,
+    );
     const [aBefore, bBefore] = snapshotRefs(ul);
-    reconcile(ul, [{ id: "a", label: "A!" }, { id: "b", label: "B!" }], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A!" },
+        { id: "b", label: "B!" },
+      ],
+      spec,
+    );
     const [aAfter, bAfter] = snapshotRefs(ul);
     expect(aAfter).toBe(aBefore);
     expect(bAfter).toBe(bBefore);
@@ -100,20 +128,28 @@ describe("reconcile: identity preservation", () => {
 
   it("reorder: identity preserved across moves", () => {
     const ul = makeUL();
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
     const refs = new Map<string, HTMLElement>();
     for (const el of snapshotRefs(ul)) {
       refs.set(el.getAttribute("data-reconcile-key") ?? "", el);
     }
-    reconcile(ul, [
-      { id: "c", label: "C" },
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "c", label: "C" },
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["C", "A", "B"]);
     for (const el of snapshotRefs(ul)) {
       const k = el.getAttribute("data-reconcile-key") ?? "";
@@ -126,78 +162,121 @@ describe("reconcile: insert / remove / mixed", () => {
   it("appends new items at end", () => {
     const ul = makeUL();
     reconcile(ul, [{ id: "a", label: "A" }], spec);
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "B", "C"]);
   });
 
   it("prepends new items at front", () => {
     const ul = makeUL();
     reconcile(ul, [{ id: "z", label: "Z" }], spec);
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "z", label: "Z" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "z", label: "Z" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "B", "Z"]);
   });
 
   it("inserts in the middle", () => {
     const ul = makeUL();
-    reconcile(ul, [{ id: "a", label: "A" }, { id: "c", label: "C" }], spec);
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "B", "C"]);
   });
 
   it("removes from the middle", () => {
     const ul = makeUL();
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "c", label: "C" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["A", "C"]);
   });
 
   it("reverse order", () => {
     const ul = makeUL();
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
-    reconcile(ul, [
-      { id: "c", label: "C" },
-      { id: "b", label: "B" },
-      { id: "a", label: "A" },
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
+    reconcile(
+      ul,
+      [
+        { id: "c", label: "C" },
+        { id: "b", label: "B" },
+        { id: "a", label: "A" },
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["C", "B", "A"]);
   });
 
   it("mixed: insert + remove + update + reorder", () => {
     const ul = makeUL();
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], spec);
-    reconcile(ul, [
-      { id: "d", label: "D" },         // new
-      { id: "b", label: "B!" },        // updated + moved
-      { id: "a", label: "A" },         // moved
-      // c removed
-    ], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      spec,
+    );
+    reconcile(
+      ul,
+      [
+        { id: "d", label: "D" }, // new
+        { id: "b", label: "B!" }, // updated + moved
+        { id: "a", label: "A" }, // moved
+        // c removed
+      ],
+      spec,
+    );
     expect(rendered(ul)).toEqual(["D", "B!", "A"]);
   });
 });
@@ -217,14 +296,21 @@ describe("reconcile: update optionality", () => {
     const countingSpec: ReconcileSpec<Item> = {
       key: (i) => i.id,
       mount,
-      update: (el, item) => { updateCalls++; update(el, item); },
+      update: (el, item) => {
+        updateCalls++;
+        update(el, item);
+      },
     };
     reconcile(ul, [{ id: "a", label: "A" }], countingSpec);
     expect(updateCalls).toBe(0);
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-    ], countingSpec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      countingSpec,
+    );
     expect(updateCalls).toBe(1); // only "a" was already mounted
   });
 });
@@ -237,7 +323,14 @@ describe("reconcile: non-keyed siblings preserved", () => {
     header.textContent = "HEADER";
     ul.appendChild(header);
 
-    reconcile(ul, [{ id: "a", label: "A" }, { id: "b", label: "B" }], spec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      spec,
+    );
     // Header stays — appended before the new items.
     expect(rendered(ul)).toEqual(["HEADER", "A", "B"]);
     expect(ul.querySelector(".header")).toBe(header);
@@ -250,7 +343,10 @@ describe("reconcile: non-keyed siblings preserved", () => {
 
 describe("reconcile: nested usage", () => {
   it("inner reconcile inside mount/update produces correctly-keyed sublists", () => {
-    interface Section { id: string; rows: Item[] }
+    interface Section {
+      id: string;
+      rows: Item[];
+    }
     const root = document.createElement("div");
 
     const renderRow: ReconcileSpec<Item> = {
@@ -260,7 +356,9 @@ describe("reconcile: nested usage", () => {
         li.textContent = i.label;
         return li;
       },
-      update: (el, i) => { el.textContent = i.label; },
+      update: (el, i) => {
+        el.textContent = i.label;
+      },
     };
 
     const renderSection: ReconcileSpec<Section> = {
@@ -278,10 +376,20 @@ describe("reconcile: nested usage", () => {
       },
     };
 
-    reconcile(root, [
-      { id: "s1", rows: [{ id: "a", label: "A" }, { id: "b", label: "B" }] },
-      { id: "s2", rows: [{ id: "c", label: "C" }] },
-    ], renderSection);
+    reconcile(
+      root,
+      [
+        {
+          id: "s1",
+          rows: [
+            { id: "a", label: "A" },
+            { id: "b", label: "B" },
+          ],
+        },
+        { id: "s2", rows: [{ id: "c", label: "C" }] },
+      ],
+      renderSection,
+    );
 
     const sec1 = root.children[0]!;
     const sec2 = root.children[1]!;
@@ -290,10 +398,20 @@ describe("reconcile: nested usage", () => {
 
     // Mutate inner rows; outer identity preserved, inner DOM patched.
     const sec1Before = sec1;
-    reconcile(root, [
-      { id: "s1", rows: [{ id: "a", label: "A!" }] }, // b removed, a updated
-      { id: "s2", rows: [{ id: "c", label: "C" }, { id: "d", label: "D" }] }, // d added
-    ], renderSection);
+    reconcile(
+      root,
+      [
+        { id: "s1", rows: [{ id: "a", label: "A!" }] }, // b removed, a updated
+        {
+          id: "s2",
+          rows: [
+            { id: "c", label: "C" },
+            { id: "d", label: "D" },
+          ],
+        }, // d added
+      ],
+      renderSection,
+    );
 
     expect(root.children[0]).toBe(sec1Before);
     expect(rendered(root.children[0]!.querySelector("ul")!)).toEqual(["A!"]);
@@ -305,17 +423,25 @@ describe("reconcile: signal integration", () => {
   it("effect + reconcile patches DOM on every signal mutation", () => {
     const ul = makeUL();
     const items = signal<readonly Item[]>([]);
-    const stop = effect(() => { reconcile(ul, items.value, spec); });
+    const stop = effect(() => {
+      reconcile(ul, items.value, spec);
+    });
 
     items.value = [{ id: "a", label: "A" }];
     expect(rendered(ul)).toEqual(["A"]);
 
-    items.value = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
+    items.value = [
+      { id: "a", label: "A" },
+      { id: "b", label: "B" },
+    ];
     expect(rendered(ul)).toEqual(["A", "B"]);
 
     // Identity preserved across the signal mutation
     const aBefore = ul.children[0];
-    items.value = [{ id: "b", label: "B" }, { id: "a", label: "A!" }];
+    items.value = [
+      { id: "b", label: "B" },
+      { id: "a", label: "A!" },
+    ];
     expect(rendered(ul)).toEqual(["B", "A!"]);
     expect(ul.children[1]).toBe(aBefore);
 
@@ -369,13 +495,19 @@ describe("reconcile: onRemove hook", () => {
       key: (i) => i.id,
       mount,
       update,
-      onRemove: (el, key) => { removed.push({ key, connected: el.isConnected }); },
+      onRemove: (el, key) => {
+        removed.push({ key, connected: el.isConnected });
+      },
     };
-    reconcile(ul, [
-      { id: "a", label: "A" },
-      { id: "b", label: "B" },
-      { id: "c", label: "C" },
-    ], teardownSpec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ],
+      teardownSpec,
+    );
     reconcile(ul, [{ id: "b", label: "B" }], teardownSpec);
     expect(removed.map((r) => r.key).sort()).toEqual(["a", "c"]);
     // Element is still in the DOM at the time of the callback.
@@ -390,10 +522,26 @@ describe("reconcile: onRemove hook", () => {
       key: (i) => i.id,
       mount,
       update,
-      onRemove: (_, key) => { removed.push(key); },
+      onRemove: (_, key) => {
+        removed.push(key);
+      },
     };
-    reconcile(ul, [{ id: "a", label: "A" }, { id: "b", label: "B" }], teardownSpec);
-    reconcile(ul, [{ id: "b", label: "B!" }, { id: "a", label: "A!" }], teardownSpec);
+    reconcile(
+      ul,
+      [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      teardownSpec,
+    );
+    reconcile(
+      ul,
+      [
+        { id: "b", label: "B!" },
+        { id: "a", label: "A!" },
+      ],
+      teardownSpec,
+    );
     expect(removed).toEqual([]);
   });
 

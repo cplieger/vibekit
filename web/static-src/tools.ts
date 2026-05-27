@@ -17,7 +17,13 @@ import { reconcile } from "./reconcile.js";
 
 type ToolEntry =
   | { kind: "label"; sec: string; isBuiltin: boolean }
-  | { kind: "row"; sec: string; name: string; entry: Record<string, unknown> | undefined; isBuiltin: boolean };
+  | {
+      kind: "row";
+      sec: string;
+      name: string;
+      entry: Record<string, unknown> | undefined;
+      isBuiltin: boolean;
+    };
 
 type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
 
@@ -29,53 +35,115 @@ interface MethodSchema {
 const INSTALL_METHODS: Readonly<Record<MethodKind, MethodSchema>> = {
   go: {
     fields: { version: true, pkg: true, install: false, binaries: true },
-    hints: { cat: "Installed via go install. Provide the full module path.", version: "Go module version tag, e.g. v1.2.0", pkg: "Full import path with version, e.g. golang.org/x/tools/cmd/goimports@${VERSION}", install: "" },
+    hints: {
+      cat: "Installed via go install. Provide the full module path.",
+      version: "Go module version tag, e.g. v1.2.0",
+      pkg: "Full import path with version, e.g. golang.org/x/tools/cmd/goimports@${VERSION}",
+      install: "",
+    },
   },
   npm: {
     fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: { cat: "Installed globally via npm. Just name and version.", version: "npm package version, e.g. 17.6.0", pkg: "", install: "" },
+    hints: {
+      cat: "Installed globally via npm. Just name and version.",
+      version: "npm package version, e.g. 17.6.0",
+      pkg: "",
+      install: "",
+    },
   },
   pip: {
     fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: { cat: "Installed via pip. Just name and version.", version: "PyPI package version, e.g. 1.38.0", pkg: "", install: "" },
+    hints: {
+      cat: "Installed via pip. Just name and version.",
+      version: "PyPI package version, e.g. 1.38.0",
+      pkg: "",
+      install: "",
+    },
   },
   cargo: {
     fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: { cat: "Installed via cargo install. Just name and version.", version: "Crate version, e.g. v0.13.1", pkg: "", install: "" },
+    hints: {
+      cat: "Installed via cargo install. Just name and version.",
+      version: "Crate version, e.g. v0.13.1",
+      pkg: "",
+      install: "",
+    },
   },
   apt: {
     fields: { version: false, pkg: false, install: false, binaries: false },
-    hints: { cat: "Installed via apt-get. No version pinning; uses distro package.", version: "", pkg: "", install: "" },
+    hints: {
+      cat: "Installed via apt-get. No version pinning; uses distro package.",
+      version: "",
+      pkg: "",
+      install: "",
+    },
   },
   binary: {
     fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: { cat: "Downloaded as a prebuilt binary. Provide a curl/tar install command.", version: "Release tag, e.g. v2.14.0. Use ${VERSION} in the install command.", pkg: "", install: "Shell command using ${VERSION}, ${BIN}, ${TOOLS}. e.g. curl -fsSL ... | tar -xz -C ${BIN}" },
+    hints: {
+      cat: "Downloaded as a prebuilt binary. Provide a curl/tar install command.",
+      version: "Release tag, e.g. v2.14.0. Use ${VERSION} in the install command.",
+      pkg: "",
+      install:
+        "Shell command using ${VERSION}, ${BIN}, ${TOOLS}. e.g. curl -fsSL ... | tar -xz -C ${BIN}",
+    },
   },
   runtimes: {
     fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: { cat: "A language runtime (Go, Node, etc). Provide a custom install command.", version: "Runtime version, e.g. 1.26.2", pkg: "", install: "Shell command using ${VERSION}, ${RUNTIMES}. Installs to ${RUNTIMES}/<name>/." },
+    hints: {
+      cat: "A language runtime (Go, Node, etc). Provide a custom install command.",
+      version: "Runtime version, e.g. 1.26.2",
+      pkg: "",
+      install: "Shell command using ${VERSION}, ${RUNTIMES}. Installs to ${RUNTIMES}/<name>/.",
+    },
   },
   custom: {
     fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: { cat: "Fully custom install script. You control everything.", version: "Version label for tracking. Use ${VERSION} in the install command.", pkg: "", install: "Shell command using ${VERSION}, ${BIN}, ${TOOLS}." },
+    hints: {
+      cat: "Fully custom install script. You control everything.",
+      version: "Version label for tracking. Use ${VERSION} in the install command.",
+      pkg: "",
+      install: "Shell command using ${VERSION}, ${BIN}, ${TOOLS}.",
+    },
   },
   mcp: {
     fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: { cat: "Install an MCP server that needs a package manager or binary (pip install ha-mcp, cargo install, curl). An unconfigured entry is added to the MCP section; fill in credentials + stdio command there.", version: "Version label, e.g. 1.0.0", pkg: "", install: "Install command, e.g. pip install --user ha-mcp" },
+    hints: {
+      cat: "Install an MCP server that needs a package manager or binary (pip install ha-mcp, cargo install, curl). An unconfigured entry is added to the MCP section; fill in credentials + stdio command there.",
+      version: "Version label, e.g. 1.0.0",
+      pkg: "",
+      install: "Install command, e.g. pip install --user ha-mcp",
+    },
   },
 };
 
 // Modal form fields that only this module touches. Queried lazily via
 // getters so the module can import before DOMContentLoaded.
 const f = {
-  get title(): HTMLElement { return el("tool-modal-title"); },
-  get cat(): HTMLSelectElement { return el("tool-cat"); },
-  get name(): HTMLInputElement { return el("tool-name"); },
-  get version(): HTMLInputElement { return el("tool-version"); },
-  get install(): HTMLInputElement { return el("tool-install"); },
-  get binaries(): HTMLInputElement { return el("tool-binaries"); },
-  get pkg(): HTMLInputElement { return el("tool-package"); },
-  get save(): HTMLButtonElement { return el("tool-modal-save"); },
+  get title(): HTMLElement {
+    return el("tool-modal-title");
+  },
+  get cat(): HTMLSelectElement {
+    return el("tool-cat");
+  },
+  get name(): HTMLInputElement {
+    return el("tool-name");
+  },
+  get version(): HTMLInputElement {
+    return el("tool-version");
+  },
+  get install(): HTMLInputElement {
+    return el("tool-install");
+  },
+  get binaries(): HTMLInputElement {
+    return el("tool-binaries");
+  },
+  get pkg(): HTMLInputElement {
+    return el("tool-package");
+  },
+  get save(): HTMLButtonElement {
+    return el("tool-modal-save");
+  },
 };
 
 class ToolsManager {
@@ -87,17 +155,21 @@ class ToolsManager {
   }
 
   init(): void {
-    $.toolAddBtn.addEventListener("click", () => this.openToolModal(null, null));
+    $.toolAddBtn.addEventListener("click", () => {
+      this.openToolModal(null, null);
+    });
 
     const toolOutput = new RollingOutput($.toolUpdateOutput, "git-output-modal");
     $.toolUpdateBtn.addEventListener("click", () => void this.runToolsInstall(toolOutput));
     bindLoadingState("tools.install", $.toolUpdateBtn);
 
     $.autoUpdateToggle.addEventListener("change", () => {
-      patchSettings({ auto_update: $.autoUpdateToggle.checked }, $.autoUpdateToggle);
+      void patchSettings({ auto_update: $.autoUpdateToggle.checked }, $.autoUpdateToggle);
     });
 
-    f.save.addEventListener("click", () => this.saveToolFromModal());
+    f.save.addEventListener("click", () => {
+      this.saveToolFromModal();
+    });
     const unbindSave = bindLoadingState("tools.save", f.save);
     const unbindSeed = bindLoadingState("tools.seed_mcp", f.save, { preserveDisabled: true });
     registerCleanup(unbindSave);
@@ -125,21 +197,35 @@ class ToolsManager {
       toolOutput.append("Install request failed");
     } else {
       toolOutput.append(d.output ?? "");
-      if (d.error !== undefined) toolOutput.append(`Error: ${d.error}`);
+      if (d.error !== undefined) {
+        toolOutput.append(`Error: ${d.error}`);
+      }
     }
     this.loadToolsList();
   }
 
   private renderToolsList(): void {
     const container = $.toolsList;
-    const sections = ["runtimes", "binary", "go", "npm", "pip", "cargo", "apt", "custom", "builtin"];
+    const sections = [
+      "runtimes",
+      "binary",
+      "go",
+      "npm",
+      "pip",
+      "cargo",
+      "apt",
+      "custom",
+      "builtin",
+    ];
 
     // Flatten groups + rows into a single keyed sequence so reconcile
     // can patch in place across reloads (no flash of empty list).
     const flat: ToolEntry[] = [];
     for (const sec of sections) {
       const entries = this.toolsData[sec];
-      if (entries === undefined || Object.keys(entries).length === 0) continue;
+      if (entries === undefined || Object.keys(entries).length === 0) {
+        continue;
+      }
       const isBuiltin = sec === "builtin";
       flat.push({ kind: "label", sec, isBuiltin });
       for (const name of Object.keys(entries).sort()) {
@@ -149,7 +235,9 @@ class ToolsManager {
 
     // Drop any non-keyed empty-state placeholder before reconciling.
     for (const child of [...container.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
 
     if (flat.length === 0) {
@@ -159,7 +247,7 @@ class ToolsManager {
     }
 
     reconcile(container, flat, {
-      key: (e: ToolEntry) => e.kind === "label" ? `label:${e.sec}` : `row:${e.sec}:${e.name}`,
+      key: (e: ToolEntry) => (e.kind === "label" ? `label:${e.sec}` : `row:${e.sec}:${e.name}`),
       mount: (e: ToolEntry) => {
         if (e.kind === "label") {
           const label = document.createElement("div");
@@ -170,32 +258,40 @@ class ToolsManager {
         return this.renderToolRow(e.sec, e.name, e.entry, e.isBuiltin);
       },
       update: (row, e: ToolEntry) => {
-        if (e.kind !== "row") return;
+        if (e.kind !== "row") {
+          return;
+        }
         // Keep version/description text in sync in case the entry changed.
-        const meta = row.querySelector(".list-row-meta") as HTMLSpanElement | null;
+        const meta = row.querySelector(".list-row-meta");
         if (meta !== null) {
           meta.textContent = e.isBuiltin
-            ? (e.entry?.["description"] as string | undefined) ?? ""
-            : (e.entry?.["version"] as string | undefined) ?? "";
+            ? ((e.entry?.["description"] as string | undefined) ?? "")
+            : ((e.entry?.["version"] as string | undefined) ?? "");
         }
       },
     });
   }
 
   private renderToolRow(
-    sec: string, name: string, entry: Record<string, unknown> | undefined, isBuiltin: boolean,
+    sec: string,
+    name: string,
+    entry: Record<string, unknown> | undefined,
+    isBuiltin: boolean,
   ): HTMLDivElement {
     const row = document.createElement("div");
     row.className = "list-row";
     const nameEl = document.createElement("span");
-    nameEl.className = "list-row-name"; nameEl.textContent = name;
+    nameEl.className = "list-row-name";
+    nameEl.textContent = name;
     const verEl = document.createElement("span");
     verEl.className = "list-row-meta";
     verEl.textContent = isBuiltin
-      ? (entry?.["description"] as string | undefined) ?? ""
-      : (entry?.["version"] as string | undefined) ?? "";
+      ? ((entry?.["description"] as string | undefined) ?? "")
+      : ((entry?.["version"] as string | undefined) ?? "");
     row.append(nameEl, verEl);
-    if (!isBuiltin) row.appendChild(this.toolActions(sec, name));
+    if (!isBuiltin) {
+      row.appendChild(this.toolActions(sec, name));
+    }
     return row;
   }
 
@@ -203,18 +299,24 @@ class ToolsManager {
     const actions = document.createElement("div");
     actions.className = "list-row-actions";
     const editBtn = document.createElement("button");
-    editBtn.className = "list-row-btn"; editBtn.setAttribute("data-tooltip", "Edit");
+    editBtn.className = "list-row-btn";
+    editBtn.setAttribute("data-tooltip", "Edit");
     editBtn.setAttribute("aria-label", `Edit ${name}`);
     editBtn.innerHTML = ICON_EDIT;
-    editBtn.addEventListener("click", () => this.openToolModal(sec, name));
+    editBtn.addEventListener("click", () => {
+      this.openToolModal(sec, name);
+    });
     const delBtn = document.createElement("button");
-    delBtn.className = "list-row-btn"; delBtn.setAttribute("data-tooltip", "Delete");
+    delBtn.className = "list-row-btn";
+    delBtn.setAttribute("data-tooltip", "Delete");
     delBtn.setAttribute("aria-label", `Delete ${name}`);
     delBtn.innerHTML = ICON_CLOSE;
     delBtn.addEventListener("click", () => {
       void (async () => {
         const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
-        if (!ok) return;
+        if (!ok) {
+          return;
+        }
         delete this.toolsData[sec]![name];
         this.saveToolsData();
         this.renderToolsList();
@@ -238,13 +340,17 @@ class ToolsManager {
   }
 
   private openToolModal(cat: string | null, name: string | null): void {
-    f.cat.onchange = () => this.updateToolFormVisibility();
+    f.cat.onchange = () => {
+      this.updateToolFormVisibility();
+    };
     if (cat !== null && name !== null) {
       f.title.textContent = `Edit: ${name}`;
       this.editingTool = { cat, name };
       const entry = this.toolsData[cat]?.[name];
-      f.cat.value = cat; f.cat.disabled = true;
-      f.name.value = name; f.name.disabled = true;
+      f.cat.value = cat;
+      f.cat.disabled = true;
+      f.name.value = name;
+      f.name.disabled = true;
       f.version.value = (entry?.["version"] as string | undefined) ?? "";
       f.install.value = (entry?.["install"] as string | undefined) ?? "";
       f.binaries.value = ((entry?.["binaries"] as string[] | undefined) ?? []).join(", ");
@@ -252,9 +358,14 @@ class ToolsManager {
     } else {
       f.title.textContent = "Add tool";
       this.editingTool = null;
-      f.cat.value = "go"; f.cat.disabled = false;
-      f.name.value = ""; f.name.disabled = false;
-      f.version.value = ""; f.install.value = ""; f.binaries.value = ""; f.pkg.value = "";
+      f.cat.value = "go";
+      f.cat.disabled = false;
+      f.name.value = "";
+      f.name.disabled = false;
+      f.version.value = "";
+      f.install.value = "";
+      f.binaries.value = "";
+      f.pkg.value = "";
     }
     this.updateToolFormVisibility();
     openModal($.toolModal);
@@ -264,28 +375,48 @@ class ToolsManager {
     const uiCat = f.cat.value as MethodKind;
     const cat = uiCat === "mcp" ? "custom" : uiCat;
     const name = f.name.value.trim();
-    if (name === "") return;
+    if (name === "") {
+      return;
+    }
     const { fields } = INSTALL_METHODS[uiCat] ?? INSTALL_METHODS.custom;
     const version = f.version.value.trim();
-    if (fields.version && version === "") return;
+    if (fields.version && version === "") {
+      return;
+    }
 
-    if (this.toolsData[cat] === undefined) this.toolsData[cat] = {};
+    if (this.toolsData[cat] === undefined) {
+      this.toolsData[cat] = {};
+    }
     const entry: Record<string, unknown> = {};
-    if (fields.version) entry["version"] = version;
+    if (fields.version) {
+      entry["version"] = version;
+    }
     const install = f.install.value.trim();
-    if (fields.install && install !== "") entry["install"] = install;
+    if (fields.install && install !== "") {
+      entry["install"] = install;
+    }
     const binaries = f.binaries.value.trim();
     if (fields.binaries && binaries !== "") {
-      entry["binaries"] = binaries.split(",").map((s) => s.trim()).filter((s) => s !== "");
+      entry["binaries"] = binaries
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s !== "");
     }
     const pkg = f.pkg.value.trim();
-    if (fields.pkg && pkg !== "") entry["package"] = pkg;
-    if (uiCat === "mcp") entry["kind"] = "mcp";
+    if (fields.pkg && pkg !== "") {
+      entry["package"] = pkg;
+    }
+    if (uiCat === "mcp") {
+      entry["kind"] = "mcp";
+    }
 
-    if (this.editingTool !== null && (this.editingTool.cat !== cat || this.editingTool.name !== name)) {
+    if (
+      this.editingTool !== null &&
+      (this.editingTool.cat !== cat || this.editingTool.name !== name)
+    ) {
       delete this.toolsData[this.editingTool.cat]![this.editingTool.name];
     }
-    this.toolsData[cat]![name] = entry;
+    this.toolsData[cat][name] = entry;
     this.saveToolsData();
     this.renderToolsList();
 
@@ -315,8 +446,14 @@ function setHintText(id: string, text: string): void {
 
 // Singleton instance — internal to the module.
 const manager = new ToolsManager();
-registerCleanup(() => manager.cancelLoad());
+registerCleanup(() => {
+  manager.cancelLoad();
+});
 
 // Public delegate functions preserving the existing module API.
-export function initTools(): void { manager.init(); }
-export function loadToolsList(): void { manager.loadToolsList(); }
+export function initTools(): void {
+  manager.init();
+}
+export function loadToolsList(): void {
+  manager.loadToolsList();
+}

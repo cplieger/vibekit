@@ -11,7 +11,10 @@ vi.mock("./api-client.js", () => ({
 }));
 
 vi.mock("./toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { fetchKiroSetting } from "./api-client.js";

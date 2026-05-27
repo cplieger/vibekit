@@ -55,7 +55,8 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     const r = document.createElement("span");
     r.className = "diff-pane-label diff-pane-label-new";
     r.textContent = opts.newLabel ?? "";
-    header.appendChild(l); header.appendChild(r);
+    header.appendChild(l);
+    header.appendChild(r);
     if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
       header.appendChild(buildWhitespaceToggle(container, opts));
     }
@@ -75,13 +76,16 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   leftCol.className = "diff-col diff-col-old";
   const rightCol = document.createElement("div");
   rightCol.className = "diff-col diff-col-new";
-  body.appendChild(leftCol); body.appendChild(rightCol);
+  body.appendChild(leftCol);
+  body.appendChild(rightCol);
   container.appendChild(body);
 
   const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
   let rowCount = 0;
   for (const line of lines) {
-    if (rowCount >= limit) break;
+    if (rowCount >= limit) {
+      break;
+    }
     appendRow(leftCol, rightCol, line, lineNumbers);
     rowCount++;
   }
@@ -93,10 +97,15 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     container.appendChild(more);
   }
 
-  if (syncScroll) wireSyncScroll(leftCol, rightCol);
+  if (syncScroll) {
+    wireSyncScroll(leftCol, rightCol);
+  }
 
   // Per-hunk action buttons (accept/reject/ask).
-  const hasHunkActions = opts.onAcceptHunk !== undefined || opts.onRejectHunk !== undefined || opts.onAskAbout !== undefined;
+  const hasHunkActions =
+    opts.onAcceptHunk !== undefined ||
+    opts.onRejectHunk !== undefined ||
+    opts.onAskAbout !== undefined;
   if (hasHunkActions) {
     const hunks = identifyHunks(lines);
     for (const hunk of hunks) {
@@ -111,7 +120,14 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn accept";
         btn.textContent = "\u2713 Accept";
-        btn.addEventListener("click", () => { acceptCb(idx, newLines); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.reject"); if (sib) sib.disabled = true; });
+        btn.addEventListener("click", () => {
+          acceptCb(idx, newLines);
+          btn.disabled = true;
+          const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.reject");
+          if (sib) {
+            sib.disabled = true;
+          }
+        });
         toolbar.appendChild(btn);
       }
 
@@ -122,7 +138,14 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
         btn.type = "button";
         btn.className = "diff-hunk-btn reject";
         btn.textContent = "\u2717 Reject";
-        btn.addEventListener("click", () => { rejectCb(idx); btn.disabled = true; const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.accept"); if (sib) sib.disabled = true; });
+        btn.addEventListener("click", () => {
+          rejectCb(idx);
+          btn.disabled = true;
+          const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.accept");
+          if (sib) {
+            sib.disabled = true;
+          }
+        });
         toolbar.appendChild(btn);
       }
 
@@ -137,7 +160,9 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
           btn.type = "button";
           btn.className = "diff-ask-btn";
           btn.textContent = "Ask";
-          btn.addEventListener("click", () => askCb(hunkText));
+          btn.addEventListener("click", () => {
+            askCb(hunkText);
+          });
           toolbar.appendChild(btn);
         }
       }
@@ -150,8 +175,8 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 }
 
 /** Identify contiguous hunks (groups of add/del lines separated by context). */
-function identifyHunks(lines: DiffLine[]): Array<{ index: number; lines: DiffLine[] }> {
-  const hunks: Array<{ index: number; lines: DiffLine[] }> = [];
+function identifyHunks(lines: DiffLine[]): { index: number; lines: DiffLine[] }[] {
+  const hunks: { index: number; lines: DiffLine[] }[] = [];
   let current: DiffLine[] = [];
   let hunkIdx = 0;
   for (const line of lines) {
@@ -162,7 +187,9 @@ function identifyHunks(lines: DiffLine[]): Array<{ index: number; lines: DiffLin
       current = [];
     }
   }
-  if (current.length > 0) hunks.push({ index: hunkIdx, lines: current });
+  if (current.length > 0) {
+    hunks.push({ index: hunkIdx, lines: current });
+  }
   return hunks;
 }
 
@@ -191,7 +218,8 @@ function appendRow(
 function makeRowPair(line: DiffLine, lineNumbers: boolean): [HTMLDivElement, HTMLDivElement] {
   const left = document.createElement("div");
   const right = document.createElement("div");
-  left.className = "diff-row"; right.className = "diff-row";
+  left.className = "diff-row";
+  right.className = "diff-row";
 
   if (line.kind === "ctx") {
     populateRow(left, line.oldNo, line.text, "ctx", lineNumbers);
@@ -236,16 +264,19 @@ function populateRow(
 function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
   let locked = false;
   const sync = (src: HTMLDivElement, dst: HTMLDivElement) => (): void => {
-    if (locked) return;
+    if (locked) {
+      return;
+    }
     locked = true;
     dst.scrollTop = src.scrollTop;
     dst.scrollLeft = src.scrollLeft;
-    requestAnimationFrame(() => { locked = false; });
+    requestAnimationFrame(() => {
+      locked = false;
+    });
   };
   left.addEventListener("scroll", sync(left, right));
   right.addEventListener("scroll", sync(right, left));
 }
-
 
 // --- Whitespace toggle ---
 
@@ -253,10 +284,7 @@ function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
  *  supplied, toggling re-diffs and re-renders the pane in place
  *  without the caller needing to participate; the pane becomes
  *  self-contained for the common case. */
-function buildWhitespaceToggle(
-  container: HTMLDivElement,
-  opts: DiffPaneOpts,
-): HTMLLabelElement {
+function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): HTMLLabelElement {
   const wrap = document.createElement("label");
   wrap.className = "diff-pane-ws-toggle";
   const input = document.createElement("input");
@@ -275,33 +303,38 @@ function buildWhitespaceToggle(
       // cloned opts so the re-rendered pane doesn't attach a second
       // whitespace toggle to its header (we keep the outer header).
       const source = opts.source;
-      const {
-        source: _, ...freshOpts
-      } = opts;
+      const { source: _, ...freshOpts } = opts;
       const freshDiffOpts: DiffPaneOpts = freshOpts;
-      import("./diff.js").then(({ lineDiff }) => {
-        const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
-        const rerendered = renderDiffPane(fresh, freshDiffOpts);
-        // Replace everything after the header (body + hunk toolbars +
-        // "+N more" footer). Hunk toolbars are siblings of the body,
-        // not children, so replacing only .diff-pane-body left stale
-        // toolbar buttons referencing old hunk indices.
-        const header = container.querySelector(".diff-pane-header");
-        const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
-        while (insertionPoint !== null && container.lastChild !== null && container.lastChild !== header) {
-          container.removeChild(container.lastChild);
-        }
-        // Append all children from the re-rendered pane after its header.
-        const freshHeader = rerendered.querySelector(".diff-pane-header");
-        let node = freshHeader !== null ? freshHeader.nextSibling : rerendered.firstChild;
-        while (node !== null) {
-          const next = node.nextSibling;
-          container.appendChild(node);
-          node = next;
-        }
-      }).catch((e: unknown) => { console.error("[diff-pane] whitespace re-render failed", e); });
+      import("./diff.js")
+        .then(({ lineDiff }) => {
+          const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
+          const rerendered = renderDiffPane(fresh, freshDiffOpts);
+          // Replace everything after the header (body + hunk toolbars +
+          // "+N more" footer). Hunk toolbars are siblings of the body,
+          // not children, so replacing only .diff-pane-body left stale
+          // toolbar buttons referencing old hunk indices.
+          const header = container.querySelector(".diff-pane-header");
+          const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
+          while (
+            insertionPoint !== null &&
+            container.lastChild !== null &&
+            container.lastChild !== header
+          ) {
+            container.removeChild(container.lastChild);
+          }
+          // Append all children from the re-rendered pane after its header.
+          const freshHeader = rerendered.querySelector(".diff-pane-header");
+          let node = freshHeader !== null ? freshHeader.nextSibling : rerendered.firstChild;
+          while (node !== null) {
+            const next = node.nextSibling;
+            container.appendChild(node);
+            node = next;
+          }
+        })
+        .catch((e: unknown) => {
+          console.error("[diff-pane] whitespace re-render failed", e);
+        });
     }
   });
   return wrap;
 }
-

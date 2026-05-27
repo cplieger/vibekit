@@ -38,7 +38,9 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "navigate from root pushes to history",
-        steps: (s: FileBrowserState) => { s.navigate("src"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("src");
+        },
         check: (s: FileBrowserState) => {
           expect(s.currentPath).toBe("src");
           expect(s.history).toEqual([".", "src"]);
@@ -95,7 +97,9 @@ describe("FileBrowserState", () => {
       },
       {
         name: "moves back one step",
-        steps: (s: FileBrowserState) => { s.navigate("src"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("src");
+        },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(true);
           expect(s.currentPath).toBe(".");
@@ -128,7 +132,9 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "returns false at end of history",
-        steps: (s: FileBrowserState) => { s.navigate("a"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("a");
+        },
         check: (s: FileBrowserState) => {
           expect(s.goForward()).toBe(false);
           expect(s.currentPath).toBe("a");

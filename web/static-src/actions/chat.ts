@@ -8,12 +8,25 @@
 import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { transportAction } from "./transport.js";
-import { get, setThinking, setSupervisedMode, setAutoApproveCrew as storeSetAutoApproveCrew, enqueuePrompt, removeChat, reinsertSession, indexOfSession, setModel, clearPendingChanges, addPendingChange } from "../store.js";
+import type { PendingChange, Session } from "../types.js";
+import {
+  get,
+  setThinking,
+  setSupervisedMode,
+  setAutoApproveCrew as storeSetAutoApproveCrew,
+  enqueuePrompt,
+  removeChat,
+  reinsertSession,
+  indexOfSession,
+  setModel,
+  clearPendingChanges,
+  addPendingChange,
+} from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
 
-export const deleteChat = transportAction<string, { session: import("../types.js").Session; atIndex: number }>({
+export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
   name: "chat.delete",
   networkMode: "always",
   scope: (id) => `chat:${id}`,
@@ -23,7 +36,9 @@ export const deleteChat = transportAction<string, { session: import("../types.js
   command: (id) => ({ type: "delete_chat", chat_id: id }),
   optimistic: (id) => {
     const session = get(id);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const atIndex = indexOfSession(id);
     removeChat(id);
     return { session, atIndex };
@@ -33,14 +48,16 @@ export const deleteChat = transportAction<string, { session: import("../types.js
   // remove it, causing a brief flicker. Full correctness would require server-side
   // dedup + ack; the user-visible glitch is negligible so we accept it.
   rollback: (_id, op) => {
-    if (op !== undefined) reinsertSession(op.session, op.atIndex);
+    if (op !== undefined) {
+      reinsertSession(op.session, op.atIndex);
+    }
   },
   error: "Couldn't delete chat",
 });
 
 // --- chat.archive ---
 
-export const archiveChat = apiAction<string, unknown, { session: import("../types.js").Session; atIndex: number }>({
+export const archiveChat = apiAction<string, unknown, { session: Session; atIndex: number }>({
   name: "chat.archive",
   scope: (id) => `chat:${id}`,
   dedupe: true,
@@ -53,13 +70,17 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
   }),
   optimistic: (id) => {
     const session = get(id);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const atIndex = indexOfSession(id);
     removeChat(id);
     return { session, atIndex };
   },
   rollback: (_id, op) => {
-    if (op !== undefined) reinsertSession(op.session, op.atIndex);
+    if (op !== undefined) {
+      reinsertSession(op.session, op.atIndex);
+    }
   },
   success: false,
   error: "Couldn't archive chat",
@@ -67,7 +88,10 @@ export const archiveChat = apiAction<string, unknown, { session: import("../type
 
 // --- chat.set_supervised ---
 
-export const setSupervised = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
+export const setSupervised = transportAction<
+  { chatID: string; enabled: boolean },
+  { prev: boolean }
+>({
   name: "chat.set_supervised",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -78,23 +102,29 @@ export const setSupervised = transportAction<{ chatID: string; enabled: boolean 
   }),
   optimistic: ({ chatID, enabled }) => {
     const session = get(chatID);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const prev: boolean = session.supervised_mode ?? false;
     setSupervisedMode(chatID, enabled);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined) setSupervisedMode(chatID, op.prev);
+    if (op !== undefined) {
+      setSupervisedMode(chatID, op.prev);
+    }
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't update supervised mode",
 });
 
-
 // --- chat.resolve_all_pending ---
 
-export const resolveAllPending = transportAction<{ chatID: string; action: "accept" | "reject" }, { prev: import("../types.js").PendingChange[] }>({
+export const resolveAllPending = transportAction<
+  { chatID: string; action: "accept" | "reject" },
+  { prev: PendingChange[] }
+>({
   name: "chat.resolve_all_pending",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
@@ -107,14 +137,18 @@ export const resolveAllPending = transportAction<{ chatID: string; action: "acce
   }),
   optimistic: ({ chatID }) => {
     const session = get(chatID);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const prev = [...session.pending_changes];
     clearPendingChanges(chatID);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
     if (op !== undefined) {
-      for (const change of op.prev) addPendingChange(chatID, change);
+      for (const change of op.prev) {
+        addPendingChange(chatID, change);
+      }
     }
   },
   error: "Couldn't resolve pending changes",
@@ -145,7 +179,10 @@ export const clearPendingTrust = transportAction<string>({
 
 // --- chat.set_auto_approve_crew ---
 
-export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boolean }, { prev: boolean }>({
+export const setAutoApproveCrew = transportAction<
+  { chatID: string; enabled: boolean },
+  { prev: boolean }
+>({
   name: "chat.set_auto_approve_crew",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID, enabled }) => ({
@@ -155,13 +192,17 @@ export const setAutoApproveCrew = transportAction<{ chatID: string; enabled: boo
   }),
   optimistic: ({ chatID, enabled }) => {
     const session = get(chatID);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const prev = session.auto_approve_crew;
     storeSetAutoApproveCrew(chatID, enabled);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined) storeSetAutoApproveCrew(chatID, op.prev);
+    if (op !== undefined) {
+      storeSetAutoApproveCrew(chatID, op.prev);
+    }
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -189,7 +230,7 @@ export const restoreChat = apiAction<string, { ok: boolean }>({
 // first attempt succeeds but the response times out, a retry would hit 404
 // and surface a misleading error toast.
 
-export const deleteArchivedChat = apiAction<string, unknown>({
+export const deleteArchivedChat = apiAction<string>({
   name: "chat.delete_archived",
   scope: (id) => `chat:${id}`,
   request: (id) => ({
@@ -201,7 +242,10 @@ export const deleteArchivedChat = apiAction<string, unknown>({
 
 // --- chat.load_history ---
 
-export const loadHistory = apiAction<void, { chats: Array<{ id: string; name: string; summary?: string; updated_at: number }> }>({
+export const loadHistory = apiAction<
+  void,
+  { chats: { id: string; name: string; summary?: string; updated_at: number }[] }
+>({
   name: "chat.load_history",
   dedupe: true,
   retryable: retryNetwork,
@@ -230,7 +274,9 @@ export const cancelTurn = transportAction<string, { wasThinking: boolean }>({
     return { wasThinking };
   },
   rollback: (chatID, op) => {
-    if (op !== undefined) setThinking(chatID, op.wasThinking);
+    if (op !== undefined) {
+      setThinking(chatID, op.wasThinking);
+    }
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -244,20 +290,28 @@ export const cancelTurn = transportAction<string, { wasThinking: boolean }>({
 //
 // On failure, rollback restores the previous model via setModel(). bindLoadingState handles the spinner.
 
-export const switchModel = defineAction<{ chatID: string; model: string }, boolean, { prev: string }>({
+export const switchModel = defineAction<
+  { chatID: string; model: string },
+  boolean,
+  { prev: string }
+>({
   name: "chat.switch_model",
   scope: ({ chatID }) => `chat:${chatID}`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
-    if (session === undefined) return undefined;
+    if (session === undefined) {
+      return undefined;
+    }
     const prev = session.model;
     setModel(chatID, model);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
-    if (op !== undefined) setModel(chatID, op.prev);
+    if (op !== undefined) {
+      setModel(chatID, op.prev);
+    }
   },
   run: async ({ chatID, model }, signal) => {
     // Don't touch thinking state — it's owned by sendPrompt and
@@ -271,7 +325,9 @@ export const switchModel = defineAction<{ chatID: string; model: string }, boole
         throw new ActionError("cancelled", { code: "cancelled" });
       }
       const errOpts: { status: number; code?: string } = { status: r.status };
-      if (r.code !== undefined) errOpts.code = r.code;
+      if (r.code !== undefined) {
+        errOpts.code = r.code;
+      }
       throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
     }
     return true;
@@ -311,27 +367,35 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     return { chatID };
   },
   rollback: (_args, op) => {
-    if (op !== undefined) setThinking(op.chatID, false);
+    if (op !== undefined) {
+      setThinking(op.chatID, false);
+    }
   },
   run: async (args, signal, ctx) => {
     const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
     const r = await transportSend(
       {
-        type: "prompt", chat_id: chatID,
+        type: "prompt",
+        chat_id: chatID,
         payload: {
-          text, message_id: messageID, agent, model,
+          text,
+          message_id: messageID,
+          agent,
+          model,
           active_file: activeFile,
           open_files: openFiles,
-          attachments: (attachments !== undefined && attachments.length > 0)
-            ? attachments : undefined,
+          attachments:
+            attachments !== undefined && attachments.length > 0 ? attachments : undefined,
           // Only include the key if the framework provided one (avoids
           // sending `idempotency_key: undefined` which serializes inconsistently).
           ...(ctx?.idempotencyKey !== undefined ? { idempotency_key: ctx.idempotencyKey } : {}),
         },
       },
-      { signal, reportSendState: true },  // send-state IS the error surface
+      { signal, reportSendState: true }, // send-state IS the error surface
     );
-    if (r.ok) return "sent";
+    if (r.ok) {
+      return "sent";
+    }
     if (r.status === 409) {
       // Server says "in-flight turn"; queue the text and report queued.
       // The queue drains via SSE turn_ended. enqueuePrompt runs in
@@ -350,12 +414,16 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
       ...(r.code !== undefined ? { code: r.code } : {}),
     });
   },
-  error: false,  // send-state.ts (blocked send button) is the surface
+  error: false, // send-state.ts (blocked send button) is the surface
 });
 
 // --- chat.resolve_pending_change ---
 
-export const resolvePendingChange = transportAction<{ chatID: string; toolCallID: string; action: "accept" | "reject" }>({
+export const resolvePendingChange = transportAction<{
+  chatID: string;
+  toolCallID: string;
+  action: "accept" | "reject";
+}>({
   name: "chat.resolve_pending_change",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -378,7 +446,11 @@ export const resolvePendingChange = transportAction<{ chatID: string; toolCallID
 // first round-trips, which feels sluggish when the agent is waiting on
 // multiple permissions simultaneously.
 
-export const respondPermission = transportAction<{ chatID: string; requestID: number; optionID: string }>({
+export const respondPermission = transportAction<{
+  chatID: string;
+  requestID: number;
+  optionID: string;
+}>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,

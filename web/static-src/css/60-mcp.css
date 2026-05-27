@@ -1,4 +1,3 @@
-
 /* ---- Diff pane (shared: chat preview, editor diff mode, conflict compare) ---- */
 .diff-pane {
   display: flex;
@@ -27,7 +26,9 @@
 }
 
 .diff-pane-ws-toggle {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding-inline: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
@@ -35,7 +36,9 @@
   flex-shrink: 0;
 }
 
-.diff-pane-ws-toggle input { margin: 0; }
+.diff-pane-ws-toggle input {
+  margin: 0;
+}
 
 .diff-pane-label {
   flex: 1;
@@ -46,7 +49,9 @@
   white-space: nowrap;
 }
 
-.diff-pane-label-old { border-right: 1px solid var(--c-border); }
+.diff-pane-label-old {
+  border-right: 1px solid var(--c-border);
+}
 
 .diff-pane-body {
   display: grid;
@@ -60,7 +65,9 @@
   min-width: 0;
 }
 
-.diff-col-old { border-right: 1px solid var(--c-border); }
+.diff-col-old {
+  border-right: 1px solid var(--c-border);
+}
 
 .diff-row {
   display: flex;
@@ -93,17 +100,30 @@
   user-select: none;
 }
 
-.diff-row-add { background: color-mix(in oklch, var(--c-green) 14%, transparent); }
+.diff-row-add {
+  background: color-mix(in oklch, var(--c-green) 14%, transparent);
+}
 
-.diff-row-add .diff-marker { color: var(--c-green); }
+.diff-row-add .diff-marker {
+  color: var(--c-green);
+}
 
-.diff-row-del { background: color-mix(in oklch, var(--c-red) 14%, transparent); }
+.diff-row-del {
+  background: color-mix(in oklch, var(--c-red) 14%, transparent);
+}
 
-.diff-row-del .diff-marker { color: var(--c-red); }
+.diff-row-del .diff-marker {
+  color: var(--c-red);
+}
 
-.diff-row-ctx { color: var(--c-text-primary); }
+.diff-row-ctx {
+  color: var(--c-text-primary);
+}
 
-.diff-row-empty { background: var(--c-bg-disabled, transparent); opacity: 0.5; }
+.diff-row-empty {
+  background: var(--c-bg-disabled, transparent);
+  opacity: 0.5;
+}
 
 .diff-more {
   padding: var(--sp-1) var(--sp-2);
@@ -130,9 +150,15 @@
   font-size: var(--fs-sm);
 }
 
-.tool-diff-stats .diff-add-count { color: var(--c-green); font-weight: 600; }
+.tool-diff-stats .diff-add-count {
+  color: var(--c-green);
+  font-weight: 600;
+}
 
-.tool-diff-stats .diff-del-count { color: var(--c-red); font-weight: 600; }
+.tool-diff-stats .diff-del-count {
+  color: var(--c-red);
+  font-weight: 600;
+}
 
 .tool-diff-view-btn {
   margin-left: auto;
@@ -145,7 +171,9 @@
   cursor: pointer;
 }
 
-.tool-diff-view-btn:hover { background: var(--c-bg-hover, var(--c-bg-tertiary)); }
+.tool-diff-view-btn:hover {
+  background: var(--c-bg-hover, var(--c-bg-tertiary));
+}
 
 .tool-diff-mini {
   max-height: 5em;
@@ -172,7 +200,9 @@
   overflow: hidden;
 }
 
-.editor-diff-pane.hidden { display: none; }
+.editor-diff-pane.hidden {
+  display: none;
+}
 
 .editor-diff-pane .diff-pane {
   flex: 1;
@@ -194,7 +224,9 @@
   font-size: var(--fs-sm);
 }
 
-.editor-conflict-overlay.hidden { display: none; }
+.editor-conflict-overlay.hidden {
+  display: none;
+}
 
 .conflict-status {
   font-weight: 600;
@@ -226,7 +258,9 @@
   font-size: var(--fs-sm);
 }
 
-.conflict-btn:hover { background: var(--c-bg-hover, var(--c-bg-tertiary)); }
+.conflict-btn:hover {
+  background: var(--c-bg-hover, var(--c-bg-tertiary));
+}
 
 .conflict-btn:disabled {
   opacity: 0.6;
@@ -280,74 +314,126 @@
 }
 
 /* Notification sub-option indent */
-[id="notify-sub-options"] .section-option { padding-inline-start: 2.75rem; }
+[id="notify-sub-options"] .section-option {
+  padding-inline-start: 2.75rem;
+}
 
 /* Warning-colored hints */
-[id="notify-hint"] { color: var(--c-yellow); }
+[id="notify-hint"] {
+  color: var(--c-yellow);
+}
 
-[id="trust-list-empty-hint"] { color: var(--c-yellow); }
+[id="trust-list-empty-hint"] {
+  color: var(--c-yellow);
+}
 
 /* ==========================================================================
    MCP integrations section + modal
    ========================================================================== */
 
 .mcp-server-list {
-  display: flex; flex-direction: column; gap: 1px;
-  background: var(--c-border); border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--c-border);
+  border-radius: var(--r);
   overflow: hidden;
 }
 
 .mcp-empty {
-  padding: var(--sp-4); background: var(--c-bg-secondary);
-  color: var(--c-text-tertiary); font-size: var(--fs-sm);
-  font-style: italic; text-align: center;
+  padding: var(--sp-4);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  text-align: center;
 }
 
 .mcp-row {
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-secondary);
 }
 
-.mcp-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.125rem; }
+.mcp-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
 
 .mcp-row-name-line {
-  display: flex; align-items: center; gap: var(--sp-2); min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 
 .mcp-row-name {
-  font-family: var(--font-mono); font-size: var(--fs-sm);
-  color: var(--c-text-primary); font-weight: var(--fw-medium);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mcp-row-meta {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mcp-row-actions {
-  display: flex; align-items: center; gap: 0.125rem; flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  flex-shrink: 0;
 }
 
-.mcp-toggle { flex-shrink: 0; }
+.mcp-toggle {
+  flex-shrink: 0;
+}
 
 /* Status dot: mirrors the sidebar status-dot patterns but at a smaller scale. */
 .mcp-dot {
-  width: 0.5rem; height: 0.5rem; border-radius: 50%;
-  flex-shrink: 0; background: var(--c-text-tertiary);
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--c-text-tertiary);
 
-  &.idle { background: var(--c-text-tertiary); }
-  &.connected { background: var(--c-green); }
-  &.oauth { background: var(--c-yellow); animation: vk-breathe 2s ease-in-out infinite; }
-  &.failed { background: var(--c-red); animation: vk-breathe 2s ease-in-out infinite; }
-  &.disabled { background: var(--c-border); }
+  &.idle {
+    background: var(--c-text-tertiary);
+  }
+  &.connected {
+    background: var(--c-green);
+  }
+  &.oauth {
+    background: var(--c-yellow);
+    animation: vk-breathe 2s ease-in-out infinite;
+  }
+  &.failed {
+    background: var(--c-red);
+    animation: vk-breathe 2s ease-in-out infinite;
+  }
+  &.disabled {
+    background: var(--c-border);
+  }
 }
 
 /* Transport badge: stdio / http / sse */
 .mcp-transport {
-  padding: 0.0625rem 0.375rem; border-radius: 999rem;
-  font-family: var(--font-mono); font-size: var(--fs-xs);
+  padding: 0.0625rem 0.375rem;
+  border-radius: 999rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   border: 1px solid var(--c-border);
   text-transform: lowercase;
@@ -356,53 +442,76 @@
 
 .mcp-oauth-pill {
   align-self: flex-start;
-  padding: 0.125rem var(--sp-2); border-radius: 999rem;
+  padding: 0.125rem var(--sp-2);
+  border-radius: 999rem;
   background: color-mix(in srgb, var(--c-yellow) 20%, transparent);
-  color: var(--c-yellow); font-size: var(--fs-xs);
-  text-decoration: none; font-weight: var(--fw-medium);
+  color: var(--c-yellow);
+  font-size: var(--fs-xs);
+  text-decoration: none;
+  font-weight: var(--fw-medium);
   margin-block-start: 0.125rem;
 
-  &:hover { background: color-mix(in srgb, var(--c-yellow) 30%, transparent); }
+  &:hover {
+    background: color-mix(in srgb, var(--c-yellow) 30%, transparent);
+  }
 }
 
 .mcp-drift-banner {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   background: color-mix(in srgb, var(--c-yellow) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--c-yellow) 35%, transparent);
   border-radius: var(--r);
-  font-size: var(--fs-sm); color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
 }
 
-.mcp-drift-msg { flex: 1; }
+.mcp-drift-msg {
+  flex: 1;
+}
 
 /* ---------- Add / edit modal ---------- */
 
 .mcp-modal-card {
-  width: min(36rem, 92vw); max-height: 85vh;
-  display: flex; flex-direction: column; gap: var(--sp-3);
+  width: min(36rem, 92vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
 }
 
 .mcp-modal-tabs {
-  display: flex; gap: 0.25rem;
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  display: flex;
+  gap: 0.25rem;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
   border-radius: var(--r);
   padding: 0.25rem;
   flex-wrap: wrap;
 }
 
 .mcp-modal-tab {
-  flex: 1; min-width: 0;
+  flex: 1;
+  min-width: 0;
   padding: var(--sp-1) var(--sp-2);
-  background: transparent; border: 1px solid transparent;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: calc(var(--r) - 0.125rem);
   color: var(--c-text-secondary);
-  font-size: var(--fs-sm); font-weight: var(--fw-medium);
-  cursor: pointer; white-space: nowrap;
-  text-overflow: ellipsis; overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 
-  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
+  &:hover {
+    background: var(--c-bg-tertiary);
+    color: var(--c-text-primary);
+  }
 
   &.active {
     background: var(--c-bg-primary);
@@ -412,7 +521,9 @@
 }
 
 .mcp-mode-panel {
-  display: flex; flex-direction: column; gap: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
   overflow-y: auto;
 }
 
@@ -420,93 +531,132 @@
  * stretches; the button is a fixed-width action-pill matching the
  * input's height so the pair reads as a single search field. */
 .mcp-search-row {
-  display: flex; align-items: stretch;
+  display: flex;
+  align-items: stretch;
   gap: var(--sp-2);
 }
 
 :where(.mcp-search-row) .tool-form-input {
-  flex: 1; min-width: 0; min-height: var(--btn-h);
+  flex: 1;
+  min-width: 0;
+  min-height: var(--btn-h);
 }
 
 .mcp-mode-hint {
-  font-size: var(--fs-sm); color: var(--c-text-secondary);
-  line-height: 1.55; margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  line-height: 1.55;
+  margin: 0;
   text-wrap: pretty;
 }
 
 .mcp-form-section {
-  display: flex; flex-direction: column; gap: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
   padding-block-start: var(--sp-2);
 }
 
 .mcp-form-section-head {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
 }
 
 .tool-form-label-text {
-  font-size: var(--fs-sm); color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
   font-weight: var(--fw-medium);
 }
 
-.mcp-pair-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.mcp-pair-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
 
 .mcp-pair-row {
-  display: grid; grid-template-columns: 10rem 1fr auto; gap: 0.25rem;
+  display: grid;
+  grid-template-columns: 10rem 1fr auto;
+  gap: 0.25rem;
   align-items: center;
 }
 
-.mcp-pair-name, .mcp-pair-value {
+.mcp-pair-name,
+.mcp-pair-value {
   width: 100%;
   padding: var(--sp-1) var(--sp-2);
-  font-family: var(--font-mono); font-size: var(--fs-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
 }
 
 .mcp-pair-del {
   padding: var(--sp-1);
   color: var(--c-text-tertiary);
 
-  &:hover { color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
+  &:hover {
+    color: var(--c-red);
+    background: color-mix(in srgb, var(--c-red) 12%, transparent);
+  }
 }
 
 /* Registry search results */
 .mcp-search-results {
-  display: flex; flex-direction: column; gap: var(--sp-2);
-  max-height: 22rem; overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 22rem;
+  overflow-y: auto;
 }
 
 .mcp-result {
-  display: flex; flex-direction: column; gap: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
 }
 
-.mcp-result-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.mcp-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
 
 .mcp-result-name {
-  font-weight: var(--fw-semibold); color: var(--c-text-primary);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
   font-size: var(--fs-md);
 }
 
 .mcp-result-version {
-  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
 }
 
 .mcp-result-desc {
-  font-size: var(--fs-sm); color: var(--c-text-secondary);
-  margin: 0; line-height: 1.45;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  margin: 0;
+  line-height: 1.45;
 }
 
 .mcp-install-btn {
   align-self: flex-start;
-  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 
 .mcp-raw-input {
-  font-family: var(--font-mono); font-size: var(--fs-sm);
-  min-height: 12rem; max-height: 22rem; resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  min-height: 12rem;
+  max-height: 22rem;
+  resize: vertical;
   width: 100%;
 }
 
@@ -524,7 +674,13 @@
     grid-template-columns: 1fr auto;
     grid-template-areas: "name del" "value value";
   }
-  .mcp-pair-name { grid-area: name; }
-  .mcp-pair-value { grid-area: value; }
-  .mcp-pair-del { grid-area: del; }
+  .mcp-pair-name {
+    grid-area: name;
+  }
+  .mcp-pair-value {
+    grid-area: value;
+  }
+  .mcp-pair-del {
+    grid-area: del;
+  }
 }

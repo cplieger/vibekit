@@ -34,14 +34,23 @@ export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirLis
   const { signal } = holder.current;
   try {
     const d = await apiGet<{ files?: FileEntry[]; writable?: boolean; error?: string }>(
-      `/api/files?path=${encodeURIComponent(path)}`, signal,
+      `/api/files?path=${encodeURIComponent(path)}`,
+      signal,
     );
-    if (signal.aborted) return { files: [], writable: false, error: "stale" };
-    if (d === null) return { files: [], writable: false, error: "fetch failed" };
-    if (d.error !== undefined) return { files: [], writable: false, error: d.error };
+    if (signal.aborted) {
+      return { files: [], writable: false, error: "stale" };
+    }
+    if (d === null) {
+      return { files: [], writable: false, error: "fetch failed" };
+    }
+    if (d.error !== undefined) {
+      return { files: [], writable: false, error: d.error };
+    }
     return { files: d.files ?? [], writable: d.writable ?? false };
   } catch {
-    if (signal.aborted) return { files: [], writable: false, error: "stale" };
+    if (signal.aborted) {
+      return { files: [], writable: false, error: "stale" };
+    }
     return { files: [], writable: false, error: "fetch failed" };
   }
 }
@@ -49,22 +58,27 @@ export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirLis
 /** Sort directory entries: directories first, then alphabetical by name. */
 export function sortEntries<T extends { name: string; isDir: boolean }>(entries: T[]): T[] {
   return [...entries].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    if (a.isDir !== b.isDir) {
+      return a.isDir ? -1 : 1;
+    }
     return a.name.localeCompare(b.name);
   });
 }
 
-
-
 /** Wire an editable path input with click-to-edit, Enter/Escape/blur handling.
  *  `onNavigate` is called with the cleaned path on Enter. `getDisplayPath`
  *  returns the display string to restore on Escape/blur. */
-export function initEditablePath(input: HTMLInputElement, opts: {
-  onNavigate: (path: string) => void;
-  getDisplayPath: () => string;
-}): void {
+export function initEditablePath(
+  input: HTMLInputElement,
+  opts: {
+    onNavigate: (path: string) => void;
+    getDisplayPath: () => string;
+  },
+): void {
   input.addEventListener("click", () => {
-    if (!input.readOnly) return;
+    if (!input.readOnly) {
+      return;
+    }
     input.readOnly = false;
     input.select();
   });
@@ -89,25 +103,38 @@ export function initEditablePath(input: HTMLInputElement, opts: {
 }
 
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) {
+    return `${String(bytes)} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 export function formatDate(ms: number): string {
   const d = new Date(ms);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-    + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return (
+    d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
+    " " +
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  );
 }
 
 export function joinPath(base: string, name: string): string {
-  if (base === ".") return name;
+  if (base === ".") {
+    return name;
+  }
   return `${base.replace(/\/+$/, "")}/${name}`;
 }
 
 export function parentPath(p: string): string {
-  if (p === "." || p === "") return ".";
+  if (p === "." || p === "") {
+    return ".";
+  }
   const parts = p.split("/").filter((s) => s !== "");
   parts.pop();
   return parts.length === 0 ? "." : parts.join("/");
@@ -136,5 +163,3 @@ export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
   }
   return row;
 }
-
-

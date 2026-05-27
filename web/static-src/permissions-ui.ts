@@ -25,11 +25,21 @@ import { reconcile } from "./reconcile.js";
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
 const SUGGESTED_TOOLS = [
-  "readFile", "readCode", "readMultipleFiles",
-  "listDirectory", "fileSearch", "grepSearch",
-  "fsWrite", "fsAppend", "strReplace",
-  "deleteFile", "smartRelocate", "semanticRename",
-  "executePwsh", "webFetch", "remote_web_search",
+  "readFile",
+  "readCode",
+  "readMultipleFiles",
+  "listDirectory",
+  "fileSearch",
+  "grepSearch",
+  "fsWrite",
+  "fsAppend",
+  "strReplace",
+  "deleteFile",
+  "smartRelocate",
+  "semanticRename",
+  "executePwsh",
+  "webFetch",
+  "remote_web_search",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -55,14 +65,18 @@ class PermissionsUIController {
       const radio = el<HTMLInputElement>(`perm-mode-${m}`);
       radio.checked = this.currentMode === m;
       radio.addEventListener("change", () => {
-        if (!radio.checked) return;
+        if (!radio.checked) {
+          return;
+        }
         this.currentMode = m;
         void patchSettings({ permission_mode: m });
         this.renderEditor();
       });
     }
 
-    const supCheckbox = document.getElementById("supervised-default-checkbox") as HTMLInputElement | null;
+    const supCheckbox = document.getElementById(
+      "supervised-default-checkbox",
+    ) as HTMLInputElement | null;
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default === true;
       supCheckbox.addEventListener("change", () => {
@@ -73,7 +87,9 @@ class PermissionsUIController {
     const adder = el("trust-list-add");
     adder.setAttribute("aria-label", "Add trusted tool");
     adder.setAttribute("aria-expanded", "false");
-    adder.addEventListener("click", () => this.toggleMenu());
+    adder.addEventListener("click", () => {
+      this.toggleMenu();
+    });
 
     const menu = el<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
@@ -93,10 +109,14 @@ class PermissionsUIController {
     for (const p of ["no_commands", "safe_commands", "all_commands"] as ShellPolicy[]) {
       const id = `shell-policy-${p}`;
       const radio = document.getElementById(id) as HTMLInputElement | null;
-      if (radio === null) continue;
+      if (radio === null) {
+        continue;
+      }
       radio.checked = this.currentShellPolicy === p;
       radio.addEventListener("change", () => {
-        if (!radio.checked) return;
+        if (!radio.checked) {
+          return;
+        }
         this.currentShellPolicy = p;
         void patchSettings({ shell_policy: p });
       });
@@ -109,8 +129,10 @@ class PermissionsUIController {
     if (input !== null && addBtn !== null) {
       const submit = (): void => {
         const val = input.value.trim();
-        if (val === "") return;
-        const mode = (modeSel?.value === "deny" ? "deny" : "allow");
+        if (val === "") {
+          return;
+        }
+        const mode = modeSel?.value === "deny" ? "deny" : "allow";
         const priority = parseInt(prioSel?.value ?? "0", 10) || 0;
         void this.addRule(val, mode, priority);
         input.value = "";
@@ -123,7 +145,11 @@ class PermissionsUIController {
         }
       });
       registerCleanup(bindLoadingState("permissions.add_rule", addBtn as HTMLButtonElement));
-      registerCleanup(bindLoadingState("permissions.remove_rule", addBtn as HTMLButtonElement, { preserveDisabled: true }));
+      registerCleanup(
+        bindLoadingState("permissions.remove_rule", addBtn as HTMLButtonElement, {
+          preserveDisabled: true,
+        }),
+      );
     }
 
     void this.loadRules();
@@ -139,7 +165,9 @@ class PermissionsUIController {
   private renderEditor(): void {
     const editor = el<HTMLDivElement>("trust-list-editor");
     editor.classList.toggle("hidden", this.currentMode !== "trust-list");
-    if (this.currentMode !== "trust-list") return;
+    if (this.currentMode !== "trust-list") {
+      return;
+    }
     this.renderChips();
     const hint = el<HTMLParagraphElement>("trust-list-empty-hint");
     hint.classList.toggle("hidden", this.currentList.length > 0);
@@ -149,17 +177,25 @@ class PermissionsUIController {
     const chips = el<HTMLDivElement>("trust-list-chips");
     chips.replaceChildren();
     for (const name of this.currentList) {
-      chips.appendChild(buildChip({
-        label: name,
-        onRemove: () => this.removeTool(name),
-      }));
+      chips.appendChild(
+        buildChip({
+          label: name,
+          onRemove: () => {
+            this.removeTool(name);
+          },
+        }),
+      );
     }
   }
 
   private addTool(name: string): void {
     const clean = name.trim();
-    if (clean === "") return;
-    if (this.currentList.includes(clean)) return;
+    if (clean === "") {
+      return;
+    }
+    if (this.currentList.includes(clean)) {
+      return;
+    }
     this.currentList.push(clean);
     void patchSettings({ trust_tools: this.currentList });
     this.renderEditor();
@@ -216,21 +252,28 @@ class PermissionsUIController {
     this.rulesController = new AbortController();
     const { signal } = this.rulesController;
     const data = await apiGet<{ entries: CommandRule[] }>("/api/permissions/commands", signal);
-    if (signal.aborted) return;
-    if (data === null) return;
+    if (signal.aborted) {
+      return;
+    }
+    if (data === null) {
+      return;
+    }
     this.commandRules = data.entries ?? [];
     this.renderRuleChips();
   }
 
   private renderRuleChips(): void {
     const container = document.getElementById("command-rules-chips");
-    if (container === null) return;
+    if (container === null) {
+      return;
+    }
     container.replaceChildren();
 
     if (this.commandRules.length === 0) {
       const hint = document.createElement("p");
       hint.className = "text-muted text-sm";
-      hint.textContent = "No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.";
+      hint.textContent =
+        "No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.";
       container.appendChild(hint);
       return;
     }
@@ -243,11 +286,13 @@ class PermissionsUIController {
         code: true,
         badge: { text: modeLabel + prioLabel, className: "chip-mode" },
         chipClass: `chip mono chip-rule-${entry.mode}`,
-        onRemove: () => { void this.removeRule(entry.pattern); },
+        onRemove: () => {
+          void this.removeRule(entry.pattern);
+        },
       });
       chip.dataset["pattern"] = entry.pattern;
       // Click the mode label to flip allow↔deny in place.
-      const modeEl = chip.querySelector(".chip-mode") as HTMLElement;
+      const modeEl = chip.querySelector(".chip-mode")!;
       modeEl.addEventListener("click", (e) => {
         e.stopPropagation();
         const next: RuleMode = entry.mode === "allow" ? "deny" : "allow";
@@ -263,7 +308,9 @@ class PermissionsUIController {
   };
 
   private async removeRule(pattern: string): Promise<void> {
-    if (!this.commandRules.some((e) => e.pattern === pattern)) return;
+    if (!this.commandRules.some((e) => e.pattern === pattern)) {
+      return;
+    }
     await removeRule.dispatch({
       pattern,
       rules: this.commandRules,
@@ -274,7 +321,9 @@ class PermissionsUIController {
 
   private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
     const clean = pattern.trim();
-    if (clean === "") return;
+    if (clean === "") {
+      return;
+    }
     await addRule.dispatch({
       pattern: clean,
       mode,
@@ -293,11 +342,18 @@ class PermissionsUIController {
 
     const input = document.getElementById("agent-ignore-input") as HTMLInputElement | null;
     const addBtn = document.getElementById("agent-ignore-add");
-    if (input === null || addBtn === null) return;
+    if (input === null || addBtn === null) {
+      return;
+    }
     const submit = (): void => {
       const val = input.value.trim();
-      if (val === "") return;
-      if (this.ignoreFiles.includes(val)) { input.value = ""; return; }
+      if (val === "") {
+        return;
+      }
+      if (this.ignoreFiles.includes(val)) {
+        input.value = "";
+        return;
+      }
       this.ignoreFiles.push(val);
       void patchSettings({ agent_ignore_files: this.ignoreFiles });
       input.value = "";
@@ -314,37 +370,48 @@ class PermissionsUIController {
 
   private renderIgnoreChips(): void {
     const container = document.getElementById("agent-ignore-chips");
-    if (container === null) return;
+    if (container === null) {
+      return;
+    }
     container.replaceChildren();
     if (this.ignoreFiles.length === 0) {
       const hint = document.createElement("p");
       hint.className = "text-muted text-sm";
-      hint.textContent = "No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).";
+      hint.textContent =
+        "No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).";
       container.appendChild(hint);
       return;
     }
     for (const entry of this.ignoreFiles) {
-      container.appendChild(buildChip({
-        label: entry,
-        code: true,
-        chipClass: "chip mono",
-        onRemove: () => {
-          this.ignoreFiles = this.ignoreFiles.filter((f) => f !== entry);
-          void patchSettings({ agent_ignore_files: this.ignoreFiles });
-          this.renderIgnoreChips();
-        },
-      }));
+      container.appendChild(
+        buildChip({
+          label: entry,
+          code: true,
+          chipClass: "chip mono",
+          onRemove: () => {
+            this.ignoreFiles = this.ignoreFiles.filter((f) => f !== entry);
+            void patchSettings({ agent_ignore_files: this.ignoreFiles });
+            this.renderIgnoreChips();
+          },
+        }),
+      );
     }
   }
 }
 
 // Singleton instance — internal to the module.
 const controller = new PermissionsUIController();
-registerCleanup(() => controller.cancelRulesLoad());
+registerCleanup(() => {
+  controller.cancelRulesLoad();
+});
 
 // Public delegate functions preserving the existing module API.
-export function initPermissionsUI(initial: AppSettings): void { controller.initPermissions(initial); }
-export function initShellPolicyUI(initial: AppSettings): void { controller.initShellPolicy(initial); }
+export function initPermissionsUI(initial: AppSettings): void {
+  controller.initPermissions(initial);
+}
+export function initShellPolicyUI(initial: AppSettings): void {
+  controller.initShellPolicy(initial);
+}
 
 /** Thin alias kept for permission.ts: "approve and trust this
  *  command for the future" maps to adding an allow rule. */

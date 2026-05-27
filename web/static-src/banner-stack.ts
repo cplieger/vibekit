@@ -53,16 +53,23 @@ function clearDismiss(chatID: string, code: string): void {
 }
 
 export function showBanner(
-  chatID: string, code: string, message: string,
-  level: BannerLevel, dismissible: boolean,
+  chatID: string,
+  code: string,
+  message: string,
+  level: BannerLevel,
+  dismissible: boolean,
 ): void {
-  if (isDismissed(chatID, code)) return;
+  if (isDismissed(chatID, code)) {
+    return;
+  }
   const key = bannerKey(chatID, code);
   const existing = banners.get(key);
   if (existing !== undefined) {
     // Replace message in place.
     const msg = existing.el.querySelector(".banner-msg");
-    if (msg !== null) msg.textContent = message;
+    if (msg !== null) {
+      msg.textContent = message;
+    }
     existing.message = message;
     return;
   }
@@ -93,7 +100,9 @@ export function showBanner(
 function removeBanner(chatID: string, code: string): void {
   const key = bannerKey(chatID, code);
   const entry = banners.get(key);
-  if (entry === undefined) return;
+  if (entry === undefined) {
+    return;
+  }
   entry.el.remove();
   banners.delete(key);
   clearDismiss(chatID, code);
@@ -101,7 +110,9 @@ function removeBanner(chatID: string, code: string): void {
 
 /** Remove all banners matching any of the given codes for a chat. */
 export function clearBannerCodes(chatID: string, codes: string[]): void {
-  for (const code of codes) removeBanner(chatID, code);
+  for (const code of codes) {
+    removeBanner(chatID, code);
+  }
 }
 
 /** Drop every banner (and its dismissed-state persistence) for a
@@ -118,7 +129,9 @@ export function clearBannersForChat(chatID: string): void {
   for (const key of [...banners.keys()]) {
     if (key.startsWith(prefix)) {
       const entry = banners.get(key);
-      if (entry !== undefined) entry.el.remove();
+      if (entry !== undefined) {
+        entry.el.remove();
+      }
       banners.delete(key);
     }
   }
@@ -140,7 +153,9 @@ export function renderStack(): void {
   const activeID = getActiveId();
   const visible: BannerEntry[] = [];
   for (const entry of banners.values()) {
-    if (entry.chatID === activeID) visible.push(entry);
+    if (entry.chatID === activeID) {
+      visible.push(entry);
+    }
   }
   reconcile(container, visible, {
     key: (e: BannerEntry) => bannerKey(e.chatID, e.code),

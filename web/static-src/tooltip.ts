@@ -16,7 +16,11 @@
 
 type TooltipState =
   | { readonly kind: "idle" }
-  | { readonly kind: "pending"; readonly anchor: HTMLElement; readonly timer: ReturnType<typeof setTimeout> }
+  | {
+      readonly kind: "pending";
+      readonly anchor: HTMLElement;
+      readonly timer: ReturnType<typeof setTimeout>;
+    }
   | { readonly kind: "visible"; readonly anchor: HTMLElement; readonly tip: HTMLDivElement }
   | { readonly kind: "fading"; readonly tip: HTMLDivElement };
 
@@ -34,54 +38,97 @@ class TooltipController {
   private warmUntil = 0;
 
   init(): void {
-    document.addEventListener("pointerover", (e) => { this.onEnter(e); });
-    document.addEventListener("pointerout", (e) => { this.onLeave(e); });
-    document.addEventListener("focusin", (e) => { this.onEnter(e); });
-    document.addEventListener("focusout", (e) => { this.onLeave(e); });
-    document.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Escape") this.hide();
+    document.addEventListener("pointerover", (e) => {
+      this.onEnter(e);
     });
-    window.addEventListener("blur", () => { this.hide(); });
-    document.addEventListener("scroll", () => { this.hide(); }, true);
+    document.addEventListener("pointerout", (e) => {
+      this.onLeave(e);
+    });
+    document.addEventListener("focusin", (e) => {
+      this.onEnter(e);
+    });
+    document.addEventListener("focusout", (e) => {
+      this.onLeave(e);
+    });
+    document.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        this.hide();
+      }
+    });
+    window.addEventListener("blur", () => {
+      this.hide();
+    });
+    document.addEventListener(
+      "scroll",
+      () => {
+        this.hide();
+      },
+      true,
+    );
   }
 
   private closestAnchor(target: EventTarget | null): HTMLElement | null {
-    if (!(target instanceof Element)) return null;
-    return target.closest("[data-tooltip]") as HTMLElement | null;
+    if (!(target instanceof Element)) {
+      return null;
+    }
+    return target.closest("[data-tooltip]");
   }
 
   private onEnter(e: Event): void {
     const target = this.closestAnchor(e.target);
-    if (target === null) return;
+    if (target === null) {
+      return;
+    }
     const text = target.dataset["tooltip"] ?? "";
-    if (text === "") return;
+    if (text === "") {
+      return;
+    }
 
-    if (this.state.kind === "pending" && this.state.anchor === target) return;
-    if (this.state.kind === "visible" && this.state.anchor === target) return;
+    if (this.state.kind === "pending" && this.state.anchor === target) {
+      return;
+    }
+    if (this.state.kind === "visible" && this.state.anchor === target) {
+      return;
+    }
 
     this.teardown();
     const delay = Date.now() < this.warmUntil ? DELAY_WARM : DELAY_COLD;
-    const timer = setTimeout(() => { this.show(target, text); }, delay);
+    const timer = setTimeout(() => {
+      this.show(target, text);
+    }, delay);
     this.state = { kind: "pending", anchor: target, timer };
   }
 
   private onLeave(e: Event): void {
     const target = this.closestAnchor(e.target);
-    if (target === null) return;
+    if (target === null) {
+      return;
+    }
 
-    if (this.state.kind === "pending" && this.state.anchor !== target) return;
-    if (this.state.kind === "visible" && this.state.anchor !== target) return;
-    if (this.state.kind === "idle" || this.state.kind === "fading") return;
+    if (this.state.kind === "pending" && this.state.anchor !== target) {
+      return;
+    }
+    if (this.state.kind === "visible" && this.state.anchor !== target) {
+      return;
+    }
+    if (this.state.kind === "idle" || this.state.kind === "fading") {
+      return;
+    }
 
     const pe = e as Event & { relatedTarget?: EventTarget | null };
     const related = pe.relatedTarget ?? null;
-    if (related instanceof Node && target.contains(related)) return;
+    if (related instanceof Node && target.contains(related)) {
+      return;
+    }
 
     this.hide();
   }
 
   private show(anchor: HTMLElement, text: string): void {
-    if (!anchor.isConnected) { this.state = { kind: "idle" }; return; }
+    if (!anchor.isConnected) {
+      this.state = { kind: "idle" };
+      return;
+    }
     this.teardown();
 
     const tip = document.createElement("div");
@@ -101,9 +148,15 @@ class TooltipController {
     let left = rect.left + rect.width / 2 - tipRect.width / 2;
     let top = rect.top - tipRect.height - 6;
 
-    if (left < 4) left = 4;
-    if (left + tipRect.width > window.innerWidth - 4) left = window.innerWidth - 4 - tipRect.width;
-    if (top < 4) { top = rect.bottom + 6; }
+    if (left < 4) {
+      left = 4;
+    }
+    if (left + tipRect.width > window.innerWidth - 4) {
+      left = window.innerWidth - 4 - tipRect.width;
+    }
+    if (top < 4) {
+      top = rect.bottom + 6;
+    }
 
     tip.style.left = `${String(left)}px`;
     tip.style.top = `${String(top)}px`;
@@ -130,13 +183,23 @@ class TooltipController {
       tip.classList.add("fading-out");
       this.state = { kind: "fading", tip };
 
-      tip.addEventListener("transitionend", () => {
-        if (this.state.kind === "fading" && this.state.tip === tip) this.state = { kind: "idle" };
-        tip.remove();
-      }, { once: true });
+      tip.addEventListener(
+        "transitionend",
+        () => {
+          if (this.state.kind === "fading" && this.state.tip === tip) {
+            this.state = { kind: "idle" };
+          }
+          tip.remove();
+        },
+        { once: true },
+      );
       setTimeout(() => {
-        if (this.state.kind === "fading" && this.state.tip === tip) this.state = { kind: "idle" };
-        if (tip.isConnected) tip.remove();
+        if (this.state.kind === "fading" && this.state.tip === tip) {
+          this.state = { kind: "idle" };
+        }
+        if (tip.isConnected) {
+          tip.remove();
+        }
       }, 100);
 
       this.warmUntil = Date.now() + COOLDOWN;
@@ -168,7 +231,9 @@ const instance = new TooltipController();
 let initialized = false;
 
 export function initTooltips(): void {
-  if (initialized) return;
+  if (initialized) {
+    return;
+  }
   initialized = true;
   instance.init();
 }

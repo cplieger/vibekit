@@ -17,8 +17,15 @@ import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import {
-  stage, discard, pull, push, stash, stashPop,
-  unstage, commit as commitAction, generateCommitMessage,
+  stage,
+  discard,
+  pull,
+  push,
+  stash,
+  stashPop,
+  unstage,
+  commit as commitAction,
+  generateCommitMessage,
 } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
@@ -27,14 +34,18 @@ import { reconcile } from "./reconcile.js";
 
 /** Throw if an action dispatch returned null or undefined (failure already toasted). */
 function assertOk<T>(result: T): asserts result is NonNullable<T> {
-  if (result === null || result === undefined) throw new Error("action failed");
+  if (result === null || result === undefined) {
+    throw new Error("action failed");
+  }
 }
 
 /** Sentinel thrown when user cancels a confirm dialog. withAsyncFeedback
  *  treats it like any error (shows ✗); no toast fires because no action
  *  was dispatched. */
 class CancelledError extends Error {
-  constructor() { super("cancelled"); }
+  constructor() {
+    super("cancelled");
+  }
 }
 
 // --- Wire types ---
@@ -70,7 +81,9 @@ let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
 let diffAbort: AbortController | null = null;
-registerCleanup(() => { refreshAbort?.abort(); });
+registerCleanup(() => {
+  refreshAbort?.abort();
+});
 registerCleanup(() => diffAbort?.abort());
 
 /** Repos that recently received a successful push. Used to surface a
@@ -93,7 +106,7 @@ const userExpandedRepos = new Set<string>();
 const expandedDiffPaths = new Set<string>();
 
 // Per-paint cleanup: unbind functions from bindLoadingState calls.
-let bindingCleanups: Array<() => void> = [];
+let bindingCleanups: (() => void)[] = [];
 
 // Deferred paint: set when paint bails due to focused textarea.
 let paintDeferred = false;
@@ -103,7 +116,9 @@ let paintDeferred = false;
 /** Initialise the Changes tab. Wires the filter input, the global
  *  refresh button, and the SSE forge-changed event. Idempotent. */
 export function initChangesTab(): void {
-  if (inited) return;
+  if (inited) {
+    return;
+  }
   inited = true;
   const filterEl = document.getElementById("git-changes-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
@@ -113,7 +128,11 @@ export function initChangesTab(): void {
 
   // Fire deferred paint when commit textarea loses focus.
   document.addEventListener("focusout", (e) => {
-    if (paintDeferred && e.target instanceof HTMLTextAreaElement && e.target.classList.contains("git-commit-input")) {
+    if (
+      paintDeferred &&
+      e.target instanceof HTMLTextAreaElement &&
+      e.target.classList.contains("git-commit-input")
+    ) {
       paint();
     }
   });
@@ -137,7 +156,9 @@ export function initChangesTab(): void {
   let sseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const debouncedRefresh = (): void => {
     clearTimeout(sseRefreshTimer);
-    sseRefreshTimer = setTimeout(() => { void refreshChanges(); }, 300);
+    sseRefreshTimer = setTimeout(() => {
+      void refreshChanges();
+    }, 300);
   };
   onSSE("turn_ended", debouncedRefresh);
   onSSE("forges_changed", debouncedRefresh);
@@ -155,9 +176,13 @@ export async function refreshChanges(): Promise<void> {
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
   const data = await apiGet<StatusAllResponse>("/api/git/status-all", ctrl.signal);
-  if (gen < refreshGeneration) return; // stale — a newer call supersedes
+  if (gen < refreshGeneration) {
+    return;
+  } // stale — a newer call supersedes
   if (data === null) {
-    if (!ctrl.signal.aborted) paintError("Failed to load git status.");
+    if (!ctrl.signal.aborted) {
+      paintError("Failed to load git status.");
+    }
     return;
   }
   lastStatusAll = data.repos;
@@ -172,7 +197,9 @@ function paint(): void {
 
 function paintInner(): void {
   const root = document.getElementById("git-changes-mount");
-  if (root === null) return;
+  if (root === null) {
+    return;
+  }
 
   // Bug 1: Skip re-render entirely if a commit textarea is focused
   // to avoid destroying user input mid-typing.
@@ -184,7 +211,9 @@ function paintInner(): void {
   paintDeferred = false;
 
   // Tear down previous bindLoadingState subscriptions before re-render.
-  for (const fn of bindingCleanups) fn();
+  for (const fn of bindingCleanups) {
+    fn();
+  }
   bindingCleanups = [];
 
   // Abort any in-flight diff fetches from the previous paint.
@@ -199,19 +228,36 @@ function paintInner(): void {
   const activePathsByRepo = new Map<string, Set<string>>();
   for (const r of lastStatusAll) {
     const paths = new Set<string>();
-    for (const f of r.files) paths.add(f.path);
+    for (const f of r.files) {
+      paths.add(f.path);
+    }
     activePathsByRepo.set(r.repo, paths);
   }
-  for (const k of userCollapsedRepos) if (!activeRepos.has(k)) userCollapsedRepos.delete(k);
-  for (const k of userExpandedRepos) if (!activeRepos.has(k)) userExpandedRepos.delete(k);
-  for (const k of commitMessages.keys()) if (!activeRepos.has(k)) commitMessages.delete(k);
+  for (const k of userCollapsedRepos) {
+    if (!activeRepos.has(k)) {
+      userCollapsedRepos.delete(k);
+    }
+  }
+  for (const k of userExpandedRepos) {
+    if (!activeRepos.has(k)) {
+      userExpandedRepos.delete(k);
+    }
+  }
+  for (const k of commitMessages.keys()) {
+    if (!activeRepos.has(k)) {
+      commitMessages.delete(k);
+    }
+  }
   for (const k of expandedDiffPaths) {
     const nulIdx = k.indexOf("\0");
-    if (nulIdx === -1) { expandedDiffPaths.delete(k); continue; }
+    if (nulIdx === -1) {
+      expandedDiffPaths.delete(k);
+      continue;
+    }
     const repo = k.slice(0, nulIdx);
     const path = k.slice(nulIdx + 1);
     const repoPaths = activePathsByRepo.get(repo);
-    if (repoPaths === undefined || !repoPaths.has(path)) {
+    if (!repoPaths?.has(path)) {
       expandedDiffPaths.delete(k);
     }
   }
@@ -219,7 +265,9 @@ function paintInner(): void {
   // Bug 1: Capture current commit messages before destroying DOM.
   for (const ta of root.querySelectorAll<HTMLTextAreaElement>(".git-commit-input[data-repo]")) {
     const repo = ta.dataset["repo"];
-    if (repo) commitMessages.set(repo, ta.value);
+    if (repo) {
+      commitMessages.set(repo, ta.value);
+    }
   }
 
   if (lastStatusAll.length === 0) {
@@ -238,18 +286,25 @@ function paintInner(): void {
     if (filterText !== "") {
       const repoMatches = r.repo.toLowerCase().includes(filterText);
       const anyFileMatches = r.files.some((f) => f.path.toLowerCase().includes(filterText));
-      if (!repoMatches && !anyFileMatches) continue;
+      if (!repoMatches && !anyFileMatches) {
+        continue;
+      }
     }
     visibleRepos.push(r);
   }
 
   // Drop any prior non-keyed empty-state placeholder before reconciling.
   for (const child of [...root.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+      child.remove();
+    }
   }
 
   if (visibleRepos.length === 0) {
-    reconcile(root, [] as RepoStatus[], { key: (r) => r.repo, mount: () => document.createElement("div") });
+    reconcile(root, [] as RepoStatus[], {
+      key: (r) => r.repo,
+      mount: () => document.createElement("div"),
+    });
     if (filterText !== "") {
       root.innerHTML = renderEmptyState({
         icon: ICON_FILTER,
@@ -277,7 +332,9 @@ function paintInner(): void {
     },
     update: (section: HTMLElement, r: RepoStatus) => {
       const fresh = renderRepoSection(r);
-      if (fresh === null) return;
+      if (fresh === null) {
+        return;
+      }
       section.className = fresh.className;
       section.replaceChildren(...Array.from(fresh.childNodes));
     },
@@ -290,18 +347,18 @@ const ICON_REPO_EMPTY =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
   '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
-  '</svg>';
+  "</svg>";
 
 const ICON_CLEAN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
   '<polyline points="22 4 12 14.01 9 11.01"/>' +
-  '</svg>';
+  "</svg>";
 
 const ICON_FILTER =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  '</svg>';
+  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -315,17 +372,22 @@ function renderEmptyState(opts: { icon: string; title: string; hint: string }): 
 
 function paintError(msg: string): void {
   const root = document.getElementById("git-changes-mount");
-  if (root === null) return;
+  if (root === null) {
+    return;
+  }
   root.innerHTML = `<div class="git-multirepo-error">${msg}</div>`;
 }
 
 function renderRepoSection(r: RepoStatus): HTMLElement | null {
   // Apply filter: keep section if (a) filter empty, (b) repo name
   // matches, or (c) any file path matches.
-  const filteredFiles = filterText === ""
-    ? r.files
-    : r.files.filter((f) => f.path.toLowerCase().includes(filterText));
-  if (filterText !== "" && filteredFiles.length === 0 && !r.repo.toLowerCase().includes(filterText)) {
+  const filteredFiles =
+    filterText === "" ? r.files : r.files.filter((f) => f.path.toLowerCase().includes(filterText));
+  if (
+    filterText !== "" &&
+    filteredFiles.length === 0 &&
+    !r.repo.toLowerCase().includes(filterText)
+  ) {
     return null;
   }
   // Hide clean repos by default unless filter is active or repo
@@ -333,14 +395,20 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
   // Bug 3: User-toggled state overrides data-driven default.
   let expandedDefault: boolean;
-  if (userCollapsedRepos.has(r.repo)) expandedDefault = false;
-  else if (userExpandedRepos.has(r.repo)) expandedDefault = true;
-  else expandedDefault = dataDefault;
+  if (userCollapsedRepos.has(r.repo)) {
+    expandedDefault = false;
+  } else if (userExpandedRepos.has(r.repo)) {
+    expandedDefault = true;
+  } else {
+    expandedDefault = dataDefault;
+  }
 
   const section = document.createElement("section");
   section.className = "git-repo-section";
   section.dataset["repo"] = r.repo;
-  if (expandedDefault) section.classList.add("expanded");
+  if (expandedDefault) {
+    section.classList.add("expanded");
+  }
 
   // Header
   const header = document.createElement("button");
@@ -357,9 +425,13 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     if (chip !== null && chip !== undefined && header.contains(chip)) {
       ev.preventDefault();
       ev.stopPropagation();
-      void import("./git-branch-switcher.js").then(({ openBranchSwitcher }) => {
-        openBranchSwitcher(r.repo, chip);
-      }).catch(() => {});
+      void import("./git-branch-switcher.js")
+        .then(({ openBranchSwitcher }) => {
+          openBranchSwitcher(r.repo, chip);
+        })
+        .catch(() => {
+          /* noop */
+        });
       return;
     }
     const open = section.classList.toggle("expanded");
@@ -427,7 +499,10 @@ function renderHeaderHTML(r: RepoStatus): string {
   const dirty = r.has_dirty
     ? ` <span class="git-repo-dirty-dot" title="Has uncommitted changes" aria-label="dirty"></span>`
     : "";
-  const stashes = r.stashes > 0 ? ` <span class="git-repo-stashes" title="${r.stashes} stash${r.stashes === 1 ? "" : "es"}">📦${r.stashes}</span>` : "";
+  const stashes =
+    r.stashes > 0
+      ? ` <span class="git-repo-stashes" title="${r.stashes} stash${r.stashes === 1 ? "" : "es"}">📦${r.stashes}</span>`
+      : "";
   const branch = escapeHTML(r.branch || "(detached)");
   // The branch chip is a span (not a nested button — buttons can't
   // be inside a button per HTML spec) but the section header captures
@@ -458,7 +533,9 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   const stageAllBtn = btn("Stage all", "Stage every unstaged change");
   stageAllBtn.addEventListener("click", () => {
     const files = r.files.filter((f) => !f.staged).map((f) => f.path);
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      return;
+    }
     void withAsyncFeedback(stageAllBtn, async () => {
       assertOk(await stage.dispatch({ repo: r.repo, files }));
       await refreshChanges();
@@ -467,10 +544,16 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   bar.appendChild(stageAllBtn);
   bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
 
-  const discardAllBtn = btn("Discard all", "Throw away all uncommitted changes (irreversible)", true);
+  const discardAllBtn = btn(
+    "Discard all",
+    "Throw away all uncommitted changes (irreversible)",
+    true,
+  );
   discardAllBtn.addEventListener("click", () => {
     // Bug 2: Module-level guard prevents concurrent discard-all per repo.
-    if (discardPendingRepos.has(r.repo)) return;
+    if (discardPendingRepos.has(r.repo)) {
+      return;
+    }
     discardPendingRepos.add(r.repo);
     void (async () => {
       try {
@@ -479,9 +562,13 @@ function renderActionBar(r: RepoStatus): HTMLElement {
           "Discard",
           "destructive",
         );
-        if (!ok) return;
+        if (!ok) {
+          return;
+        }
         const files = r.files.map((f) => f.path);
-        if (files.length === 0) return;
+        if (files.length === 0) {
+          return;
+        }
         await withAsyncFeedback(discardAllBtn, async () => {
           assertOk(await discard.dispatch({ repo: r.repo, files }));
           await refreshChanges();
@@ -507,7 +594,9 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(pullBtn);
-  bindingCleanups.push(bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn));
+  bindingCleanups.push(
+    bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn),
+  );
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
@@ -525,7 +614,9 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pushBtn);
-    bindingCleanups.push(bindLoadingState(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn));
+    bindingCleanups.push(
+      bindLoadingState(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn),
+    );
   }
 
   const stashBtn = btn("Stash", "Stash uncommitted changes");
@@ -536,7 +627,9 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     });
   });
   bar.appendChild(stashBtn);
-  bindingCleanups.push(bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn));
+  bindingCleanups.push(
+    bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn),
+  );
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
@@ -547,7 +640,9 @@ function renderActionBar(r: RepoStatus): HTMLElement {
       });
     });
     bar.appendChild(pop);
-    bindingCleanups.push(bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop));
+    bindingCleanups.push(
+      bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop),
+    );
   }
 
   return bar;
@@ -556,12 +651,16 @@ function renderActionBar(r: RepoStatus): HTMLElement {
 function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
   // Sort: staged first, then unstaged; within each group alphabetical.
   const sorted = [...files].sort((a, b) => {
-    if (a.staged !== b.staged) return a.staged ? -1 : 1;
+    if (a.staged !== b.staged) {
+      return a.staged ? -1 : 1;
+    }
     return a.path.localeCompare(b.path);
   });
   const list = document.createElement("ul");
   list.className = "git-file-list";
-  for (const f of sorted) list.appendChild(renderFileRow(r, f));
+  for (const f of sorted) {
+    list.appendChild(renderFileRow(r, f));
+  }
   return list;
 }
 
@@ -589,7 +688,12 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const actions = document.createElement("span");
   actions.className = "git-file-actions";
 
-  const action = (label: string, title: string, fn: () => Promise<unknown>, danger = false): HTMLButtonElement => {
+  const action = (
+    label: string,
+    title: string,
+    fn: () => Promise<unknown>,
+    danger = false,
+  ): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = `btn-small${danger ? " btn-danger" : ""}`;
@@ -603,24 +707,38 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   };
 
   if (f.staged) {
-    actions.appendChild(action("Unstage", "Move out of staged area",
-      async () => {
+    actions.appendChild(
+      action("Unstage", "Move out of staged area", async () => {
         assertOk(await unstage.dispatch({ repo: r.repo, files: [f.path] }));
         await refreshChanges();
-      }));
+      }),
+    );
   } else {
-    actions.appendChild(action("Stage", "Add to staged area",
-      async () => {
+    actions.appendChild(
+      action("Stage", "Add to staged area", async () => {
         assertOk(await stage.dispatch({ repo: r.repo, files: [f.path] }));
         await refreshChanges();
-      }));
-    actions.appendChild(action("Discard", "Throw away this change",
-      async () => {
-        const ok = await confirmDialog(`Discard changes to ${f.path}? This cannot be undone.`, "Discard", "destructive");
-        if (!ok) throw new CancelledError();
-        assertOk(await discard.dispatch({ repo: r.repo, files: [f.path] }));
-        await refreshChanges();
-      }, true));
+      }),
+    );
+    actions.appendChild(
+      action(
+        "Discard",
+        "Throw away this change",
+        async () => {
+          const ok = await confirmDialog(
+            `Discard changes to ${f.path}? This cannot be undone.`,
+            "Discard",
+            "destructive",
+          );
+          if (!ok) {
+            throw new CancelledError();
+          }
+          assertOk(await discard.dispatch({ repo: r.repo, files: [f.path] }));
+          await refreshChanges();
+        },
+        true,
+      ),
+    );
   }
   top.appendChild(actions);
   li.appendChild(top);
@@ -642,7 +760,9 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
       `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
       signal,
     ).then((data) => {
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        return;
+      }
       if (data === null) {
         diffDrawer.replaceChildren();
         const msg = document.createElement("span");
@@ -652,7 +772,10 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
         retryBtn.type = "button";
         retryBtn.className = "btn-small";
         retryBtn.textContent = "Retry";
-        retryBtn.addEventListener("click", () => { loadedDiff = false; loadDiff(); });
+        retryBtn.addEventListener("click", () => {
+          loadedDiff = false;
+          loadDiff();
+        });
         diffDrawer.appendChild(retryBtn);
         return;
       }
@@ -677,7 +800,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   }
 
   top.addEventListener("click", () => {
-    const opening = diffDrawer.classList.toggle("hidden") === false;
+    const opening = !diffDrawer.classList.toggle("hidden");
     li.classList.toggle("expanded", opening);
     // Bug 4: Persist toggle state.
     if (opening) {
@@ -735,13 +858,17 @@ function renderRecentCommits(r: RepoStatus): HTMLElement {
 
   let loaded = false;
   wrap.addEventListener("toggle", () => {
-    if (!wrap.open || loaded) return;
+    if (!wrap.open || loaded) {
+      return;
+    }
     loaded = true;
     void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
       `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
       diffAbort?.signal,
     ).then((data) => {
-      if (diffAbort?.signal.aborted) return;
+      if (diffAbort?.signal.aborted) {
+        return;
+      }
       if (data === null) {
         body.textContent = "Failed to load.";
         return;
@@ -791,7 +918,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
   ta.dataset["repo"] = r.repo;
   // Bug 1: Restore previously typed commit message.
   const saved = commitMessages.get(r.repo);
-  if (saved) ta.value = saved;
+  if (saved) {
+    ta.value = saved;
+  }
   wrap.appendChild(ta);
 
   const row = document.createElement("div");
@@ -807,7 +936,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
       assertOk(msg);
       commitMessages.set(r.repo, msg.message ?? "");
-      if (ta.isConnected) ta.value = msg.message ?? "";
+      if (ta.isConnected) {
+        ta.value = msg.message ?? "";
+      }
     });
   });
   row.appendChild(ai);
@@ -843,7 +974,9 @@ function renderCommitArea(r: RepoStatus): HTMLElement {
  *  "Open PR" hint. Anything else is treated as a feature branch
  *  candidate. */
 function isFeatureBranch(branch: string): boolean {
-  if (branch === "") return false;
+  if (branch === "") {
+    return false;
+  }
   switch (branch.toLowerCase()) {
     case "main":
     case "master":
@@ -875,30 +1008,47 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
       const { openNewPRForRepo } = await import("./git-prs-tab.js");
       setGitTab("prs");
       await openNewPRForRepo(r.repo, r.branch);
-    })().catch(() => {});
+    })().catch(() => {
+      /* noop */
+    });
   });
   hint.appendChild(btn);
   return hint;
 }
 
 function statusLetter(s: string): string {
-  if (s.length >= 1) return s.charAt(0);
+  if (s.length >= 1) {
+    return s.charAt(0);
+  }
   return "?";
 }
 
 function describeStatus(s: string): string {
   switch (s.charAt(0)) {
-    case "M": return "Modified";
-    case "A": return "Added";
-    case "D": return "Deleted";
-    case "R": return "Renamed";
-    case "?": return "Untracked";
-    case "U": return "Unmerged";
-    default:  return s;
+    case "M":
+      return "Modified";
+    case "A":
+      return "Added";
+    case "D":
+      return "Deleted";
+    case "R":
+      return "Renamed";
+    case "?":
+      return "Untracked";
+    case "U":
+      return "Unmerged";
+    default:
+      return s;
   }
 }
 
 function escapeHTML(s: string): string {
-  const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  const map: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
   return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }

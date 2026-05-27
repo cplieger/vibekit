@@ -17,9 +17,7 @@ interface KiroConfigItem {
   inclusion?: string;
 }
 
-type ConfigEntry =
-  | { kind: "label"; type: string }
-  | { kind: "item"; item: KiroConfigItem };
+type ConfigEntry = { kind: "label"; type: string } | { kind: "item"; item: KiroConfigItem };
 
 const TYPE_LABELS: Record<string, string> = {
   steering: "Steering docs",
@@ -33,8 +31,12 @@ const loadKiroConfigAction = defineAction<void, { items: KiroConfigItem[] }>({
   retry: { count: 2, delay: 300 },
   run: async (_args, signal) => {
     const data = await apiGet<{ items: KiroConfigItem[] }>("/api/workspace/kiro-config", signal);
-    if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    if (!data) throw new ActionError("Failed to load config", { code: "network" });
+    if (signal.aborted) {
+      throw new DOMException("aborted", "AbortError");
+    }
+    if (!data) {
+      throw new ActionError("Failed to load config", { code: "network" });
+    }
     return data;
   },
   error: false,
@@ -68,12 +70,16 @@ function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
   const flat: ConfigEntry[] = [];
   for (const [type, group] of groups) {
     flat.push({ kind: "label", type });
-    for (const item of group) flat.push({ kind: "item", item });
+    for (const item of group) {
+      flat.push({ kind: "item", item });
+    }
   }
 
   // Drop any prior non-keyed empty-state placeholder before reconcile.
   for (const child of [...container.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+      child.remove();
+    }
   }
 
   if (flat.length === 0) {
@@ -86,8 +92,8 @@ function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
   }
 
   reconcile(container, flat, {
-    key: (e: ConfigEntry) => e.kind === "label" ? `label:${e.type}` : `item:${e.item.path}`,
-    mount: (e: ConfigEntry) => e.kind === "label" ? labelRow(e.type) : itemRow(e.item),
+    key: (e: ConfigEntry) => (e.kind === "label" ? `label:${e.type}` : `item:${e.item.path}`),
+    mount: (e: ConfigEntry) => (e.kind === "label" ? labelRow(e.type) : itemRow(e.item)),
   });
 }
 
@@ -116,6 +122,8 @@ function itemRow(item: KiroConfigItem): HTMLDivElement {
   edit.innerHTML = ICON_EDIT;
 
   row.append(name, meta, edit);
-  row.addEventListener("click", () => openFile(item.path));
+  row.addEventListener("click", () => {
+    openFile(item.path);
+  });
   return row;
 }

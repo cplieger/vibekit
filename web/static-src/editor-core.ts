@@ -21,21 +21,29 @@ import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./action
 import { bindLoadingState } from "./actions/index.js";
 import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import {
-  resolveActivePending, applyActivePendingPartial, openDiscussPromptForActive,
+  resolveActivePending,
+  applyActivePendingPartial,
+  openDiscussPromptForActive,
 } from "./editor-pending.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import {
-  showReadMode, showEditMode, updateGutter, renderHighlight,
+  showReadMode,
+  showEditMode,
+  updateGutter,
+  renderHighlight,
   renderEditModeUI,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
+import { activateFile, closeEditorFile, fetchGitDiffSources } from "./editor-openers.js";
 import {
-  activateFile, closeEditorFile, fetchGitDiffSources,
-} from "./editor-openers.js";
-import {
-  fileStates, getActiveFilePath,
-  freshState, isPendingPath, parsePendingPath,
-  planDraftChatID, unsavedDiffSource, gitDiffSource,
+  fileStates,
+  getActiveFilePath,
+  freshState,
+  isPendingPath,
+  parsePendingPath,
+  planDraftChatID,
+  unsavedDiffSource,
+  gitDiffSource,
 } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
 
@@ -43,8 +51,11 @@ import type { FileState } from "./editor-types.js";
 // Consumers that import from editor-core.ts continue to work.
 
 export {
-  isPendingPath, parsePendingPath, isPlanDraftPath,
-  routeForPath, getDirtyEditorPaths,
+  isPendingPath,
+  parsePendingPath,
+  isPlanDraftPath,
+  routeForPath,
+  getDirtyEditorPaths,
 } from "./editor-types.js";
 export type { FileState } from "./editor-types.js";
 
@@ -53,7 +64,9 @@ export function initEditor(): void {
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
-  $.editorSendPlanBtn.addEventListener("click", () => { void sendActivePlan(); });
+  $.editorSendPlanBtn.addEventListener("click", () => {
+    void sendActivePlan();
+  });
 
   // Registry-driven loading state: button auto-disables while the
   // dispatch is in flight. preserveDisabled keeps the
@@ -61,26 +74,42 @@ export function initEditor(): void {
   // bindLoadingState OR's the original disabled value.
   bindLoadingState("editor.save_file", $.editorSaveBtn, { preserveDisabled: true });
   bindLoadingState("editor.send_plan", $.editorSendPlanBtn);
-  $.editorPendingAcceptBtn.addEventListener("click", () => { void resolveActivePending("accept"); });
-  $.editorPendingRejectBtn.addEventListener("click", () => { void resolveActivePending("reject"); });
-  $.editorPendingApplyPartialBtn.addEventListener("click", () => { void applyActivePendingPartial(); });
+  $.editorPendingAcceptBtn.addEventListener("click", () => {
+    void resolveActivePending("accept");
+  });
+  $.editorPendingRejectBtn.addEventListener("click", () => {
+    void resolveActivePending("reject");
+  });
+  $.editorPendingApplyPartialBtn.addEventListener("click", () => {
+    void applyActivePendingPartial();
+  });
   bindLoadingState("editor.resolve_partial", $.editorPendingApplyPartialBtn);
-  $.editorPendingDiscussBtn.addEventListener("click", () => { openDiscussPromptForActive(); });
+  $.editorPendingDiscussBtn.addEventListener("click", () => {
+    openDiscussPromptForActive();
+  });
 
   onBus(BUS_PENDING_RESOLVED, (p) => {
     const targetPath = `pending:${p.chatID}:${p.toolCallID}`;
-    if (fileStates.has(targetPath)) closeEditorFile(targetPath);
+    if (fileStates.has(targetPath)) {
+      closeEditorFile(targetPath);
+    }
   });
   onBus(BUS_PENDING_CLEARED, (p) => {
     for (const path of [...fileStates.keys()]) {
-      if (!isPendingPath(path)) continue;
+      if (!isPendingPath(path)) {
+        continue;
+      }
       const { chatID } = parsePendingPath(path);
-      if (chatID === p.chatID) closeEditorFile(path);
+      if (chatID === p.chatID) {
+        closeEditorFile(path);
+      }
     }
   });
   $.editorContent.addEventListener("input", () => {
     const state = fileStates.get(getActiveFilePath());
-    if (state === undefined) return;
+    if (state === undefined) {
+      return;
+    }
     state.current = $.editorContent.value;
     $.editorSaveBtn.disabled = state.current === state.original;
     updateGutter(state.current);
@@ -96,8 +125,18 @@ export function initEditor(): void {
 
 export function restoreEditorTabs(paths: string[]): void {
   for (const p of paths) {
-    if (!fileStates.has(p)) fileStates.set(p, freshState(p));
-    openEditorView(p, () => activateFile(p), () => closeEditorFile(p));
+    if (!fileStates.has(p)) {
+      fileStates.set(p, freshState(p));
+    }
+    openEditorView(
+      p,
+      () => {
+        activateFile(p);
+      },
+      () => {
+        closeEditorFile(p);
+      },
+    );
   }
 }
 
@@ -105,7 +144,9 @@ export function restoreEditorTabs(paths: string[]): void {
 
 function toggleDiffMode(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   if (state.mode.kind === "diff") {
     state.mode = { kind: "edit", editing: false };
     state.cachedDiff = null;
@@ -113,7 +154,9 @@ function toggleDiffMode(): void {
     renderEditModeUI(state);
     return;
   }
-  if (state.current === state.original) return;
+  if (state.current === state.original) {
+    return;
+  }
   state.mode = {
     kind: "diff",
     diffSource: unsavedDiffSource(state.original, state.current),
@@ -125,10 +168,13 @@ function toggleDiffMode(): void {
 
 function startEditing(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   if (state.mode.kind === "diff") {
-    state.returnToGitDiff = state.mode.diffSource.fromGit === true
-      ? { ref: state.mode.diffSource.oldLabel, repo: state.repo } : null;
+    state.returnToGitDiff = state.mode.diffSource.fromGit
+      ? { ref: state.mode.diffSource.oldLabel, repo: state.repo }
+      : null;
     state.cachedDiff = null;
     state.pendingHunkCount = null;
   }
@@ -146,11 +192,15 @@ function startEditing(): void {
 
 function confirmStopEditing(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   if (state.current !== state.original) {
     void (async () => {
       const ok = await confirmDialog("Discard unsaved changes?", "Discard", "destructive");
-      if (ok) stopEditing(state);
+      if (ok) {
+        stopEditing(state);
+      }
     })();
   } else {
     stopEditing(state);
@@ -187,57 +237,66 @@ function stopEditing(state: FileState): void {
 
 function saveFile(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   const content = $.editorContent.value;
-  void saveFileAction.dispatch({ path: state.path, content }, {
-    onError: (e) => {
-      if (getActiveFilePath() === state.path) {
-        $.editorError.textContent = e.message || "Save failed";
-        $.editorError.classList.remove("hidden");
-      }
-    },
-    onSuccess: (d) => {
-      if (d.error !== undefined) {
+  void saveFileAction.dispatch(
+    { path: state.path, content },
+    {
+      onError: (e) => {
         if (getActiveFilePath() === state.path) {
-          $.editorError.textContent = d.error;
+          $.editorError.textContent = e.message || "Save failed";
           $.editorError.classList.remove("hidden");
         }
-        return;
-      }
-      state.original = content;
-      // Don't overwrite state.current — user may have edited during save.
-      // Re-derive button state from live values; guard against file switch.
-      if (getActiveFilePath() === state.path) {
-        $.editorSaveBtn.disabled = state.current === state.original;
-      }
-      $.editorError.classList.add("hidden");
-      if (getActiveFilePath() === state.path) {
-        if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-          state.mode = { kind: "edit", editing: false };
-          renderEditModeUI(state);
+      },
+      onSuccess: (d) => {
+        if (d.error !== undefined) {
+          if (getActiveFilePath() === state.path) {
+            $.editorError.textContent = d.error;
+            $.editorError.classList.remove("hidden");
+          }
+          return;
         }
-        if (state.returnToGitDiff !== null) {
-          const { ref, repo } = state.returnToGitDiff;
-          state.returnToGitDiff = null;
-          state.mode = {
-            kind: "diff",
-            diffSource: gitDiffSource(ref, "", content),
-          };
-          state.pendingHunkCount = null;
-          void fetchGitDiffSources(state, repo, ref);
+        state.original = content;
+        // Don't overwrite state.current — user may have edited during save.
+        // Re-derive button state from live values; guard against file switch.
+        if (getActiveFilePath() === state.path) {
+          $.editorSaveBtn.disabled = state.current === state.original;
         }
-      }
+        $.editorError.classList.add("hidden");
+        if (getActiveFilePath() === state.path) {
+          if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
+            state.mode = { kind: "edit", editing: false };
+            renderEditModeUI(state);
+          }
+          if (state.returnToGitDiff !== null) {
+            const { ref, repo } = state.returnToGitDiff;
+            state.returnToGitDiff = null;
+            state.mode = {
+              kind: "diff",
+              diffSource: gitDiffSource(ref, "", content),
+            };
+            state.pendingHunkCount = null;
+            void fetchGitDiffSources(state, repo, ref);
+          }
+        }
+      },
     },
-  });
+  );
 }
 
 // --- Plan handoff ---
 
 async function sendActivePlan(): Promise<void> {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   const chatID = planDraftChatID(state.path);
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   const content = state.current; // capture before await
   const result = await sendPlanAction.dispatch({ chatID, content });
   if (result === null) {

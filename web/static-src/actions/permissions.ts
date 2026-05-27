@@ -41,7 +41,11 @@ interface RemoveRuleArgs {
 // Any mismatch between local and server state is corrected on the next page
 // load when loadRules() is called during initShellPolicy().
 
-export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previousRule: CommandRule | undefined }>({
+export const addRule = apiAction<
+  AddRuleArgs,
+  unknown,
+  { pattern: string; previousRule: CommandRule | undefined }
+>({
   name: "permissions.add_rule",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -58,12 +62,18 @@ export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previo
     const previousRule = idx >= 0 ? rules[idx] : undefined;
     const pending: CommandRule = { pattern, mode, priority, created_at: Date.now() };
     const next = [...rules];
-    if (idx >= 0) next[idx] = pending; else next.push(pending);
+    if (idx >= 0) {
+      next[idx] = pending;
+    } else {
+      next.push(pending);
+    }
     setRules(next);
     return { pattern, previousRule };
   },
   rollback: ({ getCurrentRules, setRules }, op) => {
-    if (op === undefined) return;
+    if (op === undefined) {
+      return;
+    }
     // Read current state at rollback time, not the dispatch-time
     // snapshot. If concurrent mutations (e.g. loadRules) replaced
     // the rules array, we splice into the latest state instead of
@@ -78,7 +88,7 @@ export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previo
       const prev = op.previousRule;
       const found = current.some((r) => r.pattern === op.pattern);
       if (found) {
-        setRules(current.map((r) => r.pattern === op.pattern ? prev : r));
+        setRules(current.map((r) => (r.pattern === op.pattern ? prev : r)));
       } else {
         setRules([...current, prev]);
       }
@@ -90,7 +100,11 @@ export const addRule = apiAction<AddRuleArgs, unknown, { pattern: string; previo
   error: "Couldn't add rule",
 });
 
-export const removeRule = apiAction<RemoveRuleArgs, void, { previousRule: CommandRule | undefined; atIndex: number }>({
+export const removeRule = apiAction<
+  RemoveRuleArgs,
+  void,
+  { previousRule: CommandRule | undefined; atIndex: number }
+>({
   name: "permissions.remove_rule",
   // Not retryable: a timed-out DELETE may have succeeded server-side;
   // retrying would hit 404 and trigger a misleading rollback.
@@ -106,7 +120,9 @@ export const removeRule = apiAction<RemoveRuleArgs, void, { previousRule: Comman
     return { previousRule, atIndex: idx };
   },
   rollback: ({ getCurrentRules, setRules }, op) => {
-    if (op === undefined || op.previousRule === undefined) return;
+    if (op?.previousRule === undefined) {
+      return;
+    }
     // Splice previousRule back into the current rules array at its
     // original position. Without atIndex the rule would jump to the
     // end of the list on rollback (cosmetic glitch); using atIndex

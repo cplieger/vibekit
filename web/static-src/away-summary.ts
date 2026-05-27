@@ -42,10 +42,14 @@ class AwaySummaryController {
 
   private checkAway(): void {
     const elapsed = Date.now() - this.lastHiddenAt;
-    if (elapsed < AWAY_THRESHOLD_MS) return;
+    if (elapsed < AWAY_THRESHOLD_MS) {
+      return;
+    }
 
     const s = getActive();
-    if (s === undefined) return;
+    if (s === undefined) {
+      return;
+    }
 
     if (s.id !== this.lastChatId) {
       this.snapshotState();
@@ -61,10 +65,14 @@ class AwaySummaryController {
     const contextGrowth = s.usage.context_pct - this.lastContextPct;
     const contextSize = s.usage.context_size;
     const tokensConsumed = contextSize > 0 ? (contextGrowth / 100) * contextSize : 0;
-    if (tokensConsumed < TOKEN_THRESHOLD) return;
+    if (tokensConsumed < TOKEN_THRESHOLD) {
+      return;
+    }
 
     const newMsgs = s.messages.length - this.lastMsgCount;
-    if (newMsgs <= 0) return;
+    if (newMsgs <= 0) {
+      return;
+    }
 
     let assistantMsgs = 0;
     let toolCalls = 0;
@@ -88,11 +96,19 @@ class AwaySummaryController {
     }
 
     const parts: string[] = [];
-    if (assistantMsgs > 0) parts.push(`${String(assistantMsgs)} response${assistantMsgs > 1 ? "s" : ""}`);
-    if (toolCalls > 0) parts.push(`${String(toolCalls)} tool call${toolCalls > 1 ? "s" : ""}`);
-    if (changedPaths.size > 0) parts.push(`${String(changedPaths.size)} file${changedPaths.size > 1 ? "s" : ""} changed`);
+    if (assistantMsgs > 0) {
+      parts.push(`${String(assistantMsgs)} response${assistantMsgs > 1 ? "s" : ""}`);
+    }
+    if (toolCalls > 0) {
+      parts.push(`${String(toolCalls)} tool call${toolCalls > 1 ? "s" : ""}`);
+    }
+    if (changedPaths.size > 0) {
+      parts.push(`${String(changedPaths.size)} file${changedPaths.size > 1 ? "s" : ""} changed`);
+    }
 
-    if (parts.length === 0) return;
+    if (parts.length === 0) {
+      return;
+    }
 
     const awayMins = Math.round(elapsed / 60_000);
     const msg = `Welcome back (${String(awayMins)}m away). ${parts.join(", ")}.`;

@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -22,7 +25,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: (value: string) => void;
     const action = defineAction({
       name: "test.bind1",
-      run: () => new Promise<string>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.bind1", btn);
@@ -38,7 +44,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind2",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.bind2", btn);
@@ -54,7 +63,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind3",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.bind3", btn, { ariaBusy: false });
@@ -68,7 +80,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind4",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.bind4", btn, { pendingClass: "btn-loading" });
@@ -84,24 +99,30 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind5",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
-    btn.disabled = true;  // disabled for some unrelated reason (e.g. validation)
+    btn.disabled = true; // disabled for some unrelated reason (e.g. validation)
     bindLoadingState("test.bind5", btn, { preserveDisabled: true });
-    expect(btn.disabled).toBe(true);  // still disabled
+    expect(btn.disabled).toBe(true); // still disabled
     const p = action.dispatch({});
-    expect(btn.disabled).toBe(true);  // still disabled (now from pending)
+    expect(btn.disabled).toBe(true); // still disabled (now from pending)
     resolveRun!();
     await p;
-    expect(btn.disabled).toBe(true);  // STAYS disabled (original state preserved)
+    expect(btn.disabled).toBe(true); // STAYS disabled (original state preserved)
   });
 
   it("ignores transitions of other actions", async () => {
     let resolveRun: () => void;
     const target = defineAction({
       name: "test.bind6.target",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const noise = defineAction({
       name: "test.bind6.noise",
@@ -122,7 +143,10 @@ describe("bindLoadingState — single name", () => {
     const resolvers: (() => void)[] = [];
     const action = defineAction({
       name: "test.bind7",
-      run: () => new Promise<void>((r) => { resolvers.push(r); }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolvers.push(r);
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.bind7", btn);
@@ -131,7 +155,7 @@ describe("bindLoadingState — single name", () => {
     expect(btn.disabled).toBe(true);
     resolvers[0]!();
     await p1;
-    expect(btn.disabled).toBe(true);  // still pending: instance #2
+    expect(btn.disabled).toBe(true); // still pending: instance #2
     resolvers[1]!();
     await p2;
     expect(btn.disabled).toBe(false);
@@ -141,7 +165,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind8",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     const unbind = bindLoadingState("test.bind8", btn);
@@ -157,7 +184,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind9",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     // Initially enabled.
@@ -178,7 +208,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind10",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     btn.classList.add("other");
@@ -200,7 +233,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind11",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     // External code sets aria-busy before bind.
@@ -221,7 +257,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind12",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     // Initially enabled.
@@ -244,7 +283,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind13",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     const unbind = bindLoadingState("test.bind13", btn);
@@ -262,7 +304,10 @@ describe("bindLoadingState — single name", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.bind_autodispose",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -290,11 +335,17 @@ describe("bindLoadingState — multi-name", () => {
     let resolve2!: () => void;
     const a1 = defineAction({
       name: "test.multi1",
-      run: () => new Promise<void>((r) => { resolve1 = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve1 = r;
+        }),
     });
     const a2 = defineAction({
       name: "test.multi2",
-      run: () => new Promise<void>((r) => { resolve2 = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve2 = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState(["test.multi1", "test.multi2"], btn);
@@ -323,7 +374,10 @@ describe("bindLoadingState — multi-name", () => {
     let resolve!: () => void;
     const action = defineAction({
       name: "test.multi_single",
-      run: () => new Promise<void>((r) => { resolve = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState(["test.multi_single"], btn);
@@ -338,7 +392,10 @@ describe("bindLoadingState — multi-name", () => {
     let resolve!: () => void;
     const action = defineAction({
       name: "test.multi_dispose",
-      run: () => new Promise<void>((r) => { resolve = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -356,7 +413,10 @@ describe("bindLoadingState — multi-name", () => {
     let resolve!: () => void;
     const action = defineAction({
       name: "test.multi_unsub",
-      run: () => new Promise<void>((r) => { resolve = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve = r;
+        }),
     });
     const btn = document.createElement("button");
     const unbind = bindLoadingState(["test.multi_unsub"], btn);
@@ -374,7 +434,10 @@ describe("bindLoadingState — focus restore", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.focus_restore",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -395,7 +458,10 @@ describe("bindLoadingState — focus restore", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.focus_no_steal",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     const other = document.createElement("input");
@@ -427,7 +493,10 @@ describe("bindLoadingState — focus restore edge cases", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.focus_preserve_disabled",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     const other = document.createElement("input");
@@ -453,7 +522,9 @@ describe("bindLoadingState — focus restore edge cases", () => {
   it("restores focus after error (not just success)", async () => {
     const action = defineAction({
       name: "test.focus_on_error",
-      run: async () => { throw new Error("boom"); },
+      run: async () => {
+        throw new Error("boom");
+      },
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -473,11 +544,17 @@ describe("bindLoadingState — multi-name focus restore", () => {
     let resolve2!: () => void;
     const a1 = defineAction({
       name: "test.multi_focus1",
-      run: () => new Promise<void>((r) => { resolve1 = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve1 = r;
+        }),
     });
     const a2 = defineAction({
       name: "test.multi_focus2",
-      run: () => new Promise<void>((r) => { resolve2 = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve2 = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -502,7 +579,10 @@ describe("bindLoadingState — multi-name focus restore", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.multi_focus_no_steal",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     const other = document.createElement("input");
@@ -525,7 +605,10 @@ describe("bindLoadingState — disabledFn", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn1",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     let formValid = true;
     const btn = document.createElement("button");
@@ -545,7 +628,10 @@ describe("bindLoadingState — disabledFn", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn2",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     bindLoadingState("test.disabledfn2", btn, { disabledFn: () => false });
@@ -560,7 +646,10 @@ describe("bindLoadingState — disabledFn", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn3",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     btn.disabled = true;
@@ -581,7 +670,10 @@ describe("bindLoadingState — disabledFn", () => {
     let resolve1!: () => void;
     const a1 = defineAction({
       name: "test.multi_dfn1",
-      run: () => new Promise<void>((r) => { resolve1 = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolve1 = r;
+        }),
     });
     let externalDisabled = false;
     const btn = document.createElement("button");
@@ -604,13 +696,18 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn_throw",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
     bindLoadingState("test.disabledfn_throw", btn, {
       pendingClass: "loading",
-      disabledFn: () => { throw new Error("validation exploded"); },
+      disabledFn: () => {
+        throw new Error("validation exploded");
+      },
     });
     const p = action.dispatch({});
     expect(btn.disabled).toBe(true);
@@ -630,13 +727,19 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn_throw_focus",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
     let shouldThrow = false;
     bindLoadingState("test.disabledfn_throw_focus", btn, {
-      disabledFn: () => { if (shouldThrow) throw new Error("boom"); return false; },
+      disabledFn: () => {
+        if (shouldThrow) throw new Error("boom");
+        return false;
+      },
     });
     btn.focus();
     expect(document.activeElement).toBe(btn);
@@ -655,7 +758,10 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.disabledfn_no_focus",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
@@ -677,13 +783,18 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     let resolveRun: () => void;
     const action = defineAction({
       name: "test.multi_dfn_throw",
-      run: () => new Promise<void>((r) => { resolveRun = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveRun = r;
+        }),
     });
     const btn = document.createElement("button");
     document.body.appendChild(btn);
     bindLoadingState(["test.multi_dfn_throw", "test.multi_dfn_other"], btn, {
       pendingClass: "spin",
-      disabledFn: () => { throw new Error("kaboom"); },
+      disabledFn: () => {
+        throw new Error("kaboom");
+      },
     });
     const p = action.dispatch({});
     expect(btn.disabled).toBe(true);
@@ -697,4 +808,3 @@ describe("bindLoadingState — disabledFn edge cases", () => {
     btn.remove();
   });
 });
-

@@ -32,10 +32,7 @@ let opened: OpenedMenu | null = null;
 
 /** Open an overflow menu anchored to `trigger`. Closes any previously
  *  open menu and installs an outside-click + Escape close. */
-export function openOverflowMenu(
-  trigger: HTMLElement,
-  items: readonly OverflowMenuItem[],
-): void {
+export function openOverflowMenu(trigger: HTMLElement, items: readonly OverflowMenuItem[]): void {
   closeOverflowMenu();
 
   const root = document.createElement("div");
@@ -50,13 +47,17 @@ export function openOverflowMenu(
     btn.dataset["overflowItem"] = item.id;
     btn.setAttribute("role", "menuitem");
     btn.textContent = item.label;
-    if (item.danger === true) btn.classList.add("overflow-menu-item-danger");
+    if (item.danger === true) {
+      btn.classList.add("overflow-menu-item-danger");
+    }
     if (item.disabled === true) {
       btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
     }
     btn.addEventListener("click", () => {
-      if (item.disabled === true) return;
+      if (item.disabled === true) {
+        return;
+      }
       closeOverflowMenu();
       item.onSelect();
     });
@@ -77,9 +78,15 @@ export function openOverflowMenu(
 
   const onDocumentClick = (e: MouseEvent): void => {
     const target = e.target as Node | null;
-    if (target === null) return;
-    if (root.contains(target)) return;
-    if (trigger.contains(target)) return;
+    if (target === null) {
+      return;
+    }
+    if (root.contains(target)) {
+      return;
+    }
+    if (trigger.contains(target)) {
+      return;
+    }
     closeOverflowMenu();
   };
   const onKey = (e: KeyboardEvent): void => {
@@ -88,15 +95,22 @@ export function openOverflowMenu(
       closeOverflowMenu();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      const items = root.querySelectorAll<HTMLButtonElement>(".overflow-menu-item:not([aria-disabled='true'])");
-      if (items.length === 0) return;
+      const items = root.querySelectorAll<HTMLButtonElement>(
+        ".overflow-menu-item:not([aria-disabled='true'])",
+      );
+      if (items.length === 0) {
+        return;
+      }
       const current = root.querySelector<HTMLButtonElement>(".overflow-menu-item:focus");
       let idx = current !== null ? Array.from(items).indexOf(current) : -1;
-      idx = e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      idx =
+        e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
       items[idx]!.focus();
     }
   };
-  const onScrollOrResize = (): void => { closeOverflowMenu(); };
+  const onScrollOrResize = (): void => {
+    closeOverflowMenu();
+  };
 
   // Attach keydown immediately — Escape doesn't need deferral.
   document.addEventListener("keydown", onKey);
@@ -134,7 +148,9 @@ export function openOverflowMenu(
 
 /** Close any currently-open overflow menu. No-op if none open. */
 export function closeOverflowMenu(): void {
-  if (opened === null) return;
+  if (opened === null) {
+    return;
+  }
   const o = opened;
   opened = null;
   o.cleanup();
@@ -142,4 +158,6 @@ export function closeOverflowMenu(): void {
 }
 
 /** Test seam: report whether a menu is currently open. */
-export function _isOverflowMenuOpen(): boolean { return opened !== null; }
+export function _isOverflowMenuOpen(): boolean {
+  return opened !== null;
+}

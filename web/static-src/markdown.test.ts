@@ -33,8 +33,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
       "javascript:void(0)",
       "JavaScript:alert(document.cookie)",
     );
-    const mdWithLink = fc.tuple(safeText, jsUrl)
-      .map(([text, url]) => `[${text}](${url})`);
+    const mdWithLink = fc.tuple(safeText, jsUrl).map(([text, url]) => `[${text}](${url})`);
 
     fc.assert(
       fc.property(mdWithLink, (input) => {
@@ -68,14 +67,16 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 
   it("never produces data: URIs in href/src attributes", () => {
     // Generate markdown with images/links that attempt data: injection
-    const mdWithDataUri = fc.tuple(
-      fc.string({ minLength: 1, maxLength: 50 }),
-      fc.constantFrom(
-        "data:text/html,<script>alert(1)</script>",
-        "data:image/svg+xml,<svg onload=alert(1)>",
-        "DATA:text/html,test",
-      ),
-    ).map(([text, url]) => `![${text}](${url})`);
+    const mdWithDataUri = fc
+      .tuple(
+        fc.string({ minLength: 1, maxLength: 50 }),
+        fc.constantFrom(
+          "data:text/html,<script>alert(1)</script>",
+          "data:image/svg+xml,<svg onload=alert(1)>",
+          "DATA:text/html,test",
+        ),
+      )
+      .map(([text, url]) => `![${text}](${url})`);
 
     fc.assert(
       fc.property(mdWithDataUri, (input) => {
@@ -95,13 +96,8 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 
   it("never produces vbscript: URIs in href/src attributes", () => {
     const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
-    const vbUrl = fc.constantFrom(
-      "vbscript:msgbox",
-      "VBSCRIPT:MsgBox",
-      "vbscript:Execute",
-    );
-    const mdWithVbscript = fc.tuple(safeText, vbUrl)
-      .map(([text, url]) => `[${text}](${url})`);
+    const vbUrl = fc.constantFrom("vbscript:msgbox", "VBSCRIPT:MsgBox", "vbscript:Execute");
+    const mdWithVbscript = fc.tuple(safeText, vbUrl).map(([text, url]) => `[${text}](${url})`);
 
     fc.assert(
       fc.property(mdWithVbscript, (input) => {
@@ -120,15 +116,11 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 
   it("XSS payloads in link text are escaped", () => {
     fc.assert(
-      fc.property(
-        fc.string({ minLength: 1, maxLength: 200 }),
-        fc.webUrl(),
-        (text, url) => {
-          const md = `[${text}](${url})`;
-          const html = renderMarkdown(md);
-          expect(html.toLowerCase()).not.toContain("<script");
-        },
-      ),
+      fc.property(fc.string({ minLength: 1, maxLength: 200 }), fc.webUrl(), (text, url) => {
+        const md = `[${text}](${url})`;
+        const html = renderMarkdown(md);
+        expect(html.toLowerCase()).not.toContain("<script");
+      }),
       { numRuns: 100 },
     );
   });
@@ -147,8 +139,16 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "italic with _", input: "_italic_", expected: "<p><em>italic</em></p>" },
     { name: "strikethrough", input: "~~strike~~", expected: "<p><s>strike</s></p>" },
     { name: "inline code", input: "`code`", expected: "<p><code>code</code></p>" },
-    { name: "inline code with special chars", input: "`<script>alert(1)</script>`", expected: /&lt;script&gt;/ },
-    { name: "nested bold in italic", input: "*hello **world***", expected: /<em>.*<strong>world<\/strong>.*<\/em>/ },
+    {
+      name: "inline code with special chars",
+      input: "`<script>alert(1)</script>`",
+      expected: /&lt;script&gt;/,
+    },
+    {
+      name: "nested bold in italic",
+      input: "*hello **world***",
+      expected: /<em>.*<strong>world<\/strong>.*<\/em>/,
+    },
 
     // --- Headings (ATX only — smd-parser does not implement setext headings,
     //     which are rare in kiro-cli output) ---
@@ -160,11 +160,23 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     { name: "h6 ATX", input: "###### Heading", expected: /^<h6>.*Heading.*<\/h6>$/ },
 
     // --- Links ---
-    { name: "basic link", input: "[text](https://example.com)", expected: /href="https:\/\/example\.com"/ },
+    {
+      name: "basic link",
+      input: "[text](https://example.com)",
+      expected: /href="https:\/\/example\.com"/,
+    },
     { name: "link with target blank", input: "[x](https://a.com)", expected: /target="_blank"/ },
     { name: "link with rel noopener", input: "[x](https://a.com)", expected: /rel="noopener"/ },
-    { name: "javascript: link blocked", input: "[click](javascript:alert(1))", expected: /href="#"/ },
-    { name: "JAVASCRIPT: link blocked (case)", input: "[click](JAVASCRIPT:alert(1))", expected: /href="#"/ },
+    {
+      name: "javascript: link blocked",
+      input: "[click](javascript:alert(1))",
+      expected: /href="#"/,
+    },
+    {
+      name: "JAVASCRIPT: link blocked (case)",
+      input: "[click](JAVASCRIPT:alert(1))",
+      expected: /href="#"/,
+    },
     { name: "data: link blocked", input: "[click](data:text/html,<script>)", expected: /href="#"/ },
     { name: "vbscript: link blocked", input: "[click](vbscript:msgbox)", expected: /href="#"/ },
     { name: "file: link blocked", input: "[click](file:///etc/passwd)", expected: /href="#"/ },
@@ -178,33 +190,77 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     // --- Code blocks ---
     // (pre gets class="code"; code gets class="language-X" when a lang is set;
     //  plain fenced blocks omit the code-class attribute.)
-    { name: "fenced code block", input: "```\ncode\n```", expected: /<pre class="code"><code>code<\/code><\/pre>/ },
+    {
+      name: "fenced code block",
+      input: "```\ncode\n```",
+      expected: /<pre class="code"><code>code<\/code><\/pre>/,
+    },
     { name: "fenced code with lang", input: "```js\nvar x;\n```", expected: /class="language-js"/ },
-    { name: "code block escapes HTML", input: "```\n<script>alert(1)</script>\n```", expected: /&lt;script&gt;alert\(1\)&lt;\/script&gt;/ },
-    { name: "nested fences", input: "````\n```\ninner\n```\n````", expected: /<pre.*<code>```\ninner\n```<\/code><\/pre>/ },
+    {
+      name: "code block escapes HTML",
+      input: "```\n<script>alert(1)</script>\n```",
+      expected: /&lt;script&gt;alert\(1\)&lt;\/script&gt;/,
+    },
+    {
+      name: "nested fences",
+      input: "````\n```\ninner\n```\n````",
+      expected: /<pre.*<code>```\ninner\n```<\/code><\/pre>/,
+    },
 
     // --- Lists ---
-    { name: "unordered list", input: "- item1\n- item2", expected: /<ul>.*<li>.*item1.*<\/li>.*<li>.*item2.*<\/li>.*<\/ul>/s },
-    { name: "ordered list", input: "1. first\n2. second", expected: /<ol>.*<li>.*first.*<\/li>.*<li>.*second.*<\/li>.*<\/ol>/s },
+    {
+      name: "unordered list",
+      input: "- item1\n- item2",
+      expected: /<ul>.*<li>.*item1.*<\/li>.*<li>.*item2.*<\/li>.*<\/ul>/s,
+    },
+    {
+      name: "ordered list",
+      input: "1. first\n2. second",
+      expected: /<ol>.*<li>.*first.*<\/li>.*<li>.*second.*<\/li>.*<\/ol>/s,
+    },
     { name: "bullet with +", input: "+ item", expected: /<ul>.*<li>.*item.*<\/li>.*<\/ul>/s },
     { name: "bullet with *", input: "* item", expected: /<ul>.*<li>.*item.*<\/li>.*<\/ul>/s },
 
     // --- Blockquotes ---
     { name: "blockquote", input: "> quoted", expected: /<blockquote>.*quoted.*<\/blockquote>/s },
-    { name: "nested blockquote", input: "> > nested", expected: /<blockquote>.*<blockquote>.*nested.*<\/blockquote>.*<\/blockquote>/s },
+    {
+      name: "nested blockquote",
+      input: "> > nested",
+      expected: /<blockquote>.*<blockquote>.*nested.*<\/blockquote>.*<\/blockquote>/s,
+    },
 
     // --- Horizontal rules (HTML5 void form: <hr>) ---
     { name: "hr with ---", input: "text\n\n---\n\nmore", expected: /<hr>/ },
     { name: "hr with * * *", input: "a\n\n* * *\n\nb", expected: /<hr>/ },
 
     // --- Tables (GFM) — smd-parser preserves cell padding whitespace ---
-    { name: "basic table", input: "\n| A | B |\n|---|---|\n| 1 | 2 |\n", expected: /<table>.*<th[^>]*>\s*A\s*<\/th>.*<td[^>]*>\s*1\s*<\/td>/s },
-    { name: "table escapes cell content", input: "\n| <b> |\n|---|\n| <i> |\n", expected: /&lt;b&gt;/ },
+    {
+      name: "basic table",
+      input: "\n| A | B |\n|---|---|\n| 1 | 2 |\n",
+      expected: /<table>.*<th[^>]*>\s*A\s*<\/th>.*<td[^>]*>\s*1\s*<\/td>/s,
+    },
+    {
+      name: "table escapes cell content",
+      input: "\n| <b> |\n|---|\n| <i> |\n",
+      expected: /&lt;b&gt;/,
+    },
 
     // --- Task lists (smd-parser emits HTML5 boolean attrs as attr="") ---
-    { name: "checked task", input: "- [x] done", expected: /<input type="checkbox" disabled="" aria-label="Task item" checked=""/ },
-    { name: "unchecked task", input: "- [ ] todo", expected: /<input type="checkbox" disabled="" aria-label="Task item"/ },
-    { name: "task list XSS in content", input: "- [x] <img onerror=alert(1)>", expected: /&lt;img onerror=alert\(1\)&gt;/ },
+    {
+      name: "checked task",
+      input: "- [x] done",
+      expected: /<input type="checkbox" disabled="" aria-label="Task item" checked=""/,
+    },
+    {
+      name: "unchecked task",
+      input: "- [ ] todo",
+      expected: /<input type="checkbox" disabled="" aria-label="Task item"/,
+    },
+    {
+      name: "task list XSS in content",
+      input: "- [x] <img onerror=alert(1)>",
+      expected: /&lt;img onerror=alert\(1\)&gt;/,
+    },
 
     // --- Paragraphs (no inter-paragraph newline in smd-parser output) ---
     { name: "single paragraph", input: "hello", expected: "<p>hello</p>" },
@@ -220,11 +276,23 @@ describe("renderMarkdown edge cases (table-driven)", () => {
     // HTML in plain text is ESCAPED, not passed through. This is the
     // correct XSS-safe behaviour; the old snarkdown port passed it through
     // literally, which was a latent risk.
-    { name: "HTML in text is escaped", input: "<div>test</div>", expected: /&lt;div&gt;test&lt;\/div&gt;/ },
+    {
+      name: "HTML in text is escaped",
+      input: "<div>test</div>",
+      expected: /&lt;div&gt;test&lt;\/div&gt;/,
+    },
     { name: "ampersand in text is escaped", input: "a & b", expected: /a &amp; b/ },
     // Unclosed fences auto-close at EOF (CommonMark-correct).
-    { name: "unclosed fence auto-closes", input: "```\nno close", expected: /<pre class="code"><code>no close<\/code><\/pre>/ },
-    { name: "consecutive lists merge", input: "1. a\n\n2. b", expected: /<ol>.*<li>.*a.*<\/li>.*<li>.*b.*<\/li>.*<\/ol>/s },
+    {
+      name: "unclosed fence auto-closes",
+      input: "```\nno close",
+      expected: /<pre class="code"><code>no close<\/code><\/pre>/,
+    },
+    {
+      name: "consecutive lists merge",
+      input: "1. a\n\n2. b",
+      expected: /<ol>.*<li>.*a.*<\/li>.*<li>.*b.*<\/li>.*<\/ol>/s,
+    },
   ];
 
   it.each(cases)("$name", ({ input, expected }) => {
@@ -303,7 +371,6 @@ describe("createMarkdownStream streaming/one-shot equivalence", () => {
     expect(el.innerHTML).toBe(after);
   });
 });
-
 
 // ---------------------------------------------------------------------------
 // Surface contracts: renderMarkdown is pure structure; renderMarkdownInto

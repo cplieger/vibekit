@@ -308,7 +308,23 @@ describe("normalizeLang", () => {
 import fc from "fast-check";
 
 describe("highlightByLang property-based fuzz", () => {
-  const allLangs = ["go", "ts", "js", "py", "sh", "rs", "rb", "c", "yaml", "json", "css", "html", "dockerfile", "toml", ""];
+  const allLangs = [
+    "go",
+    "ts",
+    "js",
+    "py",
+    "sh",
+    "rs",
+    "rb",
+    "c",
+    "yaml",
+    "json",
+    "css",
+    "html",
+    "dockerfile",
+    "toml",
+    "",
+  ];
 
   it("never throws for any (input, lang) pair", () => {
     expect.assertions(1);

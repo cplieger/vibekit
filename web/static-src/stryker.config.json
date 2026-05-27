@@ -31,14 +31,7 @@
     "excludedMutations": ["StringLiteral"]
   },
 
-  "ignorePatterns": [
-    "node_modules",
-    "reports",
-    "coverage",
-    "*.test.ts",
-    "*.d.ts",
-    "../static"
-  ],
+  "ignorePatterns": ["node_modules", "reports", "coverage", "*.test.ts", "*.d.ts", "../static"],
 
   "ignoreStatic": true,
 

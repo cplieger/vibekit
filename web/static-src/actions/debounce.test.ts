@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";

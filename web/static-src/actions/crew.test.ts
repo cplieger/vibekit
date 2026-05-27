@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
@@ -62,8 +65,8 @@ describe("crew.sendMessage", () => {
       .mockResolvedValueOnce({ ok: true, status: 200 });
 
     const p = sendMessage.dispatch({ chatID: "c1", subSessionID: "s1", text: "retry" });
-    await vi.advanceTimersByTimeAsync(300);  // first retry delay
-    await vi.advanceTimersByTimeAsync(600);  // second retry delay (300*2)
+    await vi.advanceTimersByTimeAsync(300); // first retry delay
+    await vi.advanceTimersByTimeAsync(600); // second retry delay (300*2)
     await p;
     expect(mockSend).toHaveBeenCalledTimes(3);
     expect(recentLog()[0]?.status).toBe("success");

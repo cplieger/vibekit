@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { _resetForTest as resetDefine } from "./define.js";
@@ -44,7 +47,12 @@ describe("downloadFiles action", () => {
     const removeSpy = vi.fn();
     vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
       if (tag === "a") {
-        return { href: "", download: "", click: clickSpy, remove: removeSpy } as unknown as HTMLAnchorElement;
+        return {
+          href: "",
+          download: "",
+          click: clickSpy,
+          remove: removeSpy,
+        } as unknown as HTMLAnchorElement;
       }
       return document.createElement(tag);
     });
@@ -88,7 +96,12 @@ describe("downloadFiles action", () => {
     const clickSpy = vi.fn();
     vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
       if (tag === "a") {
-        return { href: "", download: "", click: clickSpy, remove: vi.fn() } as unknown as HTMLAnchorElement;
+        return {
+          href: "",
+          download: "",
+          click: clickSpy,
+          remove: vi.fn(),
+        } as unknown as HTMLAnchorElement;
       }
       return document.createElement(tag);
     });
@@ -110,11 +123,17 @@ describe("downloadFiles action", () => {
 
   it("records pending then success in registry", async () => {
     const fakeBlob = new Blob(["z"]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(fakeBlob) }));
-    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
-    vi.spyOn(document, "createElement").mockReturnValue(
-      { href: "", download: "", click: vi.fn(), remove: vi.fn() } as unknown as HTMLAnchorElement,
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(fakeBlob) }),
     );
+    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
+    vi.spyOn(document, "createElement").mockReturnValue({
+      href: "",
+      download: "",
+      click: vi.fn(),
+      remove: vi.fn(),
+    } as unknown as HTMLAnchorElement);
     vi.spyOn(document.body, "appendChild").mockImplementation((el) => el);
 
     await downloadFiles.dispatch({ paths: ["a.txt"] });

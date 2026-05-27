@@ -171,21 +171,18 @@ describe("computeBackoff sequence-level invariants", () => {
   it("arbitrary prev-value sequences maintain monotonicity and bounds", () => {
     expect.assertions(1);
     const result = fc.check(
-      fc.property(
-        fc.array(fc.nat(60_000), { minLength: 2, maxLength: 50 }),
-        (prevValues) => {
-          for (const prev of prevValues) {
-            const { delay, backoffMs } = computeBackoff(prev);
-            // Invariant 1: backoffMs never exceeds BACKOFF_CAP_MS
-            if (backoffMs > BACKOFF_CAP_MS) return false;
-            // Invariant 2: delay is always in [0, backoffMs)
-            if (delay < 0 || delay >= backoffMs) return false;
-            // Invariant 3: after a successful reconnect (prev=0), resets to 500ms
-            if (prev === 0 && backoffMs !== 500) return false;
-          }
-          return true;
-        },
-      ),
+      fc.property(fc.array(fc.nat(60_000), { minLength: 2, maxLength: 50 }), (prevValues) => {
+        for (const prev of prevValues) {
+          const { delay, backoffMs } = computeBackoff(prev);
+          // Invariant 1: backoffMs never exceeds BACKOFF_CAP_MS
+          if (backoffMs > BACKOFF_CAP_MS) return false;
+          // Invariant 2: delay is always in [0, backoffMs)
+          if (delay < 0 || delay >= backoffMs) return false;
+          // Invariant 3: after a successful reconnect (prev=0), resets to 500ms
+          if (prev === 0 && backoffMs !== 500) return false;
+        }
+        return true;
+      }),
       { numRuns: 200 },
     );
     expect(result.failed).toBe(false);
@@ -194,21 +191,18 @@ describe("computeBackoff sequence-level invariants", () => {
   it("simulated reconnect sequences with resets maintain invariants", () => {
     expect.assertions(1);
     const result = fc.check(
-      fc.property(
-        fc.array(fc.boolean(), { minLength: 5, maxLength: 30 }),
-        (resetPattern) => {
-          let prev = 0;
-          for (const shouldReset of resetPattern) {
-            if (shouldReset) prev = 0;
-            const { delay, backoffMs } = computeBackoff(prev);
-            if (backoffMs > BACKOFF_CAP_MS) return false;
-            if (delay < 0 || delay >= backoffMs) return false;
-            if (prev === 0 && backoffMs !== 500) return false;
-            prev = backoffMs;
-          }
-          return true;
-        },
-      ),
+      fc.property(fc.array(fc.boolean(), { minLength: 5, maxLength: 30 }), (resetPattern) => {
+        let prev = 0;
+        for (const shouldReset of resetPattern) {
+          if (shouldReset) prev = 0;
+          const { delay, backoffMs } = computeBackoff(prev);
+          if (backoffMs > BACKOFF_CAP_MS) return false;
+          if (delay < 0 || delay >= backoffMs) return false;
+          if (prev === 0 && backoffMs !== 500) return false;
+          prev = backoffMs;
+        }
+        return true;
+      }),
       { numRuns: 200 },
     );
     expect(result.failed).toBe(false);

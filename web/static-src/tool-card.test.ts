@@ -35,7 +35,11 @@ const { extractSubtitle, mcpHue } = await import("./tool-card.js");
 // ---------------------------------------------------------------------------
 
 describe("extractSubtitle", () => {
-  const cases: Array<{ name: string; input: Record<string, unknown> | undefined; expected: string }> = [
+  const cases: Array<{
+    name: string;
+    input: Record<string, unknown> | undefined;
+    expected: string;
+  }> = [
     { name: "undefined input", input: undefined, expected: "" },
     { name: "empty object", input: {}, expected: "" },
     { name: "query key", input: { query: "find all files" }, expected: "find all files" },
@@ -44,12 +48,28 @@ describe("extractSubtitle", () => {
     { name: "url key", input: { url: "https://example.com" }, expected: "https://example.com" },
     { name: "path key", input: { path: "/src/main.ts" }, expected: "/src/main.ts" },
     { name: "explanation key", input: { explanation: "doing stuff" }, expected: "doing stuff" },
-    { name: "priority order: query wins over path", input: { path: "/a", query: "q" }, expected: "q" },
-    { name: "priority order: pattern wins over command", input: { command: "c", pattern: "p" }, expected: "p" },
+    {
+      name: "priority order: query wins over path",
+      input: { path: "/a", query: "q" },
+      expected: "q",
+    },
+    {
+      name: "priority order: pattern wins over command",
+      input: { command: "c", pattern: "p" },
+      expected: "p",
+    },
     { name: "empty string value skipped", input: { query: "", path: "/x" }, expected: "/x" },
     { name: "non-string value skipped", input: { query: 42, path: "/y" }, expected: "/y" },
-    { name: "truncation at 121 chars", input: { query: "a".repeat(121) }, expected: "a".repeat(117) + "\u2026" },
-    { name: "exactly 120 chars not truncated", input: { query: "b".repeat(120) }, expected: "b".repeat(120) },
+    {
+      name: "truncation at 121 chars",
+      input: { query: "a".repeat(121) },
+      expected: "a".repeat(117) + "\u2026",
+    },
+    {
+      name: "exactly 120 chars not truncated",
+      input: { query: "b".repeat(120) },
+      expected: "b".repeat(120),
+    },
     { name: "no matching keys", input: { foo: "bar", baz: "qux" }, expected: "" },
   ];
 
@@ -84,7 +104,7 @@ describe("mcpHue", () => {
   });
 
   it("different inputs produce different hues (for known distinct servers)", () => {
-    const hues = new Set(knownServers.map(s => s.hue));
+    const hues = new Set(knownServers.map((s) => s.hue));
     // With 5 distinct server names, we expect at least 3 distinct hues.
     expect(hues.size).toBeGreaterThanOrEqual(3);
   });

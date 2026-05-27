@@ -30,7 +30,9 @@ function optimisticRemovePR(args: PRArgs): PRRemoveResult | undefined {
 
 /** Rollback: re-insert the PR into its original group position. */
 function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
-  if (op !== undefined) reinsertPRInGroups(op);
+  if (op !== undefined) {
+    reinsertPRInGroups(op);
+  }
 }
 
 // --- Actions ---
@@ -70,11 +72,13 @@ export const refreshPRs = defineAction<void, void>({
     try {
       await refreshPRs(signal);
     } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      throw new ActionError(
-        e instanceof Error ? e.message : "network error",
-        { code: "network", cause: e },
-      );
+      if (signal.aborted) {
+        throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      }
+      throw new ActionError(e instanceof Error ? e.message : "network error", {
+        code: "network",
+        cause: e,
+      });
     }
   },
   error: "Couldn't refresh PRs",

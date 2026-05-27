@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -34,11 +37,16 @@ describe("git.stage", () => {
     await stage.dispatch({ repo: "myrepo", files: ["src/a.ts", "src/b.ts"] });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/git/stage");
-    expect(JSON.parse(opts.body as string)).toEqual({ repo: "myrepo", files: ["src/a.ts", "src/b.ts"] });
+    expect(JSON.parse(opts.body as string)).toEqual({
+      repo: "myrepo",
+      files: ["src/a.ts", "src/b.ts"],
+    });
   });
 
   it("toasts with file name on single-file failure", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "no such file" }), { status: 404 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "no such file" }), { status: 404 }),
+    );
     const { stage } = await import("./git-changes.js");
     await stage.dispatch({ repo: "", files: ["README.md"] });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("README.md"), undefined);
@@ -54,7 +62,9 @@ describe("git.stage", () => {
 
 describe("git.discard", () => {
   it("is not retryable (destructive)", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "timeout" }), { status: 500 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "timeout" }), { status: 500 }),
+    );
     const { discard } = await import("./git-changes.js");
     await discard.dispatch({ repo: "", files: ["x.ts"] });
     const log = recentLog();
@@ -82,7 +92,9 @@ describe("git.push", () => {
   });
 
   it("is not retryable (may have succeeded server-side)", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "rejected" }), { status: 500 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "rejected" }), { status: 500 }),
+    );
     const { push } = await import("./git-changes.js");
     await push.dispatch({ repo: "" });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Push failed"), undefined);
@@ -98,7 +110,9 @@ describe("git.commit", () => {
   });
 
   it("error toast includes truncated commit message", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nothing to commit" }), { status: 400 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "nothing to commit" }), { status: 400 }),
+    );
     const { commit } = await import("./git-changes.js");
     await commit.dispatch({ repo: "", message: "fix: typo" });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("fix: typo"), undefined);
@@ -107,7 +121,9 @@ describe("git.commit", () => {
 
 describe("git.generateCommitMessage", () => {
   it("POSTs to /api/git/commit-message", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: "feat: add X" }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ message: "feat: add X" }), { status: 200 }),
+    );
     const { generateCommitMessage } = await import("./git-changes.js");
     const r = await generateCommitMessage.dispatch({ repo: "main" });
     expect(r).toEqual({ message: "feat: add X" });

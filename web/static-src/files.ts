@@ -17,18 +17,31 @@ import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import {
-  FileEntry, fetchDir, formatSize, formatDate, joinPath, parentPath, displayPath, errorRow,
-  sortEntries, initEditablePath, FetchDirOpts,
+  type FileEntry,
+  fetchDir,
+  formatSize,
+  formatDate,
+  joinPath,
+  parentPath,
+  displayPath,
+  errorRow,
+  sortEntries,
+  initEditablePath,
+  type FetchDirOpts,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
-import { createFile, createFolder, renameFile, deleteFilesBatch, upload, downloadFiles } from "./actions/files.js";
+import {
+  createFile,
+  createFolder,
+  renameFile,
+  deleteFilesBatch,
+  upload,
+  downloadFiles,
+} from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 
-type FbEntry =
-  | { kind: "parent" }
-  | { kind: "entry"; entry: FileEntry };
-
+type FbEntry = { kind: "parent" } | { kind: "entry"; entry: FileEntry };
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
@@ -55,7 +68,9 @@ export class FileBrowserState {
   }
 
   goBack(): boolean {
-    if (this.historyIdx <= 0) return false;
+    if (this.historyIdx <= 0) {
+      return false;
+    }
     this.historyIdx--;
     this.currentPath = this.history[this.historyIdx]!;
     this.selected.clear();
@@ -64,7 +79,9 @@ export class FileBrowserState {
   }
 
   goForward(): boolean {
-    if (this.historyIdx >= this.history.length - 1) return false;
+    if (this.historyIdx >= this.history.length - 1) {
+      return false;
+    }
     this.historyIdx++;
     this.currentPath = this.history[this.historyIdx]!;
     this.selected.clear();
@@ -105,7 +122,9 @@ const state = new FileBrowserState();
 // --- Init ---
 
 export function initFileBrowser(): void {
-  $.filesBtn.addEventListener("click", () => toggleFilesView(loadDir, resetFileBrowser));
+  $.filesBtn.addEventListener("click", () => {
+    toggleFilesView(loadDir, resetFileBrowser);
+  });
   $.fbBack.addEventListener("click", goBack);
   $.fbForward.addEventListener("click", goForward);
   $.fbNewFile.addEventListener("click", newFile);
@@ -125,7 +144,13 @@ export function initFileBrowser(): void {
 
   // Auto-disable buttons while any mutually-exclusive file operation is
   // in flight. Prevents races (e.g. rename + delete on the same selection).
-  const fileOps = ["files.upload", "files.create_file", "files.create_folder", "files.rename", "files.delete"] as const;
+  const fileOps = [
+    "files.upload",
+    "files.create_file",
+    "files.create_folder",
+    "files.rename",
+    "files.delete",
+  ] as const;
   bindLoadingState(fileOps, $.fbUpload, { preserveDisabled: true });
   bindLoadingState(fileOps, $.fbNewFile, { preserveDisabled: true });
   bindLoadingState(fileOps, $.fbNewFolder, { preserveDisabled: true });
@@ -144,15 +169,23 @@ export function initFileBrowser(): void {
 
   // F2 renames the selected single item. No-op for zero or multi.
   document.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key !== "F2") return;
-    if (document.getElementById("files-view")?.classList.contains("hidden") ?? true) return;
-    if (state.selected.size !== 1) return;
+    if (e.key !== "F2") {
+      return;
+    }
+    if (document.getElementById("files-view")?.classList.contains("hidden") ?? true) {
+      return;
+    }
+    if (state.selected.size !== 1) {
+      return;
+    }
     e.preventDefault();
     renameSelected();
   });
 
   // Picker uploads should refresh this view if it's open.
-  setOnUploadComplete(() => loadDir());
+  setOnUploadComplete(() => {
+    loadDir();
+  });
 }
 
 /** Restore the file browser path from settings (called from restoreAll). */
@@ -176,7 +209,9 @@ export { loadDir as loadFileBrowser };
 function initPathInput(): void {
   $.fbPath.setAttribute("aria-label", "File browser path");
   initEditablePath($.fbPath, {
-    onNavigate: (target) => navigate(target),
+    onNavigate: (target) => {
+      navigate(target);
+    },
     getDisplayPath: () => displayPath(state.currentPath),
   });
 }
@@ -186,7 +221,9 @@ function initPathInput(): void {
 function loadDir(): void {
   void fetchDir(state.currentPath, browserFetchHolder).then((d) => {
     if (d.error !== undefined) {
-      if (d.error === "stale") return;
+      if (d.error === "stale") {
+        return;
+      }
       state.entries = [];
       state.entryMap.clear();
       state.dirWritable = false;
@@ -196,7 +233,9 @@ function loadDir(): void {
     }
     state.entries = d.files;
     state.entryMap.clear();
-    for (const e of state.entries) state.entryMap.set(e.name, e);
+    for (const e of state.entries) {
+      state.entryMap.set(e.name, e);
+    }
     state.dirWritable = d.writable;
     renderList();
   });
@@ -204,10 +243,14 @@ function loadDir(): void {
 
 function loadDirAsync(): Promise<void> {
   return fetchDir(state.currentPath, browserFetchHolder).then((d) => {
-    if (d.error !== undefined) return;
+    if (d.error !== undefined) {
+      return;
+    }
     state.entries = d.files;
     state.entryMap.clear();
-    for (const e of state.entries) state.entryMap.set(e.name, e);
+    for (const e of state.entries) {
+      state.entryMap.set(e.name, e);
+    }
     state.dirWritable = d.writable;
     // transition:false so the DOM is updated synchronously — callers
     // chain inline rename on the freshly-created row immediately.
@@ -231,7 +274,9 @@ function navigate(path: string): void {
 }
 
 function goBack(): void {
-  if (!state.goBack()) return;
+  if (!state.goBack()) {
+    return;
+  }
   uiState.save({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
@@ -239,7 +284,9 @@ function goBack(): void {
 }
 
 function goForward(): void {
-  if (!state.goForward()) return;
+  if (!state.goForward()) {
+    return;
+  }
   uiState.save({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
@@ -247,7 +294,9 @@ function goForward(): void {
 }
 
 function loadWithTransition(): void {
-  maybeViewTransition(() => loadDir());
+  maybeViewTransition(() => {
+    loadDir();
+  });
 }
 
 // --- Button state ---
@@ -289,21 +338,29 @@ function renderList(opts: { transition?: boolean } = {}): void {
     $.fbList.setAttribute("role", "list");
 
     const items: FbEntry[] = [];
-    if (state.currentPath !== ".") items.push({ kind: "parent" });
-    for (const entry of sorted) items.push({ kind: "entry", entry });
+    if (state.currentPath !== ".") {
+      items.push({ kind: "parent" });
+    }
+    for (const entry of sorted) {
+      items.push({ kind: "entry", entry });
+    }
 
     reconcile($.fbList, items, {
-      key: (e: FbEntry) => e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`,
-      mount: (e: FbEntry) => e.kind === "parent" ? parentRow() : entryRow(e.entry),
+      key: (e: FbEntry) => (e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`),
+      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry)),
       update: (row: HTMLElement, e: FbEntry) => {
-        if (e.kind !== "entry") return;
+        if (e.kind !== "entry") {
+          return;
+        }
         // Sync metadata that can change when the directory was re-fetched
         // (size, modTime, mode). Selection state is driven by
         // updateRowHighlights() — leave that out of update.
-        const meta = row.querySelector(".fb-meta") as HTMLSpanElement | null;
+        const meta = row.querySelector(".fb-meta");
         if (meta !== null) {
           const parts: string[] = [];
-          if (!e.entry.isDir) parts.push(formatSize(e.entry.size));
+          if (!e.entry.isDir) {
+            parts.push(formatSize(e.entry.size));
+          }
           parts.push(formatDate(e.entry.modTime));
           parts.push(e.entry.mode);
           meta.textContent = parts.join("   ·   ");
@@ -344,7 +401,9 @@ function parentRow(): HTMLDivElement {
   const nameSpan = document.createElement("span");
   nameSpan.className = "fb-name fb-name-link";
   nameSpan.textContent = "..";
-  nameSpan.addEventListener("click", () => navigate(parentPath(state.currentPath)));
+  nameSpan.addEventListener("click", () => {
+    navigate(parentPath(state.currentPath));
+  });
 
   const metaSpan = document.createElement("span");
   metaSpan.className = "fb-meta";
@@ -365,8 +424,11 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   check.className = "fb-check";
   check.checked = state.selected.has(entry.name);
   check.addEventListener("change", () => {
-    if (check.checked) state.selectEntry(entry.name);
-    else state.deselectEntry(entry.name);
+    if (check.checked) {
+      state.selectEntry(entry.name);
+    } else {
+      state.deselectEntry(entry.name);
+    }
     updateActionButtons();
     updateRowHighlights();
   });
@@ -383,14 +445,19 @@ function entryRow(entry: FileEntry): HTMLDivElement {
       shiftSelect(state.lastClickedName, entry.name);
       return;
     }
-    if (entry.isDir) navigate(joinPath(state.currentPath, entry.name));
-    else openFile(joinPath(state.currentPath, entry.name));
+    if (entry.isDir) {
+      navigate(joinPath(state.currentPath, entry.name));
+    } else {
+      openFile(joinPath(state.currentPath, entry.name));
+    }
   });
 
   const meta = document.createElement("span");
   meta.className = "fb-meta";
   const parts: string[] = [];
-  if (!entry.isDir) parts.push(formatSize(entry.size));
+  if (!entry.isDir) {
+    parts.push(formatSize(entry.size));
+  }
   parts.push(formatDate(entry.modTime));
   parts.push(entry.mode);
   meta.textContent = parts.join("   ·   ");
@@ -403,10 +470,14 @@ function entryRow(entry: FileEntry): HTMLDivElement {
 function shiftSelect(from: string, to: string): void {
   const a = state.sortedNames.indexOf(from);
   const b = state.sortedNames.indexOf(to);
-  if (a === -1 || b === -1) return;
+  if (a === -1 || b === -1) {
+    return;
+  }
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
-  for (let i = lo; i <= hi; i++) state.selected.add(state.sortedNames[i]!);
+  for (let i = lo; i <= hi; i++) {
+    state.selected.add(state.sortedNames[i]!);
+  }
   state.lastClickedName = to;
   updateActionButtons();
   updateRowHighlights();
@@ -416,30 +487,47 @@ function updateRowHighlights(): void {
   for (const row of [...$.fbList.children]) {
     const el = row as HTMLDivElement;
     const name = el.dataset["name"];
-    if (name === undefined) continue;
+    if (name === undefined) {
+      continue;
+    }
     el.classList.toggle("fb-row-selected", state.selected.has(name));
-    const check = el.querySelector(".fb-check") as HTMLInputElement | null;
-    if (check !== null) check.checked = state.selected.has(name);
+    const check = el.querySelector(".fb-check");
+    if (check !== null) {
+      check.checked = state.selected.has(name);
+    }
   }
 }
 
 // --- Actions ---
 
-function newFile(): void { createEntry("touch", "new file"); }
-function newFolder(): void { createEntry("mkdir", "new folder"); }
+function newFile(): void {
+  createEntry("touch", "new file");
+}
+function newFolder(): void {
+  createEntry("mkdir", "new folder");
+}
 
 function createEntry(action: "touch" | "mkdir", name: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
-  void actionFn.dispatch({
-    dir: state.currentPath,
-    name,
-  }, {
-    onSuccess: () => { void loadDirAsync().then(() => startInlineRename(name)); },
-  });
+  void actionFn.dispatch(
+    {
+      dir: state.currentPath,
+      name,
+    },
+    {
+      onSuccess: () => {
+        void loadDirAsync().then(() => {
+          startInlineRename(name);
+        });
+      },
+    },
+  );
 }
 
 function addSelectedToChat(): void {
-  if (state.selected.size === 0) return;
+  if (state.selected.size === 0) {
+    return;
+  }
   // Directory attachments are plain paths like anywhere else — the chat
   // input doesn't care whether it's a file or folder, both are text.
   for (const name of state.selected) {
@@ -448,7 +536,9 @@ function addSelectedToChat(): void {
 }
 
 function renameSelected(): void {
-  if (state.selected.size !== 1) return;
+  if (state.selected.size !== 1) {
+    return;
+  }
   startInlineRename([...state.selected][0]!);
 }
 
@@ -456,9 +546,11 @@ function startInlineRename(targetName: string): void {
   const row = [...$.fbList.children].find(
     (el) => (el as HTMLDivElement).dataset["name"] === targetName,
   ) as HTMLDivElement | undefined;
-  if (row === undefined) return;
+  if (row === undefined) {
+    return;
+  }
 
-  const nameEl = row.querySelector(".fb-name") as HTMLElement;
+  const nameEl = row.querySelector(".fb-name")!;
   const original = nameEl.textContent ?? "";
 
   const input = document.createElement("input");
@@ -468,8 +560,11 @@ function startInlineRename(targetName: string): void {
   nameEl.replaceWith(input);
   input.focus();
   const dotIdx = original.lastIndexOf(".");
-  if (dotIdx > 0) input.setSelectionRange(0, dotIdx);
-  else input.select();
+  if (dotIdx > 0) {
+    input.setSelectionRange(0, dotIdx);
+  } else {
+    input.select();
+  }
 
   let committed = false;
   const restore = (text: string): HTMLElement => {
@@ -481,62 +576,91 @@ function startInlineRename(targetName: string): void {
   };
 
   const commit = (): void => {
-    if (committed) return;
+    if (committed) {
+      return;
+    }
     committed = true;
     const newName = input.value.trim();
     const span = restore(newName !== "" ? newName : original);
-    if (newName === "" || newName === original) return;
+    if (newName === "" || newName === original) {
+      return;
+    }
 
-    void renameFile.dispatch({ dir: state.currentPath, original, newName }, {
-      onSuccess: () => {
-        // Reload the directory to rebuild rows with click handlers and
-        // correct sort order (fixes stale handler + sort-after-rename).
-        state.deselectAll();
-        updateActionButtons();
-        loadDir();
+    void renameFile.dispatch(
+      { dir: state.currentPath, original, newName },
+      {
+        onSuccess: () => {
+          // Reload the directory to rebuild rows with click handlers and
+          // correct sort order (fixes stale handler + sort-after-rename).
+          state.deselectAll();
+          updateActionButtons();
+          loadDir();
+        },
+        onError: () => {
+          span.textContent = original;
+        },
       },
-      onError: () => {
-        span.textContent = original;
-      },
-    });
+    );
   };
 
   const cancel = (): void => {
-    if (committed) return;
+    if (committed) {
+      return;
+    }
     committed = true;
     restore(original);
   };
 
   input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); }
-    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancel();
+    }
   });
-  input.addEventListener("blur", () => commit());
+  input.addEventListener("blur", () => {
+    commit();
+  });
 }
 
 function deleteSelected(): void {
-  if (state.selected.size === 0) return;
+  if (state.selected.size === 0) {
+    return;
+  }
   const names = [...state.selected];
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`;
   const capturedDir = state.currentPath;
   void (async () => {
-    const ok = await confirmDialog(`Delete ${label}? This cannot be undone.`, "Delete", "destructive");
-    if (!ok) return;
-    void deleteFilesBatch.dispatch({ dir: capturedDir, names, listEl: $.fbList }, {
-      onSuccess: () => {
-        state.deselectAll();
-        updateActionButtons();
-        setTimeout(loadDir, 200);
+    const ok = await confirmDialog(
+      `Delete ${label}? This cannot be undone.`,
+      "Delete",
+      "destructive",
+    );
+    if (!ok) {
+      return;
+    }
+    void deleteFilesBatch.dispatch(
+      { dir: capturedDir, names, listEl: $.fbList },
+      {
+        onSuccess: () => {
+          state.deselectAll();
+          updateActionButtons();
+          setTimeout(loadDir, 200);
+        },
+        onError: () => {
+          loadDir();
+        },
       },
-      onError: () => {
-        loadDir();
-      },
-    });
+    );
   })();
 }
 
 function downloadSelected(): void {
-  if (state.selected.size === 0) return;
+  if (state.selected.size === 0) {
+    return;
+  }
   const names = [...state.selected];
   // Single file (non-directory): use the simple GET endpoint.
   // NOTE: No double-click guard here — the anchor-click approach is
@@ -563,15 +687,18 @@ function uploadViaDialog(): void {
   input.multiple = true;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
-      void upload.dispatch({ files: input.files, targetDir: state.currentPath }, {
-        onSuccess: (paths) => {
-          loadDir();
-          for (const p of paths) attachPathToActiveChat(p);
+      void upload.dispatch(
+        { files: input.files, targetDir: state.currentPath },
+        {
+          onSuccess: (paths) => {
+            loadDir();
+            for (const p of paths) {
+              attachPathToActiveChat(p);
+            }
+          },
         },
-      });
+      );
     }
   });
   input.click();
 }
-
-

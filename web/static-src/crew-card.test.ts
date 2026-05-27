@@ -34,7 +34,14 @@ describe("signature", () => {
       crew: {
         group: "g1",
         subagents: [
-          { session_id: "s1", session_name: "n1", agent_name: "a1", initial_query: "", status: "working", group: "g1" },
+          {
+            session_id: "s1",
+            session_name: "n1",
+            agent_name: "a1",
+            initial_query: "",
+            status: "working",
+            group: "g1",
+          },
         ],
       },
       expected: "g1|s1:working:;",
@@ -44,8 +51,24 @@ describe("signature", () => {
       crew: {
         group: "g2",
         subagents: [
-          { session_id: "s1", session_name: "n1", agent_name: "a1", initial_query: "", status: "terminated", status_msg: "done", group: "g2" },
-          { session_id: "s2", session_name: "n2", agent_name: "a2", initial_query: "", status: "error", status_msg: "timeout", group: "g2" },
+          {
+            session_id: "s1",
+            session_name: "n1",
+            agent_name: "a1",
+            initial_query: "",
+            status: "terminated",
+            status_msg: "done",
+            group: "g2",
+          },
+          {
+            session_id: "s2",
+            session_name: "n2",
+            agent_name: "a2",
+            initial_query: "",
+            status: "error",
+            status_msg: "timeout",
+            group: "g2",
+          },
         ],
       },
       expected: "g2|s1:terminated:done;s2:error:timeout;",
@@ -55,11 +78,16 @@ describe("signature", () => {
       crew: {
         group: "g3",
         subagents: [
-          { session_id: "s1", session_name: "n1", agent_name: "a1", initial_query: "", status: "working", group: "g3" },
+          {
+            session_id: "s1",
+            session_name: "n1",
+            agent_name: "a1",
+            initial_query: "",
+            status: "working",
+            group: "g3",
+          },
         ],
-        pending_stages: [
-          { name: "stage-a", agent_name: "a2" },
-        ],
+        pending_stages: [{ name: "stage-a", agent_name: "a2" }],
       },
       expected: "g3|s1:working:;p:stage-a;",
     },
@@ -70,7 +98,19 @@ describe("signature", () => {
     },
     {
       name: "pending_stages undefined",
-      crew: { group: "x", subagents: [{ session_id: "s1", session_name: "n", agent_name: "a", initial_query: "", status: "pending", group: "x" }] },
+      crew: {
+        group: "x",
+        subagents: [
+          {
+            session_id: "s1",
+            session_name: "n",
+            agent_name: "a",
+            initial_query: "",
+            status: "pending",
+            group: "x",
+          },
+        ],
+      },
       expected: "x|s1:pending:;",
     },
   ];

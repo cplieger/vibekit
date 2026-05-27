@@ -238,7 +238,10 @@ describe("isSafeUrl property-based", () => {
       fc.property(fc.string(), (s) => {
         const result = isSafeUrl(s);
         if (!result) {
-          const normalized = s.trim().replace(/[\t\n\r\x00]/g, "").toLowerCase();
+          const normalized = s
+            .trim()
+            .replace(/[\t\n\r\x00]/g, "")
+            .toLowerCase();
           const hasBlocked = blockedPrefixes.some((p) => normalized.startsWith(p));
           expect(hasBlocked).toBe(true);
         } else {
@@ -251,13 +254,9 @@ describe("isSafeUrl property-based", () => {
 
   it("no false negatives: blocked prefix + suffix is always rejected", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom(...blockedPrefixes),
-        fc.string(),
-        (prefix, suffix) => {
-          expect(isSafeUrl(prefix + suffix)).toBe(false);
-        },
-      ),
+      fc.property(fc.constantFrom(...blockedPrefixes), fc.string(), (prefix, suffix) => {
+        expect(isSafeUrl(prefix + suffix)).toBe(false);
+      }),
       { numRuns: 500 },
     );
   });
@@ -266,7 +265,10 @@ describe("isSafeUrl property-based", () => {
     fc.assert(
       fc.property(
         fc.string().filter((s) => {
-          const n = s.trim().replace(/[\t\n\r\x00]/g, "").toLowerCase();
+          const n = s
+            .trim()
+            .replace(/[\t\n\r\x00]/g, "")
+            .toLowerCase();
           return !blockedPrefixes.some((p) => n.startsWith(p));
         }),
         (s) => {

@@ -14,17 +14,23 @@ import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 
-interface BranchEntry { name: string; current: boolean; }
-interface BranchesResponse { branches: BranchEntry[]; current: string; }
+interface BranchEntry {
+  name: string;
+  current: boolean;
+}
+interface BranchesResponse {
+  branches: BranchEntry[];
+  current: string;
+}
 
 let openPopover: HTMLDivElement | null = null;
 let activeAnchor: HTMLElement | null = null;
 let branchController: AbortController | null = null;
-let popoverBindingCleanups: Array<() => void> = [];
+let popoverBindingCleanups: (() => void)[] = [];
 /** Per-branch-row checkout-action loading-state unbinds, keyed by
  *  branch name. Cleared via reconcile.onRemove during filter typing
  *  and en masse via closePopover(). */
-const rowUnbinds: Map<string, () => void> = new Map();
+const rowUnbinds = new Map<string, () => void>();
 registerCleanup(() => branchController?.abort());
 
 /** Open the branch switcher anchored to anchorEl for repo. Idempotent
@@ -56,7 +62,9 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   const filter = pop.querySelector<HTMLInputElement>(".git-branch-popover-filter")!;
   const list = pop.querySelector<HTMLDivElement>(".git-branch-popover-list")!;
   const createForm = pop.querySelector<HTMLFormElement>(".git-branch-popover-create")!;
-  const createInput = createForm.querySelector<HTMLInputElement>(".git-branch-popover-create-input")!;
+  const createInput = createForm.querySelector<HTMLInputElement>(
+    ".git-branch-popover-create-input",
+  )!;
 
   // Load branches.
   branchController?.abort();
@@ -73,11 +81,16 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       const filtered = data.branches.filter((b) => b.name.toLowerCase().includes(q.toLowerCase()));
       // Drop any non-keyed empty/error placeholder before reconciling.
       for (const child of [...list.children]) {
-        if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+        if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+          child.remove();
+        }
       }
       const onRemoveRow = (_: HTMLElement, key: string): void => {
         const u = rowUnbinds.get(key);
-        if (u !== undefined) { u(); rowUnbinds.delete(key); }
+        if (u !== undefined) {
+          u();
+          rowUnbinds.delete(key);
+        }
       };
       if (filtered.length === 0) {
         reconcile(list, [] as BranchEntry[], {
@@ -96,7 +109,9 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
           row.setAttribute("role", "menuitem");
           row.textContent = b.name;
-          if (b.current) row.setAttribute("data-tooltip", "Current branch");
+          if (b.current) {
+            row.setAttribute("data-tooltip", "Current branch");
+          }
           row.addEventListener("click", () => {
             void doCheckout(repo, b.name, false);
           });
@@ -107,14 +122,19 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
           // current-flag may flip when the active branch changes mid-popover
           // (e.g. the user picks a different one and the popover stays open).
           row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
-          if (b.current) row.setAttribute("data-tooltip", "Current branch");
-          else row.removeAttribute("data-tooltip");
+          if (b.current) {
+            row.setAttribute("data-tooltip", "Current branch");
+          } else {
+            row.removeAttribute("data-tooltip");
+          }
         },
         onRemove: onRemoveRow,
       });
     };
     render("");
-    filter.addEventListener("input", () => render(filter.value));
+    filter.addEventListener("input", () => {
+      render(filter.value);
+    });
     filter.focus();
   });
 
@@ -122,7 +142,9 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   createForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const name = createInput.value.trim();
-    if (name === "") return;
+    if (name === "") {
+      return;
+    }
     void doCheckout(repo, name, true);
   });
   popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
@@ -136,8 +158,12 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
 }
 
 function closePopover(): void {
-  if (openPopover === null) return;
-  for (const fn of popoverBindingCleanups) fn();
+  if (openPopover === null) {
+    return;
+  }
+  for (const fn of popoverBindingCleanups) {
+    fn();
+  }
   popoverBindingCleanups = [];
   branchController?.abort();
   branchController = null;
@@ -158,27 +184,46 @@ function closePopover(): void {
 
 function outsideClickHandler(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
-  if (target === null) return;
-  if (openPopover === null) return;
-  if (openPopover.contains(target)) return;
-  if (activeAnchor !== null && activeAnchor.contains(target)) return;
+  if (target === null) {
+    return;
+  }
+  if (openPopover === null) {
+    return;
+  }
+  if (openPopover.contains(target)) {
+    return;
+  }
+  if (activeAnchor?.contains(target)) {
+    return;
+  }
   closePopover();
 }
 
 function escapeHandler(e: KeyboardEvent): void {
-  if (e.key === "Escape") closePopover();
+  if (e.key === "Escape") {
+    closePopover();
+  }
 }
 
 function arrowNavHandler(e: KeyboardEvent): void {
-  if (openPopover === null) return;
-  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  if (openPopover === null) {
+    return;
+  }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+    return;
+  }
   const rows = [...openPopover.querySelectorAll<HTMLButtonElement>(".git-branch-popover-row")];
-  if (rows.length === 0) return;
+  if (rows.length === 0) {
+    return;
+  }
   e.preventDefault();
   const current = rows.indexOf(document.activeElement as HTMLButtonElement);
   let next: number;
-  if (e.key === "ArrowDown") next = current < rows.length - 1 ? current + 1 : 0;
-  else next = current > 0 ? current - 1 : rows.length - 1;
+  if (e.key === "ArrowDown") {
+    next = current < rows.length - 1 ? current + 1 : 0;
+  } else {
+    next = current > 0 ? current - 1 : rows.length - 1;
+  }
   rows[next]!.focus();
 }
 
@@ -217,7 +262,9 @@ async function doCheckout(repo: string, branch: string, create: boolean): Promis
       onSuccess: () => {
         void import("./git-changes-tab.js")
           .then((m) => m.refreshChanges())
-          .catch((e) => console.error("[git-branch] refresh import failed", e));
+          .catch((e: unknown) => {
+            console.error("[git-branch] refresh import failed", e);
+          });
       },
       onError: () => {
         // Restore the previous label if the anchor is still in the DOM.
@@ -225,7 +272,9 @@ async function doCheckout(repo: string, branch: string, create: boolean): Promis
           anchor.textContent = prevText;
         }
       },
-      onSettled: () => closePopover(),
+      onSettled: () => {
+        closePopover();
+      },
     },
   );
 }

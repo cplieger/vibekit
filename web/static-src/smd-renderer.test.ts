@@ -5,10 +5,30 @@
 import { describe, it, expect } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
 import {
-  PARAGRAPH, HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6,
-  BLOCKQUOTE, ITALIC_AST, ITALIC_UND, STRONG_AST, STRONG_UND, STRIKE,
-  CODE_INLINE, LIST_UNORDERED, LIST_ORDERED, LIST_ITEM, TABLE,
-  CHECKBOX, CODE_FENCE, LINK, IMAGE, EQUATION_BLOCK, EQUATION_INLINE,
+  PARAGRAPH,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
+  BLOCKQUOTE,
+  ITALIC_AST,
+  ITALIC_UND,
+  STRONG_AST,
+  STRONG_UND,
+  STRIKE,
+  CODE_INLINE,
+  LIST_UNORDERED,
+  LIST_ORDERED,
+  LIST_ITEM,
+  TABLE,
+  CHECKBOX,
+  CODE_FENCE,
+  LINK,
+  IMAGE,
+  EQUATION_BLOCK,
+  EQUATION_INLINE,
 } from "./smd-parser-types.js";
 import type { Token } from "./smd-parser-types.js";
 
@@ -36,8 +56,16 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
     { token: CODE_FENCE, expectedTag: "PRE", label: "CODE_FENCE → pre" },
     { token: LINK, expectedTag: "A", label: "LINK → a" },
     { token: IMAGE, expectedTag: "IMG", label: "IMAGE → img" },
-    { token: EQUATION_BLOCK, expectedTag: "EQUATION-BLOCK", label: "EQUATION_BLOCK → equation-block" },
-    { token: EQUATION_INLINE, expectedTag: "EQUATION-INLINE", label: "EQUATION_INLINE → equation-inline" },
+    {
+      token: EQUATION_BLOCK,
+      expectedTag: "EQUATION-BLOCK",
+      label: "EQUATION_BLOCK → equation-block",
+    },
+    {
+      token: EQUATION_INLINE,
+      expectedTag: "EQUATION-INLINE",
+      label: "EQUATION_INLINE → equation-inline",
+    },
   ];
 
   it.each(cases)("$label", ({ token, expectedTag }) => {

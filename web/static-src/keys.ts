@@ -5,12 +5,12 @@
 import { emitBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { closeTopModal } from "./modals.js";
 
-type ShortcutDef = {
+interface ShortcutDef {
   key: string;
   shift?: boolean;
   action: () => void;
   description: string;
-};
+}
 
 const shortcuts: ShortcutDef[] = [];
 let initialized = false;
@@ -27,13 +27,20 @@ export function initKeyboardShortcuts(actions: {
   toggleSettings: () => void;
   sendMessage: () => void;
 }): void {
-  if (initialized) return;
+  if (initialized) {
+    return;
+  }
   initialized = true;
 
   register({ key: "k", action: actions.newChat, description: "New conversation" });
   register({ key: "n", action: actions.newChat, description: "New conversation" });
   register({ key: "/", action: actions.toggleShell, description: "Toggle shell" });
-  register({ key: "f", shift: true, action: actions.toggleFiles, description: "Toggle file browser" });
+  register({
+    key: "f",
+    shift: true,
+    action: actions.toggleFiles,
+    description: "Toggle file browser",
+  });
   register({ key: "g", shift: true, action: actions.toggleGit, description: "Toggle git panel" });
   register({ key: ",", action: actions.toggleSettings, description: "Toggle settings" });
   register({ key: "Enter", action: actions.sendMessage, description: "Send message" });
@@ -41,7 +48,8 @@ export function initKeyboardShortcuts(actions: {
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     // Don't intercept when typing in inputs (except for Escape and Ctrl combos)
     const target = e.target as HTMLElement;
-    const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+    const isInput =
+      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
 
     if (e.key === "Escape") {
       // Close topmost modal/panel via the shared helper, which
@@ -57,12 +65,20 @@ export function initKeyboardShortcuts(actions: {
     }
 
     const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return;
+    if (!mod) {
+      return;
+    }
 
     for (const s of shortcuts) {
-      if (s.key.toLowerCase() !== e.key.toLowerCase()) continue;
-      if (s.shift === true && !e.shiftKey) continue;
-      if (s.shift !== true && e.shiftKey) continue;
+      if (s.key.toLowerCase() !== e.key.toLowerCase()) {
+        continue;
+      }
+      if (s.shift === true && !e.shiftKey) {
+        continue;
+      }
+      if (s.shift !== true && e.shiftKey) {
+        continue;
+      }
 
       // Allow Ctrl+Enter in textareas for send
       if (s.key === "Enter" && isInput) {

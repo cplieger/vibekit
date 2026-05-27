@@ -4,9 +4,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
-  ICON_CLOSE: "", ICON_TAB_CHAT: "", ICON_TAB_PLAN: "",
-  ICON_TAB_SETTINGS: "", ICON_TAB_GIT: "", ICON_TAB_FILES: "",
-  ICON_TAB_EDITOR: "", ICON_TAB_FOLLOW: "", ICON_TAB_HISTORY: "",
+  ICON_CLOSE: "",
+  ICON_TAB_CHAT: "",
+  ICON_TAB_PLAN: "",
+  ICON_TAB_SETTINGS: "",
+  ICON_TAB_GIT: "",
+  ICON_TAB_FILES: "",
+  ICON_TAB_EDITOR: "",
+  ICON_TAB_FOLLOW: "",
+  ICON_TAB_HISTORY: "",
 }));
 vi.mock("./ui-state.js", () => ({
   save: vi.fn(),
@@ -22,14 +28,22 @@ vi.mock("./tabs-drag.js", () => ({
 }));
 
 import {
-  openTab, closeTab, activateTab, renameTab, hasTab, getActiveTabId,
+  openTab,
+  closeTab,
+  activateTab,
+  renameTab,
+  hasTab,
+  getActiveTabId,
   _resetForTest,
 } from "./tabs.js";
 import type { TabSpec } from "./tabs.js";
 
 function makeTab(id: string, name = id): TabSpec {
   return {
-    id, name, kind: "chat", view: "#chat-view",
+    id,
+    name,
+    kind: "chat",
+    view: "#chat-view",
     route: { kind: "chat", id },
   };
 }
@@ -43,8 +57,18 @@ beforeEach(() => {
 describe("openTab", () => {
   it.each([
     { desc: "opens a new tab and activates it", tabs: ["a"], expectActive: "a", expectHas: ["a"] },
-    { desc: "opening existing tab activates it", tabs: ["a", "b", "a"], expectActive: "a", expectHas: ["a", "b"] },
-    { desc: "opens multiple distinct tabs", tabs: ["a", "b", "c"], expectActive: "c", expectHas: ["a", "b", "c"] },
+    {
+      desc: "opening existing tab activates it",
+      tabs: ["a", "b", "a"],
+      expectActive: "a",
+      expectHas: ["a", "b"],
+    },
+    {
+      desc: "opens multiple distinct tabs",
+      tabs: ["a", "b", "c"],
+      expectActive: "c",
+      expectHas: ["a", "b", "c"],
+    },
   ])("$desc", ({ tabs, expectActive, expectHas }) => {
     expect.assertions(1 + expectHas.length);
     for (const id of tabs) openTab(makeTab(id));
@@ -57,28 +81,48 @@ describe("closeTab", () => {
   it.each([
     {
       desc: "closing active tab activates neighbor (next)",
-      setup: ["a", "b", "c"], activate: "b", close: "b",
-      expectActive: "c", expectHas: ["a", "c"], expectGone: ["b"],
+      setup: ["a", "b", "c"],
+      activate: "b",
+      close: "b",
+      expectActive: "c",
+      expectHas: ["a", "c"],
+      expectGone: ["b"],
     },
     {
       desc: "closing active tab activates previous when last",
-      setup: ["a", "b", "c"], activate: "c", close: "c",
-      expectActive: "b", expectHas: ["a", "b"], expectGone: ["c"],
+      setup: ["a", "b", "c"],
+      activate: "c",
+      close: "c",
+      expectActive: "b",
+      expectHas: ["a", "b"],
+      expectGone: ["c"],
     },
     {
       desc: "closing inactive tab preserves active",
-      setup: ["a", "b", "c"], activate: "c", close: "a",
-      expectActive: "c", expectHas: ["b", "c"], expectGone: ["a"],
+      setup: ["a", "b", "c"],
+      activate: "c",
+      close: "a",
+      expectActive: "c",
+      expectHas: ["b", "c"],
+      expectGone: ["a"],
     },
     {
       desc: "closing the only tab results in empty state",
-      setup: ["a"], activate: "a", close: "a",
-      expectActive: "", expectHas: [], expectGone: ["a"],
+      setup: ["a"],
+      activate: "a",
+      close: "a",
+      expectActive: "",
+      expectHas: [],
+      expectGone: ["a"],
     },
     {
       desc: "closing non-existent tab is a no-op",
-      setup: ["a", "b"], activate: "b", close: "z",
-      expectActive: "b", expectHas: ["a", "b"], expectGone: ["z"],
+      setup: ["a", "b"],
+      activate: "b",
+      close: "z",
+      expectActive: "b",
+      expectHas: ["a", "b"],
+      expectGone: ["z"],
     },
   ])("$desc", ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
     expect.assertions(1 + expectHas.length + expectGone.length);
@@ -94,8 +138,18 @@ describe("closeTab", () => {
 describe("activateTab", () => {
   it.each([
     { desc: "activates existing tab", setup: ["a", "b"], target: "a", expectActive: "a" },
-    { desc: "activating non-existent tab is a no-op", setup: ["a", "b"], target: "z", expectActive: "b" },
-    { desc: "activating already-active tab is a no-op", setup: ["a", "b"], target: "b", expectActive: "b" },
+    {
+      desc: "activating non-existent tab is a no-op",
+      setup: ["a", "b"],
+      target: "z",
+      expectActive: "b",
+    },
+    {
+      desc: "activating already-active tab is a no-op",
+      setup: ["a", "b"],
+      target: "b",
+      expectActive: "b",
+    },
   ])("$desc", ({ setup, target, expectActive }) => {
     expect.assertions(1);
     for (const id of setup) openTab(makeTab(id));

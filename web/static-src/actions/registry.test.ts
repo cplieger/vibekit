@@ -153,15 +153,14 @@ describe("listener iteration", () => {
     const calls: string[] = [];
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    subscribe(() => { throw new Error("boom"); });
+    subscribe(() => {
+      throw new Error("boom");
+    });
     subscribe(() => calls.push("survived"));
 
     record(makeInstance());
     expect(calls).toEqual(["survived"]);
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "[actions] registry listener threw",
-      expect.any(Error),
-    );
+    expect(consoleSpy).toHaveBeenCalledWith("[actions] registry listener threw", expect.any(Error));
     consoleSpy.mockRestore();
   });
 });
@@ -188,7 +187,7 @@ describe("recentLog", () => {
     record(makeInstance({ id: "second", status: "success" }));
     record(makeInstance({ id: "third", status: "success" }));
     const log = recentLog();
-    expect(log.map(e => e.id)).toEqual(["first", "second", "third"]);
+    expect(log.map((e) => e.id)).toEqual(["first", "second", "third"]);
   });
 });
 
@@ -287,14 +286,18 @@ describe("pendingByName index", () => {
     expect(isPending("file.upload")).toBe(true);
     expect(pendingCount(["file.upload"])).toBe(1);
 
-    record(makeInstance({ id: "a2", name: "file.upload", status: "error", error: { message: "fail" } }));
+    record(
+      makeInstance({ id: "a2", name: "file.upload", status: "error", error: { message: "fail" } }),
+    );
     expect(isPending("file.upload")).toBe(false);
     expect(pendingCount(["file.upload"])).toBe(0);
   });
 
   it("retry (terminal→pending) re-adds to pendingByName", () => {
     record(makeInstance({ id: "r1", name: "git.push", status: "pending" }));
-    record(makeInstance({ id: "r1", name: "git.push", status: "error", error: { message: "timeout" } }));
+    record(
+      makeInstance({ id: "r1", name: "git.push", status: "error", error: { message: "timeout" } }),
+    );
     expect(isPending("git.push")).toBe(false);
 
     // Retry: same id goes back to pending
@@ -324,7 +327,7 @@ describe("pendingByName index", () => {
     // The evicted entry (hc-0) should be removed from pendingByName
     expect(pendingCount()).toBe(1000);
     const pending = recentLog().filter((i) => i.status === "pending" && i.name === "bulk.op");
-    expect(pending.find(e => e.id === "hc-0")).toBeUndefined();
+    expect(pending.find((e) => e.id === "hc-0")).toBeUndefined();
   });
 
   it("_resetForTest clears pendingByName", () => {

@@ -21,12 +21,37 @@
 // ---------------------------------------------------------------------------
 
 import {
-  DOCUMENT, BLOCKQUOTE, PARAGRAPH, LINE_BREAK, RULE,
-  HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6,
-  ITALIC_AST, ITALIC_UND, STRONG_AST, STRONG_UND, STRIKE,
-  CODE_INLINE, CODE_BLOCK, CODE_FENCE, RAW_URL, LINK, IMAGE,
-  LIST_UNORDERED, LIST_ORDERED, LIST_ITEM, CHECKBOX,
-  TABLE, TABLE_ROW, TABLE_CELL, EQUATION_BLOCK, EQUATION_INLINE,
+  DOCUMENT,
+  BLOCKQUOTE,
+  PARAGRAPH,
+  LINE_BREAK,
+  RULE,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
+  ITALIC_AST,
+  ITALIC_UND,
+  STRONG_AST,
+  STRONG_UND,
+  STRIKE,
+  CODE_INLINE,
+  CODE_BLOCK,
+  CODE_FENCE,
+  RAW_URL,
+  LINK,
+  IMAGE,
+  LIST_UNORDERED,
+  LIST_ORDERED,
+  LIST_ITEM,
+  CHECKBOX,
+  TABLE,
+  TABLE_ROW,
+  TABLE_CELL,
+  EQUATION_BLOCK,
+  EQUATION_INLINE,
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
@@ -71,9 +96,11 @@ const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
 };
 
 function add_token_dom(data: DomRendererData, type: Token): void {
-  const parent = data.nodes[data.index] as Element;
+  const parent = data.nodes[data.index]!;
 
-  if (type === DOCUMENT) return;
+  if (type === DOCUMENT) {
+    return;
+  }
 
   switch (type) {
     case CHECKBOX: {
@@ -110,7 +137,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
           tableParent = parent.appendChild(makeEl("tbody"));
           break;
         default:
-          tableParent = parent.children[1] as Element;
+          tableParent = parent.children[1]!;
       }
       const slot = makeEl("tr");
       data.nodes[++data.index] = tableParent.appendChild(slot);
@@ -125,7 +152,9 @@ function add_token_dom(data: DomRendererData, type: Token): void {
   }
 
   const tag = TOKEN_TAG_MAP[type];
-  if (tag === undefined) return;
+  if (tag === undefined) {
+    return;
+  }
   data.nodes[++data.index] = parent.appendChild(makeEl(tag));
 }
 
@@ -137,20 +166,28 @@ function end_token_dom(data: DomRendererData): void {
   // callers can decorate / animate the freshly-completed block.
   // Code blocks are special: the "closing" node is the inner <code>,
   // but the visible block is its <pre> parent — surface that instead.
-  if (data.index === 0 && closing !== null && closing !== undefined && data.onBlockComplete !== undefined) {
+  if (
+    data.index === 0 &&
+    closing !== null &&
+    closing !== undefined &&
+    data.onBlockComplete !== undefined
+  ) {
     const tag = closing.tagName;
-    const target = tag === "CODE" && closing.parentElement?.tagName === "PRE"
-      ? closing.parentElement
-      : closing as HTMLElement;
+    const target =
+      tag === "CODE" && closing.parentElement?.tagName === "PRE"
+        ? closing.parentElement
+        : (closing as HTMLElement);
     data.onBlockComplete(target);
   }
 }
 
 function add_text_dom(data: DomRendererData, text: string): void {
   const parent = data.nodes[data.index];
-  if (parent === null || parent === undefined) return;
+  if (parent === null || parent === undefined) {
+    return;
+  }
 
-  const tag = (parent as Element).tagName;
+  const tag = parent.tagName;
 
   // IMG is void — text inside an image node is the alt text per
   // markdown syntax `![alt](url)`. Append to the alt attribute rather
@@ -168,18 +205,22 @@ function add_text_dom(data: DomRendererData, text: string): void {
 
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   const node = data.nodes[data.index];
-  if (node === null || node === undefined) return;
+  if (node === null || node === undefined) {
+    return;
+  }
   const attrName = attr_to_html_attr(attr);
-  if (attrName === "") return;
+  if (attrName === "") {
+    return;
+  }
   if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
-    (node as Element).setAttribute(attrName, "#");
+    node.setAttribute(attrName, "#");
     return;
   }
-  if (attrName === "class" && (node as Element).tagName === "CODE") {
-    (node as Element).setAttribute("class", "language-" + value);
+  if (attrName === "class" && node.tagName === "CODE") {
+    node.setAttribute("class", "language-" + value);
     return;
   }
-  (node as Element).setAttribute(attrName, value);
+  node.setAttribute(attrName, value);
 }
 
 /** Factory for a DOM renderer rooted at `el`. Caller can register

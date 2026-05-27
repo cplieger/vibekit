@@ -12,8 +12,14 @@ import { pushRoute } from "./router.js";
 import type { Route, SettingsTab } from "./router.js";
 import {
   ICON_CLOSE,
-  ICON_TAB_CHAT, ICON_TAB_PLAN, ICON_TAB_SETTINGS, ICON_TAB_GIT,
-  ICON_TAB_FILES, ICON_TAB_EDITOR, ICON_TAB_FOLLOW, ICON_TAB_HISTORY,
+  ICON_TAB_CHAT,
+  ICON_TAB_PLAN,
+  ICON_TAB_SETTINGS,
+  ICON_TAB_GIT,
+  ICON_TAB_FILES,
+  ICON_TAB_EDITOR,
+  ICON_TAB_FOLLOW,
+  ICON_TAB_HISTORY,
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
@@ -23,8 +29,7 @@ import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 
 // --- Types ---
 
-type TabKind =
-  | "chat" | "plan" | "settings" | "git" | "files" | "editor" | "follow" | "history";
+type TabKind = "chat" | "plan" | "settings" | "git" | "files" | "editor" | "follow" | "history";
 
 /** Everything needed to render and route a tab. */
 export interface TabSpec {
@@ -44,9 +49,9 @@ export interface TabSpec {
 // --- Singleton tab IDs (single source of truth) ---
 
 const TAB_SETTINGS = "__settings__";
-const TAB_GIT      = "__git__";
-const TAB_FILES    = "__files__";
-const TAB_HISTORY  = "__history__";
+const TAB_GIT = "__git__";
+const TAB_FILES = "__files__";
+const TAB_HISTORY = "__history__";
 
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
@@ -102,7 +107,7 @@ type Subscriber = (s: State) => void;
 
 /** All registered module-level effects. Tracked so _resetForTest can
  *  dispose them and start fresh; production never disposes. */
-const moduleEffects: Array<() => void> = [];
+const moduleEffects: (() => void)[] = [];
 
 function emit(): void {
   stateVersion.value = stateVersion.peek() + 1;
@@ -138,7 +143,9 @@ export function openTab(spec: TabSpec): void {
 /** Activate an existing tab. */
 export function activateTab(id: string): void {
   const tab = state.tabs.find((t) => t.id === id);
-  if (tab === undefined || state.active === id) return;
+  if (tab === undefined || state.active === id) {
+    return;
+  }
   state.active = id;
   emit();
   tab.onShow?.();
@@ -150,20 +157,28 @@ export function activateTab(id: string): void {
  *  to avoid re-dispatching archive/delete actions against a stale session. */
 export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
-  if (idx < 0) return;
+  if (idx < 0) {
+    return;
+  }
   const tab = state.tabs[idx]!;
 
   // Check if this tab has rewind children. If so, ask the user.
   const children = state.tabs.filter((t) => {
     const s = storeGet(t.id);
-    return s !== undefined && s.parent_chat_id === id;
+    return s?.parent_chat_id === id;
   });
   if (children.length > 0 && !opts?.skipOnClose) {
-    showRewindChildPrompt(id, children.map((t) => t.id), opts);
+    showRewindChildPrompt(
+      id,
+      children.map((t) => t.id),
+      opts,
+    );
     return;
   }
 
-  if (!opts?.skipOnClose) tab.onClose?.();
+  if (!opts?.skipOnClose) {
+    tab.onClose?.();
+  }
   state.tabs.splice(idx, 1);
 
   if (state.active === id) {
@@ -208,21 +223,33 @@ function showRewindChildPrompt(
 
   card.addEventListener("click", (e) => {
     const action = (e.target as HTMLElement).dataset["action"];
-    if (!action) return;
+    if (!action) {
+      return;
+    }
     overlay.remove();
-    if (action === "cancel") return;
+    if (action === "cancel") {
+      return;
+    }
     if (action === "keep") {
       // Promote all children (clear parent_chat_id via server command).
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
-          send({ type: "promote_rewind_chat", chat_id: cid, request_id: `promote-${Date.now()}` } as any);
+          void send({
+            type: "promote_rewind_chat",
+            chat_id: cid,
+            request_id: `promote-${Date.now()}`,
+          } as any);
         });
       }
     } else {
       // Discard children: dispatch server-side delete for each, then close tabs.
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
-          send({ type: "discard_rewind_chat", chat_id: cid, request_id: `discard-${Date.now()}` } as any);
+          void send({
+            type: "discard_rewind_chat",
+            chat_id: cid,
+            request_id: `discard-${Date.now()}`,
+          } as any);
         });
         closeTab(cid, { skipOnClose: true });
       }
@@ -234,7 +261,9 @@ function showRewindChildPrompt(
 
 export function renameTab(id: string, name: string): void {
   const tab = state.tabs.find((t) => t.id === id);
-  if (tab === undefined || tab.name === name) return;
+  if (tab === undefined || tab.name === name) {
+    return;
+  }
   tab.name = name;
   emit();
 }
@@ -242,8 +271,10 @@ export function renameTab(id: string, name: string): void {
 /** Set a status indicator on a tab: "thinking" (pulsing accent dot),
  *  "permission" (amber dot), or "" to clear. */
 export function setTabStatus(id: string, status: "" | "thinking" | "permission"): void {
-  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`) as HTMLElement | null;
-  if (el === null) return;
+  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
+  if (el === null) {
+    return;
+  }
   el.classList.toggle("hidden", status === "");
   el.classList.toggle("tab-dot-thinking", status === "thinking");
   el.classList.toggle("tab-dot-permission", status === "permission");
@@ -254,29 +285,46 @@ function reorderTabs(order: string[]): void {
   const next: TabSpec[] = [];
   for (const id of order) {
     const t = byID.get(id);
-    if (t !== undefined) { next.push(t); byID.delete(id); }
+    if (t !== undefined) {
+      next.push(t);
+      byID.delete(id);
+    }
   }
   // Preserve any unknown tabs at the end (defensive; order drift).
-  for (const t of byID.values()) next.push(t);
+  for (const t of byID.values()) {
+    next.push(t);
+  }
   state.tabs = next;
   emit();
 }
 
-export function hasTab(id: string): boolean { return state.tabs.some((t) => t.id === id); }
-export function getActiveTabId(): string { return state.active; }
+export function hasTab(id: string): boolean {
+  return state.tabs.some((t) => t.id === id);
+}
+export function getActiveTabId(): string {
+  return state.active;
+}
 /** Return all open tab IDs. Used by system handlers to reconcile tabs
  *  without DOM scraping. */
-export function getOpenTabIDs(): string[] { return state.tabs.map((t) => t.id); }
+export function getOpenTabIDs(): string[] {
+  return state.tabs.map((t) => t.id);
+}
 
 // --- Activation listener ---
-export function setOnActivate(fn: (id: string) => void): void { callbacks.onActivate = fn; }
+export function setOnActivate(fn: (id: string) => void): void {
+  callbacks.onActivate = fn;
+}
 
 // --- Empty-state timer ---
 
-export function setOnEmpty(fn: () => void): void { callbacks.onEmpty = fn; }
+export function setOnEmpty(fn: () => void): void {
+  callbacks.onEmpty = fn;
+}
 
 function scheduleEmpty(): void {
-  if (internal.emptyTimer !== null) clearTimeout(internal.emptyTimer);
+  if (internal.emptyTimer !== null) {
+    clearTimeout(internal.emptyTimer);
+  }
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
@@ -299,7 +347,9 @@ function registerModuleSubscribers(): void {
 
   // Persistence.
   tabsEffect(() => {
-    if (state.tabs.length === 0 && state.active === "") return;
+    if (state.tabs.length === 0 && state.active === "") {
+      return;
+    }
     uiState.save({
       tab_order: state.tabs.map((t) => t.id),
       active_view: state.active,
@@ -308,18 +358,30 @@ function registerModuleSubscribers(): void {
 
   // View / route sync.
   tabsEffect((s) => {
-    if (s.tabs.length === 0 && s.active === "") return;
+    if (s.tabs.length === 0 && s.active === "") {
+      return;
+    }
     const active = s.tabs.find((t) => t.id === s.active);
-    if (active !== undefined) showView(active);
-    else syncSidebarButtons(null);
+    if (active !== undefined) {
+      showView(active);
+    } else {
+      syncSidebarButtons(null);
+    }
   });
 
   // DOM rendering.
   tabsEffect(() => {
-    if (state.tabs.length === 0 && state.active === "") return;
-    if (internal.renderQueued) return;
+    if (state.tabs.length === 0 && state.active === "") {
+      return;
+    }
+    if (internal.renderQueued) {
+      return;
+    }
     internal.renderQueued = true;
-    requestAnimationFrame(() => { internal.renderQueued = false; renderDOM(); });
+    requestAnimationFrame(() => {
+      internal.renderQueued = false;
+      renderDOM();
+    });
   });
 }
 
@@ -327,7 +389,9 @@ function registerModuleSubscribers(): void {
  *  after modules have registered their tabs. */
 export function restoreTabState(): void {
   const saved = uiState.load();
-  if (saved.tab_order.length > 0) reorderTabs(saved.tab_order);
+  if (saved.tab_order.length > 0) {
+    reorderTabs(saved.tab_order);
+  }
   if (saved.active_view !== "" && hasTab(saved.active_view)) {
     activateTab(saved.active_view);
   }
@@ -345,9 +409,9 @@ const ALL_VIEWS_SELECTOR = "[data-tab-view]";
  *  map. */
 const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = {
   settings: () => $.settingsBtn,
-  git:      () => $.gitBtn,
-  files:    () => $.filesBtn,
-  history:  () => $.historyBtn,
+  git: () => $.gitBtn,
+  files: () => $.filesBtn,
+  history: () => $.historyBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
@@ -359,18 +423,30 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 // Queued view transition: wraps DOM swaps in startViewTransition so
 // tab switches get a cross-fade. Queue prevents overlapping jank.
 function viewTransition(fn: () => void): void {
-  if (!document.startViewTransition) { fn(); return; }
+  if (!document.startViewTransition) {
+    fn();
+    return;
+  }
   const run = (): void => {
     const t = document.startViewTransition(fn);
     // Chain catch on the stored promise so its rejection is handled
     // even if `t.finished` rejects (browsers can skip transitions).
     internal.vtPending = t.finished
-      .then(() => { internal.vtPending = null; })
-      .catch(() => { internal.vtPending = null; });
-    t.ready.catch(() => {});
+      .then(() => {
+        internal.vtPending = null;
+      })
+      .catch(() => {
+        internal.vtPending = null;
+      });
+    t.ready.catch(() => {
+      /* noop */
+    });
   };
-  if (internal.vtPending !== null) void internal.vtPending.then(run);
-  else run();
+  if (internal.vtPending !== null) {
+    void internal.vtPending.then(run);
+  } else {
+    run();
+  }
 }
 
 function showView(tab: TabSpec): void {
@@ -394,12 +470,16 @@ function showView(tab: TabSpec): void {
 
 function renderDOM(): void {
   const list = $.tabList;
-  if (!list.hasAttribute("role")) list.setAttribute("role", "tablist");
+  if (!list.hasAttribute("role")) {
+    list.setAttribute("role", "tablist");
+  }
 
   const existing = new Map<string, HTMLElement>();
   for (const el of [...list.children]) {
     const id = (el as HTMLElement).dataset["tabId"];
-    if (id !== undefined) existing.set(id, el as HTMLElement);
+    if (id !== undefined) {
+      existing.set(id, el as HTMLElement);
+    }
   }
 
   const activeIDs = new Set(state.tabs.map((t) => t.id));
@@ -408,7 +488,13 @@ function renderDOM(): void {
   for (const [id, el] of existing) {
     if (!activeIDs.has(id)) {
       el.classList.add("exiting");
-      el.addEventListener("animationend", () => el.remove(), { once: true });
+      el.addEventListener(
+        "animationend",
+        () => {
+          el.remove();
+        },
+        { once: true },
+      );
       existing.delete(id);
     }
   }
@@ -423,17 +509,30 @@ function renderDOM(): void {
     let el = existing.get(tab.id);
     if (el === undefined) {
       el = createTabEl(tab);
-      if (prev !== null) prev.after(el); else list.prepend(el);
+      if (prev !== null) {
+        prev.after(el);
+      } else {
+        list.prepend(el);
+      }
       el.classList.add("entering");
     } else {
-      const nameEl = el.querySelector(".tab-name") as HTMLElement | null;
-      if (nameEl !== null && nameEl.textContent !== tab.name) nameEl.textContent = tab.name;
+      const nameEl = el.querySelector(".tab-name");
+      if (nameEl !== null && nameEl.textContent !== tab.name) {
+        nameEl.textContent = tab.name;
+      }
       let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
-      while (expectedNext !== null && (expectedNext as HTMLElement).classList?.contains("exiting")) {
+      while (
+        expectedNext !== null &&
+        (expectedNext as HTMLElement).classList?.contains("exiting")
+      ) {
         expectedNext = expectedNext.nextSibling;
       }
       if (el !== expectedNext) {
-        if (prev !== null) prev.after(el); else list.prepend(el);
+        if (prev !== null) {
+          prev.after(el);
+        } else {
+          list.prepend(el);
+        }
       }
     }
     el.classList.toggle("active", tab.id === state.active);
@@ -441,7 +540,10 @@ function renderDOM(): void {
     el.tabIndex = tab.id === state.active ? 0 : -1;
     // Rewind child indent: chats with parent_chat_id render indented.
     const session = storeGet(tab.id);
-    el.classList.toggle("tab-rewind-child", session?.parent_chat_id !== undefined && session.parent_chat_id !== "");
+    el.classList.toggle(
+      "tab-rewind-child",
+      session?.parent_chat_id !== undefined && session.parent_chat_id !== "",
+    );
     prev = el;
   }
 }
@@ -479,7 +581,9 @@ function createTabEl(tab: TabSpec): HTMLElement {
   // Right-click "Promote" for rewind children.
   el.addEventListener("contextmenu", (e) => {
     const s = storeGet(tab.id);
-    if (s === undefined || !s.parent_chat_id) return;
+    if (!s?.parent_chat_id) {
+      return;
+    }
     e.preventDefault();
     const menu = document.createElement("div");
     menu.className = "tab-context-menu";
@@ -492,14 +596,29 @@ function createTabEl(tab: TabSpec): HTMLElement {
     btn.addEventListener("click", () => {
       menu.remove();
       void import("./transport.js").then(({ send }) => {
-        send({ type: "promote_rewind_chat", chat_id: s.id, request_id: `promote-${Date.now()}` } as any);
+        void send({
+          type: "promote_rewind_chat",
+          chat_id: s.id,
+          request_id: `promote-${Date.now()}`,
+        } as any);
       });
     });
     menu.appendChild(btn);
     document.body.appendChild(menu);
-    const dismiss = (): void => { menu.remove(); document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escDismiss); };
-    const escDismiss = (ev: KeyboardEvent): void => { if (ev.key === "Escape") dismiss(); };
-    setTimeout(() => { document.addEventListener("pointerdown", dismiss); document.addEventListener("keydown", escDismiss); }, 0);
+    const dismiss = (): void => {
+      menu.remove();
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escDismiss);
+    };
+    const escDismiss = (ev: KeyboardEvent): void => {
+      if (ev.key === "Escape") {
+        dismiss();
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener("pointerdown", dismiss);
+      document.addEventListener("keydown", escDismiss);
+    }, 0);
   });
 
   return el;
@@ -510,15 +629,24 @@ function createTabEl(tab: TabSpec): HTMLElement {
 function attachTabInteraction(el: HTMLElement, id: string): void {
   // Click to activate (any target outside .tab-close).
   el.addEventListener("pointerup", (e) => {
-    if (isDragHandled()) return;
-    if ((e.target as HTMLElement).closest(".tab-close") !== null) return;
-    if (!e.isPrimary) return;
+    if (isDragHandled()) {
+      return;
+    }
+    if ((e.target as HTMLElement).closest(".tab-close") !== null) {
+      return;
+    }
+    if (!e.isPrimary) {
+      return;
+    }
     activateTab(id);
   });
 
   // Middle-click to close.
   el.addEventListener("auxclick", (e) => {
-    if (e.button === 1) { e.preventDefault(); closeTab(id); }
+    if (e.button === 1) {
+      e.preventDefault();
+      closeTab(id);
+    }
   });
 
   // Keyboard navigation: Enter/Space activates, Delete closes, arrows move focus.
@@ -544,10 +672,15 @@ function attachTabInteraction(el: HTMLElement, id: string): void {
         const tabs = [...(el.parentElement?.children ?? [])] as HTMLElement[];
         const i = tabs.indexOf(el);
         let target: HTMLElement | undefined;
-        if (e.key === "ArrowDown" || e.key === "ArrowRight") target = tabs[i + 1] ?? tabs[0];
-        else if (e.key === "ArrowUp" || e.key === "ArrowLeft") target = tabs[i - 1] ?? tabs[tabs.length - 1];
-        else if (e.key === "Home") target = tabs[0];
-        else target = tabs[tabs.length - 1];
+        if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+          target = tabs[i + 1] ?? tabs[0];
+        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+          target = tabs[i - 1] ?? tabs[tabs.length - 1];
+        } else if (e.key === "Home") {
+          target = tabs[0];
+        } else {
+          target = tabs[tabs.length - 1];
+        }
         target?.focus();
         break;
       }
@@ -556,8 +689,6 @@ function attachTabInteraction(el: HTMLElement, id: string): void {
 
   attachDrag(el);
 }
-
-
 
 // --- Singleton tab helpers ---
 
@@ -575,7 +706,9 @@ function toggleSingleton(spec: TabSpec): void {
  *  open/activate, landing on the given tab (default: General). */
 export function toggleSettingsView(tab: SettingsTab = "general", onShow?: () => void): void {
   toggleSingleton({
-    id: TAB_SETTINGS, name: "Settings", kind: "settings",
+    id: TAB_SETTINGS,
+    name: "Settings",
+    kind: "settings",
     view: TAB_VIEWS.settings,
     route: { kind: "settings", tab },
     onShow,
@@ -587,29 +720,47 @@ export function toggleSettingsView(tab: SettingsTab = "general", onShow?: () => 
  *  to toggle — only change the inner tab. */
 export function setSettingsTab(tab: SettingsTab): void {
   const spec = state.tabs.find((t) => t.id === TAB_SETTINGS);
-  if (spec === undefined) return;
+  if (spec === undefined) {
+    return;
+  }
   spec.route = { kind: "settings", tab };
-  if (state.active === TAB_SETTINGS) emit();
+  if (state.active === TAB_SETTINGS) {
+    emit();
+  }
 }
 
 export function toggleGitView(onShow: () => void): void {
   toggleSingleton({
-    id: TAB_GIT, name: "Source Control", kind: "git",
-    view: TAB_VIEWS.git, route: { kind: "git" }, onShow,
+    id: TAB_GIT,
+    name: "Source Control",
+    kind: "git",
+    view: TAB_VIEWS.git,
+    route: { kind: "git" },
+    onShow,
   });
 }
 
 export function toggleFilesView(onShow: () => void, onClose?: () => void): void {
   toggleSingleton({
-    id: TAB_FILES, name: "Files", kind: "files",
-    view: TAB_VIEWS.files, route: { kind: "files", path: "." }, onShow, onClose,
+    id: TAB_FILES,
+    name: "Files",
+    kind: "files",
+    view: TAB_VIEWS.files,
+    route: { kind: "files", path: "." },
+    onShow,
+    onClose,
   });
 }
 
 export function toggleHistoryView(onShow: () => void, onClose?: () => void): void {
   toggleSingleton({
-    id: TAB_HISTORY, name: "History", kind: "history",
-    view: TAB_VIEWS.history, route: { kind: "history" }, onShow, onClose,
+    id: TAB_HISTORY,
+    name: "History",
+    kind: "history",
+    view: TAB_VIEWS.history,
+    route: { kind: "history" },
+    onShow,
+    onClose,
   });
 }
 
@@ -617,10 +768,13 @@ export function openEditorView(filePath: string, onShow: () => void, onClose?: (
   const id = `editor:${filePath}`;
   const name = filePath.split("/").pop() ?? filePath;
   openTab({
-    id, name, kind: "editor",
+    id,
+    name,
+    kind: "editor",
     view: TAB_VIEWS.editor,
     route: { kind: "file", path: filePath },
-    onShow, onClose,
+    onShow,
+    onClose,
   });
 }
 
@@ -632,18 +786,21 @@ export function _resetForTest(): void {
   state.active = "";
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
-  if (internal.emptyTimer !== null) clearTimeout(internal.emptyTimer);
+  if (internal.emptyTimer !== null) {
+    clearTimeout(internal.emptyTimer);
+  }
   internal.emptyTimer = null;
   internal.vtPending = null;
   internal.renderQueued = false;
   // Dispose existing module effects and re-register so tests observe
   // the same side-effects (persistence, view sync, DOM render) as
   // production.
-  for (const c of moduleEffects) c();
+  for (const c of moduleEffects) {
+    c();
+  }
   moduleEffects.length = 0;
   registerModuleSubscribers();
 }
-
 
 // Register module-level effects after all module declarations are
 // initialized — effect() bodies run synchronously on subscribe, so

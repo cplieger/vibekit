@@ -1,12 +1,25 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from "vitest";
-import { bindPRState, updateGroupsRef, removePRFromGroups, reinsertPRInGroups } from "./git-prs-state.js";
+import {
+  bindPRState,
+  updateGroupsRef,
+  removePRFromGroups,
+  reinsertPRInGroups,
+} from "./git-prs-state.js";
 
 function makePR(number: number) {
-  return { number, title: `PR #${number}`, state: "open", source_branch: "feat", target_branch: "main" };
+  return {
+    number,
+    title: `PR #${number}`,
+    state: "open",
+    source_branch: "feat",
+    target_branch: "main",
+  };
 }
 
-function makeGroup(overrides: Partial<{ forge_id: string; owner: string; name: string; prs: any[] }> = {}) {
+function makeGroup(
+  overrides: Partial<{ forge_id: string; owner: string; name: string; prs: any[] }> = {},
+) {
   return {
     forge_id: overrides.forge_id ?? "f1",
     forge_kind: "github" as const,
@@ -25,7 +38,12 @@ describe("git-prs-state", () => {
   beforeEach(() => {
     groups = [makeGroup()];
     paintCount = 0;
-    bindPRState({ groups, paint: () => { paintCount++; } });
+    bindPRState({
+      groups,
+      paint: () => {
+        paintCount++;
+      },
+    });
     updateGroupsRef(groups);
   });
 

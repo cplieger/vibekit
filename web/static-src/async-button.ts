@@ -13,8 +13,7 @@
 
 const RESET_MS = 1200;
 
-const SPINNER_HTML =
-  '<span class="spinner-sm btn-async-spinner" aria-hidden="true"></span>';
+const SPINNER_HTML = '<span class="spinner-sm btn-async-spinner" aria-hidden="true"></span>';
 
 const CHECK_HTML =
   '<svg class="btn-async-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
@@ -42,7 +41,9 @@ function announce(message: string): void {
   }
   // Clear then set to ensure re-announcement of identical messages.
   liveRegion.textContent = "";
-  setTimeout(() => { liveRegion!.textContent = message; }, 50);
+  setTimeout(() => {
+    liveRegion!.textContent = message;
+  }, 50);
 }
 
 export interface AsyncFeedbackOptions {
@@ -64,7 +65,9 @@ export async function withAsyncFeedback(
   opts: AsyncFeedbackOptions = {},
 ): Promise<void> {
   // Guard: reject re-entry while any status is active (pending, success, error display)
-  if (btn.dataset["asyncStatus"] !== undefined) return;
+  if (btn.dataset["asyncStatus"] !== undefined) {
+    return;
+  }
 
   // Cancel any pending reset timer from a prior cycle to avoid stale restores
   const prevTimer = resetTimers.get(btn);
@@ -80,9 +83,7 @@ export async function withAsyncFeedback(
   btn.dataset["asyncStatus"] = "pending";
   btn.disabled = true;
   btn.setAttribute("aria-busy", "true");
-  btn.innerHTML = opts.keepLabel === true
-    ? `${SPINNER_HTML} ${origHTML}`
-    : SPINNER_HTML;
+  btn.innerHTML = opts.keepLabel === true ? `${SPINNER_HTML} ${origHTML}` : SPINNER_HTML;
 
   let ok = true;
   try {
@@ -96,22 +97,30 @@ export async function withAsyncFeedback(
   // clone). Skip the success/error visual in that case — the new
   // DOM already reflects the result.
   if (!btn.isConnected) {
-    if (origAriaBusy === null) btn.removeAttribute("aria-busy");
-    else btn.setAttribute("aria-busy", origAriaBusy);
+    if (origAriaBusy === null) {
+      btn.removeAttribute("aria-busy");
+    } else {
+      btn.setAttribute("aria-busy", origAriaBusy);
+    }
     delete btn.dataset["asyncStatus"];
     return;
   }
 
   btn.dataset["asyncStatus"] = ok ? "success" : "error";
   btn.innerHTML = ok ? CHECK_HTML : X_HTML;
-  if (origAriaBusy === null) btn.removeAttribute("aria-busy");
-  else btn.setAttribute("aria-busy", origAriaBusy);
+  if (origAriaBusy === null) {
+    btn.removeAttribute("aria-busy");
+  } else {
+    btn.setAttribute("aria-busy", origAriaBusy);
+  }
   announce(ok ? "Action completed" : "Action failed");
 
   const reset = opts.resetMs ?? RESET_MS;
   const timerId = setTimeout(() => {
     resetTimers.delete(btn);
-    if (!btn.isConnected) return;
+    if (!btn.isConnected) {
+      return;
+    }
     btn.innerHTML = origHTML;
     btn.disabled = origDisabled;
     delete btn.dataset["asyncStatus"];

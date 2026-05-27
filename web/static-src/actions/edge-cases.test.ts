@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
@@ -36,8 +39,12 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("runWithRetry: no retry on abort even for retry-class errors", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("signal aborted externally before run() throws — no retry", async () => {
     let attempts = 0;
@@ -80,9 +87,13 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
       run: async (_args, signal) => {
         attempts++;
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => {
-            reject(new DOMException("aborted", "AbortError"));
-          }, { once: true });
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
         });
       },
     });

@@ -10,7 +10,9 @@ import { $ } from "./dom.js";
  *  upper third of the viewport. */
 export function scrollToEditorLine(line: number): void {
   const scroller = $.editorHighlight.parentElement;
-  if (scroller === null) return;
+  if (scroller === null) {
+    return;
+  }
   const lh = getLineHeight();
   const pad = getPaddingTop();
   const target = pad + (line - 1) * lh;
@@ -22,7 +24,9 @@ export function scrollToEditorLine(line: number): void {
  *  after scroll so the user's eye catches the target. */
 export function flashEditorLine(line: number): void {
   const scroller = $.editorHighlight.parentElement;
-  if (scroller === null) return;
+  if (scroller === null) {
+    return;
+  }
   const lh = getLineHeight();
   const pad = getPaddingTop();
   const flash = document.createElement("div");
@@ -30,17 +34,24 @@ export function flashEditorLine(line: number): void {
   flash.style.top = `${String(pad + (line - 1) * lh)}px`;
   flash.style.height = `${String(lh)}px`;
   scroller.appendChild(flash);
-  setTimeout(() => flash.remove(), 1200);
+  setTimeout(() => {
+    flash.remove();
+  }, 1200);
 }
 
 let cachedLineHeight: number | null = null;
 let cachedPaddingTop: number | null = null;
 
 function getLineHeight(): number {
-  if (cachedLineHeight !== null) return cachedLineHeight;
+  if (cachedLineHeight !== null) {
+    return cachedLineHeight;
+  }
   const style = getComputedStyle($.editorCode);
   const lh = parseFloat(style.lineHeight);
-  if (Number.isFinite(lh) && lh > 0) { cachedLineHeight = lh; return lh; }
+  if (Number.isFinite(lh) && lh > 0) {
+    cachedLineHeight = lh;
+    return lh;
+  }
   const fs = parseFloat(style.fontSize);
   const val = Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 18;
   cachedLineHeight = val;
@@ -48,7 +59,9 @@ function getLineHeight(): number {
 }
 
 function getPaddingTop(): number {
-  if (cachedPaddingTop !== null) return cachedPaddingTop;
+  if (cachedPaddingTop !== null) {
+    return cachedPaddingTop;
+  }
   const pad = parseFloat(getComputedStyle($.editorHighlight).paddingTop);
   const val = Number.isFinite(pad) && pad >= 0 ? pad : 0;
   cachedPaddingTop = val;

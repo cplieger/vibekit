@@ -13,8 +13,15 @@ import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
-  getSessions, getActiveId, get, setThinking, loadList, loadMessages,
-  setCurrentMode, clearMsgIndex, invalidateSession,
+  getSessions,
+  getActiveId,
+  get,
+  setThinking,
+  loadList,
+  loadMessages,
+  setCurrentMode,
+  clearMsgIndex,
+  invalidateSession,
   version,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
@@ -28,7 +35,9 @@ onSSE("settings_updated", () => {
   // patchSettings, which writes the value back to the server, which
   // re-broadcasts settings_updated, looping forever at debounce speed.
   void syncSettings().then((s) => {
-    if (s.last_model !== undefined) restoreLastModel(s.last_model);
+    if (s.last_model !== undefined) {
+      restoreLastModel(s.last_model);
+    }
   });
   refreshCompactionThreshold();
   void refreshRetention();
@@ -51,7 +60,9 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   //   3. If a chat is active, reload its messages from scratch so
   //      streaming tails and tool-call updates heal.
   for (const s of getSessions()) {
-    if (s.thinking) setThinking(s.id, false);
+    if (s.thinking) {
+      setThinking(s.id, false);
+    }
   }
   void loadList().then(() => {
     // Reconcile tabs: close any chat/plan tab whose session no longer
@@ -60,13 +71,18 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // discard) and we missed the chat_deleted SSE.
     const sessionIDs = new Set(getSessions().map((s) => s.id));
     // Walk open tabs via the tabs module (avoids DOM scraping).
-    for (const id of getOpenTabIDs()
-      .filter((id) => id !== "" && !id.startsWith("__") && !id.startsWith("editor:"))) {
-      if (!sessionIDs.has(id) && hasTab(id)) closeTab(id);
+    for (const id of getOpenTabIDs().filter(
+      (id) => id !== "" && !id.startsWith("__") && !id.startsWith("editor:"),
+    )) {
+      if (!sessionIDs.has(id) && hasTab(id)) {
+        closeTab(id);
+      }
     }
   });
   const id = getActiveId();
-  if (id !== "") void loadMessages(id);
+  if (id !== "") {
+    void loadMessages(id);
+  }
 });
 
 // commands_updated: no longer consumed — slash command UI stripped.
@@ -89,22 +105,36 @@ onSSE("compaction_started", () => {
 // mode_id. Reflect it in the store so any UI reading current_mode_id
 // stays current without waiting for the next chat_updated rebuild.
 onSSE("mode_changed", (chatID, p) => {
-  if (chatID === "") return;
-  if (typeof p.mode_id !== "string" || p.mode_id === "") return;
+  if (chatID === "") {
+    return;
+  }
+  if (typeof p.mode_id !== "string" || p.mode_id === "") {
+    return;
+  }
   setCurrentMode(chatID, p.mode_id);
 });
 
 // Steering inclusion: render "Context loaded: tech.md, go.md" badges
 // in the message list when kiro-cli reports which steering docs were loaded.
 onSSE("steering_loaded", (chatID, payload) => {
-  if (chatID === "" || getActiveId() !== chatID) return;
-  if (!Array.isArray(payload?.documents)) return;
+  if (chatID === "" || getActiveId() !== chatID) {
+    return;
+  }
+  if (!Array.isArray(payload?.documents)) {
+    return;
+  }
   const docs = payload.documents;
-  if (docs.length === 0) return;
+  if (docs.length === 0) {
+    return;
+  }
   const msgs = document.getElementById("messages");
-  if (msgs === null) return;
+  if (msgs === null) {
+    return;
+  }
   // Dedup: skip if a steering-badge already exists for this chat
-  if (msgs.querySelector(".steering-badge") !== null) return;
+  if (msgs.querySelector(".steering-badge") !== null) {
+    return;
+  }
   const badge = document.createElement("div");
   badge.className = "steering-badge";
   badge.setAttribute("data-chat-entry", "");
@@ -120,9 +150,13 @@ onSSE("steering_loaded", (chatID, payload) => {
 // up by reloading messages so the DOM drops stale checkpoint lines
 // referring to truncated turns.
 onSSE("checkpoint_restored", (chatID, _payload) => {
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   // Clear local messages so renderSwitch starts fresh on the next
   // loadMessages response. The activeId check guards against
   // reloading a chat the user isn't looking at (server-side archive

@@ -14,7 +14,13 @@ describe("computeVirtualWindow", () => {
         fc.integer({ min: 1, max: 2000 }),
         fc.integer({ min: 0, max: 50 }),
         (totalLines, lineHeight, scrollTop, viewportHeight, bufferLines) => {
-          const w = computeVirtualWindow(totalLines, lineHeight, scrollTop, viewportHeight, bufferLines);
+          const w = computeVirtualWindow(
+            totalLines,
+            lineHeight,
+            scrollTop,
+            viewportHeight,
+            bufferLines,
+          );
           expect(w.startLine).toBeGreaterThanOrEqual(0);
           expect(w.endLine).toBeLessThanOrEqual(totalLines);
           expect(w.paddingTopPx).toBeGreaterThanOrEqual(0);
@@ -58,7 +64,13 @@ describe("computeVirtualWindow", () => {
         fc.integer({ min: 1, max: 1000 }),
         fc.integer({ min: 0, max: 20 }),
         (totalLines, lineHeight, scrollTop, viewportHeight, bufferLines) => {
-          const w = computeVirtualWindow(totalLines, lineHeight, scrollTop, viewportHeight, bufferLines);
+          const w = computeVirtualWindow(
+            totalLines,
+            lineHeight,
+            scrollTop,
+            viewportHeight,
+            bufferLines,
+          );
           // Only valid when startLine <= endLine (scrollTop within document)
           if (w.startLine <= w.endLine) {
             const visiblePx = (w.endLine - w.startLine) * lineHeight;

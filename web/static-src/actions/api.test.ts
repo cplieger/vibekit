@@ -92,10 +92,9 @@ describe("apiAction", () => {
   });
 
   it("throws ActionError with status + body.error message on non-OK response", async () => {
-    mockFetch.mockResolvedValue(new Response(
-      JSON.stringify({ error: "Not found" }),
-      { status: 404 },
-    ));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+    );
     const action = testAction();
     const result = await action.dispatch({ id: "1" });
     expect(result).toBeNull();

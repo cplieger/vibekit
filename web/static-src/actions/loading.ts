@@ -24,7 +24,11 @@
 import { subscribeByName, isPending, pendingCount } from "./registry.js";
 
 /** Element types that have a `.disabled` writable boolean. */
-type DisableableElement = HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+type DisableableElement =
+  | HTMLButtonElement
+  | HTMLInputElement
+  | HTMLSelectElement
+  | HTMLTextAreaElement;
 
 interface BindLoadingOptions {
   /** When true (default), set `aria-busy="true"` while pending. */
@@ -77,9 +81,19 @@ export function bindLoadingState(
   // (focus restore, disposal on DOM removal, dedup of base-disabled
   // capture) are identical.
   const names: readonly string[] = typeof actionName === "string" ? [actionName] : actionName;
-  if (names.length === 0) return () => {};
+  if (names.length === 0) {
+    return () => {
+      /* noop */
+    };
+  }
 
-  const { ariaBusy = true, preserveAriaBusy = false, pendingClass, preserveDisabled = false, disabledFn } = opts;
+  const {
+    ariaBusy = true,
+    preserveAriaBusy = false,
+    pendingClass,
+    preserveDisabled = false,
+    disabledFn,
+  } = opts;
   const manageAriaBusy = ariaBusy && !preserveAriaBusy;
   // Track pending transitions to snapshot disabled state lazily —
   // avoids stale bind-time capture when external code mutates disabled.
@@ -95,7 +109,11 @@ export function bindLoadingState(
    *  default) rather than stuck in the pending visual state. */
   const resolveBase = (): boolean => {
     if (disabledFn !== undefined) {
-      try { return disabledFn(); } catch { return false; }
+      try {
+        return disabledFn();
+      } catch {
+        return false;
+      }
     }
     return preserveDisabled ? baseDisabled : false;
   };
@@ -103,15 +121,21 @@ export function bindLoadingState(
   /** Restore element to idle state. */
   const setIdle = (): void => {
     el.disabled = resolveBase();
-    if (manageAriaBusy) el.removeAttribute("aria-busy");
-    if (pendingClass) el.classList.remove(pendingClass);
+    if (manageAriaBusy) {
+      el.removeAttribute("aria-busy");
+    }
+    if (pendingClass) {
+      el.classList.remove(pendingClass);
+    }
     // Restore focus only if the user hasn't explicitly moved focus
     // elsewhere during the pending phase. When a button is disabled,
     // focus moves to <body>; if it's still there, the user didn't
     // intentionally navigate away, so restoring is correct.
     if (hadFocus && el.isConnected && !el.disabled) {
       const active = document.activeElement;
-      if (active === null || active === document.body) el.focus();
+      if (active === null || active === document.body) {
+        el.focus();
+      }
     }
     hadFocus = false;
   };
@@ -125,15 +149,23 @@ export function bindLoadingState(
   let unsubs: (() => void)[] | undefined;
 
   const apply = (): void => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
     // Auto-dispose if the element was removed from the DOM — prevents
     // stale bindings and keeps the closure from leaking the element.
     if (wasConnected && !el.isConnected) {
       disposed = true;
-      if (unsubs) for (const u of unsubs) u();
+      if (unsubs) {
+        for (const u of unsubs) {
+          u();
+        }
+      }
       return;
     }
-    if (el.isConnected) wasConnected = true;
+    if (el.isConnected) {
+      wasConnected = true;
+    }
     const pending = readPending();
     // Snapshot the live disabled state on the pending edge (before we
     // clobber it) so we can restore it when the action completes.
@@ -143,8 +175,12 @@ export function bindLoadingState(
     }
     if (pending) {
       el.disabled = true;
-      if (manageAriaBusy) el.setAttribute("aria-busy", "true");
-      if (pendingClass) el.classList.add(pendingClass);
+      if (manageAriaBusy) {
+        el.setAttribute("aria-busy", "true");
+      }
+      if (pendingClass) {
+        el.classList.add(pendingClass);
+      }
     } else if (wasPending) {
       // Transition pending→idle: restore element state.
       setIdle();
@@ -171,6 +207,10 @@ export function bindLoadingState(
   return () => {
     disposed = true;
     restore();
-    if (unsubs) for (const u of unsubs) u();
+    if (unsubs) {
+      for (const u of unsubs) {
+        u();
+      }
+    }
   };
 }

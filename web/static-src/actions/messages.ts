@@ -49,7 +49,8 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
     chat_id: chatID,
     payload: { tag, file_path: filePath },
   }),
-  success: (args) => `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
+  success: (args) =>
+    `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
   error: "Undo failed — the checkpoint may have expired",
 });
 
@@ -62,7 +63,9 @@ export const runPlan = defineAction<{ chatID: string; content: string }, void>({
   idempotencyKey: (args) => `plan.run:${args.chatID}:${args.content.slice(0, 40)}`,
   retryable: (err) => err.code === "send_failed" || retryNetwork(err),
   run: async ({ chatID, content }, signal) => {
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
       throw new ActionError("prompt rejected", { code: "send_failed" });

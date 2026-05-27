@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
@@ -147,7 +150,9 @@ describe("scope with undefined arg value", () => {
       run: () => {
         callCount++;
         if (callCount === 1) {
-          return new Promise<string>((r) => { resolveFirst = () => r("first"); });
+          return new Promise<string>((r) => {
+            resolveFirst = () => r("first");
+          });
         }
         return Promise.resolve("second");
       },
@@ -223,11 +228,19 @@ describe("deduped dispatch fires per-call callbacks", () => {
 
     // Original got the real error.
     expect(onError1).toHaveBeenCalledTimes(1);
-    expect(onError1.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+    expect(onError1.mock.calls[0]![0]).toMatchObject({
+      message: "server rejected",
+      code: "validation_failed",
+      status: 422,
+    });
 
     // Deduped caller now gets the SAME real error (not the synthetic one).
     expect(onError2).toHaveBeenCalledTimes(1);
-    expect(onError2.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+    expect(onError2.mock.calls[0]![0]).toMatchObject({
+      message: "server rejected",
+      code: "validation_failed",
+      status: 422,
+    });
 
     // Success was never called.
     expect(onSuccess2).not.toHaveBeenCalled();
@@ -239,14 +252,21 @@ describe("deduped dispatch fires per-call callbacks", () => {
 // ===========================================================================
 
 describe("debouncedDispatch leading flush", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("leading mode: first fires immediately, flush() fires the most-recently-suppressed args", async () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_leading_flush",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
 
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
@@ -276,7 +296,10 @@ describe("debouncedDispatch leading flush", () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_leading_flush_explicit",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
 
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
@@ -323,7 +346,11 @@ describe("transportAction idempotency_key in payload", () => {
     await action.dispatch({ chatID: "c1" });
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const cmd = mockSend.mock.calls[0]![0] as { type: string; chat_id: string; payload?: { idempotency_key?: string } };
+    const cmd = mockSend.mock.calls[0]![0] as {
+      type: string;
+      chat_id: string;
+      payload?: { idempotency_key?: string };
+    };
     expect(cmd.type).toBe("cancel");
     expect(cmd.chat_id).toBe("c1");
     // F3 fix verification: the idempotency_key MUST be in the payload.
@@ -372,7 +399,9 @@ describe("dedupe shared promise behavior", () => {
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => { resolveRun = r; });
+        return new Promise<string>((r) => {
+          resolveRun = r;
+        });
       },
     });
 
@@ -397,14 +426,21 @@ describe("dedupe shared promise behavior", () => {
 // ===========================================================================
 
 describe("debouncedDispatch leading trailing timer after cancel", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel + re-dispatch within cooldown fires via trailing timer", async () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_redispatch",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 
@@ -426,7 +462,10 @@ describe("debouncedDispatch leading trailing timer after cancel", () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_multi_suppress",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 
@@ -447,7 +486,10 @@ describe("debouncedDispatch leading trailing timer after cancel", () => {
     const runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_trailing_window",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 

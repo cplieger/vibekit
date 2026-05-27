@@ -19,7 +19,9 @@ describe("a11y: missing labels", () => {
     const dismiss = showToast("File saved", "success", 5000);
     const toast = document.querySelector(".vk-toast-success") as HTMLDivElement;
     expect(toast).not.toBeNull();
-    expect(toast.getAttribute("aria-label")).toBe("success notification: File saved. Click to dismiss.");
+    expect(toast.getAttribute("aria-label")).toBe(
+      "success notification: File saved. Click to dismiss.",
+    );
     dismiss();
   });
 
@@ -115,9 +117,7 @@ describe("a11y: focus management", () => {
     document.body.appendChild(trigger);
     trigger.focus();
 
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: vi.fn() },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: vi.fn() }]);
 
     // Focus moved to menu item
     const menuItem = document.querySelector(".overflow-menu-item") as HTMLButtonElement;
@@ -131,7 +131,6 @@ describe("a11y: focus management", () => {
 });
 
 describe("a11y: aria-expanded on popover triggers", () => {
-
   it("supervised-pill sets aria-expanded on expand/collapse", async () => {
     vi.resetModules();
     vi.doMock("./store.js", () => ({
@@ -160,7 +159,11 @@ describe("a11y: aria-expanded on popover triggers", () => {
     }));
     vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
     vi.doMock("./pill-expand.js", () => ({
-      makeExpandable: (_pill: HTMLElement, _content: HTMLElement, opts?: { onExpand?: () => void; onCollapse?: () => void }) => {
+      makeExpandable: (
+        _pill: HTMLElement,
+        _content: HTMLElement,
+        opts?: { onExpand?: () => void; onCollapse?: () => void },
+      ) => {
         _pill.addEventListener("click", () => {
           if (_pill.classList.contains("pill-expanded")) {
             _pill.classList.remove("pill-expanded");
@@ -203,9 +206,13 @@ describe("a11y: aria-expanded on popover triggers", () => {
     const btn = document.createElement("button");
     btn.id = "auto-approve-crew-btn";
     vi.doMock("./dom.js", () => ({
-      $: new Proxy({ autoApproveCrewBtn: btn }, {
-        get: (t, p) => (p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div")),
-      }),
+      $: new Proxy(
+        { autoApproveCrewBtn: btn },
+        {
+          get: (t, p) =>
+            p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div"),
+        },
+      ),
     }));
     vi.doMock("./store.js", () => ({
       getActive: () => ({
@@ -233,7 +240,9 @@ describe("a11y: aria-expanded on popover triggers", () => {
 describe("a11y: tool-card aria-expanded on toggle", () => {
   it("tool-toggle button starts with aria-expanded=false and aria-label", async () => {
     vi.resetModules();
-    vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
+    vi.mock("./scroll.js", () =>
+      import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
+    );
     vi.mock("./editor-openers.js", () => ({ openFile: () => {}, openFileDiff: () => {} }));
     vi.mock("./tool-group.js", () => ({ trackInProgress: () => {} }));
 
@@ -255,7 +264,9 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
 
   it("tool-toggle aria-expanded toggles on click", async () => {
     vi.resetModules();
-    vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
+    vi.mock("./scroll.js", () =>
+      import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
+    );
     vi.mock("./editor-openers.js", () => ({ openFile: () => {}, openFileDiff: () => {} }));
     vi.mock("./tool-group.js", () => ({ trackInProgress: () => {} }));
 

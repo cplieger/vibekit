@@ -60,29 +60,40 @@ class PromptInputController {
   private divider: Element | null = null;
   private sendWrap: HTMLElement | null = null;
 
-  private exitCycling(): void { this.idx = -1; this.draft = ""; }
+  private exitCycling(): void {
+    this.idx = -1;
+    this.draft = "";
+  }
 
   private userPrompts(): string[] {
     const s = getActive();
-    if (s === undefined) return [];
+    if (s === undefined) {
+      return [];
+    }
     const out: string[] = [];
     for (let i = s.messages.length - 1; i >= 0; i--) {
       const m = s.messages[i]!;
-      if (m.role === "user" && (m.content ?? "") !== "") out.push(m.content!);
+      if (m.role === "user" && (m.content ?? "") !== "") {
+        out.push(m.content!);
+      }
     }
     return out;
   }
 
   private cursorOnFirstLine(el: HTMLTextAreaElement): boolean {
     const pos = el.selectionStart;
-    if (pos !== el.selectionEnd) return false;
-    return el.value.slice(0, pos).indexOf("\n") === -1;
+    if (pos !== el.selectionEnd) {
+      return false;
+    }
+    return !el.value.slice(0, pos).includes("\n");
   }
 
   private cursorOnLastLine(el: HTMLTextAreaElement): boolean {
     const pos = el.selectionStart;
-    if (pos !== el.selectionEnd) return false;
-    return el.value.slice(pos).indexOf("\n") === -1;
+    if (pos !== el.selectionEnd) {
+      return false;
+    }
+    return !el.value.slice(pos).includes("\n");
   }
 
   private setInputValue(el: HTMLTextAreaElement, v: string): void {
@@ -104,20 +115,33 @@ class PromptInputController {
     $.sendBtn.disabled = disableForm;
     $.promptInput.disabled = k === "queued" || k === "blocked";
 
-    if (this.cancelHalf !== null) this.cancelHalf.classList.toggle("hidden", k !== "busy");
-    if (this.divider !== null) this.divider.classList.toggle("hidden", k !== "busy");
-    if (this.sendWrap !== null) this.sendWrap.classList.toggle("send-wrap-busy", k === "busy");
+    if (this.cancelHalf !== null) {
+      this.cancelHalf.classList.toggle("hidden", k !== "busy");
+    }
+    if (this.divider !== null) {
+      this.divider.classList.toggle("hidden", k !== "busy");
+    }
+    if (this.sendWrap !== null) {
+      this.sendWrap.classList.toggle("send-wrap-busy", k === "busy");
+    }
   }
 
   setSendState(next: SendState): void {
-    if (this.state.kind === next.kind &&
-        (this.state.kind !== "blocked" || (next as { kind: "blocked"; reason: string }).reason === this.state.reason)) return;
+    if (
+      this.state.kind === next.kind &&
+      (this.state.kind !== "blocked" ||
+        (next as { kind: "blocked"; reason: string }).reason === this.state.reason)
+    ) {
+      return;
+    }
     this.state = next;
     this.applyButtonState();
   }
 
   init(onSubmit: Submit, onCancel: Cancel): void {
-    if (initialized) return;
+    if (initialized) {
+      return;
+    }
     initialized = true;
 
     const form = $.promptForm;
@@ -132,16 +156,26 @@ class PromptInputController {
     this.cancelHalf?.addEventListener("click", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (this.state.kind === "busy") onCancel();
+      if (this.state.kind === "busy") {
+        onCancel();
+      }
     });
 
     this.applyButtonState();
 
     form.addEventListener("submit", (e: Event) => {
       e.preventDefault();
-      if (this.state.kind === "queued" || this.state.kind === "blocked" || this.state.kind === "busy") return;
+      if (
+        this.state.kind === "queued" ||
+        this.state.kind === "blocked" ||
+        this.state.kind === "busy"
+      ) {
+        return;
+      }
       const text = input.value.trim();
-      if (text === "") return;
+      if (text === "") {
+        return;
+      }
       this.exitCycling();
       onSubmit(text);
       input.value = "";
@@ -161,10 +195,16 @@ class PromptInputController {
 
       if (e.key === "ArrowUp" && this.cursorOnFirstLine(input)) {
         const prompts = this.userPrompts();
-        if (prompts.length === 0) return;
-        if (this.idx === -1) this.draft = input.value;
+        if (prompts.length === 0) {
+          return;
+        }
+        if (this.idx === -1) {
+          this.draft = input.value;
+        }
         const next = Math.min(this.idx + 1, prompts.length - 1);
-        if (next === this.idx) return;
+        if (next === this.idx) {
+          return;
+        }
         this.idx = next;
         e.preventDefault();
         this.setInputValue(input, prompts[this.idx]!);
@@ -173,7 +213,11 @@ class PromptInputController {
 
       if (e.key === "ArrowDown" && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
-        if (this.idx === 0) { this.exitCycling(); this.setInputValue(input, this.draft); return; }
+        if (this.idx === 0) {
+          this.exitCycling();
+          this.setInputValue(input, this.draft);
+          return;
+        }
         this.idx -= 1;
         const prompts = this.userPrompts();
         this.setInputValue(input, prompts[this.idx] ?? "");
@@ -190,8 +234,14 @@ class PromptInputController {
       }
     });
 
-    input.addEventListener("input", () => { if (this.idx !== -1) this.exitCycling(); });
-    input.addEventListener("focus", () => { collapseAll(); });
+    input.addEventListener("input", () => {
+      if (this.idx !== -1) {
+        this.exitCycling();
+      }
+    });
+    input.addEventListener("focus", () => {
+      collapseAll();
+    });
 
     fixIOSViewport(input);
   }

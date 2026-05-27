@@ -76,7 +76,9 @@ let containerEl: HTMLDivElement | null = null;
 let escHandlerInstalled = false;
 
 function ensureContainer(): HTMLDivElement {
-  if (containerEl !== null) return containerEl;
+  if (containerEl !== null) {
+    return containerEl;
+  }
   const stack = document.createElement("div");
   stack.className = "vk-toast-stack";
   // role=status + aria-live=polite: announce without interrupting.
@@ -92,14 +94,20 @@ function ensureContainer(): HTMLDivElement {
 }
 
 function installEscHandler(): void {
-  if (escHandlerInstalled) return;
+  if (escHandlerInstalled) {
+    return;
+  }
   escHandlerInstalled = true;
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape") {
+      return;
+    }
     // Dismiss the most recently added toast (LIFO) so repeated Esc
     // tears down the stack from newest to oldest.
     const newest = visible[visible.length - 1];
-    if (newest === undefined) return;
+    if (newest === undefined) {
+      return;
+    }
     dismiss(newest);
   });
 }
@@ -109,9 +117,13 @@ function defaultDuration(level: ToastLevel): number {
 }
 
 function startTimer(t: ToastEntry): void {
-  if (t.duration <= 0 || t.remaining <= 0) return;
+  if (t.duration <= 0 || t.remaining <= 0) {
+    return;
+  }
   t.startedAt = Date.now();
-  t.timerId = setTimeout(() => dismiss(t), t.remaining);
+  t.timerId = setTimeout(() => {
+    dismiss(t);
+  }, t.remaining);
   if (t.progressEl !== null) {
     // Reset transition then animate width to 0 over `remaining`.
     t.progressEl.style.transitionDuration = "0ms";
@@ -119,13 +131,17 @@ function startTimer(t: ToastEntry): void {
     void t.progressEl.offsetWidth;
     t.progressEl.style.transitionDuration = `${String(t.remaining)}ms`;
     requestAnimationFrame(() => {
-      if (t.progressEl !== null) t.progressEl.style.width = "0%";
+      if (t.progressEl !== null) {
+        t.progressEl.style.width = "0%";
+      }
     });
   }
 }
 
 function pauseTimer(t: ToastEntry): void {
-  if (t.timerId === null || t.duration <= 0) return;
+  if (t.timerId === null || t.duration <= 0) {
+    return;
+  }
   clearTimeout(t.timerId);
   t.timerId = null;
   const elapsed = Date.now() - t.startedAt;
@@ -139,12 +155,16 @@ function pauseTimer(t: ToastEntry): void {
 }
 
 function resumeTimer(t: ToastEntry): void {
-  if (t.timerId !== null || t.duration <= 0 || t.remaining <= 0) return;
+  if (t.timerId !== null || t.duration <= 0 || t.remaining <= 0) {
+    return;
+  }
   startTimer(t);
 }
 
 function dismiss(t: ToastEntry): void {
-  if (t.dismissed) return;
+  if (t.dismissed) {
+    return;
+  }
   t.dismissed = true;
   if (t.timerId !== null) {
     clearTimeout(t.timerId);
@@ -154,18 +174,26 @@ function dismiss(t: ToastEntry): void {
   let removed = false;
   let fallbackId: ReturnType<typeof setTimeout> | null = null;
   const cleanup = (): void => {
-    if (removed) return;
+    if (removed) {
+      return;
+    }
     removed = true;
-    if (fallbackId !== null) clearTimeout(fallbackId);
+    if (fallbackId !== null) {
+      clearTimeout(fallbackId);
+    }
     t.el.removeEventListener("transitionend", onEnd);
     t.el.remove();
     const idx = visible.indexOf(t);
-    if (idx !== -1) visible.splice(idx, 1);
+    if (idx !== -1) {
+      visible.splice(idx, 1);
+    }
     promoteFromQueue();
   };
   const onEnd = (e: Event): void => {
     // Only fire on the toast element itself, not bubbling children.
-    if (e.target !== t.el) return;
+    if (e.target !== t.el) {
+      return;
+    }
     cleanup();
   };
   t.el.addEventListener("transitionend", onEnd);
@@ -177,13 +205,20 @@ function dismiss(t: ToastEntry): void {
 function promoteFromQueue(): void {
   while (visible.length < MAX_VISIBLE) {
     const next = queue.shift();
-    if (next === undefined) return;
+    if (next === undefined) {
+      return;
+    }
     const dismissFn = mount(next.message, next.level, next.duration, next.retry);
     next.resolve(dismissFn);
   }
 }
 
-function mount(message: string, level: ToastLevel, duration: number, retry?: ToastRetry): () => void {
+function mount(
+  message: string,
+  level: ToastLevel,
+  duration: number,
+  retry?: ToastRetry,
+): () => void {
   const stack = ensureContainer();
 
   const el = document.createElement("div");
@@ -226,7 +261,9 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
       try {
         const r = handler();
         if (r instanceof Promise) {
-          r.catch((err) => console.error("[toast] retry handler rejected", err));
+          r.catch((err: unknown) => {
+            console.error("[toast] retry handler rejected", err);
+          });
         }
       } catch (err) {
         console.error("[toast] retry handler threw", err);
@@ -255,24 +292,43 @@ function mount(message: string, level: ToastLevel, duration: number, retry?: Toa
     dismissed: false,
   };
 
-  el.addEventListener("click", () => dismiss(t));
-  el.addEventListener("mouseenter", () => pauseTimer(t));
-  el.addEventListener("mouseleave", () => resumeTimer(t));
-  el.addEventListener("focusin", () => pauseTimer(t));
-  el.addEventListener("focusout", () => resumeTimer(t));
+  el.addEventListener("click", () => {
+    dismiss(t);
+  });
+  el.addEventListener("mouseenter", () => {
+    pauseTimer(t);
+  });
+  el.addEventListener("mouseleave", () => {
+    resumeTimer(t);
+  });
+  el.addEventListener("focusin", () => {
+    pauseTimer(t);
+  });
+  el.addEventListener("focusout", () => {
+    resumeTimer(t);
+  });
 
   stack.appendChild(el);
   visible.push(t);
 
   // Slide-in: a frame after insertion so the transition triggers.
-  requestAnimationFrame(() => el.classList.add("vk-toast-shown"));
+  requestAnimationFrame(() => {
+    el.classList.add("vk-toast-shown");
+  });
 
   startTimer(t);
 
-  return () => dismiss(t);
+  return () => {
+    dismiss(t);
+  };
 }
 
-function show(message: string, level: ToastLevel, duration: number, retry?: ToastRetry): () => void {
+function show(
+  message: string,
+  level: ToastLevel,
+  duration: number,
+  retry?: ToastRetry,
+): () => void {
   if (visible.length >= MAX_VISIBLE) {
     // Queue. The dismiss-fn returned from the queued path proxies to
     // the eventual mounted toast; if dismissed before mount we just
@@ -288,11 +344,15 @@ function show(message: string, level: ToastLevel, duration: number, retry?: Toas
       dismissedBeforeMount = true;
       if (queueEntry !== undefined) {
         const idx = queue.indexOf(queueEntry);
-        if (idx !== -1) queue.splice(idx, 1);
+        if (idx !== -1) {
+          queue.splice(idx, 1);
+        }
       }
     };
     queueEntry = {
-      message, level, duration,
+      message,
+      level,
+      duration,
       ...(retry !== undefined ? { retry } : {}),
       resolve: (fn) => {
         if (dismissedBeforeMount) {
@@ -339,7 +399,9 @@ export function showToast(
 
 /** Test-only: clear all visible + queued toasts. */
 export function _resetForTest(): void {
-  for (const t of [...visible]) dismiss(t);
+  for (const t of [...visible]) {
+    dismiss(t);
+  }
   queue.length = 0;
   if (containerEl !== null) {
     containerEl.remove();

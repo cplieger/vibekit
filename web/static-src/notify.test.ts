@@ -81,7 +81,9 @@ describe("urlBase64ToUint8Array adversarial inputs", () => {
       fc.property(fc.base64String({ minLength: 4, maxLength: 100 }), (input) => {
         const padded = input + "=".repeat((4 - (input.length % 4)) % 4);
         try {
-          const r = urlBase64ToUint8Array(padded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
+          const r = urlBase64ToUint8Array(
+            padded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+          );
           const expectedLen = Math.floor((padded.replace(/=+$/, "").length * 3) / 4);
           return r.length === expectedLen;
         } catch {

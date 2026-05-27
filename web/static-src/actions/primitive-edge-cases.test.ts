@@ -8,7 +8,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -119,7 +122,9 @@ describe("structuredClone fallback on retry toast", () => {
 
     // Fire the retry
     retryHandler!.onClick();
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(attempts).toBe(2);
     expect(callback).toHaveBeenCalledTimes(1);
   });
@@ -143,11 +148,15 @@ describe("structuredClone fallback on retry toast", () => {
     await action.dispatch({ el: circular });
     expect(attempts).toBe(1);
 
-    const retryHandler = vi.mocked(toast.error).mock.calls[0]?.[1] as { onClick: () => void } | undefined;
+    const retryHandler = vi.mocked(toast.error).mock.calls[0]?.[1] as
+      | { onClick: () => void }
+      | undefined;
     expect(retryHandler).toBeDefined();
 
     retryHandler!.onClick();
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(attempts).toBe(2);
   });
 });
@@ -226,7 +235,9 @@ describe("scope + cancel interaction", () => {
       run: (args) => {
         runCalls++;
         if (runCalls === 1) {
-          return new Promise<string>((r) => { resolveFirst = () => r("A"); });
+          return new Promise<string>((r) => {
+            resolveFirst = () => r("A");
+          });
         }
         return Promise.resolve(args.tag);
       },
@@ -272,7 +283,9 @@ describe("scope + cancel interaction", () => {
       run: (args) => {
         log.push(args.tag);
         if (args.tag === "A") {
-          return new Promise<void>((r) => { resolveFirst = () => r(); });
+          return new Promise<void>((r) => {
+            resolveFirst = () => r();
+          });
         }
         return Promise.resolve();
       },
@@ -302,8 +315,12 @@ describe("scope + cancel interaction", () => {
 // ===========================================================================
 
 describe("abort during retry backoff (signal fires mid-sleep)", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel during backoff sleep aborts the retry chain and resolves null", async () => {
     let attempts = 0;

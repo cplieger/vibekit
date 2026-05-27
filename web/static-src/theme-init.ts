@@ -31,8 +31,8 @@
         stored = parsed.theme;
       }
     }
-    const theme: "dark" | "light" = stored ??
-      (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    const theme: "dark" | "light" =
+      stored ?? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
     document.documentElement.dataset["theme"] = theme;
   } catch {
     document.documentElement.dataset["theme"] = "dark";

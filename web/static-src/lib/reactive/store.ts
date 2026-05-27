@@ -31,7 +31,11 @@ export function createStore<M>(): Store<M> {
     const cbs = subscribers[key];
     if (!cbs) return;
     for (const cb of cbs) {
-      try { cb(value); } catch (e) { console.error("store subscriber error:", e); }
+      try {
+        cb(value);
+      } catch (e) {
+        console.error("store subscriber error:", e);
+      }
     }
   }
 
@@ -57,13 +61,15 @@ export function createStore<M>(): Store<M> {
     subscribers[key].push(cb as Callback);
     return () => {
       const arr = subscribers[key];
-      if (arr) subscribers[key] = arr.filter(c => c !== cb);
+      if (arr) subscribers[key] = arr.filter((c) => c !== cb);
     };
   }
 
   function storeBatch(fn: () => void): void {
     batchDepth++;
-    try { fn(); } finally {
+    try {
+      fn();
+    } finally {
       batchDepth--;
       if (batchDepth === 0 && pendingKeys) {
         const p = pendingKeys;
@@ -82,14 +88,23 @@ export function createStore<M>(): Store<M> {
       if (disposed) return;
       for (const u of unsubs) u();
       unsubs = [];
-      if (cleanup) { cleanup(); cleanup = undefined; }
+      if (cleanup) {
+        cleanup();
+        cleanup = undefined;
+      }
       const prev = tracking;
       tracking = new Set();
-      try { cleanup = fn(); } catch (e) { console.error("store effect error:", e); }
+      try {
+        cleanup = fn();
+      } catch (e) {
+        console.error("store effect error:", e);
+      }
       const deps = tracking;
       tracking = prev;
       for (const dep of deps) {
-        unsubs.push(subscribe(dep as keyof M & string, run as (value: M[keyof M & string]) => void));
+        unsubs.push(
+          subscribe(dep as keyof M & string, run as (value: M[keyof M & string]) => void),
+        );
       }
     };
     run();
@@ -97,12 +112,17 @@ export function createStore<M>(): Store<M> {
       disposed = true;
       for (const u of unsubs) u();
       unsubs = [];
-      if (cleanup) { cleanup(); cleanup = undefined; }
+      if (cleanup) {
+        cleanup();
+        cleanup = undefined;
+      }
     };
   }
 
   function computed<K extends keyof M & string>(outputKey: K, fn: () => M[K]): () => void {
-    return storeEffect(() => { set(outputKey, fn()); });
+    return storeEffect(() => {
+      set(outputKey, fn());
+    });
   }
 
   return { get, set, subscribe, effect: storeEffect, computed, batch: storeBatch };

@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -50,7 +53,9 @@ describe("editor.save_file", () => {
   });
 
   it("suppresses error toast (error: false)", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "disk full" }), { status: 500 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "disk full" }), { status: 500 }),
+    );
     const { saveFile } = await import("./editor.js");
     const { error: toastError } = await import("../toast.js");
     await saveFile.dispatch({ path: "x.ts", content: "" });
@@ -76,7 +81,11 @@ describe("editor.resolve_partial", () => {
   it("records error on transport failure", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "internal" });
     const { resolvePendingPartial } = await import("./editor.js");
-    const r = await resolvePendingPartial.dispatch({ chatID: "c1", toolCallID: "tc1", mergedText: "" });
+    const r = await resolvePendingPartial.dispatch({
+      chatID: "c1",
+      toolCallID: "tc1",
+      mergedText: "",
+    });
     expect(r).toBeNull();
     expect(recentLog()[0]?.status).toBe("error");
   });
@@ -84,7 +93,9 @@ describe("editor.resolve_partial", () => {
 
 describe("editor.fetch_agent_lines", () => {
   it("GETs file changes with chat_id and path params", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ changes: [{ start_line: 1, end_line: 5 }] }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ changes: [{ start_line: 1, end_line: 5 }] }), { status: 200 }),
+    );
     const { fetchAgentLines } = await import("./editor.js");
     const r = await fetchAgentLines.dispatch({ chatID: "c1", path: "src/a.ts" });
     expect(r).toEqual({ changes: [{ start_line: 1, end_line: 5 }] });
@@ -97,7 +108,9 @@ describe("editor.fetch_agent_lines", () => {
 
 describe("editor.suggest_resolution", () => {
   it("POSTs to /api/utility/resolve-conflict", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ output: "resolved" }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ output: "resolved" }), { status: 200 }),
+    );
     const { suggestResolution } = await import("./editor.js");
     const r = await suggestResolution.dispatch({ ours: "a", theirs: "b", context: "merge" });
     expect(r).toEqual({ output: "resolved" });

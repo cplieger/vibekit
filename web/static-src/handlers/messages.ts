@@ -7,9 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import {
-  appendMessage, upsertMessage, appendChunk, upsertToolCall,
-} from "../store.js";
+import { appendMessage, upsertMessage, appendChunk, upsertToolCall } from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { clearBannerCodes } from "../banner-stack.js";
@@ -28,19 +26,27 @@ onSSE("message_appended", (chatID, m) => {
 onSSE("message_created", (chatID, m) => {
   // message_created starts a new assistant bubble; upsert so future chunks
   // target the right ID. Content is empty until chunks arrive.
-  if (m !== undefined) upsertMessage(chatID, m);
+  if (m !== undefined) {
+    upsertMessage(chatID, m);
+  }
 });
 
 onSSE("message_chunk", (chatID, p) => {
-  if (p !== undefined) appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false);
+  if (p !== undefined) {
+    appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false);
+  }
 });
 
 onSSE("message_updated", (chatID, m) => {
-  if (m !== undefined) upsertMessage(chatID, m);
+  if (m !== undefined) {
+    upsertMessage(chatID, m);
+  }
 });
 
 onSSE("tool_call", (chatID, p) => {
-  if (p !== undefined) upsertToolCall(chatID, p.message_id, p.tool_call);
+  if (p !== undefined) {
+    upsertToolCall(chatID, p.message_id, p.tool_call);
+  }
 });
 
 onSSE("tool_call_update", (chatID, p) => {
@@ -57,11 +63,17 @@ onSSE("tool_call_update", (chatID, p) => {
 // "Thinking..."). The event carries a sub_session_id and an event
 // object with a human-readable label.
 onSSE("subagent_activity", (_chatID, p) => {
-  if (p === undefined) return;
+  if (p === undefined) {
+    return;
+  }
   const sid = p.sub_session_id;
-  if (typeof sid !== "string" || sid === "") return;
+  if (typeof sid !== "string" || sid === "") {
+    return;
+  }
   const evt = p.event;
-  if (evt === null || evt === undefined || typeof evt !== "object") return;
+  if (evt === null || evt === undefined || typeof evt !== "object") {
+    return;
+  }
   const e = evt as Record<string, unknown>;
   // Extract a human-readable label from the activity event. kiro-cli
   // sends various shapes; we look for common fields in priority order.
@@ -70,5 +82,7 @@ onSSE("subagent_activity", (_chatID, p) => {
     (typeof e["title"] === "string" ? e["title"] : "") ||
     (typeof e["tool_name"] === "string" ? e["tool_name"] : "") ||
     (typeof e["status"] === "string" ? e["status"] : "");
-  if (label !== "") setSubagentActivity(sid, label);
+  if (label !== "") {
+    setSubagentActivity(sid, label);
+  }
 });

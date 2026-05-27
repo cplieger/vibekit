@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -29,7 +32,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const statusResp = { repos: [{ repo: "main", is_repo: true, branch: "main", ahead: 0, behind: 0, has_dirty: false }] };
+const statusResp = {
+  repos: [{ repo: "main", is_repo: true, branch: "main", ahead: 0, behind: 0, has_dirty: false }],
+};
 const forgesResp = { forges: [{ id: "gh:1", connected: true }] };
 
 describe("refreshGitBadge", () => {
@@ -39,8 +44,10 @@ describe("refreshGitBadge", () => {
 
   it("fetches both status-all and forges in parallel", async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url === "/api/git/status-all") return Promise.resolve(new Response(JSON.stringify(statusResp), { status: 200 }));
-      if (url === "/api/forges") return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
+      if (url === "/api/git/status-all")
+        return Promise.resolve(new Response(JSON.stringify(statusResp), { status: 200 }));
+      if (url === "/api/forges")
+        return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
       return Promise.resolve(new Response("", { status: 404 }));
     });
 
@@ -55,13 +62,15 @@ describe("refreshGitBadge", () => {
   });
 
   it("dedupes concurrent dispatches", async () => {
-    mockFetch.mockImplementation((url: string) =>
-      new Promise((r) =>
-        setTimeout(() => {
-          if (url === "/api/git/status-all") r(new Response(JSON.stringify(statusResp), { status: 200 }));
-          else r(new Response(JSON.stringify(forgesResp), { status: 200 }));
-        }, 10),
-      ),
+    mockFetch.mockImplementation(
+      (url: string) =>
+        new Promise((r) =>
+          setTimeout(() => {
+            if (url === "/api/git/status-all")
+              r(new Response(JSON.stringify(statusResp), { status: 200 }));
+            else r(new Response(JSON.stringify(forgesResp), { status: 200 }));
+          }, 10),
+        ),
     );
 
     vi.useFakeTimers();

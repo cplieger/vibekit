@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -29,7 +32,9 @@ describe("cross-action scope serialization after cancel", () => {
       scope: "serial",
       run: () => {
         order.push("A-start");
-        return new Promise<string>((r) => { resolveA = r; });
+        return new Promise<string>((r) => {
+          resolveA = r;
+        });
       },
     });
 
@@ -86,7 +91,9 @@ describe("cross-action scope serialization after cancel", () => {
       scope: "last-cancel",
       run: () => {
         order.push("A-start");
-        return new Promise<string>((r) => { resolveA = r; });
+        return new Promise<string>((r) => {
+          resolveA = r;
+        });
       },
     });
 

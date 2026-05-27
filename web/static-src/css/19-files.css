@@ -1,14 +1,18 @@
-
 /* ==========================================================================
    File Browser
    ========================================================================== */
 
 .fb-page {
-  display: flex; flex-direction: column; height: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .fb-list-wrap {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
   position: relative;
 }
 
@@ -17,21 +21,38 @@
 }
 
 .fb-drop-overlay {
-  position: absolute; inset: 0; z-index: 10;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-2);
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   background: color-mix(in srgb, var(--c-accent) 10%, var(--c-bg-primary));
-  border: 0.125rem dashed var(--c-accent); border-radius: var(--r);
-  color: var(--c-accent); font-size: var(--fs-md); font-weight: var(--fw-medium);
+  border: 0.125rem dashed var(--c-accent);
+  border-radius: var(--r);
+  color: var(--c-accent);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
   opacity: 1;
   transition: opacity var(--dur-standard);
 }
 
 .chat-drop-overlay {
-  position: absolute; inset: 0; z-index: 20;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-2);
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   background: color-mix(in srgb, var(--c-accent) 5%, transparent);
   border: 0.125rem dashed var(--c-accent);
-  color: var(--c-accent); font-size: var(--fs-md); font-weight: var(--fw-medium);
+  color: var(--c-accent);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
   pointer-events: none;
   opacity: 1;
   transition: opacity var(--dur-standard);
@@ -40,10 +61,14 @@
 /* Global upload progress bar */
 .upload-progress {
   padding: var(--sp-2) var(--sp-4);
-  background: var(--c-bg-secondary); border-block-start: 1px solid var(--c-border);
-  display: flex; align-items: center; gap: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-block-start: 1px solid var(--c-border);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   flex-shrink: 0;
-  height: 2.5rem; overflow: hidden;
+  height: 2.5rem;
+  overflow: hidden;
   transition:
     height var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard),
@@ -62,28 +87,43 @@
 }
 
 .upload-progress-bar {
-  flex: 1; height: 0.375rem; background: var(--c-bg-tertiary); border-radius: 0.1875rem; overflow: hidden;
+  flex: 1;
+  height: 0.375rem;
+  background: var(--c-bg-tertiary);
+  border-radius: 0.1875rem;
+  overflow: hidden;
 }
 
 .upload-progress-fill {
-  height: 100%; background: var(--c-accent); border-radius: 0.1875rem;
-  width: 0; transition: width var(--dur-standard);
+  height: 100%;
+  background: var(--c-accent);
+  border-radius: 0.1875rem;
+  width: 0;
+  transition: width var(--dur-standard);
 }
 
 .upload-progress-label {
-  font-size: var(--fs-xs); color: var(--c-text-secondary); white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
 }
 
 .upload-progress-cancel {
   flex-shrink: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.5rem; height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
-  background: transparent; border: none;
+  background: transparent;
+  border: none;
   color: var(--c-text-secondary);
   border-radius: var(--r);
   cursor: pointer;
-  transition: background-color var(--dur-fast), color var(--dur-fast);
+  transition:
+    background-color var(--dur-fast),
+    color var(--dur-fast);
 
   &:hover {
     background: var(--c-bg-hover);
@@ -91,24 +131,32 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent); outline-offset: 1px;
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
   }
 }
 
 /* File picker popup */
 .filepicker-card {
-  width: min(31.25rem, 90vw); max-height: 60vh;
-  display: flex; flex-direction: column;
+  width: min(31.25rem, 90vw);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .filepicker-list {
-  flex: 1; overflow-y: auto; min-height: 10rem;
-  border: 1px solid var(--c-border); border-radius: var(--r);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 10rem;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
   padding-inline: var(--sp-2);
 }
 
 .filepicker-footer {
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   padding-block-start: var(--sp-3);
   margin-block-start: auto;
 }
@@ -121,63 +169,102 @@
 }
 
 .fb-row {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   min-height: var(--btn-h);
   border-block-end: 1px solid var(--c-border);
   font-size: var(--fs-sm);
-  transition: background var(--dur-micro), opacity var(--dur-enter), transform var(--dur-enter);
+  transition:
+    background var(--dur-micro),
+    opacity var(--dur-enter),
+    transform var(--dur-enter);
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 
-  &:last-child { border-block-end: none; }
+  &:last-child {
+    border-block-end: none;
+  }
 
-  &:hover { background: var(--c-bg-tertiary); }
-  &.fb-row-selected { background: var(--c-accent-subtle); }
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+  &.fb-row-selected {
+    background: var(--c-accent-subtle);
+  }
 
   &.fb-row-exiting {
-    opacity: 0; transform: translateX(-1rem);
-    transition: opacity var(--dur-standard), transform var(--dur-standard);
+    opacity: 0;
+    transform: translateX(-1rem);
+    transition:
+      opacity var(--dur-standard),
+      transform var(--dur-standard);
   }
 }
 
-
 .fb-check {
-  width: 1rem; height: 1rem; flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
 .fb-icon {
-  flex-shrink: 0; color: var(--c-text-secondary);
-  display: flex; align-items: center;
-  width: 1.25rem; height: 1.25rem;
+  flex-shrink: 0;
+  color: var(--c-text-secondary);
+  display: flex;
+  align-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
   line-height: 0;
 
-  & svg { width: 100%; height: 100%; }
+  & svg {
+    width: 100%;
+    height: 100%;
+  }
 }
 
 .fb-name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--c-text-primary);
 }
 
-.fb-name-link { cursor: pointer; }
+.fb-name-link {
+  cursor: pointer;
+}
 
-.fb-name-link:hover { color: var(--c-text-primary); }
+.fb-name-link:hover {
+  color: var(--c-text-primary);
+}
 
 /* Add-to-chat button: inline at the end of each file row, visible on
    hover. Quick-attach a workspace file path to the active chat. */
 .fb-add-to-chat {
-  background: none; border: none; color: var(--c-text-tertiary);
-  cursor: pointer; padding: 0.25rem; margin-inline-start: var(--sp-2);
+  background: none;
+  border: none;
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+  padding: 0.25rem;
+  margin-inline-start: var(--sp-2);
   border-radius: calc(var(--r) / 2);
   line-height: 0;
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
-  transition: opacity var(--dur-micro), color var(--dur-micro), background var(--dur-micro) var(--ease-micro);
+  transition:
+    opacity var(--dur-micro),
+    color var(--dur-micro),
+    background var(--dur-micro) var(--ease-micro);
 }
 
 :where(.fb-row:hover) .fb-add-to-chat,
-.fb-add-to-chat:focus-visible { opacity: 1; }
+.fb-add-to-chat:focus-visible {
+  opacity: 1;
+}
 
 .fb-add-to-chat:hover {
   background: var(--c-bg-tertiary);
@@ -185,21 +272,29 @@
 }
 
 .fb-name-edit {
-  flex: 1; background: var(--c-bg-primary); color: var(--c-text-primary);
-  border: 1px solid var(--c-accent); border-radius: var(--r);
-  padding: 0.125rem var(--sp-1); font-size: var(--fs-sm);
-  font-family: inherit; outline: none;
+  flex: 1;
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-accent);
+  border-radius: var(--r);
+  padding: 0.125rem var(--sp-1);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  outline: none;
 }
 
 .fb-meta {
-  flex-shrink: 0; color: var(--c-text-tertiary);
-  font-family: var(--font-mono); font-size: var(--fs-xs);
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 .bottom-bar {
   padding: var(--sp-2) var(--sp-4) calc(var(--sp-2) + env(safe-area-inset-bottom, 0));
-  border-block-start: 1px solid var(--c-border); flex-shrink: 0;
+  border-block-start: 1px solid var(--c-border);
+  flex-shrink: 0;
   background: var(--c-bg-primary);
 }
 
@@ -207,30 +302,48 @@
   padding-bottom: var(--sp-2);
 }
 
-.fb-toolbar, .editor-toolbar {
-  display: flex; align-items: center;
+.fb-toolbar,
+.editor-toolbar {
+  display: flex;
+  align-items: center;
 }
 
 .view-toolbar-inner {
-  display: flex; align-items: center; gap: var(--sp-2);
-  max-width: var(--content-max-w); margin: 0 auto; width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: var(--content-max-w);
+  margin: 0 auto;
+  width: 100%;
 }
 
 .view-toolbar-inner .icon-btn {
-  min-width: var(--btn-h); min-height: var(--btn-h);
-  display: flex; align-items: center; justify-content: center;
+  min-width: var(--btn-h);
+  min-height: var(--btn-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .fb-path {
-  flex: 1 1 4rem; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-sm);
-  color: var(--c-text-primary); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
-  border-radius: var(--r); padding: var(--sp-2) var(--sp-3);
-  outline: none; min-height: var(--input-h);
+  flex: 1 1 4rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-2) var(--sp-3);
+  outline: none;
+  min-height: var(--input-h);
   transition: border-color var(--dur-micro) var(--ease-micro);
 
-  &:focus, &:not(:read-only) {
+  &:focus,
+  &:not(:read-only) {
     border-color: var(--c-accent);
     color: var(--c-text-primary);
   }

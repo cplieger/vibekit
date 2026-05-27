@@ -26,10 +26,7 @@
 // higher-priority state arrives).
 // ---------------------------------------------------------------------------
 
-export type BannerKey =
-  | "forge-auth-failed"
-  | "gh-cli-missing"
-  | "forges-not-connected";
+export type BannerKey = "forge-auth-failed" | "gh-cli-missing" | "forges-not-connected";
 
 interface Callbacks {
   /** Routed CTA for "forge-auth-failed" and "forges-not-connected". */
@@ -47,7 +44,7 @@ const PRIORITY: readonly BannerKey[] = [
 
 class StatusBanner {
   private root: HTMLElement | null = null;
-  private active: Set<BannerKey> = new Set();
+  private active = new Set<BannerKey>();
   private dismissed: BannerKey | null = null;
   private callbacks: Callbacks | null = null;
 
@@ -58,7 +55,9 @@ class StatusBanner {
   }
 
   set(key: BannerKey): void {
-    if (this.active.has(key)) return;
+    if (this.active.has(key)) {
+      return;
+    }
     this.active.add(key);
     // If a higher-priority key just became top-active, drop any prior
     // dismissal so the user sees the more urgent state.
@@ -69,9 +68,13 @@ class StatusBanner {
   }
 
   clear(key: BannerKey): void {
-    if (!this.active.has(key)) return;
+    if (!this.active.has(key)) {
+      return;
+    }
     this.active.delete(key);
-    if (this.dismissed === key) this.dismissed = null;
+    if (this.dismissed === key) {
+      this.dismissed = null;
+    }
     this.render();
   }
 
@@ -86,12 +89,18 @@ class StatusBanner {
   }
 
   private topKey(): BannerKey | null {
-    for (const k of PRIORITY) if (this.active.has(k)) return k;
+    for (const k of PRIORITY) {
+      if (this.active.has(k)) {
+        return k;
+      }
+    }
     return null;
   }
 
   private render(): void {
-    if (this.root === null) return;
+    if (this.root === null) {
+      return;
+    }
     const top = this.topKey();
     if (top === null || top === this.dismissed) {
       this.root.replaceChildren();
@@ -123,7 +132,9 @@ class StatusBanner {
     cta.className = "btn-small git-status-banner-cta";
     cta.dataset["bannerCta"] = key;
     cta.textContent = ctaLabelFor(key);
-    cta.addEventListener("click", () => this.fireCTA(key));
+    cta.addEventListener("click", () => {
+      this.fireCTA(key);
+    });
     wrap.appendChild(cta);
 
     const dismiss = document.createElement("button");
@@ -142,7 +153,9 @@ class StatusBanner {
   }
 
   private fireCTA(key: BannerKey): void {
-    if (this.callbacks === null) return;
+    if (this.callbacks === null) {
+      return;
+    }
     switch (key) {
       case "forge-auth-failed":
       case "forges-not-connected":
@@ -178,9 +191,17 @@ function ctaLabelFor(key: BannerKey): string {
 
 const banner = new StatusBanner();
 
-export function initStatusBanner(callbacks: Callbacks): void { banner.init(callbacks); }
-export function setBanner(key: BannerKey): void { banner.set(key); }
-export function clearBanner(key: BannerKey): void { banner.clear(key); }
+export function initStatusBanner(callbacks: Callbacks): void {
+  banner.init(callbacks);
+}
+export function setBanner(key: BannerKey): void {
+  banner.set(key);
+}
+export function clearBanner(key: BannerKey): void {
+  banner.clear(key);
+}
 
 /** Test-only: reset internal state between cases. */
-export function _resetBannerState(): void { banner.reset(); }
+export function _resetBannerState(): void {
+  banner.reset();
+}

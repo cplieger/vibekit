@@ -1,56 +1,123 @@
 @layer mobile {
-@media (width <= 48rem) {
-  :root { --btn-h: 2.75rem; --input-h: 2.75rem; }
-  [id="chat-area"] { margin-inline-start: 0; }
+  @media (width <= 48rem) {
+    :root {
+      --btn-h: 2.75rem;
+      --input-h: 2.75rem;
+    }
+    [id="chat-area"] {
+      margin-inline-start: 0;
+    }
 
-  [id="sidebar"] {
-    left: -100vw; width: 100vw; z-index: 100;
-    transition: left var(--dur-standard);
+    [id="sidebar"] {
+      left: -100vw;
+      width: 100vw;
+      z-index: 100;
+      transition: left var(--dur-standard);
+    }
+    [id="sidebar"].open {
+      left: 0;
+    }
+    .sidebar-close-only {
+      display: block;
+    }
+    .mobile-only {
+      display: flex;
+    }
+
+    .chat-toolbar {
+      position: static;
+      width: 100%;
+      border-radius: 0;
+      padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
+      min-height: calc(3.25rem + env(safe-area-inset-top, 0));
+      border: none;
+      border-block-end: 1px solid var(--c-border);
+      justify-content: flex-end;
+      background: var(--c-bg-primary);
+      flex-shrink: 0;
+      z-index: auto;
+    }
+    .toolbar-title {
+      display: block;
+    }
+    .page-title {
+      display: none;
+      padding-bottom: var(--sp-3);
+      padding-top: var(--sp-1);
+    }
+    .chat-toolbar .mobile-only {
+      display: flex;
+    }
+
+    /* Scroll-to-bottom: right-anchored square icon, text hidden. */
+    [id="scroll-bottom"] {
+      left: auto;
+      right: var(--sp-3);
+      transform: none;
+      width: var(--btn-h);
+      padding: 0;
+    }
+    [id="scroll-bottom"] > span {
+      display: none;
+    }
+    [id="user-popup"] {
+      left: 0;
+      right: 0;
+      min-width: 0;
+      width: calc(100vw - 2 * var(--sp-4));
+    }
+    .fb-row {
+      padding: var(--sp-3);
+    }
+    .fb-check {
+      width: 1.25rem;
+      height: 1.25rem;
+    }
+
+    /* Modals: full-width on small screens */
+    .modal-card {
+      width: calc(100vw - 2 * var(--sp-4));
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .subagent-modal-card {
+      width: calc(100vw - 2 * var(--sp-4));
+    }
+
+    /* Toolbars: larger touch targets */
+    .bottom-bar {
+      padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0));
+    }
+    .pill {
+      height: 2rem;
+      padding: 0.25rem var(--sp-3);
+      font-size: var(--fs-sm);
+    }
+    [id="send-btn"] {
+      min-width: 2.5rem;
+      height: 2.25rem;
+      padding: 0 var(--sp-3);
+    }
+    [id="send-btn"] svg {
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+    .view-toolbar-inner {
+      gap: var(--sp-1);
+    }
+    .fb-actions {
+      gap: 0;
+    }
+
+    /* Settings page: reduce padding */
+    .page-content {
+      padding: var(--sp-3);
+    }
+
+    /* Sidebar tabs: larger touch targets on mobile */
+    .tab-close {
+      width: var(--btn-h);
+      height: var(--btn-h);
+    }
   }
-  [id="sidebar"].open { left: 0; }
-  .sidebar-close-only { display: block; }
-  .mobile-only { display: flex; }
-
-  .chat-toolbar {
-    position: static;
-    width: 100%; border-radius: 0;
-    padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
-    min-height: calc(3.25rem + env(safe-area-inset-top, 0));
-    border: none; border-block-end: 1px solid var(--c-border);
-    justify-content: flex-end;
-    background: var(--c-bg-primary);
-    flex-shrink: 0; z-index: auto;
-  }
-  .toolbar-title { display: block; }
-  .page-title { display: none; padding-bottom: var(--sp-3); padding-top: var(--sp-1); }
-  .chat-toolbar .mobile-only { display: flex; }
-
-  /* Scroll-to-bottom: right-anchored square icon, text hidden. */
-  [id="scroll-bottom"] {
-    left: auto; right: var(--sp-3); transform: none;
-    width: var(--btn-h); padding: 0;
-  }
-  [id="scroll-bottom"] > span { display: none; }
-  [id="user-popup"] { left: 0; right: 0; min-width: 0; width: calc(100vw - 2 * var(--sp-4)); }
-  .fb-row { padding: var(--sp-3); }
-  .fb-check { width: 1.25rem; height: 1.25rem; }
-
-  /* Modals: full-width on small screens */
-  .modal-card { width: calc(100vw - 2 * var(--sp-4)); max-height: 85vh; overflow-y: auto; }
-  .subagent-modal-card { width: calc(100vw - 2 * var(--sp-4)); }
-
-  /* Toolbars: larger touch targets */
-  .bottom-bar { padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0)); }
-  .pill { height: 2rem; padding: 0.25rem var(--sp-3); font-size: var(--fs-sm); }
-  [id="send-btn"] { min-width: 2.5rem; height: 2.25rem; padding: 0 var(--sp-3); }
-  [id="send-btn"] svg { width: 1.1rem; height: 1.1rem; }
-  .view-toolbar-inner { gap: var(--sp-1); }
-  .fb-actions { gap: 0; }
-
-  /* Settings page: reduce padding */
-  .page-content { padding: var(--sp-3); }
-
-  /* Sidebar tabs: larger touch targets on mobile */
-  .tab-close { width: var(--btn-h); height: var(--btn-h); }
-}
 } /* @layer mobile */

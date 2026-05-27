@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -86,10 +89,12 @@ describe("apiAction — response edge cases", () => {
   });
 
   it("throws ActionError on non-JSON response body", async () => {
-    mockFetch.mockResolvedValue(new Response("<html>error</html>", {
-      status: 200,
-      headers: { "Content-Type": "text/html" },
-    }));
+    mockFetch.mockResolvedValue(
+      new Response("<html>error</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
     const action = apiAction<void, unknown>({
       name: "test.bad_json",
       request: () => ({ method: "GET", path: "/api/broken" }),
@@ -130,10 +135,9 @@ describe("apiAction — response edge cases", () => {
 
 describe("apiAction — error code propagation", () => {
   it("propagates code from JSON error body to ActionError", async () => {
-    mockFetch.mockResolvedValue(new Response(
-      JSON.stringify({ error: "rate limited", code: "rate_limit" }),
-      { status: 429 },
-    ));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "rate limited", code: "rate_limit" }), { status: 429 }),
+    );
     const action = apiAction<void, unknown>({
       name: "test.code_prop",
       request: () => ({ method: "POST", path: "/api/limited", body: {} }),
@@ -148,10 +152,9 @@ describe("apiAction — error code propagation", () => {
   });
 
   it("omits code when error body has no code field", async () => {
-    mockFetch.mockResolvedValue(new Response(
-      JSON.stringify({ error: "not found" }),
-      { status: 404 },
-    ));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+    );
     const action = apiAction<void, unknown>({
       name: "test.no_code",
       request: () => ({ method: "GET", path: "/api/missing" }),

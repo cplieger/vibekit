@@ -11,20 +11,25 @@ import { reconcile } from "./reconcile.js";
 import { escText } from "./strings.js";
 
 const STATUS_ICON: Record<string, string> = {
-  completed: "\u2705",   // green check
+  completed: "\u2705", // green check
   in_progress: "\u23f3", // hourglass
-  pending: "\u25cb",     // circle
+  pending: "\u25cb", // circle
 };
 
 export function initTaskListPill(): void {
-  effect(() => { messagesVersion.value; refreshTaskList(); });
+  effect(() => {
+    messagesVersion.value;
+    refreshTaskList();
+  });
 }
 
 function refreshTaskList(): void {
   const pill = document.getElementById("task-list-pill");
   const badge = document.getElementById("task-list-badge");
   const items = document.getElementById("task-list-items");
-  if (pill === null || badge === null || items === null) return;
+  if (pill === null || badge === null || items === null) {
+    return;
+  }
 
   const session = getActive();
   if (session === undefined) {
@@ -66,7 +71,9 @@ function refreshTaskList(): void {
     update: (row, e) => {
       row.className = `task-item task-${e.status}`;
       const icon = row.querySelector(".task-icon");
-      if (icon !== null) icon.textContent = STATUS_ICON[e.status] ?? STATUS_ICON["pending"]!;
+      if (icon !== null) {
+        icon.textContent = STATUS_ICON[e.status] ?? STATUS_ICON["pending"]!;
+      }
     },
   });
 }

@@ -22,7 +22,13 @@ import { getActive, activeVersion } from "./store.js";
 import { effect } from "./signals.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
-import { setSupervised, resolveAllPending, resolvePendingChange, trustPending, clearPendingTrust } from "./actions/chat.js";
+import {
+  setSupervised,
+  resolveAllPending,
+  resolvePendingChange,
+  trustPending,
+  clearPendingTrust,
+} from "./actions/chat.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import type { PendingChange } from "./types.js";
 
@@ -30,28 +36,41 @@ class SupervisedPillController {
   private wired = false;
   private pill: HTMLElement | null = null;
   private content: HTMLDivElement | null = null;
-  private unbinds: Array<() => void> = [];
+  private unbinds: (() => void)[] = [];
 
   /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
    *  element exists. No-op on a second call. */
   init(): void {
-    if (this.wired) return;
+    if (this.wired) {
+      return;
+    }
     this.wired = true;
 
     this.pill = document.getElementById("supervised-pill");
-    if (this.pill === null) return;
+    if (this.pill === null) {
+      return;
+    }
 
     this.content = this.pill.querySelector(".pill-expand-content");
-    if (this.content === null) return;
+    if (this.content === null) {
+      return;
+    }
 
     makeExpandable(this.pill, this.content, {
-      onExpand: () => { this.pill?.setAttribute("aria-expanded", "true"); },
-      onCollapse: () => { this.pill?.setAttribute("aria-expanded", "false"); },
+      onExpand: () => {
+        this.pill?.setAttribute("aria-expanded", "true");
+      },
+      onCollapse: () => {
+        this.pill?.setAttribute("aria-expanded", "false");
+      },
     });
     this.pill.setAttribute("aria-expanded", "false");
     this.render();
 
-    effect(() => { activeVersion.value; this.render(); });
+    effect(() => {
+      activeVersion.value;
+      this.render();
+    });
   }
 
   /** Render the pill in three states:
@@ -63,8 +82,12 @@ class SupervisedPillController {
    *  Called on every store change. O(pending_changes) per render, which
    *  stays tiny for realistic turns. */
   private render(): void {
-    if (this.pill === null || this.content === null) return;
-    for (const u of this.unbinds) u();
+    if (this.pill === null || this.content === null) {
+      return;
+    }
+    for (const u of this.unbinds) {
+      u();
+    }
     this.unbinds = [];
     const s = getActive();
     if (s === undefined) {
@@ -84,7 +107,9 @@ class SupervisedPillController {
         ? `Supervised · ${pendingCount}`
         : "Supervised";
     const labelEl = this.pill.querySelector(".pill-label");
-    if (labelEl !== null) labelEl.textContent = label;
+    if (labelEl !== null) {
+      labelEl.textContent = label;
+    }
 
     this.pill.classList.toggle("pill-active", supervised);
     this.pill.classList.toggle("has-pending", pendingCount > 0);
@@ -93,9 +118,9 @@ class SupervisedPillController {
     this.pill.title = trusted
       ? "Trusted for this turn — agent writes bypass staging until the turn ends"
       : supervised
-        ? (pendingCount > 0
+        ? pendingCount > 0
           ? `Supervised mode on · ${String(pendingCount)} pending change${pendingCount === 1 ? "" : "s"}`
-          : "Supervised mode on (file changes will be staged)")
+          : "Supervised mode on (file changes will be staged)"
         : "Supervised mode off (file changes apply immediately)";
 
     this.content.replaceChildren(this.buildPopoverBody(supervised, pending, trusted));
@@ -105,17 +130,39 @@ class SupervisedPillController {
     // bindLoadingState disables ALL of them when any single resolve is in
     // flight. This is acceptable because rapid-fire resolves would race on
     // the server anyway; the brief bulk-disable prevents double-submits.
-    const acceptAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="accept-all"]');
-    const rejectAllBtn = this.content.querySelector<HTMLButtonElement>('[data-action="reject-all"]');
-    const trustBtn = this.content.querySelector<HTMLButtonElement>('[data-action="trust-remaining"]');
+    const acceptAllBtn = this.content.querySelector<HTMLButtonElement>(
+      '[data-action="accept-all"]',
+    );
+    const rejectAllBtn = this.content.querySelector<HTMLButtonElement>(
+      '[data-action="reject-all"]',
+    );
+    const trustBtn = this.content.querySelector<HTMLButtonElement>(
+      '[data-action="trust-remaining"]',
+    );
     const stopBtn = this.content.querySelector<HTMLButtonElement>('[data-action="stop-trusting"]');
-    if (acceptAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn));
-    if (rejectAllBtn) this.unbinds.push(bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn));
-    if (trustBtn) this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
-    if (stopBtn) this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
+    if (acceptAllBtn) {
+      this.unbinds.push(
+        bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], acceptAllBtn),
+      );
+    }
+    if (rejectAllBtn) {
+      this.unbinds.push(
+        bindLoadingState(["chat.resolve_all_pending", "chat.resolve_pending_change"], rejectAllBtn),
+      );
+    }
+    if (trustBtn) {
+      this.unbinds.push(bindLoadingState("chat.trust_pending", trustBtn));
+    }
+    if (stopBtn) {
+      this.unbinds.push(bindLoadingState("chat.clear_pending_trust", stopBtn));
+    }
   }
 
-  private buildPopoverBody(supervised: boolean, pending: PendingChange[], trusted: boolean): DocumentFragment {
+  private buildPopoverBody(
+    supervised: boolean,
+    pending: PendingChange[],
+    trusted: boolean,
+  ): DocumentFragment {
     const frag = document.createDocumentFragment();
 
     // Header: title + toggle switch.
@@ -154,8 +201,8 @@ class SupervisedPillController {
     if (trusted) {
       const explainer = document.createElement("p");
       explainer.className = "supervised-hint";
-      explainer.textContent
-        = "Trusted for this turn. Changes apply immediately until the turn ends. The agent's next turn starts staging again.";
+      explainer.textContent =
+        "Trusted for this turn. Changes apply immediately until the turn ends. The agent's next turn starts staging again.";
       frag.appendChild(explainer);
 
       const actions = document.createElement("div");
@@ -165,7 +212,9 @@ class SupervisedPillController {
       stopBtn.className = "pill-button";
       stopBtn.dataset["action"] = "stop-trusting";
       stopBtn.textContent = "Stop trusting";
-      stopBtn.addEventListener("click", () => this.stopTrusting());
+      stopBtn.addEventListener("click", () => {
+        this.stopTrusting();
+      });
       actions.appendChild(stopBtn);
       frag.appendChild(actions);
       return frag;
@@ -186,7 +235,9 @@ class SupervisedPillController {
     const list = document.createElement("ul");
     list.className = "supervised-pending-list";
     list.setAttribute("role", "list");
-    for (const change of pending) list.appendChild(this.buildRow(change));
+    for (const change of pending) {
+      list.appendChild(this.buildRow(change));
+    }
     frag.appendChild(list);
 
     // Bulk actions.
@@ -197,21 +248,27 @@ class SupervisedPillController {
     rejectAllBtn.className = "pill-button";
     rejectAllBtn.dataset["action"] = "reject-all";
     rejectAllBtn.textContent = "Reject all";
-    rejectAllBtn.addEventListener("click", () => this.bulkResolve("reject"));
+    rejectAllBtn.addEventListener("click", () => {
+      this.bulkResolve("reject");
+    });
     actions.appendChild(rejectAllBtn);
 
     const trustBtn = document.createElement("button");
     trustBtn.className = "pill-button";
     trustBtn.dataset["action"] = "trust-remaining";
     trustBtn.textContent = "Trust remaining";
-    trustBtn.addEventListener("click", () => this.trustRemaining());
+    trustBtn.addEventListener("click", () => {
+      this.trustRemaining();
+    });
     actions.appendChild(trustBtn);
 
     const acceptAllBtn = document.createElement("button");
     acceptAllBtn.className = "pill-button primary";
     acceptAllBtn.dataset["action"] = "accept-all";
     acceptAllBtn.textContent = "Accept all";
-    acceptAllBtn.addEventListener("click", () => this.bulkResolve("accept"));
+    acceptAllBtn.addEventListener("click", () => {
+      this.bulkResolve("accept");
+    });
     actions.appendChild(acceptAllBtn);
 
     frag.appendChild(actions);
@@ -263,18 +320,26 @@ class SupervisedPillController {
     rejectBtn.className = "pill-button";
     rejectBtn.dataset["action"] = "reject";
     rejectBtn.textContent = "Reject";
-    rejectBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "reject"));
+    rejectBtn.addEventListener("click", () => {
+      this.resolveOne(change.tool_call_id, "reject");
+    });
     actionsSpan.appendChild(rejectBtn);
 
     const acceptBtn = document.createElement("button");
     acceptBtn.className = "pill-button primary";
     acceptBtn.dataset["action"] = "accept";
     acceptBtn.textContent = "Accept";
-    acceptBtn.addEventListener("click", () => this.resolveOne(change.tool_call_id, "accept"));
+    acceptBtn.addEventListener("click", () => {
+      this.resolveOne(change.tool_call_id, "accept");
+    });
     actionsSpan.appendChild(acceptBtn);
 
-    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn));
-    this.unbinds.push(bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn));
+    this.unbinds.push(
+      bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn),
+    );
+    this.unbinds.push(
+      bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn),
+    );
 
     li.appendChild(actionsSpan);
     return li;
@@ -305,13 +370,17 @@ class SupervisedPillController {
   }
 
   dispose(): void {
-    for (const u of this.unbinds) u();
+    for (const u of this.unbinds) {
+      u();
+    }
     this.unbinds = [];
   }
 }
 
 const controller = new SupervisedPillController();
-registerCleanup(() => { controller.dispose(); });
+registerCleanup(() => {
+  controller.dispose();
+});
 
 /** Initialise the pill. Must run after DOMContentLoaded so the #supervised-pill
  *  element exists. No-op on a second call. */

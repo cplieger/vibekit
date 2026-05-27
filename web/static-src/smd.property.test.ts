@@ -9,7 +9,18 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { parser, parser_write, parser_end, DOCUMENT, HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6 } from "./smd-parser.js";
+import {
+  parser,
+  parser_write,
+  parser_end,
+  DOCUMENT,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
+} from "./smd-parser.js";
 import { TOKEN_ARRAY_CAP } from "./smd-parser-types.js";
 import type { Parser, Token } from "./smd-parser.js";
 
@@ -25,7 +36,8 @@ function nullRenderer() {
 }
 
 /** Recording renderer — captures the callback sequence for equivalence checks. */
-type RendererCall = { op: "add_token"; type: number }
+type RendererCall =
+  | { op: "add_token"; type: number }
   | { op: "end_token" }
   | { op: "add_text"; text: string }
   | { op: "set_attr"; attr: number; value: string };
@@ -36,10 +48,18 @@ function recordingRenderer() {
     calls,
     renderer: {
       data: null,
-      add_token: (_data: null, type: number) => { calls.push({ op: "add_token", type }); },
-      end_token: () => { calls.push({ op: "end_token" }); },
-      add_text: (_data: null, text: string) => { calls.push({ op: "add_text", text }); },
-      set_attr: (_data: null, attr: number, value: string) => { calls.push({ op: "set_attr", attr, value }); },
+      add_token: (_data: null, type: number) => {
+        calls.push({ op: "add_token", type });
+      },
+      end_token: () => {
+        calls.push({ op: "end_token" });
+      },
+      add_text: (_data: null, text: string) => {
+        calls.push({ op: "add_text", text });
+      },
+      set_attr: (_data: null, attr: number, value: string) => {
+        calls.push({ op: "set_attr", attr, value });
+      },
     },
   };
 }
@@ -49,23 +69,33 @@ const markdownLike = fc.oneof(
   // Plain text
   fc.lorem({ maxCount: 5 }),
   // Headings
-  fc.tuple(fc.constantFrom("# ", "## ", "### ", "#### "), fc.lorem({ maxCount: 3 }))
+  fc
+    .tuple(fc.constantFrom("# ", "## ", "### ", "#### "), fc.lorem({ maxCount: 3 }))
     .map(([h, t]) => h + t + "\n"),
   // Emphasis
-  fc.tuple(fc.constantFrom("*", "**", "_", "__", "~~"), fc.lorem({ maxCount: 2 }))
+  fc
+    .tuple(fc.constantFrom("*", "**", "_", "__", "~~"), fc.lorem({ maxCount: 2 }))
     .map(([m, t]) => m + t + m),
   // Code fences (possibly unclosed)
-  fc.tuple(fc.constantFrom("```", "````"), fc.constantFrom("", "js", "ts"), fc.lorem({ maxCount: 3 }), fc.boolean())
+  fc
+    .tuple(
+      fc.constantFrom("```", "````"),
+      fc.constantFrom("", "js", "ts"),
+      fc.lorem({ maxCount: 3 }),
+      fc.boolean(),
+    )
     .map(([f, lang, body, closed]) => f + lang + "\n" + body + "\n" + (closed ? f : "") + "\n"),
   // Inline code
   fc.lorem({ maxCount: 2 }).map((t) => "`" + t + "`"),
   // Blockquotes
   fc.lorem({ maxCount: 3 }).map((t) => "> " + t + "\n"),
   // Lists
-  fc.tuple(fc.constantFrom("- ", "* ", "1. ", "2. "), fc.lorem({ maxCount: 3 }))
+  fc
+    .tuple(fc.constantFrom("- ", "* ", "1. ", "2. "), fc.lorem({ maxCount: 3 }))
     .map(([prefix, t]) => prefix + t + "\n"),
   // Links and images
-  fc.tuple(fc.lorem({ maxCount: 1 }), fc.constant("https://example.com"))
+  fc
+    .tuple(fc.lorem({ maxCount: 1 }), fc.constant("https://example.com"))
     .map(([text, url]) => `[${text}](${url})`),
   fc.constant("![alt](https://example.com/img.png)"),
   // Tables
@@ -83,12 +113,15 @@ const markdownLike = fc.oneof(
 );
 
 /** Generate a markdown document from multiple fragments. */
-const markdownDocument = fc.array(markdownLike, { minLength: 1, maxLength: 20 })
+const markdownDocument = fc
+  .array(markdownLike, { minLength: 1, maxLength: 20 })
   .map((parts) => parts.join(""));
 
 /** Split a string at random positions into chunks. */
 function splitAtPositions(input: string, positions: number[]): string[] {
-  const sorted = [...new Set(positions.map((p) => Math.min(Math.max(0, p), input.length)))].sort((a, b) => a - b);
+  const sorted = [...new Set(positions.map((p) => Math.min(Math.max(0, p), input.length)))].sort(
+    (a, b) => a - b,
+  );
   const chunks: string[] = [];
   let prev = 0;
   for (const pos of sorted) {
@@ -202,8 +235,13 @@ describe("smd parser property: structural invariants", () => {
         maxDepth: () => maxDepth,
         renderer: {
           data: null,
-          add_token: () => { depth++; if (depth > maxDepth) maxDepth = depth; },
-          end_token: () => { depth--; },
+          add_token: () => {
+            depth++;
+            if (depth > maxDepth) maxDepth = depth;
+          },
+          end_token: () => {
+            depth--;
+          },
           add_text: () => {},
           set_attr: () => {},
         },
@@ -343,28 +381,24 @@ describe("smd parser property: heading level extraction", () => {
     const HEADING_TOKENS = [HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6];
     expect.assertions(1);
     const result = fc.check(
-      fc.property(
-        fc.integer({ min: 1, max: 10 }),
-        fc.lorem({ maxCount: 2 }),
-        (hashCount, text) => {
-          const input = "#".repeat(hashCount) + " " + text + "\n";
-          const rec = recordingRenderer();
-          const p: Parser = parser(rec.renderer);
-          parser_write(p, input);
-          parser_end(p);
+      fc.property(fc.integer({ min: 1, max: 10 }), fc.lorem({ maxCount: 2 }), (hashCount, text) => {
+        const input = "#".repeat(hashCount) + " " + text + "\n";
+        const rec = recordingRenderer();
+        const p: Parser = parser(rec.renderer);
+        parser_write(p, input);
+        parser_end(p);
 
-          const addTokenCalls = rec.calls.filter(
-            (c): c is { op: "add_token"; type: number } => c.op === "add_token",
-          );
+        const addTokenCalls = rec.calls.filter(
+          (c): c is { op: "add_token"; type: number } => c.op === "add_token",
+        );
 
-          if (hashCount >= 1 && hashCount <= 6) {
-            const expected = HEADING_TOKENS[hashCount - 1];
-            return addTokenCalls.some((c) => c.type === expected);
-          }
-          // 7+ hashes: should NOT produce any heading token
-          return !addTokenCalls.some((c) => HEADING_TOKENS.includes(c.type as Token));
-        },
-      ),
+        if (hashCount >= 1 && hashCount <= 6) {
+          const expected = HEADING_TOKENS[hashCount - 1];
+          return addTokenCalls.some((c) => c.type === expected);
+        }
+        // 7+ hashes: should NOT produce any heading token
+        return !addTokenCalls.some((c) => HEADING_TOKENS.includes(c.type as Token));
+      }),
       { numRuns: 200 },
     );
     expect(result.failed).toBe(false);

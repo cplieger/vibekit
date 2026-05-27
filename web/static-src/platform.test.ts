@@ -4,8 +4,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { guardAction } from "./platform.js";
 
 describe("guardAction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   const cases = [
     {

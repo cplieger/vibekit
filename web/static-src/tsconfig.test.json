@@ -3,6 +3,14 @@
   "compilerOptions": {
     "types": ["vitest/globals", "node"]
   },
-  "include": ["*.ts", "*.d.ts", "handlers/*.ts", "wire/*.ts", "actions/*.ts", "vendor-types/*.d.ts", "**/*.test.ts"],
+  "include": [
+    "*.ts",
+    "*.d.ts",
+    "handlers/*.ts",
+    "wire/*.ts",
+    "actions/*.ts",
+    "vendor-types/*.d.ts",
+    "**/*.test.ts"
+  ],
   "exclude": ["vitest.config.ts"]
 }

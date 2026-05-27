@@ -25,26 +25,45 @@ import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from ".
 import { escText } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
 import {
-  getActive, getActiveId, messagesVersion, activeVersion,
-  ensureStreamingSig, clearStreamingSig,
-  ensureReasoningSig, clearReasoningSig,
-  ensureToolCallSig, clearToolCallSig,
-  ensureCrewSig, clearCrewSig,
+  getActive,
+  getActiveId,
+  messagesVersion,
+  activeVersion,
+  ensureStreamingSig,
+  clearStreamingSig,
+  ensureReasoningSig,
+  clearReasoningSig,
+  ensureToolCallSig,
+  clearToolCallSig,
+  ensureCrewSig,
+  clearCrewSig,
 } from "./store.js";
 import { effect } from "./signals.js";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
 import { ICON_CHEVRON_UP, ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { $ } from "./dom.js";
 import {
-  getScrollEl, scrollToBottom, suppressScroll, setUserScrolledUp,
-  resetScrollState, setLoadMore,
+  getScrollEl,
+  scrollToBottom,
+  suppressScroll,
+  setUserScrolledUp,
+  resetScrollState,
+  setLoadMore,
 } from "./scroll.js";
 import {
-  isSubAgent, isSubAgentActive, appendToSubAgent,
-  createSubAgentCard, updateSubAgentCard, resetSubAgents,
+  isSubAgent,
+  isSubAgentActive,
+  appendToSubAgent,
+  createSubAgentCard,
+  updateSubAgentCard,
+  resetSubAgents,
 } from "./subagent.js";
 import {
-  breakToolGroup, maybeCollapseGroup, formatDuration, untrackInProgress, summarize,
+  breakToolGroup,
+  maybeCollapseGroup,
+  formatDuration,
+  untrackInProgress,
+  summarize,
 } from "./tool-group.js";
 import { linkifyPaths } from "./linkify.js";
 import { isToolDone } from "./tool-schema.js";
@@ -53,13 +72,15 @@ import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
 import { openPlanDraftPath } from "./editor-openers.js";
 import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
 import { bindLoadingState } from "./actions/index.js";
-import {
-  addEditActions, initMessageActions, clearActionBindings,
-} from "./messages-actions.js";
+import { addEditActions, initMessageActions, clearActionBindings } from "./messages-actions.js";
 import {
   updateCrew as updateCrewInternal,
-  buildCrewCardForReplay, clearCrews, addToolToCrewRow, getCrewToolEl,
-  onCrewToolCompleted, setSubagentActivity,
+  buildCrewCardForReplay,
+  clearCrews,
+  addToolToCrewRow,
+  getCrewToolEl,
+  onCrewToolCompleted,
+  setSubagentActivity,
 } from "./crew-card.js";
 import { formatToolActivity } from "./format-tool-activity.js";
 
@@ -101,10 +122,13 @@ const streams = new WeakMap<HTMLDivElement, MarkdownStream>();
 
 /** bindLoadingState unsubs accumulated within a chat. Cleared on
  *  message removal (via reconcile.onRemove) and on chat switch. */
-const bindUnbinds = new Map<string, Array<() => void>>();
+const bindUnbinds = new Map<string, (() => void)[]>();
 function pushBind(key: string, unbind: () => void): void {
   let arr = bindUnbinds.get(key);
-  if (arr === undefined) { arr = []; bindUnbinds.set(key, arr); }
+  if (arr === undefined) {
+    arr = [];
+    bindUnbinds.set(key, arr);
+  }
   arr.push(unbind);
 }
 
@@ -114,15 +138,23 @@ function pushBind(key: string, unbind: () => void): void {
  *  one for the content stream + one for the reasoning stream).
  *  Separate from bindUnbinds so tool-card loading-state bindings
  *  survive turn end. */
-const streamingEffects = new Map<string, Array<() => void>>();
+const streamingEffects = new Map<string, (() => void)[]>();
 function pushStreamingEffect(id: string, fn: () => void): void {
   const arr = streamingEffects.get(id);
-  if (arr === undefined) streamingEffects.set(id, [fn]);
-  else arr.push(fn);
+  if (arr === undefined) {
+    streamingEffects.set(id, [fn]);
+  } else {
+    arr.push(fn);
+  }
 }
 function disposeStreamingEffect(id: string): void {
   const arr = streamingEffects.get(id);
-  if (arr !== undefined) { for (const fn of arr) fn(); streamingEffects.delete(id); }
+  if (arr !== undefined) {
+    for (const fn of arr) {
+      fn();
+    }
+    streamingEffects.delete(id);
+  }
   clearStreamingSig(id);
   clearReasoningSig(id);
 }
@@ -134,7 +166,10 @@ function disposeStreamingEffect(id: string): void {
 const toolEffects = new Map<string, () => void>();
 function disposeToolEffect(id: string): void {
   const fn = toolEffects.get(id);
-  if (fn !== undefined) { fn(); toolEffects.delete(id); }
+  if (fn !== undefined) {
+    fn();
+    toolEffects.delete(id);
+  }
   clearToolCallSig(id);
 }
 
@@ -145,7 +180,10 @@ function disposeToolEffect(id: string): void {
 const crewEffects = new Map<string, () => void>();
 function disposeCrewEffect(id: string): void {
   const fn = crewEffects.get(id);
-  if (fn !== undefined) { fn(); crewEffects.delete(id); }
+  if (fn !== undefined) {
+    fn();
+    crewEffects.delete(id);
+  }
   clearCrewSig(id);
 }
 
@@ -173,8 +211,10 @@ let lastActiveId: string | undefined;
 const staggerIndex = new Map<string, number>();
 
 // Avatars (parsed once, cloned per use).
-const KIRO_AVATAR = '<svg class="avatar-icon" width="17" height="20" viewBox="-2 -2 44 52" fill="none"><path d="M7.58762 37.203C2.62272 48.1978 13.1975 50.9578 20.9974 44.5229C23.2923 51.7378 31.8872 46.3529 34.9771 40.758C41.772 28.4282 39.027 15.8585 38.322 13.2635C33.4921 -4.42116 9.34259 -4.45116 5.18767 13.3535C4.21269 16.4734 4.19769 20.0134 3.6577 23.6883C3.3877 25.5483 3.17771 26.7332 2.47272 28.6832C2.05273 29.8082 1.49774 30.7982 0.597756 32.4781C-0.782218 35.0881 -0.197229 40.113 6.94263 37.503L7.61762 37.203H7.58762Z" fill="white" stroke="#9046FF" stroke-width="1.5"/><path d="M21.9284 20.928C19.9484 20.928 19.6484 18.5581 19.6484 17.1481C19.6484 15.8731 19.8734 14.8681 20.3084 14.2231C20.6834 13.6532 21.2384 13.3682 21.9284 13.3682C22.6184 13.3682 23.2184 13.6532 23.6384 14.2381C24.1184 14.8981 24.3733 15.9031 24.3733 17.1481C24.3733 19.518 23.4584 20.928 21.9434 20.928H21.9284Z" fill="#1e1e2e"/><path d="M30.0729 20.928C28.093 20.928 27.793 18.5581 27.793 17.1481C27.793 15.8731 28.018 14.8681 28.453 14.2231C28.8279 13.6532 29.3829 13.3682 30.0729 13.3682C30.7629 13.3682 31.3629 13.6532 31.7829 14.2381C32.2629 14.8981 32.5179 15.9031 32.5179 17.1481C32.5179 19.518 31.6029 20.928 30.0879 20.928H30.0729Z" fill="#1e1e2e"/></svg>';
-const USER_AVATAR = '<svg class="avatar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 00-16 0"/></svg>';
+const KIRO_AVATAR =
+  '<svg class="avatar-icon" width="17" height="20" viewBox="-2 -2 44 52" fill="none"><path d="M7.58762 37.203C2.62272 48.1978 13.1975 50.9578 20.9974 44.5229C23.2923 51.7378 31.8872 46.3529 34.9771 40.758C41.772 28.4282 39.027 15.8585 38.322 13.2635C33.4921 -4.42116 9.34259 -4.45116 5.18767 13.3535C4.21269 16.4734 4.19769 20.0134 3.6577 23.6883C3.3877 25.5483 3.17771 26.7332 2.47272 28.6832C2.05273 29.8082 1.49774 30.7982 0.597756 32.4781C-0.782218 35.0881 -0.197229 40.113 6.94263 37.503L7.61762 37.203H7.58762Z" fill="white" stroke="#9046FF" stroke-width="1.5"/><path d="M21.9284 20.928C19.9484 20.928 19.6484 18.5581 19.6484 17.1481C19.6484 15.8731 19.8734 14.8681 20.3084 14.2231C20.6834 13.6532 21.2384 13.3682 21.9284 13.3682C22.6184 13.3682 23.2184 13.6532 23.6384 14.2381C24.1184 14.8981 24.3733 15.9031 24.3733 17.1481C24.3733 19.518 23.4584 20.928 21.9434 20.928H21.9284Z" fill="#1e1e2e"/><path d="M30.0729 20.928C28.093 20.928 27.793 18.5581 27.793 17.1481C27.793 15.8731 28.018 14.8681 28.453 14.2231C28.8279 13.6532 29.3829 13.3682 30.0729 13.3682C30.7629 13.3682 31.3629 13.6532 31.7829 14.2381C32.2629 14.8981 32.5179 15.9031 32.5179 17.1481C32.5179 19.518 31.6029 20.928 30.0879 20.928H30.0729Z" fill="#1e1e2e"/></svg>';
+const USER_AVATAR =
+  '<svg class="avatar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 00-16 0"/></svg>';
 
 function svgTemplate(markup: string): () => Node {
   const tpl = document.createElement("template");
@@ -196,11 +236,14 @@ let mounted = false;
  *  bump. Streaming markdown chunks flow through the assistant-update
  *  path inside this same effect. */
 export function mountChatView(): void {
-  if (mounted) return;
+  if (mounted) {
+    return;
+  }
   mounted = true;
   initMessageActions();
   effect(() => {
-    messagesVersion.value; activeVersion.value;
+    messagesVersion.value;
+    activeVersion.value;
     paint();
   });
 }
@@ -234,7 +277,9 @@ function paint(): void {
     if (idx >= 0) {
       for (let i = idx + 1; i < session.messages.length; i++) {
         const id = session.messages[i]?.id;
-        if (id !== undefined) appendNewIds.add(id);
+        if (id !== undefined) {
+          appendNewIds.add(id);
+        }
       }
     }
   } else if (isChatSwitch) {
@@ -243,7 +288,9 @@ function paint(): void {
     const total = session.messages.length;
     for (let i = Math.max(0, total - 8); i < total; i++) {
       const id = session.messages[i]?.id;
-      if (id !== undefined) staggerIndex.set(id, total - 1 - i);
+      if (id !== undefined) {
+        staggerIndex.set(id, total - 1 - i);
+      }
     }
   }
   reconcile(messagesEl, session.messages, messageSpec);
@@ -255,10 +302,14 @@ function paint(): void {
 /** Pure: resolve the checkpoint tag the server stored for a turn, or
  *  "" when no backing snapshot exists. Tag form: "<turn>" or "<turn>.<...>". */
 export function checkpointTagForTurn(turnIndex: number, oldestTag: string): string {
-  if (oldestTag === "") return "";
+  if (oldestTag === "") {
+    return "";
+  }
   const candidate = String(turnIndex);
   const oldestTurn = parseInt(oldestTag.split(".")[0] ?? "0", 10);
-  if (!Number.isFinite(oldestTurn) || turnIndex < oldestTurn) return "";
+  if (!Number.isFinite(oldestTurn) || turnIndex < oldestTurn) {
+    return "";
+  }
   return candidate;
 }
 
@@ -266,11 +317,21 @@ export function checkpointTagForTurn(turnIndex: number, oldestTag: string): stri
  *  becomes undefined. The reconcile call after a real session arrives
  *  will rebuild from scratch. */
 function teardownAll(): void {
-  for (const arr of bindUnbinds.values()) for (const fn of arr) fn();
+  for (const arr of bindUnbinds.values()) {
+    for (const fn of arr) {
+      fn();
+    }
+  }
   bindUnbinds.clear();
-  for (const id of [...streamingEffects.keys()]) disposeStreamingEffect(id);
-  for (const id of [...toolEffects.keys()]) disposeToolEffect(id);
-  for (const id of [...crewEffects.keys()]) disposeCrewEffect(id);
+  for (const id of [...streamingEffects.keys()]) {
+    disposeStreamingEffect(id);
+  }
+  for (const id of [...toolEffects.keys()]) {
+    disposeToolEffect(id);
+  }
+  for (const id of [...crewEffects.keys()]) {
+    disposeCrewEffect(id);
+  }
   for (const st of messageStates.values()) {
     finalizeStreamingPipeline(st.el.querySelector(".message.assistant.streaming"));
   }
@@ -295,7 +356,9 @@ const messageSpec: ReconcileSpec<Message> = {
     // Only animate genuinely-new appended messages; chat-switch replay
     // and pagination prepends mount silently. See paint() for how
     // appendNewIds is populated.
-    if (appendNewIds.has(m.id)) el.setAttribute("data-chat-entry", "");
+    if (appendNewIds.has(m.id)) {
+      el.setAttribute("data-chat-entry", "");
+    }
     const stagger = staggerIndex.get(m.id);
     if (stagger !== undefined && stagger > 0) {
       el.style.setProperty("--stagger-index", String(stagger));
@@ -306,10 +369,17 @@ const messageSpec: ReconcileSpec<Message> = {
     });
     return el;
   },
-  update: (el, m) => updateMessage(el as HTMLElement, m),
+  update: (el, m) => {
+    updateMessage(el, m);
+  },
   onRemove: (el, key) => {
     const arr = bindUnbinds.get(key);
-    if (arr !== undefined) { for (const fn of arr) fn(); bindUnbinds.delete(key); }
+    if (arr !== undefined) {
+      for (const fn of arr) {
+        fn();
+      }
+      bindUnbinds.delete(key);
+    }
     disposeStreamingEffect(key);
     disposeCrewEffect(key);
     // Finalize any streaming bubble that lived in this message.
@@ -324,15 +394,21 @@ const messageSpec: ReconcileSpec<Message> = {
 
 function buildMessage(m: Message): HTMLElement {
   switch (m.role) {
-    case "user":      return buildUser(m);
-    case "assistant": return buildAssistant(m);
-    case "event":     return buildEvent(m) ?? buildSystemFallback(m);
+    case "user":
+      return buildUser(m);
+    case "assistant":
+      return buildAssistant(m);
+    case "event":
+      return buildEvent(m) ?? buildSystemFallback(m);
   }
 }
 
 function updateMessage(el: HTMLElement, m: Message): void {
-  if (m.role === "assistant") updateAssistant(el, m);
-  else if (m.role === "event") updateEvent(el, m);
+  if (m.role === "assistant") {
+    updateAssistant(el, m);
+  } else if (m.role === "event") {
+    updateEvent(el, m);
+  }
   // user messages are immutable once mounted.
 }
 
@@ -367,12 +443,22 @@ function buildUser(m: Message): HTMLElement {
     rewindBtn.addEventListener("click", () => {
       // Find the turn index for this message.
       const session = getActive();
-      if (session === undefined) return;
+      if (session === undefined) {
+        return;
+      }
       const turnIdx = session.messages.findIndex((msg) => msg.id === m.id);
-      if (turnIdx < 0) return;
-      if (!confirm("Rewind from this turn? Creates a new chat starting from this point. File contents on disk are not affected (use Restore for that).")) return;
+      if (turnIdx < 0) {
+        return;
+      }
+      if (
+        !confirm(
+          "Rewind from this turn? Creates a new chat starting from this point. File contents on disk are not affected (use Restore for that).",
+        )
+      ) {
+        return;
+      }
       void import("./transport.js").then(({ send }) => {
-        send({
+        void send({
           type: "rewind_chat",
           chat_id: session.id,
           request_id: `rewind-${Date.now()}`,
@@ -445,11 +531,16 @@ function buildAssistant(m: Message): HTMLElement {
  *  the wrap. Subscribes to the per-message reasoning signal so chunks
  *  fan in here without re-running the global reconcile. */
 function mountReasoningBlock(
-  wrap: HTMLElement, reasoning: string, live: boolean, messageID: string,
+  wrap: HTMLElement,
+  reasoning: string,
+  live: boolean,
+  messageID: string,
 ): HTMLDetailsElement {
   const details = document.createElement("details");
   details.className = "reasoning-block msg-reasoning";
-  if (live) details.open = true;
+  if (live) {
+    details.open = true;
+  }
 
   const summary = document.createElement("summary");
   summary.className = "reasoning-summary";
@@ -468,7 +559,9 @@ function mountReasoningBlock(
     let lastLen = reasoning.length;
     const cleanup = effect(() => {
       const full = sig.value;
-      if (full.length <= lastLen) return;
+      if (full.length <= lastLen) {
+        return;
+      }
       // Append the delta as a new text node — much cheaper than
       // re-rendering body.textContent on every chunk.
       body.appendChild(document.createTextNode(full.slice(lastLen)));
@@ -489,12 +582,17 @@ function mountReasoningBlock(
  *  content signal for live streaming chunks; renders the full markdown
  *  in one shot for replay. */
 function mountContentBubble(
-  wrap: HTMLElement, content: string, live: boolean, messageID: string,
+  wrap: HTMLElement,
+  content: string,
+  live: boolean,
+  messageID: string,
 ): HTMLDivElement {
   const row = makeRow("assistant");
   const bubble = document.createElement("div");
   bubble.className = "message assistant";
-  if (live) bubble.classList.add("streaming");
+  if (live) {
+    bubble.classList.add("streaming");
+  }
   if (content !== "") {
     if (!live) {
       // Replay path: full markdown one-shot.
@@ -514,7 +612,9 @@ function mountContentBubble(
     let lastLen = content.length;
     const cleanup = effect(() => {
       const full = sig.value;
-      if (full.length <= lastLen) return;
+      if (full.length <= lastLen) {
+        return;
+      }
       ensureStream(bubble).writeDelta(full.slice(lastLen));
       lastLen = full.length;
     });
@@ -549,16 +649,23 @@ function mountToolGroup(parent: HTMLElement): HTMLDivElement {
   const onToggle = (): void => {
     group.classList.add("tool-group-user-toggled");
     const wasAuto = group.classList.contains("tool-group-auto-collapsed");
-    if (wasAuto) group.classList.remove("tool-group-auto-collapsed");
+    if (wasAuto) {
+      group.classList.remove("tool-group-auto-collapsed");
+    }
     group.classList.toggle("tool-group-collapsed");
     const collapsed = group.classList.contains("tool-group-collapsed");
     header.setAttribute("aria-expanded", collapsed ? "false" : "true");
     refreshGroupHeader(group);
-    if (!collapsed || wasAuto) setUserScrolledUp(true);
+    if (!collapsed || wasAuto) {
+      setUserScrolledUp(true);
+    }
   };
   header.addEventListener("click", onToggle);
   header.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggle();
+    }
   });
   group.appendChild(header);
   parent.appendChild(group);
@@ -569,17 +676,22 @@ function mountToolGroup(parent: HTMLElement): HTMLDivElement {
  *  AND on every tool status flip (via applyStatusUpdate). */
 function refreshGroupHeader(group: HTMLElement): void {
   const headerText = group.querySelector(".tool-group-header .tool-group-count");
-  if (headerText === null) return;
+  if (headerText === null) {
+    return;
+  }
   const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
-  const collapsed = group.classList.contains("tool-group-collapsed")
-    || group.classList.contains("tool-group-auto-collapsed");
+  const collapsed =
+    group.classList.contains("tool-group-collapsed") ||
+    group.classList.contains("tool-group-auto-collapsed");
   const summary = summarize(calls);
   headerText.textContent = collapsed ? `${summary} (collapsed)` : summary;
 }
 
 function updateAssistant(wrap: HTMLElement, m: Message): void {
   const state = messageStates.get(m.id);
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
 
   // Late-arriving reasoning: mount the block if it didn't exist at
   // initial mount time. Subsequent reasoning chunks flow through the
@@ -590,7 +702,9 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
     reasoningEl = mountReasoningBlock(wrap, reasoning, state.streaming, m.id);
     // Place at the top of the wrap if the row already exists.
     const firstChild = wrap.firstElementChild;
-    if (firstChild !== reasoningEl) wrap.prepend(reasoningEl);
+    if (firstChild !== reasoningEl) {
+      wrap.prepend(reasoningEl);
+    }
   }
 
   // Late-arriving content: mount the bubble if it didn't exist at
@@ -613,7 +727,9 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   const calls = m.tool_calls ?? [];
   let tools = wrap.querySelector<HTMLDivElement>(":scope > .tool-group");
   if (calls.length > 0) {
-    if (tools === null) tools = mountToolGroup(wrap);
+    if (tools === null) {
+      tools = mountToolGroup(wrap);
+    }
     reconcile(tools, calls, toolSpec);
     refreshGroupHeader(tools);
   } else if (tools !== null) {
@@ -622,12 +738,15 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
 
   // Plan: reconcile entries in place. Action buttons keep their
   // click handlers because the plan card itself isn't replaced.
-  let plan = wrap.querySelector<HTMLDivElement>(":scope > .plan-message");
+  const plan = wrap.querySelector<HTMLDivElement>(":scope > .plan-message");
   if (m.plan !== undefined && m.plan.length > 0) {
     if (plan === null) {
       const fresh = planElement(m.plan);
-      if (tools !== null) tools.before(fresh);
-      else wrap.appendChild(fresh);
+      if (tools !== null) {
+        tools.before(fresh);
+      } else {
+        wrap.appendChild(fresh);
+      }
     } else {
       updatePlanElement(plan, m.plan);
     }
@@ -641,7 +760,9 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
  *  .streaming class, attach turn-actions row. Idempotent: callers may
  *  invoke without knowing whether the element was streaming. */
 function finalizeStreamingPipeline(el: Element | null): void {
-  if (el === null) return;
+  if (el === null) {
+    return;
+  }
   const bubble = el as HTMLDivElement;
   const s = streams.get(bubble);
   if (s !== undefined) {
@@ -661,7 +782,9 @@ function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
   const session = getActive();
   const isThinking = session?.thinking ?? false;
   for (const [id, st] of messageStates) {
-    if (!st.streaming) continue;
+    if (!st.streaming) {
+      continue;
+    }
     const stillLast = id === messages[lastAssistantIdx]?.id;
     if (!stillLast || !isThinking) {
       st.streaming = false;
@@ -673,7 +796,9 @@ function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
 
 function lastAssistantIndex(messages: readonly Message[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "assistant") return i;
+    if (messages[i]?.role === "assistant") {
+      return i;
+    }
   }
   return -1;
 }
@@ -683,10 +808,16 @@ function lastAssistantIndex(messages: readonly Message[]): number {
  *  array. Both content and reasoning chunks may flow into a live
  *  message; we hook both signals at mount time. Replay path skips this. */
 function isLikelyLiveStreaming(m: Message): boolean {
-  if (m.role !== "assistant") return false;
+  if (m.role !== "assistant") {
+    return false;
+  }
   const session = getActive();
-  if (session === undefined) return false;
-  if (!session.thinking) return false;
+  if (session === undefined) {
+    return false;
+  }
+  if (!session.thinking) {
+    return false;
+  }
   const idx = lastAssistantIndex(session.messages);
   return idx >= 0 && session.messages[idx]?.id === m.id;
 }
@@ -698,7 +829,12 @@ const toolSpec: ReconcileSpec<ToolCall> = {
   mount: (tc) => {
     // Sub-agent calls render as their own sub-cards.
     if (isSubAgent(tc.title)) {
-      const card = createSubAgentCard(tc.id, tc.status, tc.input as Record<string, unknown> | undefined, tc.output);
+      const card = createSubAgentCard(
+        tc.id,
+        tc.status,
+        tc.input as Record<string, unknown> | undefined,
+        tc.output,
+      );
       toolEls.set(tc.id, card);
       // Subscribe per-tool signal so subagent card status flips bypass
       // the global reconcile.
@@ -706,7 +842,9 @@ const toolSpec: ReconcileSpec<ToolCall> = {
       let lastApplied = tc;
       const cleanup = effect(() => {
         const next = sig.value;
-        if (next === lastApplied) return;
+        if (next === lastApplied) {
+          return;
+        }
         updateSubAgentCard(next.id, next.status, next.output);
         lastApplied = next;
       });
@@ -730,13 +868,15 @@ const toolSpec: ReconcileSpec<ToolCall> = {
       // Track in toolEls so permission.ts findToolCard still resolves
       // by id (callers handle the placeholder gracefully because they
       // check for specific selectors before applying changes).
-      toolEls.set(tc.id, placeholder as unknown as HTMLDivElement);
+      toolEls.set(tc.id, placeholder);
       // Subscribe so subsequent status updates fold-update the preview.
       const sig = ensureToolCallSig(tc.id, tc);
       let last = tc;
       const cleanup = effect(() => {
         const next = sig.value;
-        if (next === last) return;
+        if (next === last) {
+          return;
+        }
         if (next.status !== last.status || (next.output ?? "") !== (last.output ?? "")) {
           appendToSubAgent(formatNestedToolUpdate(next, last));
         }
@@ -747,13 +887,25 @@ const toolSpec: ReconcileSpec<ToolCall> = {
     }
 
     const opts: Parameters<typeof buildToolCard>[0] = {
-      id: tc.id, title: tc.title, kind: tc.kind, status: tc.status, live: true,
+      id: tc.id,
+      title: tc.title,
+      kind: tc.kind,
+      status: tc.status,
+      live: true,
     };
     const rawInput = tc.input as Record<string, unknown> | undefined;
-    if (rawInput !== undefined) opts.input = rawInput;
-    if (tc.output !== undefined) opts.output = tc.output;
-    if (tc.diffs !== undefined && tc.diffs.length > 0) opts.diffs = tc.diffs;
-    if (tc.locations !== undefined && tc.locations.length > 0) opts.locations = tc.locations;
+    if (rawInput !== undefined) {
+      opts.input = rawInput;
+    }
+    if (tc.output !== undefined) {
+      opts.output = tc.output;
+    }
+    if (tc.diffs !== undefined && tc.diffs.length > 0) {
+      opts.diffs = tc.diffs;
+    }
+    if (tc.locations !== undefined && tc.locations.length > 0) {
+      opts.locations = tc.locations;
+    }
     const el = buildToolCard(opts);
     toolEls.set(tc.id, el);
 
@@ -770,7 +922,9 @@ const toolSpec: ReconcileSpec<ToolCall> = {
     let lastApplied = tc;
     const cleanup = effect(() => {
       const next = sig.value;
-      if (next === lastApplied) return;
+      if (next === lastApplied) {
+        return;
+      }
       applyToolCallUpdate(el, next);
       mirrorToolUpdateToCrew(next);
       lastApplied = next;
@@ -799,10 +953,18 @@ const toolSpec: ReconcileSpec<ToolCall> = {
 /** Apply a ToolCall snapshot's updatable fields to its DOM card.
  *  Idempotent: safe to call repeatedly with the same tc. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
-  if (tc.status !== undefined) applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
-  if (tc.title !== undefined) applyTitleUpdate(el, tc.title);
-  if (tc.output !== undefined && tc.output !== "") applyOutputUpdate(el, tc.output);
-  if (tc.diffs !== undefined && tc.diffs.length > 0) applyDiffUpdate(el, tc.diffs);
+  if (tc.status !== undefined) {
+    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
+  }
+  if (tc.title !== undefined) {
+    applyTitleUpdate(el, tc.title);
+  }
+  if (tc.output !== undefined && tc.output !== "") {
+    applyOutputUpdate(el, tc.output);
+  }
+  if (tc.diffs !== undefined && tc.diffs.length > 0) {
+    applyDiffUpdate(el, tc.diffs);
+  }
 }
 
 /** Format a single-line preview for a tool nested inside an active
@@ -818,8 +980,12 @@ function formatNestedToolPreview(tc: ToolCall): string {
  *  emits a line if the status transitioned to a final state (so
  *  in-progress ticks don't spam the transcript). */
 function formatNestedToolUpdate(next: ToolCall, prev: ToolCall): string {
-  if (next.status === prev.status) return "";
-  if (next.status !== "completed" && next.status !== "failed") return "";
+  if (next.status === prev.status) {
+    return "";
+  }
+  if (next.status !== "completed" && next.status !== "failed") {
+    return "";
+  }
   const verb = next.status === "completed" ? "✓" : "✗";
   const out = (next.output ?? "").trim();
   const tail = out !== "" ? `: ${out.slice(0, 80)}${out.length > 80 ? "…" : ""}` : "";
@@ -830,7 +996,9 @@ function formatNestedToolUpdate(next: ToolCall, prev: ToolCall): string {
  *  with a subagent. Updates the activity line + completion state. */
 function mirrorToolUpdateToCrew(tc: ToolCall): void {
   const crewEl = getCrewToolEl(tc.id);
-  if (crewEl === undefined) return;
+  if (crewEl === undefined) {
+    return;
+  }
   applyToolCallUpdate(crewEl, tc);
   if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
     if (tc.status === "completed" || tc.status === "failed") {
@@ -841,26 +1009,42 @@ function mirrorToolUpdateToCrew(tc: ToolCall): void {
   }
 }
 
-function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDurationMs: number | undefined, toolId: string): void {
+function applyStatusUpdate(
+  el: HTMLDivElement,
+  status: ToolStatus,
+  serverDurationMs: number | undefined,
+  toolId: string,
+): void {
   const s = el.querySelector(".tool-status");
-  if (s !== null) { s.textContent = status; s.className = `tool-status ${status}`; }
+  if (s !== null) {
+    s.textContent = status;
+    s.className = `tool-status ${status}`;
+  }
   const done = isToolDone(status);
   if (done) {
     el.querySelector(".tool-spinner")?.remove();
     untrackInProgress(el);
-    const ms = serverDurationMs ?? (() => {
-      const start = el.dataset["startMs"];
-      if (start === undefined) return 0;
-      delete el.dataset["startMs"];
-      return Date.now() - parseInt(start, 10);
-    })();
-    const dur = el.querySelector(".tool-duration") as HTMLElement | null;
-    if (dur !== null && ms >= 1000) dur.textContent = formatDuration(ms);
+    const ms =
+      serverDurationMs ??
+      (() => {
+        const start = el.dataset["startMs"];
+        if (start === undefined) {
+          return 0;
+        }
+        delete el.dataset["startMs"];
+        return Date.now() - parseInt(start, 10);
+      })();
+    const dur = el.querySelector(".tool-duration");
+    if (dur !== null && ms >= 1000) {
+      dur.textContent = formatDuration(ms);
+    }
     maybeCollapseGroup(el);
     // Update the group's summary header so "Read 3 files" stops saying
     // "Reading…" once the last call completes.
     const group = el.closest(".tool-group");
-    if (group !== null) refreshGroupHeader(group as HTMLElement);
+    if (group !== null) {
+      refreshGroupHeader(group as HTMLElement);
+    }
     if (status === "completed" && el.dataset["kind"] === "edit") {
       addEditActions(el);
     }
@@ -868,7 +1052,10 @@ function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDuratio
   if (status === "failed") {
     el.querySelector(".tool-details")?.classList.remove("collapsed");
     const b = el.querySelector(".tool-toggle");
-    if (b !== null) { b.textContent = ""; b.appendChild(svgTemplate(ICON_CHEVRON_UP)()); }
+    if (b !== null) {
+      b.textContent = "";
+      b.appendChild(svgTemplate(ICON_CHEVRON_UP)());
+    }
     if (el.querySelector(".tool-explain-btn") === null) {
       const output = el.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
@@ -876,7 +1063,10 @@ function applyStatusUpdate(el: HTMLDivElement, status: ToolStatus, serverDuratio
         btn.type = "button";
         btn.className = "tool-explain-btn";
         btn.textContent = "Explain this error";
-        pushBind(toolId, bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }));
+        pushBind(
+          toolId,
+          bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }),
+        );
         btn.addEventListener("click", () => {
           void explainError(output, el.dataset["title"] ?? "").then((explanation) => {
             if (explanation !== "") {
@@ -896,16 +1086,17 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
   if (t !== null) {
     const display = title.startsWith("Running: ") ? title.slice(9) : title;
     t.textContent = display;
-    (t.parentElement as HTMLElement).title = title;
+    t.parentElement!.title = title;
   }
 }
 
 function applyOutputUpdate(el: HTMLDivElement, output: string): void {
-  const box = el.querySelector(".tool-output-box") as HTMLDivElement | null;
+  const box = el.querySelector(".tool-output-box");
   if (box !== null) {
     const pre = box.querySelector("pre");
-    if (pre !== null) pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
-    else {
+    if (pre !== null) {
+      pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+    } else {
       const newPre = document.createElement("pre");
       newPre.innerHTML = ansiToHtml(output);
       box.appendChild(newPre);
@@ -913,11 +1104,14 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
     box.scrollTop = box.scrollHeight;
     return;
   }
-  const out = el.querySelector(".tool-output") as HTMLDivElement | null;
-  if (out === null) return;
+  const out = el.querySelector(".tool-output");
+  if (out === null) {
+    return;
+  }
   const existingPre = out.querySelector("pre");
-  if (existingPre !== null) existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
-  else {
+  if (existingPre !== null) {
+    existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+  } else {
     const pre = document.createElement("pre");
     pre.innerHTML = ansiToHtml(output);
     out.appendChild(pre);
@@ -925,9 +1119,13 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
 }
 
 function applyDiffUpdate(el: HTMLDivElement, diffs: ToolDiff[]): void {
-  if (el.querySelector(".tool-diff-preview") !== null) return;
+  if (el.querySelector(".tool-diff-preview") !== null) {
+    return;
+  }
   const d = diffs[0];
-  if (d === undefined) return;
+  if (d === undefined) {
+    return;
+  }
   insertDiffPreview(el, d.path, { oldText: d.old_text ?? "", newText: d.new_text });
 }
 
@@ -972,12 +1170,21 @@ function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
   el.dataset["plan"] = JSON.stringify(entries);
   const latestMd = (): string => {
     const stored = el.dataset["plan"];
-    if (stored === undefined) return planToMarkdown([...entries]);
-    try { return planToMarkdown(JSON.parse(stored) as PlanEntry[]); }
-    catch { return planToMarkdown([...entries]); }
+    if (stored === undefined) {
+      return planToMarkdown([...entries]);
+    }
+    try {
+      return planToMarkdown(JSON.parse(stored) as PlanEntry[]);
+    } catch {
+      return planToMarkdown([...entries]);
+    }
   };
-  editBtn.addEventListener("click", () => { void editPlanAction(getActiveId(), latestMd()); });
-  runBtn.addEventListener("click", () => { void runPlan(getActiveId(), latestMd()); });
+  editBtn.addEventListener("click", () => {
+    void editPlanAction(getActiveId(), latestMd());
+  });
+  runBtn.addEventListener("click", () => {
+    void runPlan(getActiveId(), latestMd());
+  });
 
   return el;
 }
@@ -987,13 +1194,17 @@ function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
 function updatePlanElement(el: HTMLDivElement, entries: readonly PlanEntry[]): void {
   el.dataset["plan"] = JSON.stringify(entries);
   const list = el.querySelector<HTMLDivElement>(":scope > .plan-entries");
-  if (list !== null) reconcilePlanEntries(list, entries);
+  if (list !== null) {
+    reconcilePlanEntries(list, entries);
+  }
 }
 
 const planEntrySpec: ReconcileSpec<PlanEntry> = {
   key: (e) => e.content,
   mount: (e) => buildPlanRow(e),
-  update: (el, e) => updatePlanRow(el as HTMLDivElement, e),
+  update: (el, e) => {
+    updatePlanRow(el as HTMLDivElement, e);
+  },
 };
 
 function reconcilePlanEntries(list: HTMLDivElement, entries: readonly PlanEntry[]): void {
@@ -1015,9 +1226,13 @@ function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
 }
 
 async function editPlanAction(chatID: string, content: string): Promise<void> {
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   const ok = await writePlanDraft(chatID, content);
-  if (!ok) return;
+  if (!ok) {
+    return;
+  }
   openPlanDraftPath(chatID);
 }
 
@@ -1025,19 +1240,38 @@ async function editPlanAction(chatID: string, content: string): Promise<void> {
 
 export type BoundaryKind = "switched" | "compacted" | "failed" | "agent";
 
-export const EVENT_BOUNDARY_META: Readonly<Partial<Record<EventKind, {
-  readonly boundary: BoundaryKind;
-  readonly icon: string;
-  readonly defaultLabel: string;
-  readonly labelFn?: (content: string) => string;
-}>>> = {
-  model_switched: { boundary: "switched", icon: "\u21bb", defaultLabel: "Context reset",
-    labelFn: (c) => c ? `Switched to ${c}` : "Context reset" },
+export const EVENT_BOUNDARY_META: Readonly<
+  Partial<
+    Record<
+      EventKind,
+      {
+        readonly boundary: BoundaryKind;
+        readonly icon: string;
+        readonly defaultLabel: string;
+        readonly labelFn?: (content: string) => string;
+      }
+    >
+  >
+> = {
+  model_switched: {
+    boundary: "switched",
+    icon: "\u21bb",
+    defaultLabel: "Context reset",
+    labelFn: (c) => (c ? `Switched to ${c}` : "Context reset"),
+  },
   compacted: { boundary: "compacted", icon: "\u273b", defaultLabel: "Conversation compacted" },
-  compaction_failed: { boundary: "failed", icon: "\u26a0", defaultLabel: "Compaction failed",
-    labelFn: (c) => c ? `Compaction failed: ${c}` : "Compaction failed" },
-  agent_switched: { boundary: "agent", icon: "\u2192", defaultLabel: "Agent switched",
-    labelFn: (c) => c || "Agent switched" },
+  compaction_failed: {
+    boundary: "failed",
+    icon: "\u26a0",
+    defaultLabel: "Compaction failed",
+    labelFn: (c) => (c ? `Compaction failed: ${c}` : "Compaction failed"),
+  },
+  agent_switched: {
+    boundary: "agent",
+    icon: "\u2192",
+    defaultLabel: "Agent switched",
+    labelFn: (c) => c || "Agent switched",
+  },
 };
 
 function buildEvent(m: Message): HTMLElement | null {
@@ -1067,8 +1301,12 @@ function buildEvent(m: Message): HTMLElement | null {
         let lastApplied = m.crew;
         const cleanup = effect(() => {
           const next = sig.value;
-          if (next === lastApplied) return;
-          updateCrewInternal(m.id, next, () => { /* no-op: el already mounted */ });
+          if (next === lastApplied) {
+            return;
+          }
+          updateCrewInternal(m.id, next, () => {
+            /* no-op: el already mounted */
+          });
           lastApplied = next;
         });
         crewEffects.set(m.id, cleanup);
@@ -1100,7 +1338,10 @@ function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement
   el.className = `boundary boundary-${kind}`;
   let icon = "";
   for (const meta of Object.values(EVENT_BOUNDARY_META)) {
-    if (meta !== undefined && meta.boundary === kind) { icon = meta.icon; break; }
+    if (meta?.boundary === kind) {
+      icon = meta.icon;
+      break;
+    }
   }
   const iconSpan = document.createElement("span");
   iconSpan.className = "boundary-icon";
@@ -1123,9 +1364,13 @@ function attachTurnActions(el: HTMLDivElement): void {
   const session = getActive();
   const msg = session?.messages.find((m) => m.id === msgID);
   const raw = msg?.content ?? el.textContent ?? "";
-  if (raw.trim() === "") return;
+  if (raw.trim() === "") {
+    return;
+  }
   // Avoid duplicate.
-  if (el.nextElementSibling?.classList.contains("turn-actions")) return;
+  if (el.nextElementSibling?.classList.contains("turn-actions")) {
+    return;
+  }
 
   const chatID = getActiveId();
   const row = document.createElement("div");
@@ -1139,14 +1384,20 @@ function attachTurnActions(el: HTMLDivElement): void {
   rightSlot.className = "turn-actions-buttons";
   row.appendChild(rightSlot);
 
-  const makeBtn = (svgMarkup: string, ariaLabel: string, onClick: (btn: HTMLButtonElement) => void): HTMLButtonElement => {
+  const makeBtn = (
+    svgMarkup: string,
+    ariaLabel: string,
+    onClick: (btn: HTMLButtonElement) => void,
+  ): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "turn-action-btn";
     btn.appendChild(svgTemplate(svgMarkup)());
     btn.setAttribute("aria-label", ariaLabel);
     btn.setAttribute("data-tooltip", ariaLabel);
-    btn.addEventListener("click", () => { onClick(btn); });
+    btn.addEventListener("click", () => {
+      onClick(btn);
+    });
     return btn;
   };
 
@@ -1156,32 +1407,56 @@ function attachTurnActions(el: HTMLDivElement): void {
       onSuccess: () => {
         btn.classList.add("copied");
         const prev = copyTimers.get(btn);
-        if (prev !== undefined) clearTimeout(prev);
-        copyTimers.set(btn, setTimeout(() => btn.classList.remove("copied"), 1500));
+        if (prev !== undefined) {
+          clearTimeout(prev);
+        }
+        copyTimers.set(
+          btn,
+          setTimeout(() => {
+            btn.classList.remove("copied");
+          }, 1500),
+        );
       },
     });
   };
 
-  rightSlot.appendChild(makeBtn(ICON_COPY, "Copy as text", (btn) => copyAndAnimate(btn, el.textContent ?? "")));
-  rightSlot.appendChild(makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => copyAndAnimate(btn, raw)));
+  rightSlot.appendChild(
+    makeBtn(ICON_COPY, "Copy as text", (btn) => {
+      copyAndAnimate(btn, el.textContent ?? "");
+    }),
+  );
+  rightSlot.appendChild(
+    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
+      copyAndAnimate(btn, raw);
+    }),
+  );
   if (chatID !== "") {
-    rightSlot.appendChild(makeBtn(ICON_LINK, "Copy chat ID", (btn) => copyAndAnimate(btn, chatID)));
-    rightSlot.appendChild(makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
-      const a = document.createElement("a");
-      a.href = `/api/chats/${encodeURIComponent(chatID)}/export`;
-      a.download = `${chatID}.json`;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }));
+    rightSlot.appendChild(
+      makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+        copyAndAnimate(btn, chatID);
+      }),
+    );
+    rightSlot.appendChild(
+      makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
+        const a = document.createElement("a");
+        a.href = `/api/chats/${encodeURIComponent(chatID)}/export`;
+        a.download = `${chatID}.json`;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }),
+    );
   }
 
   // Place turn actions at the end of the message wrap so they sit
   // below the bubble + tool group + plan (the natural reading order).
   // Reuses the wrap captured at the top for the markdown lookup.
-  if (wrap !== null && wrap !== undefined) wrap.appendChild(row);
-  else el.insertAdjacentElement("afterend", row);
+  if (wrap !== null && wrap !== undefined) {
+    wrap.appendChild(row);
+  } else {
+    el.insertAdjacentElement("afterend", row);
+  }
 }
 
 // --- Helpers ---

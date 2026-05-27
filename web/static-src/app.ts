@@ -10,8 +10,15 @@
 import type { ServerEvent, ModelInfo } from "./types.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 import {
-  MODEL_CONTEXT_SIZES, parseContextSize, contextSizeFor, sessionsVersion,
-  getActiveId, getActive, get, getSessions, isThinking,
+  MODEL_CONTEXT_SIZES,
+  parseContextSize,
+  contextSizeFor,
+  sessionsVersion,
+  getActiveId,
+  getActive,
+  get,
+  getSessions,
+  isThinking,
   loadList,
 } from "./store.js";
 import { effect } from "./signals.js";
@@ -22,8 +29,12 @@ import * as transport from "./transport.js";
 import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
 import { apiGet } from "./api-client.js";
 import {
-  setOnEmpty, restoreTabState, getActiveTabId, activateTab,
-  openTab, TAB_VIEWS,
+  setOnEmpty,
+  restoreTabState,
+  getActiveTabId,
+  activateTab,
+  openTab,
+  TAB_VIEWS,
 } from "./tabs.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
@@ -50,8 +61,12 @@ import { forceSettingsTab } from "./settings-tabs.js";
 import { loadGitRepos } from "./git.js";
 import { restoreLastModel } from "./session-context.js";
 import {
-  openChatTab, createSession, createPlannerSession, switchSession,
-  sendPrompt, installStoreSubscribers,
+  openChatTab,
+  createSession,
+  createPlannerSession,
+  switchSession,
+  sendPrompt,
+  installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
 import { initFollowAlong } from "./follow.js";
@@ -74,7 +89,9 @@ import { subscribeToActions, pendingCount } from "./actions/index.js";
 // immediacy.
 import "./conflicts.js";
 
-const noop = (): void => {};
+const noop = (): void => {
+  /* noop */
+};
 
 function dismissLoadingScreen(): void {
   document.getElementById("app-loading")?.remove();
@@ -86,7 +103,9 @@ function dismissLoadingScreen(): void {
 // ============================================================
 
 function init(): void {
-  setOnEmpty(() => createSession());
+  setOnEmpty(() => {
+    createSession();
+  });
 
   // Register SSE payload decoders before opening the transport.
   // Decoders run in transport.ts before each event reaches dispatch();
@@ -97,10 +116,14 @@ function init(): void {
   registerAllSSEDecoders();
 
   transport.init(
-    (evt: ServerEvent) => { dispatch(evt); },
+    (evt: ServerEvent) => {
+      dispatch(evt);
+    },
     (status) => {
       setStatus(status);
-      if (status === "connected") void loadList();
+      if (status === "connected") {
+        void loadList();
+      }
     },
   );
 
@@ -116,8 +139,10 @@ function init(): void {
   effect(() => {
     sessionsVersion.value;
     const active = getActive();
-    if (active === undefined) return;
-    const sig = active.id + ":" + active.available_models.map(m => m.id).join(",");
+    if (active === undefined) {
+      return;
+    }
+    const sig = active.id + ":" + active.available_models.map((m) => m.id).join(",");
     if (sig !== lastModelSig) {
       lastModelSig = sig;
       fetchModelsFromSession();
@@ -134,7 +159,13 @@ function init(): void {
   initTaskListPill();
   // Wire toolbar history button. Hidden when retention is 0 (no archive).
   $.historyBtn.addEventListener("click", () => {
-    void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
+    void import("./history.js")
+      .then(({ showHistoryView }) => {
+        showHistoryView();
+      })
+      .catch(() => {
+        /* noop */
+      });
   });
   // Sync history button visibility with retention setting.
   const syncHistoryBtn = (): void => {
@@ -147,16 +178,24 @@ function init(): void {
   initTooltips();
   initHistory();
   initLoginModal(onLoginSuccess);
-  initSidebarSwipe(
-    $.chatArea,
-    $.sidebar,
-  );
+  initSidebarSwipe($.chatArea, $.sidebar);
   initKeyboardShortcuts({
-    newChat: () => { createSession(); $.sidebar.classList.remove("open"); },
-    toggleShell: () => $.shellBtn.click(),
-    toggleFiles: () => $.filesBtn.click(),
-    toggleGit: () => $.gitBtn.click(),
-    toggleSettings: () => $.settingsBtn.click(),
+    newChat: () => {
+      createSession();
+      $.sidebar.classList.remove("open");
+    },
+    toggleShell: () => {
+      $.shellBtn.click();
+    },
+    toggleFiles: () => {
+      $.filesBtn.click();
+    },
+    toggleGit: () => {
+      $.gitBtn.click();
+    },
+    toggleSettings: () => {
+      $.settingsBtn.click();
+    },
     sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
   });
 
@@ -166,12 +205,22 @@ function init(): void {
   // Inlined from a former actions/console-log.ts module — single boot
   // wiring, not worth a separate module.
   subscribeToActions((inst) => {
-    if (inst.status !== "error" || inst.error === undefined) return;
+    if (inst.status !== "error" || inst.error === undefined) {
+      return;
+    }
     const meta: string[] = [];
-    if (inst.completedAt !== undefined) meta.push(`${String(inst.completedAt - inst.startedAt)}ms`);
-    if (inst.attempts !== undefined && inst.attempts > 1) meta.push(`${String(inst.attempts)} attempts`);
-    if (inst.error.status !== undefined) meta.push(`HTTP ${String(inst.error.status)}`);
-    if (inst.error.code !== undefined) meta.push(inst.error.code);
+    if (inst.completedAt !== undefined) {
+      meta.push(`${String(inst.completedAt - inst.startedAt)}ms`);
+    }
+    if (inst.attempts !== undefined && inst.attempts > 1) {
+      meta.push(`${String(inst.attempts)} attempts`);
+    }
+    if (inst.error.status !== undefined) {
+      meta.push(`HTTP ${String(inst.error.status)}`);
+    }
+    if (inst.error.code !== undefined) {
+      meta.push(inst.error.code);
+    }
     console.error(
       `[action] ${inst.name} failed (${meta.join(", ")}): ${inst.error.message}`,
       inst.error,
@@ -192,10 +241,16 @@ function init(): void {
       if (active !== wasActive) {
         wasActive = active;
         if (active) {
-          if (offTimer !== undefined) { clearTimeout(offTimer); offTimer = undefined; }
+          if (offTimer !== undefined) {
+            clearTimeout(offTimer);
+            offTimer = undefined;
+          }
           progressEl.classList.add("active");
         } else {
-          offTimer = setTimeout(() => { offTimer = undefined; progressEl.classList.remove("active"); }, 200);
+          offTimer = setTimeout(() => {
+            offTimer = undefined;
+            progressEl.classList.remove("active");
+          }, 200);
         }
       }
     });
@@ -209,7 +264,11 @@ async function checkAuthAndStart(): Promise<void> {
   restoreLastModel(settings.last_model);
 
   suppressPush(true);
-  try { restoreAll(settings); } catch { /* best-effort */ }
+  try {
+    restoreAll(settings);
+  } catch {
+    /* best-effort */
+  }
   suppressPush(false);
 
   let authenticated = false;
@@ -251,7 +310,9 @@ async function checkAuthAndStart(): Promise<void> {
     const ok = await loadList();
     skel.remove();
     if (!ok || getSessions().length === 0) {
-      if (!shareWillCreate) createSession();
+      if (!shareWillCreate) {
+        createSession();
+      }
     } else {
       for (const s of getSessions()) {
         openChatTab(s.id, s.name, s.agent);
@@ -263,7 +324,9 @@ async function checkAuthAndStart(): Promise<void> {
     }
   } catch {
     skel.remove();
-    if (!shareWillCreate) createSession();
+    if (!shareWillCreate) {
+      createSession();
+    }
   }
   suppressPush(false);
 
@@ -275,13 +338,17 @@ function onLoginSuccess(): void {
   hideLoginModal();
   dismissLoadingScreen();
   void apiGet<WhoamiResponse>("/api/whoami").then((d) => {
-    if (d?.email !== undefined) setUserEmail(d.email);
+    if (d?.email !== undefined) {
+      setUserEmail(d.email);
+    }
   });
   // Fetch the pre-conversation catalog so the picker is populated
   // before the first chat's session/new arrives. Session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  if (getSessions().length === 0) createSession();
+  if (getSessions().length === 0) {
+    createSession();
+  }
 }
 
 async function fetchModelsFromREST(): Promise<void> {
@@ -292,7 +359,9 @@ async function fetchModelsFromREST(): Promise<void> {
   // path below overwrites with the authoritative catalog for that
   // chat.
   const d = await apiGet<{ models: ModelInfo[] }>("/api/models");
-  if (d === null || d.models === undefined || d.models.length === 0) return;
+  if (d?.models === undefined || d.models.length === 0) {
+    return;
+  }
   populatePickerModels(d.models, "");
 }
 
@@ -303,7 +372,9 @@ function fetchModelsFromSession(): void {
   // authoritative list into the picker, overwriting whatever the
   // REST fetch seeded at startup.
   const active = getActive();
-  if (active === undefined || active.available_models.length === 0) return;
+  if (active === undefined || active.available_models.length === 0) {
+    return;
+  }
   const mapped: ModelInfo[] = active.available_models.map((m) => ({
     model_id: m.id,
     model_name: m.name,
@@ -324,7 +395,9 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
   for (const m of models) {
     if (m.description !== undefined && MODEL_CONTEXT_SIZES[m.model_id] === undefined) {
       const size = parseContextSize(m.description);
-      if (size !== undefined) MODEL_CONTEXT_SIZES[m.model_id] = size;
+      if (size !== undefined) {
+        MODEL_CONTEXT_SIZES[m.model_id] = size;
+      }
     }
   }
   setPickerModels(models);
@@ -336,27 +409,42 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
 // ============================================================
 
 function setupInput(): void {
-  initPromptInput((text: string) => {
-    if (getActiveId() === "") createSession(text);
-    else sendPrompt(text);
-  }, () => {
-    // Cancel the active chat's in-flight turn. No-op if nothing running.
-    if (getActiveId() === "") return;
-    if (!isThinking(getActiveId())) return;
-    void cancelTurn.dispatch(getActiveId());
-  });
+  initPromptInput(
+    (text: string) => {
+      if (getActiveId() === "") {
+        createSession(text);
+      } else {
+        sendPrompt(text);
+      }
+    },
+    () => {
+      // Cancel the active chat's in-flight turn. No-op if nothing running.
+      if (getActiveId() === "") {
+        return;
+      }
+      if (!isThinking(getActiveId())) {
+        return;
+      }
+      void cancelTurn.dispatch(getActiveId());
+    },
+  );
 
   const doCreate = guardAction(() => {
     createSession();
     $.sidebar.classList.remove("open");
   });
   $.newChatBtn.addEventListener("click", doCreate);
-  $.newPlanBtn.addEventListener("click", guardAction(() => {
-    createPlannerSession();
-    $.sidebar.classList.remove("open");
-  }));
+  $.newPlanBtn.addEventListener(
+    "click",
+    guardAction(() => {
+      createPlannerSession();
+      $.sidebar.classList.remove("open");
+    }),
+  );
   $.menuToggle.addEventListener("click", () => $.sidebar.classList.toggle("open"));
-  $.sidebarClose.addEventListener("click", () => $.sidebar.classList.remove("open"));
+  $.sidebarClose.addEventListener("click", () => {
+    $.sidebar.classList.remove("open");
+  });
 
   // The model switcher owns its button click, popover, queue, and
   // outside-click dismissal. See model-switcher.ts.
@@ -366,10 +454,14 @@ function setupInput(): void {
   initSupervisedPill();
 
   // Expandable pills: context and status dot.
-  const ctxExpand = $.contextIndicator.querySelector(".pill-expand-content") as HTMLElement | null;
-  if (ctxExpand !== null) makeExpandable($.contextIndicator, ctxExpand);
-  const statusExpand = $.statusDot.querySelector(".pill-expand-content") as HTMLElement | null;
-  if (statusExpand !== null) makeExpandable($.statusDot, statusExpand);
+  const ctxExpand = $.contextIndicator.querySelector(".pill-expand-content");
+  if (ctxExpand !== null) {
+    makeExpandable($.contextIndicator, ctxExpand);
+  }
+  const statusExpand = $.statusDot.querySelector(".pill-expand-content");
+  if (statusExpand !== null) {
+    makeExpandable($.statusDot, statusExpand);
+  }
 }
 
 // ============================================================
@@ -388,7 +480,9 @@ function applyRoute(route: Route): void {
     case "settings":
       forceSettingsTab(route.tab);
       openTab({
-        id: "__settings__", name: "Settings", kind: "settings",
+        id: "__settings__",
+        name: "Settings",
+        kind: "settings",
         view: TAB_VIEWS.settings,
         route: { kind: "settings", tab: route.tab },
         onShow: loadSettingsForTab(route.tab),
@@ -396,23 +490,45 @@ function applyRoute(route: Route): void {
       break;
     case "git":
       openTab({
-        id: "__git__", name: "Source Control", kind: "git",
-        view: TAB_VIEWS.git, route: { kind: "git" }, onShow: loadGitRepos,
+        id: "__git__",
+        name: "Source Control",
+        kind: "git",
+        view: TAB_VIEWS.git,
+        route: { kind: "git" },
+        onShow: loadGitRepos,
       });
       break;
     case "files":
       restoreFileBrowser(route.path);
       openTab({
-        id: "__files__", name: "Files", kind: "files",
-        view: TAB_VIEWS.files, route: { kind: "files", path: route.path }, onShow: loadFileBrowser,
+        id: "__files__",
+        name: "Files",
+        kind: "files",
+        view: TAB_VIEWS.files,
+        route: { kind: "files", path: route.path },
+        onShow: loadFileBrowser,
       });
       break;
-    case "file":     openFile(route.path, route.line); break;
+    case "file":
+      openFile(route.path, route.line);
+      break;
     case "history":
-      void import("./history.js").then(({ showHistoryView }) => showHistoryView()).catch(() => {});
+      void import("./history.js")
+        .then(({ showHistoryView }) => {
+          showHistoryView();
+        })
+        .catch(() => {
+          /* noop */
+        });
       break;
     case "follow":
-      void import("./follow.js").then(({ showFollowView }) => showFollowView()).catch(() => {});
+      void import("./follow.js")
+        .then(({ showFollowView }) => {
+          showFollowView();
+        })
+        .catch(() => {
+          /* noop */
+        });
       break;
   }
 }
@@ -423,11 +539,16 @@ function applyRoute(route: Route): void {
 // when their tab actually opens).
 function loadSettingsForTab(tab: SettingsTab): () => void {
   switch (tab) {
-    case "tools":        return loadToolsList;
-    case "instructions": return loadKiroConfig;
-    case "general":      return noop;
-    case "permissions":  return noop;
-    case "git":          return noop; // settings.ts onTabChange handles the fetch
+    case "tools":
+      return loadToolsList;
+    case "instructions":
+      return loadKiroConfig;
+    case "general":
+      return noop;
+    case "permissions":
+      return noop;
+    case "git":
+      return noop; // settings.ts onTabChange handles the fetch
   }
 }
 
@@ -440,6 +561,8 @@ function applyInitialRoute(): void {
   }
 }
 
-onPopState((route: Route) => applyRoute(route));
+onPopState((route: Route) => {
+  applyRoute(route);
+});
 
 document.addEventListener("DOMContentLoaded", init);

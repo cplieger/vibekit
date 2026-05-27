@@ -26,17 +26,41 @@
 
 export type SettingsTab = "general" | "tools" | "permissions" | "instructions" | "git";
 
-interface RouteChat { kind: "chat"; id: string }
-interface RouteGit { kind: "git" }
-interface RouteFiles { kind: "files"; path: string }
-interface RouteFile { kind: "file"; path: string; line?: number }
-interface RouteFollow { kind: "follow" }
-interface RouteHistory { kind: "history" }
-interface RouteSettings { kind: "settings"; tab: SettingsTab }
+interface RouteChat {
+  kind: "chat";
+  id: string;
+}
+interface RouteGit {
+  kind: "git";
+}
+interface RouteFiles {
+  kind: "files";
+  path: string;
+}
+interface RouteFile {
+  kind: "file";
+  path: string;
+  line?: number;
+}
+interface RouteFollow {
+  kind: "follow";
+}
+interface RouteHistory {
+  kind: "history";
+}
+interface RouteSettings {
+  kind: "settings";
+  tab: SettingsTab;
+}
 
 export type Route =
-  | RouteChat | RouteGit | RouteFiles | RouteFile
-  | RouteFollow | RouteHistory | RouteSettings;
+  | RouteChat
+  | RouteGit
+  | RouteFiles
+  | RouteFile
+  | RouteFollow
+  | RouteHistory
+  | RouteSettings;
 
 // --- Parse current URL into a Route ---
 
@@ -72,21 +96,29 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "chat": {
       const id = safeDecode(segments[1] ?? "");
-      if (id !== "") return { kind: "chat", id };
+      if (id !== "") {
+        return { kind: "chat", id };
+      }
       break;
     }
 
     case "files": {
       // /files → workspace root; /files/<path> → specific path.
-      if (segments.length <= 1) return { kind: "files", path: "." };
+      if (segments.length <= 1) {
+        return { kind: "files", path: "." };
+      }
       const filePath = safeDecode(segments.slice(1).join("/"));
       return { kind: "files", path: filePath === "" ? "." : filePath };
     }
 
     case "file": {
-      if (segments.length <= 1) break; // missing path → fall through to default
+      if (segments.length <= 1) {
+        break;
+      } // missing path → fall through to default
       const filePath = safeDecode(segments.slice(1).join("/"));
-      if (filePath === "") break;
+      if (filePath === "") {
+        break;
+      }
       const line = parseHashLine(hash);
       return line !== undefined
         ? { kind: "file", path: filePath, line }
@@ -114,7 +146,9 @@ function parseSettingsTab(seg: string | undefined): SettingsTab {
 
 function parseHashLine(hash: string): number | undefined {
   const m = /^#L(\d+)/.exec(hash);
-  if (m === null) return undefined;
+  if (m === null) {
+    return undefined;
+  }
   const n = parseInt(m[1]!, 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
@@ -155,10 +189,14 @@ function encodePath(path: string): string {
 // --- Push or replace the URL without triggering popstate ---
 
 let suppressed = false;
-export function suppressPush(v: boolean): void { suppressed = v; }
+export function suppressPush(v: boolean): void {
+  suppressed = v;
+}
 
 export function pushRoute(route: Route): void {
-  if (suppressed) return;
+  if (suppressed) {
+    return;
+  }
   const target = buildPath(route);
   const current = location.pathname + location.hash;
   if (target !== current) {
@@ -167,7 +205,9 @@ export function pushRoute(route: Route): void {
 }
 
 export function replaceRoute(route: Route): void {
-  if (suppressed) return;
+  if (suppressed) {
+    return;
+  }
   const target = buildPath(route);
   const current = location.pathname + location.hash;
   if (target !== current) {

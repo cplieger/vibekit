@@ -18,7 +18,9 @@ interface OpenDiffArgs {
  *  plain text (not JSON), which apiAction's executeRequest doesn't
  *  support. Error classification is handled via classifyFetchError. */
 async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Promise<string> {
-  if (sha === "") return "";
+  if (sha === "") {
+    return "";
+  }
   const path = `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`;
   let resp: Response;
   try {
@@ -26,7 +28,9 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
   } catch (e) {
     throw classifyFetchError(e, signal);
   }
-  if (!resp.ok) throw new ActionError("server returned non-ok", { status: resp.status });
+  if (!resp.ok) {
+    throw new ActionError("server returned non-ok", { status: resp.status });
+  }
   return resp.text();
 }
 
@@ -62,6 +66,9 @@ export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   dedupe: (args) => args,
-  request: (chatID) => ({ method: "GET", path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts` }),
+  request: (chatID) => ({
+    method: "GET",
+    path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts`,
+  }),
   error: false,
 });

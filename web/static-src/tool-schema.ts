@@ -72,47 +72,47 @@ export interface ToolRenderInfo {
  *  through the kind field the server already provides. */
 const TITLE_PROFILES: Readonly<Record<string, ToolProfile>> = {
   // File reads
-  readFile:            { kind: "read",    writesFile: false },
-  readCode:            { kind: "read",    writesFile: false },
-  readMultipleFiles:   { kind: "read",    writesFile: false },
-  listDirectory:       { kind: "read",    writesFile: false },
+  readFile: { kind: "read", writesFile: false },
+  readCode: { kind: "read", writesFile: false },
+  readMultipleFiles: { kind: "read", writesFile: false },
+  listDirectory: { kind: "read", writesFile: false },
 
   // File writes
-  fsWrite:             { kind: "write",   writesFile: true  },
-  fsAppend:            { kind: "write",   writesFile: true  },
-  strReplace:          { kind: "edit",    writesFile: true  },
-  FileEdit:            { kind: "edit",    writesFile: true  },
-  FileWrite:           { kind: "write",   writesFile: true  },
+  fsWrite: { kind: "write", writesFile: true },
+  fsAppend: { kind: "write", writesFile: true },
+  strReplace: { kind: "edit", writesFile: true },
+  FileEdit: { kind: "edit", writesFile: true },
+  FileWrite: { kind: "write", writesFile: true },
 
   // File lifecycle
-  deleteFile:          { kind: "delete",  writesFile: false },
-  smartRelocate:       { kind: "move",    writesFile: false },
-  semanticRename:      { kind: "edit",    writesFile: false },
+  deleteFile: { kind: "delete", writesFile: false },
+  smartRelocate: { kind: "move", writesFile: false },
+  semanticRename: { kind: "edit", writesFile: false },
 
   // Discovery
-  fileSearch:          { kind: "search",  writesFile: false },
-  grepSearch:          { kind: "search",  writesFile: false },
+  fileSearch: { kind: "search", writesFile: false },
+  grepSearch: { kind: "search", writesFile: false },
 
   // Shell / web / reasoning
-  executePwsh:         { kind: "execute", writesFile: false },
-  webFetch:            { kind: "fetch",   writesFile: false },
-  remote_web_search:   { kind: "fetch",   writesFile: false },
+  executePwsh: { kind: "execute", writesFile: false },
+  webFetch: { kind: "fetch", writesFile: false },
+  remote_web_search: { kind: "fetch", writesFile: false },
 };
 
 /** Fallback profile keyed on the ACP-provided kind string. Covers tools
  *  the client doesn't explicitly know. */
 const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
-  read:        { kind: "read",        writesFile: false },
-  edit:        { kind: "edit",        writesFile: true  },
-  write:       { kind: "write",       writesFile: true  },
-  delete:      { kind: "delete",      writesFile: false },
-  move:        { kind: "move",        writesFile: false },
-  search:      { kind: "search",      writesFile: false },
-  execute:     { kind: "execute",     writesFile: false },
-  command:     { kind: "command",     writesFile: false },
-  browser:     { kind: "browser",     writesFile: false },
-  fetch:       { kind: "fetch",       writesFile: false },
-  think:       { kind: "think",       writesFile: false },
+  read: { kind: "read", writesFile: false },
+  edit: { kind: "edit", writesFile: true },
+  write: { kind: "write", writesFile: true },
+  delete: { kind: "delete", writesFile: false },
+  move: { kind: "move", writesFile: false },
+  search: { kind: "search", writesFile: false },
+  execute: { kind: "execute", writesFile: false },
+  command: { kind: "command", writesFile: false },
+  browser: { kind: "browser", writesFile: false },
+  fetch: { kind: "fetch", writesFile: false },
+  think: { kind: "think", writesFile: false },
   switch_mode: { kind: "switch_mode", writesFile: false },
 };
 
@@ -170,9 +170,13 @@ const MCP_COLON_RE = /^mcp:([A-Za-z0-9][A-Za-z0-9_.-]*):([A-Za-z0-9][A-Za-z0-9_.
  *  wire (no "Running: " prefix — that's stripped at call site). */
 export function mcpToolInfo(title: string): { server: string; tool: string } | null {
   const u = MCP_UNDERSCORE_RE.exec(title);
-  if (u !== null) return { server: u[1]!, tool: u[2]! };
+  if (u !== null) {
+    return { server: u[1]!, tool: u[2]! };
+  }
   const c = MCP_COLON_RE.exec(title);
-  if (c !== null) return { server: c[1]!, tool: c[2]! };
+  if (c !== null) {
+    return { server: c[1]!, tool: c[2]! };
+  }
   return null;
 }
 
@@ -186,13 +190,23 @@ export function formatMCPToolName(tool: string): string {
 
 // --- Input-shape extraction ---
 
-const PATH_KEYS: readonly string[] = ["path", "targetFile", "sourcePath", "file", "destinationPath"];
+const PATH_KEYS: readonly string[] = [
+  "path",
+  "targetFile",
+  "sourcePath",
+  "file",
+  "destinationPath",
+];
 
 function pickFilePath(input: Record<string, unknown> | undefined): string {
-  if (input === undefined) return "";
+  if (input === undefined) {
+    return "";
+  }
   for (const k of PATH_KEYS) {
     const v = input[k];
-    if (typeof v === "string" && v !== "") return v;
+    if (typeof v === "string" && v !== "") {
+      return v;
+    }
   }
   return "";
 }
@@ -200,15 +214,21 @@ function pickFilePath(input: Record<string, unknown> | undefined): string {
 function pickDiffSources(
   input: Record<string, unknown> | undefined,
 ): { oldText: string; newText: string } | null {
-  if (input === undefined) return null;
+  if (input === undefined) {
+    return null;
+  }
   const os = input["oldStr"];
   const ns = input["newStr"];
-  if (typeof os === "string" && typeof ns === "string") return { oldText: os, newText: ns };
+  if (typeof os === "string" && typeof ns === "string") {
+    return { oldText: os, newText: ns };
+  }
   // fsWrite / fsAppend use `text` for the full new content; prior content
   // isn't on the wire. Render as pure-add — still useful for new files and
   // informative for overwrites.
   const t = input["text"];
-  if (typeof t === "string") return { oldText: "", newText: t };
+  if (typeof t === "string") {
+    return { oldText: "", newText: t };
+  }
   return null;
 }
 

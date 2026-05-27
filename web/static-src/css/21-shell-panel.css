@@ -1,11 +1,12 @@
-
 /* ==========================================================================
    Shell Panel
    ========================================================================== */
 
 .shell-panel {
-  border-block-start: 1px solid var(--c-border); flex-shrink: 0;
-  display: flex; flex-direction: column;
+  border-block-start: 1px solid var(--c-border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--c-bg-secondary);
   overflow: hidden;
   height: var(--shell-h, 16rem);
@@ -27,55 +28,92 @@
     opacity: 0;
   }
 
-  &.collapsed { height: 2rem; }
+  &.collapsed {
+    height: 2rem;
+  }
 }
 
 .shell-resize {
-  position: absolute; top: 0; left: 0; right: 0;
-  height: 0.1875rem; cursor: ns-resize;
-  background: transparent; z-index: 1;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0.1875rem;
+  cursor: ns-resize;
+  background: transparent;
+  z-index: 1;
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
-.shell-resize:hover, .shell-resize.dragging { background: var(--c-accent); }
+.shell-resize:hover,
+.shell-resize.dragging {
+  background: var(--c-accent);
+}
 
 .shell-header {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 0 var(--sp-3); height: 2rem;
-  border-block-end: 1px solid var(--c-border); flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  height: 2rem;
+  border-block-end: 1px solid var(--c-border);
+  flex-shrink: 0;
 }
 
 .shell-title {
-  display: flex; align-items: center; gap: var(--sp-2);
-  font-size: var(--fs-sm); font-weight: var(--fw-medium);
-  color: var(--c-text-primary); line-height: 1; flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+  line-height: 1;
+  flex: 1;
 }
 
 .shell-status {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  font-family: var(--font-mono); line-height: 1;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  line-height: 1;
 }
 
 .shell-header-btn {
-  background: none; border: none; color: var(--c-text-primary);
-  cursor: pointer; padding: var(--sp-1); border-radius: var(--r);
-  display: flex; align-items: center; line-height: 0;
+  background: none;
+  border: none;
+  color: var(--c-text-primary);
+  cursor: pointer;
+  padding: var(--sp-1);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  line-height: 0;
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
-.shell-header-btn:hover { background: var(--c-bg-tertiary); }
+.shell-header-btn:hover {
+  background: var(--c-bg-tertiary);
+}
 
 .shell-terminal {
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   padding: var(--sp-1) 0;
 }
 
 /* xterm.js viewport fills the container */
-.shell-terminal .xterm { height: 100%; }
+.shell-terminal .xterm {
+  height: 100%;
+}
 
-.shell-panel:where(.collapsed) .shell-resize { display: none; }
+.shell-panel:where(.collapsed) .shell-resize {
+  display: none;
+}
 
-.shell-panel:where(.collapsed) .shell-terminal { display: none; }
+.shell-panel:where(.collapsed) .shell-terminal {
+  display: none;
+}
 
 /* Subtle top-border glow when disconnected / reconnecting */
 .shell-panel.shell-disconnected {
@@ -87,12 +125,28 @@
 }
 
 /* Confirm dialog */
-.confirm-card { width: 18.75rem; text-align: center; }
+.confirm-card {
+  width: 18.75rem;
+  text-align: center;
+}
 
-.confirm-text { font-size: var(--fs-md); color: var(--c-text-primary); }
+.confirm-text {
+  font-size: var(--fs-md);
+  color: var(--c-text-primary);
+}
 
-.confirm-actions { display: flex; gap: var(--sp-2); justify-content: center; padding-block-start: var(--sp-3); }
+.confirm-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: center;
+  padding-block-start: var(--sp-3);
+}
 
-.confirm-danger { border-color: var(--c-red); color: var(--c-red); }
+.confirm-danger {
+  border-color: var(--c-red);
+  color: var(--c-red);
+}
 
-.confirm-danger:hover { background: color-mix(in srgb, var(--c-red) 15%, transparent); }
+.confirm-danger:hover {
+  background: color-mix(in srgb, var(--c-red) 15%, transparent);
+}

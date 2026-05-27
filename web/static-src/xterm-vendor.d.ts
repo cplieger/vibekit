@@ -12,8 +12,10 @@
 // ---------------------------------------------------------------------------
 
 declare module "xterm" {
-  export interface IDisposable { dispose(): void; }
-  export interface IEvent<T> { (listener: (arg: T) => void): IDisposable; }
+  export interface IDisposable {
+    dispose(): void;
+  }
+  export type IEvent<T> = (listener: (arg: T) => void) => IDisposable;
 
   export interface ITheme {
     foreground?: string;
@@ -22,11 +24,22 @@ declare module "xterm" {
     cursorAccent?: string;
     selectionBackground?: string;
     selectionInactiveBackground?: string;
-    black?: string; red?: string; green?: string; yellow?: string;
-    blue?: string; magenta?: string; cyan?: string; white?: string;
-    brightBlack?: string; brightRed?: string; brightGreen?: string;
-    brightYellow?: string; brightBlue?: string; brightMagenta?: string;
-    brightCyan?: string; brightWhite?: string;
+    black?: string;
+    red?: string;
+    green?: string;
+    yellow?: string;
+    blue?: string;
+    magenta?: string;
+    cyan?: string;
+    white?: string;
+    brightBlack?: string;
+    brightRed?: string;
+    brightGreen?: string;
+    brightYellow?: string;
+    brightBlue?: string;
+    brightMagenta?: string;
+    brightCyan?: string;
+    brightWhite?: string;
   }
 
   export interface ITerminalOptions {

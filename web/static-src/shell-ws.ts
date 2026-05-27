@@ -80,7 +80,7 @@ export class ShellWS {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private callbacks: ShellWSCallbacks | null = null;
   private isActive = false;
-  private openWaiters: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  private openWaiters: { resolve: () => void; reject: (e: Error) => void }[] = [];
   private reconnectAttempt = 0;
   private connectGen = 0;
 
@@ -96,7 +96,9 @@ export class ShellWS {
 
   /** Open a new WebSocket connection. No-op if already connected/connecting. */
   async connect(): Promise<void> {
-    if (this.state.kind === "connected" || this.state.kind === "connecting") return;
+    if (this.state.kind === "connected" || this.state.kind === "connecting") {
+      return;
+    }
     this.state = { kind: "connecting" };
     const gen = ++this.connectGen;
 
@@ -104,7 +106,9 @@ export class ShellWS {
     try {
       sock = await openSocket();
     } catch {
-      if (this.connectGen !== gen) return;
+      if (this.connectGen !== gen) {
+        return;
+      }
       this.state = { kind: "idle" };
       if (this.isActive) {
         this.callbacks?.onReconnecting();
@@ -128,7 +132,10 @@ export class ShellWS {
     this.callbacks?.onOpen();
     this.notifySocketOpen();
 
-    registerCleanup(() => { this.cancelReconnect(); this.disconnect(); });
+    registerCleanup(() => {
+      this.cancelReconnect();
+      this.disconnect();
+    });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (e.data instanceof ArrayBuffer) {
@@ -171,9 +178,13 @@ export class ShellWS {
 
   /** Send a JSON control message (resize/signal/kill). Prefixed with 0x00. */
   sendControl(obj: Record<string, unknown>): void {
-    if (this.state.kind !== "connected") return;
+    if (this.state.kind !== "connected") {
+      return;
+    }
     const { ws } = this.state;
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
     const body = encoder.encode(JSON.stringify(obj));
     const frame = new Uint8Array(1 + body.length);
     frame[0] = 0x00;
@@ -183,9 +194,13 @@ export class ShellWS {
 
   /** Send raw bytes to the PTY. No-op if the socket isn't open. */
   sendRaw(data: Uint8Array<ArrayBuffer>): void {
-    if (this.state.kind !== "connected") return;
+    if (this.state.kind !== "connected") {
+      return;
+    }
     const { ws } = this.state;
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
     ws.send(data);
   }
 
@@ -199,7 +214,9 @@ export class ShellWS {
       this.openWaiters.push(waiter);
       setTimeout(() => {
         const idx = this.openWaiters.indexOf(waiter);
-        if (idx === -1) return;
+        if (idx === -1) {
+          return;
+        }
         this.openWaiters.splice(idx, 1);
         reject(new Error("websocket not ready"));
       }, timeoutMs);
@@ -208,8 +225,12 @@ export class ShellWS {
 
   /** Reconnect if the socket is stale (e.g. after iOS sleep). */
   reconnectIfStale(): void {
-    if (!this.isActive) return;
-    if (this.state.kind === "connected" || this.state.kind === "connecting") return;
+    if (!this.isActive) {
+      return;
+    }
+    if (this.state.kind === "connected" || this.state.kind === "connecting") {
+      return;
+    }
     this.cancelReconnect();
     this.state = { kind: "idle" };
     void this.connect();
@@ -225,7 +246,9 @@ export class ShellWS {
     this.state = { kind: "reconnecting", attempt };
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.isActive) void this.connect();
+      if (this.isActive) {
+        void this.connect();
+      }
     }, delay);
   }
 
@@ -238,11 +261,15 @@ export class ShellWS {
 
   private notifySocketOpen(): void {
     const pending = this.openWaiters.splice(0, this.openWaiters.length);
-    for (const w of pending) w.resolve();
+    for (const w of pending) {
+      w.resolve();
+    }
   }
 
   private rejectSocketWaiters(reason: string): void {
     const pending = this.openWaiters.splice(0, this.openWaiters.length);
-    for (const w of pending) w.reject(new Error(reason));
+    for (const w of pending) {
+      w.reject(new Error(reason));
+    }
   }
 }

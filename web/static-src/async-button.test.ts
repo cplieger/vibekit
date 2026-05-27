@@ -23,7 +23,9 @@ describe("withAsyncFeedback", () => {
   it("shows pending state immediately and disables the button", async () => {
     const btn = makeButton();
     let resolveFn: (() => void) | undefined;
-    const work = new Promise<void>((res) => { resolveFn = res; });
+    const work = new Promise<void>((res) => {
+      resolveFn = res;
+    });
     const promise = withAsyncFeedback(btn, () => work);
 
     // Synchronously after the call, button should be in pending state.
@@ -103,7 +105,9 @@ describe("withAsyncFeedback", () => {
   it("with keepLabel renders spinner alongside the original content", async () => {
     const btn = makeButton("Clone");
     let resolveFn: (() => void) | undefined;
-    const work = new Promise<void>((res) => { resolveFn = res; });
+    const work = new Promise<void>((res) => {
+      resolveFn = res;
+    });
     const promise = withAsyncFeedback(btn, () => work, { keepLabel: true });
 
     expect(btn.querySelector(".btn-async-spinner")).not.toBeNull();

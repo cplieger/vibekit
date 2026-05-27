@@ -6,9 +6,6 @@ export class AnsiUp {
   ansi_to_html(text: string): string {
     // Strip ANSI codes and escape HTML (minimal stub).
     const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
-    return stripped
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+    return stripped.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 }

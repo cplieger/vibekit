@@ -48,8 +48,14 @@ export function restoreUI(state: FileState): void {
   }
 
   switch (state.mode.kind) {
-    case "diff":     renderDiffModeUI(state); return;
-    case "conflict": renderConflictModeUI(state); return;
-    case "edit":     renderEditModeUI(state); return;
+    case "diff":
+      renderDiffModeUI(state);
+      return;
+    case "conflict":
+      renderConflictModeUI(state);
+      return;
+    case "edit":
+      renderEditModeUI(state);
+      return;
   }
 }

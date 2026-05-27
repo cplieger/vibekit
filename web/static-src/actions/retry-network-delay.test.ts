@@ -6,7 +6,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -221,7 +224,9 @@ describe("retry.delay as a function", () => {
       retryable: retryNetwork,
       retry: {
         count: 1,
-        delay: () => { throw new Error("bad delay fn"); },
+        delay: () => {
+          throw new Error("bad delay fn");
+        },
       },
       error: false,
       run: () => {

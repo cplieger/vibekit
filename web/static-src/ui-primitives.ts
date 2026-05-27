@@ -51,11 +51,16 @@ export function buildChip(opts: ChipOptions): HTMLSpanElement {
   removeBtn.type = "button";
   removeBtn.title = opts.removeTitle ?? "Remove";
   removeBtn.appendChild(iconEl(ICON_CLOSE));
-  removeBtn.addEventListener("click", () => opts.onRemove());
+  removeBtn.addEventListener("click", () => {
+    opts.onRemove();
+  });
   chip.appendChild(removeBtn);
 
   chip.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); opts.onRemove(); }
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      opts.onRemove();
+    }
   });
   return chip;
 }

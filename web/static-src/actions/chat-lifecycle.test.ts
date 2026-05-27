@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
@@ -27,14 +30,30 @@ const mockFetch = vi.fn();
 
 function makeSession(id: string, extra?: Partial<Session>): Session {
   return {
-    id, name: "test", agent: "", model: "claude-4",
-    acp_session_id: "", current_mode_id: "",
-    available_modes: [], available_models: [],
-    auto_approve_crew: false, supervised_mode: false,
+    id,
+    name: "test",
+    agent: "",
+    model: "claude-4",
+    acp_session_id: "",
+    current_mode_id: "",
+    available_modes: [],
+    available_models: [],
+    auto_approve_crew: false,
+    supervised_mode: false,
     pending_changes: [],
-    usage: { context_pct: 0, context_size: 0, credits: 0, turn_count: 0, last_turn_ms: 0, has_real_data: false },
-    message_count: 0, messages: [], has_more: false,
-    thinking: false, working_label: "Thinking",
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    message_count: 0,
+    messages: [],
+    has_more: false,
+    thinking: false,
+    working_label: "Thinking",
     ...extra,
   };
 }
@@ -143,8 +162,11 @@ describe("chat.delete_archived", () => {
 describe("chat.load_history", () => {
   it("GETs /api/chats/archived and dedupes", async () => {
     vi.useFakeTimers();
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ chats: [] }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => r(new Response(JSON.stringify({ chats: [] }), { status: 200 })), 50),
+        ),
     );
     const { loadHistory } = await import("./chat.js");
     const p1 = loadHistory.dispatch(undefined);
@@ -157,7 +179,6 @@ describe("chat.load_history", () => {
     vi.useRealTimers();
   });
 });
-
 
 describe("chat.resolve_pending_change", () => {
   it("sends resolve_pending_change with tool_call_id and action", async () => {

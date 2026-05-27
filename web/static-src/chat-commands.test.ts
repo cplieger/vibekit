@@ -48,9 +48,12 @@ describe("sendPromptTo", () => {
     mockSendPromptDispatch.mockResolvedValue("sent");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("sent");
-    expect(mockSendPromptDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      chatID: "chat1", text: "hello",
-    }));
+    expect(mockSendPromptDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatID: "chat1",
+        text: "hello",
+      }),
+    );
   });
 
   it("returns 'queued' on 409 and enqueues prompt", async () => {
@@ -64,7 +67,9 @@ describe("sendPromptTo", () => {
     vi.mocked(attachments.takeAttachments).mockReturnValueOnce([{ path: "foo", name: "foo" }]);
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
-    expect(store.setLastQueuedAttachments).toHaveBeenCalledWith("chat1", [{ path: "foo", name: "foo" }]);
+    expect(store.setLastQueuedAttachments).toHaveBeenCalledWith("chat1", [
+      { path: "foo", name: "foo" },
+    ]);
   });
 
   it("returns 'failed' on null result (action error)", async () => {

@@ -3,14 +3,22 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { parseConflicts, resolveHunk, type ConflictFile, type ConflictHunk, type Resolution } from "./conflict.js";
+import {
+  parseConflicts,
+  resolveHunk,
+  type ConflictFile,
+  type ConflictHunk,
+  type Resolution,
+} from "./conflict.js";
 import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath, fileStates } from "./editor-types.js";
 import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/index.js";
 
-registerCleanup(() => suggestResolution.cancel());
+registerCleanup(() => {
+  suggestResolution.cancel();
+});
 
 /** Per-file generation counter so superseded dispatches can detect
  *  they were cancelled WITHOUT invalidating other files' in-flight
@@ -47,7 +55,9 @@ export function abortSuggestion(path?: string): void {
   const state = fileStates.get(targetPath);
   if (state !== undefined) {
     for (const [key, entry] of state.suggestions) {
-      if (entry.loading) state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
+      if (entry.loading) {
+        state.suggestions.set(key, { loading: false, preview: null, error: "cancelled" });
+      }
     }
   }
   // Bump only this path's counter so this file's in-flight requests
@@ -97,8 +107,16 @@ export function renderConflictOverlay(state: FileState): void {
       pill.className = "conflict-suggest-pill";
       pill.textContent = "AI suggestion";
       row.appendChild(pill);
-      row.appendChild(resolveBtn("Accept", () => acceptSuggestion(state, i)));
-      row.appendChild(resolveBtn("Reject", () => rejectSuggestion(state, hunk.startLine)));
+      row.appendChild(
+        resolveBtn("Accept", () => {
+          acceptSuggestion(state, i);
+        }),
+      );
+      row.appendChild(
+        resolveBtn("Reject", () => {
+          rejectSuggestion(state, hunk.startLine);
+        }),
+      );
       overlay.appendChild(row);
       const preview = document.createElement("pre");
       preview.className = "conflict-suggest-preview";
@@ -106,15 +124,29 @@ export function renderConflictOverlay(state: FileState): void {
       overlay.appendChild(preview);
       continue;
     }
-    row.appendChild(resolveBtn("Ours", () => applyResolution(state, i, "ours")));
-    row.appendChild(resolveBtn("Theirs", () => applyResolution(state, i, "theirs")));
-    row.appendChild(resolveBtn("Both", () => applyResolution(state, i, "both")));
+    row.appendChild(
+      resolveBtn("Ours", () => {
+        applyResolution(state, i, "ours");
+      }),
+    );
+    row.appendChild(
+      resolveBtn("Theirs", () => {
+        applyResolution(state, i, "theirs");
+      }),
+    );
+    row.appendChild(
+      resolveBtn("Both", () => {
+        applyResolution(state, i, "both");
+      }),
+    );
     const suggestBtn = document.createElement("button");
     suggestBtn.className = "conflict-btn conflict-btn-suggest";
     suggestBtn.textContent = suggestion?.loading === true ? "Suggesting..." : "Suggest";
     suggestBtn.title = "Propose a merged version using the utility AI bridge";
     suggestBtn.disabled = suggestion?.loading === true;
-    suggestBtn.addEventListener("click", () => { void requestSuggestion(state, i); });
+    suggestBtn.addEventListener("click", () => {
+      void requestSuggestion(state, i);
+    });
     row.appendChild(suggestBtn);
     if (suggestion !== undefined && suggestion.error !== "") {
       const err = document.createElement("span");
@@ -135,7 +167,9 @@ function resolveBtn(label: string, onClick: () => void): HTMLButtonElement {
 }
 
 function applyResolution(state: FileState, hunkIndex: number, resolution: Resolution): void {
-  if (state.mode.kind !== "conflict") return;
+  if (state.mode.kind !== "conflict") {
+    return;
+  }
   const newContent = resolveHunk(state.mode.conflict, hunkIndex, resolution);
   state.current = newContent;
   const parsed = parseConflicts(newContent);
@@ -153,11 +187,20 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
 }
 
 async function requestSuggestion(state: FileState, hunkIndex: number): Promise<void> {
-  if (state.mode.kind !== "conflict") return;
+  if (state.mode.kind !== "conflict") {
+    return;
+  }
   const hunk = state.mode.conflict.hunks[hunkIndex];
-  if (hunk === undefined) return;
+  if (hunk === undefined) {
+    return;
+  }
   const existing = state.suggestions.get(hunk.startLine);
-  if (existing?.loading === true || existing?.preview !== undefined && existing.preview !== null) return;
+  if (
+    existing?.loading === true ||
+    (existing?.preview !== undefined && existing.preview !== null)
+  ) {
+    return;
+  }
   // Per-file generation: bump only THIS file's counter. Other files'
   // in-flight suggestions remain valid.
   // Note: we no longer call suggestResolution.cancel() globally — that
@@ -176,13 +219,25 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   // Stale-dispatch guard: if abortSuggestion(state.path) or another
   // requestSuggestion on this file ran while we were awaiting, the
   // path's gen has incremented. Bail silently.
-  if (myDispatchId !== currentSuggestionGen(state.path)) return;
-  if (state.mode.kind !== "conflict") return;
-  if (getActiveFilePath() !== state.path) return; // stale file switch
+  if (myDispatchId !== currentSuggestionGen(state.path)) {
+    return;
+  }
+  if (state.mode.kind !== "conflict") {
+    return;
+  }
+  if (getActiveFilePath() !== state.path) {
+    return;
+  } // stale file switch
   const current = state.mode.conflict.hunks[hunkIndex];
-  if (current?.startLine !== hunk.startLine) return;
+  if (current?.startLine !== hunk.startLine) {
+    return;
+  }
   if (resp === null || typeof resp.output !== "string") {
-    state.suggestions.set(hunk.startLine, { loading: false, preview: null, error: resp?.error ?? "generation failed" });
+    state.suggestions.set(hunk.startLine, {
+      loading: false,
+      preview: null,
+      error: resp?.error ?? "generation failed",
+    });
     renderConflictOverlay(state);
     return;
   }
@@ -191,11 +246,17 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
 }
 
 function acceptSuggestion(state: FileState, hunkIndex: number): void {
-  if (state.mode.kind !== "conflict") return;
+  if (state.mode.kind !== "conflict") {
+    return;
+  }
   const hunk = state.mode.conflict.hunks[hunkIndex];
-  if (hunk === undefined) return;
+  if (hunk === undefined) {
+    return;
+  }
   const suggestion = state.suggestions.get(hunk.startLine);
-  if (suggestion === undefined || suggestion.preview === null) return;
+  if (suggestion?.preview == null) {
+    return;
+  }
   const previewLines = suggestion.preview === "" ? [] : suggestion.preview.split("\n");
   const out = [
     ...state.mode.conflict.lines.slice(0, hunk.startLine),
@@ -226,7 +287,12 @@ function rejectSuggestion(state: FileState, startLine: number): void {
 function buildHunkContext(file: ConflictFile, hunk: ConflictHunk): string {
   const ctxLines = 10;
   const before = file.lines.slice(Math.max(0, hunk.startLine - ctxLines), hunk.startLine);
-  const after = file.lines.slice(hunk.endLine + 1, Math.min(file.lines.length, hunk.endLine + 1 + ctxLines));
-  if (before.length === 0 && after.length === 0) return "";
+  const after = file.lines.slice(
+    hunk.endLine + 1,
+    Math.min(file.lines.length, hunk.endLine + 1 + ctxLines),
+  );
+  if (before.length === 0 && after.length === 0) {
+    return "";
+  }
   return [...before, "/* ...conflict hunk... */", ...after].join("\n");
 }

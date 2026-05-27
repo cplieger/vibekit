@@ -25,6 +25,13 @@
     "allowUnreachableCode": false,
     "allowUnusedLabels": false
   },
-  "include": ["*.ts", "*.d.ts", "handlers/*.ts", "wire/*.ts", "actions/*.ts", "vendor-types/*.d.ts"],
+  "include": [
+    "*.ts",
+    "*.d.ts",
+    "handlers/*.ts",
+    "wire/*.ts",
+    "actions/*.ts",
+    "vendor-types/*.d.ts"
+  ],
   "exclude": ["vitest.config.ts", "fc-strict-setup.ts", "**/*.test.ts"]
 }

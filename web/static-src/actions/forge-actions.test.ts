@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -28,7 +31,11 @@ beforeEach(() => {
 
 describe("forge.start_device_flow", () => {
   it("POSTs to /api/forges/oauth/github/start", async () => {
-    const resp = { device_code: "abc", user_code: "1234", verification_uri: "https://github.com/login/device" };
+    const resp = {
+      device_code: "abc",
+      user_code: "1234",
+      verification_uri: "https://github.com/login/device",
+    };
     mockFetch.mockResolvedValue(new Response(JSON.stringify(resp), { status: 200 }));
     const { startDeviceFlow } = await import("./forge.js");
     const r = await startDeviceFlow.dispatch(undefined);
@@ -40,8 +47,11 @@ describe("forge.start_device_flow", () => {
 
   it("dedupes concurrent dispatches", async () => {
     vi.useFakeTimers();
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50),
+        ),
     );
     const { startDeviceFlow } = await import("./forge.js");
     const p1 = startDeviceFlow.dispatch(undefined);
@@ -53,7 +63,9 @@ describe("forge.start_device_flow", () => {
   });
 
   it("suppresses error toast on failure", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }),
+    );
     const { startDeviceFlow } = await import("./forge.js");
     await startDeviceFlow.dispatch(undefined);
     expect(toast.error).not.toHaveBeenCalled();
@@ -140,7 +152,9 @@ describe("forge.connect_pat", () => {
   });
 
   it("suppresses error toast on failure", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "invalid" }), { status: 401 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid" }), { status: 401 }),
+    );
     const { connectPAT } = await import("./forge.js");
     await connectPAT.dispatch({ kind: "github", host: "github.com", token: "bad" });
     expect(toast.error).not.toHaveBeenCalled();

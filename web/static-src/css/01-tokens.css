@@ -1,171 +1,183 @@
 @layer tokens {
-:root {
-  color-scheme: dark;
-  interpolate-size: allow-keywords;
+  :root {
+    color-scheme: dark;
+    interpolate-size: allow-keywords;
 
-  --c-bg-primary: oklch(24.3% 0.030 283.9deg);
-  --c-bg-secondary: oklch(27.2% 0.031 284.1deg);
-  --c-bg-tertiary: oklch(30.8% 0.041 283.7deg);
-  --c-bg-hover: oklch(34.1% 0.047 283.6deg);
-  --c-text-primary: oklch(100% 0 0deg);
-  --c-text-secondary: oklch(75.1% 0.040 273.9deg);
-  --c-text-tertiary: oklch(55.0% 0.034 277.1deg);
-  --c-accent: oklch(59.0% 0.254 295.8deg);
-  --c-accent-hover: oklch(54.1% 0.247 293.0deg);
-  --c-accent-subtle: oklch(35.6% 0.172 285.8deg);
-  --c-border: oklch(34.5% 0.045 283.8deg);
-  --c-green: oklch(85.8% 0.109 142.7deg);
-  --c-red: oklch(75.6% 0.130 2.8deg);
-  --c-yellow: oklch(91.9% 0.070 86.5deg);
-  --c-user-bubble: oklch(34.5% 0.045 283.8deg);
-  --c-agent-bubble: color-mix(in srgb, var(--c-accent) 15%, transparent);
+    --c-bg-primary: oklch(24.3% 0.03 283.9deg);
+    --c-bg-secondary: oklch(27.2% 0.031 284.1deg);
+    --c-bg-tertiary: oklch(30.8% 0.041 283.7deg);
+    --c-bg-hover: oklch(34.1% 0.047 283.6deg);
+    --c-text-primary: oklch(100% 0 0deg);
+    --c-text-secondary: oklch(75.1% 0.04 273.9deg);
+    --c-text-tertiary: oklch(55% 0.034 277.1deg);
+    --c-accent: oklch(59% 0.254 295.8deg);
+    --c-accent-hover: oklch(54.1% 0.247 293deg);
+    --c-accent-subtle: oklch(35.6% 0.172 285.8deg);
+    --c-border: oklch(34.5% 0.045 283.8deg);
+    --c-green: oklch(85.8% 0.109 142.7deg);
+    --c-red: oklch(75.6% 0.13 2.8deg);
+    --c-yellow: oklch(91.9% 0.07 86.5deg);
+    --c-user-bubble: oklch(34.5% 0.045 283.8deg);
+    --c-agent-bubble: color-mix(in srgb, var(--c-accent) 15%, transparent);
 
-  /* Terminal (xterm.js) 16-color ANSI palette + surfaces. Read via
+    /* Terminal (xterm.js) 16-color ANSI palette + surfaces. Read via
      getComputedStyle in shell.ts so the terminal theme follows the app
      theme automatically. */
-  --c-term-bg: oklch(20% 0.020 283deg);
-  --c-term-fg: oklch(88% 0.010 283deg);
-  --c-term-cursor: var(--c-term-fg);
-  --c-term-cursor-accent: var(--c-term-bg);
-  --c-term-selection: oklch(100% 0 0deg / 20%);
-  --c-term-selection-inactive: oklch(100% 0 0deg / 10%);
-  --c-term-black: oklch(28% 0.010 283deg);
-  --c-term-red: oklch(66% 0.180 25deg);
-  --c-term-green: oklch(75% 0.140 140deg);
-  --c-term-yellow: oklch(82% 0.140 85deg);
-  --c-term-blue: oklch(72% 0.140 245deg);
-  --c-term-magenta: oklch(70% 0.170 315deg);
-  --c-term-cyan: oklch(75% 0.100 200deg);
-  --c-term-white: oklch(88% 0.010 283deg);
-  --c-term-bright-black: oklch(50% 0.010 283deg);
-  --c-term-bright-red: oklch(72% 0.180 25deg);
-  --c-term-bright-green: oklch(82% 0.140 140deg);
-  --c-term-bright-yellow: oklch(88% 0.140 85deg);
-  --c-term-bright-blue: oklch(78% 0.140 245deg);
-  --c-term-bright-magenta: oklch(76% 0.170 315deg);
-  --c-term-bright-cyan: oklch(82% 0.100 200deg);
-  --c-term-bright-white: oklch(100% 0 0deg);
-  --font-sans: system-ui, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "Fira Code", monospace;
-  --fs-xs: 0.6875rem;
-  --fs-sm: 0.75rem;
-  --fs-base: 0.8125rem;
-  --fs-md: 0.875rem;
-  --fs-lg: 1rem;
-  --fs-xl: 1.125rem;
-  --fw-normal: 400;
-  --fw-medium: 500;
-  --fw-semibold: 600;
-  --sp-1: 0.25rem;
-  --sp-2: 0.5rem;
-  --sp-3: 0.75rem;
-  --sp-4: 1rem;
-  --sp-5: 1.25rem;
-  --sidebar-w: 16.25rem;
-  --r: 0.375rem;
-  --content-max-w: 50rem;
-  --btn-h: 2.25rem;
-  --input-h: 2.375rem;
+    --c-term-bg: oklch(20% 0.02 283deg);
+    --c-term-fg: oklch(88% 0.01 283deg);
+    --c-term-cursor: var(--c-term-fg);
+    --c-term-cursor-accent: var(--c-term-bg);
+    --c-term-selection: oklch(100% 0 0deg / 20%);
+    --c-term-selection-inactive: oklch(100% 0 0deg / 10%);
+    --c-term-black: oklch(28% 0.01 283deg);
+    --c-term-red: oklch(66% 0.18 25deg);
+    --c-term-green: oklch(75% 0.14 140deg);
+    --c-term-yellow: oklch(82% 0.14 85deg);
+    --c-term-blue: oklch(72% 0.14 245deg);
+    --c-term-magenta: oklch(70% 0.17 315deg);
+    --c-term-cyan: oklch(75% 0.1 200deg);
+    --c-term-white: oklch(88% 0.01 283deg);
+    --c-term-bright-black: oklch(50% 0.01 283deg);
+    --c-term-bright-red: oklch(72% 0.18 25deg);
+    --c-term-bright-green: oklch(82% 0.14 140deg);
+    --c-term-bright-yellow: oklch(88% 0.14 85deg);
+    --c-term-bright-blue: oklch(78% 0.14 245deg);
+    --c-term-bright-magenta: oklch(76% 0.17 315deg);
+    --c-term-bright-cyan: oklch(82% 0.1 200deg);
+    --c-term-bright-white: oklch(100% 0 0deg);
+    --font-sans: system-ui, sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+    --fs-xs: 0.6875rem;
+    --fs-sm: 0.75rem;
+    --fs-base: 0.8125rem;
+    --fs-md: 0.875rem;
+    --fs-lg: 1rem;
+    --fs-xl: 1.125rem;
+    --fw-normal: 400;
+    --fw-medium: 500;
+    --fw-semibold: 600;
+    --sp-1: 0.25rem;
+    --sp-2: 0.5rem;
+    --sp-3: 0.75rem;
+    --sp-4: 1rem;
+    --sp-5: 1.25rem;
+    --sidebar-w: 16.25rem;
+    --r: 0.375rem;
+    --content-max-w: 50rem;
+    --btn-h: 2.25rem;
+    --input-h: 2.375rem;
 
-  /* Motion tokens (see vibekit-ui.md for rationale) */
-  --ease-micro: cubic-bezier(0.2, 0, 0, 1);
-  --dur-micro: 0.1s;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --dur-standard: 0.2s;
-  --ease-enter: cubic-bezier(0, 0, 0, 1);
-  --dur-enter: 0.25s;
-  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
-  --dur-exit: 0.15s;
-  --ease-spring: linear(
-    0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%,
-    0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%,
-    1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.6%, 1
-  );
-  --dur-spring: 0.5s;
-}
+    /* Motion tokens (see vibekit-ui.md for rationale) */
+    --ease-micro: cubic-bezier(0.2, 0, 0, 1);
+    --dur-micro: 0.1s;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --dur-standard: 0.2s;
+    --ease-enter: cubic-bezier(0, 0, 0, 1);
+    --dur-enter: 0.25s;
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --dur-exit: 0.15s;
+    --ease-spring: linear(
+      0,
+      0.006,
+      0.025 2.8%,
+      0.101 6.1%,
+      0.539 18.9%,
+      0.721 25.3%,
+      0.849 31.5%,
+      0.937 38.1%,
+      0.968 41.8%,
+      0.991 45.7%,
+      1.006 50.1%,
+      1.015 55%,
+      1.017 63.9%,
+      1.001 85.6%,
+      1
+    );
+    --dur-spring: 0.5s;
+  }
 
-:root[data-theme="light"],
-:root:not([data-theme]) {
-  @media (prefers-color-scheme: light) {
+  :root[data-theme="light"],
+  :root:not([data-theme]) {
+    @media (prefers-color-scheme: light) {
+      color-scheme: light;
+
+      --c-bg-primary: oklch(98.5% 0.005 283.9deg);
+      --c-bg-secondary: oklch(96% 0.008 284.1deg);
+      --c-bg-tertiary: oklch(93% 0.012 283.7deg);
+      --c-bg-hover: oklch(90% 0.015 283.6deg);
+      --c-text-primary: oklch(20% 0 0deg);
+      --c-text-secondary: oklch(40% 0.02 273.9deg);
+      --c-text-tertiary: oklch(55% 0.015 277.1deg);
+      --c-accent: oklch(50% 0.254 295.8deg);
+      --c-accent-hover: oklch(45% 0.247 293deg);
+      --c-accent-subtle: oklch(90% 0.06 285.8deg);
+      --c-border: oklch(85% 0.01 283.8deg);
+      --c-green: oklch(50% 0.12 142.7deg);
+      --c-red: oklch(55% 0.15 2.8deg);
+      --c-yellow: oklch(60% 0.12 86.5deg);
+      --c-user-bubble: oklch(92% 0.015 283.8deg);
+      --c-agent-bubble: color-mix(in srgb, var(--c-accent) 8%, transparent);
+      --c-term-bg: oklch(98% 0.005 283deg);
+      --c-term-fg: oklch(25% 0.01 283deg);
+      --c-term-selection: oklch(0% 0 0deg / 15%);
+      --c-term-selection-inactive: oklch(0% 0 0deg / 8%);
+      --c-term-black: oklch(20% 0.01 283deg);
+      --c-term-red: oklch(48% 0.18 25deg);
+      --c-term-green: oklch(52% 0.14 140deg);
+      --c-term-yellow: oklch(65% 0.14 85deg);
+      --c-term-blue: oklch(48% 0.14 245deg);
+      --c-term-magenta: oklch(48% 0.17 315deg);
+      --c-term-cyan: oklch(55% 0.1 200deg);
+      --c-term-white: oklch(70% 0.01 283deg);
+      --c-term-bright-black: oklch(45% 0.01 283deg);
+      --c-term-bright-red: oklch(58% 0.18 25deg);
+      --c-term-bright-green: oklch(62% 0.14 140deg);
+      --c-term-bright-yellow: oklch(70% 0.14 85deg);
+      --c-term-bright-blue: oklch(58% 0.14 245deg);
+      --c-term-bright-magenta: oklch(56% 0.17 315deg);
+      --c-term-bright-cyan: oklch(62% 0.1 200deg);
+      --c-term-bright-white: oklch(92% 0.01 283deg);
+    }
+  }
+
+  :root[data-theme="light"] {
     color-scheme: light;
 
     --c-bg-primary: oklch(98.5% 0.005 283.9deg);
-    --c-bg-secondary: oklch(96.0% 0.008 284.1deg);
-    --c-bg-tertiary: oklch(93.0% 0.012 283.7deg);
-    --c-bg-hover: oklch(90.0% 0.015 283.6deg);
+    --c-bg-secondary: oklch(96% 0.008 284.1deg);
+    --c-bg-tertiary: oklch(93% 0.012 283.7deg);
+    --c-bg-hover: oklch(90% 0.015 283.6deg);
     --c-text-primary: oklch(20% 0 0deg);
-    --c-text-secondary: oklch(40% 0.020 273.9deg);
+    --c-text-secondary: oklch(40% 0.02 273.9deg);
     --c-text-tertiary: oklch(55% 0.015 277.1deg);
     --c-accent: oklch(50% 0.254 295.8deg);
-    --c-accent-hover: oklch(45% 0.247 293.0deg);
-    --c-accent-subtle: oklch(90% 0.060 285.8deg);
-    --c-border: oklch(85% 0.010 283.8deg);
-    --c-green: oklch(50% 0.120 142.7deg);
-    --c-red: oklch(55% 0.150 2.8deg);
-    --c-yellow: oklch(60% 0.120 86.5deg);
+    --c-accent-hover: oklch(45% 0.247 293deg);
+    --c-accent-subtle: oklch(90% 0.06 285.8deg);
+    --c-border: oklch(85% 0.01 283.8deg);
+    --c-green: oklch(50% 0.12 142.7deg);
+    --c-red: oklch(55% 0.15 2.8deg);
+    --c-yellow: oklch(60% 0.12 86.5deg);
     --c-user-bubble: oklch(92% 0.015 283.8deg);
     --c-agent-bubble: color-mix(in srgb, var(--c-accent) 8%, transparent);
     --c-term-bg: oklch(98% 0.005 283deg);
-    --c-term-fg: oklch(25% 0.010 283deg);
+    --c-term-fg: oklch(25% 0.01 283deg);
     --c-term-selection: oklch(0% 0 0deg / 15%);
     --c-term-selection-inactive: oklch(0% 0 0deg / 8%);
-    --c-term-black: oklch(20% 0.010 283deg);
-    --c-term-red: oklch(48% 0.180 25deg);
-    --c-term-green: oklch(52% 0.140 140deg);
-    --c-term-yellow: oklch(65% 0.140 85deg);
-    --c-term-blue: oklch(48% 0.140 245deg);
-    --c-term-magenta: oklch(48% 0.170 315deg);
-    --c-term-cyan: oklch(55% 0.100 200deg);
-    --c-term-white: oklch(70% 0.010 283deg);
-    --c-term-bright-black: oklch(45% 0.010 283deg);
-    --c-term-bright-red: oklch(58% 0.180 25deg);
-    --c-term-bright-green: oklch(62% 0.140 140deg);
-    --c-term-bright-yellow: oklch(70% 0.140 85deg);
-    --c-term-bright-blue: oklch(58% 0.140 245deg);
-    --c-term-bright-magenta: oklch(56% 0.170 315deg);
-    --c-term-bright-cyan: oklch(62% 0.100 200deg);
-    --c-term-bright-white: oklch(92% 0.010 283deg);
+    --c-term-black: oklch(20% 0.01 283deg);
+    --c-term-red: oklch(48% 0.18 25deg);
+    --c-term-green: oklch(52% 0.14 140deg);
+    --c-term-yellow: oklch(65% 0.14 85deg);
+    --c-term-blue: oklch(48% 0.14 245deg);
+    --c-term-magenta: oklch(48% 0.17 315deg);
+    --c-term-cyan: oklch(55% 0.1 200deg);
+    --c-term-white: oklch(70% 0.01 283deg);
+    --c-term-bright-black: oklch(45% 0.01 283deg);
+    --c-term-bright-red: oklch(58% 0.18 25deg);
+    --c-term-bright-green: oklch(62% 0.14 140deg);
+    --c-term-bright-yellow: oklch(70% 0.14 85deg);
+    --c-term-bright-blue: oklch(58% 0.14 245deg);
+    --c-term-bright-magenta: oklch(56% 0.17 315deg);
+    --c-term-bright-cyan: oklch(62% 0.1 200deg);
+    --c-term-bright-white: oklch(92% 0.01 283deg);
   }
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-
-  --c-bg-primary: oklch(98.5% 0.005 283.9deg);
-  --c-bg-secondary: oklch(96.0% 0.008 284.1deg);
-  --c-bg-tertiary: oklch(93.0% 0.012 283.7deg);
-  --c-bg-hover: oklch(90.0% 0.015 283.6deg);
-  --c-text-primary: oklch(20% 0 0deg);
-  --c-text-secondary: oklch(40% 0.020 273.9deg);
-  --c-text-tertiary: oklch(55% 0.015 277.1deg);
-  --c-accent: oklch(50% 0.254 295.8deg);
-  --c-accent-hover: oklch(45% 0.247 293.0deg);
-  --c-accent-subtle: oklch(90% 0.060 285.8deg);
-  --c-border: oklch(85% 0.010 283.8deg);
-  --c-green: oklch(50% 0.120 142.7deg);
-  --c-red: oklch(55% 0.150 2.8deg);
-  --c-yellow: oklch(60% 0.120 86.5deg);
-  --c-user-bubble: oklch(92% 0.015 283.8deg);
-  --c-agent-bubble: color-mix(in srgb, var(--c-accent) 8%, transparent);
-  --c-term-bg: oklch(98% 0.005 283deg);
-  --c-term-fg: oklch(25% 0.010 283deg);
-  --c-term-selection: oklch(0% 0 0deg / 15%);
-  --c-term-selection-inactive: oklch(0% 0 0deg / 8%);
-  --c-term-black: oklch(20% 0.010 283deg);
-  --c-term-red: oklch(48% 0.180 25deg);
-  --c-term-green: oklch(52% 0.140 140deg);
-  --c-term-yellow: oklch(65% 0.140 85deg);
-  --c-term-blue: oklch(48% 0.140 245deg);
-  --c-term-magenta: oklch(48% 0.170 315deg);
-  --c-term-cyan: oklch(55% 0.100 200deg);
-  --c-term-white: oklch(70% 0.010 283deg);
-  --c-term-bright-black: oklch(45% 0.010 283deg);
-  --c-term-bright-red: oklch(58% 0.180 25deg);
-  --c-term-bright-green: oklch(62% 0.140 140deg);
-  --c-term-bright-yellow: oklch(70% 0.140 85deg);
-  --c-term-bright-blue: oklch(58% 0.140 245deg);
-  --c-term-bright-magenta: oklch(56% 0.170 315deg);
-  --c-term-bright-cyan: oklch(62% 0.100 200deg);
-  --c-term-bright-white: oklch(92% 0.010 283deg);
-}
 } /* @layer tokens */

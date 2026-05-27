@@ -6,22 +6,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { retryNetwork } from "./error.js";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
-import {
-  defineAction,
-  IDEMPOTENCY_HEADER,
-  _resetForTest as resetDefine,
-} from "./define.js";
+import { defineAction, IDEMPOTENCY_HEADER, _resetForTest as resetDefine } from "./define.js";
 import { apiAction } from "./api.js";
-import {
-  _resetForTest as resetRegistry,
-  pendingCount,
-} from "./registry.js";
+import { _resetForTest as resetRegistry, pendingCount } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { debouncedDispatch } from "./debounce.js";
-
 
 beforeEach(() => {
   resetDefine();
@@ -36,7 +31,9 @@ beforeEach(() => {
 
 describe("idempotencyKey", () => {
   it("apiAction sends Idempotency-Key header when configured: true", async () => {
-    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}", { status: 200 })),
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<{ id: string }, unknown>({
@@ -55,7 +52,9 @@ describe("idempotencyKey", () => {
   });
 
   it("apiAction sends caller-supplied key from function form", async () => {
-    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}", { status: 200 })),
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<{ id: string }, unknown>({
@@ -107,7 +106,9 @@ describe("idempotencyKey", () => {
   });
 
   it("no Idempotency-Key when idempotencyKey is undefined", async () => {
-    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}", { status: 200 })));
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}", { status: 200 })),
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const action = apiAction<void, unknown>({
@@ -149,19 +150,27 @@ describe("pendingCount", () => {
     let resolveB: () => void = () => {};
     const a = defineAction<void, void>({
       name: "test.pc.a",
-      run: () => new Promise<void>((r) => { resolveA = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveA = r;
+        }),
     });
     const b = defineAction<void, void>({
       name: "test.pc.b",
-      run: () => new Promise<void>((r) => { resolveB = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveB = r;
+        }),
     });
     expect(pendingCount()).toBe(0);
     const pa = a.dispatch();
     const pb = b.dispatch();
     expect(pendingCount()).toBe(2);
-    resolveA(); await pa;
+    resolveA();
+    await pa;
     expect(pendingCount()).toBe(1);
-    resolveB(); await pb;
+    resolveB();
+    await pb;
     expect(pendingCount()).toBe(0);
   });
 
@@ -169,14 +178,18 @@ describe("pendingCount", () => {
     let resolveA: () => void = () => {};
     const a = defineAction<void, void>({
       name: "test.pfa.a",
-      run: () => new Promise<void>((r) => { resolveA = r; }),
+      run: () =>
+        new Promise<void>((r) => {
+          resolveA = r;
+        }),
     });
     expect(pendingCount(["test.pfa.a", "test.pfa.b"])).toBe(0);
     const pa = a.dispatch();
     expect(pendingCount(["test.pfa.a"])).toBe(1);
     expect(pendingCount(["test.pfa.b"])).toBe(0);
     expect(pendingCount(["test.pfa.a", "test.pfa.b"])).toBe(1);
-    resolveA(); await pa;
+    resolveA();
+    await pa;
     expect(pendingCount(["test.pfa.a"])).toBe(0);
   });
 
@@ -198,7 +211,9 @@ describe("dedupe", () => {
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => { resolveRun = r; });
+        return new Promise<string>((r) => {
+          resolveRun = r;
+        });
       },
     });
     const p1 = action.dispatch({ id: "a" });
@@ -272,7 +287,9 @@ describe("debouncedDispatch", () => {
       },
     });
     const dbg = debouncedDispatch(action, { wait: 100 });
-    dbg("a"); dbg("b"); dbg("c");
+    dbg("a");
+    dbg("b");
+    dbg("c");
     expect(runArgs).toEqual([]);
     await vi.advanceTimersByTimeAsync(100);
     expect(runArgs).toEqual(["c"]);
@@ -284,10 +301,14 @@ describe("debouncedDispatch", () => {
     let runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce.flush",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 1000 });
-    dbg("a"); dbg("b");
+    dbg("a");
+    dbg("b");
     dbg.flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(runArgs).toEqual(["b"]);
@@ -302,7 +323,10 @@ describe("debouncedDispatch", () => {
     let runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce.cancel",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100 });
     dbg("a");
@@ -317,10 +341,15 @@ describe("debouncedDispatch", () => {
     let runArgs: string[] = [];
     const action = defineAction<string, void>({
       name: "test.debounce.leading",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
-    dbg("a"); dbg("b"); dbg("c");
+    dbg("a");
+    dbg("b");
+    dbg("c");
     // Leading edge fires "a" immediately; "b" and "c" are suppressed.
     expect(runArgs).toEqual(["a"]);
     // After cooldown, the trailing timer fires the most-recent

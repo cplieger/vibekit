@@ -26,10 +26,23 @@
 
 import { apiGet, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_16, ICON_REPO, ICON_TRASH } from "./icons.js";
+import {
+  ICON_DOWNLOAD,
+  ICON_EXTERNAL,
+  ICON_GLOBE,
+  ICON_PLUS_16,
+  ICON_REPO,
+  ICON_TRASH,
+} from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
-import type { ConfiguredForge, DeviceFlowResponse, ForgeKind, PollResult, Repo } from "./wire/types.gen.js";
+import type {
+  ConfiguredForge,
+  DeviceFlowResponse,
+  ForgeKind,
+  PollResult,
+  Repo,
+} from "./wire/types.gen.js";
 import { HOST_LOCKED_KINDS, DEFAULT_HOST, forgeKindLabel } from "./forge-types.js";
 import {
   startDeviceFlow,
@@ -48,8 +61,12 @@ interface ForgesListResponse {
   oauth?: Partial<Record<ForgeKind, boolean>>;
 }
 
-interface RepoListResponse { repos: Repo[] }
-interface LocalReposResponse { repos: string[] }
+interface RepoListResponse {
+  repos: Repo[];
+}
+interface LocalReposResponse {
+  repos: string[];
+}
 
 // --- Module state -----------------------------------------------------
 
@@ -60,24 +77,24 @@ let lastReposByForge: Record<string, Repo[]> = {};
 
 /** Names of locally-cloned repos. Used to compute the cloned-count
  *  per-account and to drive the green dot / Trash button per row. */
-let lastLocalNames: Set<string> = new Set();
+let lastLocalNames = new Set<string>();
 
 /** Forge IDs whose collapsible footer should render expanded on the
  *  next paint. Populated when the user successfully adds an account
  *  (PAT submit or OAuth complete) so the user lands on the freshly-
  *  added account with its repos visible. Cleared after one paint. */
-const expandOnNextPaint: Set<string> = new Set();
+const expandOnNextPaint = new Set<string>();
 
 /** OAuth availability per kind, populated from the forges list response. */
 let oauthByKind: Partial<Record<ForgeKind, boolean>> = {};
 
 /** Per-render cleanup: unbind functions from bindLoadingState on sign-out
  *  buttons. Drained at the top of each paintIntoRoot call. */
-let signOutUnbinds: Array<() => void> = [];
+let signOutUnbinds: (() => void)[] = [];
 
 /** Per-render cleanup: unbind functions from bindLoadingState on PAT
  *  form submit buttons. Drained at the top of each paintIntoRoot call. */
-let patFormUnbinds: Array<() => void> = [];
+let patFormUnbinds: (() => void)[] = [];
 
 /** True when the last /api/forges fetch failed; the effect renders an
  *  error UI with a Retry button instead of the kind sections. */
@@ -107,12 +124,16 @@ function bumpState(): void {
  *  the new root). */
 let panelEffectStarted = false;
 function ensurePanelEffect(): void {
-  if (panelEffectStarted) return;
+  if (panelEffectStarted) {
+    return;
+  }
   panelEffectStarted = true;
   effect(() => {
     stateVersion.value; // subscribe
     const root = document.getElementById("forges-panel");
-    if (root === null) return;
+    if (root === null) {
+      return;
+    }
     paintIntoRoot(root);
   });
 }
@@ -145,30 +166,39 @@ const ALL_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"
 /** Brand SVG glyphs from Simple Icons (CC0). 24x24 viewBox; CSS sizes
  *  them down to fit the 22-px kind badge. */
 const KIND_ICONS: Record<ForgeKind, string> = {
-  github:
-    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>`,
-  gitlab:
-    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z"/></svg>`,
-  codeberg:
-    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.955.49A12 12 0 0 0 0 12.49a12 12 0 0 0 1.832 6.373L11.838 5.928a.187.14 0 0 1 .324 0l10.006 12.935A12 12 0 0 0 24 12.49a12 12 0 0 0-12-12 12 12 0 0 0-.045 0zm.375 6.467l4.416 16.553a12 12 0 0 0 5.137-4.213z"/></svg>`,
-  gitea:
-    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.209 4.603c-.247 0-.525.02-.84.088-.333.07-1.28.283-2.054 1.027C-.403 7.25.035 9.685.089 10.052c.065.446.263 1.687 1.21 2.768 1.749 2.141 5.513 2.092 5.513 2.092s.462 1.103 1.168 2.119c.955 1.263 1.936 2.248 2.89 2.367 2.406 0 7.212-.004 7.212-.004s.458.004 1.08-.394c.535-.324 1.013-.893 1.013-.893s.492-.527 1.18-1.73c.21-.37.385-.729.538-1.068 0 0 2.107-4.471 2.107-8.823-.042-1.318-.367-1.55-.443-1.627-.156-.156-.366-.153-.366-.153s-4.475.252-6.792.306c-.508.011-1.012.023-1.512.027v4.474l-.634-.301c0-1.39-.004-4.17-.004-4.17-1.107.016-3.405-.084-3.405-.084s-5.399-.27-5.987-.324c-.187-.011-.401-.032-.648-.032zm.354 1.832h.111s.271 2.269.6 3.597C5.549 11.147 6.22 13 6.22 13s-.996-.119-1.641-.348c-.99-.324-1.409-.714-1.409-.714s-.73-.511-1.096-1.52C1.444 8.73 2.021 7.7 2.021 7.7s.32-.859 1.47-1.145c.395-.106.863-.12 1.072-.12zm8.33 2.554c.26.003.509.127.509.127l.868.422-.529 1.075a.686.686 0 0 0-.614.359.685.685 0 0 0 .072.756l-.939 1.924a.69.69 0 0 0-.66.527.687.687 0 0 0 .347.763.686.686 0 0 0 .867-.206.688.688 0 0 0-.069-.882l.916-1.874a.667.667 0 0 0 .237-.02.657.657 0 0 0 .271-.137 8.826 8.826 0 0 1 1.016.512.761.761 0 0 1 .286.282c.073.21-.073.569-.073.569-.087.29-.702 1.55-.702 1.55a.692.692 0 0 0-.676.477.681.681 0 1 0 1.157-.252c.073-.141.141-.282.214-.431.19-.397.515-1.16.515-1.16.035-.066.218-.394.103-.814-.095-.435-.48-.638-.48-.638-.467-.301-1.116-.58-1.116-.58s0-.156-.042-.27a.688.688 0 0 0-.148-.241l.516-1.062 2.89 1.401s.48.218.583.619c.073.282-.019.534-.069.657-.24.587-2.1 4.317-2.1 4.317s-.232.554-.748.588a1.065 1.065 0 0 1-.393-.045l-.202-.08-4.31-2.1s-.417-.218-.49-.596c-.083-.31.104-.691.104-.691l2.073-4.272s.183-.37.466-.497a.855.855 0 0 1 .35-.077z"/></svg>`,
+  github: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>`,
+  gitlab: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z"/></svg>`,
+  codeberg: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.955.49A12 12 0 0 0 0 12.49a12 12 0 0 0 1.832 6.373L11.838 5.928a.187.14 0 0 1 .324 0l10.006 12.935A12 12 0 0 0 24 12.49a12 12 0 0 0-12-12 12 12 0 0 0-.045 0zm.375 6.467l4.416 16.553a12 12 0 0 0 5.137-4.213z"/></svg>`,
+  gitea: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.209 4.603c-.247 0-.525.02-.84.088-.333.07-1.28.283-2.054 1.027C-.403 7.25.035 9.685.089 10.052c.065.446.263 1.687 1.21 2.768 1.749 2.141 5.513 2.092 5.513 2.092s.462 1.103 1.168 2.119c.955 1.263 1.936 2.248 2.89 2.367 2.406 0 7.212-.004 7.212-.004s.458.004 1.08-.394c.535-.324 1.013-.893 1.013-.893s.492-.527 1.18-1.73c.21-.37.385-.729.538-1.068 0 0 2.107-4.471 2.107-8.823-.042-1.318-.367-1.55-.443-1.627-.156-.156-.366-.153-.366-.153s-4.475.252-6.792.306c-.508.011-1.012.023-1.512.027v4.474l-.634-.301c0-1.39-.004-4.17-.004-4.17-1.107.016-3.405-.084-3.405-.084s-5.399-.27-5.987-.324c-.187-.011-.401-.032-.648-.032zm.354 1.832h.111s.271 2.269.6 3.597C5.549 11.147 6.22 13 6.22 13s-.996-.119-1.641-.348c-.99-.324-1.409-.714-1.409-.714s-.73-.511-1.096-1.52C1.444 8.73 2.021 7.7 2.021 7.7s.32-.859 1.47-1.145c.395-.106.863-.12 1.072-.12zm8.33 2.554c.26.003.509.127.509.127l.868.422-.529 1.075a.686.686 0 0 0-.614.359.685.685 0 0 0 .072.756l-.939 1.924a.69.69 0 0 0-.66.527.687.687 0 0 0 .347.763.686.686 0 0 0 .867-.206.688.688 0 0 0-.069-.882l.916-1.874a.667.667 0 0 0 .237-.02.657.657 0 0 0 .271-.137 8.826 8.826 0 0 1 1.016.512.761.761 0 0 1 .286.282c.073.21-.073.569-.073.569-.087.29-.702 1.55-.702 1.55a.692.692 0 0 0-.676.477.681.681 0 1 0 1.157-.252c.073-.141.141-.282.214-.431.19-.397.515-1.16.515-1.16.035-.066.218-.394.103-.814-.095-.435-.48-.638-.48-.638-.467-.301-1.116-.58-1.116-.58s0-.156-.042-.27a.688.688 0 0 0-.148-.241l.516-1.062 2.89 1.401s.48.218.583.619c.073.282-.019.534-.069.657-.24.587-2.1 4.317-2.1 4.317s-.232.554-.748.588a1.065 1.065 0 0 1-.393-.045l-.202-.08-4.31-2.1s-.417-.218-.49-.596c-.083-.31.104-.691.104-.691l2.073-4.272s.183-.37.466-.497a.855.855 0 0 1 .35-.077z"/></svg>`,
 };
 
 const PAT_HELP_LINKS: Record<ForgeKind, { url: string; label: string } | null> = {
-  github:   { url: "https://github.com/settings/tokens?type=beta", label: "Create a GitHub fine-grained token" },
-  gitlab:   { url: "https://gitlab.com/-/profile/personal_access_tokens?scopes=api,read_repository,write_repository", label: "Create a GitLab token" },
-  codeberg: { url: "https://codeberg.org/user/settings/applications", label: "Create a Codeberg token" },
-  gitea:    null,
+  github: {
+    url: "https://github.com/settings/tokens?type=beta",
+    label: "Create a GitHub fine-grained token",
+  },
+  gitlab: {
+    url: "https://gitlab.com/-/profile/personal_access_tokens?scopes=api,read_repository,write_repository",
+    label: "Create a GitLab token",
+  },
+  codeberg: {
+    url: "https://codeberg.org/user/settings/applications",
+    label: "Create a Codeberg token",
+  },
+  gitea: null,
 };
 
 /** Manage-account URL on the forge itself, parameterized by host. */
 function manageAccountURL(kind: ForgeKind, host: string): string {
   switch (kind) {
-    case "github":   return `https://${host}/settings/profile`;
-    case "gitlab":   return `https://${host}/-/profile`;
-    case "codeberg": return `https://${host}/user/settings`;
-    case "gitea":    return host === "" ? "" : `https://${host}/user/settings`;
+    case "github":
+      return `https://${host}/settings/profile`;
+    case "gitlab":
+      return `https://${host}/-/profile`;
+    case "codeberg":
+      return `https://${host}/user/settings`;
+    case "gitea":
+      return host === "" ? "" : `https://${host}/user/settings`;
   }
 }
 
@@ -178,10 +208,14 @@ function manageAccountURL(kind: ForgeKind, host: string): string {
  *  example so users can't miss that the field needs filling. */
 function hostPlaceholder(kind: ForgeKind): string {
   switch (kind) {
-    case "github":   return "github.com";
-    case "gitlab":   return "gitlab.com";
-    case "codeberg": return "codeberg.org";
-    case "gitea":    return "your-host.example.com";
+    case "github":
+      return "github.com";
+    case "gitlab":
+      return "gitlab.com";
+    case "codeberg":
+      return "codeberg.org";
+    case "gitea":
+      return "your-host.example.com";
   }
 }
 
@@ -197,16 +231,22 @@ function hostPlaceholder(kind: ForgeKind): string {
  *  When `skipRepos` is true, the local-repos fetch is skipped so that
  *  an optimistic in-memory mutation (e.g. removeLocalRepo) is not
  *  overwritten by a stale server response before the action completes. */
-export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?: boolean } = {}): Promise<void> {
+export async function renderForgesPanel(
+  opts: { revalidate?: boolean; skipRepos?: boolean } = {},
+): Promise<void> {
   const root = document.getElementById("forges-panel");
-  if (root === null) return;
+  if (root === null) {
+    return;
+  }
 
   ensurePanelEffect();
 
   const myGen = ++renderGen;
 
   const data = await apiGet<ForgesListResponse>("/api/forges");
-  if (myGen !== renderGen) return;
+  if (myGen !== renderGen) {
+    return;
+  }
   if (data === null) {
     lastForgesError = true;
     bumpState();
@@ -222,12 +262,16 @@ export async function renderForgesPanel(opts: { revalidate?: boolean; skipRepos?
       refreshLocalNames(),
       refreshReposByForge(data.forges),
     ]);
-    if (myGen !== renderGen) return;
+    if (myGen !== renderGen) {
+      return;
+    }
     lastLocalNames = localNames;
     lastReposByForge = reposByForge;
   } else {
     const reposByForge = await refreshReposByForge(data.forges);
-    if (myGen !== renderGen) return;
+    if (myGen !== renderGen) {
+      return;
+    }
     lastReposByForge = reposByForge;
   }
 
@@ -249,16 +293,21 @@ async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string>> {
   return new Set((r?.repos ?? []).filter((n) => n !== "."));
 }
 
-async function refreshReposByForge(forges: ConfiguredForge[], signal?: AbortSignal): Promise<Record<string, Repo[]>> {
+async function refreshReposByForge(
+  forges: ConfiguredForge[],
+  signal?: AbortSignal,
+): Promise<Record<string, Repo[]>> {
   const map: Record<string, Repo[]> = {};
   await Promise.all(
-    forges.filter((f) => f.connected).map(async (f) => {
-      const r = await apiGet<RepoListResponse>(
-        `/api/forges/${encodeURIComponent(f.id)}/repos`,
-        signal,
-      );
-      map[f.id] = r?.repos ?? [];
-    }),
+    forges
+      .filter((f) => f.connected)
+      .map(async (f) => {
+        const r = await apiGet<RepoListResponse>(
+          `/api/forges/${encodeURIComponent(f.id)}/repos`,
+          signal,
+        );
+        map[f.id] = r?.repos ?? [];
+      }),
   );
   return map;
 }
@@ -278,16 +327,26 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   await Promise.allSettled(
     ids.map((id) => apiPost(`/api/forges/${encodeURIComponent(id)}/probe`, {}, signal)),
   );
-  if (signal.aborted) return;
+  if (signal.aborted) {
+    return;
+  }
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
-  if (signal.aborted) return;
-  if (data === null || data === undefined) return;
+  if (signal.aborted) {
+    return;
+  }
+  if (data === null || data === undefined) {
+    return;
+  }
   const [localNames, reposByForge] = await Promise.all([
     refreshLocalNames(signal),
     refreshReposByForge(data.forges, signal),
   ]);
-  if (signal.aborted) return;
-  if (myGen !== renderGen) return;
+  if (signal.aborted) {
+    return;
+  }
+  if (myGen !== renderGen) {
+    return;
+  }
   lastLocalNames = localNames;
   lastReposByForge = reposByForge;
   lastForgesData = data;
@@ -301,16 +360,22 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
  *  panel root to match the latest forges/repos/local-names state. */
 function paintIntoRoot(root: HTMLElement): void {
   // Drain per-render cleanup from previous paint.
-  for (const fn of signOutUnbinds) fn();
+  for (const fn of signOutUnbinds) {
+    fn();
+  }
   signOutUnbinds = [];
-  for (const fn of patFormUnbinds) fn();
+  for (const fn of patFormUnbinds) {
+    fn();
+  }
   patFormUnbinds = [];
 
   if (lastForgesError) {
     paintErrorState(root);
     return;
   }
-  if (lastForgesData === null) return;
+  if (lastForgesData === null) {
+    return;
+  }
 
   // Clear any leftover error UI before reconciling kind sections.
   const errEl = root.querySelector(":scope > .forge-error");
@@ -323,9 +388,13 @@ function paintIntoRoot(root: HTMLElement): void {
 function paintErrorState(root: HTMLElement): void {
   // Remove existing keyed kind sections first; the error UI stands alone.
   for (const child of [...root.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") !== null) child.remove();
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") !== null) {
+      child.remove();
+    }
   }
-  if (root.querySelector(":scope > .forge-error") !== null) return; // already shown
+  if (root.querySelector(":scope > .forge-error") !== null) {
+    return;
+  } // already shown
   const errDiv = document.createElement("div");
   errDiv.className = "forge-error";
   errDiv.textContent = "Failed to load forges.";
@@ -333,7 +402,9 @@ function paintErrorState(root: HTMLElement): void {
   retryBtn.type = "button";
   retryBtn.className = "btn-small";
   retryBtn.textContent = "Retry";
-  retryBtn.addEventListener("click", () => { void renderForgesPanel(); });
+  retryBtn.addEventListener("click", () => {
+    void renderForgesPanel();
+  });
   errDiv.appendChild(retryBtn);
   root.appendChild(errDiv);
 }
@@ -343,7 +414,9 @@ function paintErrorState(root: HTMLElement): void {
 const kindSpec: ReconcileSpec<ForgeKind> = {
   key: (k) => k,
   mount: (k) => buildKindSection(k),
-  update: (el, k) => updateKindSection(el, k),
+  update: (el, k) => {
+    updateKindSection(el, k);
+  },
 };
 
 const accountSpec: ReconcileSpec<ConfiguredForge> = {
@@ -355,7 +428,9 @@ const accountSpec: ReconcileSpec<ConfiguredForge> = {
     paintAccountRow(li, a);
     return li;
   },
-  update: (li, a) => paintAccountRow(li, a),
+  update: (li, a) => {
+    paintAccountRow(li, a);
+  },
 };
 
 const repoSpec: ReconcileSpec<Repo> = {
@@ -364,7 +439,9 @@ const repoSpec: ReconcileSpec<Repo> = {
   update: (li, r) => {
     const cloned = lastLocalNames.has(r.name);
     li.querySelector(":scope > .forge-account-repo-state")?.replaceWith(renderRepoState(cloned));
-    li.querySelector(":scope > .forge-account-repo-actions")?.replaceWith(renderRepoActions(r, cloned));
+    li.querySelector(":scope > .forge-account-repo-actions")?.replaceWith(
+      renderRepoActions(r, cloned),
+    );
   },
 };
 
@@ -398,7 +475,9 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
   addBtn.setAttribute("aria-label", "Add an account");
   addBtn.setAttribute("data-tooltip", "Add an account");
   addBtn.innerHTML = ICON_PLUS_16;
-  addBtn.addEventListener("click", () => { onAddAccount(kind, section); });
+  addBtn.addEventListener("click", () => {
+    onAddAccount(kind, section);
+  });
   header.appendChild(addBtn);
 
   section.appendChild(header);
@@ -422,12 +501,16 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
 
 function updateKindSection(section: HTMLElement, kind: ForgeKind): void {
   const list = section.querySelector<HTMLElement>(":scope > .forge-account-list");
-  if (list === null) return;
+  if (list === null) {
+    return;
+  }
   reconcile(list, accountsForKind(kind), accountSpec);
 }
 
 function accountsForKind(kind: ForgeKind): ConfiguredForge[] {
-  if (lastForgesData === null) return [];
+  if (lastForgesData === null) {
+    return [];
+  }
   return lastForgesData.forges.filter((f) => f.kind === kind);
 }
 
@@ -442,8 +525,11 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   // Top row: identity + actions.
   const newTop = renderAccountTopRow(a);
   const oldTop = li.querySelector<HTMLElement>(":scope > .forge-account-row-top");
-  if (oldTop !== null) oldTop.replaceWith(newTop);
-  else li.appendChild(newTop);
+  if (oldTop !== null) {
+    oldTop.replaceWith(newTop);
+  } else {
+    li.appendChild(newTop);
+  }
 
   // Repos details (only when connected and we have repo data).
   const oldDetails = li.querySelector<HTMLElement>(":scope > .forge-account-repos");
@@ -484,8 +570,12 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   const meta = document.createElement("span");
   meta.className = "forge-account-meta";
   const parts: string[] = [];
-  if (hasEmail && hasUsername) parts.push("@" + a.username!);
-  if (a.host !== "") parts.push(a.host);
+  if (hasEmail && hasUsername) {
+    parts.push("@" + a.username!);
+  }
+  if (a.host !== "") {
+    parts.push(a.host);
+  }
   meta.textContent = parts.join(" · ");
   id.appendChild(meta);
   if (!a.connected && a.last_error !== undefined && a.last_error !== "") {
@@ -516,7 +606,9 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   out.type = "button";
   out.className = "btn-small btn-danger";
   out.textContent = "Sign out";
-  out.addEventListener("click", () => { void onSignOut(a); });
+  out.addEventListener("click", () => {
+    void onSignOut(a);
+  });
   signOutUnbinds.push(bindLoadingState("forge.sign_out", out));
   actions.appendChild(out);
 
@@ -602,7 +694,9 @@ function sortRepos(repos: Repo[]): Repo[] {
   return [...repos].sort((x, y) => {
     const xc = lastLocalNames.has(x.name);
     const yc = lastLocalNames.has(y.name);
-    if (xc !== yc) return xc ? -1 : 1;
+    if (xc !== yc) {
+      return xc ? -1 : 1;
+    }
     return x.full_name.localeCompare(y.full_name);
   });
 }
@@ -621,21 +715,25 @@ function setAccountSummaryLabel(summary: HTMLElement, repos: Repo[]): void {
  *  withAsyncFeedback loop's textContent updates don't get clobbered;
  *  the next bumpState after the action completes will refresh it. */
 function refreshAccountSummaryButtons(summary: HTMLElement, repos: Repo[]): void {
-  const cloneable = repos.filter((r) =>
-    !lastLocalNames.has(r.name) &&
-    typeof r.clone_url === "string" && r.clone_url !== "");
+  const cloneable = repos.filter(
+    (r) => !lastLocalNames.has(r.name) && typeof r.clone_url === "string" && r.clone_url !== "",
+  );
   const clonedRepos = repos.filter((r) => lastLocalNames.has(r.name));
 
   const oldCloneAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
-  if (oldCloneAll === null || oldCloneAll.getAttribute("aria-busy") !== "true") {
+  if (oldCloneAll?.getAttribute("aria-busy") !== "true") {
     oldCloneAll?.remove();
-    if (cloneable.length > 0) summary.appendChild(makeCloneAllButton(cloneable));
+    if (cloneable.length > 0) {
+      summary.appendChild(makeCloneAllButton(cloneable));
+    }
   }
 
   const oldDeleteAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
-  if (oldDeleteAll === null || oldDeleteAll.getAttribute("aria-busy") !== "true") {
+  if (oldDeleteAll?.getAttribute("aria-busy") !== "true") {
     oldDeleteAll?.remove();
-    if (clonedRepos.length > 0) summary.appendChild(makeDeleteAllButton(clonedRepos));
+    if (clonedRepos.length > 0) {
+      summary.appendChild(makeDeleteAllButton(clonedRepos));
+    }
   }
 }
 
@@ -644,13 +742,17 @@ function makeCloneAllButton(cloneable: Repo[]): HTMLButtonElement {
   btn.type = "button";
   btn.className = "btn-small forge-account-repos-clone-all";
   btn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
-  btn.setAttribute("data-tooltip", `Clone every uncloned repo on this account (${cloneable.length})`);
+  btn.setAttribute(
+    "data-tooltip",
+    `Clone every uncloned repo on this account (${cloneable.length})`,
+  );
   btn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn))
-      .then(() => bumpState());
+    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn)).then(() => {
+      bumpState();
+    });
   });
   return btn;
 }
@@ -660,13 +762,17 @@ function makeDeleteAllButton(clonedRepos: Repo[]): HTMLButtonElement {
   btn.type = "button";
   btn.className = "btn-small btn-danger forge-account-repos-delete-all";
   btn.innerHTML = `${ICON_TRASH}<span>${clonedRepos.length}</span>`;
-  btn.setAttribute("data-tooltip", `Remove every locally-cloned repo on this account (${clonedRepos.length})`);
+  btn.setAttribute(
+    "data-tooltip",
+    `Remove every locally-cloned repo on this account (${clonedRepos.length})`,
+  );
   btn.setAttribute("aria-label", `Delete ${clonedRepos.length} local clones`);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn))
-      .then(() => bumpState());
+    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn)).then(() => {
+      bumpState();
+    });
   });
   return btn;
 }
@@ -691,10 +797,18 @@ function renderRepoRow(repo: Repo): HTMLElement {
   name.textContent = repo.full_name;
   idEl.appendChild(name);
   const tags: string[] = [];
-  if (repo.private === true) tags.push("private");
-  if (repo.archived === true) tags.push("archived");
-  if (repo.fork === true) tags.push("fork");
-  if (repo.default_branch !== undefined && repo.default_branch !== "") tags.push(repo.default_branch);
+  if (repo.private === true) {
+    tags.push("private");
+  }
+  if (repo.archived === true) {
+    tags.push("archived");
+  }
+  if (repo.fork === true) {
+    tags.push("fork");
+  }
+  if (repo.default_branch !== undefined && repo.default_branch !== "") {
+    tags.push(repo.default_branch);
+  }
   if (tags.length > 0) {
     const tagSpan = document.createElement("span");
     tagSpan.className = "forge-account-repo-tags";
@@ -771,10 +885,16 @@ function renderRepoActions(repo: Repo, cloned: boolean): HTMLElement {
 
 async function cloneRepo(repo: Repo): Promise<void> {
   const url = repo.clone_url ?? "";
-  if (url === "") throw new Error("no clone URL");
+  if (url === "") {
+    throw new Error("no clone URL");
+  }
   const res = await cloneRepoAction.dispatch({ url });
-  if (res === null) throw new Error("clone failed");
-  if (res.error !== undefined && res.error !== "") throw new Error(res.error);
+  if (res === null) {
+    throw new Error("clone failed");
+  }
+  if (res.error !== undefined && res.error !== "") {
+    throw new Error(res.error);
+  }
   lastLocalNames.add(repo.name);
   bumpState();
 }
@@ -787,11 +907,10 @@ async function cloneRepo(repo: Repo): Promise<void> {
  *  alone mid-loop (aria-busy guard) so withAsyncFeedback's progress
  *  is preserved; it's refreshed after the loop via the .then() on
  *  the click handler. */
-async function cloneAllForAccount(
-  candidates: Repo[],
-  btn: HTMLButtonElement,
-): Promise<void> {
-  if (candidates.length === 0) return;
+async function cloneAllForAccount(candidates: Repo[], btn: HTMLButtonElement): Promise<void> {
+  if (candidates.length === 0) {
+    return;
+  }
   let done = 0;
   let failed = 0;
   for (const repo of candidates) {
@@ -820,17 +939,18 @@ async function cloneAllForAccount(
  *  account. One bulk confirm up-front (this is destructive); then
  *  sequential per-repo /api/git/remove. Same partial-success
  *  semantics as cloneAllForAccount. */
-async function deleteAllForAccount(
-  candidates: Repo[],
-  btn: HTMLButtonElement,
-): Promise<void> {
-  if (candidates.length === 0) return;
+async function deleteAllForAccount(candidates: Repo[], btn: HTMLButtonElement): Promise<void> {
+  if (candidates.length === 0) {
+    return;
+  }
   const ok = await confirmDialog(
     `Delete the local copy of ${candidates.length} repo${candidates.length === 1 ? "" : "s"}? The remotes stay intact; you can re-clone any of them later.`,
     "Delete all",
     "destructive",
   );
-  if (!ok) return;
+  if (!ok) {
+    return;
+  }
 
   let done = 0;
   for (const repo of candidates) {
@@ -850,7 +970,9 @@ async function removeLocalRepo(repo: Repo): Promise<void> {
     "Delete",
     "destructive",
   );
-  if (!ok) return;
+  if (!ok) {
+    return;
+  }
 
   // Optimistic: flip clone state and bump; effect reconciles surgically.
   lastLocalNames.delete(repo.name);
@@ -985,7 +1107,9 @@ function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void 
     const code = copyBtn.dataset["copy"] ?? "";
     void navigator.clipboard.writeText(code);
     copyBtn.textContent = "Copied";
-    setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+    setTimeout(() => {
+      copyBtn.textContent = "Copy";
+    }, 2000);
   });
 }
 
@@ -995,16 +1119,26 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
   let backoff = intervalSec;
   const MAX_ATTEMPTS = 60;
   const tick = async (): Promise<void> => {
-    if (pollStopped || !host.isConnected) return;
-    attempts++;
-    if (attempts > MAX_ATTEMPTS) {
-      if (statusEl !== null) statusEl.textContent = "Timed out waiting for approval. Try again.";
+    if (pollStopped || !host.isConnected) {
       return;
     }
-    const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", { device_code: deviceCode });
-    if (pollStopped) return;
+    attempts++;
+    if (attempts > MAX_ATTEMPTS) {
+      if (statusEl !== null) {
+        statusEl.textContent = "Timed out waiting for approval. Try again.";
+      }
+      return;
+    }
+    const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", {
+      device_code: deviceCode,
+    });
+    if (pollStopped) {
+      return;
+    }
     if (res === null) {
-      if (statusEl !== null) statusEl.textContent = "Network error. Retrying…";
+      if (statusEl !== null) {
+        statusEl.textContent = "Network error. Retrying…";
+      }
       backoff = Math.min(backoff * 2, 60);
       pollTimerId = setTimeout(() => void tick(), backoff * 1000);
       return;
@@ -1012,17 +1146,23 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
     // Reset backoff on successful network response.
     backoff = intervalSec;
     if (res.status === "complete") {
-      if (statusEl !== null) statusEl.textContent = "Connected.";
+      if (statusEl !== null) {
+        statusEl.textContent = "Connected.";
+      }
       expandOnNextPaint.add("github:github.com");
       void renderForgesPanel();
       return;
     }
     if (res.status === "expired") {
-      if (statusEl !== null) statusEl.textContent = "Device code expired. Try again.";
+      if (statusEl !== null) {
+        statusEl.textContent = "Device code expired. Try again.";
+      }
       return;
     }
     if (res.status === "error") {
-      if (statusEl !== null) statusEl.textContent = `Error: ${res.error ?? "unknown"}`;
+      if (statusEl !== null) {
+        statusEl.textContent = `Error: ${res.error ?? "unknown"}`;
+      }
       return;
     }
     pollTimerId = setTimeout(() => void tick(), intervalSec * 1000);
@@ -1053,7 +1193,8 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
   } else if (kind === "gitea") {
     const help = document.createElement("p");
     help.className = "forge-help";
-    help.textContent = "Create a token at /user/settings/applications on your Gitea or Forgejo host.";
+    help.textContent =
+      "Create a token at /user/settings/applications on your Gitea or Forgejo host.";
     hostEl.appendChild(help);
   }
 
@@ -1098,7 +1239,10 @@ function renderPATForm(hostEl: HTMLElement, kind: ForgeKind, slot: HTMLElement):
   // B3: track unbind so the subscription is cleaned up on close.
   const unbindLoading = bindLoadingState("forge.connect_pat", submit);
   patFormUnbinds.push(unbindLoading);
-  cancel.addEventListener("click", () => { unbindLoading(); closeSlot(slot); });
+  cancel.addEventListener("click", () => {
+    unbindLoading();
+    closeSlot(slot);
+  });
   form.appendChild(cancel);
 
   form.addEventListener("submit", (e) => {
@@ -1156,19 +1300,30 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
     "Sign out",
     "destructive",
   );
-  if (!ok) return;
+  if (!ok) {
+    return;
+  }
 
   // Optimistic: hide the account row immediately.
-  const row = document.querySelector<HTMLElement>(`.forge-account-row[data-id="${CSS.escape(f.id)}"]`);
-  if (row !== null) row.hidden = true;
+  const row = document.querySelector<HTMLElement>(
+    `.forge-account-row[data-id="${CSS.escape(f.id)}"]`,
+  );
+  if (row !== null) {
+    row.hidden = true;
+  }
 
   const res = await signOut.dispatch({ forgeId: f.id });
   if (res === null) {
     // Rollback: re-query the DOM since revalidateInBackground may have
     // replaced the original row while the dispatch was in-flight.
-    const freshRow = document.querySelector<HTMLElement>(`.forge-account-row[data-id="${CSS.escape(f.id)}"]`);
-    if (freshRow !== null) freshRow.hidden = false;
-    else void renderForgesPanel({ revalidate: false });
+    const freshRow = document.querySelector<HTMLElement>(
+      `.forge-account-row[data-id="${CSS.escape(f.id)}"]`,
+    );
+    if (freshRow !== null) {
+      freshRow.hidden = false;
+    } else {
+      void renderForgesPanel({ revalidate: false });
+    }
     return;
   }
   void renderForgesPanel();
@@ -1177,7 +1332,13 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
 // --- helpers ---
 
 function escapeHTML(s: string): string {
-  const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  const map: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
   return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }
 

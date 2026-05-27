@@ -63,9 +63,16 @@ describe("simplifyName", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractNpxPackage", () => {
-  const stub = (args: string[]): Server => ({
-    id: "x", name: "x", transport: "stdio", enabled: true, args, created_at: 0, updated_at: 0,
-  } as Server);
+  const stub = (args: string[]): Server =>
+    ({
+      id: "x",
+      name: "x",
+      transport: "stdio",
+      enabled: true,
+      args,
+      created_at: 0,
+      updated_at: 0,
+    }) as Server;
 
   const cases: Array<{ label: string; args: string[]; expected: string }> = [
     { label: "typical npx args", args: ["-y", "@scope/pkg"], expected: "@scope/pkg" },
@@ -90,33 +97,63 @@ describe("extractNpxPackage", () => {
 describe("rawEditShape", () => {
   it("converts server to edit shape with env as object", () => {
     const s = {
-      id: "1", name: "test", transport: "stdio", enabled: true,
-      command: "/bin/cmd", args: ["--flag"], env: [{ name: "KEY", value: "VAL" }],
-      created_at: 0, updated_at: 0,
+      id: "1",
+      name: "test",
+      transport: "stdio",
+      enabled: true,
+      command: "/bin/cmd",
+      args: ["--flag"],
+      env: [{ name: "KEY", value: "VAL" }],
+      created_at: 0,
+      updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "test", command: "/bin/cmd", args: ["--flag"], env: { KEY: "VAL" }, prewarm: false,
+      name: "test",
+      command: "/bin/cmd",
+      args: ["--flag"],
+      env: { KEY: "VAL" },
+      prewarm: false,
     });
   });
 
   it("handles missing optional fields", () => {
     const s = {
-      id: "2", name: "bare", transport: "stdio", enabled: true,
-      created_at: 0, updated_at: 0,
+      id: "2",
+      name: "bare",
+      transport: "stdio",
+      enabled: true,
+      created_at: 0,
+      updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "bare", command: "", args: [], env: {}, prewarm: false,
+      name: "bare",
+      command: "",
+      args: [],
+      env: {},
+      prewarm: false,
     });
   });
 
   it("handles multiple env pairs", () => {
     const s = {
-      id: "3", name: "multi", transport: "stdio", enabled: true,
-      command: "cmd", env: [{ name: "A", value: "1" }, { name: "B", value: "2" }],
-      created_at: 0, updated_at: 0,
+      id: "3",
+      name: "multi",
+      transport: "stdio",
+      enabled: true,
+      command: "cmd",
+      env: [
+        { name: "A", value: "1" },
+        { name: "B", value: "2" },
+      ],
+      created_at: 0,
+      updated_at: 0,
     } as Server;
     expect(rawEditShape(s)).toEqual({
-      name: "multi", command: "cmd", args: [], env: { A: "1", B: "2" }, prewarm: false,
+      name: "multi",
+      command: "cmd",
+      args: [],
+      env: { A: "1", B: "2" },
+      prewarm: false,
     });
   });
 });
@@ -129,7 +166,12 @@ describe("rawSubmitShape", () => {
   it("returns valid partial server for complete input", () => {
     const result = rawSubmitShape({ name: "srv", command: "/bin/x", args: ["a"], env: { K: "V" } });
     expect(result).toEqual({
-      transport: "stdio", name: "srv", command: "/bin/x", args: ["a"], env: [{ name: "K", value: "V" }], prewarm: false,
+      transport: "stdio",
+      name: "srv",
+      command: "/bin/x",
+      args: ["a"],
+      env: [{ name: "K", value: "V" }],
+      prewarm: false,
     });
   });
 
@@ -171,7 +213,10 @@ describe("rawSubmitShape", () => {
 
   it("strips env entries with empty-string keys", () => {
     const result = rawSubmitShape({ name: "s", command: "c", env: { "": "val", K: "V" } });
-    expect(result!.env).toEqual([{ name: "", value: "val" }, { name: "K", value: "V" }]);
+    expect(result!.env).toEqual([
+      { name: "", value: "val" },
+      { name: "K", value: "V" },
+    ]);
   });
 
   it("handles undefined env gracefully", () => {
@@ -211,7 +256,10 @@ describe("simplifyName property", () => {
           // Must have alphanumeric content AND not simplify to "server" naturally
           if (!/[A-Za-z0-9]/.test(s)) return false;
           const afterSlash = s.slice(s.lastIndexOf("/") + 1);
-          const cleaned = afterSlash.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+          const cleaned = afterSlash
+            .replace(/[^A-Za-z0-9_-]/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 48);
           return cleaned !== "" && cleaned !== "server";
         }),
         (input) => {

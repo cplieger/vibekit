@@ -35,16 +35,20 @@ export function planToMarkdown(entries: PlanEntry[]): string {
  *  the expected failure for large plans; other statuses (chat gone,
  *  disk full, permission) render with the server's error text. */
 export async function writePlanDraft(chatID: string, content: string): Promise<boolean> {
-  if (chatID === "") return false;
+  if (chatID === "") {
+    return false;
+  }
   const r = await apiPutOrError<{ ok?: boolean }>(
-    `/api/chats/${encodeURIComponent(chatID)}/plan-draft`, { content },
+    `/api/chats/${encodeURIComponent(chatID)}/plan-draft`,
+    { content },
   );
   if (!r.ok) {
-    const msg = r.status === 413
-      ? "Plan is too large to save (256 KB limit). Trim some items and try again."
-      : r.error !== ""
-        ? `Could not save plan draft: ${r.error}`
-        : "Could not save plan draft.";
+    const msg =
+      r.status === 413
+        ? "Plan is too large to save (256 KB limit). Trim some items and try again."
+        : r.error !== ""
+          ? `Could not save plan draft: ${r.error}`
+          : "Could not save plan draft.";
     showBanner(chatID, "plan_draft_write_failed", msg, "error", true);
     return false;
   }
@@ -53,7 +57,9 @@ export async function writePlanDraft(chatID: string, content: string): Promise<b
 
 /** Delete the plan-draft file on the server. Silent best-effort. */
 async function deletePlanDraft(chatID: string): Promise<void> {
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   await apiDelete(`/api/chats/${encodeURIComponent(chatID)}/plan-draft`);
 }
 
@@ -68,9 +74,13 @@ async function deletePlanDraft(chatID: string): Promise<void> {
  *  on disk so the user's work survives the failure and they can retry
  *  from the editor. */
 export async function runPlan(chatID: string, content: string): Promise<boolean> {
-  if (chatID === "" || content.trim() === "") return false;
+  if (chatID === "" || content.trim() === "") {
+    return false;
+  }
   const result = await runPlanAction.dispatch({ chatID, content });
-  if (result === null) return false;
+  if (result === null) {
+    return false;
+  }
   await deletePlanDraft(chatID);
   return true;
 }

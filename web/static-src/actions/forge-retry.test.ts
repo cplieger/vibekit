@@ -7,7 +7,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import * as toast from "../toast.js";
@@ -54,7 +57,9 @@ describe("forge.signOut retry", () => {
   });
 
   it("does NOT show Retry button on HTTP 403", async () => {
-    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 })));
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 })),
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     await signOut.dispatch({ forgeId: "gh:user" });
@@ -97,7 +102,7 @@ describe("forge.cloneRepo retry", () => {
     const fetchSpy = vi.fn<typeof fetch>(() => {
       attempt++;
       if (attempt < 3) return Promise.reject(new TypeError("Failed to fetch"));
-      return Promise.resolve(new Response('{}', { status: 200 }));
+      return Promise.resolve(new Response("{}", { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
 

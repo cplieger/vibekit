@@ -54,9 +54,15 @@ interface RepoGroup {
   error?: string;
 }
 
-interface ForgesListResponse { forges: ConfiguredForge[] }
-interface RepoListResponse { repos: Repo[] }
-interface PRListResponse { prs: PR[] }
+interface ForgesListResponse {
+  forges: ConfiguredForge[];
+}
+interface RepoListResponse {
+  repos: Repo[];
+}
+interface PRListResponse {
+  prs: PR[];
+}
 
 // --- State ---
 
@@ -74,7 +80,9 @@ registerCleanup(() => refreshController?.abort());
 let prsInited = false;
 
 export function initPRsTab(): void {
-  if (prsInited) return;
+  if (prsInited) {
+    return;
+  }
   prsInited = true;
   bindPRState({ groups: lastGroups, paint });
 
@@ -98,7 +106,9 @@ export function initPRsTab(): void {
 
   // Refetch on forge credential changes; PRs list depends on which
   // forges are connected.
-  onSSE("forges_changed", () => { void refreshPRsAction.dispatch(undefined); });
+  onSSE("forges_changed", () => {
+    void refreshPRsAction.dispatch(undefined);
+  });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
@@ -111,25 +121,40 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   // Honour external signal (e.g. from action framework).
   // Capture local ref to avoid stale closure over module-level refreshController.
   const myController = refreshController;
-  if (externalSignal) externalSignal.addEventListener("abort", () => myController.abort(), { once: true });
+  if (externalSignal) {
+    externalSignal.addEventListener(
+      "abort",
+      () => {
+        myController.abort();
+      },
+      { once: true },
+    );
+  }
   const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
-  if (signal.aborted) return;
+  if (signal.aborted) {
+    return;
+  }
   if (forgesRes === null) {
     throw new Error("Failed to load forges");
   }
   const forges = forgesRes.forges.filter((f) => f.connected);
 
   // Build a flat (forge, owner/name) list to fetch.
-  const tasks: Array<{ forge: ConfiguredForge; repo: Repo }> = [];
-  const repoResults = await Promise.all(forges.map((forge) =>
-    apiGet<RepoListResponse>(
-      `/api/forges/${encodeURIComponent(forge.id)}/repos`,
-      signal,
-    ).then((res) => ({ forge, res })),
-  ));
-  if (signal.aborted) return;
+  const tasks: { forge: ConfiguredForge; repo: Repo }[] = [];
+  const repoResults = await Promise.all(
+    forges.map((forge) =>
+      apiGet<RepoListResponse>(`/api/forges/${encodeURIComponent(forge.id)}/repos`, signal).then(
+        (res) => ({ forge, res }),
+      ),
+    ),
+  );
+  if (signal.aborted) {
+    return;
+  }
   for (const { forge, res } of repoResults) {
-    if (res === null) continue;
+    if (res === null) {
+      continue;
+    }
     for (const repo of res.repos) {
       tasks.push({ forge, repo });
     }
@@ -175,7 +200,9 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   });
 
   // Bail if a newer refresh was started while we were fetching.
-  if (myGen !== refreshGen) return;
+  if (myGen !== refreshGen) {
+    return;
+  }
 
   lastGroups = groups;
   updateGroupsRef(lastGroups);
@@ -190,7 +217,9 @@ function paint(): void {
 
 function paintInner(): void {
   const root = document.getElementById("git-prs-mount");
-  if (root === null) return;
+  if (root === null) {
+    return;
+  }
 
   if (lastGroups.length === 0) {
     root.innerHTML = renderEmptyState({
@@ -203,10 +232,13 @@ function paintInner(): void {
 
   const visible: RepoGroup[] = [];
   for (const g of lastGroups) {
-    const matchesFilter = filterText === ""
-      || g.full_name.toLowerCase().includes(filterText)
-      || g.prs.some((pr) => pr.title.toLowerCase().includes(filterText));
-    if (matchesFilter) visible.push(g);
+    const matchesFilter =
+      filterText === "" ||
+      g.full_name.toLowerCase().includes(filterText) ||
+      g.prs.some((pr) => pr.title.toLowerCase().includes(filterText));
+    if (matchesFilter) {
+      visible.push(g);
+    }
   }
 
   // Aggregate: any open PRs at all? If not, show a centered empty
@@ -214,9 +246,14 @@ function paintInner(): void {
   const totalOpen = visible.reduce((acc, g) => acc + g.prs.length, 0);
   if (totalOpen === 0 && filterText === "") {
     // Wipe any prior keyed sections, then show centered empty state.
-    reconcile(root, [] as RepoGroup[], { key: (g) => g.full_name, mount: () => document.createElement("div") });
+    reconcile(root, [] as RepoGroup[], {
+      key: (g) => g.full_name,
+      mount: () => document.createElement("div"),
+    });
     for (const child of [...root.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
     root.innerHTML = renderEmptyState({
       icon: ICON_PR_EMPTY,
@@ -227,9 +264,14 @@ function paintInner(): void {
   }
 
   if (visible.length === 0) {
-    reconcile(root, [] as RepoGroup[], { key: (g) => g.full_name, mount: () => document.createElement("div") });
+    reconcile(root, [] as RepoGroup[], {
+      key: (g) => g.full_name,
+      mount: () => document.createElement("div"),
+    });
     for (const child of [...root.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
     root.innerHTML = renderEmptyState({
       icon: ICON_FILTER,
@@ -241,12 +283,16 @@ function paintInner(): void {
 
   // Drop any prior non-keyed empty-state placeholder before reconciling.
   for (const child of [...root.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+      child.remove();
+    }
   }
   reconcile(root, visible, {
     key: (g: RepoGroup) => g.full_name,
     mount: (g: RepoGroup) => renderGroup(g),
-    update: (section: HTMLElement, g: RepoGroup) => paintGroupBody(section, g),
+    update: (section: HTMLElement, g: RepoGroup) => {
+      paintGroupBody(section, g);
+    },
   });
 }
 
@@ -256,15 +302,23 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
   const meta = section.querySelector(".git-repo-section-meta");
-  if (meta !== null) meta.textContent = countText;
+  if (meta !== null) {
+    meta.textContent = countText;
+  }
 
   const body = section.querySelector<HTMLElement>(":scope > .git-repo-section-body");
-  if (body === null) return;
+  if (body === null) {
+    return;
+  }
 
   // Drop any non-keyed placeholders (error / empty rows) before reconcile.
   for (const child of [...body.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null
-      && !child.classList.contains("git-pr-list")) child.remove();
+    if (
+      (child as HTMLElement).getAttribute("data-reconcile-key") === null &&
+      !child.classList.contains("git-pr-list")
+    ) {
+      child.remove();
+    }
   }
 
   if (g.error !== undefined && g.error !== "") {
@@ -277,9 +331,10 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   }
 
   const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
-  const filtered = filterText === "" || groupMatchesFilter
-    ? g.prs
-    : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
+  const filtered =
+    filterText === "" || groupMatchesFilter
+      ? g.prs
+      : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
 
   if (filtered.length === 0) {
     body.replaceChildren();
@@ -311,12 +366,12 @@ const ICON_PR_EMPTY =
   '<line x1="6" y1="9" x2="6" y2="15"/>' +
   '<circle cx="18" cy="18" r="3"/>' +
   '<path d="M18 9a9 9 0 00-9-9"/>' +
-  '</svg>';
+  "</svg>";
 
 const ICON_FILTER =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  '</svg>';
+  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -334,7 +389,9 @@ function renderGroup(g: RepoGroup): HTMLElement {
   const section = document.createElement("section");
   section.className = "git-repo-section";
   section.dataset["repo"] = g.full_name;
-  if (expandedDefault) section.classList.add("expanded");
+  if (expandedDefault) {
+    section.classList.add("expanded");
+  }
 
   // Header is a flex container that hosts: chevron + forge icon +
   // name + count (left side, click-to-toggle), and a right-aligned
@@ -390,10 +447,13 @@ function renderGroup(g: RepoGroup): HTMLElement {
     const list = document.createElement("ul");
     list.className = "git-pr-list";
     const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
-    const filtered = filterText === "" || groupMatchesFilter
-      ? g.prs
-      : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
-    for (const pr of filtered) list.appendChild(renderPRRow(g, pr));
+    const filtered =
+      filterText === "" || groupMatchesFilter
+        ? g.prs
+        : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
+    for (const pr of filtered) {
+      list.appendChild(renderPRRow(g, pr));
+    }
     body.appendChild(list);
   }
 
@@ -447,8 +507,12 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const sub = document.createElement("div");
   sub.className = "git-pr-row-sub";
   const parts: string[] = [];
-  if (pr.author !== undefined && pr.author !== "") parts.push(`by @${pr.author}`);
-  if (pr.updated_at !== undefined && pr.updated_at > 0) parts.push(relativeTime(pr.updated_at));
+  if (pr.author !== undefined && pr.author !== "") {
+    parts.push(`by @${pr.author}`);
+  }
+  if (pr.updated_at !== undefined && pr.updated_at > 0) {
+    parts.push(relativeTime(pr.updated_at));
+  }
   if (pr.source_branch !== "" && pr.target_branch !== "") {
     parts.push(`${pr.source_branch} → ${pr.target_branch}`);
   }
@@ -465,18 +529,26 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   merge.textContent = "Merge";
   const mergeReason = computeMergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
-  merge.setAttribute("data-tooltip", mergeReason !== ""
-    ? `Cannot merge: ${mergeReason}`
-    : "Merge this pull request");
+  merge.setAttribute(
+    "data-tooltip",
+    mergeReason !== "" ? `Cannot merge: ${mergeReason}` : "Merge this pull request",
+  );
   merge.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
-      if (!ok) return;
+      if (!ok) {
+        return;
+      }
       await withAsyncFeedback(merge, async () => {
         const res = await mergePR.dispatch({
-          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+          forge_id: g.forge_id,
+          owner: g.owner,
+          name: g.name,
+          pr_number: pr.number,
         });
-        if (res === null) throw new Error("failed");
+        if (res === null) {
+          throw new Error("failed");
+        }
         // Skip refreshPRs — optimistic remove already shows correct state.
       });
     })();
@@ -489,13 +561,24 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   close.textContent = "Close";
   close.addEventListener("click", () => {
     void (async () => {
-      const ok = await confirmDialog(`Close PR #${pr.number} without merging?`, "Close PR", "destructive");
-      if (!ok) return;
+      const ok = await confirmDialog(
+        `Close PR #${pr.number} without merging?`,
+        "Close PR",
+        "destructive",
+      );
+      if (!ok) {
+        return;
+      }
       await withAsyncFeedback(close, async () => {
         const res = await closePR.dispatch({
-          forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number,
+          forge_id: g.forge_id,
+          owner: g.owner,
+          name: g.name,
+          pr_number: pr.number,
         });
-        if (res === null) throw new Error("failed");
+        if (res === null) {
+          throw new Error("failed");
+        }
         // Skip refreshPRs — optimistic remove already shows correct state.
       });
     })();
@@ -519,7 +602,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
  *  pre-filled from the call site so the user doesn't have to retype. */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
   if (lastGroups.length === 0) {
-    try { await refreshPRs(); } catch { /* ignore — we'll check lastGroups below */ }
+    try {
+      await refreshPRs();
+    } catch {
+      /* ignore — we'll check lastGroups below */
+    }
   }
   const group = lastGroups.find((g) => g.name === repoName);
   if (group === undefined) {
@@ -549,7 +636,15 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement | null;
   const generateBtn = document.getElementById("pr-generate-btn") as HTMLButtonElement | null;
 
-  if (!baseInput || !headInput || !titleInput || !bodyInput || !draftInput || !submitBtn || !generateBtn) {
+  if (
+    !baseInput ||
+    !headInput ||
+    !titleInput ||
+    !bodyInput ||
+    !draftInput ||
+    !submitBtn ||
+    !generateBtn
+  ) {
     console.error("PR dialog missing required elements");
     return;
   }
@@ -576,31 +671,56 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   for (const btn of dlg.querySelectorAll<HTMLButtonElement>("[data-pr-close]")) {
     const fresh = btn.cloneNode(true) as HTMLButtonElement;
     btn.replaceWith(fresh);
-    fresh.addEventListener("click", () => dlg.close());
+    fresh.addEventListener("click", () => {
+      dlg.close();
+    });
   }
 
   let generateAbort = new AbortController();
-  dlg.addEventListener("close", () => generateAbort.abort(), { once: true });
+  dlg.addEventListener(
+    "close",
+    () => {
+      generateAbort.abort();
+    },
+    { once: true },
+  );
 
   const generate = async (): Promise<void> => {
-    if (status !== null) status.textContent = "Generating description…";
+    if (status !== null) {
+      status.textContent = "Generating description…";
+    }
     const res = await apiPost<{ title?: string; body?: string; error?: string }>(
       `/api/git/pr-description`,
       { repo: g.name, branch: baseInput.value.trim() || "main" },
       generateAbort.signal,
     );
     if (res === null) {
-      if (generateAbort.signal.aborted) return;
-      if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      if (generateAbort.signal.aborted) {
+        return;
+      }
+      if (status !== null) {
+        status.textContent = "Network error.";
+        status.className = "forge-status err";
+      }
       return;
     }
     if (res.error !== undefined && res.error !== "") {
-      if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      if (status !== null) {
+        status.textContent = res.error;
+        status.className = "forge-status err";
+      }
       return;
     }
-    if (res.title !== undefined && titleInput.value === "") titleInput.value = res.title;
-    if (res.body !== undefined && bodyInput.value === "") bodyInput.value = res.body;
-    if (status !== null) { status.textContent = "Description generated. Edit and submit."; status.className = "forge-status ok"; }
+    if (res.title !== undefined && titleInput.value === "") {
+      titleInput.value = res.title;
+    }
+    if (res.body !== undefined && bodyInput.value === "") {
+      bodyInput.value = res.body;
+    }
+    if (status !== null) {
+      status.textContent = "Description generated. Edit and submit.";
+      status.className = "forge-status ok";
+    }
   };
 
   newGenerate.addEventListener("click", () => {
@@ -612,7 +732,10 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   // Stage 2: review + submit.
   newSubmit.addEventListener("click", async () => {
     newSubmit.disabled = true;
-    if (status !== null) { status.textContent = "Opening PR…"; status.className = "forge-status"; }
+    if (status !== null) {
+      status.textContent = "Opening PR…";
+      status.className = "forge-status";
+    }
     const res = await apiPost<{ number?: number; error?: string }>(
       `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
       {
@@ -624,17 +747,25 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
       },
     );
     if (res === null) {
-      if (status !== null) { status.textContent = "Network error."; status.className = "forge-status err"; }
+      if (status !== null) {
+        status.textContent = "Network error.";
+        status.className = "forge-status err";
+      }
       newSubmit.disabled = false;
       return;
     }
     if (res.error !== undefined && res.error !== "") {
-      if (status !== null) { status.textContent = res.error; status.className = "forge-status err"; }
+      if (status !== null) {
+        status.textContent = res.error;
+        status.className = "forge-status err";
+      }
       newSubmit.disabled = false;
       return;
     }
     dlg.close();
-    await refreshPRs().catch(() => {});
+    await refreshPRs().catch(() => {
+      /* noop */
+    });
   });
 
   dlg.showModal();
@@ -671,6 +802,12 @@ function computeMergeBlockReason(pr: PR): string {
 }
 
 function escapeHTML(s: string): string {
-  const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  const map: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
   return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }

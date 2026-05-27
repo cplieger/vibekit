@@ -8,7 +8,13 @@
 // ---------------------------------------------------------------------------
 
 import type {
-  Session, ChatHeader, Message, Usage, ToolCall, PendingChange, Crew,
+  Session,
+  ChatHeader,
+  Message,
+  Usage,
+  ToolCall,
+  PendingChange,
+  Crew,
 } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
@@ -71,7 +77,10 @@ export function getCrewSig(messageID: string): ReturnType<typeof signal<Crew>> |
 
 /** Get or create the content signal for a message id. Initialized to the
  *  current full content. */
-export function ensureStreamingSig(messageID: string, initial: string): ReturnType<typeof signal<string>> {
+export function ensureStreamingSig(
+  messageID: string,
+  initial: string,
+): ReturnType<typeof signal<string>> {
   let sig = streamingTextSig.get(messageID);
   if (sig === undefined) {
     sig = signal(initial);
@@ -82,7 +91,10 @@ export function ensureStreamingSig(messageID: string, initial: string): ReturnTy
 
 /** Get or create the reasoning signal for a message id. Initialized to
  *  the current full reasoning. */
-export function ensureReasoningSig(messageID: string, initial: string): ReturnType<typeof signal<string>> {
+export function ensureReasoningSig(
+  messageID: string,
+  initial: string,
+): ReturnType<typeof signal<string>> {
   let sig = streamingReasoningSig.get(messageID);
   if (sig === undefined) {
     sig = signal(initial);
@@ -93,7 +105,10 @@ export function ensureReasoningSig(messageID: string, initial: string): ReturnTy
 
 /** Get or create the signal for a tool call id. Initialized to the
  *  current ToolCall snapshot. */
-export function ensureToolCallSig(toolID: string, initial: ToolCall): ReturnType<typeof signal<ToolCall>> {
+export function ensureToolCallSig(
+  toolID: string,
+  initial: ToolCall,
+): ReturnType<typeof signal<ToolCall>> {
   let sig = toolCallSig.get(toolID);
   if (sig === undefined) {
     sig = signal(initial);
@@ -135,20 +150,36 @@ export function clearCrewSig(messageID: string): void {
   crewSig.delete(messageID);
 }
 
-function emitSessions(): void { sessionsVersion.value = sessionsVersion.peek() + 1; }
-function emitActive(): void { activeVersion.value = activeVersion.peek() + 1; }
-function emitMessages(): void { messagesVersion.value = messagesVersion.peek() + 1; }
-function scheduleMessages(): void { batch(() => { messagesVersion.value = messagesVersion.peek() + 1; }); }
+function emitSessions(): void {
+  sessionsVersion.value = sessionsVersion.peek() + 1;
+}
+function emitActive(): void {
+  activeVersion.value = activeVersion.peek() + 1;
+}
+function emitMessages(): void {
+  messagesVersion.value = messagesVersion.peek() + 1;
+}
+function scheduleMessages(): void {
+  batch(() => {
+    messagesVersion.value = messagesVersion.peek() + 1;
+  });
+}
 
 // --- Model context sizes ---
 export const MODEL_CONTEXT_SIZES: Record<string, number> = {};
 
 export function parseContextSize(description: string): number | undefined {
   const m = /(\d+)\s*[Kk]\s*context/i.exec(description);
-  if (m?.[1] !== undefined) return parseInt(m[1], 10) * 1_000;
+  if (m?.[1] !== undefined) {
+    return parseInt(m[1], 10) * 1_000;
+  }
   const m2 = /(\d+)\s*[Mm]\s*context/i.exec(description);
-  if (m2?.[1] !== undefined) return parseInt(m2[1], 10) * 1_000_000;
-  if (/\b1M\b/.test(description)) return 1_000_000;
+  if (m2?.[1] !== undefined) {
+    return parseInt(m2[1], 10) * 1_000_000;
+  }
+  if (/\b1M\b/.test(description)) {
+    return 1_000_000;
+  }
   return undefined;
 }
 
@@ -165,15 +196,25 @@ const msgControllers = new Map<string, AbortController>();
 // One sweep aborts the active list fetch + every per-chat message stream.
 registerCleanup(() => listController?.abort());
 registerCleanup(() => {
-  for (const c of msgControllers.values()) c.abort();
+  for (const c of msgControllers.values()) {
+    c.abort();
+  }
   msgControllers.clear();
 });
 
 // --- Accessors ---
-export function getSessions(): Session[] { return _sessions; }
-export function getActiveId(): string { return _activeId; }
-export function getActive(): Session | undefined { return sessionIndex.get(_activeId); }
-export function get(id: string): Session | undefined { return sessionIndex.get(id); }
+export function getSessions(): Session[] {
+  return _sessions;
+}
+export function getActiveId(): string {
+  return _activeId;
+}
+export function getActive(): Session | undefined {
+  return sessionIndex.get(_activeId);
+}
+export function get(id: string): Session | undefined {
+  return sessionIndex.get(id);
+}
 
 export function setSessions(v: Session[]): void {
   _sessions = v;
@@ -182,7 +223,9 @@ export function setSessions(v: Session[]): void {
 }
 
 export function setActive(id: string): void {
-  if (_activeId === id) return;
+  if (_activeId === id) {
+    return;
+  }
   _activeId = id;
   emitSessions();
 }
@@ -193,35 +236,51 @@ export function isThinking(id: string): boolean {
 
 export function setThinking(id: string, v: boolean): void {
   const s = get(id);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   s.thinking = v;
-  if (!v) s.working_label = "Thinking";
+  if (!v) {
+    s.working_label = "Thinking";
+  }
   emitActive();
 }
 
 export function setWorkingLabel(id: string, label: string): void {
   const s = get(id);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   s.working_label = label;
   emitActive();
 }
 
 export function queuedPrompt(id: string): string | undefined {
   const q = get(id)?.prompt_queue;
-  if (q === undefined || q.length === 0) return undefined;
+  if (q === undefined || q.length === 0) {
+    return undefined;
+  }
   return q[0];
 }
 
 export function enqueuePrompt(id: string, text: string, attachments?: readonly unknown[]): void {
   const s = get(id);
-  if (s === undefined) return;
-  if (s.prompt_queue === undefined) s.prompt_queue = [];
+  if (s === undefined) {
+    return;
+  }
+  if (s.prompt_queue === undefined) {
+    s.prompt_queue = [];
+  }
   s.prompt_queue.push(text);
   if (attachments !== undefined && attachments.length > 0) {
-    if (!_queuedAttachments.has(id)) _queuedAttachments.set(id, []);
+    if (!_queuedAttachments.has(id)) {
+      _queuedAttachments.set(id, []);
+    }
     _queuedAttachments.get(id)!.push([...attachments]);
   } else {
-    if (!_queuedAttachments.has(id)) _queuedAttachments.set(id, []);
+    if (!_queuedAttachments.has(id)) {
+      _queuedAttachments.set(id, []);
+    }
     _queuedAttachments.get(id)!.push([]);
   }
   emitActive();
@@ -229,16 +288,24 @@ export function enqueuePrompt(id: string, text: string, attachments?: readonly u
 
 export function dequeuePrompt(id: string): string | undefined {
   const s = get(id);
-  if (s === undefined) return undefined;
+  if (s === undefined) {
+    return undefined;
+  }
   const q = s.prompt_queue;
-  if (q === undefined || q.length === 0) return undefined;
+  if (q === undefined || q.length === 0) {
+    return undefined;
+  }
   const next = q.shift();
-  if (q.length === 0) delete s.prompt_queue;
+  if (q.length === 0) {
+    delete s.prompt_queue;
+  }
   // Also shift attachments (consumed via dequeuePromptAttachments or discarded).
   const aq = _queuedAttachments.get(id);
   if (aq !== undefined) {
     aq.shift();
-    if (aq.length === 0) _queuedAttachments.delete(id);
+    if (aq.length === 0) {
+      _queuedAttachments.delete(id);
+    }
   }
   emitActive();
   return next;
@@ -248,7 +315,9 @@ export function dequeuePrompt(id: string): string | undefined {
  *  call before dequeuePrompt to capture them). */
 export function peekQueuedAttachments(id: string): readonly unknown[] {
   const aq = _queuedAttachments.get(id);
-  if (aq === undefined || aq.length === 0) return [];
+  if (aq === undefined || aq.length === 0) {
+    return [];
+  }
   return aq[0]!;
 }
 
@@ -256,15 +325,24 @@ export function peekQueuedAttachments(id: string): readonly unknown[] {
  *  enqueued text-only and the caller needs to attach files after). */
 export function setLastQueuedAttachments(id: string, attachments: readonly unknown[]): void {
   const aq = _queuedAttachments.get(id);
-  if (aq === undefined || aq.length === 0) return;
+  if (aq === undefined || aq.length === 0) {
+    return;
+  }
   aq[aq.length - 1] = [...attachments];
 }
 
 export function setQueuedPrompt(id: string, text: string | undefined): void {
   const s = get(id);
-  if (s === undefined) return;
-  if (text === undefined) { delete s.prompt_queue; _queuedAttachments.delete(id); }
-  else { s.prompt_queue = [text]; _queuedAttachments.set(id, [[]]); }
+  if (s === undefined) {
+    return;
+  }
+  if (text === undefined) {
+    delete s.prompt_queue;
+    _queuedAttachments.delete(id);
+  } else {
+    s.prompt_queue = [text];
+    _queuedAttachments.set(id, [[]]);
+  }
   emitActive();
 }
 
@@ -292,12 +370,16 @@ const decodeChatGetResponseLocal: Decoder<{
 };
 
 // --- Index helpers ---
-export function clearMsgIndex(sessionID: string): void { msgIndex.delete(sessionID); }
+export function clearMsgIndex(sessionID: string): void {
+  msgIndex.delete(sessionID);
+}
 
 /** Invalidate a background session's cache so the next switch refetches. */
 export function invalidateSession(chatID: string): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   s.messages = [];
   s.has_more = false;
   clearMsgIndex(chatID);
@@ -306,7 +388,9 @@ export function invalidateSession(chatID: string): void {
 
 function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
-  for (let i = 0; i < messages.length; i++) idx.set(messages[i]!.id, i);
+  for (let i = 0; i < messages.length; i++) {
+    idx.set(messages[i]!.id, i);
+  }
   msgIndex.set(sessionID, idx);
 }
 
@@ -314,7 +398,9 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
   let mi = msgIndex.get(sessionID);
   if (mi === undefined) {
     mi = new Map<string, number>();
-    for (let i = 0; i < messages.length; i++) mi.set(messages[i]!.id, i);
+    for (let i = 0; i < messages.length; i++) {
+      mi.set(messages[i]!.id, i);
+    }
     msgIndex.set(sessionID, mi);
   }
   return mi;
@@ -327,8 +413,14 @@ export async function loadList(): Promise<boolean> {
   listController = controller;
   const knownBefore = new Set(sessionIndex.keys());
   const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, controller.signal);
-  if (controller.signal.aborted) { listController = null; return false; }
-  if (d === null || d.chats === undefined) { listController = null; return false; }
+  if (controller.signal.aborted) {
+    listController = null;
+    return false;
+  }
+  if (d?.chats === undefined) {
+    listController = null;
+    return false;
+  }
   const next: Session[] = [];
   for (const h of d.chats) {
     const existing = get(h.id);
@@ -348,21 +440,30 @@ export async function loadList(): Promise<boolean> {
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
-      has_more: existing !== undefined ? (existing.has_more || h.message_count > existing.messages.length) : h.message_count > 0,
+      has_more:
+        existing !== undefined
+          ? existing.has_more || h.message_count > existing.messages.length
+          : h.message_count > 0,
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(parent_chat_id !== undefined && { parent_chat_id }),
       ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
-      ...(existing?.trusted_this_turn !== undefined && { trusted_this_turn: existing.trusted_this_turn }),
+      ...(existing?.trusted_this_turn !== undefined && {
+        trusted_this_turn: existing.trusted_this_turn,
+      }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
-      ...(h.oldest_checkpoint_tag !== undefined && { oldest_checkpoint_tag: h.oldest_checkpoint_tag }),
+      ...(h.oldest_checkpoint_tag !== undefined && {
+        oldest_checkpoint_tag: h.oldest_checkpoint_tag,
+      }),
     };
     next.push(session);
   }
   // Preserve sessions added by SSE (upsertHeader) during the await.
   const nextIds = new Set(next.map((s) => s.id));
   for (const [id, s] of sessionIndex) {
-    if (!knownBefore.has(id) && !nextIds.has(id)) next.push(s);
+    if (!knownBefore.has(id) && !nextIds.has(id)) {
+      next.push(s);
+    }
   }
   setSessions(next);
   listController = null;
@@ -375,16 +476,27 @@ export async function loadMessages(chatID: string, before?: number, limit = 50):
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
   const params = new URLSearchParams({ limit: String(limit) });
-  if (before !== undefined) params.set("before", String(before));
+  if (before !== undefined) {
+    params.set("before", String(before));
+  }
   const d = await apiGetTyped(
     `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
     decodeChatGetResponseLocal,
     controller.signal,
   );
-  if (controller.signal.aborted) { msgControllers.delete(chatID); return false; }
-  if (d === null) { msgControllers.delete(chatID); return false; }
+  if (controller.signal.aborted) {
+    msgControllers.delete(chatID);
+    return false;
+  }
+  if (d === null) {
+    msgControllers.delete(chatID);
+    return false;
+  }
   const session = get(chatID);
-  if (session === undefined) { msgControllers.delete(chatID); return false; }
+  if (session === undefined) {
+    msgControllers.delete(chatID);
+    return false;
+  }
   if (before !== undefined) {
     session.messages = [...d.messages, ...session.messages];
   } else {
@@ -410,26 +522,53 @@ export function upsertHeader(h: ChatHeader): void {
     existing.available_modes = h.available_modes ?? [];
     existing.available_models = h.available_models ?? [];
     existing.supervised_mode = h.supervised_mode ?? false;
-    if (h.auto_approve_crew !== undefined) existing.auto_approve_crew = h.auto_approve_crew;
+    if (h.auto_approve_crew !== undefined) {
+      existing.auto_approve_crew = h.auto_approve_crew;
+    }
     existing.usage = h.usage;
     existing.message_count = h.message_count;
-    if (h.compaction_watermark !== undefined) existing.compaction_watermark = h.compaction_watermark;
-    else delete existing.compaction_watermark;
-    if (h.oldest_checkpoint_tag !== undefined) existing.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
-    else delete existing.oldest_checkpoint_tag;
-    if (h.parent_chat_id !== undefined) existing.parent_chat_id = h.parent_chat_id; else delete existing.parent_chat_id;
+    if (h.compaction_watermark !== undefined) {
+      existing.compaction_watermark = h.compaction_watermark;
+    } else {
+      delete existing.compaction_watermark;
+    }
+    if (h.oldest_checkpoint_tag !== undefined) {
+      existing.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
+    } else {
+      delete existing.oldest_checkpoint_tag;
+    }
+    if (h.parent_chat_id !== undefined) {
+      existing.parent_chat_id = h.parent_chat_id;
+    } else {
+      delete existing.parent_chat_id;
+    }
   } else {
     const s: Session = {
-      id: h.id, name: h.name, agent: h.agent ?? "", model: h.model ?? "",
-      acp_session_id: h.acp_session_id ?? "", current_mode_id: h.current_mode_id ?? "",
-      available_modes: h.available_modes ?? [], available_models: h.available_models ?? [],
-      auto_approve_crew: h.auto_approve_crew ?? false, supervised_mode: h.supervised_mode ?? false,
-      pending_changes: [], usage: h.usage, message_count: h.message_count,
-      messages: [], has_more: h.message_count > 0, thinking: false, working_label: "Thinking",
+      id: h.id,
+      name: h.name,
+      agent: h.agent ?? "",
+      model: h.model ?? "",
+      acp_session_id: h.acp_session_id ?? "",
+      current_mode_id: h.current_mode_id ?? "",
+      available_modes: h.available_modes ?? [],
+      available_models: h.available_models ?? [],
+      auto_approve_crew: h.auto_approve_crew ?? false,
+      supervised_mode: h.supervised_mode ?? false,
+      pending_changes: [],
+      usage: h.usage,
+      message_count: h.message_count,
+      messages: [],
+      has_more: h.message_count > 0,
+      thinking: false,
+      working_label: "Thinking",
       ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
     };
-    if (h.compaction_watermark !== undefined) s.compaction_watermark = h.compaction_watermark;
-    if (h.oldest_checkpoint_tag !== undefined) s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
+    if (h.compaction_watermark !== undefined) {
+      s.compaction_watermark = h.compaction_watermark;
+    }
+    if (h.oldest_checkpoint_tag !== undefined) {
+      s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
+    }
     _sessions.unshift(s);
     sessionIndex.set(s.id, s);
   }
@@ -438,20 +577,28 @@ export function upsertHeader(h: ChatHeader): void {
 
 export function setCurrentMode(id: string, modeID: string): void {
   const s = get(id);
-  if (s === undefined) return;
-  if (s.current_mode_id === modeID) return;
+  if (s === undefined) {
+    return;
+  }
+  if (s.current_mode_id === modeID) {
+    return;
+  }
   s.current_mode_id = modeID;
   emitSessions();
 }
 
 export function removeChat(id: string): void {
   const idx = _sessions.findIndex((s) => s.id === id);
-  if (idx === -1) return;
+  if (idx === -1) {
+    return;
+  }
   _sessions.splice(idx, 1);
   sessionIndex.delete(id);
   msgIndex.delete(id);
   _queuedAttachments.delete(id);
-  if (_activeId === id) _activeId = _sessions[0]?.id ?? "";
+  if (_activeId === id) {
+    _activeId = _sessions[0]?.id ?? "";
+  }
   emitSessions();
 }
 
@@ -461,7 +608,9 @@ export function removeChat(id: string): void {
  *  back on failure. Idempotent: if a session with the same id already
  *  exists, the existing entry is preserved. */
 export function reinsertSession(session: Session, atIndex?: number): void {
-  if (sessionIndex.has(session.id)) return;
+  if (sessionIndex.has(session.id)) {
+    return;
+  }
   const target = atIndex !== undefined ? Math.max(0, Math.min(atIndex, _sessions.length)) : 0;
   _sessions.splice(target, 0, session);
   sessionIndex.set(session.id, session);
@@ -470,9 +619,13 @@ export function reinsertSession(session: Session, atIndex?: number): void {
 
 export function appendMessage(chatID: string, msg: Message): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const mi = getMsgIndex(chatID, s.messages);
-  if (mi.has(msg.id)) return;
+  if (mi.has(msg.id)) {
+    return;
+  }
   const newIdx = s.messages.length;
   mi.set(msg.id, newIdx);
   s.messages.push(msg);
@@ -482,7 +635,9 @@ export function appendMessage(chatID: string, msg: Message): void {
 
 export function upsertMessage(chatID: string, msg: Message): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(msg.id) ?? -1;
   if (idx === -1) {
@@ -510,38 +665,52 @@ export function upsertMessage(chatID: string, msg: Message): void {
 
 export function addPendingChange(chatID: string, change: PendingChange): void {
   const s = get(chatID);
-  if (s === undefined) return;
-  if (s.pending_changes.some((p) => p.tool_call_id === change.tool_call_id)) return;
+  if (s === undefined) {
+    return;
+  }
+  if (s.pending_changes.some((p) => p.tool_call_id === change.tool_call_id)) {
+    return;
+  }
   s.pending_changes = [...s.pending_changes, change];
   emitActive();
 }
 
 export function removePendingChange(chatID: string, toolCallID: string): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const next = s.pending_changes.filter((p) => p.tool_call_id !== toolCallID);
-  if (next.length === s.pending_changes.length) return;
+  if (next.length === s.pending_changes.length) {
+    return;
+  }
   s.pending_changes = next;
   emitActive();
 }
 
 export function clearPendingChanges(chatID: string): void {
   const s = get(chatID);
-  if (s === undefined || s.pending_changes.length === 0) return;
+  if (s === undefined || s.pending_changes.length === 0) {
+    return;
+  }
   s.pending_changes = [];
   emitActive();
 }
 
 export function setSupervisedMode(chatID: string, enabled: boolean): void {
   const s = get(chatID);
-  if (s === undefined || s.supervised_mode === enabled) return;
+  if (s === undefined || s.supervised_mode === enabled) {
+    return;
+  }
   s.supervised_mode = enabled;
   emitActive();
 }
 
 export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
   const s = get(chatID);
-  if (s === undefined || s.auto_approve_crew === enabled) return;
+  if (s === undefined || s.auto_approve_crew === enabled) {
+    return;
+  }
   s.auto_approve_crew = enabled;
   emitActive();
 }
@@ -549,7 +718,9 @@ export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
 /** Set session model and notify subscribers. Used by switchModel. */
 export function setModel(chatID: string, model: string): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   s.model = model;
   emitSessions();
 }
@@ -557,7 +728,9 @@ export function setModel(chatID: string, model: string): void {
 /** Set session name and notify subscribers. */
 export function setName(chatID: string, name: string): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   s.name = name;
   emitSessions();
 }
@@ -569,16 +742,27 @@ export function indexOfSession(id: string): number {
 
 export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const current = s.trusted_this_turn === true;
-  if (current === trusted) return;
+  if (current === trusted) {
+    return;
+  }
   s.trusted_this_turn = trusted;
   emitActive();
 }
 
-export function appendChunk(chatID: string, messageID: string, delta: string, isReasoning: boolean): void {
+export function appendChunk(
+  chatID: string,
+  messageID: string,
+  delta: string,
+  isReasoning: boolean,
+): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
@@ -591,8 +775,11 @@ export function appendChunk(chatID: string, messageID: string, delta: string, is
     mi.set(messageID, newIdx);
     isNew = true;
   }
-  if (isReasoning) msg.reasoning = (msg.reasoning ?? "") + delta;
-  else msg.content = (msg.content ?? "") + delta;
+  if (isReasoning) {
+    msg.reasoning = (msg.reasoning ?? "") + delta;
+  } else {
+    msg.content = (msg.content ?? "") + delta;
+  }
 
   // First chunk for this message: bump global so reconcile can mount
   // the new bubble. Subsequent chunks fan out via per-message signal.
@@ -602,18 +789,26 @@ export function appendChunk(chatID: string, messageID: string, delta: string, is
   }
   if (isReasoning) {
     const sig = streamingReasoningSig.get(messageID);
-    if (sig !== undefined) sig.value = msg.reasoning ?? "";
-    else scheduleMessages();
+    if (sig !== undefined) {
+      sig.value = msg.reasoning ?? "";
+    } else {
+      scheduleMessages();
+    }
   } else {
     const sig = streamingTextSig.get(messageID);
-    if (sig !== undefined) sig.value = msg.content ?? "";
-    else scheduleMessages();
+    if (sig !== undefined) {
+      sig.value = msg.content ?? "";
+    } else {
+      scheduleMessages();
+    }
   }
 }
 
 export function upsertToolCall(chatID: string, messageID: string, call: ToolCall): void {
   const s = get(chatID);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
@@ -626,7 +821,9 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
     emitMessages();
     return;
   }
-  if (msg.tool_calls === undefined) msg.tool_calls = [];
+  if (msg.tool_calls === undefined) {
+    msg.tool_calls = [];
+  }
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
@@ -642,8 +839,11 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
   // scheduleRender if no signal exists yet (e.g. the mount hasn't
   // subscribed yet because reconcile is still pending).
   const sig = toolCallSig.get(call.id);
-  if (sig !== undefined) sig.value = call;
-  else scheduleMessages();
+  if (sig !== undefined) {
+    sig.value = call;
+  } else {
+    scheduleMessages();
+  }
 }
 
 // --- Utilities ---
@@ -653,9 +853,11 @@ export function contextSizeFor(modelID: string): number {
 
 export function defaultUsage(): Usage {
   return {
-    context_pct: 0, context_size: 0, credits: 0,
-    turn_count: 0, last_turn_ms: 0, has_real_data: false,
+    context_pct: 0,
+    context_size: 0,
+    credits: 0,
+    turn_count: 0,
+    last_turn_ms: 0,
+    has_real_data: false,
   };
 }
-
-

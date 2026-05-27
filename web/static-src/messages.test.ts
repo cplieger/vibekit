@@ -157,7 +157,12 @@ describe("checkpointTagForTurn", () => {
     { turnIndex: 5, oldestTag: "3", expected: "5", desc: "turnIndex well above oldest" },
     { turnIndex: 2, oldestTag: "3", expected: "", desc: "turnIndex below oldest returns empty" },
     { turnIndex: 0, oldestTag: "1.3", expected: "", desc: "tool suffix parsed: turnIndex below" },
-    { turnIndex: 1, oldestTag: "1.3", expected: "1", desc: "tool suffix parsed: turnIndex at oldest" },
+    {
+      turnIndex: 1,
+      oldestTag: "1.3",
+      expected: "1",
+      desc: "tool suffix parsed: turnIndex at oldest",
+    },
     { turnIndex: 3, oldestTag: "1.3", expected: "3", desc: "tool suffix parsed: turnIndex above" },
     { turnIndex: 0, oldestTag: "abc", expected: "", desc: "NaN from malformed tag returns empty" },
     { turnIndex: 0, oldestTag: ".", expected: "", desc: "dot-only tag returns empty (NaN)" },

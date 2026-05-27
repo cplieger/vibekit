@@ -13,7 +13,10 @@ import { switchModel } from "./actions/chat.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { setCurrentModel, setLastModel } from "./session-context.js";
 import {
-  showModelPicker, hideModelPicker, refreshPickerIfVisible, getCachedModels,
+  showModelPicker,
+  hideModelPicker,
+  refreshPickerIfVisible,
+  getCachedModels,
 } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
@@ -34,17 +37,22 @@ class ModelSwitchController {
     makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
         const session = getActive();
-        const isEmpty = session === undefined
-          || (session.message_count === 0 && session.messages.length === 0);
+        const isEmpty =
+          session === undefined || (session.message_count === 0 && session.messages.length === 0);
         if (isEmpty) {
-          setTimeout(() => { collapseAll(); this.openRichPicker(); }, 0);
+          setTimeout(() => {
+            collapseAll();
+            this.openRichPicker();
+          }, 0);
           return;
         }
         this.renderCondensedList();
       },
     });
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
-    onBus(BUS_TURN_IDLE, (chatID: string) => this.drainQueue(chatID));
+    onBus(BUS_TURN_IDLE, (chatID: string) => {
+      this.drainQueue(chatID);
+    });
   }
 
   private openRichPicker(): void {
@@ -66,7 +74,10 @@ class ModelSwitchController {
     list.setAttribute("aria-label", "Available models");
     const session = getActive();
     if (session === undefined) {
-      reconcile(list, [] as ModelInfo[], { key: () => "", mount: () => document.createElement("div") });
+      reconcile(list, [] as ModelInfo[], {
+        key: () => "",
+        mount: () => document.createElement("div"),
+      });
       return;
     }
     const current = session.model;
@@ -79,7 +90,9 @@ class ModelSwitchController {
     reconcile(list, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildModelOption(m),
-      update: (el, m) => this.syncModelOption(el as HTMLElement, m, current),
+      update: (el, m) => {
+        this.syncModelOption(el, m, current);
+      },
     });
     wireArrowNav(list, ".pill-model-item");
   }
@@ -92,19 +105,19 @@ class ModelSwitchController {
     // Load persisted effort on first call.
     if (!this.effortLoaded) {
       this.effortLoaded = true;
-      void import("./api-client.js").then(({ apiGet }) =>
-        apiGet<Record<string, any>>("/api/settings"),
-      ).then((settings) => {
-        const me = (settings as any)?.model_effort;
-        if (me?.effort && me?.last_model === getActive()?.model) {
-          this.currentEffort = me.effort;
-          if (this.effortRow !== null) {
-            for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-              btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+      void import("./api-client.js")
+        .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings"))
+        .then((settings) => {
+          const me = (settings as any)?.model_effort;
+          if (me?.effort && me?.last_model === getActive()?.model) {
+            this.currentEffort = me.effort;
+            if (this.effortRow !== null) {
+              for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+                btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+              }
             }
           }
-        }
-      });
+        });
     }
     if (this.effortRow === null) {
       this.effortRow = document.createElement("div");
@@ -140,7 +153,9 @@ class ModelSwitchController {
 
   private setEffort(level: string): void {
     const session = getActive();
-    if (session === undefined) return;
+    if (session === undefined) {
+      return;
+    }
     this.currentEffort = level;
     if (this.effortRow !== null) {
       for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
@@ -149,7 +164,7 @@ class ModelSwitchController {
     }
     // Dispatch to server (applies to active session).
     void import("./transport.js").then(({ send }) => {
-      send({
+      void send({
         type: "set_effort",
         chat_id: session.id,
         request_id: `effort-${Date.now()}`,
@@ -158,7 +173,7 @@ class ModelSwitchController {
     });
     // Persist so effort restores on next bridge spawn for this model.
     void import("./persist.js").then(({ patchSettings }) => {
-      patchSettings({ model_effort: { last_model: session.model, effort: level } });
+      void patchSettings({ model_effort: { last_model: session.model, effort: level } });
     });
   }
 
@@ -179,7 +194,9 @@ class ModelSwitchController {
     opt.addEventListener("click", (e: MouseEvent) => {
       e.stopPropagation();
       collapseAll();
-      if (m.model_id === getActive()?.model) return;
+      if (m.model_id === getActive()?.model) {
+        return;
+      }
       this.requestModelSwitch(m.model_id);
     });
     this.syncModelOption(opt, m, getActive()?.model ?? "");
@@ -208,7 +225,7 @@ class ModelSwitchController {
       this.enqueue(modelID);
       return;
     }
-    void this.fire(session.id, modelID);
+    this.fire(session.id, modelID);
   }
 
   private applyLocalChoice(modelID: string): void {
@@ -217,31 +234,43 @@ class ModelSwitchController {
 
   private fire(chatID: string, modelID: string): void {
     this.queueState = { status: "switching", modelID };
-    void switchModel.dispatch({ chatID, model: modelID }, {
-      onSettled: () => {
-        if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
-          this.queueState = { status: "idle" };
-        }
+    void switchModel.dispatch(
+      { chatID, model: modelID },
+      {
+        onSettled: () => {
+          if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
+            this.queueState = { status: "idle" };
+          }
+        },
       },
-    });
+    );
   }
 
   private enqueue(modelID: string): void {
     const chatID = getActiveId();
     this.queueState = { status: "queued", modelID, chatID };
     $.switchModelBtn.classList.add("pending");
-    $.switchModelBtn.setAttribute("data-tooltip", `Switch to ${humanName(modelID)} after current turn`);
+    $.switchModelBtn.setAttribute(
+      "data-tooltip",
+      `Switch to ${humanName(modelID)} after current turn`,
+    );
   }
 
   private drainQueue(idleChatID: string): void {
-    if (this.queueState.status !== "queued") return;
-    if (this.queueState.chatID !== idleChatID) return;
+    if (this.queueState.status !== "queued") {
+      return;
+    }
+    if (this.queueState.chatID !== idleChatID) {
+      return;
+    }
     const { modelID, chatID } = this.queueState;
     this.queueState = { status: "idle" };
     $.switchModelBtn.classList.remove("pending");
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
-    if (chatID === "") return;
-    void this.fire(chatID, modelID);
+    if (chatID === "") {
+      return;
+    }
+    this.fire(chatID, modelID);
   }
 }
 

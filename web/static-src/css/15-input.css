@@ -1,18 +1,24 @@
-
 /* ==========================================================================
    Input Bar (centered, same max-width as messages)
    ========================================================================== */
 
 [id="prompt-form"] {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
 }
 
 .prompt-box {
-  display: flex; flex-direction: column;
-  max-width: var(--content-max-w); margin: 0 auto; width: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: var(--content-max-w);
+  margin: 0 auto;
+  width: 100%;
   background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border); border-radius: var(--r-lg, 0.75rem);
-  transition: border-color var(--dur-micro), box-shadow var(--dur-micro) var(--ease-micro);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg, 0.75rem);
+  transition:
+    border-color var(--dur-micro),
+    box-shadow var(--dur-micro) var(--ease-micro);
 
   &:focus-within {
     border-color: var(--c-accent);
@@ -22,32 +28,46 @@
 }
 
 [id="prompt-input"] {
-  flex: 1; background: transparent; color: var(--c-text-primary);
-  border: none; border-radius: var(--r-lg, 0.75rem) var(--r-lg, 0.75rem) 0 0;
+  flex: 1;
+  background: transparent;
+  color: var(--c-text-primary);
+  border: none;
+  border-radius: var(--r-lg, 0.75rem) var(--r-lg, 0.75rem) 0 0;
   padding: var(--sp-3) var(--sp-4) var(--sp-1);
-  font-size: var(--fs-md); font-family: var(--font-sans);
-  resize: none; max-height: 12.5rem;
-  field-sizing: content; min-height: 2.5rem; line-height: 1.4;
-  appearance: none; touch-action: manipulation; outline: none;
+  font-size: var(--fs-md);
+  font-family: var(--font-sans);
+  resize: none;
+  max-height: 12.5rem;
+  field-sizing: content;
+  min-height: 2.5rem;
+  line-height: 1.4;
+  appearance: none;
+  touch-action: manipulation;
+  outline: none;
 }
 
 /* --- Attachment pill row (between textarea and pill row) --- */
 
 .attachment-row {
-  display: flex; flex-wrap: wrap; gap: var(--sp-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
   padding: var(--sp-1) var(--sp-2) 0;
 }
 
 .attachment-pill {
-  display: inline-flex; align-items: center; gap: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   padding: 0.15rem 0.5rem;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   font-size: var(--fs-xs);
   list-style: none;
-  transition: background var(--dur-micro) var(--ease-micro),
-              border-color var(--dur-micro) var(--ease-micro);
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
 }
 
 .attachment-pill:hover {
@@ -55,23 +75,36 @@
   border-color: var(--c-accent);
 }
 
-.attachment-icon { font-size: 0.85em; }
+.attachment-icon {
+  font-size: 0.85em;
+}
 
 .attachment-name {
   max-width: 12rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-close {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1rem; height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
   margin-left: 0.15rem;
-  padding: 0; border: 0; background: transparent;
+  padding: 0;
+  border: 0;
+  background: transparent;
   border-radius: 3px;
-  font-size: 0.85em; line-height: 1; color: inherit;
-  opacity: 0.5; cursor: pointer;
-  transition: opacity var(--dur-micro) var(--ease-micro),
-              background var(--dur-micro) var(--ease-micro);
+  font-size: 0.85em;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
 }
 
 .attachment-close:hover {
@@ -79,12 +112,16 @@
   background: var(--c-bg-hover);
 }
 
-.attachment-pill:hover .attachment-close { opacity: 1; }
+.attachment-pill:hover .attachment-close {
+  opacity: 1;
+}
 
 /* --- Pill row (bottom of prompt box) --- */
 
 .prompt-pills {
-  display: flex; align-items: center; gap: var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
   padding: var(--sp-1) var(--sp-2);
   border-block-start: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
   container-type: inline-size;
@@ -98,32 +135,54 @@
   font-size: var(--fs-xs);
   white-space: nowrap;
   max-width: 6rem;
-  overflow: hidden; text-overflow: ellipsis;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @container pill-row (width < 24rem) {
-  .pill-label { display: none; }
+  .pill-label {
+    display: none;
+  }
 }
 
 .pill {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.125rem var(--sp-2); height: 1.5rem;
-  border: 1px solid var(--c-border); border-radius: 0.75rem;
-  background: var(--c-bg-primary); color: var(--c-text-secondary);
-  font-size: var(--fs-xs); cursor: pointer; white-space: nowrap;
-  transition: background var(--dur-micro), color var(--dur-micro), border-color var(--dur-micro) var(--ease-micro);
-  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
-  & svg { flex-shrink: 0; }
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem var(--sp-2);
+  height: 1.5rem;
+  border: 1px solid var(--c-border);
+  border-radius: 0.75rem;
+  background: var(--c-bg-primary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+  &:hover {
+    background: var(--c-bg-tertiary);
+    color: var(--c-text-primary);
+  }
+  & svg {
+    flex-shrink: 0;
+  }
 }
 
 /* Context ring pill */
 .pill-context {
-  gap: var(--sp-1); padding-inline-start: 0.25rem;
-  & .context-ring { flex-shrink: 0; }
+  gap: var(--sp-1);
+  padding-inline-start: 0.25rem;
+  & .context-ring {
+    flex-shrink: 0;
+  }
 
   & [id="context-label"] {
     font-family: var(--font-mono);
-    font-size: 0.625rem; font-weight: var(--fw-semibold);
+    font-size: 0.625rem;
+    font-weight: var(--fw-semibold);
     font-variant-numeric: tabular-nums;
 
     /* Grow with digit count instead of reserving space for "100%".
@@ -139,25 +198,38 @@
   anchor-name: --switch-model-btn;
 
   & [id="ctx-model-pill"] {
-    max-width: 10rem; overflow: hidden; text-overflow: ellipsis;
+    max-width: 10rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  &.switching { pointer-events: none; }
-  &:where(.switching) svg { display: none; }
+  &.switching {
+    pointer-events: none;
+  }
+  &:where(.switching) svg {
+    display: none;
+  }
 
   &.switching::before {
-    content: ""; width: 0.75rem; height: 0.75rem;
-    border: 0.125rem solid currentcolor; border-top-color: transparent;
-    border-radius: 50%; animation: vk-spin 0.6s linear infinite;
+    content: "";
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 0.125rem solid currentcolor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: vk-spin 0.6s linear infinite;
   }
 
   &.pending {
-    border-color: var(--c-accent); color: var(--c-accent);
+    border-color: var(--c-accent);
+    color: var(--c-accent);
     animation: vk-breathe 1.8s ease-in-out infinite;
   }
 }
 
-.pill-spacer { flex: 1; }
+.pill-spacer {
+  flex: 1;
+}
 
 /* Auto-approve crew pill: shield icon, toggles on/off. Active state
    uses green to match the "approved" semantic. Hidden when no crew
@@ -174,9 +246,10 @@
   color: var(--c-accent);
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
   border-color: var(--c-accent);
-  transition: color var(--dur-spring) var(--ease-spring),
-              background var(--dur-spring) var(--ease-spring),
-              border-color var(--dur-spring) var(--ease-spring);
+  transition:
+    color var(--dur-spring) var(--ease-spring),
+    background var(--dur-spring) var(--ease-spring),
+    border-color var(--dur-spring) var(--ease-spring);
 }
 
 .pill-supervised.has-pending {
@@ -279,9 +352,15 @@
   line-height: 1;
 }
 
-.supervised-pending-row[data-kind="create"] .supervised-row-glyph { color: var(--c-green); }
-.supervised-pending-row[data-kind="delete"] .supervised-row-glyph { color: var(--c-red); }
-.supervised-pending-row[data-kind="edit"]   .supervised-row-glyph { color: var(--c-accent); }
+.supervised-pending-row[data-kind="create"] .supervised-row-glyph {
+  color: var(--c-green);
+}
+.supervised-pending-row[data-kind="delete"] .supervised-row-glyph {
+  color: var(--c-red);
+}
+.supervised-pending-row[data-kind="edit"] .supervised-row-glyph {
+  color: var(--c-accent);
+}
 
 .supervised-row-file {
   overflow: hidden;
@@ -352,7 +431,8 @@
 
 /* awaiting_approval status pill: warmer tone than in_progress to make
  * the "your turn" state legible at a glance. */
-.tool-status.awaiting_approval { /* stylelint-disable-line selector-class-pattern -- mirrors in_progress snake_case; server API value */
+.tool-status.awaiting_approval {
+  /* stylelint-disable-line selector-class-pattern -- mirrors in_progress snake_case; server API value */
   color: var(--c-yellow);
   background: color-mix(in srgb, var(--c-yellow) 14%, transparent);
 }
@@ -368,58 +448,106 @@
 
 /* Task list pill */
 .pill-badge {
-  font-size: 0.5rem; font-weight: var(--fw-semibold);
-  background: var(--c-accent); color: #fff;
-  border-radius: 0.5rem; padding: 0 0.25rem;
-  min-width: 0.875rem; text-align: center; line-height: 1.4;
+  font-size: 0.5rem;
+  font-weight: var(--fw-semibold);
+  background: var(--c-accent);
+  color: #fff;
+  border-radius: 0.5rem;
+  padding: 0 0.25rem;
+  min-width: 0.875rem;
+  text-align: center;
+  line-height: 1.4;
 }
-.task-list-items { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 12rem; }
-.task-item { display: flex; align-items: flex-start; gap: var(--sp-1); font-size: var(--fs-sm); }
-.task-icon { flex-shrink: 0; width: 1rem; text-align: center; }
-.task-text { color: var(--c-text-secondary); }
-.task-completed .task-text { text-decoration: line-through; color: var(--c-text-tertiary); }
+.task-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 12rem;
+}
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+}
+.task-icon {
+  flex-shrink: 0;
+  width: 1rem;
+  text-align: center;
+}
+.task-text {
+  color: var(--c-text-secondary);
+}
+.task-completed .task-text {
+  text-decoration: line-through;
+  color: var(--c-text-tertiary);
+}
 
 /* --- Expandable pill system --- */
 
-.pill-expandable { position: relative; }
+.pill-expandable {
+  position: relative;
+}
 
 .pill-expand-content {
-  position: absolute; bottom: calc(100% + var(--sp-1)); left: 0;
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
-  border-radius: 0.75rem; padding: var(--sp-2) var(--sp-3);
+  position: absolute;
+  bottom: calc(100% + var(--sp-1));
+  left: 0;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: 0.75rem;
+  padding: var(--sp-2) var(--sp-3);
   box-shadow: 0 -0.25rem 1rem oklch(0% 0 0deg / 12%);
-  display: flex; align-items: center; gap: var(--sp-2);
-  white-space: nowrap; font-size: var(--fs-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  white-space: nowrap;
+  font-size: var(--fs-xs);
   color: var(--c-text-secondary);
-  opacity: 0; transform: scale(0.4);
+  opacity: 0;
+  transform: scale(0.4);
   transform-origin: bottom left;
-  transition: opacity var(--dur-standard) var(--ease-standard), transform var(--dur-standard) var(--ease-standard);
-  pointer-events: none; z-index: 10;
+  transition:
+    opacity var(--dur-standard) var(--ease-standard),
+    transform var(--dur-standard) var(--ease-standard);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .pill-expand-content.pill-expand-visible {
-  opacity: 1; transform: scale(1);
+  opacity: 1;
+  transform: scale(1);
   pointer-events: auto;
 }
 
 .pill-sep {
-  width: 1px; height: 0.75rem;
-  background: var(--c-border); flex-shrink: 0;
+  width: 1px;
+  height: 0.75rem;
+  background: var(--c-border);
+  flex-shrink: 0;
 }
 
-.pill-detail { color: var(--c-text-primary); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pill-detail {
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Context popup: a taller card with labeled rows. Replaces the old
  * horizontal strip that was hard to scan. Each row is a label on the
  * left, value on the right, monospace-aligned. */
 .pill-context-content {
-  flex-direction: column; align-items: stretch;
-  gap: 0; padding: var(--sp-2) var(--sp-3);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: var(--sp-2) var(--sp-3);
   min-width: 14rem;
 }
 
 .pill-ctx-row {
-  display: flex; align-items: baseline; justify-content: space-between;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--sp-3);
   padding: 0.15rem 0;
 }
@@ -440,8 +568,12 @@
    entry (e.g. tokens-in + tokens-out + credits). Fixed compact grid
    so long unit labels wrap within the pill instead of overflowing. */
 .pill-metering {
-  display: grid; grid-template-columns: auto 1fr; gap: var(--sp-1) var(--sp-3);
-  width: 100%; padding-top: var(--sp-2); margin-top: var(--sp-2);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  width: 100%;
+  padding-top: var(--sp-2);
+  margin-top: var(--sp-2);
   border-top: 1px dashed var(--c-border);
 }
 
@@ -449,53 +581,96 @@
   display: contents;
 }
 
-.pill-metering-label { color: var(--c-text-secondary); font-size: var(--fs-xs); }
+.pill-metering-label {
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+}
 
 .pill-metering-value {
-  color: var(--c-text-primary); font-family: var(--font-mono);
-  font-size: var(--fs-xs); text-align: right;
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: right;
 }
 
 /* Model list expand: vertical list of model buttons. */
 .pill-model-list {
-  flex-direction: column; align-items: stretch; gap: var(--sp-1);
-  min-width: 12rem; max-height: 16rem; overflow-y: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  min-width: 12rem;
+  max-height: 16rem;
+  overflow-y: auto;
   padding: var(--sp-2);
 }
 
 .pill-model-item {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-2); padding: var(--sp-1) var(--sp-2);
-  border: none; background: transparent; border-radius: var(--r);
-  color: var(--c-text-primary); font-size: var(--fs-sm);
-  cursor: pointer; text-align: left; white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
   transition: background 0.1s;
-  &:hover { background: var(--c-bg-tertiary); }
-  &.active { background: var(--c-accent-subtle); color: var(--c-accent); }
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+  &.active {
+    background: var(--c-accent-subtle);
+    color: var(--c-accent);
+  }
 }
 
-.pill-model-meta { color: var(--c-text-tertiary); font-size: var(--fs-xs); }
+.pill-model-meta {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
 
 /* Effort row: pinned at the top of the model expand list. Five tier
  * buttons in a horizontal row with a label. */
 .effort-row {
-  display: flex; align-items: center; gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2); margin-block-end: var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  margin-block-end: var(--sp-1);
   border-bottom: 1px solid var(--c-border);
 }
 .effort-label {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  margin-inline-end: var(--sp-1); white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  margin-inline-end: var(--sp-1);
+  white-space: nowrap;
 }
 .effort-btn {
-  font-size: var(--fs-xs); padding: 0.125rem var(--sp-1);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  background: transparent; color: var(--c-text-secondary);
-  cursor: pointer; white-space: nowrap;
-  transition: background var(--dur-micro), border-color var(--dur-micro);
+  font-size: var(--fs-xs);
+  padding: 0.125rem var(--sp-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-micro),
+    border-color var(--dur-micro);
 }
-.effort-btn:hover { background: var(--c-bg-tertiary); border-color: var(--c-text-tertiary); }
-.effort-btn.active { background: var(--c-accent-subtle); border-color: var(--c-accent); color: var(--c-accent); }
+.effort-btn:hover {
+  background: var(--c-bg-tertiary);
+  border-color: var(--c-text-tertiary);
+}
+.effort-btn.active {
+  background: var(--c-accent-subtle);
+  border-color: var(--c-accent);
+  color: var(--c-accent);
+}
 
 /* Status dot expand: the dot lives in the sidebar footer at the very
  * bottom of the viewport, so growing downward pushes off-screen. Pop
@@ -503,24 +678,34 @@
  * accent on the expanded card. Min-width ensures readability even when
  * the individual status lines are short. */
 .pill-status-content {
-  bottom: calc(100% + var(--sp-1)); top: auto; left: 0;
+  bottom: calc(100% + var(--sp-1));
+  top: auto;
+  left: 0;
   transform-origin: bottom left;
   border-inline-start: 2px solid var(--status-color, var(--c-border));
-  background: color-mix(in srgb, var(--status-color, var(--c-bg-secondary)) 8%, var(--c-bg-secondary));
+  background: color-mix(
+    in srgb,
+    var(--status-color, var(--c-bg-secondary)) 8%,
+    var(--c-bg-secondary)
+  );
   min-width: 11rem;
-  flex-direction: column; align-items: flex-start; white-space: nowrap;
+  flex-direction: column;
+  align-items: flex-start;
+  white-space: nowrap;
 }
 
 /* Status popup separators render horizontally, not vertically, when
  * the content is stacked as a column. */
 .pill-status-content .pill-sep {
-  width: 100%; height: 1px;
+  width: 100%;
+  height: 1px;
   background: color-mix(in srgb, var(--c-border) 50%, transparent);
 }
 
 /* Follow-along pill active state */
 .pill[aria-pressed="true"] {
-  color: var(--c-accent); border-color: var(--c-accent);
+  color: var(--c-accent);
+  border-color: var(--c-accent);
   background: var(--c-accent-subtle);
 }
 
@@ -532,7 +717,9 @@
    * button CSS above. Only overrides needed here are state-specific. */
 
   & svg {
-    width: 1rem; height: 1rem; flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
     transition: transform var(--dur-micro) var(--ease-micro);
   }
 
@@ -543,22 +730,43 @@
   &:where(.queued) {
     color: var(--c-text-secondary);
     cursor: default;
-    & svg { animation: send-hourglass 2s ease-in-out infinite; }
+    & svg {
+      animation: send-hourglass 2s ease-in-out infinite;
+    }
   }
 
   &:where(.blocked) {
-    background: var(--c-yellow, #b88f00); color: oklch(0% 0 0deg);
+    background: var(--c-yellow, #b88f00);
+    color: oklch(0% 0 0deg);
     cursor: default;
-    & svg { transform: none; animation: vk-breathe 1.6s ease-in-out infinite; }
+    & svg {
+      transform: none;
+      animation: vk-breathe 1.6s ease-in-out infinite;
+    }
   }
 
-  &:hover { background: var(--c-accent-hover); }
-  &:active { transform: scale(0.92); transition: transform var(--dur-micro) var(--ease-micro); }
-  &:where(.busy):hover { background: var(--c-accent-hover); }
-  &:where(.queued):hover { background: var(--c-bg-tertiary); filter: none; }
-  &:where(.blocked):hover { background: var(--c-yellow, #b88f00); filter: none; }
+  &:hover {
+    background: var(--c-accent-hover);
+  }
+  &:active {
+    transform: scale(0.92);
+    transition: transform var(--dur-micro) var(--ease-micro);
+  }
+  &:where(.busy):hover {
+    background: var(--c-accent-hover);
+  }
+  &:where(.queued):hover {
+    background: var(--c-bg-tertiary);
+    filter: none;
+  }
+  &:where(.blocked):hover {
+    background: var(--c-yellow, #b88f00);
+    filter: none;
+  }
 
-  &:disabled { cursor: default; }
+  &:disabled {
+    cursor: default;
+  }
 }
 
 /* Split send/cancel button wrapper. In idle state, only the send half
@@ -566,7 +774,8 @@
  * grows to show cancel | divider | spinner. Each half has its own
  * hover effect. The width transition animates the grow/shrink. */
 .send-wrap {
-  display: inline-flex; align-items: center;
+  display: inline-flex;
+  align-items: center;
   border-radius: 1rem;
   background: var(--c-accent);
   overflow: hidden;
@@ -579,10 +788,16 @@
 }
 
 .send-half {
-  display: inline-flex; align-items: center; justify-content: center;
-  border: none; background: transparent; color: #fff;
-  cursor: pointer; padding: 0;
-  min-width: 2.25rem; height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+  min-width: 2.25rem;
+  height: 2rem;
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
@@ -591,7 +806,8 @@
 }
 
 .send-send-half svg {
-  width: 1rem; height: 1rem;
+  width: 1rem;
+  height: 1rem;
 }
 
 .send-cancel-half {
@@ -604,7 +820,8 @@
 }
 
 .send-divider {
-  width: 1px; height: 1rem;
+  width: 1px;
+  height: 1rem;
   background: var(--c-border);
   flex-shrink: 0;
 }
@@ -624,15 +841,27 @@
   transform-origin: center;
 }
 
-
-[id="context-indicator"] { anchor-name: --context-indicator; }
-
+[id="context-indicator"] {
+  anchor-name: --context-indicator;
+}
 
 @keyframes send-hourglass {
-  0%   { transform: rotate(0deg); opacity: 1; }
-  45%  { transform: rotate(0deg); opacity: 1; }
-  55%  { transform: rotate(180deg); opacity: 0.6; }
-  100% { transform: rotate(180deg); opacity: 1; }
+  0% {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  45% {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  55% {
+    transform: rotate(180deg);
+    opacity: 0.6;
+  }
+  100% {
+    transform: rotate(180deg);
+    opacity: 1;
+  }
 }
 
 /* When the input is disabled (queued / blocked), grey it out so the
@@ -644,14 +873,19 @@
 }
 
 .spinner {
-  width: 1rem; height: 1rem; border: 0.125rem solid oklch(100% 0 0deg / 30%);
-  border-top-color: #fff; border-radius: 50%;
+  width: 1rem;
+  height: 1rem;
+  border: 0.125rem solid oklch(100% 0 0deg / 30%);
+  border-top-color: #fff;
+  border-radius: 50%;
   animation: vk-spin 0.8s linear infinite;
 }
 
-
 .spinner-sm {
-  width: 0.875rem; height: 0.875rem; border: 0.125rem solid var(--c-border);
-  border-top-color: var(--c-text-primary); border-radius: 50%;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 0.125rem solid var(--c-border);
+  border-top-color: var(--c-text-primary);
+  border-radius: 50%;
   animation: vk-spin 0.8s linear infinite;
 }

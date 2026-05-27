@@ -14,7 +14,7 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
   error: "Tool install failed",
 });
 
-export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>, unknown>({
+export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>>({
   name: "tools.save",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -42,7 +42,7 @@ export const loadTools = apiAction<void, Record<string, Record<string, Record<st
   error: false,
 });
 
-export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
+export const seedMcp = apiAction<{ name: string; install?: string }>({
   name: "tools.seed_mcp",
   scope: "tools",
   idempotencyKey: true,

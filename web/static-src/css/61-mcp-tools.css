@@ -1,4 +1,3 @@
-
 /* ==========================================================================
    MCP-aware tool rendering
    ========================================================================== */
@@ -9,12 +8,13 @@
 .tool-mcp-badge {
   padding: 0.0625rem var(--sp-2);
   border-radius: 999rem;
-  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   line-height: 1.4;
-  background: oklch(from oklch(75% 0.10 var(--mcp-hue)) l c h / 18%);
-  color: oklch(75% 0.10 var(--mcp-hue));
-  border: 1px solid oklch(from oklch(75% 0.10 var(--mcp-hue)) l c h / 35%);
+  background: oklch(from oklch(75% 0.1 var(--mcp-hue)) l c h / 18%);
+  color: oklch(75% 0.1 var(--mcp-hue));
+  border: 1px solid oklch(from oklch(75% 0.1 var(--mcp-hue)) l c h / 35%);
   flex-shrink: 0;
   white-space: nowrap;
   max-width: 8rem;
@@ -61,33 +61,42 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
-  max-height: 320px; overflow-y: auto;
+  max-height: 320px;
+  overflow-y: auto;
   padding: 4px;
-  display: flex; flex-direction: column; gap: 1px;
-  opacity: 1; transform: scale(1) translateY(0);
-  transition: opacity var(--dur-enter) var(--ease-enter),
-              transform var(--dur-enter) var(--ease-enter),
-              display var(--dur-enter) allow-discrete;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter),
+    display var(--dur-enter) allow-discrete;
 
   @starting-style {
-    opacity: 0; transform: scale(0.95) translateY(4px);
+    opacity: 0;
+    transform: scale(0.95) translateY(4px);
   }
 }
 
 .commands-popover.hidden {
   display: none;
-  opacity: 0; transform: scale(0.95) translateY(4px);
+  opacity: 0;
+  transform: scale(0.95) translateY(4px);
 }
 
 .commands-popover-row {
-  display: flex; gap: var(--sp-3);
+  display: flex;
+  gap: var(--sp-3);
   align-items: baseline;
   padding: var(--sp-2) var(--sp-3);
   border: 0;
   background: transparent;
   color: var(--c-text-primary);
   text-align: left;
-  font-family: inherit; font-size: var(--fs-sm);
+  font-family: inherit;
+  font-size: var(--fs-sm);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -106,16 +115,22 @@
 .commands-popover-desc {
   color: var(--c-text-secondary);
   font-size: var(--fs-xs);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commands-popover-badge {
-  display: inline-block; margin-left: var(--sp-2);
-  padding: 0 0.375rem; border-radius: 999rem;
-  font-size: 0.625rem; font-family: var(--font-sans);
+  display: inline-block;
+  margin-left: var(--sp-2);
+  padding: 0 0.375rem;
+  border-radius: 999rem;
+  font-size: 0.625rem;
+  font-family: var(--font-sans);
   color: var(--c-text-tertiary);
   border: 1px solid var(--c-border);
-  vertical-align: middle; text-transform: uppercase;
+  vertical-align: middle;
+  text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
@@ -142,22 +157,30 @@
   font-style: italic;
 }
 
-
 /* ---------------------------------------------------------------------------
    Wave 1: Animations + reasoning blocks + tool duration
    --------------------------------------------------------------------------- */
 
 /* Thinking indicator: three dots that scale in/out (from ASAI) */
-.thinking-dots { display: inline-flex; gap: 0.2rem; align-items: center; }
+.thinking-dots {
+  display: inline-flex;
+  gap: 0.2rem;
+  align-items: center;
+}
 
 .thinking-dot {
-  width: 0.4rem; height: 0.4rem;
+  width: 0.4rem;
+  height: 0.4rem;
   border-radius: 50%;
   background: var(--c-text-tertiary);
   animation: vk-bounce-dot 1.2s infinite;
 }
-.thinking-dot:nth-child(2) { animation-delay: 0.15s; }
-.thinking-dot:nth-child(3) { animation-delay: var(--dur-enter); }
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dot:nth-child(3) {
+  animation-delay: var(--dur-enter);
+}
 
 /* Contextual working label next to the thinking dots */
 .working-label {
@@ -231,8 +254,11 @@
  * line above (both are thin, muted rows of chrome bracketing a
  * turn). */
 .turn-actions {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-1) 0; margin-block-end: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+  margin-block-end: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   opacity: 0.7;
@@ -245,26 +271,38 @@
 }
 
 .turn-actions-summary {
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   font-style: italic;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .turn-actions-buttons {
-  display: inline-flex; align-items: center; gap: 0.125rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
   flex-shrink: 0;
 }
 
 .turn-action-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.5rem; height: 1.5rem;
-  padding: 0; border: none; background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  background: transparent;
   border-radius: var(--r);
-  color: inherit; cursor: pointer;
+  color: inherit;
+  cursor: pointer;
   opacity: 0.6;
-  transition: opacity var(--dur-micro) var(--ease-micro),
-              background var(--dur-micro) var(--ease-micro),
-              color var(--dur-micro) var(--ease-micro);
+  transition:
+    opacity var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
 }
 
 .turn-action-btn:hover {
@@ -281,7 +319,9 @@
 /* Edit tool card actions (undo + diff). Thin row at the bottom of
  * completed edit tool cards, matching the turn-actions row style. */
 .tool-edit-actions {
-  display: flex; align-items: center; gap: 0.125rem;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
   padding: var(--sp-1) 0 0;
   border-block-start: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
   margin-block-start: var(--sp-1);
@@ -293,7 +333,9 @@
  * error (red) without being alarming. Click opens the editor in
  * diff mode comparing the two versions. */
 .conflict-chip {
-  display: inline-flex; align-items: center; gap: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   margin-inline-start: auto;
   padding: 0.125rem var(--sp-2);
   font-size: var(--fs-xs);
@@ -313,39 +355,56 @@
   outline: 2px solid var(--c-yellow);
   outline-offset: 2px;
 }
-.conflict-chip svg { flex-shrink: 0; }
-.conflict-chip-label { line-height: 1; }
+.conflict-chip svg {
+  flex-shrink: 0;
+}
+.conflict-chip-label {
+  line-height: 1;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .conflict-chip { transition: none; }
+  .conflict-chip {
+    transition: none;
+  }
 }
 
 /* Checkpoint line: a row with "Checkpoint" label on the left, a
  * dashed line filling the middle, and a Restore button at the right.
  * The label sits inline with the line instead of floating above it. */
 .checkpoint-line {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-2) 0; margin: var(--sp-2) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  margin: var(--sp-2) 0;
 }
 
 .checkpoint-line::after {
-  content: ""; flex: 1 1 0;
+  content: "";
+  flex: 1 1 0;
   border-top: 1px dashed var(--c-border);
   min-width: var(--sp-4);
 }
 
 .checkpoint-label {
   flex-shrink: 0;
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  text-transform: uppercase; letter-spacing: 0.05em;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .checkpoint-restore {
-  order: 1; flex-shrink: 0;
-  font-size: var(--fs-xs); color: var(--c-accent);
-  background: none; border: 1px solid var(--c-accent);
-  border-radius: 4px; padding: 2px var(--sp-2);
-  cursor: pointer; transition: background var(--dur-micro) var(--ease-micro);
+  order: 1;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
+  background: none;
+  border: 1px solid var(--c-accent);
+  border-radius: 4px;
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-micro);
 }
 
 .checkpoint-restore:hover {
@@ -353,119 +412,176 @@
 }
 
 .checkpoint-rewind {
-  order: 2; flex-shrink: 0;
-  font-size: var(--fs-xs); color: var(--c-text-secondary);
-  background: none; border: 1px solid var(--c-border);
-  border-radius: 4px; padding: 2px var(--sp-2);
-  cursor: pointer; transition: background var(--dur-micro) var(--ease-micro), border-color var(--dur-micro);
+  order: 2;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro);
 }
 
 .checkpoint-rewind:hover {
-  background: var(--c-bg-tertiary); border-color: var(--c-text-tertiary);
+  background: var(--c-bg-tertiary);
+  border-color: var(--c-text-tertiary);
 }
 
 /* File-change summary banner after a turn */
 .turn-file-changes {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  padding: var(--sp-1) 0; text-align: right;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  padding: var(--sp-1) 0;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 /* Frozen chat state (tangent active on parent) */
 [id="prompt-form"].frozen {
-  opacity: 0.4; pointer-events: none;
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 [id="prompt-form"].frozen::after {
   content: "Paused (tangent active)";
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: var(--fs-sm); color: var(--c-text-tertiary);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
   font-style: italic;
 }
 
 /* Steering inclusion badge */
 .steering-badge {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  font-family: var(--font-mono); padding: var(--sp-1) 0;
-  text-align: center; font-style: italic;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  padding: var(--sp-1) 0;
+  text-align: center;
+  font-style: italic;
 }
 
 /* Prompt suggestions: follow-up pills below the turn summary */
 .prompt-suggestions {
-  display: flex; gap: var(--sp-2); justify-content: center;
-  padding: var(--sp-2) 0; max-width: var(--content-max-w);
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: center;
+  padding: var(--sp-2) 0;
+  max-width: var(--content-max-w);
   margin: 0 auto;
 }
 
 .suggestion-pill {
-  font-size: var(--fs-xs); color: var(--c-text-secondary);
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
-  border-radius: 1rem; padding: var(--sp-1) var(--sp-3);
-  cursor: pointer; white-space: nowrap;
-  transition: background var(--dur-micro) var(--ease-micro),
-              border-color var(--dur-micro) var(--ease-micro);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: 1rem;
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
 }
 
 .suggestion-pill:hover {
-  background: var(--c-bg-tertiary); border-color: var(--c-accent);
+  background: var(--c-bg-tertiary);
+  border-color: var(--c-accent);
   color: var(--c-text-primary);
 }
 
 /* Shell tab bar for agent terminal tabs */
 .shell-tabs {
-  display: flex; gap: 1px; align-items: center;
-  margin-inline: var(--sp-2); flex: 1; overflow-x: auto;
+  display: flex;
+  gap: 1px;
+  align-items: center;
+  margin-inline: var(--sp-2);
+  flex: 1;
+  overflow-x: auto;
 }
 
 .shell-tab {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  background: none; border: none; border-bottom: 2px solid transparent;
-  padding: var(--sp-1) var(--sp-2); cursor: pointer;
-  white-space: nowrap; transition: color var(--dur-micro) var(--ease-micro);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-micro) var(--ease-micro);
 }
-.shell-tab:hover { color: var(--c-text-secondary); }
+.shell-tab:hover {
+  color: var(--c-text-secondary);
+}
 
 .shell-tab.active {
-  color: var(--c-text-primary); border-bottom-color: var(--c-accent);
+  color: var(--c-text-primary);
+  border-bottom-color: var(--c-accent);
 }
 
 .shell-tab.term-exited-ok::after {
-  content: " \2713"; color: var(--c-green);
+  content: " \2713";
+  color: var(--c-green);
 }
 
 .shell-tab.term-exited-err::after {
-  content: " \2717"; color: var(--c-red);
+  content: " \2717";
+  color: var(--c-red);
 }
 
 /* Agent terminal output panes */
-.agent-terminals { flex: 1; overflow: hidden; }
+.agent-terminals {
+  flex: 1;
+  overflow: hidden;
+}
 
 .agent-term-pane {
-  height: 100%; overflow-y: auto;
-  background: var(--c-term-bg); padding: var(--sp-2);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--c-term-bg);
+  padding: var(--sp-2);
 }
 
 .agent-term-output {
-  font-family: var(--font-mono); font-size: var(--fs-sm);
-  color: var(--c-term-fg); white-space: pre-wrap;
-  overflow-wrap: anywhere; margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-term-fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
 }
 
 /* Shell full-screen mode */
 /* stylelint-disable declaration-no-important -- fullscreen override needs specificity */
 .shell-panel.shell-fullscreen {
-  position: fixed !important; inset: 0 !important;
-  z-index: 9999; height: 100vh !important;
-  max-height: none !important; border-radius: 0;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999;
+  height: 100vh !important;
+  max-height: none !important;
+  border-radius: 0;
 }
 /* stylelint-enable declaration-no-important */
-.shell-panel.shell-fullscreen .shell-resize { display: none; }
+.shell-panel.shell-fullscreen .shell-resize {
+  display: none;
+}
 
 /* Tab status dots (thinking/permission indicators) */
 .tab-status-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  flex-shrink: 0; margin-inline-start: var(--sp-1);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-inline-start: var(--sp-1);
 }
 
 .tab-dot-thinking {
@@ -479,11 +595,16 @@
 
 /* Styled tooltip (replaces bare title attributes) */
 .vk-tooltip {
-  position: fixed; z-index: 99999;
-  background: oklch(20% 0.020 283deg); color: oklch(90% 0.010 283deg);
-  font-size: var(--fs-xs); padding: 4px 8px;
-  border-radius: 4px; pointer-events: none;
-  white-space: nowrap; max-width: 20rem;
+  position: fixed;
+  z-index: 99999;
+  background: oklch(20% 0.02 283deg);
+  color: oklch(90% 0.01 283deg);
+  font-size: var(--fs-xs);
+  padding: 4px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 20rem;
   box-shadow: 0 2px 8px oklch(0% 0 0deg / 40%);
   animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
   opacity: 1;
@@ -496,38 +617,59 @@
 
 /* Confirm dialog */
 .vk-confirm-dialog {
-  background: var(--c-bg-secondary); color: var(--c-text-primary);
-  border: 1px solid var(--c-border); border-radius: var(--r);
-  padding: var(--sp-4); max-width: 24rem;
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-4);
+  max-width: 24rem;
   box-shadow: 0 0.5rem 2rem oklch(0% 0 0deg / 50%);
 }
 
 .vk-confirm-dialog::backdrop {
   background: oklch(0% 0 0deg / 50%);
 }
-.vk-confirm-msg { margin-block-end: var(--sp-3); font-size: var(--fs-sm); }
-.vk-confirm-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; }
+.vk-confirm-msg {
+  margin-block-end: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+.vk-confirm-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+}
 
 /* Editor gutter: agent-modified line indicator */
-.gutter-line { line-height: 1.5; }
+.gutter-line {
+  line-height: 1.5;
+}
 
 .gutter-agent-modified {
   position: relative;
 }
 
 .gutter-agent-modified::after {
-  content: ""; position: absolute;
-  right: -4px; top: 50%; transform: translateY(-50%);
-  width: 4px; height: 4px; border-radius: 50%;
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
   background: var(--c-accent);
 }
 
 /* Diff "Ask about this" button */
 .diff-ask-btn {
-  font-size: var(--fs-xs); color: var(--c-accent);
-  background: none; border: 1px solid var(--c-accent);
-  border-radius: 4px; padding: 2px var(--sp-2);
-  cursor: pointer; margin-block-start: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
+  background: none;
+  border: 1px solid var(--c-accent);
+  border-radius: 4px;
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  margin-block-start: var(--sp-1);
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
@@ -536,56 +678,93 @@
 }
 
 /* Hit target minimum: 24px desktop, 44px mobile (Vercel guidelines) */
-:where(.icon-btn, .shell-header-btn, .chip-remove, .tool-toggle,
-.action-pill, .pill, .tab-close) {
-  min-width: 24px; min-height: 24px;
+:where(.icon-btn, .shell-header-btn, .chip-remove, .tool-toggle, .action-pill, .pill, .tab-close) {
+  min-width: 24px;
+  min-height: 24px;
 }
 
 @media (width <= 40rem) {
-  :where(.icon-btn, .shell-header-btn, .chip-remove, .tool-toggle,
-  .action-pill, .pill, .tab-close) {
-    min-width: 44px; min-height: 44px;
+  :where(
+    .icon-btn,
+    .shell-header-btn,
+    .chip-remove,
+    .tool-toggle,
+    .action-pill,
+    .pill,
+    .tab-close
+  ) {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 
 /* Sidebar history section (archived chats) */
-.sidebar-history { padding: 0 var(--sp-2); }
+.sidebar-history {
+  padding: 0 var(--sp-2);
+}
 
 .sidebar-history-toggle {
-  display: flex; align-items: center; gap: var(--sp-1);
-  width: 100%; background: none; border: none; color: var(--c-text-tertiary);
-  font-size: var(--fs-xs); padding: var(--sp-1) var(--sp-2);
-  cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
-.sidebar-history-toggle:hover { color: var(--c-text-secondary); }
+.sidebar-history-toggle:hover {
+  color: var(--c-text-secondary);
+}
 
 .sidebar-history-count {
-  font-size: 0.5rem; background: var(--c-bg-tertiary);
-  border-radius: 0.5rem; padding: 0 0.25rem; min-width: 0.875rem;
+  font-size: 0.5rem;
+  background: var(--c-bg-tertiary);
+  border-radius: 0.5rem;
+  padding: 0 0.25rem;
+  min-width: 0.875rem;
   text-align: center;
 }
-.sidebar-history-list { padding: 0 var(--sp-1); }
+.sidebar-history-list {
+  padding: 0 var(--sp-1);
+}
 
 .history-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: var(--sp-1) var(--sp-2); font-size: var(--fs-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-sm);
   border-radius: var(--r);
   gap: var(--sp-2);
 }
-.history-row:hover { background: var(--c-bg-hover); }
+.history-row:hover {
+  background: var(--c-bg-hover);
+}
 
 .history-name-wrap {
-  display: flex; flex-direction: column; gap: 2px;
-  overflow: hidden; flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  flex: 1;
 }
 
 .history-name {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--c-text-secondary);
 }
 
 .history-summary {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
 }
@@ -593,21 +772,30 @@
 /* Shared summary style for history table rows. Lives under the name
  * row in the History view, same grey-smaller-text treatment. */
 .list-row-title {
-  display: flex; flex-direction: column; gap: 2px;
-  overflow: hidden; flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  flex: 1;
 }
 
 .list-row-summary {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
 }
 
 .history-restore {
-  font-size: var(--fs-xs); color: var(--c-accent);
-  background: none; border: 1px solid var(--c-accent);
-  border-radius: 4px; padding: 1px var(--sp-1);
-  cursor: pointer; flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
+  background: none;
+  border: 1px solid var(--c-accent);
+  border-radius: 4px;
+  padding: 1px var(--sp-1);
+  cursor: pointer;
+  flex-shrink: 0;
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
@@ -617,10 +805,14 @@
 
 /* Tool error explanation button + result */
 .tool-explain-btn {
-  font-size: var(--fs-xs); color: var(--c-accent);
-  background: none; border: 1px solid var(--c-accent);
-  border-radius: 4px; padding: 2px var(--sp-2);
-  cursor: pointer; margin: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--c-accent);
+  background: none;
+  border: 1px solid var(--c-accent);
+  border-radius: 4px;
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  margin: var(--sp-1) var(--sp-3);
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
@@ -629,43 +821,72 @@
 }
 
 .tool-explain-result {
-  font-size: var(--fs-xs); color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
   background: color-mix(in srgb, var(--c-accent) 5%, transparent);
-  border: none; border-radius: 4px;
-  padding: var(--sp-2) var(--sp-3); margin: var(--sp-1) var(--sp-3);
-  font-style: italic; text-align: start; cursor: default;
+  border: none;
+  border-radius: 4px;
+  padding: var(--sp-2) var(--sp-3);
+  margin: var(--sp-1) var(--sp-3);
+  font-style: italic;
+  text-align: start;
+  cursor: default;
 }
 
 /* Load error with retry button */
 .load-error {
-  display: flex; align-items: center; gap: var(--sp-2);
-  justify-content: center; padding: var(--sp-4);
-  color: var(--c-text-tertiary); font-size: var(--fs-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  justify-content: center;
+  padding: var(--sp-4);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
 }
 
 /* Per-hunk action toolbar in diff pane */
 .diff-hunk-toolbar {
-  display: flex; gap: var(--sp-1); padding: 2px var(--sp-2);
+  display: flex;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
   border-top: 1px dashed var(--c-border);
 }
 
 .diff-hunk-btn {
-  font-size: var(--fs-xs); padding: 1px var(--sp-1);
-  border-radius: 4px; border: 1px solid var(--c-border);
-  background: none; cursor: pointer;
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-1);
+  border-radius: 4px;
+  border: 1px solid var(--c-border);
+  background: none;
+  cursor: pointer;
   transition: background var(--dur-micro) var(--ease-micro);
 }
-.diff-hunk-btn.accept { color: var(--c-green); }
-.diff-hunk-btn.accept:hover { background: color-mix(in srgb, var(--c-green) 12%, transparent); }
-.diff-hunk-btn.reject { color: var(--c-red); }
-.diff-hunk-btn.reject:hover { background: color-mix(in srgb, var(--c-red) 12%, transparent); }
-.diff-hunk-btn:disabled { opacity: 0.4; cursor: default; }
+.diff-hunk-btn.accept {
+  color: var(--c-green);
+}
+.diff-hunk-btn.accept:hover {
+  background: color-mix(in srgb, var(--c-green) 12%, transparent);
+}
+.diff-hunk-btn.reject {
+  color: var(--c-red);
+}
+.diff-hunk-btn.reject:hover {
+  background: color-mix(in srgb, var(--c-red) 12%, transparent);
+}
+.diff-hunk-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 /* --- Specificity-sensitive overrides (must come after base declarations) --- */
 
-[id="settings-btn"] svg { transition: transform var(--dur-standard) var(--ease-standard); }
+[id="settings-btn"] svg {
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
 
-[id="settings-btn"].active svg { transform: rotate(45deg); }
+[id="settings-btn"].active svg {
+  transform: rotate(45deg);
+}
 
 /* Disable animations when the chat tab is backgrounded so content
    renders immediately when the user switches back. */

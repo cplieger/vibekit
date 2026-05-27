@@ -27,7 +27,9 @@ vi.mock("../tabs.js", () => ({
 type SSEHandler = (chatID: string, payload: unknown) => void;
 const sseHandlers = new Map<string, SSEHandler>();
 vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => { sseHandlers.set(event, handler); }),
+  onSSE: vi.fn((event: string, handler: SSEHandler) => {
+    sseHandlers.set(event, handler);
+  }),
 }));
 
 // Mock dynamic imports used by chat_deleted

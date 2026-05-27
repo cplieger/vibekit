@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
@@ -13,9 +16,15 @@ vi.mock("../transport.js", async (importOriginal) => {
 });
 
 vi.mock("../store.js", () => ({
-  get: vi.fn(), setThinking: vi.fn(), setSupervisedMode: vi.fn(),
-  setAutoApproveCrew: vi.fn(), enqueuePrompt: vi.fn(), removeChat: vi.fn(),
-  reinsertSession: vi.fn(), indexOfSession: vi.fn(() => 0), setFrozen: vi.fn(),
+  get: vi.fn(),
+  setThinking: vi.fn(),
+  setSupervisedMode: vi.fn(),
+  setAutoApproveCrew: vi.fn(),
+  enqueuePrompt: vi.fn(),
+  removeChat: vi.fn(),
+  reinsertSession: vi.fn(),
+  indexOfSession: vi.fn(() => 0),
+  setFrozen: vi.fn(),
   setModel: vi.fn(),
 }));
 
@@ -59,9 +68,12 @@ describe("retryable transport actions — idempotency key across retries", () =>
     await p;
 
     expect(mockSend).toHaveBeenCalledTimes(3);
-    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
-    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
-    const key3 = (mockSend.mock.calls[2]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
+    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
+    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
+    const key3 = (mockSend.mock.calls[2]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
     expect(key1).toEqual(expect.any(String));
     expect(key1).toBe(key2);
     expect(key2).toBe(key3);
@@ -81,8 +93,10 @@ describe("retryable transport actions — idempotency key across retries", () =>
     await p;
 
     expect(mockSend).toHaveBeenCalledTimes(3);
-    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
-    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
+    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
+    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
     expect(key1).toBe(key2);
   });
 
@@ -99,8 +113,10 @@ describe("retryable transport actions — idempotency key across retries", () =>
     await p;
 
     expect(mockSend).toHaveBeenCalledTimes(2);
-    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
-    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
+    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
+    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
     expect(key1).toEqual(expect.any(String));
     expect(key1).toBe(key2);
   });
@@ -118,15 +134,22 @@ describe("retryable transport actions — idempotency key across retries", () =>
     await p;
 
     expect(mockSend).toHaveBeenCalledTimes(2);
-    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
-    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload?.idempotency_key;
+    const key1 = (mockSend.mock.calls[0]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
+    const key2 = (mockSend.mock.calls[1]![0] as { payload?: { idempotency_key?: string } }).payload
+      ?.idempotency_key;
     expect(key1).toBe(key2);
   });
 });
 
 describe("retryable transport actions — error code propagation", () => {
   it("server error code propagates to registry entry", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 429, error: "rate limited", code: "rate_limit" });
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 429,
+      error: "rate limited",
+      code: "rate_limit",
+    });
 
     const p = resolveAllPending.dispatch({ chatID: "c1", action: "reject" });
     // 429 is transient → retries up to 2 times with 300ms delay
@@ -143,7 +166,12 @@ describe("retryable transport actions — error code propagation", () => {
 
   it("network code is retried, non-network code is not", async () => {
     // server_rejected is in PERMANENT_FAILURE_CODES — should NOT retry
-    mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request", code: "server_rejected" });
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 400,
+      error: "bad request",
+      code: "server_rejected",
+    });
 
     const p = resolvePendingChange.dispatch({ chatID: "c1", toolCallID: "tc1", action: "reject" });
     await vi.advanceTimersByTimeAsync(1000); // give time for potential retries

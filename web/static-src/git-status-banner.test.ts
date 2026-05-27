@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
-  initStatusBanner, setBanner, clearBanner, _resetBannerState,
+  initStatusBanner,
+  setBanner,
+  clearBanner,
+  _resetBannerState,
 } from "./git-status-banner.js";
 
 function setupDOM(): void {
@@ -40,16 +43,18 @@ describe("git-status-banner", () => {
     expect(bannerEl().classList.contains("hidden")).toBe(false);
     expect(visibleState()).toBe("forge-auth-failed");
     expect(bannerEl().textContent).toContain("Forge authentication issue");
-    expect(bannerEl().querySelector<HTMLButtonElement>("[data-banner-cta]")?.textContent)
-      .toBe("Open Settings → Git");
+    expect(bannerEl().querySelector<HTMLButtonElement>("[data-banner-cta]")?.textContent).toBe(
+      "Open Settings → Git",
+    );
   });
 
   it("renders gh-cli-missing when set", () => {
     setBanner("gh-cli-missing");
     expect(visibleState()).toBe("gh-cli-missing");
     expect(bannerEl().textContent).toContain("GitHub CLI not authenticated");
-    expect(bannerEl().querySelector<HTMLButtonElement>("[data-banner-cta]")?.textContent)
-      .toBe("Authenticate with gh");
+    expect(bannerEl().querySelector<HTMLButtonElement>("[data-banner-cta]")?.textContent).toBe(
+      "Authenticate with gh",
+    );
   });
 
   it("renders forges-not-connected when set", () => {

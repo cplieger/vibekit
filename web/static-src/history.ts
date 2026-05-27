@@ -29,7 +29,7 @@ class HistoryController {
   /** Per-row delete-button bindings keyed by chat id. Cleared per row
    *  via reconcile's onRemove hook so loadHistoryTable doesn't accrue
    *  dangling subscriptions across re-renders. */
-  private rowUnbinds: Map<string, () => void> = new Map();
+  private rowUnbinds = new Map<string, () => void>();
 
   init(): void {
     const toggle = document.getElementById("history-toggle");
@@ -38,13 +38,22 @@ class HistoryController {
       toggle.addEventListener("click", () => {
         const open = !list.classList.contains("hidden");
         list.classList.toggle("hidden", open);
-        if (!open) void this.loadArchived();
+        if (!open) {
+          void this.loadArchived();
+        }
       });
     }
   }
 
   showView(): void {
-    toggleHistoryView(() => { void this.loadHistoryTable(); }, () => { this.teardown(); });
+    toggleHistoryView(
+      () => {
+        void this.loadHistoryTable();
+      },
+      () => {
+        this.teardown();
+      },
+    );
   }
 
   teardown(): void {
@@ -53,13 +62,17 @@ class HistoryController {
     this.tableAbortController = null;
     this.archivedController?.abort();
     this.archivedController = null;
-    for (const u of this.rowUnbinds.values()) u();
+    for (const u of this.rowUnbinds.values()) {
+      u();
+    }
     this.rowUnbinds.clear();
   }
 
   async loadHistoryTable(): Promise<void> {
     const container = document.getElementById("history-table");
-    if (container === null) return;
+    if (container === null) {
+      return;
+    }
 
     loadHistory.cancel();
     this.tableAbortController?.abort();
@@ -67,7 +80,9 @@ class HistoryController {
     const { signal } = this.tableAbortController;
 
     const d = await loadHistory.dispatch(undefined);
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
     if (d === null) {
       this.flushRowUnbinds();
@@ -82,7 +97,9 @@ class HistoryController {
 
     // Drop any non-keyed sibling (empty/error placeholder) before reconcile.
     for (const child of [...container.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
 
     if (chats.length === 0) {
@@ -100,42 +117,64 @@ class HistoryController {
       mount: (c) => this.buildHistoryTableRow(c),
       onRemove: (_, key) => {
         const u = this.rowUnbinds.get(key);
-        if (u !== undefined) { u(); this.rowUnbinds.delete(key); }
+        if (u !== undefined) {
+          u();
+          this.rowUnbinds.delete(key);
+        }
       },
     });
 
     // Bug 1: Use signal-bound listener so it's automatically removed on next
     // loadHistoryTable call (which aborts tableAbortController).
-    container.addEventListener("click", (e) => {
-      const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-      if (target === null) return;
-      const row = target.closest<HTMLElement>("[data-chat-id]");
-      if (row === null) return;
-      const chatId = row.getAttribute("data-chat-id")!;
-      const action = target.getAttribute("data-action");
-      if (action === "restore") {
-        // Bug 4: optimistic-remove the row to prevent double-click dispatches.
-        row.remove();
-        const u = this.rowUnbinds.get(chatId);
-        if (u !== undefined) { u(); this.rowUnbinds.delete(chatId); }
-        restoreArchivedChat(chatId);
-      } else if (action === "delete") {
-        // Bug 4: optimistic-remove the row on click.
-        row.remove();
-        const u = this.rowUnbinds.get(chatId);
-        if (u !== undefined) { u(); this.rowUnbinds.delete(chatId); }
-        if (container.querySelector("[data-chat-id]") === null) {
-          const empty = document.createElement("div");
-          empty.className = "list-empty";
-          empty.textContent = "No archived chats.";
-          container.appendChild(empty);
+    container.addEventListener(
+      "click",
+      (e) => {
+        const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
+        if (target === null) {
+          return;
         }
-        void deleteArchivedChat.dispatch(chatId);
-      }
-    }, { signal });
+        const row = target.closest<HTMLElement>("[data-chat-id]");
+        if (row === null) {
+          return;
+        }
+        const chatId = row.getAttribute("data-chat-id")!;
+        const action = target.getAttribute("data-action");
+        if (action === "restore") {
+          // Bug 4: optimistic-remove the row to prevent double-click dispatches.
+          row.remove();
+          const u = this.rowUnbinds.get(chatId);
+          if (u !== undefined) {
+            u();
+            this.rowUnbinds.delete(chatId);
+          }
+          restoreArchivedChat(chatId);
+        } else if (action === "delete") {
+          // Bug 4: optimistic-remove the row on click.
+          row.remove();
+          const u = this.rowUnbinds.get(chatId);
+          if (u !== undefined) {
+            u();
+            this.rowUnbinds.delete(chatId);
+          }
+          if (container.querySelector("[data-chat-id]") === null) {
+            const empty = document.createElement("div");
+            empty.className = "list-empty";
+            empty.textContent = "No archived chats.";
+            container.appendChild(empty);
+          }
+          void deleteArchivedChat.dispatch(chatId);
+        }
+      },
+      { signal },
+    );
   }
 
-  private buildHistoryTableRow(chat: { id: string; name: string; summary?: string; updated_at: number }): HTMLElement {
+  private buildHistoryTableRow(chat: {
+    id: string;
+    name: string;
+    summary?: string;
+    updated_at: number;
+  }): HTMLElement {
     const row = document.createElement("div");
     row.className = "list-row history-table-row";
     row.setAttribute("data-chat-entry", "");
@@ -174,7 +213,9 @@ class HistoryController {
   }
 
   private flushRowUnbinds(): void {
-    for (const u of this.rowUnbinds.values()) u();
+    for (const u of this.rowUnbinds.values()) {
+      u();
+    }
     this.rowUnbinds.clear();
   }
 
@@ -182,7 +223,9 @@ class HistoryController {
     const list = document.getElementById("history-list");
     const count = document.getElementById("history-count");
     const section = document.getElementById("sidebar-history");
-    if (list === null) return;
+    if (list === null) {
+      return;
+    }
 
     this.archivedController?.abort();
     this.archivedController = new AbortController();
@@ -191,10 +234,14 @@ class HistoryController {
     // Intentional: uses raw apiGet instead of an action because this is a
     // sidebar background fetch — no toast desired on failure (POLICY: LOG ONLY).
     const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     const chats = d?.chats ?? [];
 
-    if (section !== null) section.classList.toggle("hidden", chats.length === 0);
+    if (section !== null) {
+      section.classList.toggle("hidden", chats.length === 0);
+    }
     if (count !== null) {
       count.textContent = String(chats.length);
       count.classList.toggle("hidden", chats.length === 0);
@@ -202,7 +249,9 @@ class HistoryController {
 
     // Drop non-keyed empty-state placeholder before reconcile.
     for (const child of [...list.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
 
     if (chats.length === 0) {
@@ -221,18 +270,26 @@ class HistoryController {
     });
 
     // Bug 1: Use signal-bound listener so it's removed on next loadArchived call.
-    list.addEventListener("click", (e) => {
-      const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-      if (target === null) return;
-      const row = target.closest<HTMLElement>("[data-chat-id]");
-      if (row === null) return;
-      const chatId = row.getAttribute("data-chat-id")!;
-      if (target.getAttribute("data-action") === "restore") {
-        // Bug 4: optimistic-remove row to prevent double-click.
-        row.remove();
-        restoreArchivedChat(chatId);
-      }
-    }, { signal });
+    list.addEventListener(
+      "click",
+      (e) => {
+        const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
+        if (target === null) {
+          return;
+        }
+        const row = target.closest<HTMLElement>("[data-chat-id]");
+        if (row === null) {
+          return;
+        }
+        const chatId = row.getAttribute("data-chat-id")!;
+        if (target.getAttribute("data-action") === "restore") {
+          // Bug 4: optimistic-remove row to prevent double-click.
+          row.remove();
+          restoreArchivedChat(chatId);
+        }
+      },
+      { signal },
+    );
   }
 }
 
@@ -262,7 +319,13 @@ function buildArchivedSidebarRow(chat: ArchivedHeader): HTMLElement {
 }
 
 const historyCtrl = new HistoryController();
-registerCleanup(() => historyCtrl.teardown());
+registerCleanup(() => {
+  historyCtrl.teardown();
+});
 
-export function initHistory(): void { historyCtrl.init(); }
-export function showHistoryView(): void { historyCtrl.showView(); }
+export function initHistory(): void {
+  historyCtrl.init();
+}
+export function showHistoryView(): void {
+  historyCtrl.showView();
+}

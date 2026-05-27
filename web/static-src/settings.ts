@@ -12,9 +12,7 @@ import { restoreFileBrowser } from "./files.js";
 import { restoreEditorTabs } from "./editor-core.js";
 import { restoreShell } from "./shell.js";
 import { initTools, loadToolsList } from "./tools.js";
-import {
-  restoreNotifications,
-} from "./notify.js";
+import { restoreNotifications } from "./notify.js";
 import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
 import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
@@ -63,9 +61,15 @@ export async function syncSettings(): Promise<AppSettings> {
  *  this also restores shell, file browser, editor tabs, and theme. */
 export function restoreAll(s: AppSettings): void {
   const ui = uiState.load();
-  if (ui.shell_open) restoreShell();
-  if (ui.fb_path !== "") restoreFileBrowser(ui.fb_path);
-  if (ui.editor_files.length > 0) restoreEditorTabs(ui.editor_files);
+  if (ui.shell_open) {
+    restoreShell();
+  }
+  if (ui.fb_path !== "") {
+    restoreFileBrowser(ui.fb_path);
+  }
+  if (ui.editor_files.length > 0) {
+    restoreEditorTabs(ui.editor_files);
+  }
 
   const autoUpdateToggle = $.autoUpdateToggle;
   autoUpdateToggle.checked = s.auto_update !== false;
@@ -84,8 +88,9 @@ export function initUI(): void {
 
   // Settings gear opens the tabbed Settings panel. Default tab is General;
   // deep-link URLs (e.g. /settings/tools) override this via applyRoute.
-  $.settingsBtn.addEventListener("click", () =>
-    toggleSettingsView("general", loadToolsList));
+  $.settingsBtn.addEventListener("click", () => {
+    toggleSettingsView("general", loadToolsList);
+  });
 
   initSettingsTabs();
   initSteeringEditor();
@@ -106,8 +111,9 @@ export function initUI(): void {
   // here. (forge-auth.ts is still imported because it powers the
   // accounts UI inside that Sources tab.)
 
-  $.gitBtn.addEventListener("click", () =>
-    toggleGitView(loadGitRepos));
+  $.gitBtn.addEventListener("click", () => {
+    toggleGitView(loadGitRepos);
+  });
   initGitPanel();
 }
 
@@ -119,7 +125,9 @@ function initSteeringEditor(): void {
   let saveGen = 0;
 
   void apiGet<{ content?: string }>("/api/steering").then((d) => {
-    if (d?.content !== undefined) textarea.value = d.content;
+    if (d?.content !== undefined) {
+      textarea.value = d.content;
+    }
   });
 
   textarea.addEventListener("input", () => {
@@ -127,11 +135,16 @@ function initSteeringEditor(): void {
     showSaving();
     timer = setTimeout(() => {
       const gen = ++saveGen;
-      void saveSteering.dispatch({ content: textarea.value }, { silent: true })
-        .then((r) => {
-          if (gen !== saveGen) return; // newer save pending, skip indicator update
-          if (r === null) showError(); else showSaved();
-        });
+      void saveSteering.dispatch({ content: textarea.value }, { silent: true }).then((r) => {
+        if (gen !== saveGen) {
+          return;
+        } // newer save pending, skip indicator update
+        if (r === null) {
+          showError();
+        } else {
+          showSaved();
+        }
+      });
     }, 600);
   });
 
@@ -155,7 +168,10 @@ function initLogoutButton(): void {
 
 // --- About / Diagnostics (Settings → General) ---
 
-interface VersionPayload { vibekit?: string; kiro_cli?: string }
+interface VersionPayload {
+  vibekit?: string;
+  kiro_cli?: string;
+}
 
 /** Fetches build versions once at Settings init and renders the About
  *  grid. Both values are passive — they don't change until container
@@ -164,8 +180,12 @@ async function loadAbout(): Promise<void> {
   const v = await apiGet<VersionPayload>("/api/version");
   const vibekitEl = document.getElementById("about-vibekit");
   const kiroEl = document.getElementById("about-kirocli");
-  if (vibekitEl !== null) vibekitEl.textContent = v?.vibekit ?? "—";
-  if (kiroEl !== null) kiroEl.textContent = v?.kiro_cli ?? "—";
+  if (vibekitEl !== null) {
+    vibekitEl.textContent = v?.vibekit ?? "—";
+  }
+  if (kiroEl !== null) {
+    kiroEl.textContent = v?.kiro_cli ?? "—";
+  }
 }
 
 /** Wires the "Run diagnostics" button. Shows a spinner while kiro-cli
@@ -175,7 +195,9 @@ async function loadAbout(): Promise<void> {
 function initDiagnostics(): void {
   const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
-  if (btn === null || status === null) return;
+  if (btn === null || status === null) {
+    return;
+  }
 
   bindLoadingState("tools.run_diagnostics", btn, { pendingClass: "btn-loading" });
 
@@ -204,7 +226,9 @@ function initDiagnostics(): void {
  *  Called on startup to populate the sidebar email. */
 async function loadIdentity(): Promise<void> {
   const info = await apiGet<WhoamiResponse>("/api/whoami");
-  if (info?.email !== undefined && info.email !== "") setUserEmail(info.email);
+  if (info?.email !== undefined && info.email !== "") {
+    setUserEmail(info.email);
+  }
 }
 
 // --- User display ---
@@ -221,7 +245,10 @@ export function setUserEmail(email: string): void {
 // UI lets the user flip them individually if they want the memory /
 // disk / context-window savings of the slimmer variant.
 
-interface KiroSettingPayload { key?: string; value?: string }
+interface KiroSettingPayload {
+  key?: string;
+  value?: string;
+}
 
 // experimentalFlags is the single source of truth for which kiro-cli
 // flags we expose in the UI. Adding a row here creates the toggle,
@@ -232,11 +259,11 @@ const experimentalFlags: readonly {
   inverted?: boolean;
 }[] = [
   { key: "chat.enableCheckpoint", inputID: "flag-checkpoint" },
-  { key: "chat.enableTodoList",   inputID: "flag-todolist" },
-  { key: "chat.enableKnowledge",  inputID: "flag-knowledge" },
-  { key: "hooks.showStatus",      inputID: "flag-hooks-status" },
-  { key: "telemetry.enabled",     inputID: "flag-telemetry" },
-  { key: "toolSearch.enabled",    inputID: "flag-tool-search" },
+  { key: "chat.enableTodoList", inputID: "flag-todolist" },
+  { key: "chat.enableKnowledge", inputID: "flag-knowledge" },
+  { key: "hooks.showStatus", inputID: "flag-hooks-status" },
+  { key: "telemetry.enabled", inputID: "flag-telemetry" },
+  { key: "toolSearch.enabled", inputID: "flag-tool-search" },
 ];
 
 function initExperimentalToggles(): void {
@@ -250,7 +277,9 @@ function initExperimentalToggles(): void {
   ).then((results) => {
     for (let i = 0; i < experimentalFlags.length; i++) {
       const input = inputs[i] ?? null;
-      if (input === null) continue;
+      if (input === null) {
+        continue;
+      }
       const v = results[i]?.value ?? "";
       const isOn = v === "" || v === "true";
       input.checked = experimentalFlags[i]!.inverted ? !isOn : isOn;
@@ -259,19 +288,38 @@ function initExperimentalToggles(): void {
   for (let i = 0; i < experimentalFlags.length; i++) {
     const flag = experimentalFlags[i]!;
     const input = inputs[i] ?? null;
-    if (input === null) continue;
+    if (input === null) {
+      continue;
+    }
     input.addEventListener("change", () => {
       showSaving();
       const gen = ++kiroSettingGen;
       const wireValue = flag.inverted
-        ? (input.checked ? "false" : "true")
-        : (input.checked ? "true" : "false");
-      void setKiroSetting.dispatch({
-        key: flag.key,
-        value: wireValue,
-        input,
-      }, { silent: true })
-        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
+        ? input.checked
+          ? "false"
+          : "true"
+        : input.checked
+          ? "true"
+          : "false";
+      void setKiroSetting
+        .dispatch(
+          {
+            key: flag.key,
+            value: wireValue,
+            input,
+          },
+          { silent: true },
+        )
+        .then((r) => {
+          if (gen !== kiroSettingGen) {
+            return;
+          }
+          if (r === null) {
+            showError();
+          } else {
+            showSaved();
+          }
+        });
     });
   }
   initCompactionSettings();
@@ -286,7 +334,11 @@ const compactionSettings: readonly {
 }[] = [
   { key: "chat.disableAutoCompaction", inputID: "flag-auto-compact", isBool: true },
   { key: "compaction.excludeMessages", inputID: "compact-keep-messages", isBool: false },
-  { key: "compaction.excludeContextWindowPercent", inputID: "compact-context-buffer", isBool: false },
+  {
+    key: "compaction.excludeContextWindowPercent",
+    inputID: "compact-context-buffer",
+    isBool: false,
+  },
   // Chat retention (auto-archive lifetime). kiro-cli calls this
   // "cleanup.periodDays" and uses it both for its own session
   // cleanup and as the retention window for vibekit's archived
@@ -304,8 +356,12 @@ function initCompactionSettings(): void {
   for (let i = 0; i < compactionSettings.length; i++) {
     const s = compactionSettings[i]!;
     const input = inputs[i] ?? null;
-    if (input === null || s.isBool) continue;
-    input.addEventListener("focus", () => { snapshots.set(input, input.value); });
+    if (input === null || s.isBool) {
+      continue;
+    }
+    input.addEventListener("focus", () => {
+      snapshots.set(input, input.value);
+    });
   }
   void Promise.all(
     compactionSettings.map((s) =>
@@ -315,19 +371,25 @@ function initCompactionSettings(): void {
     for (let i = 0; i < compactionSettings.length; i++) {
       const s = compactionSettings[i]!;
       const input = inputs[i] ?? null;
-      if (input === null) continue;
+      if (input === null) {
+        continue;
+      }
       const v = results[i]?.value ?? "";
       if (s.isBool) {
         input.checked = v !== "true";
       } else {
-        if (v !== "") input.value = v;
+        if (v !== "") {
+          input.value = v;
+        }
       }
     }
   });
   for (let i = 0; i < compactionSettings.length; i++) {
     const s = compactionSettings[i]!;
     const input = inputs[i] ?? null;
-    if (input === null) continue;
+    if (input === null) {
+      continue;
+    }
     input.addEventListener("change", () => {
       let value: string;
       if (s.isBool) {
@@ -336,16 +398,31 @@ function initCompactionSettings(): void {
         value = input.value;
       }
       const previousValue = s.isBool ? undefined : snapshots.get(input);
-      if (!s.isBool) snapshots.set(input, input.value);
+      if (!s.isBool) {
+        snapshots.set(input, input.value);
+      }
       showSaving();
       const gen = ++kiroSettingGen;
-      void setKiroSetting.dispatch({
-        key: s.key,
-        value,
-        input,
-        ...(previousValue !== undefined ? { previousValue } : {}),
-      }, { silent: true })
-        .then((r) => { if (gen !== kiroSettingGen) return; if (r === null) showError(); else showSaved(); });
+      void setKiroSetting
+        .dispatch(
+          {
+            key: s.key,
+            value,
+            input,
+            ...(previousValue !== undefined ? { previousValue } : {}),
+          },
+          { silent: true },
+        )
+        .then((r) => {
+          if (gen !== kiroSettingGen) {
+            return;
+          }
+          if (r === null) {
+            showError();
+          } else {
+            showSaved();
+          }
+        });
     });
   }
 }
@@ -368,9 +445,11 @@ function initCompactionSettings(): void {
 
 function initDebugLogsToggle(initial: AppSettings): void {
   const input = document.getElementById("flag-debug-logs") as HTMLInputElement | null;
-  if (input === null) return;
+  if (input === null) {
+    return;
+  }
   input.checked = initial.debug_logs === true;
   input.addEventListener("change", () => {
-    patchSettings({ debug_logs: input.checked }, input);
+    void patchSettings({ debug_logs: input.checked }, input);
   });
 }

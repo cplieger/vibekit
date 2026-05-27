@@ -17,7 +17,9 @@ export interface DragDropContext {
 
 export function initBrowserDragDrop(ctx: DragDropContext): void {
   const wrap = $.fbList.parentElement;
-  if (wrap === null) return;
+  if (wrap === null) {
+    return;
+  }
   let dropTargetFolder = "";
 
   const clearDropTarget = (): void => {
@@ -31,9 +33,9 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
     container: wrap,
     overlay: $.fbDropOverlay,
     onDragOver: (e) => {
-      const row = (e.target as HTMLElement).closest(".fb-row") as HTMLDivElement | null;
+      const row = (e.target as HTMLElement).closest(".fb-row");
       if (row !== null) {
-        const name = row.dataset["name"];
+        const name = row.dataset.name;
         const entryMap = ctx.getEntryMap();
         const entry = name !== undefined ? entryMap.get(name) : undefined;
         if (entry?.isDir === true) {
@@ -45,20 +47,27 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
           return;
         }
       }
-      if (dropTargetFolder !== "") clearDropTarget();
+      if (dropTargetFolder !== "") {
+        clearDropTarget();
+      }
     },
     onDragLeave: clearDropTarget,
     onDrop: (files) => {
       const currentPath = ctx.getCurrentPath();
-      const targetDir = dropTargetFolder !== ""
-        ? joinPath(currentPath, dropTargetFolder) : currentPath;
+      const targetDir =
+        dropTargetFolder !== "" ? joinPath(currentPath, dropTargetFolder) : currentPath;
       dropTargetFolder = "";
-      void upload.dispatch({ files, targetDir }, {
-        onSuccess: (paths) => {
-          ctx.reload();
-          for (const p of paths) attachPathToActiveChat(p);
+      void upload.dispatch(
+        { files, targetDir },
+        {
+          onSuccess: (paths) => {
+            ctx.reload();
+            for (const p of paths) {
+              attachPathToActiveChat(p);
+            }
+          },
         },
-      });
+      );
     },
   });
 }

@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
@@ -25,8 +28,12 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("dedupe + retry interaction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("deduped caller's onError fires with the real error after retries exhaust", async () => {
     let attempt = 0;
@@ -113,7 +120,9 @@ describe("dedupe + retry interaction", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch("z");
@@ -223,7 +232,10 @@ describe("cancel during scope-queued wait", () => {
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_occ",
       scope: "q-cancel",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => r("occ");
+        }),
     });
 
     const victim = defineAction<void, string>({
@@ -275,7 +287,10 @@ describe("cancel during scope-queued wait", () => {
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_cb_occ",
       scope: "q-cancel-cb",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => r("occ");
+        }),
     });
 
     const victim = defineAction<void, string>({
@@ -308,7 +323,10 @@ describe("cancel during scope-queued wait", () => {
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_reg_occ",
       scope: "q-cancel-reg",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => r("occ");
+        }),
     });
 
     const victim = defineAction<void, string>({
@@ -340,8 +358,12 @@ describe("cancel during scope-queued wait", () => {
 // ===========================================================================
 
 describe("retry exhaustion callbacks fire before next scope entry", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("onSettled fires before the next queued action's run() begins", async () => {
     const order: string[] = [];
@@ -352,7 +374,9 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 30 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const follower = defineAction<void, string>({
@@ -365,8 +389,12 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     });
 
     const pRetrier = retrier.dispatch(undefined, {
-      onError: () => { order.push("retrier-onError"); },
-      onSettled: () => { order.push("retrier-onSettled"); },
+      onError: () => {
+        order.push("retrier-onError");
+      },
+      onSettled: () => {
+        order.push("retrier-onSettled");
+      },
     });
     await Promise.resolve();
     const pFollower = follower.dispatch();
@@ -408,7 +436,9 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     });
 
     const pRetrier = retrier.dispatch(undefined, {
-      onSuccess: () => { order.push("retrier-onSuccess"); },
+      onSuccess: () => {
+        order.push("retrier-onSuccess");
+      },
     });
     await Promise.resolve();
     const pFollower = follower.dispatch();
@@ -594,8 +624,12 @@ describe("onSuccess re-dispatch with dedupe", () => {
 // ===========================================================================
 
 describe("retry + cancel race at success boundary", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel during retry backoff prevents subsequent retry attempt", async () => {
     let attempt = 0;
@@ -632,7 +666,9 @@ describe("retry + cancel race at success boundary", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 50 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();
@@ -660,11 +696,14 @@ describe("scope + optimistic + cancel interaction", () => {
       name: "test.opt_cancel_rollback",
       scope: "opt-cancel",
       optimistic: (args) => `snapshot-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       error: false,
-      run: (_args, signal) => new Promise<string>((_, reject) => {
-        signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }),
+      run: (_args, signal) =>
+        new Promise<string>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
     });
 
     const p = action.dispatch("x");
@@ -685,14 +724,19 @@ describe("scope + optimistic + cancel interaction", () => {
     const occupant = defineAction<void, string>({
       name: "test.opt_cancel_occ",
       scope: "opt-cancel-q",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => r("occ");
+        }),
     });
 
     const victim = defineAction<string, string, string>({
       name: "test.opt_cancel_victim",
       scope: "opt-cancel-q",
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       error: false,
       run: () => Promise.resolve("never"),
     });

@@ -15,17 +15,47 @@ describe("isRunnableShell", () => {
     { name: "non-shell lang go rejected", lang: "go", text: "fmt.Println()", expected: false },
     { name: "empty text rejected", lang: "bash", text: "", expected: false },
     { name: "whitespace-only text rejected", lang: "bash", text: "   \n  ", expected: false },
-    { name: "shebang prefix rejected", lang: "bash", text: "#!/bin/bash\necho hi", expected: false },
-    { name: "shebang with env rejected", lang: "sh", text: "#!/usr/bin/env bash\nls", expected: false },
+    {
+      name: "shebang prefix rejected",
+      lang: "bash",
+      text: "#!/bin/bash\necho hi",
+      expected: false,
+    },
+    {
+      name: "shebang with env rejected",
+      lang: "sh",
+      text: "#!/usr/bin/env bash\nls",
+      expected: false,
+    },
     { name: "4-line script rejected", lang: "bash", text: "a\nb\nc\nd", expected: false },
     { name: "3-line script accepted", lang: "bash", text: "a\nb\nc", expected: true },
     { name: "sudo command rejected", lang: "bash", text: "sudo apt install foo", expected: false },
     { name: "ssh command rejected", lang: "bash", text: "ssh user@host", expected: false },
-    { name: "scp command rejected", lang: "bash", text: "scp file.txt host:/tmp/", expected: false },
+    {
+      name: "scp command rejected",
+      lang: "bash",
+      text: "scp file.txt host:/tmp/",
+      expected: false,
+    },
     { name: "rsync command rejected", lang: "bash", text: "rsync -av src/ dest/", expected: false },
-    { name: "dangerous command mid-line rejected", lang: "sh", text: "echo hi && sudo rm -rf /", expected: false },
-    { name: "text with blank lines counts only non-empty", lang: "bash", text: "a\n\nb\n\nc", expected: true },
-    { name: "3 non-empty lines with trailing newline accepted", lang: "bash", text: "a\nb\nc\n", expected: true },
+    {
+      name: "dangerous command mid-line rejected",
+      lang: "sh",
+      text: "echo hi && sudo rm -rf /",
+      expected: false,
+    },
+    {
+      name: "text with blank lines counts only non-empty",
+      lang: "bash",
+      text: "a\n\nb\n\nc",
+      expected: true,
+    },
+    {
+      name: "3 non-empty lines with trailing newline accepted",
+      lang: "bash",
+      text: "a\nb\nc\n",
+      expected: true,
+    },
   ];
 
   for (const tc of cases) {

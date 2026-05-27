@@ -17,7 +17,13 @@ import { openFile, openFileDiff } from "./editor-openers.js";
 import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp } from "./scroll.js";
-import { renderInfoFor, formatMCPToolName, toolTier, isToolActive, type ToolRenderInfo } from "./tool-schema.js";
+import {
+  renderInfoFor,
+  formatMCPToolName,
+  toolTier,
+  isToolActive,
+  type ToolRenderInfo,
+} from "./tool-schema.js";
 import { trackInProgress } from "./tool-group.js";
 
 export interface BuildToolCardOpts {
@@ -38,11 +44,8 @@ export interface BuildToolCardOpts {
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoFor(opts.title, opts.kind, opts.input);
   const tier = toolTier(info.kind);
-  const rawTitle = opts.title.startsWith("Running: ")
-    ? opts.title.slice(9) : opts.title;
-  const displayTitle = info.mcp !== null
-    ? formatMCPToolName(info.mcp.tool)
-    : rawTitle;
+  const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
+  const displayTitle = info.mcp !== null ? formatMCPToolName(info.mcp.tool) : rawTitle;
 
   const el = document.createElement("div");
   el.className = `tool-call tool-tier-${tier}`;
@@ -50,7 +53,9 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   el.dataset["title"] = displayTitle;
   el.dataset["tier"] = tier;
   el.dataset["toolId"] = opts.id;
-  if (info.mcp !== null) el.dataset["mcpServer"] = info.mcp.server;
+  if (info.mcp !== null) {
+    el.dataset["mcpServer"] = info.mcp.server;
+  }
   if (info.filePath !== "") {
     el.dataset["filename"] = info.fileBasename;
     el.dataset["filePath"] = info.filePath;
@@ -90,12 +95,15 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   }
 
   wireFileLink(el, info.filePath);
-  if (tier !== "simple") wireToggle(el);
+  if (tier !== "simple") {
+    wireToggle(el);
+  }
 
   if (opts.diffs !== undefined && opts.diffs.length > 0) {
     const d = opts.diffs[0]!;
     insertDiffPreview(el, d.path, {
-      oldText: d.old_text ?? "", newText: d.new_text,
+      oldText: d.old_text ?? "",
+      newText: d.new_text,
     });
   } else if (info.writesFile && info.diffSources !== null) {
     insertDiffPreview(el, info.filePath, info.diffSources);
@@ -105,7 +113,9 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
 
 /** Extract a one-line subtitle from tool input for medium-tier cards. */
 export function extractSubtitle(input: Record<string, unknown> | undefined): string {
-  if (input === undefined) return "";
+  if (input === undefined) {
+    return "";
+  }
   // Try common input fields in priority order.
   for (const key of ["query", "pattern", "command", "url", "path", "explanation"]) {
     const val = input[key];
@@ -119,7 +129,7 @@ export function extractSubtitle(input: Record<string, unknown> | undefined): str
 /** Append text to a complex-tier scrollable output box. Auto-scrolls
  *  to the bottom so the user sees the latest output. */
 function appendToOutputBox(box: HTMLDivElement, text: string): void {
-  const pre = box.querySelector("pre") as HTMLPreElement | null;
+  const pre = box.querySelector("pre");
   if (pre !== null) {
     pre.textContent += text;
   } else {
@@ -133,7 +143,9 @@ function appendToOutputBox(box: HTMLDivElement, text: string): void {
 // --- HTML fragments ---
 
 function buildHeader(
-  opts: BuildToolCardOpts, displayTitle: string, info: ToolRenderInfo,
+  opts: BuildToolCardOpts,
+  displayTitle: string,
+  info: ToolRenderInfo,
 ): HTMLDivElement {
   const header = document.createElement("div");
   header.className = "tool-header";
@@ -216,16 +228,19 @@ export function mcpHue(server: string): number {
 }
 
 function buildDetails(opts: BuildToolCardOpts): string {
-  const inputBlock = opts.live && opts.input !== undefined
-    ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
-    : "";
+  const inputBlock =
+    opts.live && opts.input !== undefined
+      ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
+      : "";
   return `<div class="tool-details collapsed">${inputBlock}<div class="tool-output"></div></div>`;
 }
 
 // --- Wiring ---
 
 function wireFileLink(el: HTMLElement, filePath: string): void {
-  if (filePath === "") return;
+  if (filePath === "") {
+    return;
+  }
   el.querySelector(".tool-file-link")?.addEventListener("click", (e: Event) => {
     e.stopPropagation();
     openFile(filePath);
@@ -234,8 +249,8 @@ function wireFileLink(el: HTMLElement, filePath: string): void {
 
 function wireToggle(el: HTMLElement): void {
   el.querySelector(".tool-toggle")?.addEventListener("click", () => {
-    const d = el.querySelector(".tool-details") as HTMLElement;
-    const b = el.querySelector(".tool-toggle") as HTMLElement;
+    const d = el.querySelector(".tool-details")!;
+    const b = el.querySelector(".tool-toggle")!;
     if (d.classList.contains("collapsed")) {
       d.classList.remove("collapsed");
       b.innerHTML = ICON_CHEVRON_UP;
@@ -250,8 +265,10 @@ function wireToggle(el: HTMLElement): void {
 }
 
 function appendOutput(el: HTMLElement, output: string): void {
-  const out = el.querySelector(".tool-output") as HTMLDivElement | null;
-  if (out === null) return;
+  const out = el.querySelector(".tool-output");
+  if (out === null) {
+    return;
+  }
   const pre = document.createElement("pre");
   pre.innerHTML = ansiToHtml(output);
   out.appendChild(pre);
@@ -260,34 +277,36 @@ function appendOutput(el: HTMLElement, output: string): void {
 // --- Inline diff preview for file-writing tools ---
 
 export function insertDiffPreview(
-  el: HTMLDivElement, filePath: string,
+  el: HTMLDivElement,
+  filePath: string,
   src: { oldText: string; newText: string },
 ): void {
   const diff = lineDiff(src.oldText, src.newText);
   const s = diffStats(diff);
-  if (s.adds === 0 && s.dels === 0) return;
+  if (s.adds === 0 && s.dels === 0) {
+    return;
+  }
 
   const wrap = document.createElement("div");
   wrap.className = "tool-diff-preview";
 
   const stats = document.createElement("div");
   stats.className = "tool-diff-stats";
-  stats.innerHTML = `<span class="diff-add-count">+${String(s.adds)}</span>`
-    + `<span class="diff-del-count">-${String(s.dels)}</span>`;
+  stats.innerHTML =
+    `<span class="diff-add-count">+${String(s.adds)}</span>` +
+    `<span class="diff-del-count">-${String(s.dels)}</span>`;
   const viewBtn = document.createElement("button");
   viewBtn.className = "tool-diff-view-btn";
   viewBtn.textContent = "View diff";
   viewBtn.addEventListener("click", (e: Event) => {
     e.stopPropagation();
-    openFileDiff(filePath, src.oldText, src.newText,
-      { oldLabel: "before", newLabel: "after" });
+    openFileDiff(filePath, src.oldText, src.newText, { oldLabel: "before", newLabel: "after" });
   });
   stats.appendChild(viewBtn);
   wrap.appendChild(stats);
 
   const trimmed = truncateChanged(diff, 3);
-  const mini = renderDiffPane(trimmed.lines,
-    { lineNumbers: false, syncScroll: false });
+  const mini = renderDiffPane(trimmed.lines, { lineNumbers: false, syncScroll: false });
   mini.classList.add("tool-diff-mini");
   wrap.appendChild(mini);
 

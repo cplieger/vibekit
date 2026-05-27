@@ -8,9 +8,7 @@ import { getActiveId } from "./store.js";
 import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
-import {
-  getActiveFilePath, isPlanDraftPath, fileStates,
-} from "./editor-types.js";
+import { getActiveFilePath, isPlanDraftPath, fileStates } from "./editor-types.js";
 
 // --- Pending line jump state (shared with openers) ---
 
@@ -18,18 +16,27 @@ export const pendingLines = new Map<string, number>();
 
 // --- Agent line tracking ---
 
-interface LineRange { start_line: number; end_line: number }
+interface LineRange {
+  start_line: number;
+  end_line: number;
+}
 const agentLineCache = new Map<string, LineRange[]>();
 const agentLineSetCache = new Map<string, Set<number>>();
 
 function getAgentLines(path: string): Set<number> {
   const cached = agentLineSetCache.get(path);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    return cached;
+  }
   const ranges = agentLineCache.get(path);
-  if (ranges === undefined) return new Set();
+  if (ranges === undefined) {
+    return new Set();
+  }
   const lines = new Set<number>();
   for (const r of ranges) {
-    for (let i = r.start_line; i <= r.end_line; i++) lines.add(i);
+    for (let i = r.start_line; i <= r.end_line; i++) {
+      lines.add(i);
+    }
   }
   agentLineSetCache.set(path, lines);
   return lines;
@@ -37,16 +44,22 @@ function getAgentLines(path: string): Set<number> {
 
 export async function fetchAgentLines(path: string): Promise<void> {
   const chatID = getActiveId();
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   fetchAgentLinesAction.cancel();
   const data = await fetchAgentLinesAction.dispatch({ chatID, path });
-  if (data === null) return;
-  if (getActiveFilePath() !== path) return;
+  if (data === null) {
+    return;
+  }
+  if (getActiveFilePath() !== path) {
+    return;
+  }
   agentLineCache.set(path, data.changes ?? []);
   agentLineSetCache.delete(path);
   // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);
-  if (state !== undefined && state.loaded) {
+  if (state?.loaded) {
     rebuildGutter(state.current);
   }
 }
@@ -95,7 +108,9 @@ export function updateGutter(content: string): void {
       const line = document.createElement("div");
       line.className = "gutter-line";
       line.textContent = String(i);
-      if (agentLines.has(i)) line.classList.add("gutter-agent-modified");
+      if (agentLines.has(i)) {
+        line.classList.add("gutter-agent-modified");
+      }
       gutter.appendChild(line);
     }
   }
@@ -110,7 +125,9 @@ export function rebuildGutter(content: string): void {
     const line = document.createElement("div");
     line.className = "gutter-line";
     line.textContent = String(i);
-    if (agentLines.has(i)) line.classList.add("gutter-agent-modified");
+    if (agentLines.has(i)) {
+      line.classList.add("gutter-agent-modified");
+    }
     gutter.appendChild(line);
   }
 }
@@ -153,7 +170,9 @@ export function renderEditModeUI(state: FileState): void {
 
 export function applyPendingLine(path: string): void {
   const line = pendingLines.get(path);
-  if (line === undefined || line <= 0) return;
+  if (line === undefined || line <= 0) {
+    return;
+  }
   pendingLines.delete(path);
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {

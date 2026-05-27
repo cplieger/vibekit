@@ -20,28 +20,55 @@ export function renderDiffModeUI(state: FileState): void {
   const diff = getCachedDiff(state);
   const pending = isPendingPath(state.path);
   const paneOpts: Parameters<typeof renderDiffPane>[1] = {
-    oldLabel: src.oldLabel, newLabel: src.newLabel, lineNumbers: true, syncScroll: true,
+    oldLabel: src.oldLabel,
+    newLabel: src.newLabel,
+    lineNumbers: true,
+    syncScroll: true,
     onAskAbout: (hunkText: string) => {
       if (pending) {
-        void import("./editor-pending.js").then((m) => m.openDiscussPrompt(state.path, hunkText)).catch(() => {});
+        void import("./editor-pending.js")
+          .then((m) => {
+            m.openDiscussPrompt(state.path, hunkText);
+          })
+          .catch(() => {
+            /* noop */
+          });
         return;
       }
       const chatID = getActiveId();
-      if (chatID === "") return;
+      if (chatID === "") {
+        return;
+      }
       const prompt = `Explain this diff:\n\n\`\`\`diff\n${hunkText}\n\`\`\``;
-      void import("./chat-commands.js").then(({ sendPromptTo }) => {
-        void sendPromptTo(chatID, prompt);
-      }).catch(() => {});
+      void import("./chat-commands.js")
+        .then(({ sendPromptTo }) => {
+          void sendPromptTo(chatID, prompt);
+        })
+        .catch(() => {
+          /* noop */
+        });
     },
   };
   if (pending) {
     paneOpts.onAcceptHunk = (hunkIndex: number) => {
       state.pendingHunkDecisions.set(hunkIndex, "accept");
-      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
+      void import("./editor-pending.js")
+        .then((m) => {
+          m.refreshPendingToolbar(state);
+        })
+        .catch(() => {
+          /* noop */
+        });
     };
     paneOpts.onRejectHunk = (hunkIndex: number) => {
       state.pendingHunkDecisions.set(hunkIndex, "reject");
-      void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
+      void import("./editor-pending.js")
+        .then((m) => {
+          m.refreshPendingToolbar(state);
+        })
+        .catch(() => {
+          /* noop */
+        });
     };
   }
   const pane = renderDiffPane(diff, paneOpts);
@@ -58,5 +85,13 @@ export function renderDiffModeUI(state: FileState): void {
   }
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
-  if (pending) void import("./editor-pending.js").then((m) => m.refreshPendingToolbar(state)).catch(() => {});
+  if (pending) {
+    void import("./editor-pending.js")
+      .then((m) => {
+        m.refreshPendingToolbar(state);
+      })
+      .catch(() => {
+        /* noop */
+      });
+  }
 }

@@ -7,7 +7,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -151,7 +154,7 @@ describe("defineAction retry { count, delay, factor }", () => {
     });
 
     const promise = action.dispatch();
-    await vi.advanceTimersByTimeAsync(50);  // first attempt failed, backoff scheduled
+    await vi.advanceTimersByTimeAsync(50); // first attempt failed, backoff scheduled
     action.cancel();
     await vi.advanceTimersByTimeAsync(2000);
     await promise;
@@ -203,11 +206,7 @@ describe("defineAction scope (serial dispatch)", () => {
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2, p3]);
 
-    expect(log).toEqual([
-      "start:A", "end:A",
-      "start:B", "end:B",
-      "start:C", "end:C",
-    ]);
+    expect(log).toEqual(["start:A", "end:A", "start:B", "end:B", "start:C", "end:C"]);
   });
 
   it("scope as function: per-resource queues run in parallel", async () => {
@@ -289,10 +288,7 @@ describe("defineAction scope (serial dispatch)", () => {
 
     // a2.Y must wait for a1.X even though they're different actions,
     // because they share scope "common".
-    expect(log).toEqual([
-      "a1-start:X", "a1-end:X",
-      "a2-start:Y", "a2-end:Y",
-    ]);
+    expect(log).toEqual(["a1-start:X", "a1-end:X", "a2-start:Y", "a2-end:Y"]);
   });
 });
 

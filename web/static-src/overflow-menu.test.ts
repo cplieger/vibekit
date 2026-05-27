@@ -1,9 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import {
-  openOverflowMenu, closeOverflowMenu, _isOverflowMenuOpen,
-} from "./overflow-menu.js";
+import { openOverflowMenu, closeOverflowMenu, _isOverflowMenuOpen } from "./overflow-menu.js";
 
 function setupTriggerDOM(): HTMLButtonElement {
   document.body.innerHTML = `<button id="trigger">⋯</button>`;
@@ -40,9 +38,7 @@ describe("overflow-menu", () => {
   it("clicking an item invokes its handler and closes the menu", () => {
     const trigger = setupTriggerDOM();
     const a = vi.fn();
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: a },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: a }]);
     const item = findMenu()!.querySelector<HTMLButtonElement>("[data-overflow-item='a']")!;
     item.click();
     expect(a).toHaveBeenCalledTimes(1);
@@ -53,9 +49,7 @@ describe("overflow-menu", () => {
   it("disabled items render disabled and don't fire onSelect", () => {
     const trigger = setupTriggerDOM();
     const a = vi.fn();
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: a, disabled: true },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: a, disabled: true }]);
     const item = findMenu()!.querySelector<HTMLButtonElement>("[data-overflow-item='a']")!;
     expect(item.disabled).toBe(true);
     expect(item.getAttribute("aria-disabled")).toBe("true");
@@ -74,9 +68,7 @@ describe("overflow-menu", () => {
 
   it("Escape closes the menu", () => {
     const trigger = setupTriggerDOM();
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: () => undefined },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: () => undefined }]);
     // Defer attach happens via setTimeout(0) — flush it.
     vi.advanceTimersByTime(1);
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
@@ -87,9 +79,7 @@ describe("overflow-menu", () => {
   it("outside click closes the menu", () => {
     const trigger = setupTriggerDOM();
     document.body.insertAdjacentHTML("beforeend", `<div id="elsewhere"></div>`);
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: () => undefined },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: () => undefined }]);
     vi.advanceTimersByTime(1);
     const elsewhere = document.getElementById("elsewhere") as HTMLElement;
     elsewhere.click();
@@ -98,9 +88,7 @@ describe("overflow-menu", () => {
 
   it("clicking inside the menu does not close it (until item is selected)", () => {
     const trigger = setupTriggerDOM();
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: () => undefined },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: () => undefined }]);
     vi.advanceTimersByTime(1);
     const menu = findMenu()!;
     // Click the menu container (not an item) — handler should not fire,
@@ -111,13 +99,9 @@ describe("overflow-menu", () => {
 
   it("opening a second menu closes the first one", () => {
     const trigger = setupTriggerDOM();
-    openOverflowMenu(trigger, [
-      { id: "a", label: "Action A", onSelect: () => undefined },
-    ]);
+    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: () => undefined }]);
     expect(document.querySelectorAll(".overflow-menu").length).toBe(1);
-    openOverflowMenu(trigger, [
-      { id: "b", label: "Action B", onSelect: () => undefined },
-    ]);
+    openOverflowMenu(trigger, [{ id: "b", label: "Action B", onSelect: () => undefined }]);
     expect(document.querySelectorAll(".overflow-menu").length).toBe(1);
     expect(findMenu()!.textContent).toContain("Action B");
   });

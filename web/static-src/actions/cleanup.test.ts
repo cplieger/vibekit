@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -58,7 +61,9 @@ describe("cancelAllPending + registered cleanup", () => {
   });
 
   it("a throwing cleanup hook does not stop other hooks", () => {
-    const fn1 = vi.fn(() => { throw new Error("bad"); });
+    const fn1 = vi.fn(() => {
+      throw new Error("bad");
+    });
     const fn2 = vi.fn();
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     registerCleanup(fn1);
@@ -91,14 +96,20 @@ describe("cancelAllPending + registered cleanup", () => {
       name: "test.cleanup-multi-1",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => { abort1 = true; reject(new Error("aborted")); });
+          signal.addEventListener("abort", () => {
+            abort1 = true;
+            reject(new Error("aborted"));
+          });
         }),
     });
     const a2 = defineAction({
       name: "test.cleanup-multi-2",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => { abort2 = true; reject(new Error("aborted")); });
+          signal.addEventListener("abort", () => {
+            abort2 = true;
+            reject(new Error("aborted"));
+          });
         }),
     });
     const hook = vi.fn();
@@ -121,7 +132,9 @@ describe("cancelAllPending + registered cleanup", () => {
     // Override cancel() to throw — defineAction returns a sealed
     // object, so we can't easily monkey-patch. Instead, register a
     // hook that throws and verify other hooks still run.
-    const hookThrows = vi.fn(() => { throw new Error("boom"); });
+    const hookThrows = vi.fn(() => {
+      throw new Error("boom");
+    });
     const hookOk = vi.fn();
     registerCleanup(hookThrows);
     registerCleanup(hookOk);

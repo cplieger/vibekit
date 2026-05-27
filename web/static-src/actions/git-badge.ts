@@ -15,14 +15,18 @@ interface RepoStatus {
   behind: number;
   has_dirty: boolean;
 }
-interface StatusAllResponse { repos: RepoStatus[] }
+interface StatusAllResponse {
+  repos: RepoStatus[];
+}
 
 interface ConfiguredForge {
   id: string;
   connected: boolean;
   last_error?: string;
 }
-interface ForgesListResponse { forges: ConfiguredForge[] }
+interface ForgesListResponse {
+  forges: ConfiguredForge[];
+}
 
 interface GitBadgeData {
   status: StatusAllResponse | null;
@@ -56,7 +60,9 @@ export const refreshGitBadge = defineAction<void, GitBadgeData>({
       fetchStatusAll.dispatch(undefined).catch(() => null),
       fetchForges.dispatch(undefined).catch(() => null),
     ]);
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
     return { status, forges };
   },
   error: false,

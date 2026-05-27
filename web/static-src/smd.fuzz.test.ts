@@ -66,13 +66,16 @@ describe("smd parser_write fuzz", () => {
     expect.assertions(1);
     const result = fc.check(
       fc.property(
-        fc.array(fc.oneof(
-          fc.string({ minLength: 0, maxLength: 100 }),
-          fc.constant("\0"),
-          fc.constant("\x01"),
-          fc.constant("\x7f"),
-          fc.constant(""),
-        ), { minLength: 1, maxLength: 50 }),
+        fc.array(
+          fc.oneof(
+            fc.string({ minLength: 0, maxLength: 100 }),
+            fc.constant("\0"),
+            fc.constant("\x01"),
+            fc.constant("\x7f"),
+            fc.constant(""),
+          ),
+          { minLength: 1, maxLength: 50 },
+        ),
         (chunks) => {
           const p = parser(nullRenderer());
           for (const chunk of chunks) {

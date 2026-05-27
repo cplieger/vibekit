@@ -24,7 +24,9 @@ const attached: AttachedFile[] = [];
 // Extension → icon derived from the file-extensions registry.
 function iconFor(name: string): string {
   const dot = name.lastIndexOf(".");
-  if (dot === -1) return "📎";
+  if (dot === -1) {
+    return "📎";
+  }
   const ext = name.slice(dot + 1).toLowerCase();
   return badgeForExt(ext) || "📎";
 }
@@ -32,7 +34,9 @@ function iconFor(name: string): string {
 /** Add a file to the attachment list. */
 export function addAttachment(path: string): void {
   // Deduplicate by path.
-  if (attached.some((a) => a.path === path)) return;
+  if (attached.some((a) => a.path === path)) {
+    return;
+  }
   const parts = path.split("/");
   const name = parts[parts.length - 1] ?? path;
   attached.push({ path, name });
@@ -42,7 +46,9 @@ export function addAttachment(path: string): void {
 /** Remove an attachment by path. */
 function removeAttachment(path: string): void {
   const idx = attached.findIndex((a) => a.path === path);
-  if (idx === -1) return;
+  if (idx === -1) {
+    return;
+  }
   attached.splice(idx, 1);
   renderPills();
 }
@@ -94,7 +100,9 @@ function buildAttachmentPill(att: AttachedFile): HTMLElement {
   close.className = "attachment-close";
   close.textContent = "×";
   close.setAttribute("aria-label", `Remove ${att.name}`);
-  close.addEventListener("click", () => removeAttachment(att.path));
+  close.addEventListener("click", () => {
+    removeAttachment(att.path);
+  });
 
   li.append(icon, label, close);
   return li;
