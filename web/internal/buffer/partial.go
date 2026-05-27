@@ -62,7 +62,7 @@ func (pw *PartialWriter) Open(path string) {
 }
 
 // Write rewrites the partial file with the given snapshot data.
-func (pw *PartialWriter) Write(ctx context.Context, snap PartialSnapshot) {
+func (pw *PartialWriter) Write(ctx context.Context, snap *PartialSnapshot) {
 	if pw.state == PartialDisabled {
 		slog.Warn("PartialWriter.Write called in Disabled state", "message_id", snap.MessageID)
 		return
@@ -92,7 +92,7 @@ func (pw *PartialWriter) CloseAndRemove(path string) {
 	}
 }
 
-func (pw *PartialWriter) writeOnce(_ context.Context, snap PartialSnapshot) error {
+func (pw *PartialWriter) writeOnce(_ context.Context, snap *PartialSnapshot) error {
 	data, err := json.Marshal(snap)
 	if err != nil {
 		return err

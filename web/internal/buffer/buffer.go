@@ -91,7 +91,7 @@ func (buf *Buffer) MarkCancelledToolsFailed() []api.ToolCall {
 
 // WritePartial rewrites the partial file with the current buffer state.
 func (buf *Buffer) WritePartial(ctx context.Context) {
-	buf.Partial.Write(ctx, PartialSnapshot{
+	buf.Partial.Write(ctx, &PartialSnapshot{
 		MessageID: buf.MessageID,
 		Content:   buf.Content.String(),
 		Reasoning: buf.Reasoning.String(),

@@ -4,7 +4,6 @@ package hub
 // event inspection helpers, and message builders.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,11 +30,6 @@ func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
 // handleCommand is a test helper that delegates to the dispatcher.
 func (h *Hub) handleCommand(w http.ResponseWriter, r *http.Request) {
 	h.dispatcher.ServeHTTP(w, r)
-}
-
-// mergeLastExchange is a test helper delegating to the command package.
-func (h *Hub) mergeLastExchange(ctx context.Context, targetChatID api.ChatID, msgs []api.Message) bool {
-	return false
 }
 
 // postCmd POSTs a typed ClientCommand to handleCommand and returns the recorder.

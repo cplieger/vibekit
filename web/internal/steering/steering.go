@@ -28,6 +28,10 @@ import (
 const (
 	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
 	toolsManifestCap = 1 << 20 // any realistic tools.json stays well under 1 MiB
+
+	inclusionAlways    = "always"
+	inclusionFileMatch = "fileMatch"
+	inclusionManual    = "manual"
 )
 
 // MCPSnapshot is the subset of the MCP runtime registry the steering
@@ -255,60 +259,7 @@ func writeWorkspace(b *strings.Builder, workDir string) {
 		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
 		b.WriteString("File paths like `myrepo/src/main.go` work with readFile/readCode.\n\n")
 		for _, r := range repos {
-			repoDir := filepath.Join(workDir, r)
-			origin := readGitOrigin(repoDir)
-			branch := readGitBranch(repoDir)
-			desc := readFirstLine(filepath.Join(repoDir, "README.md"))
-			fmt.Fprintf(b, "- `%s/`", r)
-			if branch != "" {
-				fmt.Fprintf(b, " on `%s`", branch)
-			}
-			if origin != "" {
-				host := hostFromGitURL(origin)
-				cli := forgeCLI(kindFromHost(host))
-				if cli != "" {
-					fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
-				} else if host != "" {
-					fmt.Fprintf(b, " (%s)", host)
-				}
-			}
-			if desc != "" {
-				fmt.Fprintf(b, " — %s", desc)
-			}
-			b.WriteString("\n")
-			// Surface per-repo .kiro/ contents grouped by type so the
-			// main agent knows what's available and when to load each.
-			docs := findRepoSteeringDocs(repoDir)
-			if len(docs) > 0 {
-				writeRepoSteering(b, r, docs)
-			}
-			skills := findRepoSkills(repoDir)
-			if len(skills) > 0 {
-				writeRepoSkills(b, r, skills)
-			}
-			agents := findRepoAgents(repoDir)
-			if len(agents) > 0 {
-				fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", r)
-				for _, a := range agents {
-					fmt.Fprintf(b, " `%s`", a.Name)
-				}
-				b.WriteString("\n")
-			}
-			hooks := findRepoHooks(repoDir)
-			if len(hooks) > 0 {
-				fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", r)
-				for _, h := range hooks {
-					trigger := h.Trigger
-					if trigger == "" {
-						trigger = "unknown"
-					}
-					fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
-					if h.Command != "" {
-						fmt.Fprintf(b, " → `%s`", h.Command)
-					}
-					b.WriteString("\n")
-				}
-			}
+			writeRepoEntry(b, workDir, r)
 		}
 		b.WriteString("\n")
 		b.WriteString("The Git panel in the UI presents these repositories as collapsible ")
@@ -335,6 +286,61 @@ func writeWorkspace(b *strings.Builder, workDir string) {
 			fmt.Fprintf(b, "- `%s/`\n", d)
 		}
 		b.WriteString("\n")
+	}
+}
+
+func writeRepoEntry(b *strings.Builder, workDir, r string) {
+	repoDir := filepath.Join(workDir, r)
+	origin := readGitOrigin(repoDir)
+	branch := readGitBranch(repoDir)
+	desc := readFirstLine(filepath.Join(repoDir, "README.md"))
+	fmt.Fprintf(b, "- `%s/`", r)
+	if branch != "" {
+		fmt.Fprintf(b, " on `%s`", branch)
+	}
+	if origin != "" {
+		host := hostFromGitURL(origin)
+		cli := forgeCLI(kindFromHost(host))
+		if cli != "" {
+			fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
+		} else if host != "" {
+			fmt.Fprintf(b, " (%s)", host)
+		}
+	}
+	if desc != "" {
+		fmt.Fprintf(b, " — %s", desc)
+	}
+	b.WriteString("\n")
+	docs := findRepoDocs(repoDir)
+	if len(docs) > 0 {
+		writeRepoSteering(b, r, docs)
+	}
+	skills := findRepoSkills(repoDir)
+	if len(skills) > 0 {
+		writeRepoSkills(b, r, skills)
+	}
+	agents := findRepoAgents(repoDir)
+	if len(agents) > 0 {
+		fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", r)
+		for _, a := range agents {
+			fmt.Fprintf(b, " `%s`", a.Name)
+		}
+		b.WriteString("\n")
+	}
+	hooks := findRepoHooks(repoDir)
+	if len(hooks) > 0 {
+		fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", r)
+		for _, h := range hooks {
+			trigger := h.Trigger
+			if trigger == "" {
+				trigger = "unknown"
+			}
+			fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
+			if h.Command != "" {
+				fmt.Fprintf(b, " → `%s`", h.Command)
+			}
+			b.WriteString("\n")
+		}
 	}
 }
 
@@ -438,15 +444,15 @@ func kindFromHost(host string) string {
 // writeRepoSteering renders the per-repo steering inventory grouped
 // by inclusion trigger ("always", "fileMatch", "manual"). Indented one
 // level under the repo bullet so the relationship is visually clear.
-func writeRepoSteering(b *strings.Builder, repo string, docs []SteeringDoc) {
-	always := make([]SteeringDoc, 0, len(docs))
-	matched := make([]SteeringDoc, 0, len(docs))
-	manual := make([]SteeringDoc, 0, len(docs))
+func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
+	always := make([]Doc, 0, len(docs))
+	matched := make([]Doc, 0, len(docs))
+	manual := make([]Doc, 0, len(docs))
 	for _, d := range docs {
 		switch d.Inclusion {
-		case "fileMatch":
+		case inclusionFileMatch:
 			matched = append(matched, d)
-		case "manual":
+		case inclusionManual:
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -473,7 +479,7 @@ func writeRepoSteering(b *strings.Builder, repo string, docs []SteeringDoc) {
 }
 
 // writeSteeringEntry renders one steering doc bullet under a group header.
-func writeSteeringEntry(b *strings.Builder, repo string, d SteeringDoc) {
+func writeSteeringEntry(b *strings.Builder, repo string, d Doc) {
 	fmt.Fprintf(b, "    - `%s/.kiro/steering/%s`", repo, d.Filename)
 	if d.FileMatch != "" {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
@@ -495,7 +501,7 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 	hasAny := false
 	for _, r := range repos {
 		rd := filepath.Join(workDir, r)
-		if len(findRepoSteeringDocs(rd)) > 0 || len(findRepoSkills(rd)) > 0 ||
+		if len(findRepoDocs(rd)) > 0 || len(findRepoSkills(rd)) > 0 ||
 			len(findRepoAgents(rd)) > 0 || len(findRepoHooks(rd)) > 0 {
 			hasAny = true
 			break
@@ -533,15 +539,15 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 
 // writeRepoSkills renders the per-repo skills inventory grouped by
 // inclusion trigger, same as steering.
-func writeRepoSkills(b *strings.Builder, repo string, docs []SteeringDoc) {
-	always := make([]SteeringDoc, 0, len(docs))
-	matched := make([]SteeringDoc, 0, len(docs))
-	manual := make([]SteeringDoc, 0, len(docs))
+func writeRepoSkills(b *strings.Builder, repo string, docs []Doc) {
+	always := make([]Doc, 0, len(docs))
+	matched := make([]Doc, 0, len(docs))
+	manual := make([]Doc, 0, len(docs))
 	for _, d := range docs {
 		switch d.Inclusion {
-		case "fileMatch":
+		case inclusionFileMatch:
 			matched = append(matched, d)
-		case "manual":
+		case inclusionManual:
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -567,7 +573,7 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []SteeringDoc) {
 	}
 }
 
-func writeSkillEntry(b *strings.Builder, repo string, d SteeringDoc) {
+func writeSkillEntry(b *strings.Builder, repo string, d Doc) {
 	fmt.Fprintf(b, "    - `%s/.kiro/skills/%s`", repo, d.Filename)
 	if d.FileMatch != "" {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
@@ -578,31 +584,31 @@ func writeSkillEntry(b *strings.Builder, repo string, d SteeringDoc) {
 	b.WriteString("\n")
 }
 
-// SteeringDoc is one classified per-repo steering markdown file. The
+// Doc is one classified per-repo steering markdown file. The
 // `Filename` is the basename (e.g. "conventions.md"); the `Inclusion`
 // + `FileMatch` + `Description` are parsed from YAML frontmatter (or
 // defaulted when absent). Used by writeWorkspace to render the per-repo
 // steering inventory in environment.md grouped by trigger type.
-type SteeringDoc struct {
+type Doc struct {
 	Filename    string // basename, e.g. "architecture.md"
 	Inclusion   string // "always" | "fileMatch" | "manual"; defaults to "always"
 	FileMatch   string // glob pattern when Inclusion == "fileMatch"; empty otherwise
 	Description string // human-readable description from the description field
 }
 
-// findRepoSteeringDocs scans a repo's `.kiro/steering/` directory and
+// findRepoDocs scans a repo's `.kiro/steering/` directory and
 // returns the markdown files classified by their YAML frontmatter
 // inclusion mode. Files without frontmatter default to "always".
 // Returns at most 20 entries — a reasonable cap for the environment.md
 // budget; repos with more steering than that are pathological and the
 // agent gets a representative sample either way.
-func findRepoSteeringDocs(repoDir string) []SteeringDoc {
+func findRepoDocs(repoDir string) []Doc {
 	dir := filepath.Join(repoDir, ".kiro", "steering")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	out := make([]SteeringDoc, 0, len(entries))
+	out := make([]Doc, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -637,8 +643,8 @@ func findRepoSteeringDocs(repoDir string) []SteeringDoc {
 //
 // Files without frontmatter default to inclusion=always with no
 // pattern and no description. Pure function — testable without DOM/FS.
-func parseSteeringFrontmatter(data []byte) SteeringDoc {
-	doc := SteeringDoc{Inclusion: "always"}
+func parseSteeringFrontmatter(data []byte) Doc {
+	doc := Doc{Inclusion: "always"}
 	if len(data) == 0 {
 		return doc
 	}
@@ -660,7 +666,7 @@ func parseSteeringFrontmatter(data []byte) SteeringDoc {
 		val := strings.Trim(strings.TrimSpace(v), `"'`)
 		switch key {
 		case "inclusion":
-			if val == "always" || val == "fileMatch" || val == "manual" {
+			if val == inclusionAlways || val == inclusionFileMatch || val == inclusionManual {
 				doc.Inclusion = val
 			}
 		case "fileMatchPattern":
@@ -674,7 +680,7 @@ func parseSteeringFrontmatter(data []byte) SteeringDoc {
 
 // findRepoSkills scans `.kiro/skills/` with the same frontmatter
 // classification as steering docs. Skills use the same inclusion model.
-func findRepoSkills(repoDir string) []SteeringDoc {
+func findRepoSkills(repoDir string) []Doc {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "skills"))
 }
 
@@ -757,12 +763,12 @@ func parseHookJSON(data []byte) HookEntry {
 
 // findMdDocsInDir is a shared helper for scanning .md files with
 // frontmatter classification (used by both steering and skills).
-func findMdDocsInDir(dir string) []SteeringDoc {
+func findMdDocsInDir(dir string) []Doc {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	out := make([]SteeringDoc, 0, len(entries))
+	out := make([]Doc, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue

@@ -38,12 +38,12 @@ func newUUIDv7() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	ms := uint64(time.Now().UnixMilli())
-	b[0] = byte(ms >> 40)
-	b[1] = byte(ms >> 32)
-	b[2] = byte(ms >> 24)
-	b[3] = byte(ms >> 16)
-	b[4] = byte(ms >> 8)
-	b[5] = byte(ms)
+	b[0] = byte(ms >> 40) //nolint:gosec // intentional truncation
+	b[1] = byte(ms >> 32) //nolint:gosec // intentional truncation
+	b[2] = byte(ms >> 24) //nolint:gosec // intentional truncation
+	b[3] = byte(ms >> 16) //nolint:gosec // intentional truncation
+	b[4] = byte(ms >> 8)  //nolint:gosec // intentional truncation
+	b[5] = byte(ms)       //nolint:gosec // intentional truncation
 	b[6] = (b[6] & 0x0F) | 0x70
 	b[8] = (b[8] & 0x3F) | 0x80
 	var buf [36]byte
