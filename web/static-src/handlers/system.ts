@@ -22,7 +22,7 @@ import {
   setCurrentMode,
   clearMsgIndex,
   invalidateSession,
-  version,
+  sessionsVersion,
 } from "../store.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -120,7 +120,7 @@ onSSE("steering_loaded", (chatID, payload) => {
   if (chatID === "" || getActiveId() !== chatID) {
     return;
   }
-  if (!Array.isArray(payload?.documents)) {
+  if (!Array.isArray(payload.documents)) {
     return;
   }
   const docs = payload.documents;
@@ -169,7 +169,7 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     s.messages = [];
     s.has_more = false;
     clearMsgIndex(chatID);
-    version.value = version.peek() + 1;
+    sessionsVersion.value = sessionsVersion.peek() + 1;
     // Rely on the version-effect's renderUpdates (triggered by
     // loadMessages bumping version) rather than an explicit
     // renderSwitch here — avoids a redundant intermediate render

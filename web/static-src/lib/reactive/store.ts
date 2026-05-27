@@ -8,7 +8,7 @@
 //   const { get, set, subscribe, effect, computed, batch } = createStore<MyMap>();
 
 type Callback = (value: unknown) => void;
-type Cleanup = void | (() => void);
+type Cleanup = undefined | (() => void);
 
 export interface Store<M> {
   get<K extends keyof M & string>(key: K): M[K];
@@ -29,7 +29,7 @@ export function createStore<M>(): Store<M> {
 
   function notifySubs(key: string, value: unknown): void {
     const cbs = subscribers[key];
-    if (!cbs) return;
+    if (!cbs) {return;}
     for (const cb of cbs) {
       try {
         cb(value);
@@ -40,16 +40,16 @@ export function createStore<M>(): Store<M> {
   }
 
   function get<K extends keyof M & string>(key: K): M[K] {
-    if (tracking) tracking.add(key);
+    if (tracking) {tracking.add(key);}
     return state[key] as M[K];
   }
 
   function set<K extends keyof M & string>(key: K, value: M[K]): void {
     const prev = state[key];
     state[key] = value;
-    if (prev === value) return;
+    if (prev === value) {return;}
     if (batchDepth > 0) {
-      if (!pendingKeys) pendingKeys = new Map();
+      pendingKeys ??= new Map();
       pendingKeys.set(key, value);
     } else {
       notifySubs(key, value);
@@ -57,11 +57,11 @@ export function createStore<M>(): Store<M> {
   }
 
   function subscribe<K extends keyof M & string>(key: K, cb: (value: M[K]) => void): () => void {
-    if (!subscribers[key]) subscribers[key] = [];
+    subscribers[key] ??= [];
     subscribers[key].push(cb as Callback);
     return () => {
       const arr = subscribers[key];
-      if (arr) subscribers[key] = arr.filter((c) => c !== cb);
+      if (arr) {subscribers[key] = arr.filter((c) => c !== cb);}
     };
   }
 
@@ -74,19 +74,19 @@ export function createStore<M>(): Store<M> {
       if (batchDepth === 0 && pendingKeys) {
         const p = pendingKeys;
         pendingKeys = null;
-        for (const [k, v] of p) notifySubs(k, v);
+        for (const [k, v] of p) {notifySubs(k, v);}
       }
     }
   }
 
   function storeEffect(fn: () => Cleanup): () => void {
-    let unsubs: Array<() => void> = [];
+    let unsubs: (() => void)[] = [];
     let cleanup: Cleanup;
     let disposed = false;
 
     const run = (): void => {
-      if (disposed) return;
-      for (const u of unsubs) u();
+      if (disposed) {return;}
+      for (const u of unsubs) {u();}
       unsubs = [];
       if (cleanup) {
         cleanup();
@@ -110,7 +110,7 @@ export function createStore<M>(): Store<M> {
     run();
     return () => {
       disposed = true;
-      for (const u of unsubs) u();
+      for (const u of unsubs) {u();}
       unsubs = [];
       if (cleanup) {
         cleanup();

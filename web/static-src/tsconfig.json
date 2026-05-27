@@ -31,7 +31,10 @@
     "handlers/*.ts",
     "wire/*.ts",
     "actions/*.ts",
-    "vendor-types/*.d.ts"
+    "lib/**/*.ts",
+    "__test-helpers__/**/*.ts",
+    "vendor-types/*.d.ts",
+    "**/*.test.ts"
   ],
-  "exclude": ["vitest.config.ts", "fc-strict-setup.ts", "**/*.test.ts"]
+  "exclude": ["vitest.config.ts", "fc-strict-setup.ts"]
 }

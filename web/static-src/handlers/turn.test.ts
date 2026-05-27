@@ -48,7 +48,7 @@ vi.mock("../transport.js", () => ({ send: vi.fn() }));
 const { ERROR_ROUTES } = await import("./turn.js");
 
 describe("ERROR_ROUTES", () => {
-  const expectedRoutes: Array<[string, { surface: string; level: string; dismissible: boolean }]> =
+  const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] =
     [
       ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
       ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],

@@ -81,9 +81,6 @@ function _pruneNotifyMap(now: number): void {
 }
 
 onSSE("working_label", (chatID, p) => {
-  if (typeof p?.label !== "string") {
-    return;
-  }
   setWorkingLabel(chatID, p.label);
 });
 
@@ -249,8 +246,8 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
     return undefined;
   }
   for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i]!;
-    if (m.tool_calls === undefined) {
+    const m = s.messages[i];
+    if (m?.tool_calls === undefined) {
       continue;
     }
     for (const tc of m.tool_calls) {
@@ -285,8 +282,8 @@ onSSE("error", (chatID, p) => {
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
 
-  const code = p.code ?? "";
-  const msg = p.message ?? "";
+  const code = p.code;
+  const msg = p.message;
 
   // Only surface errors for the active chat to avoid polluting the
   // send-button state with errors from background chats.
@@ -311,11 +308,11 @@ onSSE("error", (chatID, p) => {
  *  startup from app.ts. */
 export function wireCheckpointRestore(messagesEl: HTMLElement): void {
   messagesEl.addEventListener("click", (e: MouseEvent) => {
-    const btn = (e.target as HTMLElement).closest(".checkpoint-restore");
+    const btn = (e.target as HTMLElement).closest<HTMLElement>(".checkpoint-restore");
     if (btn === null) {
       return;
     }
-    const tag = btn.dataset.tag;
+    const tag: string | undefined = btn.dataset["tag"];
     const chatID = getActiveId();
     if (tag === undefined || chatID === "") {
       return;

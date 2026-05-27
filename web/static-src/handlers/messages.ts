@@ -14,47 +14,35 @@ import { clearBannerCodes } from "../banner-stack.js";
 import { setSubagentActivity } from "../crew-card.js";
 
 onSSE("message_appended", (chatID, m) => {
-  if (m !== undefined) {
-    appendMessage(chatID, m);
-    // Agent-switched events resolve init-error banners.
-    if (m.event_kind === "agent_switched") {
-      clearBannerCodes(chatID, ["agent_not_found", "agent_config_error"]);
-    }
+  appendMessage(chatID, m);
+  // Agent-switched events resolve init-error banners.
+  if (m.event_kind === "agent_switched") {
+    clearBannerCodes(chatID, ["agent_not_found", "agent_config_error"]);
   }
 });
 
 onSSE("message_created", (chatID, m) => {
   // message_created starts a new assistant bubble; upsert so future chunks
   // target the right ID. Content is empty until chunks arrive.
-  if (m !== undefined) {
-    upsertMessage(chatID, m);
-  }
+  upsertMessage(chatID, m);
 });
 
 onSSE("message_chunk", (chatID, p) => {
-  if (p !== undefined) {
-    appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false);
-  }
+  appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false);
 });
 
 onSSE("message_updated", (chatID, m) => {
-  if (m !== undefined) {
-    upsertMessage(chatID, m);
-  }
+  upsertMessage(chatID, m);
 });
 
 onSSE("tool_call", (chatID, p) => {
-  if (p !== undefined) {
-    upsertToolCall(chatID, p.message_id, p.tool_call);
-  }
+  upsertToolCall(chatID, p.message_id, p.tool_call);
 });
 
 onSSE("tool_call_update", (chatID, p) => {
-  if (p !== undefined) {
-    upsertToolCall(chatID, p.message_id, p.tool_call);
-    if (p.tool_call.status === "completed" && isRepoMutatingKind(p.tool_call.kind)) {
-      markGitDirty();
-    }
+  upsertToolCall(chatID, p.message_id, p.tool_call);
+  if (p.tool_call.status === "completed" && isRepoMutatingKind(p.tool_call.kind)) {
+    markGitDirty();
   }
 });
 
@@ -63,11 +51,8 @@ onSSE("tool_call_update", (chatID, p) => {
 // "Thinking..."). The event carries a sub_session_id and an event
 // object with a human-readable label.
 onSSE("subagent_activity", (_chatID, p) => {
-  if (p === undefined) {
-    return;
-  }
   const sid = p.sub_session_id;
-  if (typeof sid !== "string" || sid === "") {
+  if (sid === "") {
     return;
   }
   const evt = p.event;

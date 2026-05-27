@@ -41,7 +41,7 @@ await import("./chat.js");
 
 function fireSSE(event: string, chatID: string, payload: unknown): void {
   const handler = sseHandlers.get(event);
-  if (handler) handler(chatID, payload);
+  if (handler) {handler(chatID, payload);}
 }
 
 describe("chat_created", () => {

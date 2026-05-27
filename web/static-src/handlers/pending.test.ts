@@ -21,7 +21,7 @@ vi.mock("../store.js", () => ({
 // Capture SSE handlers and bus emissions
 type SSEHandler = (chatID: string, payload: unknown) => void;
 const sseHandlers = new Map<string, SSEHandler>();
-const busEmissions: Array<{ event: string; payload: unknown }> = [];
+const busEmissions: { event: string; payload: unknown }[] = [];
 
 vi.mock("../bus.js", () => ({
   onSSE: vi.fn((event: string, handler: SSEHandler) => {
@@ -42,7 +42,7 @@ await import("./pending.js");
 
 function fireSSE(event: string, chatID: string, payload: unknown): void {
   const handler = sseHandlers.get(event);
-  if (handler) handler(chatID, payload);
+  if (handler) {handler(chatID, payload);}
 }
 
 describe("pending_change_added", () => {
