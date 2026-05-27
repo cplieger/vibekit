@@ -214,9 +214,9 @@ describe("onError → dispatch chain in same scope", () => {
 
     await p0;
     // Await the chained dispatches directly
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await chainP1;
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await chainP2;
 
     expect(order).toEqual(["flaky-fail", "flaky-ok-1", "flaky-ok-2"]);
@@ -627,7 +627,7 @@ describe("onSuccess re-dispatch with dedupe", () => {
     });
 
     // Await the chained dispatch directly
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     const chainedResult = await chainedPromise;
 
     expect(runCount).toBe(2); // Two separate runs

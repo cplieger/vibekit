@@ -328,7 +328,7 @@ describe("debouncedDispatch", () => {
     const dbg = debouncedDispatch(action, { wait: 1000 });
     dbg("a");
     dbg("b");
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     dbg.flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(runArgs).toEqual(["b"]);

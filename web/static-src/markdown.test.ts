@@ -427,6 +427,6 @@ describe("markdown surface contracts", () => {
     r.writeDelta(big);
     r.end();
     // After end(), all text is parsed and rendered.
-    expect(el.textContent?.length).toBe(10_000); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    expect(el.textContent?.length).toBe(10_000);  
   });
 });

@@ -16,9 +16,9 @@ describe("urlBase64ToUint8Array round-trip", () => {
       fc.property(fc.uint8Array({ minLength: 0, maxLength: 128 }), (bytes) => {
         const encoded = toUrlBase64(bytes);
         const decoded = urlBase64ToUint8Array(encoded);
-        if (decoded.length !== bytes.length) return false;
+        if (decoded.length !== bytes.length) {return false;}
         for (let i = 0; i < bytes.length; i++) {
-          if (decoded[i] !== bytes[i]) return false;
+          if (decoded[i] !== bytes[i]) {return false;}
         }
         return true;
       }),

@@ -140,7 +140,7 @@ describe("scope + dedupe combined", () => {
 describe("scope with undefined arg value", () => {
   it("scope key 'chat:undefined' serializes dispatches with chatID=undefined together", async () => {
     // Document: 'chat:' + undefined === 'chat:undefined'
-    // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
+     
     expect("chat:" + undefined).toBe("chat:undefined");
 
     let callCount = 0;
@@ -148,7 +148,7 @@ describe("scope with undefined arg value", () => {
 
     const action = defineAction<{ chatID: string | undefined }, string>({
       name: "test.scope_undefined",
-      // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
+       
       scope: (args) => "chat:" + args.chatID,
       run: () => {
         callCount++;
@@ -285,7 +285,7 @@ describe("debouncedDispatch leading flush", () => {
     expect(runArgs).toEqual(["a"]);
 
     // flush() during leading mode now fires the most-recent suppressed args
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     dbg.flush();
     expect(runArgs).toEqual(["a", "b"]);
 
@@ -313,7 +313,7 @@ describe("debouncedDispatch leading flush", () => {
     dbg("b"); // suppressed
 
     // flush with explicit args always fires
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     dbg.flush("z");
     expect(runArgs).toContain("z");
   });

@@ -101,7 +101,7 @@ describe("patchSettings debounce coalescing", () => {
           patches.push(patch);
         }
       }
-      if (patches.length === 0) continue;
+      if (patches.length === 0) {continue;}
 
       for (const patch of patches) {
         patchSettings(patch as Parameters<typeof patchSettings>[0]);

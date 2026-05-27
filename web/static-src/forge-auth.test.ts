@@ -244,7 +244,7 @@ describe("forge-auth: 4-section layout", () => {
       expect(svg, `${k} badge should contain an svg`).not.toBeNull();
       expect(svg!.getAttribute("viewBox")).toBe("0 0 24 24");
       // No leftover letter text inside the badge.
-      expect(badge!.textContent?.trim() ?? "").toBe(""); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+      expect(badge!.textContent?.trim() ?? "").toBe("");  
     }
   });
 

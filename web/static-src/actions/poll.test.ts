@@ -46,7 +46,7 @@ describe("pollAction — basic scheduling", () => {
     const stop = pollAction(action, undefined, { interval: 1000 });
 
     // Immediate dispatch.
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await Promise.resolve();
     await Promise.resolve();
@@ -189,14 +189,14 @@ describe("pollAction — refreshOnFocus", () => {
 
     vi.useFakeTimers();
     const stop = pollAction(action, undefined, { interval: 10_000, refreshOnFocus: true });
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1);
 
     // Trigger focus before the interval elapses.
     window.dispatchEvent(new Event("focus"));
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(2);
@@ -214,13 +214,13 @@ describe("pollAction — refreshOnFocus", () => {
 
     vi.useFakeTimers();
     const stop = pollAction(action, undefined, { interval: 10_000, refreshOnFocus: false });
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1);
 
     window.dispatchEvent(new Event("focus"));
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBe(1); // no refresh
@@ -253,7 +253,7 @@ describe("pollAction — backoffOnError", () => {
     });
 
     // Drain initial dispatch + scheduled timer microtasks.
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     const after1 = count;
@@ -292,7 +292,7 @@ describe("pollAction — backoffOnError", () => {
       backoffOnError: { factor: 10, max: 500 },
     });
 
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await vi.runAllTicks();
     await vi.advanceTimersByTimeAsync(0);
     expect(count).toBeGreaterThanOrEqual(1);

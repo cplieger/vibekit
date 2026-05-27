@@ -77,7 +77,7 @@ describe("guardAction", () => {
       let elapsed = 0;
       for (const call of tc.calls) {
         const advance = call.advanceMs - elapsed;
-        if (advance > 0) vi.advanceTimersByTime(advance);
+        if (advance > 0) {vi.advanceTimersByTime(advance);}
         elapsed = call.advanceMs;
         guarded();
       }

@@ -35,11 +35,11 @@ const { extractSubtitle, mcpHue } = await import("./tool-card.js");
 // ---------------------------------------------------------------------------
 
 describe("extractSubtitle", () => {
-  const cases: Array<{
+  const cases: {
     name: string;
     input: Record<string, unknown> | undefined;
     expected: string;
-  }> = [
+  }[] = [
     { name: "undefined input", input: undefined, expected: "" },
     { name: "empty object", input: {}, expected: "" },
     { name: "query key", input: { query: "find all files" }, expected: "find all files" },
@@ -83,7 +83,7 @@ describe("extractSubtitle", () => {
 // ---------------------------------------------------------------------------
 
 describe("mcpHue", () => {
-  const knownServers: Array<{ server: string; hue: number }> = [
+  const knownServers: { server: string; hue: number }[] = [
     { server: "github", hue: mcpHue("github") },
     { server: "s3", hue: mcpHue("s3") },
     { server: "postgres", hue: mcpHue("postgres") },

@@ -215,7 +215,7 @@ describe("onSuccess → dispatch chain with same scope", () => {
 
     await p;
     // Await the chained dispatch directly
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     await chainedPromise;
 
     expect(dispatchCount).toBe(1); // onSuccess fired exactly once

@@ -35,7 +35,7 @@ describe("newRequestID property invariants", () => {
   it("produces unique IDs over 1000 calls", () => {
     expect.assertions(1);
     const ids = new Set<string>();
-    for (let i = 0; i < 1000; i++) ids.add(newRequestID());
+    for (let i = 0; i < 1000; i++) {ids.add(newRequestID());}
     expect(ids.size).toBe(1000);
   });
 
@@ -48,13 +48,13 @@ describe("newRequestID property invariants", () => {
         const withoutPrefix = id.slice(2);
         const dashIdx = withoutPrefix.indexOf("-");
         // Must have a dash separating timestamp from entropy
-        if (dashIdx < 1) return false;
+        if (dashIdx < 1) {return false;}
         const timestamp = withoutPrefix.slice(0, dashIdx);
         const entropy = withoutPrefix.slice(dashIdx + 1);
         // Timestamp segment must be non-empty base-36
-        if (timestamp.length === 0 || !/^[a-z0-9]+$/.test(timestamp)) return false;
+        if (timestamp.length === 0 || !/^[a-z0-9]+$/.test(timestamp)) {return false;}
         // Entropy segment must be non-empty base-36
-        if (entropy.length === 0 || !/^[a-z0-9]+$/.test(entropy)) return false;
+        if (entropy.length === 0 || !/^[a-z0-9]+$/.test(entropy)) {return false;}
         return true;
       }),
       { numRuns: 500 },
@@ -89,7 +89,7 @@ describe("newMessageID property invariants", () => {
   it("produces unique IDs over 1000 calls", () => {
     expect.assertions(1);
     const ids = new Set<string>();
-    for (let i = 0; i < 1000; i++) ids.add(newMessageID());
+    for (let i = 0; i < 1000; i++) {ids.add(newMessageID());}
     expect(ids.size).toBe(1000);
   });
 
@@ -100,11 +100,11 @@ describe("newMessageID property invariants", () => {
         const id = newMessageID();
         const withoutPrefix = id.slice(2);
         const dashIdx = withoutPrefix.indexOf("-");
-        if (dashIdx < 1) return false;
+        if (dashIdx < 1) {return false;}
         const timestamp = withoutPrefix.slice(0, dashIdx);
         const entropy = withoutPrefix.slice(dashIdx + 1);
-        if (timestamp.length === 0 || !/^[a-z0-9]+$/.test(timestamp)) return false;
-        if (entropy.length === 0 || !/^[a-z0-9]+$/.test(entropy)) return false;
+        if (timestamp.length === 0 || !/^[a-z0-9]+$/.test(timestamp)) {return false;}
+        if (entropy.length === 0 || !/^[a-z0-9]+$/.test(entropy)) {return false;}
         return true;
       }),
       { numRuns: 500 },
@@ -131,7 +131,7 @@ describe("computeBackoff property invariants", () => {
     const result = fc.check(
       fc.property(fc.nat(60_000), (prev) => {
         const { backoffMs } = computeBackoff(prev);
-        if (prev === 0) return backoffMs === 500;
+        if (prev === 0) {return backoffMs === 500;}
         const expected = Math.min(prev * 2, BACKOFF_CAP_MS);
         return backoffMs === expected;
       }),
@@ -175,11 +175,11 @@ describe("computeBackoff sequence-level invariants", () => {
         for (const prev of prevValues) {
           const { delay, backoffMs } = computeBackoff(prev);
           // Invariant 1: backoffMs never exceeds BACKOFF_CAP_MS
-          if (backoffMs > BACKOFF_CAP_MS) return false;
+          if (backoffMs > BACKOFF_CAP_MS) {return false;}
           // Invariant 2: delay is always in [0, backoffMs)
-          if (delay < 0 || delay >= backoffMs) return false;
+          if (delay < 0 || delay >= backoffMs) {return false;}
           // Invariant 3: after a successful reconnect (prev=0), resets to 500ms
-          if (prev === 0 && backoffMs !== 500) return false;
+          if (prev === 0 && backoffMs !== 500) {return false;}
         }
         return true;
       }),
@@ -194,11 +194,11 @@ describe("computeBackoff sequence-level invariants", () => {
       fc.property(fc.array(fc.boolean(), { minLength: 5, maxLength: 30 }), (resetPattern) => {
         let prev = 0;
         for (const shouldReset of resetPattern) {
-          if (shouldReset) prev = 0;
+          if (shouldReset) {prev = 0;}
           const { delay, backoffMs } = computeBackoff(prev);
-          if (backoffMs > BACKOFF_CAP_MS) return false;
-          if (delay < 0 || delay >= backoffMs) return false;
-          if (prev === 0 && backoffMs !== 500) return false;
+          if (backoffMs > BACKOFF_CAP_MS) {return false;}
+          if (delay < 0 || delay >= backoffMs) {return false;}
+          if (prev === 0 && backoffMs !== 500) {return false;}
           prev = backoffMs;
         }
         return true;
@@ -217,11 +217,11 @@ describe("newMessageID/newRequestID structural equivalence", () => {
       fc.property(fc.constant(null), () => {
         const mid = newMessageID();
         const rid = newRequestID();
-        if (!mid.startsWith("m-")) return false;
-        if (!rid.startsWith("r-")) return false;
+        if (!mid.startsWith("m-")) {return false;}
+        if (!rid.startsWith("r-")) {return false;}
         // Both suffixes must match timestamp-entropy structure
-        if (!suffixPattern.test(mid.slice(2))) return false;
-        if (!suffixPattern.test(rid.slice(2))) return false;
+        if (!suffixPattern.test(mid.slice(2))) {return false;}
+        if (!suffixPattern.test(rid.slice(2))) {return false;}
         return true;
       }),
       { numRuns: 50 },

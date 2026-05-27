@@ -161,7 +161,7 @@ export default [
     },
   },
 
-  // 5. Generated and config files: drop type-checked rules.
+  // 5. Generated and config files + tests: drop type-checked rules.
   {
     files: [
       "**/*.gen.ts",
@@ -170,6 +170,11 @@ export default [
       "*.config.ts",
       "*.config.mjs",
       "*.config.js",
+      "**/*.test.ts",
+      "**/*.fuzz.test.ts",
+      "**/*.property.test.ts",
+      "fc-strict-setup.ts",
+      "test-stubs/**",
     ],
     ...tseslint.configs.disableTypeChecked,
   },

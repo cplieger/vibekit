@@ -76,7 +76,7 @@ describe("dedupe with undefined args", () => {
     let runCalls = 0;
     const action = defineAction<{ chatID?: string | undefined }, string>({
       name: "test.dedupe_fn_undefined_field",
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+       
       dedupe: (args) => `chat:${args.chatID}`,
       run: () => {
         runCalls++;

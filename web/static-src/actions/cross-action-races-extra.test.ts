@@ -266,7 +266,7 @@ describe("cancel + success race in dedupe", () => {
     });
 
     const p1 = action.dispatch("k");
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     action.dispatch("k"); // deduped
     action.cancel();
     await p1;

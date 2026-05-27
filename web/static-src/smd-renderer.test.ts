@@ -33,7 +33,7 @@ import {
 import type { Token } from "./smd-parser-types.js";
 
 describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
-  const cases: Array<{ token: Token; expectedTag: string; label: string }> = [
+  const cases: { token: Token; expectedTag: string; label: string }[] = [
     { token: PARAGRAPH, expectedTag: "P", label: "PARAGRAPH → p" },
     { token: HEADING_1, expectedTag: "H1", label: "HEADING_1 → h1" },
     { token: HEADING_2, expectedTag: "H2", label: "HEADING_2 → h2" },

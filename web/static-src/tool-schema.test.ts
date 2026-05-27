@@ -15,7 +15,7 @@ import type { ToolKind, ToolTier as TierType } from "./tool-schema.js";
 // ---------------------------------------------------------------------------
 
 describe("mcpToolInfo", () => {
-  const valid: Array<{ input: string; expected: { server: string; tool: string } }> = [
+  const valid: { input: string; expected: { server: string; tool: string } }[] = [
     { input: "mcp__github__create_issue", expected: { server: "github", tool: "create_issue" } },
     { input: "mcp__s3__list_buckets", expected: { server: "s3", tool: "list_buckets" } },
     { input: "mcp__a__b", expected: { server: "a", tool: "b" } },
@@ -125,12 +125,12 @@ describe("mcpToolInfo (property-based)", () => {
 
 describe("profileFor", () => {
   // Title-based lookups
-  const titleCases: Array<{
+  const titleCases: {
     title: string;
     kind: string;
     expectedKind: ToolKind;
     expectedWrites: boolean;
-  }> = [
+  }[] = [
     { title: "readFile", kind: "read", expectedKind: "read", expectedWrites: false },
     { title: "readCode", kind: "read", expectedKind: "read", expectedWrites: false },
     { title: "readMultipleFiles", kind: "read", expectedKind: "read", expectedWrites: false },
@@ -160,11 +160,11 @@ describe("profileFor", () => {
   );
 
   // Kind fallback (unknown title)
-  const kindFallbackCases: Array<{
+  const kindFallbackCases: {
     kind: string;
     expectedKind: ToolKind;
     expectedWrites: boolean;
-  }> = [
+  }[] = [
     { kind: "read", expectedKind: "read", expectedWrites: false },
     { kind: "edit", expectedKind: "edit", expectedWrites: true },
     { kind: "write", expectedKind: "write", expectedWrites: true },
@@ -210,7 +210,7 @@ describe("profileFor", () => {
 // ---------------------------------------------------------------------------
 
 describe("toolTier", () => {
-  const cases: Array<{ kind: ToolKind; expected: TierType }> = [
+  const cases: { kind: ToolKind; expected: TierType }[] = [
     { kind: "read", expected: "simple" },
     { kind: "edit", expected: "simple" },
     { kind: "write", expected: "simple" },
@@ -235,7 +235,7 @@ describe("toolTier", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatMCPToolName", () => {
-  const cases: Array<{ input: string; expected: string }> = [
+  const cases: { input: string; expected: string }[] = [
     { input: "create_issue", expected: "create issue" },
     { input: "list_buckets", expected: "list buckets" },
     { input: "tool", expected: "tool" },

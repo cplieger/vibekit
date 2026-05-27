@@ -165,7 +165,7 @@ describe("defineAction — error path", () => {
     const action = defineAction({
       name: "test.weird",
       run: async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error, no-throw-literal
+        // eslint-disable-next-line no-throw-literal
         throw "string";
       },
     });
