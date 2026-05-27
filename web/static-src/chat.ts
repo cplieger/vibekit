@@ -9,7 +9,7 @@
 import {
   getActiveId, getActive, get, getSessions, setActive,
   loadList, loadMessages, upsertHeader,
-  contextSizeFor, defaultUsage, version, removeChat,
+  contextSizeFor, defaultUsage, activeVersion, removeChat,
 } from "./store.js";
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
@@ -284,7 +284,7 @@ export function createPlannerSession(): void {
 export function installStoreSubscribers(): void {
   mountChatView();
   effect(() => {
-    version.value;
+    activeVersion.value;
     const active = getActive();
     if (active !== undefined) {
 

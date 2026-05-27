@@ -142,6 +142,9 @@ describe("a11y: aria-expanded on popover triggers", () => {
         messages: [],
       }),
       version: { value: 1 },
+      sessionsVersion: { value: 1 },
+      activeVersion: { value: 1 },
+      messagesVersion: { value: 1 },
     }));
     vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => fn() }));
     vi.doMock("./actions/chat.js", () => ({
@@ -211,6 +214,9 @@ describe("a11y: aria-expanded on popover triggers", () => {
         messages: [{ event_kind: "crew" }],
       }),
       version: { value: 1 },
+      sessionsVersion: { value: 1 },
+      activeVersion: { value: 1 },
+      messagesVersion: { value: 1 },
     }));
     vi.doMock("./signals.js", () => ({ effect: (fn: () => void) => fn() }));
     vi.doMock("./actions/chat.js", () => ({ setAutoApproveCrew: { dispatch: vi.fn() } }));

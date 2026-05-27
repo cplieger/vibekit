@@ -25,7 +25,7 @@ import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from ".
 import { escText } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
 import {
-  getActive, getActiveId, version,
+  getActive, getActiveId, messagesVersion, activeVersion,
   ensureStreamingSig, clearStreamingSig,
   ensureReasoningSig, clearReasoningSig,
   ensureToolCallSig, clearToolCallSig,
@@ -200,7 +200,7 @@ export function mountChatView(): void {
   mounted = true;
   initMessageActions();
   effect(() => {
-    version.value;
+    messagesVersion.value; activeVersion.value;
     paint();
   });
 }
