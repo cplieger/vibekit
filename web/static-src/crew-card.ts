@@ -116,7 +116,7 @@ export function getSubagentName(subSessionID: string): string {
   return subSessionID;
 }
 
-export function addCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => void): void {
+function addCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => void): void {
   const existing = cards.get(messageID);
   if (existing !== undefined) {
     applyState(existing, crew);

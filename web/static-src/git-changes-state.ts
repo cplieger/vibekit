@@ -35,21 +35,9 @@ export interface RemoveResult {
   entries: { file: FileEntry; index: number }[];
 }
 
-// --- Mutable state reference (set by git-changes-tab at init time) ---
+// --- Mutable state reference (set externally) ---
 
-let stateRef: { repos: RepoStatus[]; paint: () => void } | null = null;
-
-/** Called by git-changes-tab to wire up the shared state. */
-export function bindChangesState(ref: { repos: RepoStatus[]; paint: () => void }): void {
-  stateRef = ref;
-}
-
-/** Update the repos array reference (called after refreshChanges assigns a new array). */
-export function updateReposRef(repos: RepoStatus[]): void {
-  if (stateRef !== null) {
-    stateRef.repos = repos;
-  }
-}
+const stateRef: { repos: RepoStatus[]; paint: () => void } | null = null;
 
 // --- Optimistic mutations ---
 
