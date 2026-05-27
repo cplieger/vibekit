@@ -34,7 +34,6 @@ type Gauge struct {
 
 func (g *Gauge) Inc()        { g.val.Add(1) }
 func (g *Gauge) Dec()        { g.val.Add(-1) }
-func (g *Gauge) Set(v int64) { g.val.Store(v) }
 
 // LabeledCounter tracks counts per label combination.
 type LabeledCounter struct {

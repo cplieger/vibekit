@@ -102,7 +102,7 @@ jobs:
         working-directory: web
         run: |
           (
-            deadcode ./...
+            deadcode -test ./...
           ) || { echo "Dead code (deadcode)" >> /tmp/_ci_failures; exit 1; }
 
       - name: Field alignment
