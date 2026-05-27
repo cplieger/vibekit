@@ -32,7 +32,7 @@ vi.mock("./actions/editor.js", () => ({
 }));
 
 vi.mock("./actions/index.js", () => ({
-  bindLoadingState: () => () => {},
+  bindLoadingState: () => () => { /* noop */ },
 }));
 
 vi.mock("./bus.js", () => ({
@@ -134,7 +134,7 @@ describe("resolveActivePending", () => {
     // We verify dispatch is called with the correct args.
     const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
-    fileStates.set(path, makeState([]) as any);
+    fileStates.set(path, makeState([]));
     (fileStates.get(path) as any).path = path;
     // Mock getActiveFilePath
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
@@ -152,7 +152,7 @@ describe("resolveActivePending", () => {
   it("closes tab on success", async () => {
     const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
-    fileStates.set(path, makeState([]) as any);
+    fileStates.set(path, makeState([]));
     (fileStates.get(path) as any).path = path;
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
     mockDispatch.mockResolvedValue({ ok: true });

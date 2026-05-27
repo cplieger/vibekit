@@ -33,7 +33,7 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
     container: wrap,
     overlay: $.fbDropOverlay,
     onDragOver: (e) => {
-      const row = (e.target as HTMLElement).closest(".fb-row");
+      const row = (e.target as HTMLElement).closest<HTMLElement>(".fb-row");
       if (row !== null) {
         const name = row.dataset.name;
         const entryMap = ctx.getEntryMap();

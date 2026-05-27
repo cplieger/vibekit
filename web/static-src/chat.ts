@@ -341,7 +341,7 @@ export function createPlannerSession(): void {
 export function installStoreSubscribers(): void {
   mountChatView();
   effect(() => {
-    activeVersion.value;
+    void activeVersion.value;
     const active = getActive();
     if (active !== undefined) {
       refreshContextUI(active);

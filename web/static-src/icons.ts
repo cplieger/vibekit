@@ -194,7 +194,7 @@ export function toolIcon(kind: ToolKind, title: string): string {
   if (byTitle !== undefined) {
     return byTitle;
   }
-  return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK;
+  return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
 // --- Tab icons (used by tabs.ts sidebar tabs) ---

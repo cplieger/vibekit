@@ -85,7 +85,7 @@ class FollowController {
       this.hasToolCall.delete(chatID);
     });
     effect(() => {
-      activeVersion.value;
+      void activeVersion.value;
       this.syncEnabled();
     });
     this.syncEnabled();
@@ -212,7 +212,7 @@ class FollowController {
     if (!this.enabled || locations === undefined || locations.length === 0) {
       return;
     }
-    const loc = locations[0]!;
+    const loc = locations[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const isWrite = profileFor("", kind ?? "").writesFile;
 
     if (this.paused) {
@@ -349,7 +349,7 @@ class FollowController {
 
     if (resp === null || resp.error !== undefined) {
       const msg = resp?.error ?? "File not available";
-      view.querySelector(".follow-code")!.innerHTML =
+      view.querySelector(".follow-code")!.innerHTML = // eslint-disable-line @typescript-eslint/no-non-null-assertion
         `<div class="follow-error">${escText(msg)}<br><code>${escText(path)}</code></div>`;
       return;
     }
@@ -384,7 +384,7 @@ class FollowController {
 
     // Virtualised rendering for large files.
     codeWrap.innerHTML = `<pre class="follow-pre follow-virtual"><code></code></pre>`;
-    const pre = codeWrap.querySelector(".follow-pre")!;
+    const pre = codeWrap.querySelector<HTMLPreElement>(".follow-pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
     // Reset pool for new file
     this.rowPool = [];
@@ -394,7 +394,7 @@ class FollowController {
     const probe = document.createElement("div");
     probe.className = "follow-line";
     probe.innerHTML = `<span class="follow-gutter">1</span><span class="follow-text">x</span>`;
-    pre.querySelector("code")!.appendChild(probe);
+    pre.querySelector("code")!.appendChild(probe); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     this.lineHeight = probe.getBoundingClientRect().height || 20;
     probe.remove();
 
@@ -422,7 +422,7 @@ class FollowController {
     const endLine = win.endLine;
     const needed = endLine - startLine;
 
-    const code = pre.querySelector("code")!;
+    const code = pre.querySelector("code")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const gutterWidth = String(this.lines.length).length;
     const fname = basename(this.filePath);
 
@@ -440,7 +440,7 @@ class FollowController {
     }
     // Hide excess pool elements
     for (let i = needed; i < this.poolSize; i++) {
-      this.rowPool[i]!.style.display = "none";
+      this.rowPool[i]!.style.display = "none"; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
     this.poolSize = needed;
 
@@ -448,7 +448,7 @@ class FollowController {
     for (let i = 0; i < needed; i++) {
       const lineIdx = startLine + i;
       const lineNum = lineIdx + 1;
-      const row = this.rowPool[i]!;
+      const row = this.rowPool[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       row.style.display = "";
       row.dataset["line"] = String(lineNum);
       const isActive = lineNum === this.currentLine;

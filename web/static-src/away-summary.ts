@@ -79,7 +79,7 @@ class AwaySummaryController {
     const changedPaths = new Set<string>();
 
     for (let i = this.lastMsgCount; i < s.messages.length; i++) {
-      const m = s.messages[i]!;
+      const m = s.messages[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       if (m.role === "assistant") {
         assistantMsgs++;
         if (m.tool_calls !== undefined) {

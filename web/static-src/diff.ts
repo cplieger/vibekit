@@ -61,9 +61,9 @@ function lcsTable(a: string[], b: string[]): number[][] {
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
       if (a[i] === b[j]) {
-        t[i]![j] = (t[i + 1]?.[j + 1] ?? 0) + 1;
+        t[i]![j] = (t[i + 1]?.[j + 1] ?? 0) + 1; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       } else {
-        t[i]![j] = Math.max(t[i + 1]?.[j] ?? 0, t[i]?.[j + 1] ?? 0);
+        t[i]![j] = Math.max(t[i + 1]?.[j] ?? 0, t[i]?.[j + 1] ?? 0); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     }
   }
@@ -88,9 +88,9 @@ function lcsLastRow(
   for (let i = aLo; i < aHi; i++) {
     for (let j = bLo; j < bHi; j++) {
       if (a[i] === b[j]) {
-        curr[j - bLo + 1] = prev[j - bLo]! + 1;
+        curr[j - bLo + 1] = prev[j - bLo]! + 1; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       } else {
-        curr[j - bLo + 1] = Math.max(curr[j - bLo]!, prev[j - bLo + 1]!);
+        curr[j - bLo + 1] = Math.max(curr[j - bLo]!, prev[j - bLo + 1]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     }
     [prev, curr] = [curr, prev];
@@ -122,20 +122,20 @@ function hirschbergDiff(
   if (m === 0) {
     const out: DiffLine[] = [];
     for (let j = bLo; j < bHi; j++) {
-      out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! });
+      out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
     return out;
   }
   if (n === 0) {
     const out: DiffLine[] = [];
     for (let i = aLo; i < aHi; i++) {
-      out.push({ kind: "del", oldNo: aOffset + i + 1, newNo: 0, text: aOrig[i]! });
+      out.push({ kind: "del", oldNo: aOffset + i + 1, newNo: 0, text: aOrig[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
     return out;
   }
   if (m === 1) {
     // Base case: single line in a vs b[bLo..bHi)
-    const line = a[aLo]!;
+    const line = a[aLo]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     let matchIdx = -1;
     for (let j = bLo; j < bHi; j++) {
       if (b[j] === line) {
@@ -145,22 +145,22 @@ function hirschbergDiff(
     }
     const out: DiffLine[] = [];
     if (matchIdx === -1) {
-      out.push({ kind: "del", oldNo: aOffset + aLo + 1, newNo: 0, text: aOrig[aLo]! });
+      out.push({ kind: "del", oldNo: aOffset + aLo + 1, newNo: 0, text: aOrig[aLo]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       for (let j = bLo; j < bHi; j++) {
-        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! });
+        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     } else {
       for (let j = bLo; j < matchIdx; j++) {
-        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! });
+        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
       out.push({
         kind: "ctx",
         oldNo: aOffset + aLo + 1,
         newNo: bOffset + matchIdx + 1,
-        text: aOrig[aLo]!,
+        text: aOrig[aLo]!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
       });
       for (let j = matchIdx + 1; j < bHi; j++) {
-        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! });
+        out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     }
     return out;
@@ -182,7 +182,7 @@ function hirschbergDiff(
   let bestJ = bLo;
   let bestScore = -1;
   for (let j = bLo; j <= bHi; j++) {
-    const score = fwd[j - bLo]! + rev[bHi - j]!;
+    const score = fwd[j - bLo]! + rev[bHi - j]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     if (score > bestScore) {
       bestScore = score;
       bestJ = j;
@@ -226,23 +226,23 @@ export function lineDiff(
   let j = 0;
   while (i < a.length && j < b.length) {
     if (aNorm[i] === bNorm[j]) {
-      out.push({ kind: "ctx", oldNo: i + 1, newNo: j + 1, text: a[i]! });
+      out.push({ kind: "ctx", oldNo: i + 1, newNo: j + 1, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       i++;
       j++;
     } else if ((t[i + 1]?.[j] ?? 0) >= (t[i]?.[j + 1] ?? 0)) {
-      out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! });
+      out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       i++;
     } else {
-      out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! });
+      out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       j++;
     }
   }
   while (i < a.length) {
-    out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! });
+    out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     i++;
   }
   while (j < b.length) {
-    out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! });
+    out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     j++;
   }
   return out;

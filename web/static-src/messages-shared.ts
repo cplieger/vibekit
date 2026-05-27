@@ -16,7 +16,7 @@ export function registerConflictChipRenderer(
 
 /** Re-decorate any tool-edit action rows pointing at `path` with a
  *  freshly-landed conflict chip. */
-export async function refreshConflictBadges(chatID: string, path: string): Promise<void> {
+export function refreshConflictBadges(chatID: string, path: string): void {
   if (getActiveId() !== chatID) {
     return;
   }

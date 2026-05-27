@@ -39,7 +39,7 @@ export function initAutoApprove(): void {
 
   // Re-render on every store change (active chat switch, flag change).
   effect(() => {
-    activeVersion.value;
+    void activeVersion.value;
     render();
   });
 }

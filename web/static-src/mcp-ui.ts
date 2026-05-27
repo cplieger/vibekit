@@ -169,7 +169,7 @@ function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElem
     dot.title = "Not yet connected — start a chat to initialise";
     dot.setAttribute("aria-label", `${s.name}: idle`);
   } else {
-    const meta = STATUS_META[st.state] ?? STATUS_META.idle;
+    const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     dot.classList.add(meta.css);
     if (st.state === "failed" && st.error !== "") {
       dot.title = `Failed to initialise: ${st.error}`;

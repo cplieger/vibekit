@@ -34,7 +34,7 @@ export function decorateCodeBlocks(root: HTMLElement): void {
 function decorateOne(pre: HTMLElement): void {
   const codeEl = pre.querySelector("code");
   const lang = extractLang(pre, codeEl);
-  const text = (codeEl ?? pre).textContent ?? "";
+  const text = (codeEl ?? pre).textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
   // Highlight in place. Unknown languages pass through as plain escaped
   // text (renderMarkdown already escaped it; we only swap innerHTML if

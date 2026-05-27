@@ -44,9 +44,9 @@ export function confirm(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const d = ensureDialog();
-    const msg = d.querySelector(".vk-confirm-msg")!;
-    const okBtn = d.querySelector(".vk-confirm-ok")!;
-    const cancelBtn = d.querySelector(".vk-confirm-cancel")!;
+    const msg = d.querySelector(".vk-confirm-msg")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const okBtn = d.querySelector(".vk-confirm-ok")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const cancelBtn = d.querySelector<HTMLButtonElement>(".vk-confirm-cancel")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
     // Upgrade to alertdialog for destructive prompts so screen readers
     // treat them as urgent / interruptive.

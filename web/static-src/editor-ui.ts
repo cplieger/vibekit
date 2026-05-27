@@ -55,7 +55,7 @@ export async function fetchAgentLines(path: string): Promise<void> {
   if (getActiveFilePath() !== path) {
     return;
   }
-  agentLineCache.set(path, data.changes ?? []);
+  agentLineCache.set(path, data.changes);
   agentLineSetCache.delete(path);
   // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);

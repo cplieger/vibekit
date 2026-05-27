@@ -228,7 +228,7 @@ export function removeConfiguredEntry(id: string): [Server, number] | undefined 
   if (idx === -1) {
     return undefined;
   }
-  const entry = arr[idx]!;
+  const entry = arr[idx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   arr.splice(idx, 1);
   configured = arr;
   instance.renderCb?.();

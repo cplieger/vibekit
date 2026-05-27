@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 // Mock the dom module to avoid element lookups.
 vi.mock("./dom.js", () => ({
   $: new Proxy({}, { get: () => document.createElement("div") }),
-  maybeViewTransition: (fn: () => void) => fn(),
+  maybeViewTransition: (fn: () => void) => { fn(); },
   el: () => document.createElement("div"),
 }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
@@ -88,7 +88,7 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "returns false at start of history",
-        steps: (_s: FileBrowserState) => {},
+        steps: (_s: FileBrowserState) => { /* noop */ },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(false);
           expect(s.currentPath).toBe(".");

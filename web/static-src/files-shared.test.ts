@@ -112,7 +112,7 @@ describe("isSafeUrl", () => {
   ];
 
   for (const [url, desc] of unsafe) {
-    it(`blocks unsafe URL (${desc}): "${url.replace(/[\x00-\x1f]/g, "·")}"`, () => {
+    it(`blocks unsafe URL (${desc}): "${url.replace(/[\x00-\x1f]/g, "·")}"`, () => { // eslint-disable-line no-control-regex
       expect(isSafeUrl(url)).toBe(false);
     });
   }
@@ -240,7 +240,7 @@ describe("isSafeUrl property-based", () => {
         if (!result) {
           const normalized = s
             .trim()
-            .replace(/[\t\n\r\x00]/g, "")
+            .replace(/[\t\n\r\x00]/g, "") // eslint-disable-line no-control-regex
             .toLowerCase();
           const hasBlocked = blockedPrefixes.some((p) => normalized.startsWith(p));
           expect(hasBlocked).toBe(true);
@@ -267,7 +267,7 @@ describe("isSafeUrl property-based", () => {
         fc.string().filter((s) => {
           const n = s
             .trim()
-            .replace(/[\t\n\r\x00]/g, "")
+            .replace(/[\t\n\r\x00]/g, "") // eslint-disable-line no-control-regex
             .toLowerCase();
           return !blockedPrefixes.some((p) => n.startsWith(p));
         }),

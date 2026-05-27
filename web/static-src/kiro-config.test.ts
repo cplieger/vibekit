@@ -18,7 +18,7 @@ vi.mock("./icons.js", async (importOriginal) => {
 vi.mock("./send-state.js", () => ({
   setLastError: vi.fn(),
   setSSEStatus: vi.fn(),
-  onSendStateChange: vi.fn(() => () => {}),
+  onSendStateChange: vi.fn(() => () => { /* noop */ }),
   getSendState: vi.fn(() => ({ kind: "idle" })),
 }));
 

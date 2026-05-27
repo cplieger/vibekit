@@ -250,5 +250,5 @@ export async function fetchKiroSetting<T>(
     return fallback;
   }
   const parsed = parse(raw);
-  return parsed !== null ? parsed : fallback;
+  return parsed ?? fallback;
 }

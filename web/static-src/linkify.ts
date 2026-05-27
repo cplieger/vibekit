@@ -56,7 +56,7 @@ function replacePaths(textNode: Text): void {
     if (m.index > last) {
       frag.appendChild(document.createTextNode(text.slice(last, m.index)));
     }
-    frag.appendChild(makeLink(m[1]!, m[2]));
+    frag.appendChild(makeLink(m[1]!, m[2])); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     last = m.index + m[0].length;
   }
   if (last < text.length) {

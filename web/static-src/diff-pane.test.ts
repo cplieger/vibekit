@@ -15,7 +15,7 @@ function del(oldNo: number, text = ""): DiffLine {
 }
 
 describe("countHunks", () => {
-  const cases: Array<{ name: string; lines: DiffLine[]; want: number }> = [
+  const cases: { name: string; lines: DiffLine[]; want: number }[] = [
     { name: "empty array", lines: [], want: 0 },
     { name: "all context lines", lines: [ctx(1, 1), ctx(2, 2), ctx(3, 3)], want: 0 },
     { name: "single add line", lines: [add(1)], want: 1 },

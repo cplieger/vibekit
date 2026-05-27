@@ -59,10 +59,10 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   openPopover = pop;
   positionPopover(pop, anchorEl);
 
-  const filter = pop.querySelector<HTMLInputElement>(".git-branch-popover-filter")!;
-  const list = pop.querySelector<HTMLDivElement>(".git-branch-popover-list")!;
-  const createForm = pop.querySelector<HTMLFormElement>(".git-branch-popover-create")!;
-  const createInput = createForm.querySelector<HTMLInputElement>(
+  const filter = pop.querySelector<HTMLInputElement>(".git-branch-popover-filter")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const list = pop.querySelector<HTMLDivElement>(".git-branch-popover-list")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const createForm = pop.querySelector<HTMLFormElement>(".git-branch-popover-create")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const createInput = createForm.querySelector<HTMLInputElement>( // eslint-disable-line @typescript-eslint/no-non-null-assertion
     ".git-branch-popover-create-input",
   )!;
 
@@ -224,7 +224,7 @@ function arrowNavHandler(e: KeyboardEvent): void {
   } else {
     next = current > 0 ? current - 1 : rows.length - 1;
   }
-  rows[next]!.focus();
+  rows[next]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 }
 
 function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {

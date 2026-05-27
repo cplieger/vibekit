@@ -34,7 +34,7 @@ let onUploadComplete: (() => void) | null = null;
 
 /** Per-picker abort holder — prevents browser from aborting picker fetches. */
 const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
-registerCleanup(() => pickerFetchHolder.controllerHolder?.current?.abort());
+registerCleanup(() => pickerFetchHolder.controllerHolder.current?.abort());
 
 export function setOnUploadComplete(fn: () => void): void {
   onUploadComplete = fn;

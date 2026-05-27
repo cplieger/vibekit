@@ -136,9 +136,7 @@ export function createMarkdownStream(el: HTMLElement): MarkdownStream {
         return;
       }
       buffer += delta;
-      if (flushTimer === undefined) {
-        flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
-      }
+      flushTimer ??= setTimeout(flush, FLUSH_INTERVAL_MS);
     },
     end(): void {
       if (ended) {

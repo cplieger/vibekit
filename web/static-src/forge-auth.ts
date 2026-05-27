@@ -129,7 +129,7 @@ function ensurePanelEffect(): void {
   }
   panelEffectStarted = true;
   effect(() => {
-    stateVersion.value; // subscribe
+    void stateVersion.value; // subscribe
     const root = document.getElementById("forges-panel");
     if (root === null) {
       return;
@@ -331,17 +331,17 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
     return;
   }
   const data = await apiGet<ForgesListResponse>("/api/forges", signal);
-  if (signal.aborted) {
+  if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
-  if (data === null || data === undefined) {
+  if (data === null || data === undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   const [localNames, reposByForge] = await Promise.all([
     refreshLocalNames(signal),
     refreshReposByForge(data.forges, signal),
   ]);
-  if (signal.aborted) {
+  if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   if (myGen !== renderGen) {
@@ -381,7 +381,7 @@ function paintIntoRoot(root: HTMLElement): void {
   const errEl = root.querySelector(":scope > .forge-error");
   errEl?.remove();
 
-  const supportedKinds = ALL_KINDS.filter((k) => lastForgesData!.kinds.includes(k));
+  const supportedKinds = ALL_KINDS.filter((k) => lastForgesData!.kinds.includes(k)); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   reconcile(root, supportedKinds, kindSpec);
 }
 
@@ -556,7 +556,7 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   const hasEmail = a.email !== undefined && a.email !== "";
   const hasUsername = a.username !== undefined && a.username !== "";
   if (hasEmail || hasUsername) {
-    primary.textContent = hasEmail ? a.email! : a.username!;
+    primary.textContent = hasEmail ? a.email! : a.username!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   } else {
     // No identity data yet (this is the first paint right after a
     // PAT submit / OAuth complete; the background probe hasn't
@@ -571,7 +571,7 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   meta.className = "forge-account-meta";
   const parts: string[] = [];
   if (hasEmail && hasUsername) {
-    parts.push("@" + a.username!);
+    parts.push("@" + a.username!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
   if (a.host !== "") {
     parts.push(a.host);
@@ -1132,7 +1132,7 @@ function pollGitHubDevice(host: HTMLElement, deviceCode: string, intervalSec: nu
     const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", {
       device_code: deviceCode,
     });
-    if (pollStopped) {
+    if (pollStopped) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       return;
     }
     if (res === null) {

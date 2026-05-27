@@ -148,7 +148,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
       ),
     ),
   );
-  if (signal.aborted) {
+  if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     return;
   }
   for (const { forge, res } of repoResults) {
@@ -424,7 +424,7 @@ function renderGroup(g: RepoGroup): HTMLElement {
   newBtn.textContent = "+ New PR";
   newBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    void openNewPRDialog(g);
+    openNewPRDialog(g);
   });
   header.appendChild(newBtn);
 
@@ -476,7 +476,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     if (hasURL) {
       const a = document.createElement("a");
       a.className = cls;
-      a.href = pr.url!;
+      a.href = pr.url!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       a.target = "_blank";
       a.rel = "noreferrer";
       a.textContent = text;
@@ -618,10 +618,10 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
     }
     return;
   }
-  await openNewPRDialog(group, sourceBranch);
+  openNewPRDialog(group, sourceBranch);
 }
 
-async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
+function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
   if (dlg === null) {
     return;
@@ -730,6 +730,7 @@ async function openNewPRDialog(g: RepoGroup, sourceBranch = ""): Promise<void> {
   });
 
   // Stage 2: review + submit.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   newSubmit.addEventListener("click", async () => {
     newSubmit.disabled = true;
     if (status !== null) {

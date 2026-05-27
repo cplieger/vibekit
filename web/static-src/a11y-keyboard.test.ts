@@ -11,7 +11,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
     const group = getOrCreateToolGroup((el) => {
       document.body.appendChild(el);
     });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const header = group.querySelector(".tool-group-header")!;
     expect(header.getAttribute("role")).toBe("button");
     expect(header.getAttribute("tabindex")).toBe("0");
     expect(header.getAttribute("aria-expanded")).toBe("true");
@@ -24,7 +24,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
     const group = getOrCreateToolGroup((el) => {
       document.body.appendChild(el);
     });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const header = group.querySelector(".tool-group-header")!;
 
     header.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(header.getAttribute("aria-expanded")).toBe("false");
@@ -43,7 +43,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
     const group = getOrCreateToolGroup((el) => {
       document.body.appendChild(el);
     });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const header = group.querySelector(".tool-group-header")!;
 
     header.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
     expect(header.getAttribute("aria-expanded")).toBe("false");
@@ -70,7 +70,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
       group.appendChild(call);
     }
 
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const header = group.querySelector(".tool-group-header")!;
     expect(header.getAttribute("aria-expanded")).toBe("true");
 
     maybeCollapseGroup(group.querySelector(".tool-call")!);

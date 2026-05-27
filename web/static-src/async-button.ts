@@ -42,7 +42,7 @@ function announce(message: string): void {
   // Clear then set to ensure re-announcement of identical messages.
   liveRegion.textContent = "";
   setTimeout(() => {
-    liveRegion!.textContent = message;
+    liveRegion!.textContent = message; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }, 50);
 }
 

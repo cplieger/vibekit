@@ -72,7 +72,7 @@ export function removePRFromGroups(
     if (pi === -1) {
       continue;
     }
-    const pr = g.prs.splice(pi, 1)[0]!;
+    const pr = g.prs.splice(pi, 1)[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     groupsRef.paint();
     return { group: g, pr };
   }

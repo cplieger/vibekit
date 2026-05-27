@@ -45,7 +45,7 @@ type FbEntry = { kind: "parent" } | { kind: "entry"; entry: FileEntry };
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
-registerCleanup(() => browserFetchHolder.controllerHolder?.current?.abort());
+registerCleanup(() => browserFetchHolder.controllerHolder.current?.abort());
 
 export class FileBrowserState {
   currentPath = ".";
@@ -72,7 +72,7 @@ export class FileBrowserState {
       return false;
     }
     this.historyIdx--;
-    this.currentPath = this.history[this.historyIdx]!;
+    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     this.selected.clear();
     this.lastClickedName = "";
     return true;
@@ -83,7 +83,7 @@ export class FileBrowserState {
       return false;
     }
     this.historyIdx++;
-    this.currentPath = this.history[this.historyIdx]!;
+    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     this.selected.clear();
     this.lastClickedName = "";
     return true;
@@ -476,7 +476,7 @@ function shiftSelect(from: string, to: string): void {
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
   for (let i = lo; i <= hi; i++) {
-    state.selected.add(state.sortedNames[i]!);
+    state.selected.add(state.sortedNames[i]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
   state.lastClickedName = to;
   updateActionButtons();
@@ -539,7 +539,7 @@ function renameSelected(): void {
   if (state.selected.size !== 1) {
     return;
   }
-  startInlineRename([...state.selected][0]!);
+  startInlineRename([...state.selected][0]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 }
 
 function startInlineRename(targetName: string): void {
@@ -550,8 +550,8 @@ function startInlineRename(targetName: string): void {
     return;
   }
 
-  const nameEl = row.querySelector(".fb-name")!;
-  const original = nameEl.textContent ?? "";
+  const nameEl = row.querySelector(".fb-name")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const original = nameEl.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
   const input = document.createElement("input");
   input.type = "text";
@@ -630,7 +630,7 @@ function deleteSelected(): void {
     return;
   }
   const names = [...state.selected];
-  const label = names.length === 1 ? names[0]! : `${String(names.length)} items`;
+  const label = names.length === 1 ? names[0]! : `${String(names.length)} items`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const capturedDir = state.currentPath;
   void (async () => {
     const ok = await confirmDialog(
@@ -666,10 +666,10 @@ function downloadSelected(): void {
   // NOTE: No double-click guard here — the anchor-click approach is
   // idempotent (browser deduplicates rapid same-URL downloads). If this
   // ever becomes an issue, disable the button briefly via setTimeout.
-  if (names.length === 1 && state.entryMap.get(names[0]!)?.isDir !== true) {
+  if (names.length === 1 && state.entryMap.get(names[0]!)?.isDir !== true) { // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const a = document.createElement("a");
-    a.href = `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, names[0]!))}`;
-    a.download = names[0]!;
+    a.href = `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, names[0]!))}`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    a.download = names[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();

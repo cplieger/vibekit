@@ -45,7 +45,7 @@ export function parseConflicts(content: string): ConflictFile {
 
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i]!;
+    const line = lines[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const headMatch = HEAD_RX.exec(line);
     if (headMatch === null) {
       i++;
@@ -55,7 +55,7 @@ export function parseConflicts(content: string): ConflictFile {
     let sep = -1;
     let end = -1;
     for (let j = i + 1; j < lines.length; j++) {
-      const l = lines[j]!;
+      const l = lines[j]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       if (sep === -1 && SEP_RX.test(l)) {
         sep = j;
       } else if (sep !== -1 && END_RX.test(l)) {
@@ -69,7 +69,7 @@ export function parseConflicts(content: string): ConflictFile {
     }
 
     const ourLabel = (headMatch[1] ?? "").trim();
-    const endLine = lines[end]!;
+    const endLine = lines[end]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const endMatch = END_RX.exec(endLine);
     const theirLabel = (endMatch?.[1] ?? "").trim();
 

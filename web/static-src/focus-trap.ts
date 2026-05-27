@@ -25,7 +25,7 @@ export function trapFocus(container: HTMLElement): () => void {
   // Focus the first focusable element.
   const items = getFocusable();
   if (items.length > 0) {
-    items[0]!.focus();
+    items[0]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -36,8 +36,8 @@ export function trapFocus(container: HTMLElement): () => void {
     if (focusable.length === 0) {
       return;
     }
-    const first = focusable[0]!;
-    const last = focusable[focusable.length - 1]!;
+    const first = focusable[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const last = focusable[focusable.length - 1]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
     if (e.shiftKey) {
       if (document.activeElement === first) {

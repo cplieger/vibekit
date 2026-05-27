@@ -11,15 +11,15 @@ vi.mock("./dom.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
 }));
-vi.mock("./modals.js", () => ({ closeModal: () => {} }));
+vi.mock("./modals.js", () => ({ closeModal: () => { /* noop */ } }));
 vi.mock("./mcp-state.js", () => ({
-  refetchServers: async () => {},
+  refetchServers: async () => { /* noop */ },
   configured: [],
   SECRET_MASK: "***",
 }));
 vi.mock("./mcp-pairs.js", () => ({
-  renderKeyPairList: () => {},
-  appendKeyPair: () => {},
+  renderKeyPairList: () => { /* noop */ },
+  appendKeyPair: () => { /* noop */ },
   collectKeyPairs: () => [],
 }));
 vi.mock(import("./icons.js"), async (importOriginal) => {
@@ -38,7 +38,7 @@ import type { Server } from "./mcp-state.js";
 // ---------------------------------------------------------------------------
 
 describe("simplifyName", () => {
-  const cases: Array<{ input: string; expected: string }> = [
+  const cases: { input: string; expected: string }[] = [
     { input: "@modelcontextprotocol/server-github", expected: "server-github" },
     { input: "my-server", expected: "my-server" },
     { input: "simple", expected: "simple" },
@@ -72,9 +72,9 @@ describe("extractNpxPackage", () => {
       args,
       created_at: 0,
       updated_at: 0,
-    }) as Server;
+    });
 
-  const cases: Array<{ label: string; args: string[]; expected: string }> = [
+  const cases: { label: string; args: string[]; expected: string }[] = [
     { label: "typical npx args", args: ["-y", "@scope/pkg"], expected: "@scope/pkg" },
     { label: "only package", args: ["my-pkg"], expected: "my-pkg" },
     { label: "--yes flag", args: ["--yes", "pkg"], expected: "pkg" },
@@ -225,8 +225,8 @@ describe("rawSubmitShape", () => {
   });
 
   it("handles numeric name/command types as empty", () => {
-    expect(rawSubmitShape({ name: 123 as unknown, command: "c" })).toBeNull();
-    expect(rawSubmitShape({ name: "s", command: 456 as unknown })).toBeNull();
+    expect(rawSubmitShape({ name: 123, command: "c" })).toBeNull();
+    expect(rawSubmitShape({ name: "s", command: 456 })).toBeNull();
   });
 });
 
@@ -254,7 +254,7 @@ describe("simplifyName property", () => {
       fc.property(
         fc.string({ minLength: 1 }).filter((s) => {
           // Must have alphanumeric content AND not simplify to "server" naturally
-          if (!/[A-Za-z0-9]/.test(s)) return false;
+          if (!/[A-Za-z0-9]/.test(s)) {return false;}
           const afterSlash = s.slice(s.lastIndexOf("/") + 1);
           const cleaned = afterSlash
             .replace(/[^A-Za-z0-9_-]/g, "-")

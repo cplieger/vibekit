@@ -69,7 +69,7 @@ export function initAgentTerminals(): void {
   const tabBar = document.getElementById("shell-tabs");
   if (tabBar !== null) {
     tabBar.addEventListener("click", (e: MouseEvent) => {
-      const btn = (e.target as HTMLElement).closest("[data-shell-tab]");
+      const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-shell-tab]");
       if (btn === null) {
         return;
       }
@@ -141,16 +141,14 @@ function createTab(termId: string, command: string, args?: string[]): void {
     let evictId: string | undefined;
     // Find the first exited entry that still exists in terms.
     while (exitedQueue.length > 0) {
-      const candidate = exitedQueue.shift()!;
+      const candidate = exitedQueue.shift()!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
       if (terms.has(candidate)) {
         evictId = candidate;
         break;
       }
     }
     // Fallback: if no exited terminals, evict the oldest running terminal.
-    if (evictId === undefined) {
-      evictId = terms.keys().next().value;
-    }
+    evictId ??= terms.keys().next().value;
     if (evictId !== undefined) {
       const t = terms.get(evictId);
       if (t !== undefined) {

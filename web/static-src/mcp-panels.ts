@@ -243,10 +243,10 @@ function initSearchPanel(): void {
       retryBtnUnbind?.();
       retryBtnUnbind = null;
       results.replaceChildren();
-      debouncedSearch!.cancel();
+      debouncedSearch!.cancel(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       return;
     }
-    debouncedSearch!({ q });
+    debouncedSearch!({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
 
   input.onkeydown = (e: KeyboardEvent): void => {
@@ -256,7 +256,7 @@ function initSearchPanel(): void {
       if (q === "") {
         return;
       }
-      void debouncedSearch!.flush({ q });
+      void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
   };
 
@@ -265,7 +265,7 @@ function initSearchPanel(): void {
     if (q === "") {
       return;
     }
-    void debouncedSearch!.flush({ q });
+    void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
 }
 
@@ -282,7 +282,7 @@ function renderSearchResults(
       child.remove();
     }
   }
-  if (d === undefined || d === null) {
+  if (d === undefined || d === null) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     renderSearchError(results, q);
     return;
   }
@@ -432,7 +432,7 @@ function initNpmPanel(existing: Server | null): void {
 
   el<HTMLButtonElement>("mcp-npm-save").onclick = (): void => {
     const args = ["-y", pkg.value.trim()].filter((a) => a !== "");
-    const transport: Transport = PANEL_MODES.npm.transport!;
+    const transport: Transport = PANEL_MODES.npm.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     void submitServer(
       {
         transport,
@@ -501,7 +501,7 @@ function initRemotePanel(existing: Server | null): void {
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
-    typeSel.value = PANEL_MODES.remote.transport!;
+    typeSel.value = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     url.value = "";
     oauthClientID.value = "";
     renderKeyPairList(headers, [], "header");
@@ -627,7 +627,7 @@ export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server>
       }
     }
   }
-  const transport: Transport = PANEL_MODES.raw.transport!;
+  const transport: Transport = PANEL_MODES.raw.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const prewarm = parsed["prewarm"] === true;
   return { transport, name, command, args, env, prewarm };
 }

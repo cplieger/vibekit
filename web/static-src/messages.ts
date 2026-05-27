@@ -242,8 +242,8 @@ export function mountChatView(): void {
   mounted = true;
   initMessageActions();
   effect(() => {
-    messagesVersion.value;
-    activeVersion.value;
+    void messagesVersion.value;
+    void activeVersion.value;
     paint();
   });
 }
@@ -458,6 +458,7 @@ function buildUser(m: Message): HTMLElement {
         return;
       }
       void import("./transport.js").then(({ send }) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         void send({
           type: "rewind_chat",
           chat_id: session.id,
@@ -727,9 +728,7 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   const calls = m.tool_calls ?? [];
   let tools = wrap.querySelector<HTMLDivElement>(":scope > .tool-group");
   if (calls.length > 0) {
-    if (tools === null) {
-      tools = mountToolGroup(wrap);
-    }
+    tools ??= mountToolGroup(wrap);
     reconcile(tools, calls, toolSpec);
     refreshGroupHeader(tools);
   } else if (tools !== null) {
@@ -953,10 +952,10 @@ const toolSpec: ReconcileSpec<ToolCall> = {
 /** Apply a ToolCall snapshot's updatable fields to its DOM card.
  *  Idempotent: safe to call repeatedly with the same tc. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
-  if (tc.status !== undefined) {
+  if (tc.status !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
-  if (tc.title !== undefined) {
+  if (tc.title !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     applyTitleUpdate(el, tc.title);
   }
   if (tc.output !== undefined && tc.output !== "") {
@@ -972,7 +971,7 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
  *  transcript so the user sees what the sub-agent is doing without
  *  the visual noise of separate tool cards. */
 function formatNestedToolPreview(tc: ToolCall): string {
-  const tag = tc.kind !== undefined ? `[${tc.kind}]` : "[tool]";
+  const tag = tc.kind !== undefined ? `[${tc.kind}]` : "[tool]"; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
   return `\n${tag} ${tc.title}\n`;
 }
 
@@ -1003,7 +1002,7 @@ function mirrorToolUpdateToCrew(tc: ToolCall): void {
   if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
     if (tc.status === "completed" || tc.status === "failed") {
       onCrewToolCompleted(tc.sub_session_id);
-    } else if (tc.title !== undefined) {
+    } else if (tc.title !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       setSubagentActivity(tc.sub_session_id, formatToolActivity(tc.title));
     }
   }
@@ -1086,7 +1085,7 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
   if (t !== null) {
     const display = title.startsWith("Running: ") ? title.slice(9) : title;
     t.textContent = display;
-    t.parentElement!.title = title;
+    t.parentElement!.title = title; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
 }
 
@@ -1329,7 +1328,7 @@ function updateEvent(_el: HTMLElement, _m: Message): void {
 function buildSystemFallback(m: Message): HTMLElement {
   const el = document.createElement("div");
   el.className = "message system";
-  el.textContent = m.content ?? String(m.event_kind ?? "");
+  el.textContent = m.content ?? (m.event_kind ?? "");
   return el;
 }
 
@@ -1338,7 +1337,7 @@ function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement
   el.className = `boundary boundary-${kind}`;
   let icon = "";
   for (const meta of Object.values(EVENT_BOUNDARY_META)) {
-    if (meta?.boundary === kind) {
+    if (meta?.boundary === kind) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       icon = meta.icon;
       break;
     }
@@ -1363,7 +1362,7 @@ function attachTurnActions(el: HTMLDivElement): void {
   const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
   const session = getActive();
   const msg = session?.messages.find((m) => m.id === msgID);
-  const raw = msg?.content ?? el.textContent ?? "";
+  const raw = msg?.content ?? el.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
   if (raw.trim() === "") {
     return;
   }
@@ -1422,7 +1421,7 @@ function attachTurnActions(el: HTMLDivElement): void {
 
   rightSlot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, el.textContent ?? "");
+      copyAndAnimate(btn, el.textContent ?? ""); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     }),
   );
   rightSlot.appendChild(
@@ -1452,7 +1451,7 @@ function attachTurnActions(el: HTMLDivElement): void {
   // Place turn actions at the end of the message wrap so they sit
   // below the bubble + tool group + plan (the natural reading order).
   // Reuses the wrap captured at the top for the markdown lookup.
-  if (wrap !== null && wrap !== undefined) {
+  if (wrap !== null && wrap !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     wrap.appendChild(row);
   } else {
     el.insertAdjacentElement("afterend", row);

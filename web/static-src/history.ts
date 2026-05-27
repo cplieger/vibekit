@@ -93,7 +93,7 @@ class HistoryController {
       container.appendChild(err);
       return;
     }
-    const chats = d.chats ?? [];
+    const chats = d.chats ?? []; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
     // Drop any non-keyed sibling (empty/error placeholder) before reconcile.
     for (const child of [...container.children]) {
@@ -137,7 +137,7 @@ class HistoryController {
         if (row === null) {
           return;
         }
-        const chatId = row.getAttribute("data-chat-id")!;
+        const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
         const action = target.getAttribute("data-action");
         if (action === "restore") {
           // Bug 4: optimistic-remove the row to prevent double-click dispatches.
@@ -281,7 +281,7 @@ class HistoryController {
         if (row === null) {
           return;
         }
-        const chatId = row.getAttribute("data-chat-id")!;
+        const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
         if (target.getAttribute("data-action") === "restore") {
           // Bug 4: optimistic-remove row to prevent double-click.
           row.remove();

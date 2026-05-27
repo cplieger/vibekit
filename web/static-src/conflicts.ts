@@ -155,7 +155,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
   void import("./messages-shared.js")
-    .then((m) => m.refreshConflictBadges(chatID, c.path!))
+    .then((m) => { m.refreshConflictBadges(chatID, c.path!); }) // eslint-disable-line @typescript-eslint/no-non-null-assertion
     .catch((e: unknown) => {
       console.warn("[conflicts] badge refresh failed", e);
     });
@@ -180,7 +180,7 @@ export async function loadConflictsFor(chatID: string): Promise<void> {
  *  state. Clicking the chip triggers openConflictDiff. */
 export function renderConflictChip(row: HTMLElement, chatID: string, path: string): void {
   const c = getConflict(chatID, path);
-  const existing = row.querySelector(".conflict-chip");
+  const existing = row.querySelector<HTMLElement>(".conflict-chip");
   if (c === null) {
     if (existing !== null) {
       chipUnbindMap.get(existing)?.();

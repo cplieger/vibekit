@@ -25,7 +25,7 @@ const TYPE_LABELS: Record<string, string> = {
   agent: "Custom agents",
 };
 
-const loadKiroConfigAction = defineAction<void, { items: KiroConfigItem[] }>({
+const loadKiroConfigAction = defineAction<undefined, { items: KiroConfigItem[] }>({
   name: "settings.load_kiro_config",
   retryable: retryNetwork,
   retry: { count: 2, delay: 300 },

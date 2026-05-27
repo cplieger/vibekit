@@ -102,8 +102,8 @@ export class RollingOutput {
 
   private openModal(): void {
     const modal = el<HTMLDivElement>(this.modalId);
-    const body = modal.querySelector(".subagent-modal-body, pre")!;
-    if (body !== null) {
+    const body = modal.querySelector(".subagent-modal-body, pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    if (body !== null) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       body.textContent = this.full;
       body.scrollTop = body.scrollHeight;
     }
@@ -269,16 +269,16 @@ function doLogin(
         void (async () => {
           while (!signal.aborted) {
             await new Promise<void>((r) => setTimeout(r, 3000));
-            if (signal.aborted) {
+            if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
               break;
             }
             const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
-            if (signal.aborted) {
+            if (signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
               break;
             }
             if (wd?.email !== undefined && wd.email !== "") {
               loginPollAbort = null;
-              loginPollUnregister?.();
+              loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
               loginPollUnregister = null;
               onLoggedIn();
               return;
@@ -287,7 +287,7 @@ function doLogin(
           if (ctrl.signal.aborted) {
             return;
           } // user dismissed
-          loginPollUnregister?.();
+          loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
           loginPollUnregister = null;
           status.textContent = "Login timed out. Please reload and try again.";
         })();

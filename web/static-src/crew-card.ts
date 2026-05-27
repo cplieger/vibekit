@@ -187,8 +187,8 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
     return;
   }
   cardState.set(el, sig);
-  const body = el.querySelector(".crew-body")!;
-  const count = el.querySelector(".crew-count")!;
+  const body = el.querySelector(".crew-body")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const count = el.querySelector(".crew-count")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
   const done = crew.subagents.filter((s) => s.status === "terminated").length;
@@ -224,7 +224,7 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
       const r = buildRow(e.sub);
       const tc = toolContainers.get(e.sub.session_id);
       if (tc !== undefined) {
-        const expandBody = r.querySelector(".crew-row-expand")!;
+        const expandBody = r.querySelector(".crew-row-expand")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
         expandBody.appendChild(tc);
       }
       return r;

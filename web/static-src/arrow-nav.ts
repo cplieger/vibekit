@@ -49,7 +49,7 @@ export function wireArrowNav(
     }
     if (next >= 0 && next < items.length) {
       e.preventDefault();
-      items[next]!.focus();
+      items[next]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
   });
 

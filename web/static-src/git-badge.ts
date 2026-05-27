@@ -107,7 +107,7 @@ function deriveState(
   // Forge error trumps everything: an unusable forge means PR/clone
   // operations would fail; surface it first.
   if (forges !== null) {
-    for (const f of forges.forges ?? []) {
+    for (const f of forges.forges ?? []) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       if (f.connected && f.last_error !== undefined && f.last_error !== "") {
         return "error";
       }
@@ -119,7 +119,7 @@ function deriveState(
 
   let hasLocal = false;
   let hasRemote = false;
-  for (const r of status.repos ?? []) {
+  for (const r of status.repos ?? []) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     if (!r.is_repo) {
       continue;
     }
@@ -156,7 +156,7 @@ function deriveTooltip(
       (f) => f.connected && f.last_error !== undefined && f.last_error !== "",
     );
     if (errored.length === 1) {
-      return `Forge auth issue: ${errored[0]!.id}`;
+      return `Forge auth issue: ${errored[0]!.id}`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
     return `${errored.length} forges with auth issues`;
   }
@@ -166,7 +166,7 @@ function deriveTooltip(
 
   let dirty = 0;
   let behind = 0;
-  for (const r of status.repos ?? []) {
+  for (const r of status.repos ?? []) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     if (!r.is_repo) {
       continue;
     }

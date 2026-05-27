@@ -65,7 +65,7 @@ export function stageFiles(repo: string, paths: string[]): StageResult | undefin
   const pathSet = new Set(paths);
   const entries: StageResult["entries"] = [];
   for (let i = 0; i < r.files.length; i++) {
-    const f = r.files[i]!;
+    const f = r.files[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     if (pathSet.has(f.path) && !f.staged) {
       entries.push({ file: { ...f }, index: i });
       f.staged = true;
@@ -107,7 +107,7 @@ export function unstageFiles(repo: string, paths: string[]): StageResult | undef
   const pathSet = new Set(paths);
   const entries: StageResult["entries"] = [];
   for (let i = 0; i < r.files.length; i++) {
-    const f = r.files[i]!;
+    const f = r.files[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     if (pathSet.has(f.path) && f.staged) {
       entries.push({ file: { ...f }, index: i });
       f.staged = false;
@@ -150,7 +150,7 @@ export function removeFiles(repo: string, paths: string[]): RemoveResult | undef
   const entries: RemoveResult["entries"] = [];
   // Collect in reverse order so indices stay valid during splice
   for (let i = r.files.length - 1; i >= 0; i--) {
-    const f = r.files[i]!;
+    const f = r.files[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     if (pathSet.has(f.path) && !f.staged) {
       entries.push({ file: { ...f }, index: i });
       r.files.splice(i, 1);

@@ -137,7 +137,7 @@ function init(): void {
   // overwrite whatever the REST path seeded.
   let lastModelSig = "";
   effect(() => {
-    sessionsVersion.value;
+    void sessionsVersion.value;
     const active = getActive();
     if (active === undefined) {
       return;
@@ -319,7 +319,7 @@ async function checkAuthAndStart(): Promise<void> {
       }
       restoreTabState();
       if (getActiveTabId() === "" && getSessions().length > 0) {
-        activateTab(getSessions()[0]!.id);
+        activateTab(getSessions()[0]!.id); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     }
   } catch {

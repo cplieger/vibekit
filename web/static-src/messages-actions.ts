@@ -51,7 +51,7 @@ export function addEditActions(el: HTMLDivElement): void {
     const group = el.closest(".tool-group");
     let sibling: Element | null = (group ?? el).previousElementSibling;
     while (sibling !== null) {
-      const btn = sibling.querySelector(".checkpoint-restore");
+      const btn = sibling.querySelector<HTMLElement>(".checkpoint-restore");
       if (btn !== null) {
         tag = btn.dataset.tag ?? "";
         break;

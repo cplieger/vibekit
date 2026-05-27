@@ -131,7 +131,7 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderMarkdown edge cases (table-driven)", () => {
-  const cases: Array<{ name: string; input: string; expected: string | RegExp }> = [
+  const cases: { name: string; input: string; expected: string | RegExp }[] = [
     // --- Basic inline formatting ---
     { name: "bold with **", input: "**bold**", expected: "<p><strong>bold</strong></p>" },
     { name: "bold with __", input: "__bold__", expected: "<p><strong>bold</strong></p>" },
@@ -427,6 +427,6 @@ describe("markdown surface contracts", () => {
     r.writeDelta(big);
     r.end();
     // After end(), all text is parsed and rendered.
-    expect(el.textContent?.length).toBe(10_000);
+    expect(el.textContent?.length).toBe(10_000); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
   });
 });

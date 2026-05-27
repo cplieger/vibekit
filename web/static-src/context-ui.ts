@@ -55,7 +55,7 @@ export function refreshContextUI(s: Session): void {
       : DEFAULT_CUTOFF_PCT;
   const full = u.context_pct >= cutoff;
 
-  const isThinking = s.thinking ?? false;
+  const isThinking = s.thinking;
   if (_prevThinking && !isThinking) {
     emitBus(BUS_TURN_IDLE, s.id);
     setInputDisabled(

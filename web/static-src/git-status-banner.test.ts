@@ -13,7 +13,7 @@ function setupDOM(): void {
 }
 
 function bannerEl(): HTMLElement {
-  return document.getElementById("git-status-banner") as HTMLElement;
+  return document.getElementById("git-status-banner")!;
 }
 
 function visibleState(): string | null {
@@ -153,7 +153,7 @@ describe("git-status-banner", () => {
   });
 
   it("clear is a no-op when the key isn't active", () => {
-    expect(() => clearBanner("forge-auth-failed")).not.toThrow();
+    expect(() => { clearBanner("forge-auth-failed"); }).not.toThrow();
     expect(visibleState()).toBeNull();
   });
 

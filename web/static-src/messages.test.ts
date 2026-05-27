@@ -76,9 +76,9 @@ describe("EVENT_BOUNDARY_META", () => {
     const entries = Object.entries(EVENT_BOUNDARY_META);
     expect.assertions(entries.length * 3);
     for (const [, meta] of entries) {
-      expect(meta!.boundary).toBeTruthy();
-      expect(meta!.icon).toBeDefined();
-      expect(meta!.defaultLabel).toBeTruthy();
+      expect(meta.boundary).toBeTruthy();
+      expect(meta.icon).toBeDefined();
+      expect(meta.defaultLabel).toBeTruthy();
     }
   });
 
