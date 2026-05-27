@@ -212,8 +212,8 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   if (label !== null) {
     label.textContent = `Drift vs ${c.other_chat}`;
   }
-  chip.dataset['tag'] = c.tag;
-  chip.dataset['other'] = c.other_chat;
+  chip.dataset["tag"] = c.tag;
+  chip.dataset["other"] = c.other_chat;
   chip.setAttribute("aria-label", `Conflict with chat ${c.other_chat} on ${escText(path)}`);
 }
 

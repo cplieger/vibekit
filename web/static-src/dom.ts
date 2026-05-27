@@ -8,7 +8,6 @@
 // their own modules but use this helper instead of redefining it.
 // ---------------------------------------------------------------------------
 
-
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */

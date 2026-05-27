@@ -351,8 +351,7 @@ class FollowController {
       const msg = resp?.error ?? "File not available";
       const codeEl = view.querySelector(".follow-code");
       if (codeEl) {
-        codeEl.innerHTML =
-          `<div class="follow-error">${escText(msg)}<br><code>${escText(path)}</code></div>`;
+        codeEl.innerHTML = `<div class="follow-error">${escText(msg)}<br><code>${escText(path)}</code></div>`;
       }
       return;
     }
