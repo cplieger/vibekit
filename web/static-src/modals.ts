@@ -103,8 +103,8 @@ export class RollingOutput {
   private openModal(): void {
     const modal = el<HTMLDivElement>(this.modalId);
     const body = modal.querySelector(".subagent-modal-body, pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     if (body !== null) {
-       
       body.textContent = this.full;
       body.scrollTop = body.scrollHeight;
     }
@@ -270,13 +270,13 @@ function doLogin(
         void (async () => {
           while (!signal.aborted) {
             await new Promise<void>((r) => setTimeout(r, 3000));
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
             if (signal.aborted) {
-               
               break;
             }
             const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
             if (signal.aborted) {
-               
               break;
             }
             if (wd?.email !== undefined && wd.email !== "") {

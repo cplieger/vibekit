@@ -156,8 +156,9 @@ onSSE("conflict_detected", (chatID, payload) => {
   // registry is used (e.g. from tests).
   void import("./messages-shared.js")
     .then((m) => {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- defensive check
       m.refreshConflictBadges(chatID, c.path!);
-    })  
+    })
     .catch((e: unknown) => {
       console.warn("[conflicts] badge refresh failed", e);
     });

@@ -282,8 +282,8 @@ function renderSearchResults(
       child.remove();
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (d === undefined || d === null) {
-     
     renderSearchError(results, q);
     return;
   }

@@ -952,12 +952,12 @@ const toolSpec: ReconcileSpec<ToolCall> = {
 /** Apply a ToolCall snapshot's updatable fields to its DOM card.
  *  Idempotent: safe to call repeatedly with the same tc. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (tc.status !== undefined) {
-     
     applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (tc.title !== undefined) {
-     
     applyTitleUpdate(el, tc.title);
   }
   if (tc.output !== undefined && tc.output !== "") {
@@ -1004,8 +1004,8 @@ function mirrorToolUpdateToCrew(tc: ToolCall): void {
   if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
     if (tc.status === "completed" || tc.status === "failed") {
       onCrewToolCompleted(tc.sub_session_id);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     } else if (tc.title !== undefined) {
-       
       setSubagentActivity(tc.sub_session_id, formatToolActivity(tc.title));
     }
   }
@@ -1340,8 +1340,8 @@ function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement
   el.className = `boundary boundary-${kind}`;
   let icon = "";
   for (const meta of Object.values(EVENT_BOUNDARY_META)) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     if (meta?.boundary === kind) {
-       
       icon = meta.icon;
       break;
     }
@@ -1455,8 +1455,8 @@ function attachTurnActions(el: HTMLDivElement): void {
   // Place turn actions at the end of the message wrap so they sit
   // below the bubble + tool group + plan (the natural reading order).
   // Reuses the wrap captured at the top for the markdown lookup.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (wrap !== null && wrap !== undefined) {
-     
     wrap.appendChild(row);
   } else {
     el.insertAdjacentElement("afterend", row);

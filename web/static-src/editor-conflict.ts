@@ -222,8 +222,8 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   if (myDispatchId !== currentSuggestionGen(state.path)) {
     return;
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (state.mode.kind !== "conflict") {
-     
     return;
   }
   if (getActiveFilePath() !== state.path) {

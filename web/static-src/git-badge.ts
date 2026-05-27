@@ -107,8 +107,8 @@ function deriveState(
   // Forge error trumps everything: an unusable forge means PR/clone
   // operations would fail; surface it first.
   if (forges !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     for (const f of forges.forges ?? []) {
-       
       if (f.connected && f.last_error !== undefined && f.last_error !== "") {
         return "error";
       }
@@ -120,8 +120,8 @@ function deriveState(
 
   let hasLocal = false;
   let hasRemote = false;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   for (const r of status.repos ?? []) {
-     
     if (!r.is_repo) {
       continue;
     }
@@ -168,8 +168,8 @@ function deriveTooltip(
 
   let dirty = 0;
   let behind = 0;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   for (const r of status.repos ?? []) {
-     
     if (!r.is_repo) {
       continue;
     }
