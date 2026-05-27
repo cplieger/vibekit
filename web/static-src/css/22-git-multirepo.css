@@ -207,12 +207,15 @@
 .git-repo-section-forge-github svg {
   fill: var(--c-text-primary);
 }
+
 .git-repo-section-forge-gitlab svg {
   fill: #fc6d26;
 }
+
 .git-repo-section-forge-codeberg svg {
   fill: #2185d0;
 }
+
 .git-repo-section-forge-gitea svg {
   fill: #609926;
 }
@@ -257,9 +260,11 @@
 .git-repo-ahead {
   color: color-mix(in srgb, var(--c-accent, #6cbcff) 80%, var(--c-text-primary));
 }
+
 .git-repo-behind {
   color: color-mix(in srgb, var(--c-warning, #e6c074) 80%, var(--c-text-primary));
 }
+
 .git-repo-stashes {
   color: var(--c-text-tertiary);
 }
@@ -333,6 +338,7 @@
 .git-branch-popover-row:hover {
   background: var(--c-bg-tertiary);
 }
+
 .git-branch-popover-row.current {
   font-weight: 600;
   color: var(--c-accent);
@@ -397,6 +403,7 @@
 .git-open-pr-hint-icon {
   font-size: 1rem;
 }
+
 .git-open-pr-hint-msg {
   flex: 1;
 }
@@ -468,14 +475,17 @@
   background: color-mix(in srgb, #2da44e 12%, transparent);
   color: color-mix(in srgb, #2da44e 80%, var(--c-text-primary));
 }
+
 .git-diff-line-del {
   background: color-mix(in srgb, #cf222e 12%, transparent);
   color: color-mix(in srgb, #cf222e 80%, var(--c-text-primary));
 }
+
 .git-diff-line-hunk {
   color: var(--c-text-tertiary);
   font-weight: 600;
 }
+
 .git-diff-line-meta {
   color: var(--c-text-tertiary);
 }
@@ -606,8 +616,7 @@
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-areas: "meta actions" "sub actions";
-  column-gap: var(--sp-3);
-  row-gap: 2px;
+  gap: 2px var(--sp-3);
 }
 
 .git-pr-row-meta {

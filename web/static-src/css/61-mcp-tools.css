@@ -175,9 +175,11 @@
   background: var(--c-text-tertiary);
   animation: vk-bounce-dot 1.2s infinite;
 }
+
 .thinking-dot:nth-child(2) {
   animation-delay: 0.15s;
 }
+
 .thinking-dot:nth-child(3) {
   animation-delay: var(--dur-enter);
 }
@@ -355,9 +357,11 @@
   outline: 2px solid var(--c-yellow);
   outline-offset: 2px;
 }
+
 .conflict-chip svg {
   flex-shrink: 0;
 }
+
 .conflict-chip-label {
   line-height: 1;
 }
@@ -519,6 +523,7 @@
   white-space: nowrap;
   transition: color var(--dur-micro) var(--ease-micro);
 }
+
 .shell-tab:hover {
   color: var(--c-text-secondary);
 }
@@ -629,10 +634,12 @@
 .vk-confirm-dialog::backdrop {
   background: oklch(0% 0 0deg / 50%);
 }
+
 .vk-confirm-msg {
   margin-block-end: var(--sp-3);
   font-size: var(--fs-sm);
 }
+
 .vk-confirm-actions {
   display: flex;
   gap: var(--sp-2);
@@ -717,6 +724,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
 .sidebar-history-toggle:hover {
   color: var(--c-text-secondary);
 }
@@ -729,6 +737,7 @@
   min-width: 0.875rem;
   text-align: center;
 }
+
 .sidebar-history-list {
   padding: 0 var(--sp-1);
 }
@@ -742,6 +751,7 @@
   border-radius: var(--r);
   gap: var(--sp-2);
 }
+
 .history-row:hover {
   background: var(--c-bg-hover);
 }
@@ -861,18 +871,23 @@
   cursor: pointer;
   transition: background var(--dur-micro) var(--ease-micro);
 }
+
 .diff-hunk-btn.accept {
   color: var(--c-green);
 }
+
 .diff-hunk-btn.accept:hover {
   background: color-mix(in srgb, var(--c-green) 12%, transparent);
 }
+
 .diff-hunk-btn.reject {
   color: var(--c-red);
 }
+
 .diff-hunk-btn.reject:hover {
   background: color-mix(in srgb, var(--c-red) 12%, transparent);
 }
+
 .diff-hunk-btn:disabled {
   opacity: 0.4;
   cursor: default;

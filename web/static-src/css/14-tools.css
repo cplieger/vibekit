@@ -18,6 +18,7 @@
 :where(.tool-tier-simple) .tool-toggle {
   display: none;
 }
+
 :where(.tool-tier-simple) .tool-details {
   display: none;
 }
@@ -178,12 +179,14 @@
   &.pending {
     color: var(--c-text-tertiary);
   }
+
   &.in_progress {
     color: var(--c-yellow);
   } /* stylelint-disable-line selector-class-pattern -- server API value */
   &.completed {
     color: var(--c-green);
   }
+
   &.failed {
     color: var(--c-red);
   }
@@ -275,10 +278,12 @@
     border-color: var(--c-accent);
     color: var(--c-text-primary);
   }
+
   & .tool-file-icon {
     display: inline-flex;
     align-items: center;
   }
+
   & :where(.tool-file-icon) svg {
     width: 0.85em;
     height: 0.85em;
@@ -545,12 +550,15 @@
   color: var(--c-accent);
   animation: vk-spin 1.2s linear infinite;
 }
+
 .crew-done-icon {
   color: var(--c-green);
 }
+
 .crew-error-icon {
   color: var(--c-red);
 }
+
 .crew-pending-icon {
   color: var(--c-text-tertiary);
 }
@@ -698,10 +706,12 @@
     color: var(--c-text-primary);
     background: var(--c-bg-tertiary);
   }
+
   &:disabled {
     opacity: 0.3;
     cursor: default;
   }
+
   &:disabled:hover {
     background: none;
     color: var(--c-text-secondary);
@@ -740,6 +750,7 @@
 .action-bar-local + .action-bar-sync {
   padding-block-start: 0;
 }
+
 .action-bar-local {
   padding-block-end: var(--sp-1);
 }
@@ -783,10 +794,12 @@
     background: var(--c-bg-tertiary);
     color: var(--c-text-primary);
   }
+
   &:disabled {
     opacity: 0.3;
     cursor: default;
   }
+
   &:disabled:hover {
     background: var(--c-bg-secondary);
     color: var(--c-text-secondary);
@@ -1097,12 +1110,15 @@
 .git-badge[data-state="local"] {
   background: var(--c-warning, #e6c074);
 }
+
 .git-badge[data-state="remote"] {
   background: var(--c-accent, #6cbcff);
 }
+
 .git-badge[data-state="both"] {
   background: color-mix(in srgb, var(--c-warning, #e6c074) 50%, var(--c-accent, #6cbcff));
 }
+
 .git-badge[data-state="error"] {
   background: var(--c-danger, #e66666);
 }
@@ -1271,6 +1287,7 @@
   border-radius: 4px;
   color: var(--c-text-primary);
 }
+
 .chip-input:focus {
   border-color: var(--c-accent);
   outline: none;
@@ -1286,6 +1303,7 @@
   color: var(--c-text-primary);
   cursor: pointer;
 }
+
 .chip-mode-select:focus {
   border-color: var(--c-accent);
   outline: none;

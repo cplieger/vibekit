@@ -1,6 +1,7 @@
 .tab.tab-rewind-child {
   margin-inline-start: 1rem;
 }
+
 .tab.tab-rewind-child .tab-name::before {
   content: "↳ ";
   color: var(--c-text-tertiary);
@@ -15,6 +16,7 @@
   padding: var(--sp-1);
   box-shadow: 0 4px 12px oklch(0% 0 0deg / 25%);
 }
+
 .tab-context-item {
   display: block;
   width: 100%;
@@ -27,6 +29,7 @@
   text-align: left;
   border-radius: calc(var(--r) / 2);
 }
+
 .tab-context-item:hover {
   background: var(--c-bg-tertiary);
 }

@@ -123,6 +123,7 @@
     background var(--dur-micro) var(--ease-micro);
   display: flex;
   align-items: center;
+
   &:hover {
     color: var(--c-text-primary);
     background: var(--c-bg-hover);
@@ -134,6 +135,7 @@
   & .follow-play-icon {
     display: none;
   }
+
   & .follow-pause-icon {
     display: block;
   }
@@ -142,9 +144,11 @@
   &[aria-pressed="true"] .follow-play-icon {
     display: block;
   }
+
   &[aria-pressed="true"] .follow-pause-icon {
     display: none;
   }
+
   &[aria-pressed="true"] {
     color: var(--c-accent);
   }
@@ -210,6 +214,7 @@
   font-size: var(--fs-sm);
   text-align: center;
   padding: var(--sp-4);
+
   & code {
     font-size: var(--fs-xs);
     color: var(--c-text-secondary);

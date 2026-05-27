@@ -162,10 +162,12 @@
     background var(--dur-micro),
     color var(--dur-micro),
     border-color var(--dur-micro) var(--ease-micro);
+
   &:hover {
     background: var(--c-bg-tertiary);
     color: var(--c-text-primary);
   }
+
   & svg {
     flex-shrink: 0;
   }
@@ -175,6 +177,7 @@
 .pill-context {
   gap: var(--sp-1);
   padding-inline-start: 0.25rem;
+
   & .context-ring {
     flex-shrink: 0;
   }
@@ -206,6 +209,7 @@
   &.switching {
     pointer-events: none;
   }
+
   &:where(.switching) svg {
     display: none;
   }
@@ -355,9 +359,11 @@
 .supervised-pending-row[data-kind="create"] .supervised-row-glyph {
   color: var(--c-green);
 }
+
 .supervised-pending-row[data-kind="delete"] .supervised-row-glyph {
   color: var(--c-red);
 }
+
 .supervised-pending-row[data-kind="edit"] .supervised-row-glyph {
   color: var(--c-accent);
 }
@@ -458,26 +464,31 @@
   text-align: center;
   line-height: 1.4;
 }
+
 .task-list-items {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   min-width: 12rem;
 }
+
 .task-item {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-1);
   font-size: var(--fs-sm);
 }
+
 .task-icon {
   flex-shrink: 0;
   width: 1rem;
   text-align: center;
 }
+
 .task-text {
   color: var(--c-text-secondary);
 }
+
 .task-completed .task-text {
   text-decoration: line-through;
   color: var(--c-text-tertiary);
@@ -619,9 +630,11 @@
   text-align: left;
   white-space: nowrap;
   transition: background 0.1s;
+
   &:hover {
     background: var(--c-bg-tertiary);
   }
+
   &.active {
     background: var(--c-accent-subtle);
     color: var(--c-accent);
@@ -643,12 +656,14 @@
   margin-block-end: var(--sp-1);
   border-bottom: 1px solid var(--c-border);
 }
+
 .effort-label {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   margin-inline-end: var(--sp-1);
   white-space: nowrap;
 }
+
 .effort-btn {
   font-size: var(--fs-xs);
   padding: 0.125rem var(--sp-1);
@@ -662,10 +677,12 @@
     background var(--dur-micro),
     border-color var(--dur-micro);
 }
+
 .effort-btn:hover {
   background: var(--c-bg-tertiary);
   border-color: var(--c-text-tertiary);
 }
+
 .effort-btn.active {
   background: var(--c-accent-subtle);
   border-color: var(--c-accent);
@@ -730,6 +747,7 @@
   &:where(.queued) {
     color: var(--c-text-secondary);
     cursor: default;
+
     & svg {
       animation: send-hourglass 2s ease-in-out infinite;
     }
@@ -739,6 +757,7 @@
     background: var(--c-yellow, #b88f00);
     color: oklch(0% 0 0deg);
     cursor: default;
+
     & svg {
       transform: none;
       animation: vk-breathe 1.6s ease-in-out infinite;
@@ -748,17 +767,21 @@
   &:hover {
     background: var(--c-accent-hover);
   }
+
   &:active {
     transform: scale(0.92);
     transition: transform var(--dur-micro) var(--ease-micro);
   }
+
   &:where(.busy):hover {
     background: var(--c-accent-hover);
   }
+
   &:where(.queued):hover {
     background: var(--c-bg-tertiary);
     filter: none;
   }
+
   &:where(.blocked):hover {
     background: var(--c-yellow, #b88f00);
     filter: none;
@@ -850,14 +873,17 @@
     transform: rotate(0deg);
     opacity: 1;
   }
+
   45% {
     transform: rotate(0deg);
     opacity: 1;
   }
+
   55% {
     transform: rotate(180deg);
     opacity: 0.6;
   }
+
   100% {
     transform: rotate(180deg);
     opacity: 1;

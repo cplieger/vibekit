@@ -189,6 +189,7 @@
   &:hover {
     background: var(--c-bg-tertiary);
   }
+
   &.fb-row-selected {
     background: var(--c-accent-subtle);
   }

@@ -412,17 +412,21 @@
   &.idle {
     background: var(--c-text-tertiary);
   }
+
   &.connected {
     background: var(--c-green);
   }
+
   &.oauth {
     background: var(--c-yellow);
     animation: vk-breathe 2s ease-in-out infinite;
   }
+
   &.failed {
     background: var(--c-red);
     animation: vk-breathe 2s ease-in-out infinite;
   }
+
   &.disabled {
     background: var(--c-border);
   }
@@ -674,12 +678,15 @@
     grid-template-columns: 1fr auto;
     grid-template-areas: "name del" "value value";
   }
+
   .mcp-pair-name {
     grid-area: name;
   }
+
   .mcp-pair-value {
     grid-area: value;
   }
+
   .mcp-pair-del {
     grid-area: del;
   }

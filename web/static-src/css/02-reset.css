@@ -8,6 +8,7 @@
     padding: 0;
     box-sizing: border-box;
   }
+
   /* The universal `*` rule above wipes the UA stylesheet's
    `dialog { margin: auto }` centering for modal dialogs, so without
    this rule every showModal()-opened dialog renders anchored to the
@@ -17,13 +18,16 @@
   dialog:modal {
     margin: auto;
   }
+
   ::selection {
     background: color-mix(in srgb, var(--c-accent) 25%, transparent);
     color: var(--c-text-primary);
   }
+
   :where(input, textarea, select) {
     caret-color: var(--c-accent);
   }
+
   :is(
     .steering-textarea,
     .auth-input,
@@ -37,6 +41,7 @@
     outline: none;
     border-color: var(--c-accent);
   }
+
   :is(
     .steering-textarea,
     .auth-input,
@@ -63,7 +68,6 @@
  * the appearance reset. */
   input[type="checkbox"] {
     appearance: none;
-    -webkit-appearance: none;
     width: 1rem;
     height: 1rem;
     margin: 0;
@@ -118,6 +122,7 @@
     text-wrap: pretty;
     touch-action: pan-x pan-y;
   }
+
   :where(button) {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;

@@ -38,6 +38,7 @@
   color: var(--c-text-primary);
   margin: 0;
 }
+
 h3.section-title {
   padding-block-start: var(--sp-4);
 }
@@ -90,6 +91,7 @@ h3.section-title {
    * type=number — forcing them on improves discoverability. */
   appearance: auto;
 }
+
 .page-input-sm:focus {
   outline: none;
   border-color: var(--c-accent);
@@ -186,6 +188,7 @@ h3.section-title {
   &:hover {
     background: var(--c-bg-secondary);
   }
+
   & input {
     margin-block-start: 0.2rem;
     accent-color: var(--c-accent);
@@ -196,6 +199,7 @@ h3.section-title {
     font-weight: var(--fw-medium);
     color: var(--c-text-primary);
   }
+
   & > .section-hint {
     grid-column: 2;
   }
@@ -242,6 +246,7 @@ h3.section-title {
   line-height: 0;
   display: inline-flex;
   align-items: center;
+
   &:hover {
     color: var(--c-red);
   }
@@ -301,6 +306,7 @@ h3.section-title {
   font-size: var(--fs-xs);
   color: var(--c-text-primary);
   border-radius: calc(var(--r) / 2);
+
   &:hover {
     background: var(--c-bg-tertiary);
   }
@@ -328,6 +334,7 @@ h3.section-title {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
     outline: none;
+
     &:focus {
       border-color: var(--c-accent);
     }
@@ -452,6 +459,7 @@ h3.section-title {
   color: var(--c-text-primary);
   flex: 1;
   min-width: 0;
+
   /* Native ellipsis only fires when the name actually overflows the
    * available column width — i.e. on narrow viewports or with very
    * long titles. On desktop with plenty of horizontal room the full
@@ -496,10 +504,12 @@ h3.section-title {
     color: var(--c-text-primary);
     background: var(--c-bg-tertiary);
   }
+
   &:disabled {
     opacity: 0.3;
     cursor: default;
   }
+
   &:disabled:hover {
     background: none;
     color: var(--c-text-tertiary);

@@ -38,6 +38,7 @@
   &:hover {
     background: var(--c-bg-tertiary);
   }
+
   &.active {
     color: var(--c-text-primary);
     background: var(--c-accent-subtle);
@@ -78,7 +79,8 @@
   color: var(--c-text-primary);
   box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, black 25%, transparent);
   cursor: pointer;
-  word-wrap: break-word;
+  overflow-wrap: break-word;
+
   /* Enter animation: slide up + fade in. */
   opacity: 0;
   transform: translateY(0.5rem);
@@ -140,9 +142,11 @@
   cursor: pointer;
   transition: background var(--dur-micro);
 }
+
 .vk-toast-retry:hover {
   background: color-mix(in srgb, currentcolor 18%, transparent);
 }
+
 .vk-toast-retry:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 2px;
@@ -178,10 +182,12 @@
     transition: opacity var(--dur-micro);
     transform: none;
   }
+
   .vk-toast-shown,
   .vk-toast-leaving {
     transform: none;
   }
+
   .vk-toast-progress {
     display: none;
   }

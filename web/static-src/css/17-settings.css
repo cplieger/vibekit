@@ -198,27 +198,34 @@
   background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary));
   border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border));
 }
+
 .forge-kind-github svg {
   fill: var(--c-text-primary);
 }
+
 .forge-kind-gitlab {
   background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
 }
+
 .forge-kind-gitlab svg {
   fill: #fc6d26;
 }
+
 .forge-kind-codeberg {
   background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
 }
+
 .forge-kind-codeberg svg {
   fill: #2185d0;
 }
+
 .forge-kind-gitea {
   background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #609926 40%, var(--c-border));
 }
+
 .forge-kind-gitea svg {
   fill: #609926;
 }
@@ -241,6 +248,7 @@
 
 /* Slim single-line row per connected account. Identity on the left,
  * actions on the right. */
+
 /* Account row is now a column: top row (identity + actions) plus an
  * optional collapsible repos footer. Width spans the full section. */
 .forge-account-row {
@@ -280,6 +288,7 @@
   gap: var(--sp-2);
   list-style: none;
   cursor: pointer;
+
   /* Touch-friendly tap target: ~44px minimum height on mobile.
    * Spacious horizontal padding so the chevron + icon + label
    * line reads at body size. */
@@ -472,6 +481,7 @@
 .forge-kind-slot:empty {
   display: none;
 }
+
 .forge-kind-slot {
   margin-block-start: var(--sp-2);
   padding-block-start: var(--sp-2);
@@ -569,6 +579,7 @@
 .forge-card-status.ok {
   color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary));
 }
+
 .forge-card-status.err {
   color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
 }
@@ -716,14 +727,17 @@
   border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border));
   color: var(--c-text-primary);
 }
+
 .repo-picker-badge-gitlab {
   background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
 }
+
 .repo-picker-badge-codeberg {
   background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
 }
+
 .repo-picker-badge-gitea {
   background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
   border-color: color-mix(in srgb, #609926 40%, var(--c-border));
@@ -738,9 +752,11 @@
 .repo-picker-state-synced {
   color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary));
 }
+
 .repo-picker-state-local {
   color: var(--c-text-tertiary);
 }
+
 .repo-picker-state-remote {
   color: var(--c-text-tertiary);
 }
@@ -778,6 +794,7 @@
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
   width: min(640px, 90vw);
+
   /* Fixed deterministic height: the inner list scrolls, so we don't
    * need the dialog to size to its content. clamp() gives a sane
    * floor (so iPad Safari can't collapse it to 0) and ceiling (so
@@ -1117,14 +1134,17 @@
 .git-pr-badge-draft {
   border-color: color-mix(in srgb, var(--c-text-tertiary) 35%, var(--c-border));
 }
+
 .git-pr-badge-ok {
   border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border));
   color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary));
 }
+
 .git-pr-badge-error {
   border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border));
   color: color-mix(in srgb, var(--c-danger, #e66666) 85%, var(--c-text-primary));
 }
+
 .git-pr-badge-pending {
   border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
   color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary));
@@ -1484,6 +1504,7 @@
 .overflow-menu-item-danger:not([aria-disabled="true"]) {
   color: var(--c-danger, #e66666);
 }
+
 .overflow-menu-item-danger:hover:not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--c-danger, #e66666) 10%, transparent);
 }
@@ -1514,6 +1535,7 @@
   .settings-tab-bar {
     display: none;
   }
+
   .settings-tab-select-wrap {
     display: block;
   }
