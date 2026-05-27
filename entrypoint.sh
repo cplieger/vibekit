@@ -95,25 +95,45 @@ install_kiro_cli() {
         rm -rf "$tmpdir"
         return 1
     fi
-    # Suppress the installer's "Next steps / Use the command" trailer
-    # (irrelevant in a container where vibekit drives kiro-cli directly).
-    if ! "$tmpdir/kirocli/install.sh" --no-confirm > /dev/null 2>&1; then
-        if ! "$tmpdir/kirocli/install.sh" < /dev/null > /dev/null 2>&1; then
-            printf "ERROR: install.sh failed (rc=%d)\n" "$?" >&2
-            rm -rf "$tmpdir"
-            return 1
-        fi
-    fi
+
+    # Run upstream install.sh. Don't gate on its exit code — the kiro-cli
+    # installer touches shell profiles and other side surfaces that
+    # legitimately fail in our minimal root container; what matters is
+    # whether the binary it drops at $HOME/.local/bin/kiro-cli reports
+    # the version we pinned. Capture install.sh output to a tempfile so
+    # we can surface it on failure.
+    local install_log install_rc
+    install_log=$(mktemp)
+    "$tmpdir/kirocli/install.sh" --no-confirm < /dev/null > "$install_log" 2>&1
+    install_rc=$?
     rm -rf "$tmpdir"
 
-    # The installer drops binaries in $HOME/.local/bin; move into
-    # $TOOLS/bin so the path is stable regardless of how /config is
-    # mounted across restarts.
-    if [ -f "$HOME/.local/bin/kiro-cli" ]; then
-        mv "$HOME/.local/bin/kiro-cli" "$TOOLS/bin/kiro-cli"
+    if [ ! -f "$HOME/.local/bin/kiro-cli" ]; then
+        printf "ERROR: install.sh did not produce %s/.local/bin/kiro-cli (rc=%d)\n" \
+            "$HOME" "$install_rc" >&2
+        printf "install.sh output:\n" >&2
+        cat "$install_log" >&2
+        rm -f "$install_log"
+        return 1
     fi
-    mv "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
-    mv "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
+    local installed
+    installed=$("$HOME/.local/bin/kiro-cli" --version 2>/dev/null | awk '{print $NF}')
+    if [ "$installed" != "$KIRO_CLI_VERSION" ]; then
+        printf "ERROR: installed binary reports version %s, wanted %s (install.sh rc=%d)\n" \
+            "${installed:-unknown}" "$KIRO_CLI_VERSION" "$install_rc" >&2
+        printf "install.sh output:\n" >&2
+        cat "$install_log" >&2
+        rm -f "$install_log"
+        return 1
+    fi
+    rm -f "$install_log"
+
+    # Promote to the canonical $TOOLS/bin/ location so PATH ordering
+    # (which puts /config/tools/bin first) and any in-process
+    # absolute-path references resolve to the freshly installed binary.
+    mv -f "$HOME/.local/bin/kiro-cli" "$TOOLS/bin/kiro-cli" || return 1
+    mv -f "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
+    mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
 }
 
 # Reinstall when either the binary is missing or the on-disk version
