@@ -275,12 +275,12 @@ func TestParseSteeringInclusion_NilData(t *testing.T) {
 
 func TestSpaHandler(t *testing.T) {
 	tests := []struct {
-		name       string
 		fs         fstest.MapFS
+		name       string
 		path       string
-		wantCode   int
 		wantBody   string
-		wantHeader string // Cache-Control value, empty to skip check
+		wantHeader string
+		wantCode   int
 	}{
 		{
 			name: "serves existing file",

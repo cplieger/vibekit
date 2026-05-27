@@ -8,9 +8,9 @@ import (
 
 func TestCrossChatIndex(t *testing.T) {
 	type step struct {
-		name   string
 		action func(idx *crossChatIndex)
 		assert func(t *testing.T, idx *crossChatIndex)
+		name   string
 	}
 
 	cases := []struct {

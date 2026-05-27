@@ -679,9 +679,9 @@ func TestSanitizeRepoPaths_SkipsEmpty(t *testing.T) {
 
 func TestSanitizeRepoPaths_Rejects(t *testing.T) {
 	tests := []struct {
-		in     []string
 		name   string
 		wantEr string
+		in     []string
 	}{
 		{name: "parent traversal", in: []string{".."}, wantEr: "escapes"},
 		{name: "prefix traversal", in: []string{"../etc/passwd"}, wantEr: "escapes"},
@@ -1396,21 +1396,21 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 		endpoint string
 		handler  string
 		body     string
-		wantCode int
 		wantBody string
+		wantCode int
 	}
 	cases := []testCase{
 		// handleStage
-		{"stage_malformed_body", http.MethodPost, "/api/git/stage", "stage", "{not", http.StatusBadRequest, "bad request"},
-		{"stage_absolute_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["/etc/passwd"]}`, http.StatusBadRequest, "absolute"},
-		{"stage_traversal_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["../etc/passwd"]}`, http.StatusBadRequest, "escapes"},
+		{"stage_malformed_body", http.MethodPost, "/api/git/stage", "stage", "{not", "bad request", http.StatusBadRequest},
+		{"stage_absolute_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["/etc/passwd"]}`, "absolute", http.StatusBadRequest},
+		{"stage_traversal_path", http.MethodPost, "/api/git/stage", "stage", `{"files":["../etc/passwd"]}`, "escapes", http.StatusBadRequest},
 		// handleUnstage
-		{"unstage_malformed_body", http.MethodPost, "/api/git/unstage", "unstage", "garbage", http.StatusBadRequest, ""},
-		{"unstage_traversal_path", http.MethodPost, "/api/git/unstage", "unstage", `{"files":["../../escape"]}`, http.StatusBadRequest, ""},
+		{"unstage_malformed_body", http.MethodPost, "/api/git/unstage", "unstage", "garbage", "", http.StatusBadRequest},
+		{"unstage_traversal_path", http.MethodPost, "/api/git/unstage", "unstage", `{"files":["../../escape"]}`, "", http.StatusBadRequest},
 		// handleDiscard
-		{"discard_malformed_body", http.MethodPost, "/api/git/discard", "discard", "not json", http.StatusBadRequest, "files required"},
-		{"discard_empty_files", http.MethodPost, "/api/git/discard", "discard", `{"files":[]}`, http.StatusBadRequest, "files required"},
-		{"discard_null_byte_in_path", http.MethodPost, "/api/git/discard", "discard", "{\"files\":[\"bad\\u0000file\"]}", http.StatusBadRequest, "null byte"},
+		{"discard_malformed_body", http.MethodPost, "/api/git/discard", "discard", "not json", "files required", http.StatusBadRequest},
+		{"discard_empty_files", http.MethodPost, "/api/git/discard", "discard", `{"files":[]}`, "files required", http.StatusBadRequest},
+		{"discard_null_byte_in_path", http.MethodPost, "/api/git/discard", "discard", "{\"files\":[\"bad\\u0000file\"]}", "null byte", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1479,23 +1479,23 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	// layer — otherwise a misconfigured reverse proxy or a stray GET
 	// could trigger side effects.
 	tests := []struct {
-		name    string
 		handler func(h *Handler) http.HandlerFunc
+		name    string
 	}{
-		{"clone", func(h *Handler) http.HandlerFunc { return h.handleClone }},
-		{"checkout", func(h *Handler) http.HandlerFunc { return h.handleCheckout }},
-		{"remove", func(h *Handler) http.HandlerFunc { return h.handleRemove }},
-		{"commit", func(h *Handler) http.HandlerFunc { return h.handleCommit }},
-		{"pr-fetch", func(h *Handler) http.HandlerFunc { return h.handlePRFetch }},
-		{"reclone", func(h *Handler) http.HandlerFunc { return h.handleReclone }},
-		{"stage", func(h *Handler) http.HandlerFunc { return h.handleStage }},
-		{"unstage", func(h *Handler) http.HandlerFunc { return h.handleUnstage }},
-		{"discard", func(h *Handler) http.HandlerFunc { return h.handleDiscard }},
-		{"pr-description", func(h *Handler) http.HandlerFunc { return h.handlePRDescription }},
-		{"push", func(h *Handler) http.HandlerFunc { return h.handlePush }},
-		{"pull", func(h *Handler) http.HandlerFunc { return h.handlePull }},
-		{"stash", func(h *Handler) http.HandlerFunc { return h.handleStash }},
-		{"stash-pop", func(h *Handler) http.HandlerFunc { return h.handleStashPop }},
+		{func(h *Handler) http.HandlerFunc { return h.handleClone }, "clone"},
+		{func(h *Handler) http.HandlerFunc { return h.handleCheckout }, "checkout"},
+		{func(h *Handler) http.HandlerFunc { return h.handleRemove }, "remove"},
+		{func(h *Handler) http.HandlerFunc { return h.handleCommit }, "commit"},
+		{func(h *Handler) http.HandlerFunc { return h.handlePRFetch }, "pr-fetch"},
+		{func(h *Handler) http.HandlerFunc { return h.handleReclone }, "reclone"},
+		{func(h *Handler) http.HandlerFunc { return h.handleStage }, "stage"},
+		{func(h *Handler) http.HandlerFunc { return h.handleUnstage }, "unstage"},
+		{func(h *Handler) http.HandlerFunc { return h.handleDiscard }, "discard"},
+		{func(h *Handler) http.HandlerFunc { return h.handlePRDescription }, "pr-description"},
+		{func(h *Handler) http.HandlerFunc { return h.handlePush }, "push"},
+		{func(h *Handler) http.HandlerFunc { return h.handlePull }, "pull"},
+		{func(h *Handler) http.HandlerFunc { return h.handleStash }, "stash"},
+		{func(h *Handler) http.HandlerFunc { return h.handleStashPop }, "stash-pop"},
 	}
 	methods := []string{
 		http.MethodGet, http.MethodPut, http.MethodPatch,
@@ -1520,9 +1520,9 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 
 // mockPrompter implements UtilityPrompter for tests.
 type mockPrompter struct {
-	called bool
-	result string
 	err    error
+	result string
+	called bool
 }
 
 func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string) (string, error) {

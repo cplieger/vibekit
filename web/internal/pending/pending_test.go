@@ -338,15 +338,15 @@ func TestResolveWithText(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		wantErr        error
 		name           string
 		kind           Kind
 		mergedText     string
-		wantErr        error
-		wantAccepted   bool
 		wantMerged     string
-		wantStillExist bool // op should remain in store after call
-		noAdd          bool // skip Add (test unknown id)
-		doubleResolve  bool // resolve once before the test call
+		wantAccepted   bool
+		wantStillExist bool
+		noAdd          bool
+		doubleResolve  bool
 	}{
 		{
 			name:         "accepts_and_records_merged_text",
@@ -448,14 +448,14 @@ func TestResolveWithText(t *testing.T) {
 
 			// Cases that need a concurrent waiter.
 			type result struct {
-				accepted   bool
 				mergedText string
+				accepted   bool
 			}
 			done := make(chan result, 1)
 			go func() {
 				<-waitCh
 				r := readRes()
-				done <- result{r.Accepted, r.MergedText}
+				done <- result{r.MergedText, r.Accepted}
 			}()
 
 			_, err = s.ResolveWithText(context.Background(), "tc-1", tc.mergedText)
