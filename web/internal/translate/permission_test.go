@@ -11,8 +11,8 @@ func TestFindAllowOnce(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		options []api.PermissionOption
 		want    string
+		options []api.PermissionOption
 	}{
 		{
 			name: "MatchesByKind",

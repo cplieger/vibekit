@@ -21,20 +21,28 @@ class SendStateController {
   private lastError = "";
 
   setSSEStatus(s: ConnectionStatus): void {
-    if (this.sseStatus === s) return;
+    if (this.sseStatus === s) {
+      return;
+    }
     this.sseStatus = s;
-    if (s === "connected") this.lastError = "";
+    if (s === "connected") {
+      this.lastError = "";
+    }
     this.recompute();
   }
 
   setLastError(msg: string): void {
-    if (this.lastError === msg) return;
+    if (this.lastError === msg) {
+      return;
+    }
     this.lastError = msg;
     this.recompute();
   }
 
   clearLastError(): void {
-    if (this.lastError === "") return;
+    if (this.lastError === "") {
+      return;
+    }
     this.lastError = "";
     this.recompute();
   }
@@ -67,7 +75,15 @@ class SendStateController {
 
 const instance = new SendStateController();
 
-export function setSSEStatus(s: ConnectionStatus): void { instance.setSSEStatus(s); }
-export function setLastError(msg: string): void { instance.setLastError(msg); }
-export function clearLastError(): void { instance.clearLastError(); }
-export function recompute(): void { instance.recompute(); }
+export function setSSEStatus(s: ConnectionStatus): void {
+  instance.setSSEStatus(s);
+}
+export function setLastError(msg: string): void {
+  instance.setLastError(msg);
+}
+export function clearLastError(): void {
+  instance.clearLastError();
+}
+export function recompute(): void {
+  instance.recompute();
+}

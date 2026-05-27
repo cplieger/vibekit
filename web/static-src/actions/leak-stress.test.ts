@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
 import { _resetForTest as resetRegistry, pendingCount, recentLog } from "./registry.js";
@@ -63,7 +66,10 @@ describe("memory leak stress — activeDedupes", () => {
     const action = defineAction({
       name: "stress.dedupe",
       dedupe: true,
-      run: async (args: { v: number }) => { callCount++; return args.v; },
+      run: async (args: { v: number }) => {
+        callCount++;
+        return args.v;
+      },
     });
 
     // All dispatches with same args should dedupe to one in-flight
@@ -100,7 +106,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
     const action = defineAction({
       name: "stress.errors",
       error: false, // suppress toast
-      run: async () => { throw new Error("fail"); },
+      run: async () => {
+        throw new Error("fail");
+      },
     });
 
     const promises: Promise<unknown>[] = [];
@@ -118,7 +126,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
       scope: "cancel-scope",
       run: async (_args, signal) => {
         await Promise.resolve();
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return "ok";
       },
     });
@@ -133,7 +143,9 @@ describe("memory leak stress — inFlight (via pendingCount)", () => {
     // Drain microtasks: tail resolution is deferred through prev for
     // cross-action race prevention. The chain of N cancelled entries
     // requires N+1 ticks to fully drain.
-    for (let i = 0; i < 110; i++) await Promise.resolve();
+    for (let i = 0; i < 110; i++) {
+      await Promise.resolve();
+    }
 
     expect(pendingCount(["stress.cancel"])).toBe(0);
     expect(_internalsForTest().scopeChains).toBe(0);

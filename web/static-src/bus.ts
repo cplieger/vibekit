@@ -13,17 +13,30 @@
 // ---------------------------------------------------------------------------
 
 import type {
-  ServerEvent, ChatHeader, Message, MessageChunkPayload, ToolCall,
-  TurnEndedPayload, PermissionNeeded, ErrorPayload, ConnectedPayload,
-  MCPConnectedPayload, MCPOAuthPayload, MCPFailedPayload, MCPDisconnectedPayload,
+  ServerEvent,
+  ChatHeader,
+  Message,
+  MessageChunkPayload,
+  ToolCall,
+  TurnEndedPayload,
+  PermissionNeeded,
+  ErrorPayload,
+  ConnectedPayload,
+  MCPConnectedPayload,
+  MCPOAuthPayload,
+  MCPFailedPayload,
+  MCPDisconnectedPayload,
   AvailableCommand,
-  PendingChangeAddedPayload, PendingChangeResolvedPayload, PendingChangesClearedPayload,
-  PendingTrustEnabledPayload, PendingTrustClearedPayload,
+  PendingChangeAddedPayload,
+  PendingChangeResolvedPayload,
+  PendingChangesClearedPayload,
+  PendingTrustEnabledPayload,
+  PendingTrustClearedPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
 
-/** Payload shape per SSE event type. Events with no payload use `void`;
+/** Payload shape per SSE event type. Events with no payload use `undefined`;
  *  events with a well-known shape get their own entry. Events not listed
  *  here fall through to `unknown` and can still be subscribed via `on`. */
 export interface SSEPayloads {
@@ -40,22 +53,29 @@ export interface SSEPayloads {
   readonly turn_ended: TurnEndedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly error: ErrorPayload;
-  readonly settings_updated: void;
-  readonly mcp_config_changed: void;
+  readonly settings_updated: undefined;
+  readonly mcp_config_changed: undefined;
   readonly mcp_connected: MCPConnectedPayload;
   readonly mcp_oauth_needed: MCPOAuthPayload;
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
-  readonly commands_updated: { readonly commands: AvailableCommand[]; readonly prompts?: AvailableCommand[] };
+  readonly commands_updated: {
+    readonly commands: AvailableCommand[];
+    readonly prompts?: AvailableCommand[];
+  };
   readonly mode_changed: { readonly mode_id: string };
-  readonly compaction_started: void;
+  readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
   readonly subagent_activity: { readonly sub_session_id: string; readonly event: unknown };
   /** Reserved for future crew-card auto-refresh; currently unused. */
   readonly session_list_updated: { readonly sessions: unknown[] };
   readonly steering_loaded: { readonly documents: string[] };
-  readonly terminal_created: { readonly terminal_id: string; readonly command: string; readonly args?: string[] };
+  readonly terminal_created: {
+    readonly terminal_id: string;
+    readonly command: string;
+    readonly args?: string[];
+  };
   readonly terminal_output: { readonly terminal_id: string; readonly data: string };
   readonly terminal_exited: { readonly terminal_id: string; readonly exit_code: number };
   readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
@@ -67,7 +87,7 @@ export interface SSEPayloads {
     readonly tag: string;
     readonly ts: number;
   };
-  readonly forges_changed: void;
+  readonly forges_changed: undefined;
   readonly pending_change_added: PendingChangeAddedPayload;
   readonly pending_change_resolved: PendingChangeResolvedPayload;
   readonly pending_changes_cleared: PendingChangesClearedPayload;
@@ -75,7 +95,7 @@ export interface SSEPayloads {
   readonly pending_trust_cleared: PendingTrustClearedPayload;
 }
 
-export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends void
+export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
   ? (chatID: string) => void
   : (chatID: string, payload: SSEPayloads[K]) => void;
 
@@ -104,7 +124,10 @@ function addHandler(map: Map<string, HandlerSlot>, key: string, fn: AnyHandler):
   const slot = getSlot(map, key);
   slot.set.add(fn);
   slot.dirty = true;
-  return (): void => { slot.set.delete(fn); slot.dirty = true; };
+  return (): void => {
+    slot.set.delete(fn);
+    slot.dirty = true;
+  };
 }
 
 function getSnapshot(slot: HandlerSlot): AnyHandler[] {
@@ -120,22 +143,22 @@ const busHandlers = new Map<string, HandlerSlot>();
 
 /** Subscribe to an SSE event with a typed payload. Returns an unsubscribe
  *  function. */
-export function onSSE<K extends keyof SSEPayloads>(
-  type: K, fn: SSEHandler<K>,
-): () => void {
-  return addHandler(sseHandlers, type as string, fn as AnyHandler);
+export function onSSE<K extends keyof SSEPayloads>(type: K, fn: SSEHandler<K>): () => void {
+  return addHandler(sseHandlers, type, fn as AnyHandler);
 }
 
 /** Route an incoming SSE event to all onSSE handlers registered for its
  *  type. Called by transport.ts when an event arrives. */
 export function dispatch(evt: ServerEvent): void {
   const slot = sseHandlers.get(evt.type);
-  if (slot === undefined) return;
+  if (slot === undefined) {
+    return;
+  }
   const fns = getSnapshot(slot);
   const chatID = evt.chat_id ?? "";
-  for (let i = 0; i < fns.length; i++) {
+  for (const fn of fns) {
     try {
-      fns[i]!(chatID, evt.payload);
+      fn(chatID, evt.payload);
     } catch (e) {
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }
@@ -158,11 +181,11 @@ export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
 
 import type { PendingChange } from "./types.js";
 
-/** Payload shape per bus event. Events with no payload use `void`. */
+/** Payload shape per bus event. Events with no payload use `undefined`. */
 export interface BusPayloads {
   readonly [BUS_TURN_IDLE]: string; // chatID
   readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
-  readonly [BUS_KEYS_ESCAPE]: void;
+  readonly [BUS_KEYS_ESCAPE]: undefined;
   readonly [BUS_PENDING_ADDED]: { chatID: string; change: PendingChange };
   readonly [BUS_PENDING_RESOLVED]: { chatID: string; toolCallID: string; action: string };
   readonly [BUS_PENDING_CLEARED]: { chatID: string; reason: string };
@@ -171,28 +194,28 @@ export interface BusPayloads {
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
 }
 
-export type BusHandler<K extends keyof BusPayloads> = BusPayloads[K] extends void
+export type BusHandler<K extends keyof BusPayloads> = BusPayloads[K] extends undefined
   ? () => void
   : (payload: BusPayloads[K]) => void;
 
 /** Subscribe to a typed bus event. Returns an unsubscribe function. */
-export function onBus<K extends keyof BusPayloads>(
-  event: K, fn: BusHandler<K>,
-): () => void {
+export function onBus<K extends keyof BusPayloads>(event: K, fn: BusHandler<K>): () => void {
   return addHandler(busHandlers, event, fn as AnyHandler);
 }
 
 /** Emit a typed bus event. */
 export function emitBus<K extends keyof BusPayloads>(
-  ...args: BusPayloads[K] extends void ? [event: K] : [event: K, payload: BusPayloads[K]]
+  ...args: BusPayloads[K] extends undefined ? [event: K] : [event: K, payload: BusPayloads[K]]
 ): void {
   const [event, ...rest] = args;
   const slot = busHandlers.get(event);
-  if (slot === undefined) return;
+  if (slot === undefined) {
+    return;
+  }
   const fns = getSnapshot(slot);
-  for (let i = 0; i < fns.length; i++) {
+  for (const fn of fns) {
     try {
-      fns[i]!(...rest);
+      fn(...rest);
     } catch (e) {
       console.error(`[bus] handler error for "${event}":`, e);
     }
@@ -223,7 +246,7 @@ export function registerSSEDecoder<K extends keyof SSEPayloads>(
   type: K,
   decoder: Decoder<SSEPayloads[K]>,
 ): void {
-  sseDecoders.set(type, decoder as Decoder<unknown>);
+  sseDecoders.set(type, decoder);
 }
 
 /** Returns the registered decoder for `type`, or undefined if none.

@@ -569,33 +569,19 @@ func TestAction_Delete(t *testing.T) {
 // the filesystem was not mutated.
 func TestAction_SecurityRejections(t *testing.T) {
 	type secCase struct {
-		name string
-		// action and extra fields for the JSON body.
-		action string
-		// pathSuffix is appended to the temp-dir prefix (or used as-is
-		// when useTempDir is false).
-		pathSuffix string
-		// dest/name for copy/move/rename actions.
-		dest       string
-		renameName string // "name" field for rename
-		// sensitivePrefix to inject (relative to temp dir root when
-		// useTempDir is true, absolute otherwise). Trailing "/" means
-		// directory prefix.
-		sensitivePrefix string
-		// useTempDir: when true, uses testDir(); when false, uses New().
-		useTempDir bool
-		// setupFile: file to create in temp dir before the request.
-		setupFile string
-		// setupDir: directory to create in temp dir before the request.
-		setupDir string
-		// checkSourceExists: verify this file/dir still exists after rejection.
-		checkSourceExists string
-		// checkDestAbsent: verify this path does NOT exist after rejection.
-		checkDestAbsent string
-		// checkNoTempOrphans: verify no .copy-* files remain.
+		checkSourceExists  string
+		action             string
+		pathSuffix         string
+		dest               string
+		renameName         string
+		sensitivePrefix    string
+		setupFile          string
+		setupDir           string
+		name               string
+		checkDestAbsent    string
+		wantBodyContains   string
+		useTempDir         bool
 		checkNoTempOrphans bool
-		// wantBodyContains: if non-empty, assert response body contains this.
-		wantBodyContains string
 	}
 
 	cases := []secCase{
@@ -1200,8 +1186,8 @@ func TestHandleUpload_SingleFile(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		OK       bool     `json:"ok"`
 		Uploaded []string `json:"uploaded"`
+		OK       bool     `json:"ok"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1558,11 +1544,11 @@ func TestCtxReader_Read(t *testing.T) {
 	sentinel := errors.New("inner io failure")
 
 	cases := []struct {
-		name    string
 		ctx     context.Context
 		inner   io.Reader
-		wantN   int
 		wantErr error
+		name    string
+		wantN   int
 	}{
 		{
 			name:    "cancelled_context",

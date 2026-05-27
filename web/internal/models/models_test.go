@@ -11,8 +11,8 @@ import (
 func TestCheapestModel(t *testing.T) {
 	cases := []struct {
 		name   string
-		models []api.SessionModel
 		want   string
+		models []api.SessionModel
 	}{
 		{
 			name:   "NilCatalog",

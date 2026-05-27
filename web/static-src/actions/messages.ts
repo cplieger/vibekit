@@ -8,6 +8,7 @@ import { transportAction } from "./transport.js";
 import { sendPromptTo } from "../chat-commands.js";
 
 /** Copy text to clipboard with success/error toast. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const copyClipboard = defineAction<string, void>({
   name: "ui.copy_clipboard",
   networkMode: "always",
@@ -49,20 +50,24 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
     chat_id: chatID,
     payload: { tag, file_path: filePath },
   }),
-  success: (args) => `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
+  success: (args) =>
+    `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
   error: "Undo failed — the checkpoint may have expired",
 });
 
 /** Hand a plan to the running agent as a prompt.
  *  Note: sendPromptTo doesn't accept a signal, so cancellation is
  *  best-effort between calls (checked before sendPromptTo). */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const runPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "plan.run",
   scope: (args) => "chat:" + args.chatID,
   idempotencyKey: (args) => `plan.run:${args.chatID}:${args.content.slice(0, 40)}`,
   retryable: (err) => err.code === "send_failed" || retryNetwork(err),
   run: async ({ chatID, content }, signal) => {
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
     const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
       throw new ActionError("prompt rejected", { code: "send_failed" });

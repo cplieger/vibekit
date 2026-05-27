@@ -30,7 +30,9 @@ function optimisticRemovePR(args: PRArgs): PRRemoveResult | undefined {
 
 /** Rollback: re-insert the PR into its original group position. */
 function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
-  if (op !== undefined) reinsertPRInGroups(op);
+  if (op !== undefined) {
+    reinsertPRInGroups(op);
+  }
 }
 
 // --- Actions ---
@@ -62,6 +64,7 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
 });
 
 /** Refresh all PRs across connected forges. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const refreshPRs = defineAction<void, void>({
   name: "git.refresh_prs",
   dedupe: true,
@@ -70,11 +73,13 @@ export const refreshPRs = defineAction<void, void>({
     try {
       await refreshPRs(signal);
     } catch (e) {
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled", cause: e });
-      throw new ActionError(
-        e instanceof Error ? e.message : "network error",
-        { code: "network", cause: e },
-      );
+      if (signal.aborted) {
+        throw new ActionError("cancelled", { code: "cancelled", cause: e });
+      }
+      throw new ActionError(e instanceof Error ? e.message : "network error", {
+        code: "network",
+        cause: e,
+      });
     }
   },
   error: "Couldn't refresh PRs",

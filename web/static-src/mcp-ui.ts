@@ -8,9 +8,16 @@ import { closeModal, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
-  type Server, type RuntimeStatus, type RuntimeState,
-  configured, status, refetchServers, refetchStatus, setRenderCallback,
-  setStatus, deleteStatus,
+  type Server,
+  type RuntimeStatus,
+  type RuntimeState,
+  configured,
+  status,
+  refetchServers,
+  refetchStatus,
+  setRenderCallback,
+  setStatus,
+  deleteStatus,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
@@ -20,12 +27,19 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
-let rowBindingCleanups: Array<() => void> = [];
-registerCleanup(() => { for (const fn of rowBindingCleanups) fn(); rowBindingCleanups = []; });
+let rowBindingCleanups: (() => void)[] = [];
+registerCleanup(() => {
+  for (const fn of rowBindingCleanups) {
+    fn();
+  }
+  rowBindingCleanups = [];
+});
 
 function buildSectionScaffold(): void {
   const section = document.getElementById("mcp-section");
-  if (section === null) return;
+  if (section === null) {
+    return;
+  }
 
   const title = document.createElement("h3");
   title.className = "section-title";
@@ -48,7 +62,9 @@ function buildSectionScaffold(): void {
   addBtn.setAttribute("data-tooltip", "Connect integration");
   addBtn.setAttribute("aria-label", "Connect integration");
   addBtn.innerHTML = ICON_PLUS_16;
-  addBtn.addEventListener("click", () => openAddModal());
+  addBtn.addEventListener("click", () => {
+    openAddModal();
+  });
   actions.appendChild(addBtn);
 
   actionRow.appendChild(actions);
@@ -62,25 +78,34 @@ function buildSectionScaffold(): void {
 // --- Section render ---
 
 function renderSection(): void {
-  if (sectionBody === null) return;
+  if (sectionBody === null) {
+    return;
+  }
   renderRows();
 }
 
 function renderRows(): void {
-  if (sectionBody === null) return;
-  for (const fn of rowBindingCleanups) fn();
+  if (sectionBody === null) {
+    return;
+  }
+  for (const fn of rowBindingCleanups) {
+    fn();
+  }
   rowBindingCleanups = [];
   sectionBody.replaceChildren();
 
   if (configured.length === 0) {
     const empty = document.createElement("p");
     empty.className = "mcp-empty";
-    empty.textContent = "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
+    empty.textContent =
+      "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
     sectionBody.appendChild(empty);
     return;
   }
 
-  for (const s of configured) sectionBody.appendChild(renderRow(s));
+  for (const s of configured) {
+    sectionBody.appendChild(renderRow(s));
+  }
 }
 
 function renderRow(s: Server): HTMLDivElement {
@@ -125,10 +150,10 @@ function renderRow(s: Server): HTMLDivElement {
 // --- Row sub-components ---
 
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
-  connected:  { css: "connected",  title: "Connected" },
-  needs_auth: { css: "oauth",      title: "Needs authentication" },
-  idle:       { css: "idle",        title: "Not yet connected — start a chat to initialise" },
-  failed:     { css: "failed",      title: "Failed to initialise" },
+  connected: { css: "connected", title: "Connected" },
+  needs_auth: { css: "oauth", title: "Needs authentication" },
+  idle: { css: "idle", title: "Not yet connected — start a chat to initialise" },
+  failed: { css: "failed", title: "Failed to initialise" },
 };
 
 function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
@@ -144,7 +169,7 @@ function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElem
     dot.title = "Not yet connected — start a chat to initialise";
     dot.setAttribute("aria-label", `${s.name}: idle`);
   } else {
-    const meta = STATUS_META[st.state] ?? STATUS_META.idle;
+    const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     dot.classList.add(meta.css);
     if (st.state === "failed" && st.error !== "") {
       dot.title = `Failed to initialise: ${st.error}`;
@@ -158,10 +183,10 @@ function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElem
 }
 
 function renderMeta(s: Server, st: RuntimeStatus | undefined): string {
-  if (!s.enabled) return "Disabled";
-  const origin = s.transport === "stdio"
-    ? (s.command ?? "")
-    : (s.url ?? "");
+  if (!s.enabled) {
+    return "Disabled";
+  }
+  const origin = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
   if (st?.state === "failed" && st.error !== "") {
     return `${origin} — ${st.error}`;
   }
@@ -179,10 +204,15 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
     // input.checked is already the NEW value (browser flipped it).
     input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
     // Pass the previous state explicitly so rollback restores correctly.
-    void toggleServer.dispatch({ id: s.id, enabled: input.checked }, {
-      silent: true,
-      onSuccess: () => { void refetchServers(); },
-    });
+    void toggleServer.dispatch(
+      { id: s.id, enabled: input.checked },
+      {
+        silent: true,
+        onSuccess: () => {
+          refetchServers();
+        },
+      },
+    );
   });
   const slider = document.createElement("span");
   slider.className = "toggle-slider";
@@ -221,7 +251,9 @@ function renderEditBtn(s: Server): HTMLButtonElement {
   btn.setAttribute("data-tooltip", "Edit");
   btn.setAttribute("aria-label", `Edit ${s.name}`);
   btn.innerHTML = ICON_EDIT_14;
-  btn.addEventListener("click", () => { void openEditModal(s.id); });
+  btn.addEventListener("click", () => {
+    void openEditModal(s.id);
+  });
   rowBindingCleanups.push(bindLoadingState("mcp.open_edit", btn));
   return btn;
 }
@@ -241,10 +273,17 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
         "Remove",
         "destructive",
       );
-      if (!ok) return;
-      void deleteServer.dispatch({ id: s.id }, {
-        onSuccess: () => { void refetchServers(); },
-      });
+      if (!ok) {
+        return;
+      }
+      void deleteServer.dispatch(
+        { id: s.id },
+        {
+          onSuccess: () => {
+            refetchServers();
+          },
+        },
+      );
     })();
   });
   return btn;
@@ -260,7 +299,9 @@ function openAddModal(): void {
 
 async function openEditModal(id: string): Promise<void> {
   const s = await openEdit.dispatch(id);
-  if (s === null) return;
+  if (s === null) {
+    return;
+  }
   setEditing({ id });
   const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";
   initModal({ mode, server: s });
@@ -274,7 +315,10 @@ export function initMCP(): void {
   setRenderCallback(renderSection);
 
   const close = el<HTMLButtonElement>("mcp-modal-close");
-  close.addEventListener("click", () => { cleanupModal(); closeModal($.mcpModal); });
+  close.addEventListener("click", () => {
+    cleanupModal();
+    closeModal($.mcpModal);
+  });
 
   // Hook into Escape and overlay-dismiss paths: closeModal toggles the
   // 'hidden' class on the modal element. Watch for that transition and
@@ -289,7 +333,9 @@ export function initMCP(): void {
   });
   observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
 
-  onSSE("mcp_config_changed", () => { void refetchServers(); });
+  onSSE("mcp_config_changed", () => {
+    refetchServers();
+  });
   onSSE("mcp_connected", (_chat, p) => {
     setStatus(p.server, { name: p.server, state: "connected" });
     renderSection();
@@ -331,21 +377,30 @@ function updatePrewarmStatus(pkg: string, state: string): void {
   for (const row of rows) {
     const serverId = row.dataset["serverId"] ?? "";
     const server = configured.find((s) => s.id === serverId);
-    if (server === undefined) continue;
+    if (server === undefined) {
+      continue;
+    }
     const serverPkg = extractNpxPackage(server);
-    if (serverPkg !== pkg && server.name !== pkg) continue;
+    if (serverPkg !== pkg && server.name !== pkg) {
+      continue;
+    }
 
-    let badge = row.querySelector(".prewarm-badge") as HTMLElement | null;
+    let badge = row.querySelector(".prewarm-badge");
     if (state === "done") {
-      if (badge !== null) badge.remove();
+      if (badge !== null) {
+        badge.remove();
+      }
       return;
     }
     if (badge === null) {
       badge = document.createElement("span");
       badge.className = "prewarm-badge";
       const nameEl = row.querySelector(".mcp-row-name");
-      if (nameEl !== null) nameEl.after(badge);
-      else row.prepend(badge);
+      if (nameEl !== null) {
+        nameEl.after(badge);
+      } else {
+        row.prepend(badge);
+      }
     }
     badge.textContent = state === "installing" ? "Installing…" : "Install failed";
     badge.classList.toggle("prewarm-failed", state === "failed");

@@ -47,14 +47,20 @@ export function isSubAgentActive(): boolean {
 
 /** Append free-form text to the active sub-agent preview + open modal (if open). */
 export function appendToSubAgent(text: string): void {
-  if (activeId === "") return;
+  if (activeId === "") {
+    return;
+  }
   const el = els.get(activeId);
-  if (el === undefined) return;
+  if (el === undefined) {
+    return;
+  }
   let acc = transcripts.get(activeId) ?? "";
   acc += text;
   transcripts.set(activeId, acc);
-  const preview = el.querySelector(".subagent-preview") as HTMLDivElement | null;
-  if (preview !== null) preview.textContent = lastSentences(acc, 4);
+  const preview = el.querySelector(".subagent-preview");
+  if (preview !== null) {
+    preview.textContent = lastSentences(acc, 4);
+  }
   if (!$.subagentModal.classList.contains("hidden")) {
     const body = $.subagentModalBody;
     if (body.textContent !== acc) {
@@ -74,14 +80,17 @@ function buildSpinner(): HTMLDivElement {
 
 /** Render a sub-agent card into a container (the caller picks placement). */
 export function createSubAgentCard(
-  id: string, status: ToolStatus,
+  id: string,
+  status: ToolStatus,
   rawInput: Record<string, unknown> | undefined,
   storedOutput?: string,
 ): HTMLDivElement {
   const label = labelFromInput(rawInput);
   transcripts.set(id, storedOutput ?? "");
   const active = status === "pending" || status === "in_progress";
-  if (active) activeId = id;
+  if (active) {
+    activeId = id;
+  }
 
   const el = document.createElement("div");
   el.className = "subagent-call";
@@ -117,22 +126,33 @@ export function createSubAgentCard(
   }
   el.appendChild(preview);
 
-  el.addEventListener("click", () => openPopup(id, label));
+  el.addEventListener("click", () => {
+    openPopup(id, label);
+  });
   els.set(id, el);
   return el;
 }
 
 /** Update an existing sub-agent card (status + appended output). */
 export function updateSubAgentCard(
-  id: string, status: ToolStatus | undefined, output: string | undefined,
+  id: string,
+  status: ToolStatus | undefined,
+  output: string | undefined,
 ): boolean {
   const el = els.get(id);
-  if (el === undefined) return false;
+  if (el === undefined) {
+    return false;
+  }
   if (status !== undefined) {
     const s = el.querySelector(".tool-status");
-    if (s !== null) { s.textContent = status; s.className = `tool-status ${status}`; }
+    if (s !== null) {
+      s.textContent = status;
+      s.className = `tool-status ${status}`;
+    }
     const done = isToolDone(status);
-    if (done && activeId === id) activeId = "";
+    if (done && activeId === id) {
+      activeId = "";
+    }
     if (done) {
       const spinner = el.querySelector(".subagent-header .subagent-spinner");
       if (spinner !== null) {
@@ -147,8 +167,10 @@ export function updateSubAgentCard(
     let acc = transcripts.get(id) ?? "";
     acc += (acc !== "" ? "\n" : "") + output;
     transcripts.set(id, acc);
-    const preview = el.querySelector(".subagent-preview") as HTMLDivElement | null;
-    if (preview !== null) preview.textContent = lastSentences(acc, 4);
+    const preview = el.querySelector(".subagent-preview");
+    if (preview !== null) {
+      preview.textContent = lastSentences(acc, 4);
+    }
   }
   if (!$.subagentModal.classList.contains("hidden")) {
     const body = $.subagentModalBody;
@@ -176,7 +198,11 @@ function labelFromInput(rawInput: Record<string, unknown> | undefined): string {
 }
 
 function lastSentences(text: string, n: number): string {
-  return text.split(/(?<=[.!?\n])\s+/).filter((s) => s.trim() !== "").slice(-n).join(" ");
+  return text
+    .split(/(?<=[.!?\n])\s+/)
+    .filter((s) => s.trim() !== "")
+    .slice(-n)
+    .join(" ");
 }
 
 function openPopup(id: string, label: string): void {

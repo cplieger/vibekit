@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -40,11 +43,16 @@ describe("saveSteering", () => {
   });
 
   it("toasts error on failure", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "disk full" }), { status: 500 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "disk full" }), { status: 500 }),
+    );
     const { saveSteering } = await import("./settings.js");
     const r = await saveSteering.dispatch({ content: "x" });
     expect(r).toBeNull();
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Couldn't save steering"), undefined);
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't save steering"),
+      undefined,
+    );
   });
 });
 
@@ -61,7 +69,10 @@ describe("logout", () => {
 
     expect(emailEl.textContent).toBe("");
     expect(stAuthEl.textContent).toBe("not signed in");
-    expect(mockFetch).toHaveBeenCalledWith("/api/logout", expect.objectContaining({ method: "POST" }));
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/logout",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("rolls back optimistic UI on failure", async () => {
@@ -100,7 +111,12 @@ describe("setKiroSetting", () => {
     input.value = "new-val";
 
     const { setKiroSetting } = await import("./settings.js");
-    await setKiroSetting.dispatch({ key: "compaction", value: "new-val", input, previousValue: "old-val" });
+    await setKiroSetting.dispatch({
+      key: "compaction",
+      value: "new-val",
+      input,
+      previousValue: "old-val",
+    });
 
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/kiro-settings");

@@ -22,14 +22,16 @@ import { reconcile } from "./reconcile.js";
 const AGENT_INFO: Record<string, { label: string; description: string }> = {
   "": {
     label: "Choose a model",
-    description: "Start a build session with full tool access."
-      + " The agent can read, write, and run commands in your workspace.",
+    description:
+      "Start a build session with full tool access." +
+      " The agent can read, write, and run commands in your workspace.",
   },
-  "kiro_planner": {
+  kiro_planner: {
     label: "Choose a model",
-    description: "Start a planning session."
-      + " The agent will help you think through architecture"
-      + " and design without modifying files.",
+    description:
+      "Start a planning session." +
+      " The agent will help you think through architecture" +
+      " and design without modifying files.",
   },
 };
 
@@ -48,8 +50,11 @@ class ModelPickerController {
 
   show(currentModelId: string, onSelect: (modelId: string) => void, agent?: string): void {
     const picker = $.modelPicker;
-    const grid = picker.querySelector(".picker-grid") as HTMLDivElement;
-    const label = picker.querySelector(".picker-label") as HTMLDivElement;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const grid = picker.querySelector(".picker-grid")!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const label = picker.querySelector(".picker-label")!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const info = AGENT_INFO[agent ?? ""] ?? AGENT_INFO[""]!;
     this.callback = onSelect;
     this.currentId = currentModelId;
@@ -59,7 +64,7 @@ class ModelPickerController {
     const svgHtml = svg !== null ? svg.outerHTML + " " : "";
     label.innerHTML = svgHtml + escText(info.label);
 
-    let desc = picker.querySelector(".picker-desc") as HTMLDivElement | null;
+    let desc = picker.querySelector(".picker-desc");
     if (desc === null) {
       desc = document.createElement("div");
       desc.className = "picker-desc";
@@ -72,7 +77,9 @@ class ModelPickerController {
 
     // Drop any non-keyed loading placeholder before reconciling.
     for (const child of [...grid.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
 
     if (this.models.length === 0) {
@@ -86,13 +93,16 @@ class ModelPickerController {
     reconcile(grid, this.models, {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildPickerBtn(m, currentModelId),
-      update: (el, m) => this.syncPickerBtn(el as HTMLElement, m, currentModelId),
+      update: (el, m) => {
+        this.syncPickerBtn(el, m, currentModelId);
+      },
     });
     wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
     picker.classList.remove("hidden");
     // Focus the active model button (or first) for keyboard users.
-    const focusTarget = grid.querySelector<HTMLButtonElement>(".picker-btn.active")
-      ?? grid.querySelector<HTMLButtonElement>(".picker-btn:not(.picker-loading)");
+    const focusTarget =
+      grid.querySelector<HTMLButtonElement>(".picker-btn.active") ??
+      grid.querySelector<HTMLButtonElement>(".picker-btn:not(.picker-loading)");
     focusTarget?.focus();
   }
 
@@ -100,10 +110,12 @@ class ModelPickerController {
     const btn = document.createElement("button");
     btn.setAttribute("data-model", m.model_id);
     btn.setAttribute("role", "option");
-    btn.innerHTML = `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>`
-      + `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
+    btn.innerHTML =
+      `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>` +
+      `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
     btn.addEventListener("click", () => {
-      const grid = $.modelPicker.querySelector(".picker-grid") as HTMLDivElement;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const grid = $.modelPicker.querySelector(".picker-grid")!;
       for (const b of grid.querySelectorAll(".picker-btn")) {
         b.classList.remove("active");
         b.setAttribute("aria-selected", "false");
@@ -130,8 +142,11 @@ class ModelPickerController {
 
   refreshIfVisible(overrideModelId?: string): void {
     const picker = $.modelPicker;
-    if (picker.classList.contains("hidden") || this.callback === null) return;
-    const grid = picker.querySelector(".picker-grid") as HTMLDivElement;
+    if (picker.classList.contains("hidden") || this.callback === null) {
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const grid = picker.querySelector(".picker-grid")!;
 
     // Read current model from store rather than relying solely on this.currentId.
     const storeModel = getActive()?.model;

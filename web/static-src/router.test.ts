@@ -10,30 +10,130 @@ import { parseRoute, buildPath, type Route, type SettingsTab } from "./router";
 describe("parseRoute (table-driven)", () => {
   const cases: { name: string; pathname: string; hash: string; expected: Route }[] = [
     { name: "root → default chat", pathname: "/", hash: "", expected: { kind: "chat", id: "" } },
-    { name: "empty string → default chat", pathname: "", hash: "", expected: { kind: "chat", id: "" } },
+    {
+      name: "empty string → default chat",
+      pathname: "",
+      hash: "",
+      expected: { kind: "chat", id: "" },
+    },
     { name: "/chat/abc", pathname: "/chat/abc", hash: "", expected: { kind: "chat", id: "abc" } },
-    { name: "/chat/with%20space", pathname: "/chat/with%20space", hash: "", expected: { kind: "chat", id: "with space" } },
-    { name: "/chat/ (missing id) → default", pathname: "/chat/", hash: "", expected: { kind: "chat", id: "" } },
+    {
+      name: "/chat/with%20space",
+      pathname: "/chat/with%20space",
+      hash: "",
+      expected: { kind: "chat", id: "with space" },
+    },
+    {
+      name: "/chat/ (missing id) → default",
+      pathname: "/chat/",
+      hash: "",
+      expected: { kind: "chat", id: "" },
+    },
     { name: "/git", pathname: "/git", hash: "", expected: { kind: "git" } },
     { name: "/history", pathname: "/history", hash: "", expected: { kind: "history" } },
     { name: "/follow", pathname: "/follow", hash: "", expected: { kind: "follow" } },
-    { name: "/files → workspace root", pathname: "/files", hash: "", expected: { kind: "files", path: "." } },
-    { name: "/files/ → workspace root", pathname: "/files/", hash: "", expected: { kind: "files", path: "." } },
-    { name: "/files/src/main.go", pathname: "/files/src/main.go", hash: "", expected: { kind: "files", path: "src/main.go" } },
-    { name: "/files/dir%20name/f.ts", pathname: "/files/dir%20name/f.ts", hash: "", expected: { kind: "files", path: "dir name/f.ts" } },
-    { name: "/file/readme.md (no hash)", pathname: "/file/readme.md", hash: "", expected: { kind: "file", path: "readme.md" } },
-    { name: "/file/src/app.ts#L42", pathname: "/file/src/app.ts", hash: "#L42", expected: { kind: "file", path: "src/app.ts", line: 42 } },
-    { name: "/file/x.ts#L0 (invalid line)", pathname: "/file/x.ts", hash: "#L0", expected: { kind: "file", path: "x.ts" } },
-    { name: "/file/x.ts#Lfoo (non-numeric)", pathname: "/file/x.ts", hash: "#Lfoo", expected: { kind: "file", path: "x.ts" } },
-    { name: "/file/ (missing path) → default", pathname: "/file/", hash: "", expected: { kind: "chat", id: "" } },
-    { name: "/settings → general", pathname: "/settings", hash: "", expected: { kind: "settings", tab: "general" } },
-    { name: "/settings/ → general", pathname: "/settings/", hash: "", expected: { kind: "settings", tab: "general" } },
-    { name: "/settings/tools", pathname: "/settings/tools", hash: "", expected: { kind: "settings", tab: "tools" } },
-    { name: "/settings/permissions", pathname: "/settings/permissions", hash: "", expected: { kind: "settings", tab: "permissions" } },
-    { name: "/settings/instructions", pathname: "/settings/instructions", hash: "", expected: { kind: "settings", tab: "instructions" } },
-    { name: "/settings/git", pathname: "/settings/git", hash: "", expected: { kind: "settings", tab: "git" } },
-    { name: "/settings/unknown → general", pathname: "/settings/bogus", hash: "", expected: { kind: "settings", tab: "general" } },
-    { name: "/unknown → default chat", pathname: "/unknown", hash: "", expected: { kind: "chat", id: "" } },
+    {
+      name: "/files → workspace root",
+      pathname: "/files",
+      hash: "",
+      expected: { kind: "files", path: "." },
+    },
+    {
+      name: "/files/ → workspace root",
+      pathname: "/files/",
+      hash: "",
+      expected: { kind: "files", path: "." },
+    },
+    {
+      name: "/files/src/main.go",
+      pathname: "/files/src/main.go",
+      hash: "",
+      expected: { kind: "files", path: "src/main.go" },
+    },
+    {
+      name: "/files/dir%20name/f.ts",
+      pathname: "/files/dir%20name/f.ts",
+      hash: "",
+      expected: { kind: "files", path: "dir name/f.ts" },
+    },
+    {
+      name: "/file/readme.md (no hash)",
+      pathname: "/file/readme.md",
+      hash: "",
+      expected: { kind: "file", path: "readme.md" },
+    },
+    {
+      name: "/file/src/app.ts#L42",
+      pathname: "/file/src/app.ts",
+      hash: "#L42",
+      expected: { kind: "file", path: "src/app.ts", line: 42 },
+    },
+    {
+      name: "/file/x.ts#L0 (invalid line)",
+      pathname: "/file/x.ts",
+      hash: "#L0",
+      expected: { kind: "file", path: "x.ts" },
+    },
+    {
+      name: "/file/x.ts#Lfoo (non-numeric)",
+      pathname: "/file/x.ts",
+      hash: "#Lfoo",
+      expected: { kind: "file", path: "x.ts" },
+    },
+    {
+      name: "/file/ (missing path) → default",
+      pathname: "/file/",
+      hash: "",
+      expected: { kind: "chat", id: "" },
+    },
+    {
+      name: "/settings → general",
+      pathname: "/settings",
+      hash: "",
+      expected: { kind: "settings", tab: "general" },
+    },
+    {
+      name: "/settings/ → general",
+      pathname: "/settings/",
+      hash: "",
+      expected: { kind: "settings", tab: "general" },
+    },
+    {
+      name: "/settings/tools",
+      pathname: "/settings/tools",
+      hash: "",
+      expected: { kind: "settings", tab: "tools" },
+    },
+    {
+      name: "/settings/permissions",
+      pathname: "/settings/permissions",
+      hash: "",
+      expected: { kind: "settings", tab: "permissions" },
+    },
+    {
+      name: "/settings/instructions",
+      pathname: "/settings/instructions",
+      hash: "",
+      expected: { kind: "settings", tab: "instructions" },
+    },
+    {
+      name: "/settings/git",
+      pathname: "/settings/git",
+      hash: "",
+      expected: { kind: "settings", tab: "git" },
+    },
+    {
+      name: "/settings/unknown → general",
+      pathname: "/settings/bogus",
+      hash: "",
+      expected: { kind: "settings", tab: "general" },
+    },
+    {
+      name: "/unknown → default chat",
+      pathname: "/unknown",
+      hash: "",
+      expected: { kind: "chat", id: "" },
+    },
     { name: "trailing slashes stripped", pathname: "/git///", hash: "", expected: { kind: "git" } },
   ];
 
@@ -52,7 +152,8 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
   // Arbitrary for a canonical Route (one that round-trips cleanly).
   const arbRoute: fc.Arbitrary<Route> = fc.oneof(
     // chat with non-empty id (empty id maps to "/" which is the default)
-    fc.string({ minLength: 1, maxLength: 30 })
+    fc
+      .string({ minLength: 1, maxLength: 30 })
       .filter((s) => !s.includes("/") && !s.includes("#"))
       .map((id): Route => ({ kind: "chat", id })),
     // git
@@ -64,16 +165,35 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
     // files with path "." (root)
     fc.constant<Route>({ kind: "files", path: "." }),
     // files with non-trivial path (segments without slashes or empty parts)
-    fc.array(fc.string({ minLength: 1, maxLength: 15 }).filter((s) => !s.includes("/") && !s.includes("#") && s !== "." && s !== ""), { minLength: 1, maxLength: 4 })
+    fc
+      .array(
+        fc
+          .string({ minLength: 1, maxLength: 15 })
+          .filter((s) => !s.includes("/") && !s.includes("#") && s !== "." && s !== ""),
+        { minLength: 1, maxLength: 4 },
+      )
       .map((segs): Route => ({ kind: "files", path: segs.join("/") })),
     // file without line
-    fc.array(fc.string({ minLength: 1, maxLength: 15 }).filter((s) => !s.includes("/") && !s.includes("#") && s !== ""), { minLength: 1, maxLength: 4 })
+    fc
+      .array(
+        fc
+          .string({ minLength: 1, maxLength: 15 })
+          .filter((s) => !s.includes("/") && !s.includes("#") && s !== ""),
+        { minLength: 1, maxLength: 4 },
+      )
       .map((segs): Route => ({ kind: "file", path: segs.join("/") })),
     // file with line
-    fc.tuple(
-      fc.array(fc.string({ minLength: 1, maxLength: 15 }).filter((s) => !s.includes("/") && !s.includes("#") && s !== ""), { minLength: 1, maxLength: 4 }),
-      fc.integer({ min: 1, max: 10000 }),
-    ).map(([segs, line]): Route => ({ kind: "file", path: segs.join("/"), line })),
+    fc
+      .tuple(
+        fc.array(
+          fc
+            .string({ minLength: 1, maxLength: 15 })
+            .filter((s) => !s.includes("/") && !s.includes("#") && s !== ""),
+          { minLength: 1, maxLength: 4 },
+        ),
+        fc.integer({ min: 1, max: 10000 }),
+      )
+      .map(([segs, line]): Route => ({ kind: "file", path: segs.join("/"), line })),
     // settings
     fc.constantFrom(...settingsTabs).map((tab): Route => ({ kind: "settings", tab })),
   );
@@ -132,7 +252,9 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
     const arbPath = fc.oneof(
       fc.string().map((s) => "/" + s),
       fc.string().map((s) => "/chat/" + encodeURIComponent(s)),
-      fc.string().map((s) => "/file/" + s.replace(/[^%]/g, (c) => "%" + c.charCodeAt(0).toString(16))),
+      fc
+        .string()
+        .map((s) => "/file/" + s.replace(/[^%]/g, (c) => "%" + c.charCodeAt(0).toString(16))),
       fc.constant("/%"),
       fc.constant("/%zz"),
       fc.constant("/%0"),

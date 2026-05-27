@@ -62,7 +62,10 @@ function rescanOldest(tm: TrackedMap): void {
   tm.oldestPath = null;
   tm.oldestTs = Infinity;
   for (const [p, v] of tm.entries) {
-    if (v.ts < tm.oldestTs) { tm.oldestPath = p; tm.oldestTs = v.ts; }
+    if (v.ts < tm.oldestTs) {
+      tm.oldestPath = p;
+      tm.oldestTs = v.ts;
+    }
   }
 }
 
@@ -78,7 +81,9 @@ export function remember(chatID: string, c: Conflict): void {
     registry.set(chatID, tm);
   }
   const prior = tm.entries.get(c.path);
-  if (prior !== undefined && prior.ts >= c.ts) return;
+  if (prior !== undefined && prior.ts >= c.ts) {
+    return;
+  }
   tm.entries.set(c.path, c);
   // If we replaced the entry that was tracked as oldest, rescan to
   // find the true oldest before the cap check (the replacement may
@@ -90,8 +95,12 @@ export function remember(chatID: string, c: Conflict): void {
     tm.oldestTs = c.ts;
   }
   // Cap enforcement — O(1) check + O(k) rescan only on eviction.
-  if (tm.entries.size <= MAX_PER_CHAT) return;
-  if (tm.oldestPath !== null) tm.entries.delete(tm.oldestPath);
+  if (tm.entries.size <= MAX_PER_CHAT) {
+    return;
+  }
+  if (tm.oldestPath !== null) {
+    tm.entries.delete(tm.oldestPath);
+  }
   rescanOldest(tm);
 }
 
@@ -120,10 +129,18 @@ onSSE("conflict_detected", (chatID, payload) => {
   // Server sends the full Conflict shape. We don't trust blindly —
   // drop if the payload is missing required fields.
   const c = payload as Partial<Conflict>;
-  if (typeof c.path !== "string" || c.path === "") return;
-  if (typeof c.other_chat !== "string") return;
-  if (typeof c.expected_sha !== "string") return;
-  if (typeof c.actual_sha !== "string") return;
+  if (typeof c.path !== "string" || c.path === "") {
+    return;
+  }
+  if (typeof c.other_chat !== "string") {
+    return;
+  }
+  if (typeof c.expected_sha !== "string") {
+    return;
+  }
+  if (typeof c.actual_sha !== "string") {
+    return;
+  }
   remember(chatID, {
     path: c.path,
     other_chat: c.other_chat,
@@ -137,7 +154,15 @@ onSSE("conflict_detected", (chatID, payload) => {
   // traverses [data-filename] nodes; we import it lazily so this
   // module stays free of direct DOM dependencies when only the
   // registry is used (e.g. from tests).
-  void import("./messages-shared.js").then((m) => m.refreshConflictBadges(chatID, c.path!)).catch((e) => console.warn('[conflicts] badge refresh failed', e));
+  void import("./messages-shared.js")
+    .then((m) => {
+      if (c.path !== undefined) {
+        m.refreshConflictBadges(chatID, c.path);
+      }
+    })
+    .catch((e: unknown) => {
+      console.warn("[conflicts] badge refresh failed", e);
+    });
 });
 
 /** Fetch every past conflict for a chat and populate the registry.
@@ -148,7 +173,9 @@ onSSE("conflict_detected", (chatID, payload) => {
 export async function loadConflictsFor(chatID: string): Promise<void> {
   const resp = await loadConflicts.dispatch(chatID);
   const list = resp?.conflicts ?? [];
-  for (const c of list) remember(chatID, c);
+  for (const c of list) {
+    remember(chatID, c);
+  }
 }
 
 /** Render an inline conflict chip into the given tool-edit actions
@@ -157,7 +184,7 @@ export async function loadConflictsFor(chatID: string): Promise<void> {
  *  state. Clicking the chip triggers openConflictDiff. */
 export function renderConflictChip(row: HTMLElement, chatID: string, path: string): void {
   const c = getConflict(chatID, path);
-  const existing = row.querySelector(".conflict-chip") as HTMLButtonElement | null;
+  const existing = row.querySelector<HTMLElement>(".conflict-chip");
   if (c === null) {
     if (existing !== null) {
       chipUnbindMap.get(existing)?.();
@@ -182,9 +209,11 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   // stale label/tooltip captured at first render.
   chip.title = `Chat ${c.other_chat} last left a different version here. Click to compare.`;
   const label = chip.querySelector(".conflict-chip-label");
-  if (label !== null) label.textContent = `Drift vs ${c.other_chat}`;
-  chip.dataset["tag"] = c.tag;
-  chip.dataset["other"] = c.other_chat;
+  if (label !== null) {
+    label.textContent = `Drift vs ${c.other_chat}`;
+  }
+  chip.dataset.tag = c.tag;
+  chip.dataset.other = c.other_chat;
   chip.setAttribute("aria-label", `Conflict with chat ${c.other_chat} on ${escText(path)}`);
 }
 
@@ -196,7 +225,9 @@ registerConflictChipRenderer(renderConflictChip);
  *  framework which handles error toasting. */
 async function openConflictDiff(chatID: string, path: string): Promise<void> {
   const c = getConflict(chatID, path);
-  if (c === null) return;
+  if (c === null) {
+    return;
+  }
   await openConflictDiffAction.dispatch({
     chatID,
     path,
@@ -205,4 +236,3 @@ async function openConflictDiff(chatID: string, path: string): Promise<void> {
     otherChat: c.other_chat,
   });
 }
-

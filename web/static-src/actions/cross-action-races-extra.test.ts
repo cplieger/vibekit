@@ -10,7 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
@@ -40,7 +43,9 @@ describe("dedupe + scope combined behavior", () => {
       scope: "ds",
       run: () => {
         runCount++;
-        return new Promise<string>((r) => { resolveRun = r; });
+        return new Promise<string>((r) => {
+          resolveRun = r;
+        });
       },
     });
 
@@ -106,8 +111,12 @@ describe("dedupe + scope combined behavior", () => {
 // ===========================================================================
 
 describe("optimistic persistence across retries", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("rollback fires exactly once after all retries exhaust", async () => {
     const rollbackCalls: string[] = [];
@@ -119,7 +128,9 @@ describe("optimistic persistence across retries", () => {
       retry: { count: 2, delay: 50 },
       error: false,
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       run: () => {
         attempt++;
         throw new ActionError("fail", { status: 500 });
@@ -128,7 +139,7 @@ describe("optimistic persistence across retries", () => {
 
     const p = action.dispatch("x");
     // Advance through retries
-    await vi.advanceTimersByTimeAsync(50);  // retry 1
+    await vi.advanceTimersByTimeAsync(50); // retry 1
     await vi.advanceTimersByTimeAsync(100); // retry 2
     await p;
 
@@ -145,10 +156,14 @@ describe("optimistic persistence across retries", () => {
       retryable: retryNetwork,
       retry: { count: 2, delay: 30 },
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       run: () => {
         attempt++;
-        if (attempt < 3) throw new ActionError("net", { code: "network" });
+        if (attempt < 3) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -165,13 +180,19 @@ describe("optimistic persistence across retries", () => {
   it("optimistic runs exactly once even with retries", async () => {
     let optimisticCount = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.opt_once",
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
-      optimistic: () => { optimisticCount++; return undefined; },
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      optimistic: () => {
+        optimisticCount++;
+        return undefined;
+      },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();
@@ -194,7 +215,9 @@ describe("cancel + success race in dedupe", () => {
       error: false,
       run: (_args, signal) => {
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         });
       },
     });
@@ -206,8 +229,16 @@ describe("cancel + success race in dedupe", () => {
     const onError2 = vi.fn();
     const onSettled2 = vi.fn();
 
-    const p1 = action.dispatch("k", { onSuccess: onSuccess1, onError: onError1, onSettled: onSettled1 });
-    const p2 = action.dispatch("k", { onSuccess: onSuccess2, onError: onError2, onSettled: onSettled2 });
+    const p1 = action.dispatch("k", {
+      onSuccess: onSuccess1,
+      onError: onError1,
+      onSettled: onSettled1,
+    });
+    const p2 = action.dispatch("k", {
+      onSuccess: onSuccess2,
+      onError: onError2,
+      onSettled: onSettled2,
+    });
 
     // Cancel before resolving — signal aborts, run rejects with AbortError
     action.cancel();
@@ -234,11 +265,14 @@ describe("cancel + success race in dedupe", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
     const p1 = action.dispatch("k");
+
     action.dispatch("k"); // deduped
     action.cancel();
     await p1;
@@ -285,7 +319,9 @@ describe("onSettled re-dispatch with dedupe", () => {
       error: false,
       run: () => {
         runCount++;
-        if (runCount === 1) throw new ActionError("fail");
+        if (runCount === 1) {
+          throw new ActionError("fail");
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -311,14 +347,18 @@ describe("scope chain after optimistic throw", () => {
   it("next action in scope runs after optimistic throw", async () => {
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const broken = defineAction<void, string>({
       name: "test.opt_throw",
       scope: "opt-throw",
       error: false,
-      optimistic: () => { throw new Error("optimistic boom"); },
+      optimistic: () => {
+        throw new Error("optimistic boom");
+      },
       run: () => Promise.resolve("never"),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const follower = defineAction<void, string>({
       name: "test.opt_throw_follower",
       scope: "opt-throw",
@@ -340,11 +380,14 @@ describe("scope chain after optimistic throw", () => {
   });
 
   it("scope chain drains after optimistic throw", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.opt_throw_drain",
       scope: "opt-throw-drain",
       error: false,
-      optimistic: () => { throw new Error("boom"); },
+      optimistic: () => {
+        throw new Error("boom");
+      },
       run: () => Promise.resolve("never"),
     });
 
@@ -362,8 +405,12 @@ describe("scope chain after optimistic throw", () => {
 // ===========================================================================
 
 describe("retry + dedupe + scope triple interaction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("deduped dispatch in scope with retry: single run, retries, both callers get result", async () => {
     let attempt = 0;
@@ -377,7 +424,9 @@ describe("retry + dedupe + scope triple interaction", () => {
       error: false,
       run: () => {
         attempt++;
-        if (attempt < 2) throw new ActionError("net", { code: "network" });
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });
@@ -427,14 +476,17 @@ describe("retry + dedupe + scope triple interaction", () => {
 
 describe("rapid cancel + re-dispatch", () => {
   it("re-dispatch after cancel uses a fresh AbortController", async () => {
-    let signalAborted: boolean[] = [];
+    const signalAborted: boolean[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.rapid_cancel",
       error: false,
       run: (_args, signal) => {
         signalAborted.push(signal.aborted);
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("ok");
       },
     });
@@ -462,7 +514,9 @@ describe("rapid cancel + re-dispatch", () => {
       scope: "rapid",
       error: false,
       run: (n, signal) => {
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         order.push(`run-${String(n)}`);
         return Promise.resolve(`done-${String(n)}`);
       },
@@ -486,12 +540,17 @@ describe("rapid cancel + re-dispatch", () => {
 // ===========================================================================
 
 describe("idempotency key stability across retries", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("same idempotency key is passed to all retry attempts", async () => {
     const keys: (string | undefined)[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.idem_retry",
       idempotencyKey: true,
@@ -518,6 +577,7 @@ describe("idempotency key stability across retries", () => {
   it("different dispatches get different idempotency keys", async () => {
     const keys: (string | undefined)[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.idem_unique",
       idempotencyKey: true,
@@ -540,12 +600,17 @@ describe("idempotency key stability across retries", () => {
 // ===========================================================================
 
 describe("retryable composition (custom permanent codes)", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("'cancelled' code does not retry under app-defined retry-everything-except-cancelled", async () => {
     let attempt = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cancelled_no_retry",
       retryable: (err) => err.code !== "cancelled",
@@ -569,6 +634,7 @@ describe("retryable composition (custom permanent codes)", () => {
       !APP_PERMANENT.has(err.code ?? "") && err.code !== "cancelled";
 
     let attempt = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.app_perm_rejected",
       retryable: retryAppSafe,
@@ -592,6 +658,7 @@ describe("retryable composition (custom permanent codes)", () => {
       !APP_PERMANENT.has(err.code ?? "") && err.code !== "cancelled";
 
     let attempt = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.app_perm_validation",
       retryable: retryAppSafe,
@@ -616,10 +683,15 @@ describe("retryable composition (custom permanent codes)", () => {
 // ===========================================================================
 
 describe("registry attempts field", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("records attempts=1 when no retry occurs", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.attempts_1",
       run: () => Promise.resolve("ok"),
@@ -632,12 +704,15 @@ describe("registry attempts field", () => {
   });
 
   it("records correct attempts count after retries exhaust", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.attempts_exhaust",
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 10 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();
@@ -652,13 +727,16 @@ describe("registry attempts field", () => {
 
   it("records correct attempts when retry succeeds on 2nd try", async () => {
     let attempt = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.attempts_recover",
       retryable: retryNetwork,
       retry: { count: 2, delay: 10 },
       run: () => {
         attempt++;
-        if (attempt < 2) throw new ActionError("net", { code: "network" });
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });

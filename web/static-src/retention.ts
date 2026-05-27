@@ -13,6 +13,7 @@ import { defineAction, retryNetwork } from "./actions/index.js";
 let retentionDays = 1;
 const listeners = new Set<() => void>();
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 const refreshRetentionAction = defineAction<void, number>({
   name: "settings.refresh_retention",
   dedupe: true,
@@ -21,7 +22,10 @@ const refreshRetentionAction = defineAction<void, number>({
   run: async (_args, signal) => {
     return fetchKiroSetting(
       "cleanup.periodDays",
-      (v) => { const n = parseInt(v, 10); return (!isNaN(n) && n >= 0) ? n : null; },
+      (v) => {
+        const n = parseInt(v, 10);
+        return !isNaN(n) && n >= 0 ? n : null;
+      },
       1,
       signal,
     );
@@ -29,17 +33,25 @@ const refreshRetentionAction = defineAction<void, number>({
   error: false,
 });
 
-export function isRetentionEnabled(): boolean { return retentionDays > 0; }
+export function isRetentionEnabled(): boolean {
+  return retentionDays > 0;
+}
 
 /** Subscribe to retention changes. Returns an unsubscribe function. */
 export function onRetentionChange(fn: () => void): () => void {
   listeners.add(fn);
-  return () => { listeners.delete(fn); };
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 export async function refreshRetention(): Promise<void> {
   const result = await refreshRetentionAction.dispatch(undefined);
-  if (result === null) return;
+  if (result === null) {
+    return;
+  }
   retentionDays = result;
-  for (const fn of listeners) fn();
+  for (const fn of listeners) {
+    fn();
+  }
 }

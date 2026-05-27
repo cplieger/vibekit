@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { ActionError, hasErrorString, toActionError, classifyFetchError, retryNetwork } from "./error.js";
+import {
+  ActionError,
+  hasErrorString,
+  toActionError,
+  classifyFetchError,
+  retryNetwork,
+} from "./error.js";
 
 describe("ActionError", () => {
   it("sets message, status, code, and cause", () => {
@@ -260,4 +266,3 @@ describe("classifyFetchError — TypeError branch", () => {
     expect(err.code).toBe("cancelled");
   });
 });
-

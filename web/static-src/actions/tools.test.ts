@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -67,7 +70,7 @@ describe("tools.save", () => {
   it("PUTs to /api/tools with body", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const data = { mcp: { server1: { enabled: true } } };
-    await saveTools.dispatch(data as Record<string, Record<string, Record<string, unknown>>>);
+    await saveTools.dispatch(data);
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools");
     expect(opts.method).toBe("PUT");
@@ -77,8 +80,13 @@ describe("tools.save", () => {
 
 describe("tools.run_diagnostics", () => {
   it("dedupes concurrent dispatches", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
+        ),
     );
     const p1 = runDiagnostics.dispatch(undefined);
     const p2 = runDiagnostics.dispatch(undefined);
@@ -90,8 +98,13 @@ describe("tools.run_diagnostics", () => {
 
 describe("tools.load", () => {
   it("GETs /api/tools and dedupes", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
+        ),
     );
     const p1 = loadTools.dispatch(undefined);
     const p2 = loadTools.dispatch(undefined);

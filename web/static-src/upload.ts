@@ -35,7 +35,9 @@ export function uploadFiles(opts: UploadOptions): void {
 
   const form = new FormData();
   form.append("dir", opts.targetDir);
-  for (const f of opts.files) form.append("files", f);
+  for (const f of opts.files) {
+    form.append("files", f);
+  }
 
   const progress = $.uploadProgress;
   const fill = $.uploadProgressFill;
@@ -57,9 +59,13 @@ export function uploadFiles(opts: UploadOptions): void {
   // opts.signal for programmatic abort (e.g. chat delete, navigation);
   // both paths converge on xhr.abort() below.
   cancelBtn.classList.remove("hidden");
-  const onCancelClick = (): void => { xhr.abort(); };
+  const onCancelClick = (): void => {
+    xhr.abort();
+  };
   cancelBtn.addEventListener("click", onCancelClick, { once: true });
-  const onSignalAbort = (): void => { xhr.abort(); };
+  const onSignalAbort = (): void => {
+    xhr.abort();
+  };
   const teardownCancelUI = (): void => {
     cancelBtn.classList.add("hidden");
     cancelBtn.removeEventListener("click", onCancelClick);
@@ -81,9 +87,14 @@ export function uploadFiles(opts: UploadOptions): void {
     if (xhr.status >= 200 && xhr.status < 300) {
       fill.style.width = "100%";
       label.textContent = "Upload complete";
-      setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
+      setTimeout(() => {
+        progress.classList.add("upload-closed");
+      }, 1500);
       // Use server-returned filenames (sanitized via filepath.Base) when available.
-      const sep = opts.targetDir === "" || opts.targetDir === "." ? "" : `${opts.targetDir.replace(/\/+$/, "")}/`;
+      const sep =
+        opts.targetDir === "" || opts.targetDir === "."
+          ? ""
+          : `${opts.targetDir.replace(/\/+$/, "")}/`;
       let paths: string[];
       try {
         const body = JSON.parse(xhr.responseText) as { uploaded?: string[] };
@@ -92,40 +103,56 @@ export function uploadFiles(opts: UploadOptions): void {
         } else {
           // Fallback to client names if server doesn't return the array.
           paths = [];
-          for (const f of opts.files) paths.push(sep + f.name);
+          for (const f of opts.files) {
+            paths.push(sep + f.name);
+          }
         }
       } catch {
         paths = [];
-        for (const f of opts.files) paths.push(sep + f.name);
+        for (const f of opts.files) {
+          paths.push(sep + f.name);
+        }
       }
       opts.onComplete?.(paths);
     } else {
       let msg = `Upload failed (${String(xhr.status)})`;
       try {
         const body: unknown = JSON.parse(xhr.responseText);
-        if (hasErrorString(body)) msg = body.error;
-      } catch { /* ignore */ }
+        if (hasErrorString(body)) {
+          msg = body.error;
+        }
+      } catch {
+        /* ignore */
+      }
       label.textContent = msg;
-      setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
+      setTimeout(() => {
+        progress.classList.add("upload-closed");
+      }, 2000);
       opts.onError?.(msg);
     }
   });
   xhr.addEventListener("error", () => {
     teardownCancelUI();
     label.textContent = "Upload failed";
-    setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
+    setTimeout(() => {
+      progress.classList.add("upload-closed");
+    }, 2000);
     opts.onError?.("Upload failed");
   });
   xhr.addEventListener("timeout", () => {
     teardownCancelUI();
     label.textContent = "Upload timed out";
-    setTimeout(() => { progress.classList.add("upload-closed"); }, 2000);
+    setTimeout(() => {
+      progress.classList.add("upload-closed");
+    }, 2000);
     opts.onError?.("Upload timed out");
   });
   xhr.addEventListener("abort", () => {
     teardownCancelUI();
     label.textContent = "Upload cancelled";
-    setTimeout(() => { progress.classList.add("upload-closed"); }, 1500);
+    setTimeout(() => {
+      progress.classList.add("upload-closed");
+    }, 1500);
     opts.onError?.("Upload cancelled");
   });
   if (opts.signal) {

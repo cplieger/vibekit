@@ -37,9 +37,9 @@ func FuzzStoreInvariants(f *testing.F) {
 
 		// Track state for invariant checking.
 		type pendingOp struct {
+			waitCh     <-chan struct{}
 			toolCallID string
 			chatID     api.ChatID
-			waitCh     <-chan struct{}
 		}
 
 		var (

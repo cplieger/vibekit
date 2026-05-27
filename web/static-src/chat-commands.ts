@@ -35,7 +35,11 @@ import { newMessageID } from "./transport.js";
 import { getCurrentAgent, getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import { takeAttachments, addAttachment } from "./attachments.js";
-import { switchModel as switchModelAction, resolvePendingChange as resolvePendingChangeAction, sendPrompt as sendPromptAction } from "./actions/chat.js";
+import {
+  switchModel as switchModelAction,
+  resolvePendingChange as resolvePendingChangeAction,
+  sendPrompt as sendPromptAction,
+} from "./actions/chat.js";
 import { setLastQueuedAttachments } from "./store.js";
 
 /** Options for the low-level prompt sender. */
@@ -52,11 +56,14 @@ export interface SendPromptOpts {
  *  prompt (e.g. plan handoff deleting its draft) inspect the result;
  *  most callers still ignore it. */
 export async function sendPromptTo(
-  chatID: string, text: string, opts: SendPromptOpts = {},
+  chatID: string,
+  text: string,
+  opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
   const attachments = opts.attachments !== undefined ? [...opts.attachments] : takeAttachments();
   const result = await sendPromptAction.dispatch({
-    chatID, text,
+    chatID,
+    text,
     messageID: newMessageID(),
     agent: opts.agent ?? getCurrentAgent(),
     model: opts.model ?? getCurrentModel(),
@@ -67,7 +74,9 @@ export async function sendPromptTo(
   if (result === null) {
     // Restore attachments on failure so the user doesn't lose them.
     if (opts.attachments === undefined) {
-      for (const a of attachments) addAttachment((a as { path: string }).path);
+      for (const a of attachments) {
+        addAttachment((a as { path: string }).path);
+      }
     }
     return "failed";
   }
@@ -92,7 +101,9 @@ export async function sendPromptTo(
  *  false when the call failed and the caller should clear any in-flight
  *  UI state. */
 export async function switchModel(chatID: string, model: string): Promise<boolean> {
-  if (chatID === "") return false;
+  if (chatID === "") {
+    return false;
+  }
   const result = await switchModelAction.dispatch({ chatID, model });
   return result !== null && result;
 }
@@ -100,7 +111,9 @@ export async function switchModel(chatID: string, model: string): Promise<boolea
 /** Resolve a single pending change (accept or reject). Shared by
  *  supervised-pill.ts, editor-pending.ts, and messages-actions.ts. */
 export function resolvePendingChange(
-  chatID: string, toolCallID: string, action: "accept" | "reject",
+  chatID: string,
+  toolCallID: string,
+  action: "accept" | "reject",
 ): void {
   void resolvePendingChangeAction.dispatch({ chatID, toolCallID, action });
 }

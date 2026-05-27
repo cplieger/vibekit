@@ -7,48 +7,70 @@
 // ---------------------------------------------------------------------------
 
 import {
-  getActiveId, getActive, get, getSessions, setActive,
-  loadList, loadMessages, upsertHeader,
-  contextSizeFor, defaultUsage, activeVersion, removeChat,
+  getActiveId,
+  getActive,
+  get,
+  getSessions,
+  setActive,
+  loadList,
+  loadMessages,
+  upsertHeader,
+  contextSizeFor,
+  defaultUsage,
+  activeVersion,
+  removeChat,
 } from "./store.js";
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";
 import { sendPromptTo } from "./chat-commands.js";
 import {
-  openTab, activateTab, hasTab, getActiveTabId, renameTab, setTabStatus, TAB_VIEWS,
+  openTab,
+  activateTab,
+  hasTab,
+  getActiveTabId,
+  renameTab,
+  setTabStatus,
+  TAB_VIEWS,
 } from "./tabs.js";
 import { chatSkeleton } from "./skeleton.js";
 import { showModelPicker, hideModelPicker } from "./picker.js";
 import { mountChatView, setLoadMore, scrollToBottom } from "./messages.js";
 import { addAttachment, clearAttachments } from "./attachments.js";
-import {
-  setCurrentModel, getCurrentAgent, getLastModel, withAgent,
-} from "./session-context.js";
+import { setCurrentModel, getCurrentAgent, getLastModel, withAgent } from "./session-context.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
 import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
-import { deleteChat as deleteChatAction, archiveChat as archiveChatAction, restoreChat } from "./actions/chat.js";
+import {
+  deleteChat as deleteChatAction,
+  archiveChat as archiveChatAction,
+  restoreChat,
+} from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
 onBus(BUS_ACTIVATE_CHAT, (p) => {
   activateChatView(p.chatID);
-  if (p.then !== undefined) p.then();
+  if (p.then !== undefined) {
+    p.then();
+  }
 });
 
 // --- Chat tab registration ---
 
 export function openChatTab(id: string, name: string, agent: string): void {
   openTab({
-    id, name,
+    id,
+    name,
     kind: agent === "kiro_planner" ? "plan" : "chat",
     view: TAB_VIEWS.chat,
     route: { kind: "chat", id },
-    onShow: () => activateChatView(id),
+    onShow: () => {
+      activateChatView(id);
+    },
     onClose: () => {
       // Rewind chats (parent_chat_id set) are just deleted on close —
       // the parent is never frozen, so no special unfreeze needed.
@@ -60,7 +82,7 @@ export function openChatTab(id: string, name: string, agent: string): void {
       if (isRetentionEnabled()) {
         archiveChat(id);
       } else {
-        if (s !== undefined && s.message_count === 0) {
+        if (s?.message_count === 0) {
           removeChat(id);
         } else {
           deleteChat(id);
@@ -77,7 +99,9 @@ export function openChatTab(id: string, name: string, agent: string): void {
  *  archive and would 500. */
 function archiveChat(id: string): void {
   const s = get(id);
-  if (s === undefined) return;
+  if (s === undefined) {
+    return;
+  }
   if (s.message_count === 0) {
     removeChat(id);
     return;
@@ -95,17 +119,22 @@ export function activateChatView(id: string): void {
   // Prefetch conflict records so badges on historical tool calls
   // are present as soon as the messages render. Dynamic import
   // keeps the conflicts module lazy — most chats never see one.
-  void import("./conflicts.js").then((m) => m.loadConflictsFor(id)).catch(() => {});
+  void import("./conflicts.js")
+    .then((m) => m.loadConflictsFor(id))
+    .catch(() => {
+      /* noop */
+    });
 
   const session = get(id);
-  if (session === undefined) return;
+  if (session === undefined) {
+    return;
+  }
 
   if (session.usage.context_size === 0 && session.model !== "") {
     session.usage.context_size = contextSizeFor(session.model);
   }
 
   if (session.message_count === 0 && session.messages.length === 0) {
-
     showModelPicker(session.model, applyLocalModel, session.agent);
   } else {
     // Hydrate messages from the server, then render.
@@ -114,24 +143,28 @@ export function activateChatView(id: string): void {
     $.messages.appendChild(skel);
     void loadMessages(id).then((ok) => {
       skel.remove();
-      if (getActiveId() !== id) return;
+      if (getActiveId() !== id) {
+        return;
+      }
       if (!ok) {
         // Show retry button on failed load.
         const retry = document.createElement("div");
         retry.className = "load-error";
-        retry.innerHTML = '<span>Failed to load messages.</span>';
+        retry.innerHTML = "<span>Failed to load messages.</span>";
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "btn-small";
         btn.textContent = "Retry";
-        btn.addEventListener("click", () => { retry.remove(); activateChatView(id); });
+        btn.addEventListener("click", () => {
+          retry.remove();
+          activateChatView(id);
+        });
         retry.appendChild(btn);
         $.messages.appendChild(retry);
         return;
       }
       const fresh = get(id);
       if (fresh !== undefined) {
-
         setupLoadMore(id);
         scrollToBottom();
       }
@@ -144,25 +177,35 @@ export function activateChatView(id: string): void {
 
 function setupLoadMore(chatID: string): void {
   const session = get(chatID);
-  if (session === undefined) return;
+  if (session === undefined) {
+    return;
+  }
   setLoadMore(
-    session.has_more ? (): void => {
-      const oldest = session.messages[0];
-      if (oldest === undefined) return;
-      void loadMessages(chatID, oldest.ts).then(() => {
-        // Remove the load-more skeleton — scroll.ts watches for its
-        // removal as the "load complete" signal (was previously done
-        // inside the imperative prependMessages helper).
-        document.getElementById("load-more-skeleton")?.remove();
-        if (getActiveId() !== chatID) return;
-        const s = get(chatID);
-        if (s === undefined) return;
-        // Store mutations bump version; the chat-view effect re-renders
-        // and reconcile prepends the older messages at the top with
-        // identity preserved for already-mounted ones.
-        setupLoadMore(chatID);
-      });
-    } : null,
+    session.has_more
+      ? (): void => {
+          const oldest = session.messages[0];
+          if (oldest === undefined) {
+            return;
+          }
+          void loadMessages(chatID, oldest.ts).then(() => {
+            // Remove the load-more skeleton — scroll.ts watches for its
+            // removal as the "load complete" signal (was previously done
+            // inside the imperative prependMessages helper).
+            document.getElementById("load-more-skeleton")?.remove();
+            if (getActiveId() !== chatID) {
+              return;
+            }
+            const s = get(chatID);
+            if (s === undefined) {
+              return;
+            }
+            // Store mutations bump version; the chat-view effect re-renders
+            // and reconcile prepends the older messages at the top with
+            // identity preserved for already-mounted ones.
+            setupLoadMore(chatID);
+          });
+        }
+      : null,
     session.has_more,
   );
 }
@@ -172,11 +215,11 @@ function setupLoadMore(chatID: string): void {
 export function sendPrompt(text: string): void {
   hideModelPicker();
   const chatID = getActiveId();
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   void sendPromptTo(chatID, text);
 }
-
-
 
 // --- Session lifecycle ---
 
@@ -189,7 +232,10 @@ export function createSession(initialPrompt?: string): void {
   // Template for upsertHeader + initial render; only the header fields
   // matter — the rest are defaults satisfying the Session type.
   const session: Session = {
-    id, name: "New conversation", agent, model,
+    id,
+    name: "New conversation",
+    agent,
+    model,
     acp_session_id: "",
     current_mode_id: "",
     available_modes: [],
@@ -205,11 +251,14 @@ export function createSession(initialPrompt?: string): void {
   };
   session.usage.context_size = contextSizeFor(model);
   upsertHeader({
-    id: session.id, name: session.name,
-    agent: session.agent, model: session.model,
+    id: session.id,
+    name: session.name,
+    agent: session.agent,
+    model: session.model,
     acp_session_id: "",
     usage: session.usage,
-    created_at: Date.now(), updated_at: Date.now(),
+    created_at: Date.now(),
+    updated_at: Date.now(),
     message_count: 0,
   });
   setActive(id);
@@ -224,7 +273,9 @@ export function createSession(initialPrompt?: string): void {
 }
 
 export function switchSession(id: string): void {
-  if (id === getActiveId() && getActiveTabId() === id) return;
+  if (id === getActiveId() && getActiveTabId() === id) {
+    return;
+  }
   activateTab(id);
 }
 
@@ -261,10 +312,14 @@ function deleteChat(id: string): void {
 export function restoreArchivedChat(id: string): void {
   void restoreChat.dispatch(id, {
     onSuccess: (d) => {
-      if (d.ok !== true) return;
+      if (!d.ok) {
+        return;
+      }
       void loadList().then(() => {
         const s = get(id);
-        if (s === undefined) return;
+        if (s === undefined) {
+          return;
+        }
         openChatTab(s.id, s.name, s.agent);
         activateChatView(s.id);
       });
@@ -275,7 +330,9 @@ export function restoreArchivedChat(id: string): void {
 /** Create a planner session: temporarily switch currentAgent, then createSession,
  *  then restore. */
 export function createPlannerSession(): void {
-  withAgent("kiro_planner", () => createSession());
+  withAgent("kiro_planner", () => {
+    createSession();
+  });
 }
 
 /** Wire the effect() that drives tab-rename reconciliation and
@@ -284,10 +341,9 @@ export function createPlannerSession(): void {
 export function installStoreSubscribers(): void {
   mountChatView();
   effect(() => {
-    activeVersion.value;
+    void activeVersion.value;
     const active = getActive();
     if (active !== undefined) {
-
       refreshContextUI(active);
     }
     recomputeSendState();

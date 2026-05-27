@@ -81,7 +81,16 @@ describe("getCachedDiff", () => {
   it("first call computes and caches diff, second returns same reference", async () => {
     const { getCachedDiff, freshState } = await import("./editor-types.js");
     const state = freshState("test.ts");
-    state.mode = { kind: "diff", diffSource: { oldContent: "a\nb\n", newContent: "a\nc\n", oldLabel: "old", newLabel: "new", fromGit: false } };
+    state.mode = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "a\nb\n",
+        newContent: "a\nc\n",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
     const first = getCachedDiff(state);
     expect(first.length).toBeGreaterThan(0);
     const second = getCachedDiff(state);

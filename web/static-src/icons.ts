@@ -16,54 +16,91 @@ function svg(size: number, d: string, extra = ""): string {
 export const ICON_EDIT = svg(12, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
 export const ICON_EDIT_14 = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
 export const ICON_CLOSE = svg(12, '<path d="M18 6L6 18M6 6l12 12"/>');
-export const ICON_TRASH = svg(12, '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>');
-export const ICON_TRASH_14 = svg(14, '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>');
+export const ICON_TRASH = svg(
+  12,
+  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+);
+export const ICON_TRASH_14 = svg(
+  14,
+  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+);
 export const ICON_PLUS = svg(12, '<path d="M12 5v14M5 12h14"/>');
 export const ICON_PLUS_16 = svg(16, '<path d="M12 5v14M5 12h14"/>');
 export const ICON_MINUS = svg(12, '<path d="M5 12h14"/>');
-export const ICON_COPY = svg(14, '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>');
-export const ICON_COPY_MD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
-export const ICON_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+export const ICON_COPY = svg(
+  14,
+  '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
+);
+export const ICON_COPY_MD =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
+export const ICON_LINK =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 // Open-in-new-tab / external-link icon (Lucide). Used by the
 // repo-picker and forge-auth panels to mark links that leave the app.
-export const ICON_EXTERNAL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+export const ICON_EXTERNAL =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 // Download / clone-into-workspace icon (Lucide).
-export const ICON_DOWNLOAD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+export const ICON_DOWNLOAD =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 // Repo (book-style) icon — same shape as the empty-state glyph, used
 // in the per-account collapsible repo summary.
-export const ICON_REPO = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
-export const ICON_EXPORT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-export const ICON_UNDO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-export const ICON_DIFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
-export const ICON_CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-export const ICON_X = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const ICON_REPO =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
+export const ICON_EXPORT =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+export const ICON_UNDO =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+export const ICON_DIFF =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
+export const ICON_CHECK =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+export const ICON_X =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg(16, '<path d="M6 9l6 6 6-6"/>');
-export const ICON_CHEVRON_DOWN_SM = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+export const ICON_CHEVRON_DOWN_SM =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 export const ICON_CHEVRON_UP = svg(16, '<path d="M18 15l-6-6-6 6"/>');
-export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');// Busy-state spinner rendered INTO the send button. Uses xmlns so it
+export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>'); // Busy-state spinner rendered INTO the send button. Uses xmlns so it
 // renders correctly when injected via innerHTML. CSS `.icon-spinner`
 // drives the rotation; we keep a single SVG circle here so the arc
 // geometry is deterministic regardless of browser font metrics.
-export const ICON_SPINNER = '<svg class="icon-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
-export const ICON_HOURGLASS = svg(16, '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>');
-export const ICON_ALERT = svg(16, '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
+export const ICON_SPINNER =
+  '<svg class="icon-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+export const ICON_HOURGLASS = svg(
+  16,
+  '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
+);
+export const ICON_ALERT = svg(
+  16,
+  '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+);
+export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg(16, '<path d="M12 5v14M5 12l7 7 7-7"/>');
-export const ICON_REFRESH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+export const ICON_REFRESH =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
 // Globe with meridian + equator stripes — used by the repo-picker for
 // "remote, not cloned" entries.
-export const ICON_GLOBE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
-export const ICON_WARN_12 = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
+export const ICON_GLOBE =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+export const ICON_WARN_12 =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
 
 // --- Crew status icons (14px, used by crew-card.ts) ---
-export const ICON_SPINNER_14 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4m0 12v4m-7.07-15.07l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>';
-export const ICON_CHECK_14 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+export const ICON_SPINNER_14 =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4m0 12v4m-7.07-15.07l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>';
+export const ICON_CHECK_14 =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
 
 // Save-indicator icons (14px, coloured stroke for inline status feedback)
-export const ICON_SAVE_OK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-export const ICON_SAVE_FAIL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-export const ICON_ERROR_14 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-export const ICON_PENDING_14 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-dasharray="4 4"/></svg>';
+export const ICON_SAVE_OK =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+export const ICON_SAVE_FAIL =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const ICON_ERROR_14 =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+export const ICON_PENDING_14 =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-dasharray="4 4"/></svg>';
 // --- Tool-call icons (used by messages.ts for both live and replay rendering) ---
 //
 // Keyed primarily on ACP kind (`read`, `edit`, `delete`, `move`, `search`,
@@ -71,23 +108,53 @@ export const ICON_PENDING_14 = '<svg width="14" height="14" viewBox="0 0 24 24" 
 // common kiro-cli tools (listDirectory, executePwsh, webFetch) pick a more
 // specific icon than their coarse kind suggests.
 
-const ICON_TOOL_READ = svg(14, '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>');
+const ICON_TOOL_READ = svg(
+  14,
+  '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
+);
 const ICON_TOOL_EDIT = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-const ICON_TOOL_DELETE = svg(14, '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>');
-const ICON_TOOL_MOVE = svg(14, '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>');
+const ICON_TOOL_DELETE = svg(
+  14,
+  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+);
+const ICON_TOOL_MOVE = svg(
+  14,
+  '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
+);
 const ICON_TOOL_SEARCH = svg(14, '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>');
 const ICON_TOOL_EXECUTE = svg(14, '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
-const ICON_TOOL_THINK = svg(14, '<path d="M9 22c0-1 0-2 1-3"/><path d="M15 22c0-1 0-2-1-3"/><path d="M7 16h10"/><path d="M12 2a7 7 0 017 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 017-7z"/>');
-const ICON_TOOL_FETCH = svg(14, '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>');
-const ICON_TOOL_SWITCH = svg(14, '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>');
-const ICON_TOOL_FALLBACK = svg(14, '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>');
-const ICON_TOOL_FOLDER = svg(14, '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>');
-const ICON_TOOL_TERMINAL = svg(14, '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>');
+const ICON_TOOL_THINK = svg(
+  14,
+  '<path d="M9 22c0-1 0-2 1-3"/><path d="M15 22c0-1 0-2-1-3"/><path d="M7 16h10"/><path d="M12 2a7 7 0 017 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 017-7z"/>',
+);
+const ICON_TOOL_FETCH = svg(
+  14,
+  '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>',
+);
+const ICON_TOOL_SWITCH = svg(
+  14,
+  '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
+);
+const ICON_TOOL_FALLBACK = svg(
+  14,
+  '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+);
+const ICON_TOOL_FOLDER = svg(
+  14,
+  '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+);
+const ICON_TOOL_TERMINAL = svg(
+  14,
+  '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+);
 // MCP (Model Context Protocol): a plug icon — "external integration the
 // agent can call." Two prongs pointing up from a rounded body, with a
 // downward cord. Reads as "something you connect" at 14px without needing
 // colour or detail.
-const ICON_TOOL_MCP = svg(14, '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>');
+const ICON_TOOL_MCP = svg(
+  14,
+  '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
+);
 
 const ICON_BY_KIND: Record<ToolKind, string> = {
   read: ICON_TOOL_READ,
@@ -124,20 +191,40 @@ const ICON_BY_TITLE: Record<string, string> = {
 export function toolIcon(kind: ToolKind, title: string): string {
   const cleanTitle = title.startsWith("Running: ") ? title.slice(9) : title;
   const byTitle = ICON_BY_TITLE[cleanTitle];
-  if (byTitle !== undefined) return byTitle;
-  return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK;
+  if (byTitle !== undefined) {
+    return byTitle;
+  }
+  return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
 // --- Tab icons (used by tabs.ts sidebar tabs) ---
 
-export const ICON_TAB_CHAT = svg(14, '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>');
-export const ICON_TAB_PLAN = svg(14, '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/>');
+export const ICON_TAB_CHAT = svg(
+  14,
+  '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+);
+export const ICON_TAB_PLAN = svg(
+  14,
+  '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/>',
+);
 export const ICON_TAB_SETTINGS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
-export const ICON_TAB_GIT = svg(14, '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>');
+export const ICON_TAB_GIT = svg(
+  14,
+  '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
+);
 export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
-export const ICON_TAB_FOLLOW = svg(14, '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>');
-export const ICON_TAB_FILES = svg(14, '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>');
-export const ICON_TAB_HISTORY = svg(14, '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+export const ICON_TAB_FOLLOW = svg(
+  14,
+  '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+);
+export const ICON_TAB_FILES = svg(
+  14,
+  '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+);
+export const ICON_TAB_HISTORY = svg(
+  14,
+  '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+);
 /** Seti file type icons keyed by short name. */
 export const FILE_ICONS: Record<string, string> = {
   go: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18.3 10c-1.1 0-1.9-.6-2.1-1.6-.1-.6.1-1.1.5-1.5.6-.7 1.6-.9 2.5-.6.8.3 1.3 1 1.2 1.9 0 .8-.5 1.4-1.4 1.7-.3.1-.5.1-.7.1zm-1.7-1.8c0 .4.3.7.6.7s.6-.3.6-.7c0-.4-.3-.7-.6-.7-.3.1-.6.4-.6.7zm-3.5-1.8C15 6.4 15.5 8 15 9.1c-.3.7-.9 1-1.7 1.1-1 .2-1.9-.4-2.2-1.3-.4-1.1.3-2.2 1.5-2.5h.5zm-.4 2c0-.4-.3-.7-.6-.7s-.6.3-.6.7c0 .4.3.7.6.7s.6-.3.6-.7zm3.2 1c.2 0 .4 0 .6.1.3.1.4.4.3.6 0 .1 0 .1.1.2.2.1.3.2.5.4s.2.4.1.6c-.1.2-.4.3-.6.2-.1 0-.3-.1-.4-.2-.3-.1-.6-.1-.9 0-.2.1-.4.2-.6.2-.4 0-.6-.2-.5-.6 0-.3.2-.5.4-.6 0 0 .1 0 .1-.1-.1-.4.2-.5.4-.7.1-.1.3-.1.5-.1zm-.1 1.1c.3 0 .6-.1.8-.2.3-.2.3-.4.1-.6-.1-.1-.3-.2-.4-.2-.3-.1-.7 0-.9.2-.3.3-.2.6.2.7-.1.1 0 .1.2.1z"/><path fill="currentColor" d="M16.7 12.1v.2c0 .2-.1.4-.3.4-.2 0-.4-.2-.4-.3-.1-.3 0-.6 0-1 0-.1 0-.1.1-.1.2 0 .4.1.5.2.1 0 .1.1.1.1v.5zm-.9-.2v.3c0 .2-.1.3-.2.4-.2.2-.4.1-.5-.1-.1-.2-.1-.5-.1-.8 0-.1 0-.1.1-.1.2-.1.4-.1.6-.2.1 0 .1 0 .1.1v.4z"/><g fill="currentColor"><path fill="currentColor" d="M10.5 27h-.2c-.1-.1-.3-.2-.4-.4-.2-.2-.2-.5.1-.8.2-.3.6-.5.9-.7-.8-.7-1.2-1.5-1.4-2.5-.2-.7-.2-1.5-.2-2.3 0-1.2.2-2.3.2-3.5-.3.2-.6.4-1 .5h-.2c-.2-.2-.3-.4-.3-.6 0-.2.2-.4.3-.5.3-.2.6-.3 1-.3.2 0 .2-.1.2-.2-.1-1-.2-2-.2-3-.1-1-.1-2.1.1-3.1.1-.5.1-.5-.3-.6-.5-.3-.8-.9-.7-1.4.2-1.1 1.4-1.6 2.4-1.1.1.1.2.1.3 0 .5-.4 1-.7 1.6-.9 1.7-.6 3.5-.7 5.2-.4.9.1 1.8.4 2.5 1 .2.2.4.2.6.1.8-.4 1.7-.1 2.1.7.4.8.1 1.5-.8 1.9-.1.1-.1.1-.1.2.3 1 .4 2 .4 3.1 0 1.2 0 2.3.1 3.5 0 .2 0 .2.2.3.4 0 .7.2 1 .5.2.2.2.3 0 .6v.1c0 .2-.2.3-.4.3s-.4-.1-.5-.2c-.1 0-.2-.1-.3-.1v.1c0 .6.1 1.2.1 1.9 0 1.1 0 2.1-.2 3.2-.2 1-.6 2-1.3 2.8-.1.1-.1.2 0 .3.3.2.6.5.8.9.1.3 0 .5-.3.7-.2.2-.4.1-.6 0l-.4-.4c-.2-.2-.3-.4-.5-.5-.1-.1-.2-.1-.3 0-1.1.6-2.3.8-3.5.8-1.4.1-2.9-.1-4.2-.7h-.1c-.2.2-.6.3-.8.5-.3-.2-.6 0-.9.2zm7.8-17c.2 0 .5 0 .7-.1.8-.3 1.3-.9 1.4-1.7 0-.9-.5-1.6-1.2-1.9-.8-.3-1.9 0-2.5.6-.4.4-.6.9-.5 1.5.2 1 1 1.6 2.1 1.6zm-5.2-3.6h-.5c-1.2.2-1.9 1.3-1.5 2.5.3.9 1.2 1.4 2.2 1.3.7-.1 1.3-.4 1.7-1.1.5-1.1 0-2.7-1.9-2.7zm2.8 3c-.2 0-.4 0-.6.1-.3.2-.5.3-.4.7 0 .1-.1.1-.1.1-.2.1-.4.3-.4.6-.1.4.2.6.5.6.2 0 .4-.1.6-.2.3-.1.6-.1.9 0 .1.1.3.1.4.2.3.1.5 0 .6-.2.1-.2.1-.4-.1-.6-.1-.2-.3-.3-.5-.4-.1 0-.1-.1-.1-.2.1-.3 0-.5-.3-.6-.1-.1-.3-.1-.5-.1zm.8 2.7v-.5c0-.1 0-.1-.1-.1-.2-.1-.4-.1-.5-.2-.1 0-.1 0-.1.1 0 .3-.1.6 0 1 0 .2.2.4.4.3.2 0 .3-.2.3-.4v-.2zm-.9-.2v-.4c0-.1 0-.1-.1-.1-.2.1-.4.1-.6.2-.1 0-.1.1-.1.1 0 .3 0 .5.1.8.1.2.3.3.5.1.1-.1.2-.2.2-.4-.1-.1 0-.2 0-.3z"/><path fill="currentColor" d="M16.6 8.2c0-.4.3-.7.6-.7s.6.3.6.7c0 .4-.3.7-.6.7s-.6-.3-.6-.7zm1.1.2c0-.1 0-.2-.1-.2s-.1.1-.1.2 0 .2.1.2c0 0 0-.1.1-.2zm-5 0c0 .4-.3.7-.6.7s-.6-.3-.6-.7c0-.4.3-.7.6-.7s.6.3.6.7zm-.3.3c.1 0 .1-.1.1-.1 0-.1 0-.2-.1-.2s-.1.1-.1.1c-.1.1 0 .2.1.2zm3.4 1.8c-.1 0-.3 0-.4-.1-.4-.1-.4-.4-.2-.7.3-.2.6-.3.9-.2.2 0 .3.1.4.2.2.2.2.5-.1.6-.1.1-.3.2-.6.2z"/></g><path fill="currentColor" d="M17.7 8.4c0 .1 0 .2-.1.2s-.1-.1-.1-.2 0-.2.1-.2c0 0 0 .1.1.2zm-5.3.3c-.1 0-.1-.1-.1-.2s0-.2.1-.1c.1 0 .1.1.1.2s0 .1-.1.1z"/></svg>',
@@ -151,11 +238,14 @@ export const FILE_ICONS: Record<string, string> = {
   yaml: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M17.1 19.3c-.5 0-.8.1-1.1.1h-1.8c.4-4.3.7-8.5 1.1-12.8 1.2 0 2.2-.1 3.2 0 .3 0 .7.5.6.8-.3 2.3-.8 4.7-1.2 7-.2 1.6-.5 3.2-.8 4.9zm.4 4c.1 1.1-.8 2.1-2.1 2.2-1.3.1-2.5-.7-2.6-1.8-.1-1.2.8-2.1 2.2-2.2 1.4-.1 2.4.6 2.5 1.8z" fill-rule="evenodd" clip-rule="evenodd" fill="currentColor"/></svg>',
   md: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M20.7 6.7v9.9h3.8c-2.9 3-5.8 5.9-8.7 8.8-2.7-2.8-5.6-5.8-8.4-8.7h3.5V6.6c1.3.9 4.4 3.1 5 3.1.6 0 3.6-2.2 4.8-3z"/></svg>',
   sh: '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M14.42 9.31c-.26.1-.67.3-.91.44-.14.08-.26.17-.38.26-.22.17-.54.49-.71.71-.08.1-.15.2-.22.3-.15.23-.36.64-.43.91-.04.14-.07.29-.09.44-.04.28-.04.74-.01 1.01.02.22.06.43.12.64.07.27.26.69.41.92.07.1.14.2.22.3.17.22.51.52.74.68.15.11.31.23.48.34.23.16.63.36.89.47.25.11.51.23.78.34.26.1.69.23.94.35a.3.3 0 01.08.04c.67.2 1.16.58 1.46 1.11.06.11.2.42.2.7 0 .12.07.48-.05.72-.57 1.16-1.27 1.14-2.35 1.1-.97-.22-1.35-.8-1.64-1.68-.01-.04-.02-.08-.02-.12-.05-.28-.27-.51-.55-.51h-1.61c-.28 0-.5.23-.49.51.02.33.07.65.14.94.06.27.23.7.36.95.1.18.21.35.33.51.18.22.54.49.76.65.14.1.29.2.45.29.24.14.66.31.92.41.08.03.16.05.24.07.27.06.5.28.5.56v.81c0 .28.22.51.5.51h1.11c.28 0 .5-.23.5-.51v-.81c0-.28.22-.54.49-.61.13-.03.24-.07.35-.11.26-.1.67-.28.91-.43.55-.34.93-.77 1.29-1.27.16-.23.39-.62.46-.89.05-.17.08-.35.1-.54.03-.28.03-.74 0-1.02-.02-.19-.05-.37-.1-.54a3.83 3.83 0 00-.42-.92c-.38-.6-.92-1.02-1.46-1.4-.23-.16-.62-.39-.87-.51-.61-.28-1.18-.46-1.8-.71-.26-.1-.68-.26-.89-.44-.16-.13-.45-.4-.6-.64a1.41 1.41 0 01-.17-.62c0-.06-.02-.35.03-.62.02-.12.15-.42.31-.65.03-.04.21-.27.47-.34.1-.03.4-.11.68-.12.17-.01.54-.03.82.03.12.02.42.16.64.33.1.08.34.31.46.56.07.16.19.52.2.8v.01c.02.28.23.51.51.51h1.61c.28 0 .51-.23.48-.51-.02-.25-.06-.5-.12-.74-.07-.27-.24-.7-.35-.95a3.55 3.55 0 00-.23-.43c-.14-.24-.41-.61-.62-.8-.11-.1-.22-.19-.34-.28-.23-.16-.63-.37-.87-.51-.09-.05-.18-.09-.28-.13-.26-.1-.49-.36-.49-.64V7.52c0-.28-.22-.51-.5-.51h-1.11c-.28 0-.5.23-.5.51v1.12c0 .28-.2.44-.45.56-.1.05-.21.08-.31.11z" fill="currentColor"/></svg>',
-  docker: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g fill="currentColor"><path fill="currentColor" d="M14.5 8.6h2v2h-2zm0 2.3h2v2h-2zm0 2.4h2v2h-2zm-2.3-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.4-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.3 0h2v2h-2zm9.4 0h2v2h-2z"/><path fill="currentColor" d="M27.1 13.6c-.4-.1-.9-.2-1.3-.2-.5.1-.8-.1-1-.6-.2-.5-.5-.9-.9-1.2-.6-.7-1.2-.5-1.5.3-.2.7-.2 1.5-.1 2.2.2.9.1 1.1-.8 1.3-1.1.3-16.3.2-16.3.2-.2 0-.3.5-.3 1s.1 2 .4 2.7c1 2.2 2.7 3.8 5.2 4H15c2.9-.1 5.2-1.5 7.2-3.6.8-.9 1.5-1.9 2-3 .2-.4.5-.6.9-.7.7-.1 1.3-.2 1.8-.6.1-.2.3-.4.4-.5.7-.5.6-1.1-.2-1.3zm-14.9 5.1c.4 0 .8.3.8.8s-.3.8-.8.8c-.4 0-.8-.3-.8-.8s.4-.8.8-.8zm-4.9 2.2c.8-.1 1.6.1 2.3-.1.9-.3 1.6-.2 2.1.8.3.6 1 .9 1.7 1.3-2.2.3-4.6-.5-6.1-2z"/></g></svg>',
+  docker:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g fill="currentColor"><path fill="currentColor" d="M14.5 8.6h2v2h-2zm0 2.3h2v2h-2zm0 2.4h2v2h-2zm-2.3-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.4-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.3 0h2v2h-2zm9.4 0h2v2h-2z"/><path fill="currentColor" d="M27.1 13.6c-.4-.1-.9-.2-1.3-.2-.5.1-.8-.1-1-.6-.2-.5-.5-.9-.9-1.2-.6-.7-1.2-.5-1.5.3-.2.7-.2 1.5-.1 2.2.2.9.1 1.1-.8 1.3-1.1.3-16.3.2-16.3.2-.2 0-.3.5-.3 1s.1 2 .4 2.7c1 2.2 2.7 3.8 5.2 4H15c2.9-.1 5.2-1.5 7.2-3.6.8-.9 1.5-1.9 2-3 .2-.4.5-.6.9-.7.7-.1 1.3-.2 1.8-.6.1-.2.3-.4.4-.5.7-.5.6-1.1-.2-1.3zm-14.9 5.1c.4 0 .8.3.8.8s-.3.8-.8.8c-.4 0-.8-.3-.8-.8s.4-.8.8-.8zm-4.9 2.2c.8-.1 1.6.1 2.3-.1.9-.3 1.6-.2 2.1.8.3.6 1 .9 1.7 1.3-2.2.3-4.6-.5-6.1-2z"/></g></svg>',
   img: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M21.3 17.2c1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8-1.8.8-1.8 1.8.8 1.8 1.8 1.8zm-11.1-5.5v12.4h15.3V11.7H10.2zm.7.7h13.9v10.8l-3.6-4.1-2.2 2.6-4.4-4.7-3.7 4.6v-9.2zm9.8-4.5H6.5v10.8h1.9V9.6h12.3V7.9z"/></svg>',
-  config: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M24.5 17.3c-.4-.1-.8-.3-1.1-.4 0-.7-.1-1.3-.1-2 0-.1.1-.1.1-.2.4-.2.7-.3 1.1-.5.4-.2.5-.6.4-1-.3-.7-.6-1.3-.9-2-.2-.4-.6-.6-1-.4-.4.2-.7.3-1.1.5-.1 0-.2 0-.2-.1-.2-.3-.5-.5-.7-.7-.2-.2-.5-.4-.7-.6.2-.4.3-.8.5-1.2.2-.5 0-.9-.5-1.1-.6-.1-1.3-.4-1.9-.6-.5-.2-.9 0-1.1.5-.1.4-.3.8-.4 1.1-.7 0-1.3.1-2 .1-.1 0-.1-.1-.2-.1-.2-.4-.3-.7-.5-1.1-.2-.4-.6-.5-1-.4-.7.3-1.3.6-2 .9-.4.2-.6.6-.4 1 .2.4.3.7.5 1.1 0 .1 0 .2-.1.2-.2.2-.4.3-.5.5-.3.3-.5.6-.8.9-.4-.1-.8-.3-1.1-.4-.5-.2-.9 0-1.1.5-.2.5-.5 1.2-.7 1.8-.2.6-.1.9.5 1.1.4.1.8.3 1.1.4 0 .7.1 1.3.1 2 0 .1-.1.1-.1.2-.4.2-.7.3-1.1.5-.4.2-.5.6-.4 1 .3.7.6 1.3.9 2 .2.4.6.6 1 .4.4-.2.7-.3 1.1-.5.1 0 .2 0 .2.1.2.3.5.5.7.7.2.2.5.4.7.6-.2.4-.3.8-.5 1.2-.2.5 0 .9.5 1.1.6.2 1.2.5 1.9.7.6.2.9.1 1.1-.5.1-.4.3-.8.4-1.1.7 0 1.3-.1 2-.1.1 0 .1.1.2.1.2.4.3.7.5 1.1.2.4.6.5 1 .4.7-.3 1.3-.6 2-.9.4-.2.6-.6.4-1-.2-.4-.3-.7-.5-1.1 0-.1 0-.2.1-.2.3-.2.5-.5.7-.7.2-.2.4-.5.6-.7.4.1.8.3 1.1.4.5.2.9 0 1.1-.5.2-.6.5-1.2.7-1.9.2-.5.1-.9-.5-1.1zm-7 2.1c-1.9.8-4 0-4.9-1.9-.8-1.9 0-4 1.9-4.9 1.9-.8 4 0 4.9 1.9.8 1.9 0 4-1.9 4.9z"/></svg>',
+  config:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M24.5 17.3c-.4-.1-.8-.3-1.1-.4 0-.7-.1-1.3-.1-2 0-.1.1-.1.1-.2.4-.2.7-.3 1.1-.5.4-.2.5-.6.4-1-.3-.7-.6-1.3-.9-2-.2-.4-.6-.6-1-.4-.4.2-.7.3-1.1.5-.1 0-.2 0-.2-.1-.2-.3-.5-.5-.7-.7-.2-.2-.5-.4-.7-.6.2-.4.3-.8.5-1.2.2-.5 0-.9-.5-1.1-.6-.1-1.3-.4-1.9-.6-.5-.2-.9 0-1.1.5-.1.4-.3.8-.4 1.1-.7 0-1.3.1-2 .1-.1 0-.1-.1-.2-.1-.2-.4-.3-.7-.5-1.1-.2-.4-.6-.5-1-.4-.7.3-1.3.6-2 .9-.4.2-.6.6-.4 1 .2.4.3.7.5 1.1 0 .1 0 .2-.1.2-.2.2-.4.3-.5.5-.3.3-.5.6-.8.9-.4-.1-.8-.3-1.1-.4-.5-.2-.9 0-1.1.5-.2.5-.5 1.2-.7 1.8-.2.6-.1.9.5 1.1.4.1.8.3 1.1.4 0 .7.1 1.3.1 2 0 .1-.1.1-.1.2-.4.2-.7.3-1.1.5-.4.2-.5.6-.4 1 .3.7.6 1.3.9 2 .2.4.6.6 1 .4.4-.2.7-.3 1.1-.5.1 0 .2 0 .2.1.2.3.5.5.7.7.2.2.5.4.7.6-.2.4-.3.8-.5 1.2-.2.5 0 .9.5 1.1.6.2 1.2.5 1.9.7.6.2.9.1 1.1-.5.1-.4.3-.8.4-1.1.7 0 1.3-.1 2-.1.1 0 .1.1.2.1.2.4.3.7.5 1.1.2.4.6.5 1 .4.7-.3 1.3-.6 2-.9.4-.2.6-.6.4-1-.2-.4-.3-.7-.5-1.1 0-.1 0-.2.1-.2.3-.2.5-.5.7-.7.2-.2.4-.5.6-.7.4.1.8.3 1.1.4.5.2.9 0 1.1-.5.2-.6.5-1.2.7-1.9.2-.5.1-.9-.5-1.1zm-7 2.1c-1.9.8-4 0-4.9-1.9-.8-1.9 0-4 1.9-4.9 1.9-.8 4 0 4.9 1.9.8 1.9 0 4-1.9 4.9z"/></svg>',
   file: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><path fill="currentColor" d="M394.1 537.8h411.7v54.7H394.1v-54.7zm0-130.3H624v54.7H394.1v-54.7zm0-130.3h411.7v54.7H394.1v-54.7zm0 390.9H700v54.7H394.1v-54.7z"/></svg>',
-  folder: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M28.8 6.9H16.1V5.7c0-1.4-1.1-2.5-2.5-2.5H.6v25.6h30.6V9.4c.1-1.4-1-2.5-2.4-2.5z"/></svg>',
+  folder:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M28.8 6.9H16.1V5.7c0-1.4-1.1-2.5-2.5-2.5H.6v25.6h30.6V9.4c.1-1.4-1-2.5-2.4-2.5z"/></svg>',
   ruby: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M17.8 7.5h4.1c.1 0 .2.1.3.1 1.2.3 2 1 2.2 2.2 0 .2.1.4.1.6v.8c0 .2-.1.4-.1.6-.1 1.4-.2 2.9-.3 4.3-.2 2.4-.4 4.7-.5 7.1 0 .4-.1.5-.5.5-1.1.1-2.1.1-3.2.2-2.2.1-4.4.3-6.6.4-.6 0-1.2.1-1.8.2h-1c-.1 0-.2-.1-.3-.1-1.2-.2-2.1-.9-2.4-2.1-.1-.3-.1-.6-.2-.9v-.5c0-.1.1-.2.1-.4 0-.8.1-1.7.1-2.5 0-.5 0-.9.1-1.3.7-1.8 1.5-3.5 2.9-4.9 1.7-1.8 3.6-3.2 6-3.8.3-.2.6-.3 1-.5z"/></svg>',
   php: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M12.7 19.7c-.1-.6-.4-1.1-1-1.3-.2-.1-.5-.3-.7-.4-.3-.1-.6-.2-.8-.3-.2-.1-.4 0-.6.2-.1.2 0 .4.1.5.1.2.2.3.4.5.2.3.4.5.7.8.2.3.4.5.3.9-.1.7-.4 1.4-.9 1.9-.1.1-.2.1-.2.1-.3 0-.7-.2-.9-.4-.3-.3-.2-.6.1-.8.1 0 .2-.1.2-.2.2-.2.3-.4.2-.7-.1-.1-.1-.2-.2-.3-.4-.4-.9-.8-1.4-1.2-1.3-1-1.9-2.2-2-3.6-.1-1.6.3-3.1 1.1-4.5.3-.5.7-1 1.3-1.3.4-.2.8-.3 1.2-.4 1.1-.3 2.3-.5 3.5-.3 1 .2 1.8.7 2.1 1.7.2.7.3 1.3.2 2-.1 1.4-1.2 2.6-2.5 3-.6.2-.9.1-1.2-.4-.2-.3-.5-.7-.7-1.1V14c0-.1-.1-.1-.1-.2.1.6.2 1.2.5 1.7.2.3.4.5.8.5 1.3.1 2.3-.3 3.1-1.3.8-1.1 1-2.4.8-3.8 0-.3-.1-.5-.2-.8 0-.2 0-.3.2-.4.1 0 .2 0 .2-.1 1-.2 2.1-.3 3.1-.2 1.2.1 2.3.4 3.3 1.1 1.6 1 2.6 2.5 3.1 4.3.1.3.1.5.1.8 0 .2-.1.2-.3.1-.2-.1-.3-.3-.4-.4-.1-.1-.2-.3-.3-.4-.1-.1-.2-.1-.2 0s-.1.2-.1.3c-.3 1-.7 1.9-1.4 2.6-.1.1-.2.3-.2.4 0 .4-.1.8 0 1.2.1.8.2 1.7.3 2.5.1.5-.1.7-.5.9-.3.1-.6.2-1 .2h-1.6c0-.6 0-1.2-.5-1.5.1-.4.2-.8.3-1.3.1-.4 0-.7-.2-1-.2-.3-.5-.3-.8-.2-.8.5-1.6.5-2.5.2-.4-.1-.7-.1-.9.3-.2.4-.3.8-.3 1.2 0 .5.1 1.1.2 1.6 0 .3 0 .4-.3.5-.7.2-1.4.2-2 .1h-.1c0-.6 0-1.2-.7-1.5.4-.4.4-1.1.3-1.7zm-4.1-2.3c.1-.1.2-.2.2-.4.1-.3-.2-.8-.5-.9-.2-.1-.3 0-.4.1-.3.3-.5.6-.8.9 0 .1-.1.1-.1.2-.1.2 0 .4.2.4.1 0 .3 0 .4.1.4 0 .7-.1 1-.4zm0-3.3c0-.2-.2-.4-.4-.4s-.5.2-.4.5c0 .2.2.4.5.4.1-.1.3-.3.3-.5z"/></svg>',
   java: '<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"> <g id="Java"> <path id="Vector" d="M22.0025 18.236C21.98 19 22.0212 20.0151 21.7215 20.8764C21.4593 21.7378 21.0099 22.5056 20.3732 23.1797C19.7366 23.8165 19.0062 24.3034 18.1823 24.6404C17.3583 24.94 16.73 25 15.598 25C14.466 25 13.4631 24.8839 12.4519 24.4718C11.4781 24.0224 10.6542 23.3857 9.98 22.5618L12.0025 19.9776C12.4145 20.5018 12.9201 20.9139 13.5193 21.2136C14.1186 21.5131 14.774 21.663 15.4856 21.663C16.4219 21.663 17.1523 21.3632 17.6766 20.764C18.201 20.1274 18.4631 19.191 18.4631 17.9551V7H22.0025V18.236Z" fill="currentColor"/> </g> </svg>',
@@ -168,8 +258,6 @@ export const FILE_ICONS: Record<string, string> = {
   sass: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18 17.3c-1.1.7-2.4 1.5-3.5 2.2.4.9.4 1.8.1 2.7-.5 1.6-1.7 2.5-3.2 2.7-.4.1-.8 0-1.1-.1-.4-.1-.6-.4-.7-.7-.4-.9-.3-1.7.3-2.4.4-.4.8-.9 1.3-1.2.5-.4 1.2-.7 1.8-1.1.1-.1.2-.1.4-.2-.3-.2-.4-.4-.6-.4-.8-.5-1.6-1.1-2.3-1.8-.4-.4-.8-.8-1.1-1.3-.9-.7-1-1.7-.5-2.6.4-1 1.1-1.8 1.8-2.5 1.6-1.4 3.4-2.4 5.4-3.1 1.4-.5 2.8-.7 4.2-.5.4.2 1 .3 1.4.5 1.5.6 2.1 1.8 1.6 3.4-.4 1.3-1.2 2.4-2.4 3.1-1.6 1-3.2 1.4-5.1 1.1-.6-.1-1.1-.4-1.6-.9-.1-.2-.2-.4-.3-.5 0 0 0-.1.1-.2 0 0 .1 0 .2.1.8.8 1.7.9 2.6.7 1.7-.3 3.2-.9 4.3-2.2.4-.5.8-1.1 1-1.8.2-.8-.2-1.4-.9-1.8-.8-.4-1.6-.4-2.4-.3-2 .3-3.8 1.1-5.4 2.1-.9.5-1.7 1.1-2.3 1.9-.3.4-.5.8-.7 1.2-.3.8-.2 1.6.4 2.2.4.4.8.8 1.2 1.1.6.5 1.3 1.1 1.9 1.6.1 0 .2.1.3 0 .3-.2.5-.3.8-.4.9-.5 1.8-.9 2.8-1.1 0 .4.1.4.2.5 0-.1 0-.1 0 0zm-4.3 2.5c-.9.5-1.6 1-2.3 1.7-.4.4-.6.8-.7 1.3-.1.6.3.9.9.8.8-.2 1.4-.7 1.8-1.3.5-.8.5-1.5.3-2.5z"/></svg>',
   less: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
 };
-
-
 
 // --- Shared icon template-cache helper ---
 // Parses an SVG string once into a template element and returns a clone
@@ -193,28 +281,34 @@ export function iconEl(svgStr: string): HTMLElement {
 
 /** Map exact filename to icon key. */
 const NAME_ICON: Record<string, string> = {
-  Dockerfile: 'docker',
-  Makefile: 'config',
-  Caddyfile: 'config',
-  '.gitignore': 'git',
-  '.gitattributes': 'git',
-  '.gitmodules': 'git',
-  'go.mod': 'go',
-  'go.sum': 'go',
-  'package.json': 'json',
-  'tsconfig.json': 'ts',
-  'compose.yaml': 'docker',
-  'docker-compose.yaml': 'docker',
-  'docker-compose.yml': 'docker',
+  Dockerfile: "docker",
+  Makefile: "config",
+  Caddyfile: "config",
+  ".gitignore": "git",
+  ".gitattributes": "git",
+  ".gitmodules": "git",
+  "go.mod": "go",
+  "go.sum": "go",
+  "package.json": "json",
+  "tsconfig.json": "ts",
+  "compose.yaml": "docker",
+  "docker-compose.yaml": "docker",
+  "docker-compose.yml": "docker",
 };
 
 /** Get the SVG icon string for a file or folder. */
 export function fileIcon(name: string, isDir: boolean): string {
-  if (isDir) return FILE_ICONS['folder'] ?? '';
+  if (isDir) {
+    return FILE_ICONS["folder"] ?? "";
+  }
   const byName = NAME_ICON[name];
-  if (byName !== undefined) return FILE_ICONS[byName] ?? FILE_ICONS['file'] ?? '';
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (byName !== undefined) {
+    return FILE_ICONS[byName] ?? FILE_ICONS["file"] ?? "";
+  }
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const key = extToIconKey(ext);
-  if (key !== '') return FILE_ICONS[key] ?? FILE_ICONS['file'] ?? '';
-  return FILE_ICONS['file'] ?? '';
+  if (key !== "") {
+    return FILE_ICONS[key] ?? FILE_ICONS["file"] ?? "";
+  }
+  return FILE_ICONS["file"] ?? "";
 }

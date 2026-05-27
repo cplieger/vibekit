@@ -43,18 +43,22 @@ class ContextBarController {
       "compaction.excludeContextWindowPercent",
       (v) => {
         const n = Number.parseInt(v, 10);
-        return (!Number.isNaN(n) && n >= 0 && n <= 100) ? n : null;
+        return !Number.isNaN(n) && n >= 0 && n <= 100 ? n : null;
       },
       10,
       signal,
     );
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     this.positionContextTick();
   }
 
   private positionContextTick(): void {
     const tick = document.getElementById("context-ring-tick");
-    if (tick === null) return;
+    if (tick === null) {
+      return;
+    }
     const thresholdPct = Math.max(0, Math.min(100, 100 - this.compactionBufferPct));
     const deg = (thresholdPct / 100) * 360;
     tick.setAttribute("transform", `rotate(${String(deg)} 10 10)`);
@@ -78,7 +82,9 @@ class ContextBarController {
       this.contextBarQueued = true;
       requestAnimationFrame(() => {
         this.contextBarQueued = false;
-        if (this.contextBarArgs !== null) this.updateImpl(this.contextBarArgs);
+        if (this.contextBarArgs !== null) {
+          this.updateImpl(this.contextBarArgs);
+        }
       });
     }
   }
@@ -94,24 +100,25 @@ class ContextBarController {
     const circ = 50.27;
     const offset = circ * (1 - clamped / 100);
     $.contextRingFill.style.strokeDashoffset = String(offset);
-    const stroke = clamped >= 90 ? "var(--c-red)"
-      : clamped >= 70 ? "var(--c-yellow)"
-      : "var(--c-green)";
+    const stroke =
+      clamped >= 90 ? "var(--c-red)" : clamped >= 70 ? "var(--c-yellow)" : "var(--c-green)";
     $.contextRingFill.style.stroke = stroke;
     $.contextLabel.textContent = `${pct.toFixed(0)}%`;
 
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
 
     $.ctxModelPill.textContent = humanName(model);
-    $.ctxTokens.textContent = contextSize > 0
-      ? `${formatTokens(Math.round(contextSize * pct / 100))} / ${formatTokens(contextSize)}`
-      : `${pct.toFixed(1)}%`;
+    $.ctxTokens.textContent =
+      contextSize > 0
+        ? `${formatTokens(Math.round((contextSize * pct) / 100))} / ${formatTokens(contextSize)}`
+        : `${pct.toFixed(1)}%`;
     $.ctxCredits.textContent = credits > 0 ? `${credits.toFixed(2)} cr` : "0.00 cr";
     $.ctxTurns.textContent = String(turnCount);
     $.ctxLastTurn.textContent = lastTurnMs > 0 ? `${(lastTurnMs / 1000).toFixed(1)}s` : "-";
-    $.ctxMsgs.textContent = summarizedCount > 0
-      ? `${String(msgCount)} (${String(summarizedCount)} summarized)`
-      : String(msgCount);
+    $.ctxMsgs.textContent =
+      summarizedCount > 0
+        ? `${String(msgCount)} (${String(summarizedCount)} summarized)`
+        : String(msgCount);
     $.ctxTools.textContent = String(toolCount);
 
     renderMetering(metering);
@@ -119,8 +126,9 @@ class ContextBarController {
 }
 
 const contextBar = new ContextBarController();
-registerCleanup(() => contextBar.cancelCompactionLoad());
-
+registerCleanup(() => {
+  contextBar.cancelCompactionLoad();
+});
 
 function renderMetering(items: MeteringItem[]): void {
   const box = $.ctxMetering;
@@ -144,7 +152,6 @@ function renderMetering(items: MeteringItem[]): void {
   });
   box.replaceChildren(...rows);
 }
-
 
 // --- Public API (delegate functions) ---
 
@@ -206,6 +213,9 @@ export function updateContextBar(opts: ContextBarUpdate): void {
 export function setInputDisabled(disabled: boolean, reason?: string): void {
   $.promptInput.disabled = disabled;
   $.sendBtn.disabled = disabled;
-  if (disabled && reason !== undefined) $.promptInput.placeholder = reason;
-  else $.promptInput.placeholder = "Message Kiro...";
+  if (disabled && reason !== undefined) {
+    $.promptInput.placeholder = reason;
+  } else {
+    $.promptInput.placeholder = "Message Kiro...";
+  }
 }

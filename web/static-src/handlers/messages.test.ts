@@ -43,7 +43,9 @@ vi.mock("../crew-card.js", () => ({
 type SSEHandler = (chatID: string, payload: unknown) => void;
 const sseHandlers = new Map<string, SSEHandler>();
 vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => { sseHandlers.set(event, handler); }),
+  onSSE: vi.fn((event: string, handler: SSEHandler) => {
+    sseHandlers.set(event, handler);
+  }),
 }));
 
 // Import after mocks
@@ -51,7 +53,9 @@ await import("./messages.js");
 
 function fireSSE(event: string, chatID: string, payload: unknown): void {
   const handler = sseHandlers.get(event);
-  if (handler) handler(chatID, payload);
+  if (handler) {
+    handler(chatID, payload);
+  }
 }
 
 describe("message_appended", () => {
@@ -71,7 +75,10 @@ describe("message_appended", () => {
   it("clears agent banners on agent_switched event", () => {
     const msg = { id: "m2", role: "assistant", event_kind: "agent_switched" };
     fireSSE("message_appended", "chat-1", msg);
-    expect(mockClearBannerCodes).toHaveBeenCalledWith("chat-1", ["agent_not_found", "agent_config_error"]);
+    expect(mockClearBannerCodes).toHaveBeenCalledWith("chat-1", [
+      "agent_not_found",
+      "agent_config_error",
+    ]);
   });
 });
 
@@ -103,7 +110,11 @@ describe("tool_call_update", () => {
       message_id: "m1",
       tool_call: { id: "tc1", kind: "write_file", status: "completed" },
     });
-    expect(mockUpsertToolCall).toHaveBeenCalledWith("chat-1", "m1", { id: "tc1", kind: "write_file", status: "completed" });
+    expect(mockUpsertToolCall).toHaveBeenCalledWith("chat-1", "m1", {
+      id: "tc1",
+      kind: "write_file",
+      status: "completed",
+    });
     expect(mockMarkGitDirty).toHaveBeenCalled();
   });
 

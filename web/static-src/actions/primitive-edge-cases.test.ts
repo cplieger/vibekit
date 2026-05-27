@@ -8,7 +8,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -31,12 +34,17 @@ beforeEach(() => {
 describe("dedupe with undefined args", () => {
   it("dedupe: true collapses dispatches when args is undefined", async () => {
     let runCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.dedupe_undefined_args",
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => setTimeout(() => r("ok"), 10));
+        return new Promise<string>((r) =>
+          setTimeout(() => {
+            r("ok");
+          }, 10),
+        );
       },
     });
 
@@ -72,10 +80,15 @@ describe("dedupe with undefined args", () => {
     let runCalls = 0;
     const action = defineAction<{ chatID?: string | undefined }, string>({
       name: "test.dedupe_fn_undefined_field",
+
       dedupe: (args) => `chat:${args.chatID}`,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => setTimeout(() => r("done"), 5));
+        return new Promise<string>((r) =>
+          setTimeout(() => {
+            r("done");
+          }, 5),
+        );
       },
     });
 
@@ -100,7 +113,9 @@ describe("structuredClone fallback on retry toast", () => {
       retryable: (err) => err.code !== "cancelled",
       run: (args) => {
         attempts++;
-        if (attempts === 1) throw new ActionError("fail", { status: 0 });
+        if (attempts === 1) {
+          throw new ActionError("fail", { status: 0 });
+        }
         args.fn();
         return Promise.resolve("ok");
       },
@@ -119,7 +134,9 @@ describe("structuredClone fallback on retry toast", () => {
 
     // Fire the retry
     retryHandler!.onClick();
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(attempts).toBe(2);
     expect(callback).toHaveBeenCalledTimes(1);
   });
@@ -135,7 +152,9 @@ describe("structuredClone fallback on retry toast", () => {
       retryable: retryNetwork,
       run: (args) => {
         attempts++;
-        if (attempts === 1) throw new ActionError("timeout", { code: "network" });
+        if (attempts === 1) {
+          throw new ActionError("timeout", { code: "network" });
+        }
         return Promise.resolve(args.el["name"] as string);
       },
     });
@@ -143,11 +162,15 @@ describe("structuredClone fallback on retry toast", () => {
     await action.dispatch({ el: circular });
     expect(attempts).toBe(1);
 
-    const retryHandler = vi.mocked(toast.error).mock.calls[0]?.[1] as { onClick: () => void } | undefined;
+    const retryHandler = vi.mocked(toast.error).mock.calls[0]?.[1] as
+      | { onClick: () => void }
+      | undefined;
     expect(retryHandler).toBeDefined();
 
     retryHandler!.onClick();
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(attempts).toBe(2);
   });
 });
@@ -167,8 +190,12 @@ describe("cancel after dedupe entry created but before runOnce starts", () => {
       run: (args, signal) => {
         runCalls++;
         return new Promise<string>((resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-          setTimeout(() => resolve("result-" + args.id), 50);
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+          setTimeout(() => {
+            resolve("result-" + args.id);
+          }, 50);
         });
       },
     });
@@ -226,7 +253,11 @@ describe("scope + cancel interaction", () => {
       run: (args) => {
         runCalls++;
         if (runCalls === 1) {
-          return new Promise<string>((r) => { resolveFirst = () => r("A"); });
+          return new Promise<string>((r) => {
+            resolveFirst = () => {
+              r("A");
+            };
+          });
         }
         return Promise.resolve(args.tag);
       },
@@ -266,13 +297,18 @@ describe("scope + cancel interaction", () => {
     let resolveFirst: (() => void) | null = null;
     const log: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ tag: string }, void>({
       name: "test.scope_cancel_continues",
       scope: "q",
       run: (args) => {
         log.push(args.tag);
         if (args.tag === "A") {
-          return new Promise<void>((r) => { resolveFirst = () => r(); });
+          return new Promise<void>((r) => {
+            resolveFirst = () => {
+              r();
+            };
+          });
         }
         return Promise.resolve();
       },
@@ -302,11 +338,16 @@ describe("scope + cancel interaction", () => {
 // ===========================================================================
 
 describe("abort during retry backoff (signal fires mid-sleep)", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel during backoff sleep aborts the retry chain and resolves null", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.retry_abort_backoff",
       retryable: retryNetwork,
@@ -339,6 +380,7 @@ describe("abort during retry backoff (signal fires mid-sleep)", () => {
 
   it("cancel between retry attempts (after first retry succeeds in failing, during second backoff)", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.retry_abort_between",
       retryable: retryNetwork,

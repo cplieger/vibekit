@@ -8,33 +8,41 @@ import { upsertHeader, removeChat } from "../store.js";
 import { closeTab, hasTab } from "../tabs.js";
 
 onSSE("chat_created", (_chatID, header) => {
-  if (header !== undefined) upsertHeader(header);
+  upsertHeader(header);
 });
 
 onSSE("chat_updated", (_chatID, header) => {
-  if (header !== undefined) upsertHeader(header);
+  upsertHeader(header);
 });
 
 onSSE("chat_deleted", (_chatID, p) => {
-  if (p?.id !== undefined) {
-    // Close any open tab for this chat so a remote delete/archive from
-    // another device doesn't leave an orphan tab that activates an
-    // undefined session. On the originating device the tab was already
-    // removed synchronously by the close button's click handler; hasTab
-    // is false and closeTab is a no-op. On a second device this is the
-    // only path that removes the stale tab.
-    if (hasTab(p.id)) closeTab(p.id, { skipOnClose: true });
-    removeChat(p.id);
-    void import("../conflicts.js").then(
-      (m) => m.clearConflicts(p.id),
-      (e) => console.warn("[handlers/chat] clearConflicts import failed", e),
-    );
-    // Drop any banners for the deleted chat — otherwise their
-    // BannerEntry objects + dismissed_banners localStorage entries
-    // accumulate over a long session.
-    void import("../banner-stack.js").then(
-      (m) => m.clearBannersForChat(p.id),
-      (e) => console.warn("[handlers/chat] clearBannersForChat import failed", e),
-    );
+  // Close any open tab for this chat so a remote delete/archive from
+  // another device doesn't leave an orphan tab that activates an
+  // undefined session. On the originating device the tab was already
+  // removed synchronously by the close button's click handler; hasTab
+  // is false and closeTab is a no-op. On a second device this is the
+  // only path that removes the stale tab.
+  if (hasTab(p.id)) {
+    closeTab(p.id, { skipOnClose: true });
   }
+  removeChat(p.id);
+  void import("../conflicts.js").then(
+    (m) => {
+      m.clearConflicts(p.id);
+    },
+    (e: unknown) => {
+      console.warn("[handlers/chat] clearConflicts import failed", e);
+    },
+  );
+  // Drop any banners for the deleted chat — otherwise their
+  // BannerEntry objects + dismissed_banners localStorage entries
+  // accumulate over a long session.
+  void import("../banner-stack.js").then(
+    (m) => {
+      m.clearBannersForChat(p.id);
+    },
+    (e: unknown) => {
+      console.warn("[handlers/chat] clearBannersForChat import failed", e);
+    },
+  );
 });

@@ -20,12 +20,22 @@ describe("TabDragController", () => {
   });
 
   it("pointerdown + pointermove below threshold does not start drag", () => {
-    tab.dispatchEvent(new PointerEvent("pointerdown", {
-      clientY: 100, isPrimary: true, pointerType: "mouse", bubbles: true,
-    }));
-    tab.dispatchEvent(new PointerEvent("pointermove", {
-      clientY: 102, isPrimary: true, pointerType: "mouse", bubbles: true,
-    }));
+    tab.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        clientY: 100,
+        isPrimary: true,
+        pointerType: "mouse",
+        bubbles: true,
+      }),
+    );
+    tab.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientY: 102,
+        isPrimary: true,
+        pointerType: "mouse",
+        bubbles: true,
+      }),
+    );
     tab.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     expect(isDragHandled()).toBe(false);
   });
@@ -34,20 +44,35 @@ describe("TabDragController", () => {
     const closeBtn = document.createElement("button");
     closeBtn.className = "tab-close";
     tab.appendChild(closeBtn);
-    closeBtn.dispatchEvent(new PointerEvent("pointerdown", {
-      clientY: 100, isPrimary: true, pointerType: "mouse", bubbles: true,
-    }));
-    tab.dispatchEvent(new PointerEvent("pointermove", {
-      clientY: 200, isPrimary: true, pointerType: "mouse", bubbles: true,
-    }));
+    closeBtn.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        clientY: 100,
+        isPrimary: true,
+        pointerType: "mouse",
+        bubbles: true,
+      }),
+    );
+    tab.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientY: 200,
+        isPrimary: true,
+        pointerType: "mouse",
+        bubbles: true,
+      }),
+    );
     expect(isDragHandled()).toBe(false);
   });
 
   it("touch pointerdown without hold timeout does not start drag", () => {
     vi.useFakeTimers();
-    tab.dispatchEvent(new PointerEvent("pointerdown", {
-      clientY: 100, isPrimary: true, pointerType: "touch", bubbles: true,
-    }));
+    tab.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        clientY: 100,
+        isPrimary: true,
+        pointerType: "touch",
+        bubbles: true,
+      }),
+    );
     // Release before 300ms hold timer
     vi.advanceTimersByTime(100);
     tab.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));

@@ -1,5 +1,5 @@
 # vibekit/web/static/style.css bundle manifest
-# Files concatenated in declared order by lib/shell/build-css.sh.
+# Files concatenated in declared order at Docker build time.
 #
 # Slicing follows the existing @layer cascade:
 #   00-03  layer declaration, @property defs, @layer tokens/reset/base

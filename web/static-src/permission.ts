@@ -13,7 +13,7 @@ import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
 import { getSubagentName } from "./crew-card.js";
 import { addWhitelistEntry } from "./permissions-ui.js";
 
-const approvalEl = $.toolApproval as HTMLDialogElement;
+const approvalEl = $.toolApproval;
 
 const PREVIEW_CHAR_CAP = 500;
 
@@ -26,8 +26,10 @@ export function showPermissionDialog(
   onSelect: (optionId: string) => void,
   subSessionId?: string,
 ): void {
-  const content = approvalEl.querySelector(".approval-body") as HTMLDivElement;
-  const actions = approvalEl.querySelector(".approval-actions") as HTMLDivElement;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const content = approvalEl.querySelector(".approval-body")!;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const actions = approvalEl.querySelector(".approval-actions")!;
 
   const isModeSwitch = kind === "switch_mode";
   const isSubagent = subSessionId !== undefined && subSessionId !== "";
@@ -39,7 +41,9 @@ export function showPermissionDialog(
   const mcp = mcpToolInfo(title);
   const heading = isModeSwitch
     ? "Switch session mode"
-    : (mcp !== null ? formatMCPToolName(mcp.tool) : title);
+    : mcp !== null
+      ? formatMCPToolName(mcp.tool)
+      : title;
 
   // Build content via DOM construction (no innerHTML).
   content.replaceChildren();
@@ -89,15 +93,22 @@ export function showPermissionDialog(
   for (const opt of options) {
     const btn = document.createElement("button");
     btn.textContent = opt.name;
-    btn.className = opt.kind.startsWith("allow") ? "btn-small confirm-allow" : "btn-small confirm-danger";
-    btn.addEventListener("click", () => { onSelect(opt.option_id); hidePermission(); });
+    btn.className = opt.kind.startsWith("allow")
+      ? "btn-small confirm-allow"
+      : "btn-small confirm-danger";
+    btn.addEventListener("click", () => {
+      onSelect(opt.option_id);
+      hidePermission();
+    });
     actions.appendChild(btn);
   }
 
   // "Always allow..." expansion for shell commands.
   if (kind === "execute" && !isModeSwitch && !isSubagent) {
     const alwaysRow = buildAlwaysAllowRow(title, options, onSelect);
-    if (alwaysRow !== null) actions.appendChild(alwaysRow);
+    if (alwaysRow !== null) {
+      actions.appendChild(alwaysRow);
+    }
   }
 
   approvalEl.showModal();
@@ -108,7 +119,9 @@ export function showPermissionDialog(
  *  undefined) into a user-readable preview string. Returns "" if there is
  *  nothing meaningful to show — caller skips the preview block entirely. */
 function formatInputPreview(input: unknown): string {
-  if (input === undefined || input === null) return "";
+  if (input === undefined || input === null) {
+    return "";
+  }
   let text: string;
   if (typeof input === "string") {
     // kiro-cli sometimes sends rawInput as a pre-serialized JSON string;
@@ -119,9 +132,12 @@ function formatInputPreview(input: unknown): string {
       text = input;
     }
   } else if (typeof input === "object") {
-    if (Object.keys(input as object).length === 0) return "";
+    if (Object.keys(input).length === 0) {
+      return "";
+    }
     text = JSON.stringify(input, null, 2);
   } else {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     text = String(input);
   }
 
@@ -140,12 +156,18 @@ function buildAlwaysAllowRow(
   onSelect: (optionId: string) => void,
 ): HTMLDetailsElement | null {
   const allowOpt = options.find((o) => o.kind.startsWith("allow"));
-  if (allowOpt === undefined) return null;
+  if (allowOpt === undefined) {
+    return null;
+  }
 
   const parts = command.trim().split(/\s+/);
-  if (parts.length === 0) return null;
+  if (parts.length === 0) {
+    return null;
+  }
   const base = parts[0] ?? "";
-  if (base === "") return null;
+  if (base === "") {
+    return null;
+  }
 
   // Build preset patterns: base command, base + flags, exact, wildcard.
   const presets: string[] = [];
@@ -153,7 +175,9 @@ function buildAlwaysAllowRow(
   if (parts.length > 1) {
     // "base flags *" if there are flags before the last arg.
     const withFlags = parts.slice(0, -1).join(" ") + " *";
-    if (withFlags !== `${base} *`) presets.push(withFlags);
+    if (withFlags !== `${base} *`) {
+      presets.push(withFlags);
+    }
     presets.push(command.trim());
   }
 
@@ -196,7 +220,9 @@ function buildAlwaysAllowRow(
   addBtn.textContent = "Add";
   addBtn.addEventListener("click", () => {
     const val = input.value.trim();
-    if (val === "") return;
+    if (val === "") {
+      return;
+    }
     void addWhitelistEntry(val);
     onSelect(allowOpt.option_id);
     hidePermission();

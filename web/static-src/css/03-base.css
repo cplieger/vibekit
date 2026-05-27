@@ -1,4 +1,3 @@
-
 /* ==========================================================================
    Universal interaction feedback
    ========================================================================== */
@@ -9,10 +8,21 @@
  * feel physical. Scoped via :where() so specificity stays at 0 and
  * component-level overrides (e.g. send-btn's 0.92) win naturally. */
 :where(
-  .icon-btn, .action-pill, .btn, .btn-small, .pill,
-  .sidebar-action-btn, .turn-action-btn, .picker-btn,
-  .chip, .list-row-btn, .git-action-btn, .mcp-modal-tab,
-  .history-modal-row, .tab, .perm-mode
+  .icon-btn,
+  .action-pill,
+  .btn,
+  .btn-small,
+  .pill,
+  .sidebar-action-btn,
+  .turn-action-btn,
+  .picker-btn,
+  .chip,
+  .list-row-btn,
+  .git-action-btn,
+  .mcp-modal-tab,
+  .history-modal-row,
+  .tab,
+  .perm-mode
 ):active {
   transform: scale(0.96);
   transition: transform var(--dur-micro) var(--ease-micro);
@@ -22,45 +32,125 @@
    Canonical keyframe library (vk-* prefix)
    ========================================================================== */
 
-@keyframes vk-fade-in    { from { opacity: 0 } }
+@keyframes vk-fade-in {
+  from {
+    opacity: 0;
+  }
+}
 
-@keyframes vk-fade-out   { to { opacity: 0 } }
+@keyframes vk-fade-out {
+  to {
+    opacity: 0;
+  }
+}
 
-@keyframes vk-slide-up   { from { opacity: 0; transform: translateY(6px) } }
+@keyframes vk-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
 
-@keyframes vk-slide-down { from { opacity: 0; transform: translateY(-6px) } }
+@keyframes vk-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
 
-@keyframes vk-slide-in-x { from { opacity: 0; transform: translateX(-0.75rem) } }
+@keyframes vk-slide-in-x {
+  from {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+  }
+}
 
-@keyframes vk-scale-in   { from { opacity: 0; transform: scale(0.95) } }
+@keyframes vk-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
 
-@keyframes vk-scale-out  { to { opacity: 0; transform: scale(0.95) } }
+@keyframes vk-scale-out {
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
 
-@keyframes vk-spin       { to { transform: rotate(360deg) } }
+@keyframes vk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
-@keyframes vk-breathe    { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+@keyframes vk-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
 
 /* Streaming caret blink: pure opacity step so it doesn't interpolate
  * (smooth fades would distract from the type-streaming feel).
  * `jump-none` 2 steps == on/off, avoids the trailing extra-step that
  * `jump-end` produces. */
-@keyframes vk-stream-caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0.2 } }
+@keyframes vk-stream-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0.2;
+  }
+}
 
 @keyframes vk-ping {
-  0% { transform: scale(1); opacity: 0.6 }
-  15% { transform: scale(2.5); opacity: 0 }
-  100% { opacity: 0 }
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+
+  15% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 0;
+  }
 }
 
 @keyframes vk-bounce-dot {
-  0%, 80%, 100% { opacity: 0.5; transform: scale(0) }
-  40% { opacity: 1; transform: scale(1) }
+  0%,
+  80%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0);
+  }
 
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes vk-skeleton {
-  0%, 100% { opacity: 0.4 }
-  50% { opacity: 0.15 }
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 0.15;
+  }
 }
 
 /* Streaming word-fade removed — the per-word-span approach caused
@@ -77,7 +167,10 @@
  * renders (chat switch, prependMessages) bypass appendMessage so
  * scrolling back doesn't re-animate old content. */
 @keyframes vk-chat-entry {
-  from { opacity: 0; transform: translateY(4px) }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 [data-chat-entry] {
@@ -85,7 +178,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-chat-entry] { animation-duration: 10ms; }
+  [data-chat-entry] {
+    animation-duration: 10ms;
+  }
 }
 
 /* Last-message padding during streaming removed — the MutationObserver
@@ -97,4 +192,3 @@
 /* ==========================================================================
    Sidebar
    ========================================================================== */
-

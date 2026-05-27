@@ -9,24 +9,45 @@ import { resolvePendingChange } from "./actions/chat.js";
 import { resolvePendingPartial } from "./actions/editor.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { FileState } from "./editor-types.js";
-import { fileStates, getActiveFilePath, parsePendingPath, getCachedDiff, closeFile } from "./editor-types.js";
+import {
+  fileStates,
+  getActiveFilePath,
+  parsePendingPath,
+  getCachedDiff,
+  closeFile,
+} from "./editor-types.js";
 import { emitBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 
 /** Resolve the active pending-change tab. Works for both Accept and
  *  Reject; the server handles the rest. Closes the tab on success. */
 export async function resolveActivePending(action: "accept" | "reject"): Promise<void> {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   const { chatID, toolCallID } = parsePendingPath(state.path);
-  if (chatID === "" || toolCallID === "") return;
+  if (chatID === "" || toolCallID === "") {
+    return;
+  }
   const path = state.path;
-  const unbindAccept = bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], $.editorPendingAcceptBtn);
-  const unbindReject = bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], $.editorPendingRejectBtn);
+  const unbindAccept = bindLoadingState(
+    ["chat.resolve_pending_change", "chat.resolve_all_pending"],
+    $.editorPendingAcceptBtn,
+  );
+  const unbindReject = bindLoadingState(
+    ["chat.resolve_pending_change", "chat.resolve_all_pending"],
+    $.editorPendingRejectBtn,
+  );
   await resolvePendingChange.dispatch(
     { chatID, toolCallID, action },
     {
-      onSuccess: () => closeFile(path),
-      onSettled: () => { unbindAccept(); unbindReject(); },
+      onSuccess: () => {
+        closeFile(path);
+      },
+      onSettled: () => {
+        unbindAccept();
+        unbindReject();
+      },
     },
   );
 }
@@ -46,8 +67,12 @@ export function refreshPendingToolbar(state: FileState): void {
 
 /** Count the hunks in a pending diff source. Cached on state. */
 function pendingHunkCountFor(state: FileState): number {
-  if (state.pendingHunkCount !== null) return state.pendingHunkCount;
-  if (state.mode.kind !== "diff") return 0;
+  if (state.pendingHunkCount !== null) {
+    return state.pendingHunkCount;
+  }
+  if (state.mode.kind !== "diff") {
+    return 0;
+  }
   const count = countHunks(getCachedDiff(state));
   state.pendingHunkCount = count;
   return count;
@@ -56,10 +81,16 @@ function pendingHunkCountFor(state: FileState): number {
 /** Apply the active pending op with only the user-accepted hunks. */
 export async function applyActivePendingPartial(): Promise<void> {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   const { chatID, toolCallID } = parsePendingPath(state.path);
-  if (chatID === "" || toolCallID === "") return;
-  if (state.mode.kind !== "diff") return;
+  if (chatID === "" || toolCallID === "") {
+    return;
+  }
+  if (state.mode.kind !== "diff") {
+    return;
+  }
 
   const merged = buildPartialMergeText(state, state.pendingHunkDecisions);
   const approxBytes = merged.length * 4;
@@ -73,12 +104,16 @@ export async function applyActivePendingPartial(): Promise<void> {
         "warning",
         true,
       );
-    } catch { /* chunk load failure — silently skip banner */ }
+    } catch {
+      /* chunk load failure — silently skip banner */
+    }
     return;
   }
   const path = state.path;
   const result = await resolvePendingPartial.dispatch({ chatID, toolCallID, mergedText: merged });
-  if (result !== null) closeFile(path);
+  if (result !== null) {
+    closeFile(path);
+  }
 }
 
 /** @internal Exported for testing. */
@@ -93,7 +128,9 @@ export function buildPartialMergeText(
   let hunkOld: string[] = [];
   let hunkNew: string[] = [];
   const flushHunk = (): void => {
-    if (hunkOld.length === 0 && hunkNew.length === 0) return;
+    if (hunkOld.length === 0 && hunkNew.length === 0) {
+      return;
+    }
     const decision = decisions.get(hunkIdx) ?? "reject";
     out.push(...(decision === "reject" ? hunkOld : hunkNew));
     hunkIdx++;
@@ -102,27 +139,42 @@ export function buildPartialMergeText(
   };
   for (const line of diff) {
     if (line.kind === "ctx") {
-      if (inHunk) { flushHunk(); inHunk = false; }
+      if (inHunk) {
+        flushHunk();
+        inHunk = false;
+      }
       out.push(line.text);
     } else {
       inHunk = true;
-      if (line.kind === "del") hunkOld.push(line.text);
-      else hunkNew.push(line.text);
+      if (line.kind === "del") {
+        hunkOld.push(line.text);
+      } else {
+        hunkNew.push(line.text);
+      }
     }
   }
-  if (inHunk) flushHunk();
+  if (inHunk) {
+    flushHunk();
+  }
   return out.join("\n");
 }
 
 /** Pre-fill the chat input with a discuss template for the staged change. */
 export function openDiscussPrompt(path: string, hunkText: string): void {
   const { chatID, toolCallID } = parsePendingPath(path);
-  if (chatID === "" || toolCallID === "") return;
+  if (chatID === "" || toolCallID === "") {
+    return;
+  }
   const state = fileStates.get(path) ?? null;
   const filePath = resolvePendingFilePath(chatID, toolCallID);
   const template = buildDiscussTemplate(filePath, hunkText, state);
   if (getActiveId() !== chatID) {
-    emitBus(BUS_ACTIVATE_CHAT, { chatID, then: () => fillPromptInput(template) });
+    emitBus(BUS_ACTIVATE_CHAT, {
+      chatID,
+      then: () => {
+        fillPromptInput(template);
+      },
+    });
     return;
   }
   fillPromptInput(template);
@@ -148,11 +200,7 @@ function resolvePendingFilePath(chatID: string, toolCallID: string): string {
   return change?.path ?? "(unknown)";
 }
 
-function buildDiscussTemplate(
-  filePath: string,
-  hunkText: string,
-  state: FileState | null,
-): string {
+function buildDiscussTemplate(filePath: string, hunkText: string, state: FileState | null): string {
   const lines: string[] = [];
   lines.push("Your question: ");
   lines.push("");
@@ -177,12 +225,16 @@ function buildUnifiedDiffLines(state: FileState): string[] {
   const diff = getCachedDiff(state);
   const out: string[] = [];
   for (const line of diff) {
-    if (out.length >= maxLines) break;
-    if (line.kind === "del") out.push("-" + line.text);
-    else if (line.kind === "add") out.push("+" + line.text);
+    if (out.length >= maxLines) {
+      break;
+    }
+    if (line.kind === "del") {
+      out.push("-" + line.text);
+    } else if (line.kind === "add") {
+      out.push("+" + line.text);
+    }
   }
-  const totalChanges = diff.reduce(
-    (n, l) => n + (l.kind === "add" || l.kind === "del" ? 1 : 0), 0);
+  const totalChanges = diff.reduce((n, l) => n + (l.kind === "add" || l.kind === "del" ? 1 : 0), 0);
   if (totalChanges > out.length) {
     out.push(`... ${String(totalChanges - out.length)} more changed lines omitted`);
   }
@@ -192,6 +244,8 @@ function buildUnifiedDiffLines(state: FileState): string[] {
 /** Toolbar variant: discuss the whole change (no specific hunk). */
 export function openDiscussPromptForActive(): void {
   const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) return;
+  if (state === undefined) {
+    return;
+  }
   openDiscussPrompt(state.path, "");
 }

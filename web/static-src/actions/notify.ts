@@ -25,6 +25,7 @@ export const unsubscribePush = apiAction<{ endpoint: string }>({
  * Dispatched when the user explicitly toggles notifications on.
  * Rollback: unchecks the toggle so the UI reflects reality on failure.
  */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   name: "notify.register_push",
   retryable: retryNetwork,
@@ -33,19 +34,31 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
       throw new ActionError("Service workers not supported", { code: "unsupported" });
     }
     const reg = await navigator.serviceWorker.register("/sw.js");
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
 
     const keyData = await apiGet<{ publicKey: string }>("/api/push/vapid-key", signal);
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
-    if (keyData === null) throw new ActionError("Could not fetch VAPID key", { code: "network" });
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
+    if (keyData === null) {
+      throw new ActionError("Could not fetch VAPID key", { code: "network" });
+    }
 
     const appServerKey = urlBase64ToUint8Array(keyData.publicKey);
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: appServerKey as BufferSource,
     });
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
-      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      try {
+        await sub.unsubscribe();
+      } catch {
+        /* best-effort */
+      }
       throw new ActionError("cancelled", { code: "cancelled" });
     }
 
@@ -53,17 +66,30 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     try {
       posted = await apiPost("/api/push/subscribe", sub.toJSON(), signal);
     } catch (e) {
-      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      try {
+        await sub.unsubscribe();
+      } catch {
+        /* best-effort */
+      }
       throw e;
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
     if (signal.aborted) {
-      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      try {
+        await sub.unsubscribe();
+      } catch {
+        /* best-effort */
+      }
       // Best-effort server-side cleanup after successful POST but cancelled action.
       void apiPost("/api/push/unsubscribe", {});
       throw new ActionError("cancelled", { code: "cancelled" });
     }
     if (posted === null) {
-      try { await sub.unsubscribe(); } catch { /* best-effort */ }
+      try {
+        await sub.unsubscribe();
+      } catch {
+        /* best-effort */
+      }
       throw new ActionError("Server rejected subscription", { code: "server_rejected" });
     }
 
@@ -72,7 +98,9 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
   rollback: () => {
     // Uncheck the toggle so the visual state reflects the failed registration.
     const el = document.getElementById("notify-toggle") as HTMLInputElement | null;
-    if (el === null) return;
+    if (el === null) {
+      return;
+    }
     el.checked = false;
   },
   error: "Couldn't enable push notifications",

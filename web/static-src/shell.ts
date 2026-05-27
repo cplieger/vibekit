@@ -19,10 +19,10 @@ import { ShellWS, encoder } from "./shell-ws.js";
 
 const shellWS = new ShellWS();
 import * as uiState from "./ui-state.js";
-import type {
-  ITheme, Terminal as XTerm,
-} from "xterm";
+import type { ITheme, Terminal as XTerm } from "xterm";
 import type { FitAddon as XFit } from "xterm/addon-fit";
+import type { WebglAddon } from "xterm/addon-webgl";
+import type { WebLinksAddon } from "xterm/addon-web-links";
 
 const MIN_HEIGHT_PX = 80;
 const MAX_HEIGHT_PCT = 0.8;
@@ -42,8 +42,8 @@ const RESIZE_DEBOUNCE_MS = 100;
 interface Vendor {
   Terminal: typeof XTerm;
   FitAddon: typeof XFit;
-  WebglAddon: new () => import("xterm/addon-webgl").WebglAddon;
-  WebLinksAddon: new () => import("xterm/addon-web-links").WebLinksAddon;
+  WebglAddon: new () => WebglAddon;
+  WebLinksAddon: new () => WebLinksAddon;
 }
 
 // --- Theme: read CSS custom properties so the terminal tracks the app
@@ -93,7 +93,9 @@ class ShellController {
   // --- Vendor module loading ---
 
   private async loadVendor(): Promise<Vendor> {
-    if (this.vendor !== null) return this.vendor;
+    if (this.vendor !== null) {
+      return this.vendor;
+    }
     const [xterm, fit, webgl, links] = await Promise.all([
       import("xterm"),
       import("xterm/addon-fit"),
@@ -112,14 +114,18 @@ class ShellController {
   // --- Control + input plumbing ---
 
   private sendResize(): void {
-    if (this.terminal === null) return;
+    if (this.terminal === null) {
+      return;
+    }
     shellWS.sendControl({ type: "resize", cols: this.terminal.cols, rows: this.terminal.rows });
   }
 
   // --- Terminal lifecycle ---
 
   private async ensureTerminal(): Promise<void> {
-    if (this.terminal !== null) return;
+    if (this.terminal !== null) {
+      return;
+    }
     const v = await this.loadVendor();
 
     this.terminal = new v.Terminal({
@@ -154,16 +160,22 @@ class ShellController {
 
     this.fitAddon.fit();
 
-    this.terminal.onData((data: string) => { shellWS.sendRaw(encoder.encode(data)); });
+    this.terminal.onData((data: string) => {
+      shellWS.sendRaw(encoder.encode(data));
+    });
 
     // Binary input covers non-UTF-8 paste/mouse-report payloads.
     this.terminal.onBinary((data: string) => {
       const buf = new Uint8Array(data.length);
-      for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+      for (let i = 0; i < data.length; i++) {
+        buf[i] = data.charCodeAt(i) & 0xff;
+      }
       shellWS.sendRaw(buf);
     });
 
-    this.terminal.onResize(() => { this.sendResize(); });
+    this.terminal.onResize(() => {
+      this.sendResize();
+    });
 
     // Surface the shell title (cwd in bash, program name in vim/htop etc).
     this.terminal.onTitleChange((title: string) => {
@@ -174,12 +186,16 @@ class ShellController {
   // --- Visibility / bfcache recovery (iOS sleep, tab switch, back/forward) ---
 
   private onVisibilityChange(): void {
-    if (document.visibilityState === "visible") shellWS.reconnectIfStale();
+    if (document.visibilityState === "visible") {
+      shellWS.reconnectIfStale();
+    }
   }
 
   // Safari fires pageshow with persisted=true on bfcache restore.
   private onPageShow(e: PageTransitionEvent): void {
-    if (e.persisted) shellWS.reconnectIfStale();
+    if (e.persisted) {
+      shellWS.reconnectIfStale();
+    }
   }
 
   // --- Open / close ---
@@ -190,7 +206,9 @@ class ShellController {
     void this.setShellOpen(true);
   }
 
-  private toggleShell(): void { void this.setShellOpen(!this.shellOpen); }
+  private toggleShell(): void {
+    void this.setShellOpen(!this.shellOpen);
+  }
 
   private async setShellOpen(open: boolean): Promise<void> {
     if (open) {
@@ -221,7 +239,9 @@ class ShellController {
         this.fitAddon?.fit();
         this.terminal?.focus();
         const shrunk = prevHeight - getScrollEl().clientHeight;
-        if (shrunk > 0) getScrollEl().scrollTop += shrunk;
+        if (shrunk > 0) {
+          getScrollEl().scrollTop += shrunk;
+        }
       });
 
       void shellWS.connect();
@@ -240,7 +260,9 @@ class ShellController {
   // --- Imperative "run this command" from tool cards ---
 
   private async openWithCommand(cmd: string): Promise<void> {
-    if (!this.shellOpen) await this.setShellOpen(true);
+    if (!this.shellOpen) {
+      await this.setShellOpen(true);
+    }
     try {
       await shellWS.whenSocketReady(5000);
     } catch {
@@ -252,7 +274,9 @@ class ShellController {
   // --- Theme sync ---
 
   private syncShellTheme(): void {
-    if (this.terminal === null) return;
+    if (this.terminal === null) {
+      return;
+    }
     this.terminal.options.theme = getTheme();
   }
 
@@ -262,7 +286,9 @@ class ShellController {
     // Wire up WebSocket callbacks to the terminal/UI.
     shellWS.setCallbacks({
       onMessage: (data: ArrayBuffer | string) => {
-        if (this.terminal === null) return;
+        if (this.terminal === null) {
+          return;
+        }
         if (data instanceof ArrayBuffer) {
           this.terminal.write(new Uint8Array(data));
         } else {
@@ -287,29 +313,46 @@ class ShellController {
       },
     });
 
-    setShellRunCallback((cmd: string) => { void this.openWithCommand(cmd); });
+    setShellRunCallback((cmd: string) => {
+      void this.openWithCommand(cmd);
+    });
     document.addEventListener("shell-run", (e: Event) => {
       void this.openWithCommand((e as CustomEvent<string>).detail);
     });
 
-    $.shellBtn.addEventListener("click", () => { this.toggleShell(); });
-    $.shellToggleBtn.addEventListener("click", () => { void this.setShellOpen(false); });
-    $.shellClearBtn.addEventListener("click", () => { this.terminal?.clear(); });
-    $.shellKillBtn.addEventListener("click", () => { shellWS.sendControl({ type: "kill" }); });
+    $.shellBtn.addEventListener("click", () => {
+      this.toggleShell();
+    });
+    $.shellToggleBtn.addEventListener("click", () => {
+      void this.setShellOpen(false);
+    });
+    $.shellClearBtn.addEventListener("click", () => {
+      this.terminal?.clear();
+    });
+    $.shellKillBtn.addEventListener("click", () => {
+      shellWS.sendControl({ type: "kill" });
+    });
 
     // iOS sleep / tab-switch / bfcache recovery.
-    document.addEventListener("visibilitychange", () => { this.onVisibilityChange(); });
-    window.addEventListener("pageshow", (e) => { this.onPageShow(e); });
+    document.addEventListener("visibilitychange", () => {
+      this.onVisibilityChange();
+    });
+    window.addEventListener("pageshow", (e) => {
+      this.onPageShow(e);
+    });
 
     this.initResize();
 
     // Re-theme when data-theme flips or the OS color scheme changes.
-    new MutationObserver(() => { this.syncShellTheme(); }).observe(document.documentElement, {
+    new MutationObserver(() => {
+      this.syncShellTheme();
+    }).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    window.matchMedia("(prefers-color-scheme: light)")
-      .addEventListener("change", () => { this.syncShellTheme(); });
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+      this.syncShellTheme();
+    });
   }
 
   // --- Resize drag (pointer events) ---
@@ -320,7 +363,9 @@ class ShellController {
     let pointerId = -1;
 
     $.shellResize.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary) {
+        return;
+      }
       startY = e.clientY;
       startH = $.shellPanel.offsetHeight;
       pointerId = e.pointerId;
@@ -332,14 +377,18 @@ class ShellController {
     });
 
     $.shellResize.addEventListener("pointermove", (e: PointerEvent) => {
-      if (pointerId !== e.pointerId) return;
+      if (pointerId !== e.pointerId) {
+        return;
+      }
       const maxH = window.innerHeight * MAX_HEIGHT_PCT;
       const newH = Math.max(MIN_HEIGHT_PX, Math.min(maxH, startH + (startY - e.clientY)));
       $.shellPanel.style.setProperty("--shell-h", `${String(newH)}px`);
     });
 
     const end = (e: PointerEvent): void => {
-      if (pointerId !== e.pointerId) return;
+      if (pointerId !== e.pointerId) {
+        return;
+      }
       $.shellResize.releasePointerCapture(pointerId);
       pointerId = -1;
       $.shellResize.classList.remove("dragging");
@@ -354,11 +403,17 @@ class ShellController {
     // Debounced re-fit on any container resize (window, orientation, drag).
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
-      if (this.fitAddon === null || !this.shellOpen) return;
-      if (resizeTimer !== null) clearTimeout(resizeTimer);
+      if (this.fitAddon === null || !this.shellOpen) {
+        return;
+      }
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
       resizeTimer = setTimeout(() => {
         resizeTimer = null;
-        if (this.shellOpen) this.fitAddon?.fit();
+        if (this.shellOpen) {
+          this.fitAddon?.fit();
+        }
       }, RESIZE_DEBOUNCE_MS);
     });
     ro.observe($.shellPanel);
@@ -371,5 +426,9 @@ class ShellController {
 
 const shell = new ShellController();
 
-export function initShellPanel(): void { shell.init(); }
-export function restoreShell(): void { shell.restoreShell(); }
+export function initShellPanel(): void {
+  shell.init();
+}
+export function restoreShell(): void {
+  shell.restoreShell();
+}

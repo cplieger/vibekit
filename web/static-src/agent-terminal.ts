@@ -34,16 +34,22 @@ export function initAgentTerminals(): void {
 
   const unsub2 = onSSE("terminal_output", (_chatID, p) => {
     const term = terms.get(p.terminal_id);
-    if (term === undefined) return;
+    if (term === undefined) {
+      return;
+    }
     term.output.textContent += p.data;
     // Auto-scroll to bottom.
     const container = term.output.parentElement;
-    if (container !== null) container.scrollTop = container.scrollHeight;
+    if (container !== null) {
+      container.scrollTop = container.scrollHeight;
+    }
   });
 
   const unsub3 = onSSE("terminal_exited", (_chatID, p) => {
     const term = terms.get(p.terminal_id);
-    if (term === undefined) return;
+    if (term === undefined) {
+      return;
+    }
     term.exited = true;
     term.exitCode = p.exit_code;
     term.tab.classList.toggle("term-exited-ok", p.exit_code === 0);
@@ -51,15 +57,23 @@ export function initAgentTerminals(): void {
     exitedQueue.push(p.terminal_id);
   });
 
-  registerCleanup(() => { unsub1(); unsub2(); unsub3(); terms.clear(); exitedQueue.length = 0; });
+  registerCleanup(() => {
+    unsub1();
+    unsub2();
+    unsub3();
+    terms.clear();
+    exitedQueue.length = 0;
+  });
 
   // Wire tab clicks via event delegation on the tab bar.
   const tabBar = document.getElementById("shell-tabs");
   if (tabBar !== null) {
     tabBar.addEventListener("click", (e: MouseEvent) => {
-      const btn = (e.target as HTMLElement).closest("[data-shell-tab]") as HTMLButtonElement | null;
-      if (btn === null) return;
-      const id = btn.dataset["shellTab"] ?? "";
+      const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-shell-tab]");
+      if (btn === null) {
+        return;
+      }
+      const id = btn.dataset.shellTab ?? "";
       switchTab(id);
     });
   }
@@ -69,7 +83,9 @@ export function initAgentTerminals(): void {
   if (fsBtn !== null) {
     fsBtn.addEventListener("click", () => {
       const panel = document.getElementById("shell-panel");
-      if (panel !== null) panel.classList.toggle("shell-fullscreen");
+      if (panel !== null) {
+        panel.classList.toggle("shell-fullscreen");
+      }
     });
   }
 }
@@ -77,12 +93,12 @@ export function initAgentTerminals(): void {
 function createTab(termId: string, command: string, args?: string[]): void {
   const tabBar = document.getElementById("shell-tabs");
   const container = document.getElementById("agent-terminals");
-  if (tabBar === null || container === null) return;
+  if (tabBar === null || container === null) {
+    return;
+  }
 
   // Build a short label from the command.
-  const label = args !== undefined && args.length > 0
-    ? `${command} ${args[0] ?? ""}`
-    : command;
+  const label = args !== undefined && args.length > 0 ? `${command} ${args[0] ?? ""}` : command;
   const shortLabel = label.length > 20 ? label.slice(0, 18) + "\u2026" : label;
 
   // Create tab button.
@@ -125,19 +141,22 @@ function createTab(termId: string, command: string, args?: string[]): void {
     let evictId: string | undefined;
     // Find the first exited entry that still exists in terms.
     while (exitedQueue.length > 0) {
-      const candidate = exitedQueue.shift()!;
-      if (terms.has(candidate)) { evictId = candidate; break; }
+      const candidate = exitedQueue.shift()!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      if (terms.has(candidate)) {
+        evictId = candidate;
+        break;
+      }
     }
     // Fallback: if no exited terminals, evict the oldest running terminal.
-    if (evictId === undefined) {
-      evictId = terms.keys().next().value;
-    }
+    evictId ??= terms.keys().next().value;
     if (evictId !== undefined) {
       const t = terms.get(evictId);
       if (t !== undefined) {
         t.tab.remove();
         const oldPane = container.querySelector(`[data-term-id="${CSS.escape(evictId)}"]`);
-        if (oldPane !== null) oldPane.remove();
+        if (oldPane !== null) {
+          oldPane.remove();
+        }
         terms.delete(evictId);
       }
     }
@@ -154,7 +173,9 @@ function switchTab(id: string): void {
   const tabBar = document.getElementById("shell-tabs");
   const userTerminal = document.getElementById("shell-terminal");
   const agentContainer = document.getElementById("agent-terminals");
-  if (tabBar === null || userTerminal === null || agentContainer === null) return;
+  if (tabBar === null || userTerminal === null || agentContainer === null) {
+    return;
+  }
 
   // Update tab active states.
   for (const btn of tabBar.querySelectorAll<HTMLButtonElement>("[data-shell-tab]")) {

@@ -4,10 +4,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -36,11 +40,16 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("runWithRetry: no retry on abort even for retry-class errors", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("signal aborted externally before run() throws — no retry", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.abort_no_retry",
       retryable: retryNetwork,
@@ -52,7 +61,13 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
         // but run() throws a network error (not AbortError).
         if (attempts === 1) {
           await new Promise<void>((resolve) => {
-            signal.addEventListener("abort", () => resolve(), { once: true });
+            signal.addEventListener(
+              "abort",
+              () => {
+                resolve();
+              },
+              { once: true },
+            );
           });
           throw new ActionError("network error", { code: "network" });
         }
@@ -72,6 +87,7 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
 
   it("signal aborted during run() that throws AbortError — classified as cancelled, not retried", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.abort_error_no_retry",
       retryable: retryNetwork,
@@ -80,9 +96,13 @@ describe("runWithRetry: no retry on abort even for retry-class errors", () => {
       run: async (_args, signal) => {
         attempts++;
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => {
-            reject(new DOMException("aborted", "AbortError"));
-          }, { once: true });
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
         });
       },
     });

@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -81,7 +84,11 @@ describe("files.rename", () => {
     await renameFile.dispatch({ dir: "/src", original: "old.ts", newName: "new.ts" });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/files/action");
-    expect(JSON.parse(opts.body as string)).toEqual({ action: "rename", path: "/src/old.ts", name: "new.ts" });
+    expect(JSON.parse(opts.body as string)).toEqual({
+      action: "rename",
+      path: "/src/old.ts",
+      name: "new.ts",
+    });
   });
 
   it("includes Idempotency-Key header", async () => {
@@ -141,7 +148,12 @@ describe("files.upload", () => {
       onComplete!(["a.ts", "b.ts"]);
     });
     const { upload } = await import("./files.js");
-    const files = { length: 2, item: () => null, 0: new File([""], "a.ts"), 1: new File([""], "b.ts") } as unknown as FileList;
+    const files = {
+      length: 2,
+      item: () => null,
+      0: new File([""], "a.ts"),
+      1: new File([""], "b.ts"),
+    } as unknown as FileList;
     const r = await upload.dispatch({ files, targetDir: "/uploads" });
     expect(r).toEqual(["a.ts", "b.ts"]);
     expect(toast.success).toHaveBeenCalledWith("Uploaded 2 files");

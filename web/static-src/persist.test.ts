@@ -12,7 +12,10 @@ vi.mock("./save-indicator.js", () => ({
   showError: vi.fn(),
 }));
 vi.mock("./toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { patchSettings, initSettingsTracking, __testResetTracking } from "./persist.js";
@@ -88,14 +91,19 @@ describe("patchSettings debounce coalescing", () => {
         const patch: Record<string, unknown> = {};
         for (const k of keys) {
           if (Math.random() > 0.5) {
-            patch[k] = k === "last_model" ? ["a", "b", "c"][Math.floor(Math.random() * 3)] : Math.random() > 0.5;
+            patch[k] =
+              k === "last_model"
+                ? ["a", "b", "c"][Math.floor(Math.random() * 3)]
+                : Math.random() > 0.5;
           }
         }
         if (Object.keys(patch).length > 0) {
           patches.push(patch);
         }
       }
-      if (patches.length === 0) continue;
+      if (patches.length === 0) {
+        continue;
+      }
 
       for (const patch of patches) {
         patchSettings(patch as Parameters<typeof patchSettings>[0]);
@@ -147,7 +155,9 @@ describe("patchSettings no-op dedup", () => {
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ last_model: "gemini" });
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      last_model: "gemini",
+    });
   });
 
   it("the second identical patch in a session is also filtered", async () => {
@@ -169,7 +179,9 @@ describe("patchSettings no-op dedup", () => {
     // Round-tripping back to "claude" IS a change (current is "gemini").
     patchSettings({ last_model: "claude" });
     await vi.advanceTimersByTimeAsync(350);
-    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ last_model: "claude" });
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      last_model: "claude",
+    });
   });
 
   it("array-valued settings dedup correctly", async () => {
@@ -180,7 +192,9 @@ describe("patchSettings no-op dedup", () => {
     // Different order is treated as different (we use deterministic JSON).
     patchSettings({ trust_tools: ["c", "b", "a"] });
     await vi.advanceTimersByTimeAsync(350);
-    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ trust_tools: ["c", "b", "a"] });
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      trust_tools: ["c", "b", "a"],
+    });
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
@@ -194,7 +208,9 @@ describe("patchSettings no-op dedup", () => {
   it("resolvers fire even when showSaved throws (try/finally guarantee)", async () => {
     const { showSaved } = await import("./save-indicator.js");
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.mocked(showSaved).mockImplementation(() => { throw new Error("indicator boom"); });
+    vi.mocked(showSaved).mockImplementation(() => {
+      throw new Error("indicator boom");
+    });
     const p = patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
     // The promise should still resolve (resolvers fire in finally block).

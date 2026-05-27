@@ -15,7 +15,10 @@ import { routeForPath } from "../editor-types.js";
  *  edits with the stale snapshot. The manual Retry button (retryable:
  *  "network") is kept so the user can consciously re-save, but auto-retry
  *  is intentionally omitted. */
-export const saveFile = apiAction<{ path: string; content: string }, { ok?: boolean; error?: string }>({
+export const saveFile = apiAction<
+  { path: string; content: string },
+  { ok?: boolean; error?: string }
+>({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
   retryable: retryNetwork,
@@ -31,6 +34,7 @@ export const saveFile = apiAction<{ path: string; content: string }, { ok?: bool
  *  framework toast suppressed.
  *  Note: writePlanDraft is not cancellable — once started it will complete
  *  regardless of signal state. Cancellation is checked between steps. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
   name: "editor.send_plan",
   scope: (args) => "chat:" + args.chatID,
@@ -39,7 +43,9 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
     if (!(await writePlanDraft(chatID, content))) {
       throw new ActionError("Could not save plan draft", { code: "draft_failed" });
     }
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
     const sent = await runPlan(chatID, content.trim());
     if (!sent) {
       throw new ActionError("Plan send failed", { code: "run_plan_failed" });
@@ -49,7 +55,11 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
 });
 
 /** Apply partial (per-hunk) pending change via transport. */
-export const resolvePendingPartial = transportAction<{ chatID: string; toolCallID: string; mergedText: string }>({
+export const resolvePendingPartial = transportAction<{
+  chatID: string;
+  toolCallID: string;
+  mergedText: string;
+}>({
   name: "editor.resolve_partial",
   networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
@@ -65,7 +75,10 @@ export const resolvePendingPartial = transportAction<{ chatID: string; toolCallI
 });
 
 /** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
-export const suggestResolution = apiAction<{ ours: string; theirs: string; context: string }, { output?: string; error?: string }>({
+export const suggestResolution = apiAction<
+  { ours: string; theirs: string; context: string },
+  { output?: string; error?: string }
+>({
   name: "editor.suggest_resolution",
   // No dedupe: the per-file suggestionGen counter in editor-conflict.ts
   // already handles supersession (only the latest dispatch's result is
@@ -77,7 +90,10 @@ export const suggestResolution = apiAction<{ ours: string; theirs: string; conte
 });
 
 /** Fetch agent-modified line ranges for gutter highlighting. Retry on network failure. */
-export const fetchAgentLines = apiAction<{ chatID: string; path: string }, { changes: Array<{ start_line: number; end_line: number }> }>({
+export const fetchAgentLines = apiAction<
+  { chatID: string; path: string },
+  { changes: { start_line: number; end_line: number }[] }
+>({
   name: "editor.fetch_agent_lines",
   dedupe: (args) => JSON.stringify([args.chatID, args.path]),
   request: ({ chatID, path }) => ({
@@ -90,7 +106,10 @@ export const fetchAgentLines = apiAction<{ chatID: string; path: string }, { cha
 });
 
 /** Fetch git diff sources for the editor diff view. Toast on failure. */
-export const loadDiff = defineAction<{ path: string; repo: string; ref: string }, { oldContent: string; newContent: string; error: string }>({
+export const loadDiff = defineAction<
+  { path: string; repo: string; ref: string },
+  { oldContent: string; newContent: string; error: string }
+>({
   name: "editor.load_diff",
   retryable: retryNetwork,
   run: async ({ path, repo, ref }, signal) => {
@@ -98,11 +117,17 @@ export const loadDiff = defineAction<{ path: string; repo: string; ref: string }
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
     const [oldD, newD] = await Promise.all([
       apiGet<{ content?: string }>(
-        `/api/git/show?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}${repoParam}`, signal),
+        `/api/git/show?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}${repoParam}`,
+        signal,
+      ),
       apiGet<{ content?: string; error?: string }>(
-        `/api/file?path=${encodeURIComponent(path)}`, signal),
+        `/api/file?path=${encodeURIComponent(path)}`,
+        signal,
+      ),
     ]);
-    if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
     if (oldD === null || newD === null) {
       throw new ActionError("Could not load base/new revision", { code: "network" });
     }

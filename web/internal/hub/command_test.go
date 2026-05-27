@@ -348,8 +348,8 @@ func TestIsRetryablePromptError(t *testing.T) {
 
 func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -403,11 +403,6 @@ func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
 }
 
 // --- Tangent commands ---
-
-
-
-
-
 
 // --- Create hook ---
 
@@ -805,15 +800,15 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 
 func TestBuildPromptBlocks(t *testing.T) {
 	tests := []struct {
+		setupFile       func(dir string)
 		name            string
 		text            string
+		wantType        string
+		wantContains    string
+		wantNotContains string
+		wantMIME        string
 		attachments     []api.Attachment
-		setupFile       func(dir string)
 		wantLen         int
-		wantType        string // expected type of the last block
-		wantContains    string // substring expected in last block's "text"
-		wantNotContains string // substring that must NOT appear in last block's "text"
-		wantMIME        string // expected mimeType on last block (if non-empty)
 	}{
 		{
 			name:         "TextOnly",

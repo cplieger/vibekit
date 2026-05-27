@@ -101,7 +101,9 @@ export interface Parser {
 // --- Pure utility functions ---
 
 export function add_text(p: Parser): void {
-  if (p.textBuf.length === 0) return;
+  if (p.textBuf.length === 0) {
+    return;
+  }
   p.renderer.add_text(p.renderer.data, p.textBuf.join(""));
   p.textBuf.length = 0;
 }
@@ -119,7 +121,9 @@ export function add_token(p: Parser, token: Token): void {
   ) {
     end_token(p);
   }
-  if (p.len >= TOKEN_ARRAY_CAP - 1) return; // saturate at max depth
+  if (p.len >= TOKEN_ARRAY_CAP - 1) {
+    return;
+  } // saturate at max depth
   p.len += 1;
   p.tokens[p.len] = token;
   p.token = token;
@@ -128,7 +132,9 @@ export function add_token(p: Parser, token: Token): void {
 
 export function idx_of_token(p: Parser, token: Token, start_idx: number): number {
   while (start_idx <= p.len) {
-    if (p.tokens[start_idx] === token) return start_idx;
+    if (p.tokens[start_idx] === token) {
+      return start_idx;
+    }
     start_idx += 1;
   }
   return -1;
@@ -136,14 +142,19 @@ export function idx_of_token(p: Parser, token: Token, start_idx: number): number
 
 export function end_tokens_to_len(p: Parser, len: number): void {
   p.fence_start = 0;
-  while (p.len > len) end_token(p);
+  while (p.len > len) {
+    end_token(p);
+  }
 }
 
 export function end_tokens_to_indent(p: Parser, indent: number): number {
   let idx = 0;
   for (let i = 0; i <= p.len; i += 1) {
-    indent -= p.spaces[i] as number;
-    if (indent < 0) break;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    indent -= p.spaces[i]!;
+    if (indent < 0) {
+      break;
+    }
     switch (p.tokens[i]) {
       case CODE_BLOCK:
       case CODE_FENCE:
@@ -153,7 +164,9 @@ export function end_tokens_to_indent(p: Parser, indent: number): number {
         break;
     }
   }
-  while (p.len > idx) end_token(p);
+  while (p.len > idx) {
+    end_token(p);
+  }
   return indent;
 }
 
@@ -162,7 +175,8 @@ export function continue_or_add_list(p: Parser, list_token: Token): boolean {
   let item_idx = -1;
   for (let i = p.blockquote_idx + 1; i <= p.len; i += 1) {
     if (p.tokens[i] === LIST_ITEM) {
-      if (p.indent_len < (p.spaces[i] as number)) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      if (p.indent_len < p.spaces[i]!) {
         item_idx = -1;
         break;
       }
@@ -211,8 +225,16 @@ export function is_delimiter_or_number(cc: number): boolean {
 
 function is_delimiter(cc: number): boolean {
   switch (cc) {
-    case 32: case 58: case 59: case 41: case 44:
-    case 33: case 46: case 63: case 93: case 10:
+    case 32:
+    case 58:
+    case 59:
+    case 41:
+    case 44:
+    case 33:
+    case 46:
+    case 63:
+    case 93:
+    case 10:
       return true;
     default:
       return false;
@@ -221,12 +243,18 @@ function is_delimiter(cc: number): boolean {
 
 export function heading_from_level(level: number): Token {
   switch (level) {
-    case 1: return HEADING_1;
-    case 2: return HEADING_2;
-    case 3: return HEADING_3;
-    case 4: return HEADING_4;
-    case 5: return HEADING_5;
-    default: return HEADING_6;
+    case 1:
+      return HEADING_1;
+    case 2:
+      return HEADING_2;
+    case 3:
+      return HEADING_3;
+    case 4:
+      return HEADING_4;
+    case 5:
+      return HEADING_5;
+    default:
+      return HEADING_6;
   }
 }
 

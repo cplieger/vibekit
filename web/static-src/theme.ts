@@ -28,9 +28,11 @@ function toggleTheme(): void {
 
 function updateIcon(): void {
   const btn = $.themeBtn;
-  const dark = btn.querySelector(".theme-icon-dark") as HTMLElement | null;
-  const light = btn.querySelector(".theme-icon-light") as HTMLElement | null;
-  if (dark === null || light === null) return;
+  const dark = btn.querySelector(".theme-icon-dark");
+  const light = btn.querySelector(".theme-icon-light");
+  if (dark === null || light === null) {
+    return;
+  }
 
   // Subflux-inspired vertical slide: the outgoing icon slides down
   // ("setting"), then we swap visibility and the incoming icon slides
@@ -42,7 +44,9 @@ function updateIcon(): void {
 
   let settled = false;
   const settle = (): void => {
-    if (settled) return;
+    if (settled) {
+      return;
+    }
     settled = true;
     // Swap: hide outgoing, show incoming at the "rising" position.
     outgoing.classList.add("hidden");
@@ -54,11 +58,17 @@ function updateIcon(): void {
     void incoming.offsetHeight;
     // Remove "rising" so the transition runs from below → center.
     incoming.classList.remove("theme-rising");
-    incoming.addEventListener("transitionend", () => {
-      btn.classList.remove("glow-sun", "glow-moon");
-    }, { once: true });
+    incoming.addEventListener(
+      "transitionend",
+      () => {
+        btn.classList.remove("glow-sun", "glow-moon");
+      },
+      { once: true },
+    );
     // Safety: clear glow if transitionend doesn't fire (e.g. reduced motion).
-    setTimeout(() => btn.classList.remove("glow-sun", "glow-moon"), 350);
+    setTimeout(() => {
+      btn.classList.remove("glow-sun", "glow-moon");
+    }, 350);
   };
 
   // Start: slide the outgoing icon down.
@@ -67,10 +77,14 @@ function updateIcon(): void {
   // Safety timeout in case transitionend doesn't fire.
   setTimeout(settle, 350);
 
-  btn.setAttribute("data-tooltip",
-    current === "dark" ? "Switch to light theme" : "Switch to dark theme");
-  btn.setAttribute("aria-label",
-    current === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  btn.setAttribute(
+    "data-tooltip",
+    current === "dark" ? "Switch to light theme" : "Switch to dark theme",
+  );
+  btn.setAttribute(
+    "aria-label",
+    current === "dark" ? "Switch to light theme" : "Switch to dark theme",
+  );
 }
 
 /** Wire up the theme toggle button. Call once during UI init. */

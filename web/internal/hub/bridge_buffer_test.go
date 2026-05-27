@@ -14,10 +14,10 @@ import (
 
 func TestTrackFileChanges_Table(t *testing.T) {
 	tests := []struct {
+		wantFiles map[string]*api.FileChange
 		name      string
 		diffs     []api.ToolDiff
 		isNewFile bool
-		wantFiles map[string]*api.FileChange
 	}{
 		{
 			name:      "nil_diffs",

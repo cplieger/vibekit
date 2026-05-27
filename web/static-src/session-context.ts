@@ -15,11 +15,19 @@ class SessionContextController {
   private currentModel = "auto";
   private lastModelCache = "auto";
 
-  getCurrentAgent(): string { return this.currentAgent; }
-  getCurrentModel(): string { return this.currentModel; }
-  setCurrentModel(id: string): void { this.currentModel = id; }
+  getCurrentAgent(): string {
+    return this.currentAgent;
+  }
+  getCurrentModel(): string {
+    return this.currentModel;
+  }
+  setCurrentModel(id: string): void {
+    this.currentModel = id;
+  }
 
-  getLastModel(): string { return this.lastModelCache; }
+  getLastModel(): string {
+    return this.lastModelCache;
+  }
   setLastModel(id: string): void {
     // Guard against redundant writes: an earlier bug had the SSE
     // settings_updated handler calling setLastModel with the
@@ -29,34 +37,55 @@ class SessionContextController {
     // path, but a no-op guard here prevents any other caller from
     // re-introducing the loop. It also avoids waking the save
     // indicator for writes that don't change anything.
-    if (this.lastModelCache === id) return;
+    if (this.lastModelCache === id) {
+      return;
+    }
     this.lastModelCache = id;
     void patchSettings({ last_model: id });
   }
 
   restoreLastModel(id: string | undefined): void {
-    if (id !== undefined) this.lastModelCache = id;
+    if (id !== undefined) {
+      this.lastModelCache = id;
+    }
   }
 
   withAgent(agent: string, fn: () => void): void {
     const prev = this.currentAgent;
     this.currentAgent = agent;
-    try { fn(); }
-    finally { this.currentAgent = prev; }
+    try {
+      fn();
+    } finally {
+      this.currentAgent = prev;
+    }
   }
 }
 
 const instance = new SessionContextController();
 
-export function getCurrentAgent(): string { return instance.getCurrentAgent(); }
-export function getCurrentModel(): string { return instance.getCurrentModel(); }
-export function setCurrentModel(id: string): void { instance.setCurrentModel(id); }
+export function getCurrentAgent(): string {
+  return instance.getCurrentAgent();
+}
+export function getCurrentModel(): string {
+  return instance.getCurrentModel();
+}
+export function setCurrentModel(id: string): void {
+  instance.setCurrentModel(id);
+}
 
-export function getLastModel(): string { return instance.getLastModel(); }
-export function setLastModel(id: string): void { instance.setLastModel(id); }
+export function getLastModel(): string {
+  return instance.getLastModel();
+}
+export function setLastModel(id: string): void {
+  instance.setLastModel(id);
+}
 
 /** Restore last_model from settings on startup. */
-export function restoreLastModel(id: string | undefined): void { instance.restoreLastModel(id); }
+export function restoreLastModel(id: string | undefined): void {
+  instance.restoreLastModel(id);
+}
 
 /** Run fn with currentAgent temporarily set; restored when fn returns. */
-export function withAgent(agent: string, fn: () => void): void { instance.withAgent(agent, fn); }
+export function withAgent(agent: string, fn: () => void): void {
+  instance.withAgent(agent, fn);
+}

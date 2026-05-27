@@ -49,14 +49,20 @@ class ScrollController {
 
   init(): void {
     const scrollBtn = $.scrollBottom;
-    this.scrollEl.addEventListener("scroll", () => {
-      if (Date.now() < this.suppressUntil) return;
-      this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-      const atBottom = this.isAtBottom();
-      this.userScrolledUp = !atBottom;
-      scrollBtn.classList.toggle("hidden", !this.userScrolledUp);
-      this.maybeLoadMore();
-    }, { passive: true });
+    this.scrollEl.addEventListener(
+      "scroll",
+      () => {
+        if (Date.now() < this.suppressUntil) {
+          return;
+        }
+        this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
+        const atBottom = this.isAtBottom();
+        this.userScrolledUp = !atBottom;
+        scrollBtn.classList.toggle("hidden", !this.userScrolledUp);
+        this.maybeLoadMore();
+      },
+      { passive: true },
+    );
 
     scrollBtn.addEventListener("click", () => {
       this.scrollEl.scrollTo({ top: this.scrollEl.scrollHeight, behavior: "smooth" });
@@ -64,15 +70,23 @@ class ScrollController {
       scrollBtn.classList.add("hidden");
     });
 
-    const mutationObserver = new MutationObserver(() => { this.autoScrollIfAnchored(); });
+    const mutationObserver = new MutationObserver(() => {
+      this.autoScrollIfAnchored();
+    });
     mutationObserver.observe(this.messagesEl, {
-      childList: true, subtree: true, characterData: true,
+      childList: true,
+      subtree: true,
+      characterData: true,
     });
 
-    const resizeObserver = new ResizeObserver(() => { this.autoScrollIfAnchored(); });
+    const resizeObserver = new ResizeObserver(() => {
+      this.autoScrollIfAnchored();
+    });
     resizeObserver.observe(this.scrollEl);
     const reobserveChildren = (): void => {
-      for (const child of this.messagesEl.children) resizeObserver.observe(child);
+      for (const child of this.messagesEl.children) {
+        resizeObserver.observe(child);
+      }
     };
     reobserveChildren();
     const childObserver = new MutationObserver(reobserveChildren);
@@ -81,12 +95,18 @@ class ScrollController {
 
   // --- Public API ---
 
-  suppressScroll(ms: number): void { this.suppressUntil = Date.now() + ms; }
+  suppressScroll(ms: number): void {
+    this.suppressUntil = Date.now() + ms;
+  }
 
-  setUserScrolledUp(v: boolean): void { this.userScrolledUp = v; }
+  setUserScrolledUp(v: boolean): void {
+    this.userScrolledUp = v;
+  }
 
   /** No-op shim. The MutationObserver auto-scrolls on every DOM change. */
-  scroll(): void { /* observer-driven; see init */ }
+  scroll(): void {
+    /* observer-driven; see init */
+  }
 
   scrollToBottom(): void {
     this.userScrolledUp = false;
@@ -104,12 +124,15 @@ class ScrollController {
   }
 
   trimOldMessages(): void {
-    const children = [...this.messagesEl.children].filter(
-      (el) => el.id !== "load-more-indicator",
-    );
+    const children = [...this.messagesEl.children].filter((el) => el.id !== "load-more-indicator");
     const excess = children.length - MAX_DOM_MESSAGES;
-    if (excess <= 0) return;
-    for (let i = 0; i < excess; i++) children[i]!.remove();
+    if (excess <= 0) {
+      return;
+    }
+    for (let i = 0; i < excess; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      children[i]!.remove();
+    }
     this.hasMoreMessages = true;
     this.updateLoadMoreIndicator();
   }
@@ -125,17 +148,27 @@ class ScrollController {
   // --- Internal ---
 
   private isAtBottom(): boolean {
-    return this.scrollEl.scrollTop + this.scrollEl.clientHeight
-      >= this.scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX;
+    return (
+      this.scrollEl.scrollTop + this.scrollEl.clientHeight >=
+      this.scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX
+    );
   }
 
   private rafPending = false;
 
   private autoScrollIfAnchored(): void {
-    if (this.userScrolledUp) return;
-    if (Date.now() < this.userScrollingUntil) return;
-    if (Date.now() < this.suppressUntil) return;
-    if (this.rafPending) return;
+    if (this.userScrolledUp) {
+      return;
+    }
+    if (Date.now() < this.userScrollingUntil) {
+      return;
+    }
+    if (Date.now() < this.suppressUntil) {
+      return;
+    }
+    if (this.rafPending) {
+      return;
+    }
     this.rafPending = true;
     requestAnimationFrame(() => {
       this.rafPending = false;
@@ -145,14 +178,21 @@ class ScrollController {
   }
 
   private maybeLoadMore(): void {
-    if (this.scrollEl.scrollTop >= LOAD_MORE_THRESHOLD_PX) return;
-    if (!this.hasMoreMessages || this.loadingMore || this.onLoadMore === null) return;
+    if (this.scrollEl.scrollTop >= LOAD_MORE_THRESHOLD_PX) {
+      return;
+    }
+    if (!this.hasMoreMessages || this.loadingMore || this.onLoadMore === null) {
+      return;
+    }
     this.loadingMore = true;
     const skel = loadMoreSkeleton();
     skel.id = "load-more-skeleton";
     const indicator = document.getElementById("load-more-indicator");
-    if (indicator !== null) indicator.replaceWith(skel);
-    else this.messagesEl.prepend(skel);
+    if (indicator !== null) {
+      indicator.replaceWith(skel);
+    } else {
+      this.messagesEl.prepend(skel);
+    }
     const prevHeight = this.scrollEl.scrollHeight;
     this.onLoadMore();
     const observer = new MutationObserver(() => {
@@ -167,7 +207,9 @@ class ScrollController {
     const safetyTimer = setTimeout(() => {
       observer.disconnect();
       const skel = document.getElementById("load-more-skeleton");
-      if (skel !== null) skel.remove();
+      if (skel !== null) {
+        skel.remove();
+      }
       this.loadingMore = false;
     }, 15_000);
     observer.observe(this.messagesEl, { childList: true });
@@ -204,19 +246,37 @@ function getInstance(): ScrollController {
 }
 
 /** Deferred DOM access — safe to import before DOMContentLoaded. */
-export function getScrollEl(): HTMLElement { return getInstance().scrollEl; }
+export function getScrollEl(): HTMLElement {
+  return getInstance().scrollEl;
+}
 
-export function suppressScroll(ms: number): void { getInstance().suppressScroll(ms); }
-export function setUserScrolledUp(v: boolean): void { getInstance().setUserScrolledUp(v); }
-export function scroll(): void { getInstance().scroll(); }
-export function scrollToBottom(): void { getInstance().scrollToBottom(); }
-export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void { getInstance().setLoadMore(fn, hasMore); }
-export function trimOldMessages(): void { getInstance().trimOldMessages(); }
-export function resetScrollState(): void { getInstance().resetScrollState(); }
+export function suppressScroll(ms: number): void {
+  getInstance().suppressScroll(ms);
+}
+export function setUserScrolledUp(v: boolean): void {
+  getInstance().setUserScrolledUp(v);
+}
+export function scroll(): void {
+  getInstance().scroll();
+}
+export function scrollToBottom(): void {
+  getInstance().scrollToBottom();
+}
+export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
+  getInstance().setLoadMore(fn, hasMore);
+}
+export function trimOldMessages(): void {
+  getInstance().trimOldMessages();
+}
+export function resetScrollState(): void {
+  getInstance().resetScrollState();
+}
 
 // Init on load.
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => { getInstance(); });
+  document.addEventListener("DOMContentLoaded", () => {
+    getInstance();
+  });
 } else {
   getInstance();
 }

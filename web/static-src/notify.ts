@@ -51,15 +51,29 @@ class NotifyController {
 
   // --- Preference accessors ---
 
-  areNotificationsEnabled(): boolean { return this.enabled; }
-  isAgentFinishedEnabled(): boolean { return this.agentFinished; }
-  isPermissionNeededEnabled(): boolean { return this.permissionNeeded; }
+  areNotificationsEnabled(): boolean {
+    return this.enabled;
+  }
+  isAgentFinishedEnabled(): boolean {
+    return this.agentFinished;
+  }
+  isPermissionNeededEnabled(): boolean {
+    return this.permissionNeeded;
+  }
 
-  setNotificationsEnabled(v: boolean): void { this.enabled = v; }
-  setAgentFinishedEnabled(v: boolean): void { this.agentFinished = v; }
-  setPermissionNeededEnabled(v: boolean): void { this.permissionNeeded = v; }
+  setNotificationsEnabled(v: boolean): void {
+    this.enabled = v;
+  }
+  setAgentFinishedEnabled(v: boolean): void {
+    this.agentFinished = v;
+  }
+  setPermissionNeededEnabled(v: boolean): void {
+    this.permissionNeeded = v;
+  }
 
-  setNotifyUICallback(fn: () => void): void { this.notifyUICallback = fn; }
+  setNotifyUICallback(fn: () => void): void {
+    this.notifyUICallback = fn;
+  }
 
   // --- Restore from server settings ---
 
@@ -97,30 +111,57 @@ class NotifyController {
     if (Notification.permission === "denied") {
       return "Notifications were blocked. Allow them in your browser settings.";
     }
-    Notification.requestPermission().then((result) => {
-      if (result === "granted") void this.registerPushViaAction();
-    }).catch(() => {});
+    Notification.requestPermission()
+      .then((result) => {
+        if (result === "granted") {
+          void this.registerPushViaAction();
+        }
+      })
+      .catch(() => {
+        /* noop */
+      });
     return null;
   }
 
   unregisterPush(): void {
     registerPush.cancel();
     this.pushState = { kind: "idle" };
-    if (this.swRegistration === null) return;
+    if (this.swRegistration === null) {
+      return;
+    }
     const reg = this.swRegistration;
     this.swRegistration = null;
-    reg.pushManager.getSubscription().then((sub) => {
-      if (sub === null) return;
-      const endpoint = sub.endpoint;
-      sub.unsubscribe().catch(() => {});
-      void unsubscribePush.dispatch({ endpoint });
-    }).catch(() => {});
-    reg.unregister().catch(() => {});
+    reg.pushManager
+      .getSubscription()
+      .then((sub) => {
+        if (sub === null) {
+          return;
+        }
+        const endpoint = sub.endpoint;
+        sub.unsubscribe().catch(() => {
+          /* noop */
+        });
+        void unsubscribePush.dispatch({ endpoint });
+      })
+      .catch(() => {
+        /* noop */
+      });
+    reg.unregister().catch(() => {
+      /* noop */
+    });
   }
 
   private autoSubscribe(): void {
-    if (this.pushState.kind === "registered" || this.pushState.kind === "failed" || this.pushState.kind === "registering") return;
-    if (!("Notification" in window)) return;
+    if (
+      this.pushState.kind === "registered" ||
+      this.pushState.kind === "failed" ||
+      this.pushState.kind === "registering"
+    ) {
+      return;
+    }
+    if (!("Notification" in window)) {
+      return;
+    }
     if (Notification.permission === "granted") {
       void this.registerPushViaAction(true);
       return;
@@ -131,7 +172,9 @@ class NotifyController {
   }
 
   private async registerPushViaAction(silent = false): Promise<void> {
-    if (this.pushState.kind === "registered" || this.pushState.kind === "registering") return;
+    if (this.pushState.kind === "registered" || this.pushState.kind === "registering") {
+      return;
+    }
     this.pushState = { kind: "registering" };
     const reg = await registerPush.dispatch(undefined, silent ? { silent: true } : undefined);
     if (reg !== null) {
@@ -145,16 +188,25 @@ class NotifyController {
   // --- Local notifications ---
 
   notifyIfHidden(title: string, body: string): boolean {
-    if (!this.enabled) return false;
-    if (document.visibilityState !== "hidden") return false;
-    if (!("Notification" in window) || Notification.permission !== "granted") return false;
+    if (!this.enabled) {
+      return false;
+    }
+    if (document.visibilityState !== "hidden") {
+      return false;
+    }
+    if (!("Notification" in window) || Notification.permission !== "granted") {
+      return false;
+    }
     try {
       const n = new Notification(title, {
         body,
         icon: "/favicon.svg",
         tag: "vibekit",
       });
-      n.addEventListener("click", () => { window.focus(); n.close(); });
+      n.addEventListener("click", () => {
+        window.focus();
+        n.close();
+      });
       return true;
     } catch {
       return false;
@@ -172,17 +224,33 @@ class NotifyController {
 // ---------------------------------------------------------------------------
 
 const instance = new NotifyController();
-registerCleanup(() => instance.cancelPush());
+registerCleanup(() => {
+  instance.cancelPush();
+});
 
-export function areNotificationsEnabled(): boolean { return instance.areNotificationsEnabled(); }
-export function isAgentFinishedEnabled(): boolean { return instance.isAgentFinishedEnabled(); }
-export function isPermissionNeededEnabled(): boolean { return instance.isPermissionNeededEnabled(); }
+export function areNotificationsEnabled(): boolean {
+  return instance.areNotificationsEnabled();
+}
+export function isAgentFinishedEnabled(): boolean {
+  return instance.isAgentFinishedEnabled();
+}
+export function isPermissionNeededEnabled(): boolean {
+  return instance.isPermissionNeededEnabled();
+}
 
-export function setNotificationsEnabled(v: boolean): void { instance.setNotificationsEnabled(v); }
-export function setAgentFinishedEnabled(v: boolean): void { instance.setAgentFinishedEnabled(v); }
-export function setPermissionNeededEnabled(v: boolean): void { instance.setPermissionNeededEnabled(v); }
+export function setNotificationsEnabled(v: boolean): void {
+  instance.setNotificationsEnabled(v);
+}
+export function setAgentFinishedEnabled(v: boolean): void {
+  instance.setAgentFinishedEnabled(v);
+}
+export function setPermissionNeededEnabled(v: boolean): void {
+  instance.setPermissionNeededEnabled(v);
+}
 
-export function setNotifyUICallback(fn: () => void): void { instance.setNotifyUICallback(fn); }
+export function setNotifyUICallback(fn: () => void): void {
+  instance.setNotifyUICallback(fn);
+}
 
 export function restoreNotifications(s: {
   notifications_enabled?: boolean;

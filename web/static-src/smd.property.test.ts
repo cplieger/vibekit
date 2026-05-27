@@ -9,7 +9,18 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { parser, parser_write, parser_end, DOCUMENT, HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6 } from "./smd-parser.js";
+import {
+  parser,
+  parser_write,
+  parser_end,
+  DOCUMENT,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
+} from "./smd-parser.js";
 import { TOKEN_ARRAY_CAP } from "./smd-parser-types.js";
 import type { Parser, Token } from "./smd-parser.js";
 
@@ -17,15 +28,24 @@ import type { Parser, Token } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => {},
-    end_token: () => {},
-    add_text: () => {},
-    set_attr: () => {},
+    add_token: () => {
+      /* noop */
+    },
+    end_token: () => {
+      /* noop */
+    },
+    add_text: () => {
+      /* noop */
+    },
+    set_attr: () => {
+      /* noop */
+    },
   };
 }
 
 /** Recording renderer — captures the callback sequence for equivalence checks. */
-type RendererCall = { op: "add_token"; type: number }
+type RendererCall =
+  | { op: "add_token"; type: number }
   | { op: "end_token" }
   | { op: "add_text"; text: string }
   | { op: "set_attr"; attr: number; value: string };
@@ -36,10 +56,18 @@ function recordingRenderer() {
     calls,
     renderer: {
       data: null,
-      add_token: (_data: null, type: number) => { calls.push({ op: "add_token", type }); },
-      end_token: () => { calls.push({ op: "end_token" }); },
-      add_text: (_data: null, text: string) => { calls.push({ op: "add_text", text }); },
-      set_attr: (_data: null, attr: number, value: string) => { calls.push({ op: "set_attr", attr, value }); },
+      add_token: (_data: null, type: number) => {
+        calls.push({ op: "add_token", type });
+      },
+      end_token: () => {
+        calls.push({ op: "end_token" });
+      },
+      add_text: (_data: null, text: string) => {
+        calls.push({ op: "add_text", text });
+      },
+      set_attr: (_data: null, attr: number, value: string) => {
+        calls.push({ op: "set_attr", attr, value });
+      },
     },
   };
 }
@@ -49,23 +77,33 @@ const markdownLike = fc.oneof(
   // Plain text
   fc.lorem({ maxCount: 5 }),
   // Headings
-  fc.tuple(fc.constantFrom("# ", "## ", "### ", "#### "), fc.lorem({ maxCount: 3 }))
+  fc
+    .tuple(fc.constantFrom("# ", "## ", "### ", "#### "), fc.lorem({ maxCount: 3 }))
     .map(([h, t]) => h + t + "\n"),
   // Emphasis
-  fc.tuple(fc.constantFrom("*", "**", "_", "__", "~~"), fc.lorem({ maxCount: 2 }))
+  fc
+    .tuple(fc.constantFrom("*", "**", "_", "__", "~~"), fc.lorem({ maxCount: 2 }))
     .map(([m, t]) => m + t + m),
   // Code fences (possibly unclosed)
-  fc.tuple(fc.constantFrom("```", "````"), fc.constantFrom("", "js", "ts"), fc.lorem({ maxCount: 3 }), fc.boolean())
+  fc
+    .tuple(
+      fc.constantFrom("```", "````"),
+      fc.constantFrom("", "js", "ts"),
+      fc.lorem({ maxCount: 3 }),
+      fc.boolean(),
+    )
     .map(([f, lang, body, closed]) => f + lang + "\n" + body + "\n" + (closed ? f : "") + "\n"),
   // Inline code
   fc.lorem({ maxCount: 2 }).map((t) => "`" + t + "`"),
   // Blockquotes
   fc.lorem({ maxCount: 3 }).map((t) => "> " + t + "\n"),
   // Lists
-  fc.tuple(fc.constantFrom("- ", "* ", "1. ", "2. "), fc.lorem({ maxCount: 3 }))
+  fc
+    .tuple(fc.constantFrom("- ", "* ", "1. ", "2. "), fc.lorem({ maxCount: 3 }))
     .map(([prefix, t]) => prefix + t + "\n"),
   // Links and images
-  fc.tuple(fc.lorem({ maxCount: 1 }), fc.constant("https://example.com"))
+  fc
+    .tuple(fc.lorem({ maxCount: 1 }), fc.constant("https://example.com"))
     .map(([text, url]) => `[${text}](${url})`),
   fc.constant("![alt](https://example.com/img.png)"),
   // Tables
@@ -83,12 +121,15 @@ const markdownLike = fc.oneof(
 );
 
 /** Generate a markdown document from multiple fragments. */
-const markdownDocument = fc.array(markdownLike, { minLength: 1, maxLength: 20 })
+const markdownDocument = fc
+  .array(markdownLike, { minLength: 1, maxLength: 20 })
   .map((parts) => parts.join(""));
 
 /** Split a string at random positions into chunks. */
 function splitAtPositions(input: string, positions: number[]): string[] {
-  const sorted = [...new Set(positions.map((p) => Math.min(Math.max(0, p), input.length)))].sort((a, b) => a - b);
+  const sorted = [...new Set(positions.map((p) => Math.min(Math.max(0, p), input.length)))].sort(
+    (a, b) => a - b,
+  );
   const chunks: string[] = [];
   let prev = 0;
   for (const pos of sorted) {
@@ -112,13 +153,19 @@ describe("smd parser property: structural invariants", () => {
           for (const chunk of chunks) {
             parser_write(p, chunk);
             // len must never go negative during parsing
-            if (p.len < 0) return false;
+            if (p.len < 0) {
+              return false;
+            }
           }
           parser_end(p);
           // Root DOCUMENT token always at index 0
-          if (p.tokens[0] !== DOCUMENT) return false;
+          if (p.tokens[0] !== DOCUMENT) {
+            return false;
+          }
           // len must remain non-negative
-          if (p.len < 0) return false;
+          if (p.len < 0) {
+            return false;
+          }
           return true;
         },
       ),
@@ -134,7 +181,9 @@ describe("smd parser property: structural invariants", () => {
         const p: Parser = parser(nullRenderer());
         for (const ch of doc) {
           parser_write(p, ch);
-          if (p.len < 0) return false;
+          if (p.len < 0) {
+            return false;
+          }
         }
         parser_end(p);
         return p.tokens[0] === DOCUMENT && p.len >= 0;
@@ -202,10 +251,21 @@ describe("smd parser property: structural invariants", () => {
         maxDepth: () => maxDepth,
         renderer: {
           data: null,
-          add_token: () => { depth++; if (depth > maxDepth) maxDepth = depth; },
-          end_token: () => { depth--; },
-          add_text: () => {},
-          set_attr: () => {},
+          add_token: () => {
+            depth++;
+            if (depth > maxDepth) {
+              maxDepth = depth;
+            }
+          },
+          end_token: () => {
+            depth--;
+          },
+          add_text: () => {
+            /* noop */
+          },
+          set_attr: () => {
+            /* noop */
+          },
         },
       };
     }
@@ -242,7 +302,9 @@ describe("smd parser property: structural invariants", () => {
           let cursor = 0;
           for (let i = 1; i < chunks.length; i++) {
             cursor += chunks[i - 1]!.length;
-            if (cursor < 2 || doc.slice(cursor - 2, cursor) !== "\n\n") return true;
+            if (cursor < 2 || doc.slice(cursor - 2, cursor) !== "\n\n") {
+              return true;
+            }
           }
 
           const SAFE_MAX_DEPTH = TOKEN_ARRAY_CAP - 3;
@@ -250,7 +312,9 @@ describe("smd parser property: structural invariants", () => {
           const pp1: Parser = parser(probe1.renderer);
           parser_write(pp1, doc);
           parser_end(pp1);
-          if (probe1.maxDepth() >= SAFE_MAX_DEPTH) return true;
+          if (probe1.maxDepth() >= SAFE_MAX_DEPTH) {
+            return true;
+          }
 
           const probe2 = depthTrackingRenderer();
           const pp2: Parser = parser(probe2.renderer);
@@ -258,7 +322,9 @@ describe("smd parser property: structural invariants", () => {
             parser_write(pp2, chunk);
           }
           parser_end(pp2);
-          if (probe2.maxDepth() >= SAFE_MAX_DEPTH) return true;
+          if (probe2.maxDepth() >= SAFE_MAX_DEPTH) {
+            return true;
+          }
 
           // Single pass
           const rec1 = recordingRenderer();
@@ -279,12 +345,12 @@ describe("smd parser property: structural invariants", () => {
           // it was the innermost open token, and the set_attr calls.
           // This abstracts away chunk-boundary-dependent text flushing
           // while verifying the structural DOM output is identical.
-          type TokenNode = {
+          interface TokenNode {
             type: number;
             text: string;
-            attrs: Array<{ attr: number; value: string }>;
+            attrs: { attr: number; value: string }[];
             children: TokenNode[];
-          };
+          }
 
           function buildTree(calls: RendererCall[]): TokenNode[] {
             const root: TokenNode = { type: 0, text: "", attrs: [], children: [] };
@@ -313,18 +379,32 @@ describe("smd parser property: structural invariants", () => {
           }
 
           function treesEqual(a: TokenNode[], b: TokenNode[]): boolean {
-            if (a.length !== b.length) return false;
+            if (a.length !== b.length) {
+              return false;
+            }
             for (let i = 0; i < a.length; i++) {
               const na = a[i]!;
               const nb = b[i]!;
-              if (na.type !== nb.type) return false;
-              if (na.text !== nb.text) return false;
-              if (na.attrs.length !== nb.attrs.length) return false;
-              for (let j = 0; j < na.attrs.length; j++) {
-                if (na.attrs[j]!.attr !== nb.attrs[j]!.attr) return false;
-                if (na.attrs[j]!.value !== nb.attrs[j]!.value) return false;
+              if (na.type !== nb.type) {
+                return false;
               }
-              if (!treesEqual(na.children, nb.children)) return false;
+              if (na.text !== nb.text) {
+                return false;
+              }
+              if (na.attrs.length !== nb.attrs.length) {
+                return false;
+              }
+              for (let j = 0; j < na.attrs.length; j++) {
+                if (na.attrs[j]!.attr !== nb.attrs[j]!.attr) {
+                  return false;
+                }
+                if (na.attrs[j]!.value !== nb.attrs[j]!.value) {
+                  return false;
+                }
+              }
+              if (!treesEqual(na.children, nb.children)) {
+                return false;
+              }
             }
             return true;
           }
@@ -343,28 +423,24 @@ describe("smd parser property: heading level extraction", () => {
     const HEADING_TOKENS = [HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6];
     expect.assertions(1);
     const result = fc.check(
-      fc.property(
-        fc.integer({ min: 1, max: 10 }),
-        fc.lorem({ maxCount: 2 }),
-        (hashCount, text) => {
-          const input = "#".repeat(hashCount) + " " + text + "\n";
-          const rec = recordingRenderer();
-          const p: Parser = parser(rec.renderer);
-          parser_write(p, input);
-          parser_end(p);
+      fc.property(fc.integer({ min: 1, max: 10 }), fc.lorem({ maxCount: 2 }), (hashCount, text) => {
+        const input = "#".repeat(hashCount) + " " + text + "\n";
+        const rec = recordingRenderer();
+        const p: Parser = parser(rec.renderer);
+        parser_write(p, input);
+        parser_end(p);
 
-          const addTokenCalls = rec.calls.filter(
-            (c): c is { op: "add_token"; type: number } => c.op === "add_token",
-          );
+        const addTokenCalls = rec.calls.filter(
+          (c): c is { op: "add_token"; type: number } => c.op === "add_token",
+        );
 
-          if (hashCount >= 1 && hashCount <= 6) {
-            const expected = HEADING_TOKENS[hashCount - 1];
-            return addTokenCalls.some((c) => c.type === expected);
-          }
-          // 7+ hashes: should NOT produce any heading token
-          return !addTokenCalls.some((c) => HEADING_TOKENS.includes(c.type as Token));
-        },
-      ),
+        if (hashCount >= 1 && hashCount <= 6) {
+          const expected = HEADING_TOKENS[hashCount - 1];
+          return addTokenCalls.some((c) => c.type === expected);
+        }
+        // 7+ hashes: should NOT produce any heading token
+        return !addTokenCalls.some((c) => HEADING_TOKENS.includes(c.type as Token));
+      }),
       { numRuns: 200 },
     );
     expect(result.failed).toBe(false);

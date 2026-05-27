@@ -1,7 +1,14 @@
 // Actions for the file browser: create, delete, rename, upload.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, classifyFetchError, hasErrorString, retryNetwork } from "./index.js";
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  classifyFetchError,
+  hasErrorString,
+  retryNetwork,
+} from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
@@ -17,7 +24,7 @@ interface CreateArgs {
 
 // --- files.create_file ---
 
-export const createFile = apiAction<CreateArgs, unknown>({
+export const createFile = apiAction<CreateArgs>({
   name: "files.create_file",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
@@ -33,7 +40,7 @@ export const createFile = apiAction<CreateArgs, unknown>({
 
 // --- files.create_folder ---
 
-export const createFolder = apiAction<CreateArgs, unknown>({
+export const createFolder = apiAction<CreateArgs>({
   name: "files.create_folder",
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
@@ -49,7 +56,7 @@ export const createFolder = apiAction<CreateArgs, unknown>({
 
 // --- files.rename ---
 
-export const renameFile = apiAction<{ dir: string; original: string; newName: string }, unknown>({
+export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
   idempotencyKey: (args) => `files.rename:${args.dir}/${args.original}->${args.newName}`,
@@ -71,10 +78,11 @@ interface DeleteArgs {
   listEl: HTMLElement;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
-  dedupe: (args) => `files.delete:${args.names.slice().sort().join(',')}`,
+  dedupe: (args) => `files.delete:${args.names.slice().sort().join(",")}`,
   // Batch delete must NOT retry: a timeout/network error may mean some
   // items were already deleted server-side. Retrying would re-attempt
   // those deletions, causing 404s or deleting newly-created files with
@@ -96,32 +104,55 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
           body: JSON.stringify({ action: "delete", path: joinPath(args.dir, name) }),
           signal: timedSignal,
         };
-        return fetch("/api/files/action", init).then(async (r) => {
-          if (!r.ok) {
-            let serverError = "";
-            try {
-              const body: unknown = await r.json();
-              if (hasErrorString(body)) serverError = body.error;
-            } catch { /* ignore */ }
-            return { ok: false as const, name, error: serverError || `HTTP ${String(r.status)}`, status: r.status };
-          }
-          return { ok: true as const, name };
-        }, (e: unknown) => {
-          if (signal.aborted) return { ok: false as const, name, error: "cancelled", status: 0 };
-          if (e instanceof DOMException) return { ok: false as const, name, error: "Request timed out", status: 0 };
-          return { ok: false as const, name, error: "network error", status: 0 };
-        });
+        return fetch("/api/files/action", init).then(
+          async (r) => {
+            if (!r.ok) {
+              let serverError = "";
+              try {
+                const body: unknown = await r.json();
+                if (hasErrorString(body)) {
+                  serverError = body.error;
+                }
+              } catch {
+                /* ignore */
+              }
+              return {
+                ok: false as const,
+                name,
+                error: serverError || `HTTP ${String(r.status)}`,
+                status: r.status,
+              };
+            }
+            return { ok: true as const, name };
+          },
+          (e: unknown) => {
+            if (signal.aborted) {
+              return { ok: false as const, name, error: "cancelled", status: 0 };
+            }
+            if (e instanceof DOMException) {
+              return { ok: false as const, name, error: "Request timed out", status: 0 };
+            }
+            return { ok: false as const, name, error: "network error", status: 0 };
+          },
+        );
       }),
     );
-    const failed = results.filter((r): r is { ok: false; name: string; error: string; status: number } => !r.ok);
+    const failed = results.filter(
+      (r): r is { ok: false; name: string; error: string; status: number } => !r.ok,
+    );
     if (failed.length > 0) {
       // If all failures are network/timeout/cancelled, classify the aggregate error
       const allNetwork = failed.every((f) => f.status === 0);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
       const firstErr = failed[0]!.error;
-      if (signal.aborted) throw new ActionError("cancelled", { code: "cancelled" });
+      if (signal.aborted) {
+        throw new ActionError("cancelled", { code: "cancelled" });
+      }
       const names = failed.map((f) => f.name).join(", ");
-      const word = failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
+      const word =
+        failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
       throw new ActionError(`${word} (${names}): ${firstErr}`, {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
         status: failed[0]!.status,
         ...(allNetwork ? { code: firstErr === "Request timed out" ? "timeout" : "network" } : {}),
       });
@@ -129,7 +160,9 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   },
   optimistic: (args) => {
     for (const row of [...args.listEl.children]) {
-      if (!(row instanceof HTMLDivElement)) continue;
+      if (!(row instanceof HTMLDivElement)) {
+        continue;
+      }
       if (args.names.includes(row.dataset["name"] ?? "")) {
         row.classList.add("fb-row-exiting");
       }
@@ -141,7 +174,9 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
     // the list's children (the exiting rows no longer exist in the DOM).
     // That's fine — the fresh listing from the server is the source of truth.
     for (const row of [...args.listEl.children]) {
-      if (!(row instanceof HTMLDivElement)) continue;
+      if (!(row instanceof HTMLDivElement)) {
+        continue;
+      }
       row.classList.remove("fb-row-exiting");
     }
   },
@@ -150,6 +185,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
 
 // --- files.download ---
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const downloadFiles = defineAction<{ paths: string[] }, void>({
   name: "files.download",
   retryable: retryNetwork,
@@ -165,13 +201,20 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
     } catch (e) {
       throw classifyFetchError(e, signal);
     }
-    if (!r.ok) throw new ActionError("Download failed", { status: r.status });
+    if (!r.ok) {
+      throw new ActionError("Download failed", { status: r.status });
+    }
     const blob = await r.blob();
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     // Trigger browser download via objectURL anchor
     const url = URL.createObjectURL(blob);
     try {
-      if (signal.aborted) return;
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check after async
+      if (signal.aborted) {
+        return;
+      }
       const a = document.createElement("a");
       a.href = url;
       a.download = "download.zip";
@@ -205,11 +248,16 @@ export const upload = defineAction<UploadArgs, string[]>({
         files: args.files,
         targetDir: args.targetDir,
         signal,
-        onComplete: (paths) => resolve(paths),
-        onError: (msg) => reject(new ActionError(msg)),
+        onComplete: (paths) => {
+          resolve(paths);
+        },
+        onError: (msg) => {
+          reject(new ActionError(msg));
+        },
       });
     });
   },
-  success: (_args, paths) => paths.length === 1 ? "Uploaded 1 file" : `Uploaded ${String(paths.length)} files`,
+  success: (_args, paths) =>
+    paths.length === 1 ? "Uploaded 1 file" : `Uploaded ${String(paths.length)} files`,
   error: "Upload failed",
 });

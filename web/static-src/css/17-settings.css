@@ -1,56 +1,85 @@
-
 /* ==========================================================================
    Settings: tabbed shell
    ========================================================================== */
 
 .settings-shell {
-  max-width: var(--content-max-w); margin: 0 auto; width: 100%;
-  padding: var(--sp-4); display: flex; flex-direction: column;
-  flex: 1; min-height: 0; gap: var(--sp-3);
+  max-width: var(--content-max-w);
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--sp-3);
 }
 
 .settings-header {
-  display: flex; flex-direction: column; gap: var(--sp-3);
-  position: sticky; top: 0; z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: var(--c-bg-primary);
   padding-block-end: var(--sp-2);
 }
 
 .settings-title-row {
   padding-top: calc(0.3125rem + env(safe-area-inset-top, 0));
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
 }
 
 .settings-save-status {
-  font-size: var(--fs-xs); color: var(--c-text-tertiary);
-  display: inline-flex; align-items: center;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  display: inline-flex;
+  align-items: center;
   opacity: 1;
   transition: opacity 0.4s;
 }
 
-.settings-save-status.fade-out { opacity: 0; }
+.settings-save-status.fade-out {
+  opacity: 0;
+}
 
 /* Desktop tab bar: segmented-control pills. */
 .settings-tab-bar {
-  display: flex; flex-wrap: wrap; gap: 0.25rem;
-  background: var(--c-bg-secondary); border: 1px solid var(--c-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
   border-radius: var(--r);
   padding: 0.25rem;
 }
 
 .settings-tab {
-  flex: 1; min-width: 0;
+  flex: 1;
+  min-width: 0;
   padding: var(--sp-2) var(--sp-3);
-  background: transparent; border: 1px solid transparent;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: calc(var(--r) - 0.125rem);
   color: var(--c-text-secondary);
-  font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   font-family: var(--font-sans);
-  cursor: pointer; white-space: nowrap;
-  text-overflow: ellipsis; overflow: hidden;
-  transition: background var(--dur-micro), color var(--dur-micro), border-color var(--dur-micro) var(--ease-micro);
+  cursor: pointer;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro),
+    border-color var(--dur-micro) var(--ease-micro);
 
-  &:hover { background: var(--c-bg-tertiary); color: var(--c-text-primary); }
+  &:hover {
+    background: var(--c-bg-tertiary);
+    color: var(--c-text-primary);
+  }
 
   &.active {
     background: var(--c-bg-primary);
@@ -61,7 +90,9 @@
 }
 
 /* Mobile tab select: native dropdown, hidden on desktop. */
-.settings-tab-select-wrap { display: none; }
+.settings-tab-select-wrap {
+  display: none;
+}
 
 .settings-tab-select {
   width: 100%;
@@ -70,20 +101,23 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   color: var(--c-text-primary);
-  font-family: var(--font-sans); font-size: var(--fs-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
   appearance: auto; /* keep the native chevron for platform affinity */
 }
 
 /* Panel body container. One panel visible at a time (others get .hidden). */
 .settings-panel {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   gap: var(--sp-4);
 }
 
 /* Intro blurb at the top of a panel. */
 .settings-panel-intro {
-  font-size: var(--fs-sm); color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
   line-height: 1.55;
   margin: 0;
   text-wrap: pretty;
@@ -91,13 +125,17 @@
 
 /* Section with an inline action bar on the right (e.g. Installed tools + buttons). */
 .section-header-row {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
   padding-block-start: var(--sp-2);
 }
 
 :where(.section-header-row) .section-title,
-:where(.section-header-row) h3.section-title { padding-block-start: 0; }
+:where(.section-header-row) h3.section-title {
+  padding-block-start: 0;
+}
 
 /* --- Settings → Git & forges --- */
 
@@ -108,13 +146,16 @@
   border-radius: var(--r);
   padding: var(--sp-3) var(--sp-4);
   background: var(--c-bg-primary);
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-2);
   margin-block-end: var(--sp-3);
 }
 
 .forge-kind-header {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 /* The "+" add-account button sits at the right edge of the header
@@ -127,13 +168,19 @@
   min-width: var(--btn-h);
 }
 
-.forge-kind-add-btn svg { width: 14px; height: 14px; }
+.forge-kind-add-btn svg {
+  width: 14px;
+  height: 14px;
+}
 
 /* Two-letter kind badge (SVG glyph) — mirrors .repo-picker-badge
  * for visual consistency between the picker and the forges page. */
 .forge-kind-badge {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
@@ -142,18 +189,46 @@
 }
 
 .forge-kind-badge svg {
-  width: 14px; height: 14px;
+  width: 14px;
+  height: 14px;
   display: block;
 }
 
-.forge-kind-github   { background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary)); border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border)); }
-.forge-kind-github svg   { fill: var(--c-text-primary); }
-.forge-kind-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
-.forge-kind-gitlab svg   { fill: #fc6d26; }
-.forge-kind-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
-.forge-kind-codeberg svg { fill: #2185d0; }
-.forge-kind-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
-.forge-kind-gitea svg    { fill: #609926; }
+.forge-kind-github {
+  background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border));
+}
+
+.forge-kind-github svg {
+  fill: var(--c-text-primary);
+}
+
+.forge-kind-gitlab {
+  background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
+}
+
+.forge-kind-gitlab svg {
+  fill: #fc6d26;
+}
+
+.forge-kind-codeberg {
+  background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
+}
+
+.forge-kind-codeberg svg {
+  fill: #2185d0;
+}
+
+.forge-kind-gitea {
+  background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #609926 40%, var(--c-border));
+}
+
+.forge-kind-gitea svg {
+  fill: #609926;
+}
 
 .forge-kind-title {
   margin: 0;
@@ -166,16 +241,19 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-1);
 }
 
 /* Slim single-line row per connected account. Identity on the left,
  * actions on the right. */
+
 /* Account row is now a column: top row (identity + actions) plus an
  * optional collapsible repos footer. Width spans the full section. */
 .forge-account-row {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   align-items: stretch;
   gap: 0;
   padding: 0;
@@ -186,7 +264,9 @@
 }
 
 .forge-account-row-top {
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
 }
 
@@ -203,9 +283,12 @@
 }
 
 .forge-account-repos-summary {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   list-style: none;
   cursor: pointer;
+
   /* Touch-friendly tap target: ~44px minimum height on mobile.
    * Spacious horizontal padding so the chevron + icon + label
    * line reads at body size. */
@@ -217,18 +300,23 @@
 }
 
 .forge-account-repos-icon {
-  display: inline-flex; align-items: center;
+  display: inline-flex;
+  align-items: center;
   color: var(--c-text-tertiary);
   flex-shrink: 0;
 }
 
-.forge-account-repos-icon svg { width: 16px; height: 16px; }
+.forge-account-repos-icon svg {
+  width: 16px;
+  height: 16px;
+}
 
 /* Right-aligned Clone all button on the summary line. The label
  * pushes itself to the left via flex: 1 so the button sits at the
  * far edge with vertical centering inherited from the summary. */
 .forge-account-repos-label {
-  flex: 1; min-width: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .forge-account-repos-clone-all {
@@ -236,7 +324,9 @@
   margin-inline-start: var(--sp-2);
 }
 
-.forge-account-repos-summary::-webkit-details-marker { display: none; }
+.forge-account-repos-summary::-webkit-details-marker {
+  display: none;
+}
 
 .forge-account-repos-summary:hover {
   background: var(--c-bg-tertiary);
@@ -261,33 +351,46 @@
 
 .forge-account-repos-list {
   list-style: none;
-  margin: 0; padding: 0;
-  display: flex; flex-direction: column;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   border-block-start: 1px solid var(--c-border);
 }
 
 .forge-account-repo-row {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
 }
 
-.forge-account-repo-row:first-child { border-block-start: 0; }
+.forge-account-repo-row:first-child {
+  border-block-start: 0;
+}
 
 .forge-account-repo-state {
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
   flex-shrink: 0;
   color: var(--c-text-tertiary);
 }
 
-.forge-account-repo-state svg { width: 14px; height: 14px; }
+.forge-account-repo-state svg {
+  width: 14px;
+  height: 14px;
+}
 
 .forge-account-repo-identity {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
 }
 
@@ -297,7 +400,9 @@
 .forge-account-repo-name {
   font-weight: 500;
   color: var(--c-text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forge-account-repo-row.cloned .forge-account-repo-name,
@@ -308,24 +413,32 @@
 .forge-account-repo-tags {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forge-account-repo-actions {
-  display: flex; align-items: center; gap: var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
   flex-shrink: 0;
 }
 
 .forge-account-identity {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
 }
 
 .forge-account-primary {
   font-weight: 500;
   color: var(--c-text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Skeleton placeholder for the primary identity line while the
@@ -343,7 +456,9 @@
 .forge-account-meta {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forge-account-error {
@@ -352,7 +467,9 @@
 }
 
 .forge-account-actions {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   flex-shrink: 0;
 }
 
@@ -361,7 +478,10 @@
 }
 
 /* Inline mount point: add-pane (OAuth + PAT), or status text. */
-.forge-kind-slot:empty { display: none; }
+.forge-kind-slot:empty {
+  display: none;
+}
+
 .forge-kind-slot {
   margin-block-start: var(--sp-2);
   padding-block-start: var(--sp-2);
@@ -372,7 +492,8 @@
  * divider + PAT form below. For non-GitHub kinds the OAuth section
  * isn't rendered so the pane is just the PAT form. */
 .forge-add-pane {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-3);
 }
 
@@ -384,7 +505,8 @@
 }
 
 .forge-add-pane-section {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-2);
 }
 
@@ -405,28 +527,39 @@
 
 /* GitHub OAuth device-flow code display (used inside .forge-kind-slot). */
 .forge-device-prompt {
-  display: flex; flex-direction: column; gap: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
   font-size: var(--fs-sm);
 }
 
 .forge-device-code-row {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
-.forge-device-link { color: var(--c-accent); }
+.forge-device-link {
+  color: var(--c-accent);
+}
 
 /* PAT form layout (used inside .forge-kind-slot). */
 .forge-pat-body {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-2);
 }
 
 .forge-pat-form {
-  display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
   align-items: center;
 }
 
-.forge-pat-form .tool-form-input { flex: 1 1 12rem; }
+.forge-pat-form .tool-form-input {
+  flex: 1 1 12rem;
+}
 
 .forge-help {
   margin: 0;
@@ -434,15 +567,22 @@
   color: var(--c-text-tertiary);
 }
 
-.forge-help a { color: var(--c-accent); }
+.forge-help a {
+  color: var(--c-accent);
+}
 
 .forge-card-status {
   font-size: var(--fs-xs);
   flex-basis: 100%;
 }
 
-.forge-card-status.ok  { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary)); }
-.forge-card-status.err { color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary)); }
+.forge-card-status.ok {
+  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 85%, var(--c-text-primary));
+}
+
+.forge-card-status.err {
+  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
+}
 
 .forge-error {
   padding: var(--sp-3) var(--sp-4);
@@ -456,7 +596,8 @@
 /* Form field labels in the PR creation dialog (unrelated to forges,
  * just shares a name). */
 .forge-field {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
@@ -502,12 +643,17 @@
   user-select: all;
 }
 
-.forge-device-status { font-size: var(--fs-sm); color: var(--c-text-tertiary); }
+.forge-device-status {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
 
 /* --- Unified repo picker --- */
 
 .repo-picker-trigger {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   min-height: var(--btn-h);
   background: var(--c-bg-secondary);
@@ -521,7 +667,9 @@
   transition: border-color var(--dur-micro) var(--ease-micro);
 }
 
-.repo-picker-trigger:hover { border-color: var(--c-accent); }
+.repo-picker-trigger:hover {
+  border-color: var(--c-accent);
+}
 
 .repo-picker-trigger-empty {
   color: var(--c-text-tertiary);
@@ -529,7 +677,8 @@
 }
 
 .repo-picker-trigger-stack {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
   flex: 1;
   min-width: 0;
@@ -538,13 +687,17 @@
 
 .repo-picker-trigger-name {
   font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-picker-trigger-meta {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-picker-chevron {
@@ -554,10 +707,14 @@
 
 /* Forge badge glyph (GH/GL/CB/GT) next to the repo name. */
 .repo-picker-badge {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
-  font-size: 10px; font-weight: 700;
+  font-size: 10px;
+  font-weight: 700;
   font-family: var(--font-mono);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
@@ -565,10 +722,26 @@
   flex-shrink: 0;
 }
 
-.repo-picker-badge-github   { background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary)); border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border)); color: var(--c-text-primary); }
-.repo-picker-badge-gitlab   { background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border)); }
-.repo-picker-badge-codeberg { background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #2185d0 40%, var(--c-border)); }
-.repo-picker-badge-gitea    { background: color-mix(in srgb, #609926 14%, var(--c-bg-primary)); border-color: color-mix(in srgb, #609926 40%, var(--c-border)); }
+.repo-picker-badge-github {
+  background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-text-primary) 30%, var(--c-border));
+  color: var(--c-text-primary);
+}
+
+.repo-picker-badge-gitlab {
+  background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
+}
+
+.repo-picker-badge-codeberg {
+  background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
+}
+
+.repo-picker-badge-gitea {
+  background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, #609926 40%, var(--c-border));
+}
 
 /* State glyph (cloned/remote/local-only) on the right of a row. */
 .repo-picker-state {
@@ -576,9 +749,17 @@
   color: var(--c-text-tertiary);
 }
 
-.repo-picker-state-synced { color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); }
-.repo-picker-state-local  { color: var(--c-text-tertiary); }
-.repo-picker-state-remote { color: var(--c-text-tertiary); }
+.repo-picker-state-synced {
+  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary));
+}
+
+.repo-picker-state-local {
+  color: var(--c-text-tertiary);
+}
+
+.repo-picker-state-remote {
+  color: var(--c-text-tertiary);
+}
 
 /* Dialog shell. Uses <dialog> so we get focus trap + Escape for free.
  *
@@ -613,6 +794,7 @@
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
   width: min(640px, 90vw);
+
   /* Fixed deterministic height: the inner list scrolls, so we don't
    * need the dialog to size to its content. clamp() gives a sane
    * floor (so iPad Safari can't collapse it to 0) and ceiling (so
@@ -624,10 +806,10 @@
   transform: scale(0.97);
   transform-origin: center center;
   transition:
-    opacity   var(--dur-enter),
+    opacity var(--dur-enter),
     transform var(--dur-enter),
-    display   var(--dur-enter) allow-discrete,
-    overlay   var(--dur-enter) allow-discrete;
+    display var(--dur-enter) allow-discrete,
+    overlay var(--dur-enter) allow-discrete;
 }
 
 .repo-picker-dialog[open] {
@@ -653,11 +835,15 @@
 .repo-picker-dialog[open]::backdrop {
   opacity: 1;
 
-  @starting-style { opacity: 0; }
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .repo-picker-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--c-border);
 }
@@ -669,35 +855,47 @@
 }
 
 .repo-picker-header-actions {
-  display: flex; gap: var(--sp-2); align-items: center;
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
 }
 
 .repo-picker-search-row {
   padding: var(--sp-3) var(--sp-4) 0;
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .repo-picker-search-row .tool-form-input {
-  flex: 1; min-width: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .repo-picker-search-actions {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   flex-shrink: 0;
 }
 
 /* Refresh icon-btn: SVG inside, sized to fit the search input height. */
 .repo-picker-search-actions .icon-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
 }
 
 .repo-picker-search-actions .icon-btn svg {
-  width: 14px; height: 14px;
+  width: 14px;
+  height: 14px;
 }
 
 .repo-picker-chips {
-  display: flex; flex-wrap: wrap;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-4) 0;
 }
@@ -713,7 +911,9 @@
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
-.repo-picker-chip:hover { background: var(--c-bg-hover); }
+.repo-picker-chip:hover {
+  background: var(--c-bg-hover);
+}
 
 .repo-picker-chip-active {
   background: color-mix(in srgb, var(--c-accent) 20%, var(--c-bg-secondary));
@@ -725,12 +925,15 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--sp-2) var(--sp-3) var(--sp-3);
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 
 .repo-picker-row {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   background: transparent;
@@ -742,14 +945,19 @@
   transition: background var(--dur-micro) var(--ease-micro);
 }
 
-.repo-picker-row:hover { background: var(--c-bg-hover); }
+.repo-picker-row:hover {
+  background: var(--c-bg-hover);
+}
 
 .repo-picker-row-selected {
   border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
   background: color-mix(in srgb, var(--c-accent) 6%, transparent);
 }
 
-.repo-picker-row-cloning { opacity: 0.6; pointer-events: none; }
+.repo-picker-row-cloning {
+  opacity: 0.6;
+  pointer-events: none;
+}
 
 .repo-picker-row-clone-btn {
   /* Compact action affordance on remote-only rows; appears in the
@@ -760,7 +968,8 @@
 }
 
 .repo-picker-row-stack {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
   flex: 1;
   min-width: 0;
@@ -768,17 +977,23 @@
 
 .repo-picker-row-name {
   font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-picker-row-meta {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-picker-row-right {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   flex-shrink: 0;
 }
 
@@ -798,18 +1013,22 @@
 /* --- Pull request panel (inside the git view) --- */
 
 .git-pr-section {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-2);
   margin-block-start: var(--sp-3);
 }
 
 .git-pr-section-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
 }
 
 .git-pr-placeholder {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border: 1px dashed var(--c-border);
@@ -825,7 +1044,9 @@
   font-weight: 500;
 }
 
-.git-pr-placeholder-link:hover { text-decoration: underline; }
+.git-pr-placeholder-link:hover {
+  text-decoration: underline;
+}
 
 .git-pr-empty {
   font-size: var(--fs-sm);
@@ -839,12 +1060,14 @@
 }
 
 .git-pr-list {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-2);
 }
 
 .git-pr-row {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
@@ -853,7 +1076,9 @@
 }
 
 .git-pr-row-head {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -869,7 +1094,10 @@
   text-decoration: none;
 }
 
-.git-pr-row-title:hover { text-decoration: underline; color: var(--c-accent); }
+.git-pr-row-title:hover {
+  text-decoration: underline;
+  color: var(--c-accent);
+}
 
 .git-pr-row-meta {
   font-size: var(--fs-xs);
@@ -877,7 +1105,8 @@
 }
 
 .git-pr-row-actions {
-  display: flex; flex-wrap: wrap;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-1);
   padding-block-start: var(--sp-1);
 }
@@ -902,10 +1131,24 @@
   font-variant-caps: all-small-caps;
 }
 
-.git-pr-badge-draft { border-color: color-mix(in srgb, var(--c-text-tertiary) 35%, var(--c-border)); }
-.git-pr-badge-ok      { border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border)); color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary)); }
-.git-pr-badge-error   { border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border));   color: color-mix(in srgb, var(--c-danger, #e66666) 85%, var(--c-text-primary)); }
-.git-pr-badge-pending { border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));           color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary)); }
+.git-pr-badge-draft {
+  border-color: color-mix(in srgb, var(--c-text-tertiary) 35%, var(--c-border));
+}
+
+.git-pr-badge-ok {
+  border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border));
+  color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 80%, var(--c-text-primary));
+}
+
+.git-pr-badge-error {
+  border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border));
+  color: color-mix(in srgb, var(--c-danger, #e66666) 85%, var(--c-text-primary));
+}
+
+.git-pr-badge-pending {
+  border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
+  color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary));
+}
 
 /* PR creation dialog (two-stage edit → submit). */
 .pr-dialog {
@@ -919,31 +1162,45 @@
   flex-direction: column;
 }
 
-.pr-dialog[open] { display: flex; }
+.pr-dialog[open] {
+  display: flex;
+}
 
-.pr-dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
+.pr-dialog::backdrop {
+  background: color-mix(in srgb, #000 40%, transparent);
+}
 
 .pr-dialog-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--c-border);
 }
 
-.pr-dialog-title { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.pr-dialog-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
 
 .pr-dialog-body {
   padding: var(--sp-4);
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-3);
   overflow-y: auto;
 }
 
 .pr-dialog-row {
-  display: flex; align-items: flex-end; gap: var(--sp-2);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
 }
 
 .pr-dialog-field {
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   flex: 1;
   min-width: 0;
@@ -955,7 +1212,9 @@
 }
 
 .pr-dialog-check {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
 }
@@ -968,7 +1227,9 @@
 }
 
 .pr-dialog-footer {
-  display: flex; justify-content: flex-end; gap: var(--sp-2);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
   border-top: 1px solid var(--c-border);
 }
@@ -976,7 +1237,9 @@
 /* --- CI pill (next to the branch name) --- */
 
 .git-ci-pill {
-  display: inline-flex; align-items: center; gap: var(--sp-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   padding: 2px var(--sp-2);
   border-radius: 999px;
   border: 1px solid var(--c-border);
@@ -987,39 +1250,55 @@
   margin-inline-start: var(--sp-1);
 }
 
-.git-ci-pill:hover { background: var(--c-bg-hover); }
+.git-ci-pill:hover {
+  background: var(--c-bg-hover);
+}
 
 .git-ci-dot {
-  width: 8px; height: 8px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--c-text-tertiary);
   flex-shrink: 0;
 }
 
-.git-ci-pill-success   { border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border)); }
+.git-ci-pill-success {
+  border-color: color-mix(in srgb, var(--c-accent-2, #66e6bb) 45%, var(--c-border));
+}
 
-.git-ci-pill-success .git-ci-dot { background: var(--c-accent-2, #66e6bb); }
+.git-ci-pill-success .git-ci-dot {
+  background: var(--c-accent-2, #66e6bb);
+}
 
 .git-ci-pill-failure,
-.git-ci-pill-error     { border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border)); }
+.git-ci-pill-error {
+  border-color: color-mix(in srgb, var(--c-danger, #e66666) 45%, var(--c-border));
+}
 
 .git-ci-pill-failure .git-ci-dot,
-.git-ci-pill-error .git-ci-dot { background: var(--c-danger, #e66666); }
+.git-ci-pill-error .git-ci-dot {
+  background: var(--c-danger, #e66666);
+}
 
-.git-ci-pill-pending   { border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border)); }
+.git-ci-pill-pending {
+  border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
+}
 
 .git-ci-pill-pending .git-ci-dot {
   background: var(--c-accent);
   animation: vk-breathe 1.4s var(--ease-standard, ease-in-out) infinite;
 }
 
-.git-ci-pill-canceled .git-ci-dot { background: var(--c-text-tertiary); }
+.git-ci-pill-canceled .git-ci-dot {
+  background: var(--c-text-tertiary);
+}
 
 .git-ci-panel {
   position: absolute;
   z-index: 20;
   margin-top: var(--sp-1);
-  min-width: 18rem; max-width: 28rem;
+  min-width: 18rem;
+  max-width: 28rem;
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -1036,19 +1315,27 @@
 }
 
 .git-ci-panel-list {
-  list-style: none; margin: 0; padding: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .git-ci-panel-row {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-3);
   font-size: var(--fs-sm);
 }
 
-.git-ci-panel-row-success .git-ci-dot { background: var(--c-accent-2, #66e6bb); }
+.git-ci-panel-row-success .git-ci-dot {
+  background: var(--c-accent-2, #66e6bb);
+}
 
 .git-ci-panel-row-failure .git-ci-dot,
-.git-ci-panel-row-error .git-ci-dot   { background: var(--c-danger, #e66666); }
+.git-ci-panel-row-error .git-ci-dot {
+  background: var(--c-danger, #e66666);
+}
 
 .git-ci-panel-row-pending .git-ci-dot {
   background: var(--c-accent);
@@ -1057,7 +1344,9 @@
 
 .git-ci-panel-name {
   flex: 1;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-ci-panel-link {
@@ -1066,7 +1355,9 @@
   text-decoration: none;
 }
 
-.git-ci-panel-link:hover { text-decoration: underline; }
+.git-ci-panel-link:hover {
+  text-decoration: underline;
+}
 
 /* --- Status banner (top of git view) ---
  * Single banner that surfaces forge auth issues, gh CLI install/login
@@ -1080,7 +1371,8 @@
 }
 
 .git-status-banner-row {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
@@ -1096,15 +1388,24 @@
   background: color-mix(in srgb, var(--c-warning, var(--c-danger, #e66666)) 8%, transparent);
 }
 
-.git-status-banner-icon { flex-shrink: 0; font-size: var(--fs-md); }
+.git-status-banner-icon {
+  flex-shrink: 0;
+  font-size: var(--fs-md);
+}
 
-.git-status-banner-msg { flex: 1; min-width: 0; }
+.git-status-banner-msg {
+  flex: 1;
+  min-width: 0;
+}
 
-.git-status-banner-cta { flex-shrink: 0; }
+.git-status-banner-cta {
+  flex-shrink: 0;
+}
 
 .git-status-banner-dismiss {
   flex-shrink: 0;
-  width: 24px; height: 24px;
+  width: 24px;
+  height: 24px;
   font-size: var(--fs-md);
   line-height: 1;
 }
@@ -1120,13 +1421,17 @@
 .git-empty-state {
   flex: 1;
   min-height: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .git-empty-state-card {
-  display: flex; flex-direction: column; align-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-6) var(--sp-5);
+  padding: var(--sp-5) var(--sp-5);
   text-align: center;
   max-width: 32rem;
 }
@@ -1158,7 +1463,8 @@
 
 .overflow-menu {
   z-index: 50;
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   min-width: 12rem;
   padding: var(--sp-1);
   background: var(--c-bg-primary);
@@ -1168,7 +1474,8 @@
 }
 
 .overflow-menu-item {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
@@ -1197,18 +1504,24 @@
 .overflow-menu-item-danger:not([aria-disabled="true"]) {
   color: var(--c-danger, #e66666);
 }
+
 .overflow-menu-item-danger:hover:not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--c-danger, #e66666) 10%, transparent);
 }
 
-.action-bar-inline { padding: 0; margin: 0; }
+.action-bar-inline {
+  padding: 0;
+  margin: 0;
+}
 
 /* Row below a section header: action pills on the left, an auxiliary
  * toggle (e.g. auto-update) pushed to the right via margin-auto. Used
  * on the Tools tab so controls sit under the header/description, not
  * beside it. */
 .section-actions-row {
-  display: flex; align-items: center; gap: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   margin-block: var(--sp-2);
 }
@@ -1219,40 +1532,60 @@
 
 /* Mobile: swap pill bar for the native select. */
 @media (width <= 40rem) {
-  .settings-tab-bar { display: none; }
-  .settings-tab-select-wrap { display: block; }
+  .settings-tab-bar {
+    display: none;
+  }
+
+  .settings-tab-select-wrap {
+    display: block;
+  }
 }
 
 /* Account + About + Diagnostics sections on Settings → General. Flat
    inline rows: label on the left, value / action on the right, stacking
    on mobile when the container narrows past the natural wrap point. */
 .identity-row {
-  display: flex; flex-wrap: wrap;
-  align-items: center; justify-content: space-between;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
 }
 
-.identity-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.identity-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 
-.identity-auth { font-size: var(--fs-md); color: var(--c-text-primary); }
+.identity-auth {
+  font-size: var(--fs-md);
+  color: var(--c-text-primary);
+}
 
 .identity-email {
-  font-size: var(--fs-sm); color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
   font-family: var(--font-mono, ui-monospace, Menlo, monospace);
   overflow-wrap: anywhere;
 }
 
 .about-grid {
-  display: grid; grid-template-columns: max-content 1fr;
+  display: grid;
+  grid-template-columns: max-content 1fr;
   gap: var(--sp-2) var(--sp-4);
   margin: 0;
   font-size: var(--fs-sm);
 }
 
-.about-grid dt { color: var(--c-text-secondary); }
+.about-grid dt {
+  color: var(--c-text-secondary);
+}
 
 .about-grid dd {
-  margin: 0; color: var(--c-text-primary);
+  margin: 0;
+  color: var(--c-text-primary);
   font-family: var(--font-mono, ui-monospace, Menlo, monospace);
   overflow-wrap: anywhere;
 }
@@ -1267,6 +1600,7 @@
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
-  font-family: var(--font-sans); font-size: var(--fs-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
   appearance: auto;
 }

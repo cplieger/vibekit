@@ -30,20 +30,20 @@ func writeSettings(t *testing.T, body string) string {
 func TestArgs_FailModes(t *testing.T) {
 	tests := []struct {
 		name     string
-		settings string // JSON body; "" means no file written
-		corrupt  bool   // true → write invalid JSON directly
-		noFile   bool   // true → use TempDir with no config.json
+		settings string
 		want     []string
+		corrupt  bool
+		noFile   bool
 	}{
-		{"MissingSettingsFallsOpenToTrustAll", "", false, true, []string{"--trust-all-tools"}},
-		{"UnreadableSettingsFallsOpenToTrustAll", "{not json", true, false, []string{"--trust-all-tools"}},
-		{"UnsetModeFallsOpenToTrustAll", `{"some_other_field":"x"}`, false, false, []string{"--trust-all-tools"}},
-		{"UnknownModeFallsOpenToTrustAll", `{"permission_mode":"yolo"}`, false, false, []string{"--trust-all-tools"}},
-		{"PromptModeReturnsEmpty", `{"permission_mode":"prompt"}`, false, false, []string{}},
-		{"TrustAllModeReturnsFlag", `{"permission_mode":"trust-all"}`, false, false, []string{"--trust-all-tools"}},
-		{"TrustListEmptyFallsToPrompt", `{"permission_mode":"trust-list","trust_tools":[]}`, false, false, []string{}},
-		{"MalformedPermissionModeFallsOpenToTrustAll", `{"permission_mode":42}`, false, false, []string{"--trust-all-tools"}},
-		{"MalformedTrustToolsFallsOpenToTrustAll", `{"trust_tools":"fsWrite"}`, false, false, []string{"--trust-all-tools"}},
+		{"MissingSettingsFallsOpenToTrustAll", "", []string{"--trust-all-tools"}, false, true},
+		{"UnreadableSettingsFallsOpenToTrustAll", "{not json", []string{"--trust-all-tools"}, true, false},
+		{"UnsetModeFallsOpenToTrustAll", `{"some_other_field":"x"}`, []string{"--trust-all-tools"}, false, false},
+		{"UnknownModeFallsOpenToTrustAll", `{"permission_mode":"yolo"}`, []string{"--trust-all-tools"}, false, false},
+		{"PromptModeReturnsEmpty", `{"permission_mode":"prompt"}`, []string{}, false, false},
+		{"TrustAllModeReturnsFlag", `{"permission_mode":"trust-all"}`, []string{"--trust-all-tools"}, false, false},
+		{"TrustListEmptyFallsToPrompt", `{"permission_mode":"trust-list","trust_tools":[]}`, []string{}, false, false},
+		{"MalformedPermissionModeFallsOpenToTrustAll", `{"permission_mode":42}`, []string{"--trust-all-tools"}, false, false},
+		{"MalformedTrustToolsFallsOpenToTrustAll", `{"trust_tools":"fsWrite"}`, []string{"--trust-all-tools"}, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

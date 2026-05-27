@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -57,6 +60,7 @@ describe("debouncedDispatch — trailing (default)", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
     debounced("x");
+
     debounced.flush();
     expect(run).toHaveBeenCalledWith("x", expect.anything(), expect.anything());
   });
@@ -65,6 +69,7 @@ describe("debouncedDispatch — trailing (default)", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
     debounced("old");
+
     debounced.flush("override");
     expect(run).toHaveBeenCalledWith("override", expect.anything(), expect.anything());
   });
@@ -82,6 +87,7 @@ describe("debouncedDispatch — trailing (default)", () => {
   it("flush() is no-op when nothing pending and no args", () => {
     const { action, run } = makeAction();
     const debounced = debouncedDispatch(action, { wait: 100 });
+
     debounced.flush();
     expect(run).not.toHaveBeenCalled();
   });

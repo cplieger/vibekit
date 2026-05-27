@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -15,6 +18,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -86,10 +90,15 @@ describe("git.stash_pop", () => {
   });
 
   it("is not retryable", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "no stash" }), { status: 400 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "no stash" }), { status: 400 }),
+    );
     const { stashPop } = await import("./git-changes.js");
     await stashPop.dispatch({ repo: "" });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Stash pop failed"), undefined);
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Stash pop failed"),
+      undefined,
+    );
   });
 });
 
@@ -135,8 +144,13 @@ describe("settings.load", () => {
 
   it("dedupes concurrent dispatches", async () => {
     vi.useFakeTimers();
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
+        ),
     );
     const { loadSettings } = await import("./settings.js");
     const p1 = loadSettings.dispatch(undefined);
@@ -186,8 +200,12 @@ describe("editor.send_plan", () => {
 describe("editor.load_diff", () => {
   it("fetches old and new content in parallel", async () => {
     vi.mocked(apiGet).mockImplementation(async (url: string) => {
-      if (url.includes("/api/git/show")) return { content: "old" };
-      if (url.includes("/api/file")) return { content: "new" };
+      if (url.includes("/api/git/show")) {
+        return { content: "old" };
+      }
+      if (url.includes("/api/file")) {
+        return { content: "new" };
+      }
       return null;
     });
     const { loadDiff } = await import("./editor.js");
@@ -223,8 +241,13 @@ describe("mcp.open_edit", () => {
 
   it("dedupes concurrent dispatches for same id", async () => {
     vi.useFakeTimers();
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({}), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({}), { status: 200 }));
+          }, 50),
+        ),
     );
     const { openEdit } = await import("./mcp.js");
     const p1 = openEdit.dispatch("srv1");
@@ -278,8 +301,13 @@ describe("mcp.search_registry", () => {
 
   it("dedupes concurrent searches with same query", async () => {
     vi.useFakeTimers();
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ servers: [] }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ servers: [] }), { status: 200 }));
+          }, 50),
+        ),
     );
     const { searchRegistry } = await import("./mcp.js");
     const p1 = searchRegistry.dispatch({ q: "abc" });
@@ -307,7 +335,9 @@ describe("forge.delete_local", () => {
   });
 
   it("is not retryable and suppresses error toast", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+    );
     const { deleteLocal } = await import("./forge.js");
     await deleteLocal.dispatch({ repoName: "gone" });
     expect(toast.error).not.toHaveBeenCalled();

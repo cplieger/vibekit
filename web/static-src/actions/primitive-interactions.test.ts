@@ -5,10 +5,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -43,7 +47,9 @@ describe("dedupe + cancel interaction", () => {
       run: (_args, signal) => {
         runCalls++;
         return new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         });
       },
     });
@@ -82,7 +88,9 @@ describe("dedupe + retry interaction", () => {
       retry: { count: 1, delay: 50 },
       run: () => {
         attempt++;
-        if (attempt === 1) throw new ActionError("network fail", { code: "network" });
+        if (attempt === 1) {
+          throw new ActionError("network fail", { code: "network" });
+        }
         return Promise.resolve("success");
       },
     });
@@ -136,6 +144,7 @@ describe("scope + dedupe combined", () => {
 describe("scope with undefined arg value", () => {
   it("scope key 'chat:undefined' serializes dispatches with chatID=undefined together", async () => {
     // Document: 'chat:' + undefined === 'chat:undefined'
+
     expect("chat:" + undefined).toBe("chat:undefined");
 
     let callCount = 0;
@@ -143,11 +152,16 @@ describe("scope with undefined arg value", () => {
 
     const action = defineAction<{ chatID: string | undefined }, string>({
       name: "test.scope_undefined",
+
       scope: (args) => "chat:" + args.chatID,
       run: () => {
         callCount++;
         if (callCount === 1) {
-          return new Promise<string>((r) => { resolveFirst = () => r("first"); });
+          return new Promise<string>((r) => {
+            resolveFirst = () => {
+              r("first");
+            };
+          });
         }
         return Promise.resolve("second");
       },
@@ -223,11 +237,19 @@ describe("deduped dispatch fires per-call callbacks", () => {
 
     // Original got the real error.
     expect(onError1).toHaveBeenCalledTimes(1);
-    expect(onError1.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+    expect(onError1.mock.calls[0]![0]).toMatchObject({
+      message: "server rejected",
+      code: "validation_failed",
+      status: 422,
+    });
 
     // Deduped caller now gets the SAME real error (not the synthetic one).
     expect(onError2).toHaveBeenCalledTimes(1);
-    expect(onError2.mock.calls[0]![0]).toMatchObject({ message: "server rejected", code: "validation_failed", status: 422 });
+    expect(onError2.mock.calls[0]![0]).toMatchObject({
+      message: "server rejected",
+      code: "validation_failed",
+      status: 422,
+    });
 
     // Success was never called.
     expect(onSuccess2).not.toHaveBeenCalled();
@@ -239,14 +261,22 @@ describe("deduped dispatch fires per-call callbacks", () => {
 // ===========================================================================
 
 describe("debouncedDispatch leading flush", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("leading mode: first fires immediately, flush() fires the most-recently-suppressed args", async () => {
     const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_leading_flush",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
 
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
@@ -261,6 +291,7 @@ describe("debouncedDispatch leading flush", () => {
     expect(runArgs).toEqual(["a"]);
 
     // flush() during leading mode now fires the most-recent suppressed args
+
     dbg.flush();
     expect(runArgs).toEqual(["a", "b"]);
 
@@ -274,9 +305,13 @@ describe("debouncedDispatch leading flush", () => {
 
   it("flush with explicit args fires even in leading mode", async () => {
     const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_leading_flush_explicit",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
 
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
@@ -284,6 +319,7 @@ describe("debouncedDispatch leading flush", () => {
     dbg("b"); // suppressed
 
     // flush with explicit args always fires
+
     dbg.flush("z");
     expect(runArgs).toContain("z");
   });
@@ -296,6 +332,7 @@ describe("debouncedDispatch leading flush", () => {
 describe("transportAction idempotency_key in payload", () => {
   it("sends idempotency key via ctx when idempotencyKey: true", async () => {
     const ctxKeys: (string | undefined)[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<{ chatID: string }, void>({
       name: "test.transport_idem_ctx",
       idempotencyKey: true,
@@ -323,7 +360,11 @@ describe("transportAction idempotency_key in payload", () => {
     await action.dispatch({ chatID: "c1" });
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const cmd = mockSend.mock.calls[0]![0] as { type: string; chat_id: string; payload?: { idempotency_key?: string } };
+    const cmd = mockSend.mock.calls[0]![0] as {
+      type: string;
+      chat_id: string;
+      payload?: { idempotency_key?: string };
+    };
     expect(cmd.type).toBe("cancel");
     expect(cmd.chat_id).toBe("c1");
     // F3 fix verification: the idempotency_key MUST be in the payload.
@@ -372,7 +413,9 @@ describe("dedupe shared promise behavior", () => {
       dedupe: true,
       run: () => {
         runCalls++;
-        return new Promise<string>((r) => { resolveRun = r; });
+        return new Promise<string>((r) => {
+          resolveRun = r;
+        });
       },
     });
 
@@ -397,14 +440,22 @@ describe("dedupe shared promise behavior", () => {
 // ===========================================================================
 
 describe("debouncedDispatch leading trailing timer after cancel", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel + re-dispatch within cooldown fires via trailing timer", async () => {
     const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_redispatch",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 
@@ -424,9 +475,13 @@ describe("debouncedDispatch leading trailing timer after cancel", () => {
 
   it("multiple suppressed calls after cancel: only latest args fire", async () => {
     const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_multi_suppress",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 
@@ -445,9 +500,13 @@ describe("debouncedDispatch leading trailing timer after cancel", () => {
 
   it("cancel during trailing-timer window prevents suppressed args from firing", async () => {
     const runArgs: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_cancel_trailing_window",
-      run: (args) => { runArgs.push(args); return Promise.resolve(); },
+      run: (args) => {
+        runArgs.push(args);
+        return Promise.resolve();
+      },
     });
     const dbg = debouncedDispatch(action, { wait: 100, leading: true });
 
@@ -467,6 +526,7 @@ describe("debouncedDispatch leading trailing timer after cancel", () => {
   });
 
   it("isPending() is true after suppression in leading mode (trailing-fire schedules new cooldown)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<string, void>({
       name: "test.debounce_leading_pending",
       run: () => Promise.resolve(),

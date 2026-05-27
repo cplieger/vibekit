@@ -136,13 +136,13 @@ func TestReadFirstLine(t *testing.T) {
 
 	tests := []struct {
 		name                 string
-		content              []byte // raw bytes (supports non-UTF8 injection tests)
-		useMissingPath       bool   // when true, pass a non-existent path
-		want                 string // exact match (empty string = skip exact check unless wantEmpty)
-		wantEmpty            bool   // explicitly expect ""
-		wantNotContain       []string
+		want                 string
 		wantContains         string
 		wantSuffix           string
+		content              []byte
+		wantNotContain       []string
+		useMissingPath       bool
+		wantEmpty            bool
 		checkValidUTF8Prefix bool
 	}{
 		// Original 5 cases.
@@ -586,7 +586,6 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 		t.Errorf("steering file truncated under concurrency; no Capabilities section:\n%s", s)
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // Per-repo steering inventory: frontmatter parser + grouped renderer.

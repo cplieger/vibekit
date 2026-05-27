@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -25,13 +28,18 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("two retry-configured actions in the same scope", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("second action waits for first action's retries to complete before starting", async () => {
     let attemptA = 0;
     let attemptB = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.scope_retry_A",
       scope: "shared",
@@ -40,11 +48,14 @@ describe("two retry-configured actions in the same scope", () => {
       error: false,
       run: () => {
         attemptA++;
-        if (attemptA < 3) throw new ActionError("net", { code: "network" });
+        if (attemptA < 3) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("A-done");
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.scope_retry_B",
       scope: "shared",
@@ -88,6 +99,7 @@ describe("two retry-configured actions in the same scope", () => {
     let attemptA = 0;
     let attemptB = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.scope_retry_exhaust_A",
       scope: "shared",
@@ -100,6 +112,7 @@ describe("two retry-configured actions in the same scope", () => {
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.scope_retry_exhaust_B",
       scope: "shared",
@@ -140,6 +153,7 @@ describe("onSuccess → dispatch chain with same scope", () => {
   it("chained dispatch via onSuccess runs after the triggering action completes", async () => {
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.chain_A",
       scope: "chain",
@@ -149,6 +163,7 @@ describe("onSuccess → dispatch chain with same scope", () => {
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.chain_B",
       scope: "chain",
@@ -189,16 +204,20 @@ describe("onSuccess → dispatch chain with same scope", () => {
 
     // Dispatch with onSuccess that chains ONE more dispatch (depth 1 → 0)
     let chainedPromise: Promise<unknown> | null = null;
-    const p = action.dispatch({ depth: 1 }, {
-      onSuccess: () => {
-        dispatchCount++;
-        // Only chain once (depth 0 has no onSuccess)
-        chainedPromise = action.dispatch({ depth: 0 });
+    const p = action.dispatch(
+      { depth: 1 },
+      {
+        onSuccess: () => {
+          dispatchCount++;
+          // Only chain once (depth 0 has no onSuccess)
+          chainedPromise = action.dispatch({ depth: 0 });
+        },
       },
-    });
+    );
 
     await p;
     // Await the chained dispatch directly
+
     await chainedPromise;
 
     expect(dispatchCount).toBe(1); // onSuccess fired exactly once
@@ -213,13 +232,18 @@ describe("onSuccess → dispatch chain with same scope", () => {
 // ===========================================================================
 
 describe("cancellation during retry unblocks queued action", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancelling a retrying action lets the queued action proceed", async () => {
     let attemptA = 0;
     let attemptB = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.cancel_retry_A",
       scope: "cancel-scope",
@@ -232,6 +256,7 @@ describe("cancellation during retry unblocks queued action", () => {
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.cancel_retry_B",
       scope: "cancel-scope",
@@ -268,20 +293,29 @@ describe("cancellation during retry unblocks queued action", () => {
   it("cancelling all in-flight for one action does not cancel a different action in same scope", async () => {
     let resolveB: (() => void) | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.cancel_isolation_A",
       scope: "iso-scope",
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 100 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.cancel_isolation_B",
       scope: "iso-scope",
       error: false,
-      run: () => new Promise<string>((r) => { resolveB = () => r("B-ok"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveB = () => {
+            r("B-ok");
+          };
+        }),
     });
 
     const pA = actionA.dispatch();
@@ -309,19 +343,30 @@ describe("cancellation during retry unblocks queued action", () => {
 // ===========================================================================
 
 describe("retry button re-dispatch respects scope", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("manual retry via toast button queues behind active scope occupant", async () => {
     let attemptA = 0;
     let resolveOccupant: (() => void) | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const occupant = defineAction<void, string>({
       name: "test.retry_scope_occupant",
       scope: "retry-scope",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ-done"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => {
+            r("occ-done");
+          };
+        }),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.retry_scope_A",
       scope: "retry-scope",
@@ -365,15 +410,19 @@ describe("retry button re-dispatch respects scope", () => {
 
 describe("throwing callbacks don't break scope chain", () => {
   it("onSuccess throwing does not re-record action as error", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cb_throw_success",
       scope: "cb-scope",
       run: () => Promise.resolve("ok"),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await action.dispatch(undefined, {
-      onSuccess: () => { throw new Error("callback boom"); },
+      onSuccess: () => {
+        throw new Error("callback boom");
+      },
     });
     consoleSpy.mockRestore();
 
@@ -387,21 +436,29 @@ describe("throwing callbacks don't break scope chain", () => {
   it("onSuccess throwing does not block next action in scope chain", async () => {
     let bRan = false;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.cb_throw_chain_A",
       scope: "cb-chain",
       run: () => Promise.resolve("A"),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.cb_throw_chain_B",
       scope: "cb-chain",
-      run: () => { bRan = true; return Promise.resolve("B"); },
+      run: () => {
+        bRan = true;
+        return Promise.resolve("B");
+      },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const pA = actionA.dispatch(undefined, {
-      onSuccess: () => { throw new Error("callback boom"); },
+      onSuccess: () => {
+        throw new Error("callback boom");
+      },
     });
     const pB = actionB.dispatch();
 
@@ -413,6 +470,7 @@ describe("throwing callbacks don't break scope chain", () => {
   });
 
   it("onError throwing does not reject dispatch promise", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cb_throw_error",
       scope: "cb-err-scope",
@@ -420,9 +478,12 @@ describe("throwing callbacks don't break scope chain", () => {
       run: () => Promise.reject(new Error("fail")),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await action.dispatch(undefined, {
-      onError: () => { throw new Error("callback boom"); },
+      onError: () => {
+        throw new Error("callback boom");
+      },
     });
     consoleSpy.mockRestore();
 

@@ -3,11 +3,25 @@
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
 import {
-  parseContextSize, setSessions, getSessions, get, setActive,
-  appendMessage, upsertMessage, upsertHeader, removeChat,
-  addPendingChange, setThinking, setWorkingLabel,
-  enqueuePrompt, dequeuePrompt, setQueuedPrompt, queuedPrompt,
-  setName, peekQueuedAttachments, setLastQueuedAttachments,
+  parseContextSize,
+  setSessions,
+  getSessions,
+  get,
+  setActive,
+  appendMessage,
+  upsertMessage,
+  upsertHeader,
+  removeChat,
+  addPendingChange,
+  setThinking,
+  setWorkingLabel,
+  enqueuePrompt,
+  dequeuePrompt,
+  setQueuedPrompt,
+  queuedPrompt,
+  setName,
+  peekQueuedAttachments,
+  setLastQueuedAttachments,
 } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -42,7 +56,14 @@ function makeSession(chatID: string): Session {
     auto_approve_crew: false,
     supervised_mode: false,
     pending_changes: [],
-    usage: { context_pct: 0, context_size: 0, credits: 0, turn_count: 0, last_turn_ms: 0, has_real_data: false },
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
     message_count: 0,
     messages: [],
     has_more: false,
@@ -76,7 +97,9 @@ describe("Store idempotency (property-based)", () => {
       fc.property(fc.array(arbMessage(), { minLength: 1, maxLength: 20 }), (msgs) => {
         resetStore("chat-1");
         const unique = msgs.map((m, i) => ({ ...m, id: `msg-${String(i)}` }));
-        for (const m of unique) appendMessage("chat-1", m);
+        for (const m of unique) {
+          appendMessage("chat-1", m);
+        }
         const session = get("chat-1")!;
         expect(session.messages).toHaveLength(unique.length);
       }),
@@ -132,16 +155,15 @@ describe("Store idempotency (property-based)", () => {
 
   it("addPendingChange: different tool_call_ids all land", () => {
     fc.assert(
-      fc.property(
-        fc.array(arbPendingChange(), { minLength: 1, maxLength: 10 }),
-        (changes) => {
-          resetStore("chat-1");
-          const unique = changes.map((c, i) => ({ ...c, tool_call_id: `tc-${String(i)}` }));
-          for (const c of unique) addPendingChange("chat-1", c);
-          const session = get("chat-1")!;
-          expect(session.pending_changes).toHaveLength(unique.length);
-        },
-      ),
+      fc.property(fc.array(arbPendingChange(), { minLength: 1, maxLength: 10 }), (changes) => {
+        resetStore("chat-1");
+        const unique = changes.map((c, i) => ({ ...c, tool_call_id: `tc-${String(i)}` }));
+        for (const c of unique) {
+          addPendingChange("chat-1", c);
+        }
+        const session = get("chat-1")!;
+        expect(session.pending_changes).toHaveLength(unique.length);
+      }),
       { numRuns: 100 },
     );
   });
@@ -170,7 +192,7 @@ describe("Store idempotency (property-based)", () => {
 });
 
 describe("parseContextSize (table-driven)", () => {
-  const cases: Array<{ input: string; expected: number | undefined }> = [
+  const cases: { input: string; expected: number | undefined }[] = [
     { input: "128K context", expected: 128_000 },
     { input: "200k context", expected: 200_000 },
     { input: "32K context window", expected: 32_000 },
@@ -211,7 +233,14 @@ describe("Store removeChat index consistency (property-based)", () => {
       available_models: [],
       auto_approve_crew: false,
       supervised_mode: false,
-      usage: { context_pct: 0, context_size: 0, credits: 0, turn_count: 0, last_turn_ms: 0, has_real_data: false },
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        turn_count: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
       message_count: 0,
       created_at: 0,
       updated_at: 0,
@@ -276,7 +305,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 20 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) enqueuePrompt("chat-1", text);
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           const dequeued: string[] = [];
           let next = dequeuePrompt("chat-1");
           while (next !== undefined) {
@@ -306,7 +337,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) enqueuePrompt("chat-1", text);
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           setQueuedPrompt("chat-1", undefined);
           expect(queuedPrompt("chat-1")).toBeUndefined();
           expect(dequeuePrompt("chat-1")).toBeUndefined();
@@ -323,7 +356,9 @@ describe("Store queue operations (property-based)", () => {
         fc.string({ minLength: 1, maxLength: 50 }),
         (items, replacement) => {
           resetStore("chat-1");
-          for (const text of items) enqueuePrompt("chat-1", text);
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           setQueuedPrompt("chat-1", replacement);
           expect(queuedPrompt("chat-1")).toBe(replacement);
           expect(dequeuePrompt("chat-1")).toBe(replacement);
@@ -340,7 +375,9 @@ describe("Store queue operations (property-based)", () => {
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
         (items) => {
           resetStore("chat-1");
-          for (const text of items) enqueuePrompt("chat-1", text);
+          for (const text of items) {
+            enqueuePrompt("chat-1", text);
+          }
           if (items.length > 0) {
             expect(queuedPrompt("chat-1")).toBe(items[0]);
             expect(queuedPrompt("chat-1")).toBe(items[0]);
@@ -437,17 +474,24 @@ describe("Store setLastQueuedAttachments", () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // Per-message + per-tool + per-crew signal architecture
 // ---------------------------------------------------------------------------
 
 import {
-  appendChunk, upsertToolCall,
-  ensureStreamingSig, getStreamingSig, clearStreamingSig,
-  ensureReasoningSig, getReasoningSig, clearReasoningSig,
-  ensureToolCallSig, getToolCallSig, clearToolCallSig,
-  ensureCrewSig, getCrewSig, clearCrewSig,
+  appendChunk,
+  upsertToolCall,
+  ensureStreamingSig,
+  getStreamingSig,
+  clearStreamingSig,
+  ensureReasoningSig,
+  getReasoningSig,
+  clearReasoningSig,
+  ensureToolCallSig,
+  clearToolCallSig,
+  ensureCrewSig,
+  getCrewSig,
+  clearCrewSig,
 } from "./store.js";
 import type { ToolCall, Crew } from "./types.js";
 
@@ -503,7 +547,11 @@ describe("streaming signals", () => {
 
 describe("per-tool signal", () => {
   const baseTC = (id: string, status: ToolCall["status"]): ToolCall => ({
-    id, title: "readFile", kind: "read", status, ts: 0,
+    id,
+    title: "readFile",
+    kind: "read",
+    status,
+    ts: 0,
   });
 
   it("upsertToolCall: first add bumps global, subsequent updates fan via signal", () => {
@@ -516,8 +564,8 @@ describe("per-tool signal", () => {
 
     // Now mount-time signal subscription happens.
     const sig = ensureToolCallSig("t1", baseTC("t1", "pending"));
-    let firedCount = 0;
-    let lastValue: ToolCall | null = null;
+    const firedCount = 0;
+    const lastValue: ToolCall | null = null;
     // Manually subscribe via reading sig.value in an effect-like wrapper.
     // (Tests don't import `effect`; we use peek/value to simulate the flow.)
     const observed: ToolCall[] = [];
@@ -527,7 +575,9 @@ describe("per-tool signal", () => {
     expect(sig.value.status).toBe("completed");
 
     // Idle reads to satisfy the linter.
-    void firedCount; void lastValue; void observed;
+    void firedCount;
+    void lastValue;
+    void observed;
 
     clearToolCallSig("t1");
   });
@@ -546,7 +596,13 @@ describe("per-crew signal", () => {
   const sampleCrew = (label: string): Crew => ({
     group: "g-1",
     subagents: [
-      { sub_session_id: "s1", agent_name: "agent", initial_query: label, status: "working", agent_subtask_id: "t1" },
+      {
+        sub_session_id: "s1",
+        agent_name: "agent",
+        initial_query: label,
+        status: "working",
+        agent_subtask_id: "t1",
+      },
     ],
   });
 

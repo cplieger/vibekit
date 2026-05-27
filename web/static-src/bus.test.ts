@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  onSSE, dispatch, onBus, emitBus,
-  BUS_KEYS_ESCAPE, BUS_TRANSPORT_GAP, BUS_TURN_IDLE,
+  onSSE,
+  dispatch,
+  onBus,
+  emitBus,
+  BUS_KEYS_ESCAPE,
+  BUS_TRANSPORT_GAP,
+  BUS_TURN_IDLE,
 } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 
@@ -10,7 +15,12 @@ import type { ServerEvent } from "./types.js";
 // ---------------------------------------------------------------------------
 
 describe("dispatch (SSE routing)", () => {
-  const cases: { name: string; setup: () => { handler: ReturnType<typeof vi.fn>; unsub: () => void }; event: ServerEvent; expectedCalls: unknown[][] }[] = [
+  const cases: {
+    name: string;
+    setup: () => { handler: ReturnType<typeof vi.fn>; unsub: () => void };
+    event: ServerEvent;
+    expectedCalls: unknown[][];
+  }[] = [
     {
       name: "single subscriber receives event with payload",
       setup: () => {
@@ -79,7 +89,11 @@ describe("dispatch (SSE routing)", () => {
     const unsub2 = onSSE("error", h2);
     const unsub3 = onSSE("error", h3);
     try {
-      const evt: ServerEvent = { type: "error", chat_id: "c1", payload: { code: "test", message: "fail" } };
+      const evt: ServerEvent = {
+        type: "error",
+        chat_id: "c1",
+        payload: { code: "test", message: "fail" },
+      };
       dispatch(evt);
       expect(h1).toHaveBeenCalledTimes(1);
       expect(h2).toHaveBeenCalledTimes(1);
@@ -94,12 +108,16 @@ describe("dispatch (SSE routing)", () => {
 
   it("handler error does not break other handlers", () => {
     const h1 = vi.fn();
-    const throwing = vi.fn(() => { throw new Error("boom"); });
+    const throwing = vi.fn(() => {
+      throw new Error("boom");
+    });
     const h3 = vi.fn();
     const unsub1 = onSSE("forges_changed", h1);
     const unsub2 = onSSE("forges_changed", throwing);
     const unsub3 = onSSE("forges_changed", h3);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      /* noop */
+    });
     try {
       dispatch({ type: "forges_changed", chat_id: "" });
       expect(h1).toHaveBeenCalledTimes(1);
@@ -119,8 +137,10 @@ describe("dispatch (SSE routing)", () => {
 
   it("handler that unsubscribes a later handler does not skip it", () => {
     const h2 = vi.fn();
-    let unsub2: () => void;
-    const h1 = vi.fn(() => { unsub2(); });
+    const unsub2: () => void;
+    const h1 = vi.fn(() => {
+      unsub2();
+    });
     const unsub1 = onSSE("forges_changed", h1);
     unsub2 = onSSE("forges_changed", h2);
     try {
@@ -135,8 +155,10 @@ describe("dispatch (SSE routing)", () => {
 
   it("handler that unsubscribes itself does not affect others", () => {
     const h2 = vi.fn();
-    let unsub1: () => void;
-    const h1 = vi.fn(() => { unsub1(); });
+    const unsub1: () => void;
+    const h1 = vi.fn(() => {
+      unsub1();
+    });
     unsub1 = onSSE("forges_changed", h1);
     const unsub2 = onSSE("forges_changed", h2);
     try {
@@ -213,12 +235,16 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("handler error does not break other handlers", () => {
     const h1 = vi.fn();
-    const throwing = vi.fn(() => { throw new Error("oops"); });
+    const throwing = vi.fn(() => {
+      throw new Error("oops");
+    });
     const h3 = vi.fn();
     const unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
     const unsub2 = onBus(BUS_KEYS_ESCAPE, throwing);
     const unsub3 = onBus(BUS_KEYS_ESCAPE, h3);
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      /* noop */
+    });
     try {
       emitBus(BUS_KEYS_ESCAPE);
       expect(h1).toHaveBeenCalledTimes(1);
@@ -238,8 +264,10 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("handler that unsubscribes a later handler does not skip it", () => {
     const h2 = vi.fn();
-    let unsub2: () => void;
-    const h1 = vi.fn(() => { unsub2(); });
+    const unsub2: () => void;
+    const h1 = vi.fn(() => {
+      unsub2();
+    });
     const unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
     unsub2 = onBus(BUS_KEYS_ESCAPE, h2);
     try {
@@ -254,8 +282,10 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("handler that unsubscribes itself does not affect others", () => {
     const h2 = vi.fn();
-    let unsub1: () => void;
-    const h1 = vi.fn(() => { unsub1(); });
+    const unsub1: () => void;
+    const h1 = vi.fn(() => {
+      unsub1();
+    });
     unsub1 = onBus(BUS_KEYS_ESCAPE, h1);
     const unsub2 = onBus(BUS_KEYS_ESCAPE, h2);
     try {

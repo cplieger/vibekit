@@ -74,11 +74,9 @@ ARG BUILD_VERSION=dev
 RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json \
     && /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json
 
-# Concatenate per-feature CSS splits into the served bundle. Mirrors
-# lib/shell/build-css.sh; inlined here because the Docker build context
-# is apps/vibekit/ and can't reach the repo-level lib/. Behavior must
-# stay in sync with that script: skip blank lines and #-comments, cat
-# each listed file (paths relative to manifest dir) into the output.
+# Concatenate per-feature CSS splits into the served bundle.
+# Behavior: skip blank lines and #-comments, cat each listed file
+# (paths relative to manifest dir) into the output.
 RUN set -eu; \
     : > static/style.css; \
     while IFS= read -r line || [ -n "$line" ]; do \

@@ -23,9 +23,14 @@ export interface UIState {
 
 function empty(): UIState {
   return {
-    tab_order: [], active_view: "", shell_open: false,
-    editor_files: [], fb_path: "", theme: null,
-    merge_method: {}, merge_delete_branch: {},
+    tab_order: [],
+    active_view: "",
+    shell_open: false,
+    editor_files: [],
+    fb_path: "",
+    theme: null,
+    merge_method: {},
+    merge_delete_branch: {},
     dismissed_banners: [],
   };
 }
@@ -33,7 +38,9 @@ function empty(): UIState {
 export function load(): UIState {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw === null) return empty();
+    if (raw === null) {
+      return empty();
+    }
     const d = JSON.parse(raw) as Partial<UIState>;
     const e = empty();
     return { ...e, ...d };

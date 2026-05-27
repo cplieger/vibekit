@@ -29,26 +29,40 @@ export function refreshContextUI(s: Session): void {
     msgCount++;
     if (!pastWatermark) {
       summarizedCount++;
-      if (m.id === watermark) pastWatermark = true;
+      if (m.id === watermark) {
+        pastWatermark = true;
+      }
     }
-    if (m.tool_calls !== undefined) toolCount += m.tool_calls.length;
+    if (m.tool_calls !== undefined) {
+      toolCount += m.tool_calls.length;
+    }
   }
   updateContextBar({
-    pct: u.context_pct, contextSize: u.context_size, credits: u.credits,
-    turnCount: u.turn_count, lastTurnMs: u.last_turn_ms, model: s.model,
-    metering, msgCount, toolCount, summarizedCount,
+    pct: u.context_pct,
+    contextSize: u.context_size,
+    credits: u.credits,
+    turnCount: u.turn_count,
+    lastTurnMs: u.last_turn_ms,
+    model: s.model,
+    metering,
+    msgCount,
+    toolCount,
+    summarizedCount,
   });
-  const cutoff = u.context_size > 0
-    ? ((u.context_size - CONTEXT_RESERVE_TOKENS) / u.context_size) * 100
-    : DEFAULT_CUTOFF_PCT;
+  const cutoff =
+    u.context_size > 0
+      ? ((u.context_size - CONTEXT_RESERVE_TOKENS) / u.context_size) * 100
+      : DEFAULT_CUTOFF_PCT;
   const full = u.context_pct >= cutoff;
 
-  const isThinking = s.thinking ?? false;
+  const isThinking = s.thinking;
   if (_prevThinking && !isThinking) {
     emitBus(BUS_TURN_IDLE, s.id);
     setInputDisabled(
       full,
-      full ? "Context nearly full. kiro-cli will compact automatically on the next turn." : undefined,
+      full
+        ? "Context nearly full. kiro-cli will compact automatically on the next turn."
+        : undefined,
     );
   }
   _prevThinking = isThinking;

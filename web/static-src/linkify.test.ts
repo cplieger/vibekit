@@ -8,43 +8,82 @@ import fc from "fast-check";
 
 // Re-create the regex and constants locally to test in isolation (no DOM needed).
 const FILE_EXTS = [
-  "ts", "tsx", "js", "jsx", "mjs", "cjs",
-  "go", "mod", "sum",
-  "py", "rs", "java", "kt", "rb", "php", "cs", "cpp", "cc", "c", "h", "hpp",
-  "sh", "bash", "zsh",
-  "json", "yaml", "yml", "toml", "xml", "ini", "env",
-  "md", "mdx", "txt", "rst",
-  "html", "htm", "css", "scss", "sass",
-  "sql", "graphql", "proto",
-  "tmp", "log", "lock",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "go",
+  "mod",
+  "sum",
+  "py",
+  "rs",
+  "java",
+  "kt",
+  "rb",
+  "php",
+  "cs",
+  "cpp",
+  "cc",
+  "c",
+  "h",
+  "hpp",
+  "sh",
+  "bash",
+  "zsh",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "ini",
+  "env",
+  "md",
+  "mdx",
+  "txt",
+  "rst",
+  "html",
+  "htm",
+  "css",
+  "scss",
+  "sass",
+  "sql",
+  "graphql",
+  "proto",
+  "tmp",
+  "log",
+  "lock",
   "Dockerfile",
 ];
 
 const PATH_RX = new RegExp(
-  "(?<![\\w/.-])([\\w.-]+\\/[\\w./-]*\\.(?:" + FILE_EXTS.join("|") + "))(?::(\\d+)(?::\\d+)?)?(?![\\w/.-])",
+  "(?<![\\w/.-])([\\w.-]+\\/[\\w./-]*\\.(?:" +
+    FILE_EXTS.join("|") +
+    "))(?::(\\d+)(?::\\d+)?)?(?![\\w/.-])",
   "g",
 );
 
 /** Arbitrary for a single path segment (alphanumeric only, no dots/dashes to avoid lookbehind issues). */
-const segment = fc.array(
-  fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789".split("")),
-  { minLength: 1, maxLength: 8 },
-).map(cs => cs.join(""));
+const segment = fc
+  .array(fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789".split("")), {
+    minLength: 1,
+    maxLength: 8,
+  })
+  .map((cs) => cs.join(""));
 
 /** Arbitrary for a valid file extension from FILE_EXTS. */
 const ext = fc.constantFrom(...FILE_EXTS);
 
 /** Arbitrary for a multi-segment path like `src/foo/bar.ts`. */
-const validPath = fc.tuple(
-  fc.array(segment, { minLength: 1, maxLength: 3 }),
-  segment,
-  ext,
-).map(([dirs, basename, e]) => `${dirs.join("/")}/${basename}.${e}`);
+const validPath = fc
+  .tuple(fc.array(segment, { minLength: 1, maxLength: 3 }), segment, ext)
+  .map(([dirs, basename, e]) => `${dirs.join("/")}/${basename}.${e}`);
 
 /** Arbitrary for an optional line number suffix. */
 const lineSuffix = fc.oneof(
   fc.constant(""),
-  fc.nat({ max: 9999 }).map(n => `:${n}`),
+  fc.nat({ max: 9999 }).map((n) => `:${n}`),
   fc.tuple(fc.nat({ max: 9999 }), fc.nat({ max: 200 })).map(([l, c]) => `:${l}:${c}`),
 );
 
@@ -52,19 +91,25 @@ const lineSuffix = fc.oneof(
  * Boundary characters that are NOT in [\w/.-] — these ensure the lookbehind
  * and lookahead assertions pass, so the regex will match.
  */
-const safeBoundaryBefore = fc.constantFrom(" ", "\n", "\t", "(", "\"", "'", ",", ";", "[", "{");
-const safeBoundaryAfter = fc.constantFrom(" ", "\n", "\t", ")", "\"", "'", ",", ";", "]", "}");
+const safeBoundaryBefore = fc.constantFrom(" ", "\n", "\t", "(", '"', "'", ",", ";", "[", "{");
+const safeBoundaryAfter = fc.constantFrom(" ", "\n", "\t", ")", '"', "'", ",", ";", "]", "}");
 
 describe("PATH_RX property-based tests", () => {
   it("matches valid paths embedded in prose with safe boundaries", () => {
     fc.assert(
-      fc.property(validPath, lineSuffix, safeBoundaryBefore, safeBoundaryAfter, (path, suffix, pre, post) => {
-        const input = `${pre}${path}${suffix}${post}`;
-        PATH_RX.lastIndex = 0;
-        const m = PATH_RX.exec(input);
-        expect(m).not.toBeNull();
-        expect(m![1]).toBe(path);
-      }),
+      fc.property(
+        validPath,
+        lineSuffix,
+        safeBoundaryBefore,
+        safeBoundaryAfter,
+        (path, suffix, pre, post) => {
+          const input = `${pre}${path}${suffix}${post}`;
+          PATH_RX.lastIndex = 0;
+          const m = PATH_RX.exec(input);
+          expect(m).not.toBeNull();
+          expect(m![1]).toBe(path);
+        },
+      ),
       { numRuns: 500 },
     );
   });
@@ -100,7 +145,7 @@ describe("PATH_RX property-based tests", () => {
 
   it("does not capture trailing punctuation as part of the path", () => {
     // Punctuation chars that are NOT in [\w/.-] won't be captured
-    const punct = fc.constantFrom(",", ")", ";", ":", "'", "\"", "]", "}");
+    const punct = fc.constantFrom(",", ")", ";", ":", "'", '"', "]", "}");
     fc.assert(
       fc.property(validPath, punct, (path, p) => {
         const input = ` ${path}${p} `;
@@ -143,7 +188,9 @@ describe("PATH_RX property-based tests", () => {
         PATH_RX.lastIndex = 0;
         const matches: RegExpExecArray[] = [];
         let m: RegExpExecArray | null;
-        while ((m = PATH_RX.exec(input)) !== null) matches.push(m);
+        while ((m = PATH_RX.exec(input)) !== null) {
+          matches.push(m);
+        }
         // If any match captures exactly our path, the lookahead failed to reject
         // (the suffix char should prevent matching at that exact boundary)
         let violated = false;

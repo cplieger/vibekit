@@ -8,7 +8,8 @@
 //   release(); // restore focus to the element that was focused before
 // ---------------------------------------------------------------------------
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Trap focus within `container`. Returns a release function that
  *  restores focus to the previously-focused element. */
@@ -23,14 +24,20 @@ export function trapFocus(container: HTMLElement): () => void {
 
   // Focus the first focusable element.
   const items = getFocusable();
-  if (items.length > 0) items[0]!.focus();
+  if (items.length > 0) {
+    items[0]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  }
 
   function onKeyDown(e: KeyboardEvent): void {
-    if (e.key !== "Tab") return;
+    if (e.key !== "Tab") {
+      return;
+    }
     const focusable = getFocusable();
-    if (focusable.length === 0) return;
-    const first = focusable[0]!;
-    const last = focusable[focusable.length - 1]!;
+    if (focusable.length === 0) {
+      return;
+    }
+    const first = focusable[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const last = focusable[focusable.length - 1]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
     if (e.shiftKey) {
       if (document.activeElement === first) {

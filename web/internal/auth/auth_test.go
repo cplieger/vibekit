@@ -300,10 +300,10 @@ func TestHumanizeAccountType(t *testing.T) {
 
 func TestWhoamiInfo(t *testing.T) {
 	tests := []struct {
+		check   func(t *testing.T, got *WhoamiResponse)
 		name    string
 		in      string
 		wantErr bool
-		check   func(t *testing.T, got *WhoamiResponse)
 	}{
 		{
 			name: "BuilderId normalises account_type to auth",
@@ -1467,8 +1467,8 @@ func TestBuildLoginArgs(t *testing.T) {
 // contract Grafana alert rules depend on.
 func TestClassifyLoginStartErr(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want int
 	}{
 		{

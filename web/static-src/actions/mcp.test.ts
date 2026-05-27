@@ -4,13 +4,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-  CancellableSlot: class { start() { return new AbortController().signal; } abort() {} },
+  CancellableSlot: class {
+    start() {
+      return new AbortController().signal;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    abort() {}
+  },
   apiGet: vi.fn().mockResolvedValue(null),
   apiGetTyped: vi.fn().mockResolvedValue(null),
 }));
@@ -24,7 +33,11 @@ vi.mock("../mcp-state.js", () => ({
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
-import { updateConfiguredEntry, removeConfiguredEntry, insertConfiguredEntry } from "../mcp-state.js";
+import {
+  updateConfiguredEntry,
+  removeConfiguredEntry,
+  insertConfiguredEntry,
+} from "../mcp-state.js";
 import { toggleServer, deleteServer } from "./mcp.js";
 import type { Server } from "../mcp-state.js";
 

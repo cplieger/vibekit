@@ -22,18 +22,16 @@ import { send as transportSend } from "../transport.js";
 import type { Command, TypedCommand } from "../transport.js";
 import { defineAction } from "./define.js";
 import { ActionError } from "./error.js";
-import type {
-  Action,
-  ActionContext,
-  ActionDefinition,
-} from "./types.js";
+import type { Action, ActionContext, ActionDefinition } from "./types.js";
 
 /** Caller-facing shape of a transportAction definition. Differs from
  *  the raw ActionDefinition in that `command` replaces `run`. The
  *  result is `void` because transport.send does not return a payload
  *  (the response arrives later via SSE events). */
-interface TransportActionDefinition<TArgs, TOp = unknown>
-  extends Omit<ActionDefinition<TArgs, void, TOp>, "run"> {
+interface TransportActionDefinition<TArgs, TOp = unknown> extends Omit<
+  ActionDefinition<TArgs, void, TOp>,
+  "run"
+> {
   /** Build the typed command (or untyped Command for legacy intents)
    *  for this dispatch. Re-evaluated per-dispatch with current args. */
   command: (args: TArgs) => TypedCommand | Command;
@@ -51,17 +49,21 @@ export function transportAction<TArgs, TOp = unknown>(
   def: TransportActionDefinition<TArgs, TOp>,
 ): Action<TArgs, void> {
   const { command, ...rest } = def;
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
   return defineAction<TArgs, void, TOp>({
     ...rest,
     run: async (args, signal, ctx?: ActionContext) => {
       const raw = command(args);
       let cmd: TypedCommand | Command;
       if (ctx?.idempotencyKey !== undefined) {
-        const base: Record<string, unknown> = "payload" in raw && raw.payload != null
-          ? { ...(raw.payload as Record<string, unknown>) }
-          : {};
+        const base: Record<string, unknown> =
+          "payload" in raw ? { ...(raw.payload as Record<string, unknown>) } : {};
         base["idempotency_key"] = ctx.idempotencyKey;
-        cmd = { type: raw.type, ...("chat_id" in raw ? { chat_id: raw.chat_id } : {}), payload: base };
+        cmd = {
+          type: raw.type,
+          ...("chat_id" in raw ? { chat_id: raw.chat_id } : {}),
+          payload: base,
+        };
       } else {
         cmd = raw;
       }
@@ -75,13 +77,18 @@ export function transportAction<TArgs, TOp = unknown>(
           throw new ActionError("cancelled", { code: "cancelled" });
         }
         if (r.code === "timeout") {
-          throw new ActionError(r.error ?? "Request timed out", { status: r.status, code: "timeout" });
+          throw new ActionError(r.error ?? "Request timed out", {
+            status: r.status,
+            code: "timeout",
+          });
         }
         if (r.code === "network") {
           throw new ActionError(r.error ?? "network error", { status: r.status, code: "network" });
         }
         const errOpts: { status: number; code?: string } = { status: r.status };
-        if (r.code !== undefined) errOpts.code = r.code;
+        if (r.code !== undefined) {
+          errOpts.code = r.code;
+        }
         throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
       }
       return undefined;

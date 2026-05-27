@@ -142,13 +142,18 @@ describe("conflicts registry property-based tests", () => {
 
   it("single-entry chat: one insert never triggers eviction", () => {
     fc.assert(
-      fc.property(arbChatID, arbPath, fc.integer({ min: 1, max: 1_000_000 }), (chatID, path, ts) => {
-        _resetRegistry();
-        remember(chatID, mkConflict(path, ts));
-        expect(_registrySize(chatID)).toBe(1);
-        expect(getConflict(chatID, path)).not.toBeNull();
-        expect(getConflict(chatID, path)!.ts).toBe(ts);
-      }),
+      fc.property(
+        arbChatID,
+        arbPath,
+        fc.integer({ min: 1, max: 1_000_000 }),
+        (chatID, path, ts) => {
+          _resetRegistry();
+          remember(chatID, mkConflict(path, ts));
+          expect(_registrySize(chatID)).toBe(1);
+          expect(getConflict(chatID, path)).not.toBeNull();
+          expect(getConflict(chatID, path)!.ts).toBe(ts);
+        },
+      ),
       { numRuns: 100 },
     );
   });
@@ -197,16 +202,21 @@ describe("conflicts registry property-based tests", () => {
 
   it("ts tie: equal timestamps do not overwrite (prior wins)", () => {
     fc.assert(
-      fc.property(arbChatID, arbPath, fc.integer({ min: 1, max: 1_000_000 }), (chatID, path, ts) => {
-        _resetRegistry();
-        const first = mkConflict(path, ts);
-        const second: Conflict = { ...mkConflict(path, ts), other_chat: "second" };
-        remember(chatID, first);
-        remember(chatID, second);
-        // prior.ts >= c.ts means prior wins — first stays
-        const stored = getConflict(chatID, path);
-        expect(stored!.other_chat).toBe("other");
-      }),
+      fc.property(
+        arbChatID,
+        arbPath,
+        fc.integer({ min: 1, max: 1_000_000 }),
+        (chatID, path, ts) => {
+          _resetRegistry();
+          const first = mkConflict(path, ts);
+          const second: Conflict = { ...mkConflict(path, ts), other_chat: "second" };
+          remember(chatID, first);
+          remember(chatID, second);
+          // prior.ts >= c.ts means prior wins — first stays
+          const stored = getConflict(chatID, path);
+          expect(stored!.other_chat).toBe("other");
+        },
+      ),
       { numRuns: 100 },
     );
   });

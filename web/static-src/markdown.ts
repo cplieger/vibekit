@@ -43,22 +43,28 @@ const PARSE_SLICE_BYTES = 4096;
  *  schedule it as a fresh macro-task, allowing paint between
  *  callbacks). React's scheduler uses the same trick. */
 const yieldChannel = new MessageChannel();
-let yieldQueue: Array<() => void> = [];
+let yieldQueue: (() => void)[] = [];
 yieldChannel.port1.onmessage = () => {
   const fns = yieldQueue;
   yieldQueue = [];
-  for (const fn of fns) fn();
+  for (const fn of fns) {
+    fn();
+  }
 };
 function nextTick(fn: () => void): void {
   const wasEmpty = yieldQueue.length === 0;
   yieldQueue.push(fn);
-  if (wasEmpty) yieldChannel.port2.postMessage(null);
+  if (wasEmpty) {
+    yieldChannel.port2.postMessage(null);
+  }
 }
 
 /** Decorate a freshly-completed block. Idempotent. */
 function decorate(block: HTMLElement): void {
   if (block.tagName === "PRE") {
-    if (block.parentElement !== null) decorateCodeBlocks(block.parentElement);
+    if (block.parentElement !== null) {
+      decorateCodeBlocks(block.parentElement);
+    }
     return;
   }
   linkifyPaths(block);
@@ -87,7 +93,7 @@ export interface MarkdownStream {
 export function createMarkdownStream(el: HTMLElement): MarkdownStream {
   const p: Parser = parser(domRenderer(el, { onBlockComplete: decorateAndAnimate }));
   let buffer = "";
-  let pendingParse = "";       // text queued for chunked parsing
+  let pendingParse = ""; // text queued for chunked parsing
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
   let draining = false;
   let ended = false;
@@ -101,12 +107,17 @@ export function createMarkdownStream(el: HTMLElement): MarkdownStream {
     const slice = pendingParse.slice(0, sliceEnd);
     pendingParse = pendingParse.slice(sliceEnd);
     parser_write(p, slice);
-    if (pendingParse !== "") nextTick(drain);
-    else draining = false;
+    if (pendingParse !== "") {
+      nextTick(drain);
+    } else {
+      draining = false;
+    }
   };
 
   const flush = (): void => {
-    if (buffer === "") return;
+    if (buffer === "") {
+      return;
+    }
     pendingParse += buffer;
     buffer = "";
     if (flushTimer !== undefined) {
@@ -121,14 +132,16 @@ export function createMarkdownStream(el: HTMLElement): MarkdownStream {
 
   return {
     writeDelta(delta: string): void {
-      if (ended || delta === "") return;
-      buffer += delta;
-      if (flushTimer === undefined) {
-        flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
+      if (ended || delta === "") {
+        return;
       }
+      buffer += delta;
+      flushTimer ??= setTimeout(flush, FLUSH_INTERVAL_MS);
     },
     end(): void {
-      if (ended) return;
+      if (ended) {
+        return;
+      }
       ended = true;
       // Move any unflushed buffered text into pendingParse.
       if (buffer !== "") {

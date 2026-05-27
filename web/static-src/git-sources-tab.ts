@@ -16,7 +16,9 @@ import { renderForgesPanel } from "./forge-auth.js";
 
 export function initSourcesTab(): void {
   // Refetch when forges change (login / logout).
-  onSSE("forges_changed", () => { void refreshSources(); });
+  onSSE("forges_changed", () => {
+    void refreshSources();
+  });
   void refreshSources();
 }
 
@@ -25,7 +27,9 @@ export function initSourcesTab(): void {
  *  The panel itself fetches accounts + repos + local-clone names. */
 export async function refreshSources(): Promise<void> {
   const root = document.getElementById("git-sources-mount");
-  if (root === null) return;
+  if (root === null) {
+    return;
+  }
   if (root.querySelector("#forges-panel") === null) {
     const inner = document.createElement("div");
     inner.id = "forges-panel";

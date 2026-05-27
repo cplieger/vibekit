@@ -30,9 +30,15 @@ const MIN_ERROR_DISPLAY_MS = 1500;
 let pendingSuccessTimer: ReturnType<typeof setTimeout> | undefined;
 
 function clearTimers(): void {
-  if (fadeTimer !== undefined) clearTimeout(fadeTimer);
-  if (hideTimer !== undefined) clearTimeout(hideTimer);
-  if (pendingSuccessTimer !== undefined) clearTimeout(pendingSuccessTimer);
+  if (fadeTimer !== undefined) {
+    clearTimeout(fadeTimer);
+  }
+  if (hideTimer !== undefined) {
+    clearTimeout(hideTimer);
+  }
+  if (pendingSuccessTimer !== undefined) {
+    clearTimeout(pendingSuccessTimer);
+  }
   fadeTimer = undefined;
   hideTimer = undefined;
   pendingSuccessTimer = undefined;
@@ -56,7 +62,9 @@ export function showSaved(): void {
   // Without this, a rapid error→success would cause a ✗→✓ blink.
   const elapsedSinceError = Date.now() - lastErrorAt;
   if (lastErrorAt > 0 && elapsedSinceError < MIN_ERROR_DISPLAY_MS) {
-    if (pendingSuccessTimer !== undefined) clearTimeout(pendingSuccessTimer);
+    if (pendingSuccessTimer !== undefined) {
+      clearTimeout(pendingSuccessTimer);
+    }
     const remaining = MIN_ERROR_DISPLAY_MS - elapsedSinceError;
     pendingSuccessTimer = setTimeout(() => {
       pendingSuccessTimer = undefined;
@@ -69,8 +77,12 @@ export function showSaved(): void {
 
 function doShowSaved(): void {
   lastShownAt = Date.now();
-  if (fadeTimer !== undefined) clearTimeout(fadeTimer);
-  if (hideTimer !== undefined) clearTimeout(hideTimer);
+  if (fadeTimer !== undefined) {
+    clearTimeout(fadeTimer);
+  }
+  if (hideTimer !== undefined) {
+    clearTimeout(hideTimer);
+  }
   fadeTimer = undefined;
   hideTimer = undefined;
   const el = $.settingsSaveStatus;
@@ -78,7 +90,9 @@ function doShowSaved(): void {
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");
-    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
+    hideTimer = setTimeout(() => {
+      el.classList.add("hidden");
+    }, 400);
   }, 1200);
 }
 
@@ -94,8 +108,10 @@ export function showError(): void {
   el.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
     el.classList.add("fade-out");
-    hideTimer = setTimeout(() => el.classList.add("hidden"), 400);
-  }, 2400);  // longer than success — error deserves more eye time
+    hideTimer = setTimeout(() => {
+      el.classList.add("hidden");
+    }, 400);
+  }, 2400); // longer than success — error deserves more eye time
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +122,11 @@ export function showError(): void {
 // is a safety net so the spinner also shows if a settings action is
 // dispatched from a path that doesn't call showSaving() explicitly.
 // ---------------------------------------------------------------------------
-const SETTINGS_ACTIONS = ["settings.patch", "settings.save_steering", "settings.set_kiro_setting"] as const;
+const SETTINGS_ACTIONS = [
+  "settings.patch",
+  "settings.save_steering",
+  "settings.set_kiro_setting",
+] as const;
 const SETTINGS_NAMES: ReadonlySet<string> = new Set<string>(SETTINGS_ACTIONS);
 
 // Track whether any settings action in the current batch has errored.
@@ -120,7 +140,9 @@ let batchHadError = false;
 let batchActive = false;
 
 subscribeToActions((instance) => {
-  if (!SETTINGS_NAMES.has(instance.name)) return;
+  if (!SETTINGS_NAMES.has(instance.name)) {
+    return;
+  }
   if (instance.status === "pending") {
     // Rising edge: this is the first pending in a new batch.
     // Reset the error flag so a stale error from a previous batch
@@ -129,15 +151,22 @@ subscribeToActions((instance) => {
       batchHadError = false;
       batchActive = true;
     }
-    if (Date.now() - lastShownAt < 500) return;
+    if (Date.now() - lastShownAt < 500) {
+      return;
+    }
     showSaving();
   } else {
-    if (instance.status === "error") batchHadError = true;
+    if (instance.status === "error") {
+      batchHadError = true;
+    }
     if (pendingCount(SETTINGS_ACTIONS) === 0) {
       // Batch fully settled. Show error if ANY action in the batch
       // errored, otherwise show success.
-      if (batchHadError) showError();
-      else if (instance.status === "success") showSaved();
+      if (batchHadError) {
+        showError();
+      } else if (instance.status === "success") {
+        showSaved();
+      }
       batchHadError = false;
       batchActive = false;
     }

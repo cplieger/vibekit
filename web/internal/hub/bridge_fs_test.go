@@ -77,11 +77,11 @@ func TestResolveInsideWorkDir(t *testing.T) {
 	t.Parallel()
 
 	type tc struct {
-		name     string
 		setupFn  func(t *testing.T, work string)
+		wantPath func(work string) string
+		name     string
 		input    string
 		wantErr  bool
-		wantPath func(work string) string
 		skipWin  bool
 	}
 

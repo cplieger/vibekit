@@ -63,7 +63,20 @@ export interface Command {
 // The wire format is unchanged (JSON.stringify produces the same output).
 
 export type TypedCommand =
-  | { type: "prompt"; chat_id: string; payload: { text: string; attachments?: readonly unknown[]; message_id?: string; request_id?: string; agent?: string; model?: string; active_file?: string; open_files?: readonly string[] } }
+  | {
+      type: "prompt";
+      chat_id: string;
+      payload: {
+        text: string;
+        attachments?: readonly unknown[];
+        message_id?: string;
+        request_id?: string;
+        agent?: string;
+        model?: string;
+        active_file?: string;
+        open_files?: readonly string[];
+      };
+    }
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
@@ -71,19 +84,35 @@ export type TypedCommand =
   | { type: "merge_tangent"; chat_id: string }
   | { type: "discard_tangent"; chat_id: string }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
-  | { type: "resolve_pending_change"; chat_id: string; payload: { tool_call_id: string; action: string } }
-  | { type: "resolve_pending_change_partial"; chat_id: string; payload: { tool_call_id: string; merged_text: string } }
+  | {
+      type: "resolve_pending_change";
+      chat_id: string;
+      payload: { tool_call_id: string; action: string };
+    }
+  | {
+      type: "resolve_pending_change_partial";
+      chat_id: string;
+      payload: { tool_call_id: string; merged_text: string };
+    }
   | { type: "resolve_all_pending_changes"; chat_id: string; payload: { action: string } }
   | { type: "trust_pending_changes"; chat_id: string }
   | { type: "clear_pending_trust"; chat_id: string }
-  | { type: "permission_response"; chat_id: string; payload: { request_id: number; option_id: string } }
+  | {
+      type: "permission_response";
+      chat_id: string;
+      payload: { request_id: number; option_id: string };
+    }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
   | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } };
 
-const TRANSPORT_ERROR_CODES = { TIMEOUT: 'timeout', CANCELLED: 'cancelled', NETWORK: 'network' } as const;
+const TRANSPORT_ERROR_CODES = {
+  TIMEOUT: "timeout",
+  CANCELLED: "cancelled",
+  NETWORK: "network",
+} as const;
 
 interface SendResult {
   ok: boolean;
@@ -113,7 +142,9 @@ export function newRequestID(): string {
   const arr = new Uint8Array(10);
   crypto.getRandomValues(arr);
   let out = "r-" + Date.now().toString(36) + "-";
-  for (const b of arr) out += b.toString(36);
+  for (const b of arr) {
+    out += b.toString(36);
+  }
   return out;
 }
 
@@ -146,8 +177,12 @@ type ConnState =
   | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout>; backoffMs: number };
 
 class TransportController {
-  private onMsg: MsgHandler = () => {};
-  private onStatus: StatusHandler = () => {};
+  private onMsg: MsgHandler = () => {
+    /* noop */
+  };
+  private onStatus: StatusHandler = () => {
+    /* noop */
+  };
 
   private conn: ConnState = { phase: "idle" };
   private lastSeenEventID = 0;
@@ -159,13 +194,18 @@ class TransportController {
    *  Used by the global beforeunload cleanup so navigation away
    *  doesn't leak request handles. */
   cancelInflight(): void {
-    for (const ctrl of this.inflight) ctrl.abort();
+    for (const ctrl of this.inflight) {
+      ctrl.abort();
+    }
     this.inflight.clear();
   }
 
   init(msg: MsgHandler, status: StatusHandler): void {
     this.onMsg = msg;
-    this.onStatus = (s) => { setSSEStatus(s); status(s); };
+    this.onStatus = (s) => {
+      setSSEStatus(s);
+      status(s);
+    };
     this.connectSSE();
 
     document.addEventListener("visibilitychange", () => {
@@ -177,14 +217,18 @@ class TransportController {
         this.hiddenSince = Date.now();
       } else {
         if (this.hiddenSince !== null && Date.now() - this.hiddenSince >= HIDDEN_ABORT_MS) {
-          for (const ctrl of this.inflight) ctrl.abort();
+          for (const ctrl of this.inflight) {
+            ctrl.abort();
+          }
           this.inflight.clear();
         }
         this.hiddenSince = null;
       }
     });
     window.addEventListener("pageshow", (e: PageTransitionEvent) => {
-      if (e.persisted || this.sseIsDead()) this.scheduleReconnect({ delay: 0, backoffMs: 0 });
+      if (e.persisted || this.sseIsDead()) {
+        this.scheduleReconnect({ delay: 0, backoffMs: 0 });
+      }
     });
   }
 
@@ -199,7 +243,11 @@ class TransportController {
       clearTimeout(this.conn.timer);
     }
     if (this.conn.phase === "connecting" || this.conn.phase === "connected") {
-      try { this.conn.source.close(); } catch { /* best-effort */ }
+      try {
+        this.conn.source.close();
+      } catch {
+        /* best-effort */
+      }
     }
 
     this.onStatus("connecting");
@@ -212,7 +260,9 @@ class TransportController {
     source.onmessage = (e: MessageEvent): void => {
       if (e.lastEventId !== "") {
         const id = Number(e.lastEventId);
-        if (Number.isFinite(id) && id > this.lastSeenEventID) this.lastSeenEventID = id;
+        if (Number.isFinite(id) && id > this.lastSeenEventID) {
+          this.lastSeenEventID = id;
+        }
       }
       let evt: ServerEvent;
       try {
@@ -227,7 +277,7 @@ class TransportController {
       // letting handlers see a partial shape. Events without a decoder
       // fall through to the existing untyped path so the integration is
       // strictly additive. See validators.ts and bus.ts for details.
-      const decoder = lookupSSEDecoder(evt.type as string);
+      const decoder = lookupSSEDecoder(evt.type);
       if (decoder !== undefined) {
         try {
           evt = { ...evt, payload: decoder(evt.payload) };
@@ -237,7 +287,9 @@ class TransportController {
           return;
         }
       }
-      if (evt.type === "connected") this.handleConnected(evt);
+      if (evt.type === "connected") {
+        this.handleConnected(evt);
+      }
       this.onMsg(evt);
     };
     source.onerror = (): void => {
@@ -256,7 +308,9 @@ class TransportController {
   }
 
   private scheduleReconnect(info: { delay: number; backoffMs: number }): void {
-    if (this.conn.phase === "reconnecting") clearTimeout(this.conn.timer);
+    if (this.conn.phase === "reconnecting") {
+      clearTimeout(this.conn.timer);
+    }
     const timer = setTimeout(() => {
       this.connectSSE();
     }, info.delay);
@@ -265,8 +319,12 @@ class TransportController {
 
   private handleConnected(evt: ServerEvent): void {
     const p = evt.payload as ConnectedPayload | undefined;
-    if (p === undefined) return;
-    if (this.lastSeenEventID === 0) return;
+    if (p === undefined) {
+      return;
+    }
+    if (this.lastSeenEventID === 0) {
+      return;
+    }
     const gap = p.floor === 0 || this.lastSeenEventID < p.floor;
     if (gap) {
       const info: GapInfo = { lastSeen: this.lastSeenEventID, floor: p.floor, head: p.head };
@@ -283,7 +341,9 @@ class TransportController {
     this.inflight.add(ctrl);
 
     const signals: AbortSignal[] = [ctrl.signal, AbortSignal.timeout(timeoutMs)];
-    if (opts?.signal) signals.push(opts.signal);
+    if (opts?.signal) {
+      signals.push(opts.signal);
+    }
     const combined = AbortSignal.any(signals);
 
     try {
@@ -295,22 +355,31 @@ class TransportController {
           type: cmd.type,
           request_id: requestID,
           chat_id: cmd.chat_id ?? "",
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
         }),
       });
-      if (r.ok) return { ok: true, status: r.status };
+      if (r.ok) {
+        return { ok: true, status: r.status };
+      }
 
       let errMsg = `HTTP ${String(r.status)}`;
       try {
         const d: unknown = await r.json();
-        if (hasErrorString(d)) errMsg = d.error;
-      } catch { /* non-JSON */ }
+        if (hasErrorString(d)) {
+          errMsg = d.error;
+        }
+      } catch {
+        /* non-JSON */
+      }
       // 409 is a queue signal — never reported via setLastError.
       // Otherwise honour the caller's reportSendState preference
       // (defaults to true for legacy direct callers; transportAction
       // sets it false to avoid double-feedback with its toast).
       const reportSendState = opts?.reportSendState ?? true;
-      if (r.status !== 409 && reportSendState) setLastError(errMsg);
+      if (r.status !== 409 && reportSendState) {
+        setLastError(errMsg);
+      }
       return { ok: false, status: r.status, error: errMsg };
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
@@ -327,7 +396,9 @@ class TransportController {
         code = TRANSPORT_ERROR_CODES.NETWORK;
       }
       const reportSendState = opts?.reportSendState ?? true;
-      if (reportSendState) setLastError(msg);
+      if (reportSendState) {
+        setLastError(msg);
+      }
       return { ok: false, status: 0, error: msg, code };
     } finally {
       this.inflight.delete(ctrl);
@@ -351,7 +422,9 @@ export function computeBackoff(prevBackoffMs: number): { delay: number; backoffM
 // ---------------------------------------------------------------------------
 
 const instance = new TransportController();
-registerCleanup(() => instance.cancelInflight());
+registerCleanup(() => {
+  instance.cancelInflight();
+});
 
 export function init(msg: MsgHandler, status: StatusHandler): void {
   instance.init(msg, status);

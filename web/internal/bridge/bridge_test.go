@@ -484,8 +484,8 @@ func TestRespond_GenericError(t *testing.T) {
 	n, _ := pr.Read(buf)
 	var got struct {
 		Error struct {
-			Code    int    `json:"code"`
 			Message string `json:"message"`
+			Code    int    `json:"code"`
 		} `json:"error"`
 		ID int64 `json:"id"`
 	}
@@ -515,8 +515,8 @@ func TestRespond_TypedRPCError(t *testing.T) {
 	n, _ := pr.Read(buf)
 	var got struct {
 		Error struct {
-			Code    int    `json:"code"`
 			Message string `json:"message"`
+			Code    int    `json:"code"`
 		} `json:"error"`
 		ID int64 `json:"id"`
 	}

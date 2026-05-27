@@ -16,6 +16,7 @@ interface CheckoutArgs {
 // belong to the caller, which has the live DOM context. This keeps
 // args fully structuredClone-safe so retry can clone them without
 // fallback to a mutable reference.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const checkoutBranch = apiAction<CheckoutArgs, void>({
   name: "git.checkout_branch",
   scope: (args) => "git:" + args.repo,

@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -24,26 +27,33 @@ describe("cross-action scope serialization after cancel", () => {
     const order: string[] = [];
     let resolveA!: (v: string) => void;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.serial_A",
       scope: "serial",
       run: () => {
         order.push("A-start");
-        return new Promise<string>((r) => { resolveA = r; });
+        return new Promise<string>((r) => {
+          resolveA = r;
+        });
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.serial_B",
       scope: "serial",
       error: false,
       run: (_args, signal) => {
         order.push("B-start");
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("B");
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionC = defineAction<void, string>({
       name: "test.serial_C",
       scope: "serial",
@@ -68,7 +78,7 @@ describe("cross-action scope serialization after cancel", () => {
     // C must NOT start before A finishes
     expect(order).toEqual(["A-start"]);
 
-    resolveA!("A-done");
+    resolveA("A-done");
     const [rA, rB, rC] = await Promise.all([pA, pB, pC]);
 
     expect(rA).toBe("A-done");
@@ -81,26 +91,33 @@ describe("cross-action scope serialization after cancel", () => {
     const order: string[] = [];
     let resolveA!: (v: string) => void;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionA = defineAction<void, string>({
       name: "test.last_A",
       scope: "last-cancel",
       run: () => {
         order.push("A-start");
-        return new Promise<string>((r) => { resolveA = r; });
+        return new Promise<string>((r) => {
+          resolveA = r;
+        });
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionB = defineAction<void, string>({
       name: "test.last_B",
       scope: "last-cancel",
       error: false,
       run: (_args, signal) => {
         order.push("B-start");
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        if (signal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
         return Promise.resolve("B");
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const actionD = defineAction<void, string>({
       name: "test.last_D",
       scope: "last-cancel",
@@ -124,7 +141,7 @@ describe("cross-action scope serialization after cancel", () => {
     // D must NOT start before A finishes
     expect(order).toEqual(["A-start"]);
 
-    resolveA!("A-done");
+    resolveA("A-done");
     const [rA, rB, rD] = await Promise.all([pA, pB, pD]);
 
     expect(rA).toBe("A-done");

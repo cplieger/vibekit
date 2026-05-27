@@ -80,7 +80,7 @@ describe("humanName", () => {
 // ---------------------------------------------------------------------------
 
 describe("escText property-based invariants", () => {
-  it("output never contains literal < > or \" characters", () => {
+  it('output never contains literal < > or " characters', () => {
     fc.assert(
       fc.property(fc.string({ minLength: 0, maxLength: 200 }), (input) => {
         const out = escText(input);

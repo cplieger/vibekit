@@ -26,14 +26,20 @@ import { pushRoute } from "./router.js";
 import { setSettingsTab as setTabRoute } from "./tabs.js";
 import { wireArrowNav } from "./arrow-nav.js";
 
-export const TABS: readonly SettingsTab[] = ["general", "tools", "permissions", "instructions", "git"] as const;
+export const TABS: readonly SettingsTab[] = [
+  "general",
+  "tools",
+  "permissions",
+  "instructions",
+  "git",
+] as const;
 
 export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
-  general:      "General",
-  tools:        "Tools",
-  permissions:  "Permissions",
+  general: "General",
+  tools: "Tools",
+  permissions: "Permissions",
   instructions: "Custom instructions",
-  git:          "Git & forges",
+  git: "Git & forges",
 };
 
 // --- Store ---
@@ -46,17 +52,23 @@ const listeners = new Set<Listener>();
 function onTabChange(fn: Listener): () => void {
   listeners.add(fn);
   fn(activeTab);
-  return (): void => { listeners.delete(fn); };
+  return (): void => {
+    listeners.delete(fn);
+  };
 }
 
 /** Switch to a tab. No-op if already active. Updates URL and notifies
  *  listeners (DOM panel visibility, load callbacks, etc). */
 function setSettingsTab(tab: SettingsTab): void {
-  if (tab === activeTab) return;
+  if (tab === activeTab) {
+    return;
+  }
   activeTab = tab;
   setTabRoute(tab);
   pushRoute({ kind: "settings", tab });
-  for (const fn of listeners) fn(tab);
+  for (const fn of listeners) {
+    fn(tab);
+  }
 }
 
 // --- DOM wiring ---
@@ -74,18 +86,24 @@ export function initSettingsTabs(): void {
   // here we just attach click handlers and mark the initial one active.
   for (const tab of TABS) {
     const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${tab}"]`);
-    if (btn === null) continue;
+    if (btn === null) {
+      continue;
+    }
     btn.setAttribute("role", "tab");
     btn.id = `settings-tab-${tab}`;
     btn.setAttribute("aria-label", TAB_LABELS[tab]);
     btn.setAttribute("aria-controls", `settings-panel-${tab}`);
-    btn.addEventListener("click", () => setSettingsTab(tab));
+    btn.addEventListener("click", () => {
+      setSettingsTab(tab);
+    });
   }
 
   // Mobile: select. Options are declared in HTML, just bind change.
   select.addEventListener("change", () => {
     const v = select.value;
-    if (isSettingsTab(v)) setSettingsTab(v);
+    if (isSettingsTab(v)) {
+      setSettingsTab(v);
+    }
   });
 
   // Arrow key navigation for the desktop tab bar.
@@ -102,7 +120,8 @@ export function initSettingsTabs(): void {
     select.value = tab;
     const swap = (): void => {
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
-        const panelTab = panel.dataset["settingsPanel"] as string;
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const panelTab = panel.dataset["settingsPanel"]!;
         const isActive = panelTab === tab;
         panel.classList.toggle("hidden", !isActive);
         panel.setAttribute("role", "tabpanel");
@@ -113,7 +132,9 @@ export function initSettingsTabs(): void {
     maybeViewTransition(swap);
     // Update the page title to the active tab's label.
     const title = document.getElementById("settings-page-title");
-    if (title !== null) title.textContent = TAB_LABELS[tab];
+    if (title !== null) {
+      title.textContent = TAB_LABELS[tab];
+    }
   });
 }
 
@@ -129,5 +150,7 @@ function isSettingsTab(v: string): v is SettingsTab {
 export function forceSettingsTab(tab: SettingsTab): void {
   activeTab = tab;
   setTabRoute(tab);
-  for (const fn of listeners) fn(tab);
+  for (const fn of listeners) {
+    fn(tab);
+  }
 }

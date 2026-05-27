@@ -45,27 +45,41 @@ export function initGitPanel(): void {
     initStatusBanner({
       // Connect-forge CTA from the banner: switch to the Sources tab,
       // which holds the per-forge account UI.
-      onConnectForge: () => { void (async () => {
-        const { setGitTab } = await import("./git-tabs.js");
-        setGitTab("sources");
-      })().catch(() => {}); },
+      onConnectForge: () => {
+        void (async () => {
+          const { setGitTab } = await import("./git-tabs.js");
+          setGitTab("sources");
+        })().catch(() => {
+          /* noop */
+        });
+      },
       // Authenticate-gh CTA: deferred for now (the new multi-repo
       // model handles auth via per-forge "Add account" buttons in
       // the Sources tab; the legacy `gh auth login` device-flow
       // wrapper isn't wired through this banner any more).
-      onAuthenticateGh: () => { void (async () => {
-        const { setGitTab } = await import("./git-tabs.js");
-        setGitTab("sources");
-      })().catch(() => {}); },
+      onAuthenticateGh: () => {
+        void (async () => {
+          const { setGitTab } = await import("./git-tabs.js");
+          setGitTab("sources");
+        })().catch(() => {
+          /* noop */
+        });
+      },
     });
 
     // When the user switches into a tab, run a fresh fetch so they
     // see up-to-date state. Keeps each module's data ownership tight.
     onGitTabChange((tab) => {
       switch (tab) {
-        case "changes": void refreshChanges(); break;
-        case "prs":     void refreshPRs.dispatch(undefined); break;
-        case "sources": void refreshSources(); break;
+        case "changes":
+          void refreshChanges();
+          break;
+        case "prs":
+          void refreshPRs.dispatch(undefined);
+          break;
+        case "sources":
+          void refreshSources();
+          break;
       }
     });
   } else {
@@ -73,9 +87,15 @@ export function initGitPanel(): void {
     // entry from another part of the app (Files → click commit, agent
     // ended a turn, etc.) sees fresh state.
     switch (getGitTab()) {
-      case "changes": void refreshChanges(); break;
-      case "prs":     void refreshPRs.dispatch(undefined); break;
-      case "sources": void refreshSources(); break;
+      case "changes":
+        void refreshChanges();
+        break;
+      case "prs":
+        void refreshPRs.dispatch(undefined);
+        break;
+      case "sources":
+        void refreshSources();
+        break;
     }
   }
 }

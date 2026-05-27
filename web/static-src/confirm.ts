@@ -15,7 +15,9 @@ let prevAC: AbortController | null = null;
 let prevRelease: (() => void) | null = null;
 
 function ensureDialog(): HTMLDialogElement {
-  if (dialogEl !== null) return dialogEl;
+  if (dialogEl !== null) {
+    return dialogEl;
+  }
   dialogEl = document.createElement("dialog");
   dialogEl.className = "vk-confirm-dialog";
   // The <dialog> element gets implicit role="dialog". For destructive
@@ -42,9 +44,9 @@ export function confirm(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const d = ensureDialog();
-    const msg = d.querySelector(".vk-confirm-msg") as HTMLParagraphElement;
-    const okBtn = d.querySelector(".vk-confirm-ok") as HTMLButtonElement;
-    const cancelBtn = d.querySelector(".vk-confirm-cancel") as HTMLButtonElement;
+    const msg = d.querySelector(".vk-confirm-msg")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const okBtn = d.querySelector(".vk-confirm-ok")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const cancelBtn = d.querySelector<HTMLButtonElement>(".vk-confirm-cancel")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
     // Upgrade to alertdialog for destructive prompts so screen readers
     // treat them as urgent / interruptive.
@@ -56,21 +58,35 @@ export function confirm(
 
     msg.textContent = message;
     okBtn.textContent = confirmLabel;
-    okBtn.className = variant === "destructive"
-      ? "vk-confirm-ok btn-small confirm-danger"
-      : "vk-confirm-ok btn-small confirm-allow";
+    okBtn.className =
+      variant === "destructive"
+        ? "vk-confirm-ok btn-small confirm-danger"
+        : "vk-confirm-ok btn-small confirm-allow";
 
     // Preempt any prior confirmation — treat as cancelled.
-    if (prevRelease) { prevRelease(); prevRelease = null; }
-    if (prevResolve) { prevResolve(false); prevResolve = null; }
-    if (prevAC) { prevAC.abort(); prevAC = null; }
+    if (prevRelease) {
+      prevRelease();
+      prevRelease = null;
+    }
+    if (prevResolve) {
+      prevResolve(false);
+      prevResolve = null;
+    }
+    if (prevAC) {
+      prevAC.abort();
+      prevAC = null;
+    }
 
-    if (d.open) d.close();
+    if (d.open) {
+      d.close();
+    }
     d.showModal();
     const release = trapFocus(d);
     // WAI-ARIA alertdialog: focus the least-destructive action so
     // keyboard users don't accidentally confirm a dangerous operation.
-    if (variant === "destructive") cancelBtn.focus();
+    if (variant === "destructive") {
+      cancelBtn.focus();
+    }
     const ac = new AbortController();
     const { signal } = ac;
     prevResolve = resolve;
@@ -87,10 +103,29 @@ export function confirm(
       resolve(result);
     }
 
-    okBtn.addEventListener("click", () => close(true), { signal });
-    cancelBtn.addEventListener("click", () => close(false), { signal });
-    d.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); close(false); }
-    }, { signal });
+    okBtn.addEventListener(
+      "click",
+      () => {
+        close(true);
+      },
+      { signal },
+    );
+    cancelBtn.addEventListener(
+      "click",
+      () => {
+        close(false);
+      },
+      { signal },
+    );
+    d.addEventListener(
+      "keydown",
+      (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          close(false);
+        }
+      },
+      { signal },
+    );
   });
 }

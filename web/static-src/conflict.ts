@@ -45,23 +45,33 @@ export function parseConflicts(content: string): ConflictFile {
 
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i]!;
+    const line = lines[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const headMatch = HEAD_RX.exec(line);
-    if (headMatch === null) { i++; continue; }
+    if (headMatch === null) {
+      i++;
+      continue;
+    }
     // Find separator and end.
     let sep = -1;
     let end = -1;
     for (let j = i + 1; j < lines.length; j++) {
-      const l = lines[j]!;
-      if (sep === -1 && SEP_RX.test(l)) sep = j;
-      else if (sep !== -1 && END_RX.test(l)) { end = j; break; }
+      const l = lines[j]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      if (sep === -1 && SEP_RX.test(l)) {
+        sep = j;
+      } else if (sep !== -1 && END_RX.test(l)) {
+        end = j;
+        break;
+      }
     }
-    if (sep === -1 || end === -1) { i++; continue; }
+    if (sep === -1 || end === -1) {
+      i++;
+      continue;
+    }
 
     const ourLabel = (headMatch[1] ?? "").trim();
-    const endLine = lines[end]!;
+    const endLine = lines[end]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const endMatch = END_RX.exec(endLine);
-    const theirLabel = ((endMatch?.[1]) ?? "").trim();
+    const theirLabel = (endMatch?.[1] ?? "").trim();
 
     hunks.push({
       startLine: i,
@@ -81,18 +91,18 @@ export type Resolution = "ours" | "theirs" | "both";
 
 /** Rewrite the file with one hunk resolved. Returns the new file content.
  *  Does not modify input. */
-export function resolveHunk(
-  file: ConflictFile,
-  hunkIndex: number,
-  resolution: Resolution,
-): string {
+export function resolveHunk(file: ConflictFile, hunkIndex: number, resolution: Resolution): string {
   const hunk = file.hunks[hunkIndex];
-  if (hunk === undefined) return joinFile(file.lines, file.trailingNewline);
+  if (hunk === undefined) {
+    return joinFile(file.lines, file.trailingNewline);
+  }
 
   const replacement =
-    resolution === "ours" ? hunk.oursLines :
-    resolution === "theirs" ? hunk.theirsLines :
-    [...hunk.oursLines, ...hunk.theirsLines];
+    resolution === "ours"
+      ? hunk.oursLines
+      : resolution === "theirs"
+        ? hunk.theirsLines
+        : [...hunk.oursLines, ...hunk.theirsLines];
 
   const out = [
     ...file.lines.slice(0, hunk.startLine),
@@ -103,6 +113,8 @@ export function resolveHunk(
 }
 
 function joinFile(lines: string[], trailing: boolean): string {
-  if (lines.length === 0) return trailing ? "\n" : "";
+  if (lines.length === 0) {
+    return trailing ? "\n" : "";
+  }
   return lines.join("\n") + (trailing ? "\n" : "");
 }

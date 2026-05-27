@@ -20,8 +20,16 @@ function setupDOM(): { messagesEl: HTMLElement; scrollEl: HTMLElement } {
   const messagesEl = document.getElementById("messages")!;
   const scrollEl = document.getElementById("messages-wrap")!;
   // happy-dom doesn't compute real scroll geometry, so we mock it.
-  Object.defineProperty(scrollEl, "scrollHeight", { value: 1000, writable: true, configurable: true });
-  Object.defineProperty(scrollEl, "clientHeight", { value: 400, writable: true, configurable: true });
+  Object.defineProperty(scrollEl, "scrollHeight", {
+    value: 1000,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(scrollEl, "clientHeight", {
+    value: 400,
+    writable: true,
+    configurable: true,
+  });
   Object.defineProperty(scrollEl, "scrollTop", { value: 600, writable: true, configurable: true });
   return { messagesEl, scrollEl };
 }
@@ -84,9 +92,7 @@ describe("scroll: trimOldMessages DOM cap", () => {
     }
     const before = messagesEl.children.length;
     // Simulate trimOldMessages logic
-    const children = [...messagesEl.children].filter(
-      (el) => el.id !== "load-more-indicator",
-    );
+    const children = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
     const excess = children.length - 50;
     expect(excess).toBeLessThanOrEqual(0);
     expect(messagesEl.children.length).toBe(before);
@@ -94,34 +100,29 @@ describe("scroll: trimOldMessages DOM cap", () => {
 
   it("trims oldest messages when > 50", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 51, max: 200 }),
-        (count) => {
-          messagesEl.innerHTML = "";
-          for (let i = 0; i < count; i++) {
-            const div = document.createElement("div");
-            div.className = "message";
-            div.dataset["idx"] = String(i);
-            messagesEl.appendChild(div);
+      fc.property(fc.integer({ min: 51, max: 200 }), (count) => {
+        messagesEl.innerHTML = "";
+        for (let i = 0; i < count; i++) {
+          const div = document.createElement("div");
+          div.className = "message";
+          div.dataset["idx"] = String(i);
+          messagesEl.appendChild(div);
+        }
+        // Simulate trim
+        const children = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
+        const excess = children.length - 50;
+        if (excess > 0) {
+          for (let i = 0; i < excess; i++) {
+            children[i]!.remove();
           }
-          // Simulate trim
-          const children = [...messagesEl.children].filter(
-            (el) => el.id !== "load-more-indicator",
-          );
-          const excess = children.length - 50;
-          if (excess > 0) {
-            for (let i = 0; i < excess; i++) children[i]!.remove();
-          }
-          // After trim: exactly 50 remain
-          const remaining = [...messagesEl.children].filter(
-            (el) => el.id !== "load-more-indicator",
-          );
-          expect(remaining.length).toBe(50);
-          // The kept messages are the NEWEST (highest index)
-          const firstKept = remaining[0] as HTMLElement;
-          expect(Number(firstKept.dataset["idx"])).toBe(count - 50);
-        },
-      ),
+        }
+        // After trim: exactly 50 remain
+        const remaining = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
+        expect(remaining.length).toBe(50);
+        // The kept messages are the NEWEST (highest index)
+        const firstKept = remaining[0] as HTMLElement;
+        expect(Number(firstKept.dataset["idx"])).toBe(count - 50);
+      }),
       { numRuns: 20 },
     );
   });
@@ -135,17 +136,15 @@ describe("scroll: trimOldMessages DOM cap", () => {
       div.className = "message";
       messagesEl.appendChild(div);
     }
-    const children = [...messagesEl.children].filter(
-      (el) => el.id !== "load-more-indicator",
-    );
+    const children = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
     const excess = children.length - 50;
-    for (let i = 0; i < excess; i++) children[i]!.remove();
+    for (let i = 0; i < excess; i++) {
+      children[i]!.remove();
+    }
     // Indicator still present
     expect(document.getElementById("load-more-indicator")).not.toBeNull();
     // 50 messages remain
-    const remaining = [...messagesEl.children].filter(
-      (el) => el.id !== "load-more-indicator",
-    );
+    const remaining = [...messagesEl.children].filter((el) => el.id !== "load-more-indicator");
     expect(remaining.length).toBe(50);
   });
 });
@@ -184,15 +183,12 @@ describe("scroll: autoScrollIfAnchored guards", () => {
 
   it("does not scroll during suppress window", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 5000 }),
-        (msRemaining) => {
-          const now = 10000;
-          const suppressUntil = now + msRemaining;
-          const shouldScroll = !(now < suppressUntil);
-          expect(shouldScroll).toBe(false);
-        },
-      ),
+      fc.property(fc.integer({ min: 1, max: 5000 }), (msRemaining) => {
+        const now = 10000;
+        const suppressUntil = now + msRemaining;
+        const shouldScroll = !(now < suppressUntil);
+        expect(shouldScroll).toBe(false);
+      }),
     );
   });
 
@@ -201,10 +197,7 @@ describe("scroll: autoScrollIfAnchored guards", () => {
     const now = 10000;
     const userScrollingUntil = now - 1; // debounce expired
     const suppressUntil = now - 1; // suppress expired
-    const shouldScroll =
-      !userScrolledUp &&
-      !(now < userScrollingUntil) &&
-      !(now < suppressUntil);
+    const shouldScroll = !userScrolledUp && !(now < userScrollingUntil) && !(now < suppressUntil);
     expect(shouldScroll).toBe(true);
   });
 });

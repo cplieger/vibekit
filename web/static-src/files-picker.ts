@@ -10,16 +10,23 @@
 
 import { closeModal, openModal } from "./modals.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
-import { fetchDir, joinPath, parentPath, displayPath, errorRow, sortEntries, initEditablePath, type FetchDirOpts } from "./files-shared.js";
+import {
+  fetchDir,
+  joinPath,
+  parentPath,
+  displayPath,
+  errorRow,
+  sortEntries,
+  initEditablePath,
+  type FetchDirOpts,
+} from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 
-type DirEntry =
-  | { kind: "up" }
-  | { kind: "file"; name: string; isDir: boolean };
+type DirEntry = { kind: "up" } | { kind: "file"; name: string; isDir: boolean };
 
 let currentPath = ".";
 const selected = new Set<string>();
@@ -27,9 +34,11 @@ let onUploadComplete: (() => void) | null = null;
 
 /** Per-picker abort holder — prevents browser from aborting picker fetches. */
 const pickerFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
-registerCleanup(() => pickerFetchHolder.controllerHolder?.current?.abort());
+registerCleanup(() => pickerFetchHolder.controllerHolder.current?.abort());
 
-export function setOnUploadComplete(fn: () => void): void { onUploadComplete = fn; }
+export function setOnUploadComplete(fn: () => void): void {
+  onUploadComplete = fn;
+}
 
 export function openFilePicker(preUploadFiles?: FileList, startPath = "."): void {
   currentPath = startPath;
@@ -53,17 +62,23 @@ export function initFilePicker(): void {
     input.type = "file";
     input.multiple = true;
     input.addEventListener("change", () => {
-      if (input.files === null || input.files.length === 0) return;
+      if (input.files === null || input.files.length === 0) {
+        return;
+      }
       performUpload(input.files);
     });
     input.click();
   });
 
-  bindLoadingState("files.upload", el<HTMLButtonElement>("filepicker-upload"), { preserveDisabled: true });
+  bindLoadingState("files.upload", el<HTMLButtonElement>("filepicker-upload"), {
+    preserveDisabled: true,
+  });
 
   // "Attach" button: attach all selected paths to the chat.
   el("filepicker-attach").addEventListener("click", () => {
-    if (selected.size === 0) return;
+    if (selected.size === 0) {
+      return;
+    }
     for (const name of selected) {
       attachPathToActiveChat(joinPath(currentPath, name));
     }
@@ -85,21 +100,27 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = el<HTMLDivElement>("filepicker-modal");
-  void upload.dispatch({ files, targetDir: currentPath }, {
-    onSuccess: (paths) => {
-      onUploadComplete?.();
-      for (const p of paths) attachPathToActiveChat(p);
-      closeModal(modal);
+  void upload.dispatch(
+    { files, targetDir: currentPath },
+    {
+      onSuccess: (paths) => {
+        onUploadComplete?.();
+        for (const p of paths) {
+          attachPathToActiveChat(p);
+        }
+        closeModal(modal);
+      },
     },
-  });
+  );
 }
 
 function syncAttachBtn(): void {
   const btn = el<HTMLButtonElement>("filepicker-attach");
   btn.disabled = selected.size === 0;
-  btn.textContent = selected.size > 0
-    ? `Attach ${String(selected.size)} item${selected.size > 1 ? "s" : ""}`
-    : "Attach";
+  btn.textContent =
+    selected.size > 0
+      ? `Attach ${String(selected.size)} item${selected.size > 1 ? "s" : ""}`
+      : "Attach";
 }
 
 function loadDir(): void {
@@ -112,30 +133,44 @@ function loadDir(): void {
     // Drop any prior non-keyed siblings (error row, empty placeholder)
     // before reconciling.
     for (const child of [...list.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+        child.remove();
+      }
     }
 
     if (d.error !== undefined) {
-      if (d.error === "stale") return;
+      if (d.error === "stale") {
+        return;
+      }
       // Wipe keyed children + show error row.
       reconcile(list, [], { key: () => "", mount: () => document.createElement("div") });
-      list.appendChild(errorRow(d.error, () => loadDir()));
+      list.appendChild(
+        errorRow(d.error, () => {
+          loadDir();
+        }),
+      );
       return;
     }
 
     const sorted = sortEntries(d.files);
     const entries: DirEntry[] = [];
-    if (currentPath !== ".") entries.push({ kind: "up" });
-    for (const f of sorted) entries.push({ kind: "file", name: f.name, isDir: f.isDir });
+    if (currentPath !== ".") {
+      entries.push({ kind: "up" });
+    }
+    for (const f of sorted) {
+      entries.push({ kind: "file", name: f.name, isDir: f.isDir });
+    }
 
     reconcile(list, entries, {
-      key: (e: DirEntry) => e.kind === "up" ? "__up__" : `file:${e.name}`,
-      mount: (e: DirEntry) => e.kind === "up" ? upRow() : entryRow(e.name, e.isDir),
+      key: (e: DirEntry) => (e.kind === "up" ? "__up__" : `file:${e.name}`),
+      mount: (e: DirEntry) => (e.kind === "up" ? upRow() : entryRow(e.name, e.isDir)),
       update: (row, e: DirEntry) => {
         if (e.kind === "file") {
           // Sync checkbox state to the live `selected` set.
           const check = row.querySelector<HTMLInputElement>(".fb-check");
-          if (check !== null) check.checked = selected.has(e.name);
+          if (check !== null) {
+            check.checked = selected.has(e.name);
+          }
         }
       },
     });
@@ -185,8 +220,11 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
   check.checked = selected.has(name);
   check.setAttribute("aria-label", `Select ${name}`);
   check.addEventListener("change", () => {
-    if (check.checked) selected.add(name);
-    else selected.delete(name);
+    if (check.checked) {
+      selected.add(name);
+    } else {
+      selected.delete(name);
+    }
     syncAttachBtn();
   });
 
@@ -206,8 +244,11 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
     } else {
       // Toggle checkbox on name click for files.
       check.checked = !check.checked;
-      if (check.checked) selected.add(name);
-      else selected.delete(name);
+      if (check.checked) {
+        selected.add(name);
+      } else {
+        selected.delete(name);
+      }
       syncAttachBtn();
     }
   });

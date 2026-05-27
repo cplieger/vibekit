@@ -54,10 +54,10 @@ func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 
 func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	cases := []struct {
-		name   string
 		setup  func(*Hub)
-		events []json.RawMessage
 		assert func(*testing.T, *buffer.Buffer)
+		name   string
+		events []json.RawMessage
 	}{
 		{
 			name: "tool_call_added_to_buffer",
@@ -328,8 +328,8 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 // growth under varying iteration counts.
 func BenchmarkTranslateACPEvent(b *testing.B) {
 	payloads := []struct {
-		name string
 		msg  *api.RPCResponse
+		name string
 	}{
 		{
 			name: "agent_message_chunk",

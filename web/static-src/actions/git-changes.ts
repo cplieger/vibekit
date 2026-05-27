@@ -9,9 +9,12 @@ import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { truncate } from "../strings.js";
 import {
-  stageFiles, rollbackStage,
-  unstageFiles, rollbackUnstage,
-  removeFiles, rollbackRemove,
+  stageFiles,
+  rollbackStage,
+  unstageFiles,
+  rollbackUnstage,
+  removeFiles,
+  rollbackRemove,
 } from "../git-changes-state.js";
 import type { StageResult, RemoveResult } from "../git-changes-state.js";
 
@@ -33,10 +36,14 @@ export const stage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   optimistic: (args) => stageFiles(args.repo, args.files),
-  rollback: (_args, op) => rollbackStage(op),
-  error: (args) => args.files.length === 1
-    ? `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
-    : `Couldn't stage ${String(args.files.length)} files`,
+  rollback: (_args, op) => {
+    rollbackStage(op);
+  },
+  error: (args) =>
+    args.files.length === 1
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d`
+      : `Couldn't stage ${String(args.files.length)} files`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -47,10 +54,14 @@ export const discard = apiAction<GitRepoFilesArgs, unknown, RemoveResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   optimistic: (args) => removeFiles(args.repo, args.files),
-  rollback: (_args, op) => rollbackRemove(op),
-  error: (args) => args.files.length === 1
-    ? `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
-    : `Couldn't discard ${String(args.files.length)} files`,
+  rollback: (_args, op) => {
+    rollbackRemove(op);
+  },
+  error: (args) =>
+    args.files.length === 1
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d`
+      : `Couldn't discard ${String(args.files.length)} files`,
   // Destructive: timed-out discard may have succeeded server-side
 });
 
@@ -60,36 +71,40 @@ export const unstage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   optimistic: (args) => unstageFiles(args.repo, args.files),
-  rollback: (_args, op) => rollbackUnstage(op),
-  error: (args) => args.files.length === 1
-    ? `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
-    : `Couldn't unstage ${String(args.files.length)} files`,
+  rollback: (_args, op) => {
+    rollbackUnstage(op);
+  },
+  error: (args) =>
+    args.files.length === 1
+      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
+        `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d`
+      : `Couldn't unstage ${String(args.files.length)} files`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
-export const pull = apiAction<{ repo: string }, unknown>({
+export const pull = apiAction<{ repo: string }>({
   name: "git.pull",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
-  success: (args) => args.repo !== "" ? `Pulled ${args.repo}` : "Pulled",
+  success: (args) => (args.repo !== "" ? `Pulled ${args.repo}` : "Pulled"),
   error: "Pull failed",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
-export const push = apiAction<{ repo: string }, unknown>({
+export const push = apiAction<{ repo: string }>({
   name: "git.push",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
-  success: (args) => args.repo !== "" ? `Pushed ${args.repo}` : "Pushed",
+  success: (args) => (args.repo !== "" ? `Pushed ${args.repo}` : "Pushed"),
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
 });
 
 // TODO: Add idempotencyKey back once the server reads the Idempotency-Key header
 // and deduplicates stash creation server-side.
-export const stash = apiAction<{ repo: string }, unknown>({
+export const stash = apiAction<{ repo: string }>({
   name: "git.stash",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
@@ -98,7 +113,7 @@ export const stash = apiAction<{ repo: string }, unknown>({
   // succeeded would create a duplicate stash on retry.
 });
 
-export const stashPop = apiAction<{ repo: string }, unknown>({
+export const stashPop = apiAction<{ repo: string }>({
   name: "git.stash_pop",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
@@ -106,7 +121,7 @@ export const stashPop = apiAction<{ repo: string }, unknown>({
   // Not retryable: a timed-out stash pop may have succeeded server-side.
 });
 
-export const commit = apiAction<{ repo: string; message: string }, unknown>({
+export const commit = apiAction<{ repo: string; message: string }>({
   name: "git.commit",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),

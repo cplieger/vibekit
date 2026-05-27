@@ -45,14 +45,14 @@ const ROOT = join(import.meta.dirname, "..");
  *  switch to relative-path matching for that entry. */
 const BACKGROUND_ALLOWLIST = new Set<string>([
   // Background fan-out for revalidation; partial failure is expected.
-  "forge-auth.ts",      // await apiPost in revalidateInBackground (probe per forge)
+  "forge-auth.ts", // await apiPost in revalidateInBackground (probe per forge)
 
   // Inline dialog mutations: error surfaces in the dialog status line,
   // not via toast. Intentionally excluded from the action framework.
-  "git-prs-tab.ts",     // await apiPost for PR creation + description generation (inline dialog)
+  "git-prs-tab.ts", // await apiPost for PR creation + description generation (inline dialog)
 
   // Fire-and-forget cleanup after successful plan send.
-  "plan-actions.ts",    // await apiDelete plan-draft + await apiPutOrError plan update
+  "plan-actions.ts", // await apiDelete plan-draft + await apiPutOrError plan update
 ]);
 
 /** Regex for forbidden patterns. Each match is a regression candidate.
@@ -78,7 +78,9 @@ function listTSFiles(dir: string, out: string[] = []): string[] {
     const st = statSync(p);
     if (st.isDirectory()) {
       // Skip vendored / build dirs.
-      if (name === "node_modules" || name === ".vitest-cache" || name === "actions") continue;
+      if (name === "node_modules" || name === ".vitest-cache" || name === "actions") {
+        continue;
+      }
       listTSFiles(p, out);
     } else if (name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts")) {
       out.push(p);
@@ -93,9 +95,13 @@ describe("action framework — regression guard", () => {
     for (const file of listTSFiles(ROOT)) {
       const rel = relative(ROOT, file);
       const base = rel.split("/").pop() ?? rel;
-      if (BACKGROUND_ALLOWLIST.has(base)) continue;
+      if (BACKGROUND_ALLOWLIST.has(base)) {
+        continue;
+      }
       // Skip api-client/transport — they're the underlying primitives.
-      if (base === "api-client.ts" || base === "transport.ts") continue;
+      if (base === "api-client.ts" || base === "transport.ts") {
+        continue;
+      }
       const src = readFileSync(file, "utf8");
       for (const { name, re } of PATTERNS) {
         for (const m of src.matchAll(re)) {

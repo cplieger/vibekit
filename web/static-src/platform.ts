@@ -20,7 +20,9 @@ export function guardAction(fn: () => void, ms = 400): () => void {
   let last = 0;
   return () => {
     const now = Date.now();
-    if (now - last < ms) return;
+    if (now - last < ms) {
+      return;
+    }
     last = now;
     fn();
   };
@@ -33,7 +35,9 @@ export function guardAction(fn: () => void, ms = 400): () => void {
 // ---------------------------------------------------------------------------
 
 export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
-  if (window.visualViewport == null || !isStandalone) return undefined;
+  if (window.visualViewport == null || !isStandalone) {
+    return undefined;
+  }
   let timer = 0;
   const handler = (): void => {
     clearTimeout(timer);
@@ -57,43 +61,87 @@ export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
 // ---------------------------------------------------------------------------
 
 export function initSidebarSwipe(chatArea: HTMLElement, sidebar: HTMLElement): void {
-  if (!isStandalone) return;
+  if (!isStandalone) {
+    return;
+  }
 
   let startX = 0;
   let startY = 0;
   let tracking = false;
 
-  const reset = (): void => { tracking = false; };
+  const reset = (): void => {
+    tracking = false;
+  };
 
-  chatArea.addEventListener("touchstart", (e: TouchEvent) => {
-    const t = e.touches[0];
-    if (t === undefined) return;
-    if (t.clientX <= 30) { startX = t.clientX; startY = t.clientY; tracking = true; }
-  }, { passive: true });
-  chatArea.addEventListener("touchmove", (e: TouchEvent) => {
-    if (!tracking) return;
-    const t = e.touches[0];
-    if (t === undefined) return;
-    const dx = t.clientX - startX;
-    const dy = Math.abs(t.clientY - startY);
-    if (dx > 50 && dx > dy) { sidebar.classList.add("open"); tracking = false; }
-  }, { passive: true });
+  chatArea.addEventListener(
+    "touchstart",
+    (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (t === undefined) {
+        return;
+      }
+      if (t.clientX <= 30) {
+        startX = t.clientX;
+        startY = t.clientY;
+        tracking = true;
+      }
+    },
+    { passive: true },
+  );
+  chatArea.addEventListener(
+    "touchmove",
+    (e: TouchEvent) => {
+      if (!tracking) {
+        return;
+      }
+      const t = e.touches[0];
+      if (t === undefined) {
+        return;
+      }
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > 50 && dx > dy) {
+        sidebar.classList.add("open");
+        tracking = false;
+      }
+    },
+    { passive: true },
+  );
   chatArea.addEventListener("touchend", reset, { passive: true });
 
-  sidebar.addEventListener("touchstart", (e: TouchEvent) => {
-    const t = e.touches[0];
-    if (t === undefined) return;
-    if (sidebar.classList.contains("open")) {
-      startX = t.clientX; startY = t.clientY; tracking = true;
-    }
-  }, { passive: true });
-  sidebar.addEventListener("touchmove", (e: TouchEvent) => {
-    if (!tracking) return;
-    const t = e.touches[0];
-    if (t === undefined) return;
-    const dx = startX - t.clientX;
-    const dy = Math.abs(t.clientY - startY);
-    if (dx > 50 && dx > dy) { sidebar.classList.remove("open"); tracking = false; }
-  }, { passive: true });
+  sidebar.addEventListener(
+    "touchstart",
+    (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (t === undefined) {
+        return;
+      }
+      if (sidebar.classList.contains("open")) {
+        startX = t.clientX;
+        startY = t.clientY;
+        tracking = true;
+      }
+    },
+    { passive: true },
+  );
+  sidebar.addEventListener(
+    "touchmove",
+    (e: TouchEvent) => {
+      if (!tracking) {
+        return;
+      }
+      const t = e.touches[0];
+      if (t === undefined) {
+        return;
+      }
+      const dx = startX - t.clientX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > 50 && dx > dy) {
+        sidebar.classList.remove("open");
+        tracking = false;
+      }
+    },
+    { passive: true },
+  );
   sidebar.addEventListener("touchend", reset, { passive: true });
 }

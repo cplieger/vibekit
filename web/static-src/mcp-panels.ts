@@ -9,7 +9,12 @@ import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry, type RegistrySearchResult } from "./actions/mcp.js";
-import { subscribeToActions, bindLoadingState, debouncedDispatch, registerCleanup } from "./actions/index.js";
+import {
+  subscribeToActions,
+  bindLoadingState,
+  debouncedDispatch,
+  registerCleanup,
+} from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
@@ -41,14 +46,15 @@ class EditSession {
   }
 }
 
-let session = new EditSession();
+const session = new EditSession();
 
 /** Cancel any in-flight work and tear down search subscription when
  *  the modal is dismissed (close button, Escape, or overlay click). */
 export function cleanupModal(): void {
   debouncedSearch?.cancel();
   searchRegistry.cancel();
-  retryBtnUnbind?.(); retryBtnUnbind = null;
+  retryBtnUnbind?.();
+  retryBtnUnbind = null;
   searchUnsub?.();
   searchUnsub = null;
 }
@@ -61,7 +67,10 @@ export function setEditing(ctx: EditingContext): void {
   }
 }
 
-interface InitArgs { mode: AddMode; server: Server | null }
+interface InitArgs {
+  mode: AddMode;
+  server: Server | null;
+}
 
 export function initModal(args: InitArgs): void {
   const title = el<HTMLSpanElement>("mcp-modal-title");
@@ -71,18 +80,42 @@ export function initModal(args: InitArgs): void {
   tabs.classList.toggle("hidden", session.editing.id !== "");
   for (const btn of tabs.querySelectorAll<HTMLButtonElement>(".mcp-modal-tab")) {
     btn.classList.toggle("active", btn.dataset["mcpMode"] === args.mode);
-    btn.onclick = (): void => setMode(btn.dataset["mcpMode"] as AddMode, null);
+    btn.onclick = (): void => {
+      setMode(btn.dataset["mcpMode"] as AddMode, null);
+    };
   }
 
   initDisabledToolsSection(args.server);
   setMode(args.mode, args.server);
 }
 
-const PANEL_MODES: Readonly<Record<AddMode, { transport: Transport | null; init: (existing: Server | null) => void }>> = {
-  search: { transport: null,    init: () => initSearchPanel() },
-  remote: { transport: "http",  init: (s) => initRemotePanel(s) },
-  npm:    { transport: "stdio", init: (s) => initNpmPanel(s) },
-  raw:    { transport: "stdio", init: (s) => initRawPanel(s) },
+const PANEL_MODES: Readonly<
+  Record<AddMode, { transport: Transport | null; init: (existing: Server | null) => void }>
+> = {
+  search: {
+    transport: null,
+    init: () => {
+      initSearchPanel();
+    },
+  },
+  remote: {
+    transport: "http",
+    init: (s) => {
+      initRemotePanel(s);
+    },
+  },
+  npm: {
+    transport: "stdio",
+    init: (s) => {
+      initNpmPanel(s);
+    },
+  },
+  raw: {
+    transport: "stdio",
+    init: (s) => {
+      initRawPanel(s);
+    },
+  },
 };
 
 function setMode(mode: AddMode, existing: Server | null): void {
@@ -98,7 +131,11 @@ function setMode(mode: AddMode, existing: Server | null): void {
 
 // --- Submit helpers ---
 
-async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: HTMLButtonElement | null): Promise<boolean> {
+async function submitServer(
+  body: Partial<Server>,
+  errEl: HTMLElement,
+  saveBtn: HTMLButtonElement | null,
+): Promise<boolean> {
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
@@ -106,9 +143,10 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: 
     body.disabled_tools = session.disabledToolsList;
   }
 
-  const unbind = saveBtn != null
-    ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
-    : undefined;
+  const unbind =
+    saveBtn != null
+      ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
+      : undefined;
 
   let capturedError: ActionErrorLike | undefined;
   const unsub = subscribeToActions((inst) => {
@@ -117,9 +155,15 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: 
     }
   });
 
-  const r = await saveServer.dispatch({ id: session.editing.id, body }, {
-    onSettled: () => { unsub(); unbind?.(); },
-  });
+  const r = await saveServer.dispatch(
+    { id: session.editing.id, body },
+    {
+      onSettled: () => {
+        unsub();
+        unbind?.();
+      },
+    },
+  );
 
   if (r === null) {
     errEl.textContent = capturedError?.message ?? "Save failed.";
@@ -127,7 +171,7 @@ async function submitServer(body: Partial<Server>, errEl: HTMLElement, saveBtn: 
     return false;
   }
   closeModal($.mcpModal);
-  void refetchServers();
+  refetchServers();
   return true;
 }
 
@@ -139,23 +183,33 @@ interface RegistryEntry {
   description?: string;
   version?: string;
   repository?: string;
-  packages?: Array<{
+  packages?: {
     registry_type: string;
     identifier: string;
     version?: string;
-    env_vars?: Array<{ name: string; description?: string; required?: boolean; secret?: boolean }>;
-  }>;
-  remotes?: Array<{
+    env_vars?: { name: string; description?: string; required?: boolean; secret?: boolean }[];
+  }[];
+  remotes?: {
     type: string;
     url: string;
-    headers?: Array<{ name: string; description?: string; value?: string; required?: boolean; secret?: boolean }>;
-  }>;
+    headers?: {
+      name: string;
+      description?: string;
+      value?: string;
+      required?: boolean;
+      secret?: boolean;
+    }[];
+  }[];
 }
 
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
 let searchUnsub: (() => void) | null = null;
 let retryBtnUnbind: (() => void) | null = null;
-registerCleanup(() => { debouncedSearch?.cancel(); searchUnsub?.(); retryBtnUnbind?.(); });
+registerCleanup(() => {
+  debouncedSearch?.cancel();
+  searchUnsub?.();
+  retryBtnUnbind?.();
+});
 
 function initSearchPanel(): void {
   const input = el<HTMLInputElement>("mcp-search-input");
@@ -171,7 +225,9 @@ function initSearchPanel(): void {
   debouncedSearch = debouncedDispatch(searchRegistry, { wait: 200 });
 
   searchUnsub = subscribeToActions((inst) => {
-    if (inst.name !== "mcp.search_registry") return;
+    if (inst.name !== "mcp.search_registry") {
+      return;
+    }
     if (inst.status === "success") {
       const d = inst.result as RegistrySearchResult | undefined;
       const q = (inst.args as { q: string }).q;
@@ -183,38 +239,58 @@ function initSearchPanel(): void {
 
   input.oninput = (): void => {
     const q = input.value.trim();
-    if (q === "") { retryBtnUnbind?.(); retryBtnUnbind = null; results.replaceChildren(); debouncedSearch!.cancel(); return; }
-    debouncedSearch!({ q });
+    if (q === "") {
+      retryBtnUnbind?.();
+      retryBtnUnbind = null;
+      results.replaceChildren();
+      debouncedSearch!.cancel(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      return;
+    }
+    debouncedSearch!({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
 
   input.onkeydown = (e: KeyboardEvent): void => {
     if (e.key === "Enter") {
       e.preventDefault();
       const q = input.value.trim();
-      if (q === "") return;
-      debouncedSearch!.flush({ q });
+      if (q === "") {
+        return;
+      }
+      void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
   };
 
   btn.onclick = (): void => {
     const q = input.value.trim();
-    if (q === "") return;
-    debouncedSearch!.flush({ q });
+    if (q === "") {
+      return;
+    }
+    void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   };
 }
 
-function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | undefined, q: string): void {
-  retryBtnUnbind?.(); retryBtnUnbind = null;
+function renderSearchResults(
+  results: HTMLDivElement,
+  d: RegistrySearchResult | undefined,
+  q: string,
+): void {
+  retryBtnUnbind?.();
+  retryBtnUnbind = null;
   // Drop any non-keyed empty/error placeholders before reconciling.
   for (const child of [...results.children]) {
-    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) child.remove();
+    if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+      child.remove();
+    }
   }
-  if (d === undefined || d === null) {
+  if (d == null) {
     renderSearchError(results, q);
     return;
   }
   if (d.servers.length === 0) {
-    reconcile(results, [] as RegistryEntry[], { key: (e) => e.name, mount: () => document.createElement("div") });
+    reconcile(results, [] as RegistryEntry[], {
+      key: (e) => e.name,
+      mount: () => document.createElement("div"),
+    });
     const empty = document.createElement("p");
     empty.className = "mcp-empty";
     empty.textContent = `No results for "${q}".`;
@@ -228,7 +304,8 @@ function renderSearchResults(results: HTMLDivElement, d: RegistrySearchResult | 
 }
 
 function renderSearchError(results: HTMLDivElement, q: string): void {
-  retryBtnUnbind?.(); retryBtnUnbind = null;
+  retryBtnUnbind?.();
+  retryBtnUnbind = null;
   results.replaceChildren();
   const err = document.createElement("p");
   err.className = "mcp-empty";
@@ -239,7 +316,9 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   retryBtn.className = "btn-small";
   retryBtn.textContent = "Retry";
   retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn);
-  retryBtn.addEventListener("click", () => { void searchRegistry.dispatch({ q }); });
+  retryBtn.addEventListener("click", () => {
+    void searchRegistry.dispatch({ q });
+  });
   results.appendChild(retryBtn);
 }
 
@@ -267,8 +346,19 @@ function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
     row.appendChild(renderInstallBtn(entry, "npm", pkg.identifier, pkg.env_vars ?? []));
   }
   for (const rem of entry.remotes ?? []) {
-    row.appendChild(renderInstallBtn(entry, rem.type, rem.url,
-      (rem.headers ?? []).map((h) => ({ name: h.name, description: h.description, required: h.required, secret: h.secret }))));
+    row.appendChild(
+      renderInstallBtn(
+        entry,
+        rem.type,
+        rem.url,
+        (rem.headers ?? []).map((h) => ({
+          name: h.name,
+          description: h.description,
+          required: h.required,
+          secret: h.secret,
+        })),
+      ),
+    );
   }
 
   return row;
@@ -278,7 +368,12 @@ function renderInstallBtn(
   entry: RegistryEntry,
   kind: string,
   identifier: string,
-  fields: Array<{ name: string; description?: string | undefined; required?: boolean | undefined; secret?: boolean | undefined }>,
+  fields: {
+    name: string;
+    description?: string | undefined;
+    required?: boolean | undefined;
+    secret?: boolean | undefined;
+  }[],
 ): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -300,7 +395,12 @@ function renderInstallBtn(
 export function simplifyName(full: string): string {
   const slash = full.lastIndexOf("/");
   const raw = slash >= 0 ? full.slice(slash + 1) : full;
-  return raw.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "server";
+  return (
+    raw
+      .replace(/[^A-Za-z0-9_-]/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "server"
+  );
 }
 
 // --- Panel: npm (stdio via npx) ---
@@ -332,34 +432,50 @@ function initNpmPanel(existing: Server | null): void {
 
   el<HTMLButtonElement>("mcp-npm-save").onclick = (): void => {
     const args = ["-y", pkg.value.trim()].filter((a) => a !== "");
-    const transport: Transport = PANEL_MODES.npm.transport!;
-    void submitServer({
-      transport,
-      name: name.value.trim(),
-      command: "npx",
-      args,
-      env: collectKeyPairs(envList),
-      prewarm: prewarm.checked,
-      enabled: existing?.enabled ?? true,
-    }, errEl, el<HTMLButtonElement>("mcp-npm-save"));
+    const transport: Transport = PANEL_MODES.npm.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    void submitServer(
+      {
+        transport,
+        name: name.value.trim(),
+        command: "npx",
+        args,
+        env: collectKeyPairs(envList),
+        prewarm: prewarm.checked,
+        enabled: existing?.enabled ?? true,
+      },
+      errEl,
+      el<HTMLButtonElement>("mcp-npm-save"),
+    );
   };
 }
 
 function fillNpmForm(
-  name: string, pkg: string,
-  fields: Array<{ name: string; description?: string | undefined; required?: boolean | undefined; secret?: boolean | undefined }>,
+  name: string,
+  pkg: string,
+  fields: {
+    name: string;
+    description?: string | undefined;
+    required?: boolean | undefined;
+    secret?: boolean | undefined;
+  }[],
 ): void {
   el<HTMLInputElement>("mcp-npm-name").value = name;
   el<HTMLInputElement>("mcp-npm-pkg").value = pkg;
   el<HTMLInputElement>("mcp-npm-prewarm").checked = true;
   const list = el<HTMLDivElement>("mcp-npm-env");
-  renderKeyPairList(list, fields.map((f) => ({ name: f.name, value: "" })), "env");
+  renderKeyPairList(
+    list,
+    fields.map((f) => ({ name: f.name, value: "" })),
+    "env",
+  );
 }
 
 export function extractNpxPackage(s: Server): string {
   for (const arg of s.args ?? []) {
     const a = arg.trim();
-    if (a === "" || a === "-y" || a === "--yes") continue;
+    if (a === "" || a === "-y" || a === "--yes") {
+      continue;
+    }
     return a;
   }
   return "";
@@ -385,7 +501,7 @@ function initRemotePanel(existing: Server | null): void {
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
-    typeSel.value = PANEL_MODES.remote.transport!;
+    typeSel.value = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     url.value = "";
     oauthClientID.value = "";
     renderKeyPairList(headers, [], "header");
@@ -405,20 +521,33 @@ function initRemotePanel(existing: Server | null): void {
       enabled: existing?.enabled ?? true,
     };
     const oauthID = oauthClientID.value.trim();
-    if (oauthID !== "") body.oauth_client_id = oauthID;
+    if (oauthID !== "") {
+      body.oauth_client_id = oauthID;
+    }
     void submitServer(body, errEl, el<HTMLButtonElement>("mcp-remote-save"));
   };
 }
 
 function fillRemoteForm(
-  name: string, type: Transport, url: string,
-  fields: Array<{ name: string; description?: string | undefined; required?: boolean | undefined; secret?: boolean | undefined }>,
+  name: string,
+  type: Transport,
+  url: string,
+  fields: {
+    name: string;
+    description?: string | undefined;
+    required?: boolean | undefined;
+    secret?: boolean | undefined;
+  }[],
 ): void {
   el<HTMLInputElement>("mcp-remote-name").value = name;
   el<HTMLSelectElement>("mcp-remote-type").value = type;
   el<HTMLInputElement>("mcp-remote-url").value = url;
   const list = el<HTMLDivElement>("mcp-remote-headers");
-  renderKeyPairList(list, fields.map((f) => ({ name: f.name, value: "" })), "header");
+  renderKeyPairList(
+    list,
+    fields.map((f) => ({ name: f.name, value: "" })),
+    "header",
+  );
 }
 
 // --- Panel: raw JSON ---
@@ -446,8 +575,7 @@ function initRawPanel(existing: Server | null): void {
     }
     const body = rawSubmitShape(parsed);
     if (body === null) {
-      err.textContent =
-        "JSON must include { name, command, args, env? } for a stdio server.";
+      err.textContent = "JSON must include { name, command, args, env? } for a stdio server.";
       err.classList.remove("hidden");
       return;
     }
@@ -468,7 +596,9 @@ const RAW_TEMPLATE = `{
 
 export function rawEditShape(s: Server): Record<string, unknown> {
   const env: Record<string, string> = {};
-  for (const kv of s.env ?? []) env[kv.name] = kv.value;
+  for (const kv of s.env ?? []) {
+    env[kv.name] = kv.value;
+  }
   return {
     name: s.name,
     command: s.command ?? "",
@@ -481,17 +611,23 @@ export function rawEditShape(s: Server): Record<string, unknown> {
 export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server> | null {
   const name = typeof parsed["name"] === "string" ? parsed["name"] : "";
   const command = typeof parsed["command"] === "string" ? parsed["command"] : "";
-  if (name === "" || command === "") return null;
+  if (name === "" || command === "") {
+    return null;
+  }
   const argsIn = parsed["args"];
-  const args = Array.isArray(argsIn) ? argsIn.filter((a): a is string => typeof a === "string") : [];
+  const args = Array.isArray(argsIn)
+    ? argsIn.filter((a): a is string => typeof a === "string")
+    : [];
   const envIn = parsed["env"];
   const env: KeyPair[] = [];
   if (typeof envIn === "object" && envIn !== null) {
     for (const [k, v] of Object.entries(envIn)) {
-      if (typeof v === "string") env.push({ name: k, value: v });
+      if (typeof v === "string") {
+        env.push({ name: k, value: v });
+      }
     }
   }
-  const transport: Transport = PANEL_MODES.raw.transport!;
+  const transport: Transport = PANEL_MODES.raw.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const prewarm = parsed["prewarm"] === true;
   return { transport, name, command, args, env, prewarm };
 }
@@ -517,7 +653,9 @@ function initDisabledToolsSection(server: Server | null): void {
 
   const add = (): void => {
     const name = input.value.trim();
-    if (name === "" || session.disabledToolsList.includes(name)) return;
+    if (name === "" || session.disabledToolsList.includes(name)) {
+      return;
+    }
     session.disabledToolsList.push(name);
     input.value = "";
     renderDisabledChips(chips, section, knownTools);
@@ -525,18 +663,29 @@ function initDisabledToolsSection(server: Server | null): void {
 
   addBtn.onclick = add;
   input.onkeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") { e.preventDefault(); add(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      add();
+    }
   };
 
   // Render known tools as clickable suggestions below the input.
   renderToolSuggestions(section, server.known_tools ?? [], chips);
 }
 
-function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], chips: HTMLDivElement): void {
-  let suggestionsEl = section.querySelector(".mcp-tool-suggestions") as HTMLDivElement | null;
-  if (suggestionsEl !== null) suggestionsEl.remove();
+function renderToolSuggestions(
+  section: HTMLDivElement,
+  knownTools: string[],
+  chips: HTMLDivElement,
+): void {
+  let suggestionsEl = section.querySelector(".mcp-tool-suggestions");
+  if (suggestionsEl !== null) {
+    suggestionsEl.remove();
+  }
   const available = knownTools.filter((t) => !session.disabledToolsList.includes(t));
-  if (available.length === 0) return;
+  if (available.length === 0) {
+    return;
+  }
 
   suggestionsEl = document.createElement("div");
   suggestionsEl.className = "mcp-tool-suggestions";
@@ -562,21 +711,27 @@ function renderToolSuggestions(section: HTMLDivElement, knownTools: string[], ch
   section.appendChild(suggestionsEl);
 }
 
-function renderDisabledChips(container: HTMLDivElement, section?: HTMLDivElement, knownTools?: string[]): void {
+function renderDisabledChips(
+  container: HTMLDivElement,
+  section?: HTMLDivElement,
+  knownTools?: string[],
+): void {
   container.replaceChildren();
   for (const name of session.disabledToolsList) {
-    container.appendChild(buildChip({
-      label: name,
-      code: true,
-      chipClass: "chip mono",
-      removeTitle: "Unblock",
-      onRemove: () => {
-        session.disabledToolsList = session.disabledToolsList.filter((n) => n !== name);
-        renderDisabledChips(container, section, knownTools);
-        if (section !== undefined && knownTools !== undefined) {
-          renderToolSuggestions(section, knownTools, container);
-        }
-      },
-    }));
+    container.appendChild(
+      buildChip({
+        label: name,
+        code: true,
+        chipClass: "chip mono",
+        removeTitle: "Unblock",
+        onRemove: () => {
+          session.disabledToolsList = session.disabledToolsList.filter((n) => n !== name);
+          renderDisabledChips(container, section, knownTools);
+          if (section !== undefined && knownTools !== undefined) {
+            renderToolSuggestions(section, knownTools, container);
+          }
+        },
+      }),
+    );
   }
 }

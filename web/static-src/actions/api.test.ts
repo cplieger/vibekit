@@ -92,10 +92,9 @@ describe("apiAction", () => {
   });
 
   it("throws ActionError with status + body.error message on non-OK response", async () => {
-    mockFetch.mockResolvedValue(new Response(
-      JSON.stringify({ error: "Not found" }),
-      { status: 404 },
-    ));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Not found" }), { status: 404 }),
+    );
     const action = testAction();
     const result = await action.dispatch({ id: "1" });
     expect(result).toBeNull();
@@ -107,7 +106,7 @@ describe("apiAction", () => {
 
   it("POST sends JSON body with Content-Type header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const action = apiAction<{ name: string }, unknown>({
+    const action = apiAction<{ name: string }>({
       name: "test.post",
       request: ({ name }) => ({ method: "POST", path: "/api/items", body: { name } }),
       error: "Failed",
@@ -122,7 +121,7 @@ describe("apiAction", () => {
 
   it("PUT sends JSON body with Content-Type header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const action = apiAction<{ id: string; value: number }, unknown>({
+    const action = apiAction<{ id: string; value: number }>({
       name: "test.put",
       request: ({ id, value }) => ({ method: "PUT", path: `/api/items/${id}`, body: { value } }),
       error: "Failed",
@@ -136,7 +135,7 @@ describe("apiAction", () => {
 
   it("PATCH sends JSON body with Content-Type header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const action = apiAction<{ id: string; delta: string }, unknown>({
+    const action = apiAction<{ id: string; delta: string }>({
       name: "test.patch",
       request: ({ id, delta }) => ({ method: "PATCH", path: `/api/items/${id}`, body: { delta } }),
       error: "Failed",

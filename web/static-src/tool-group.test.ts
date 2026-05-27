@@ -41,15 +41,18 @@ describe("labelWithSamples", () => {
     [3, "file", "Read", ["a.ts", "b.ts", "c.ts"], "Read 3 files: a.ts, b.ts, +1 more"],
     [2, "file", "Edited", ["x.go", "y.go"], "Edited 2 files: x.go, y.go"],
     [1, "command", "Ran", ["ls -la"], "Ran 1 command: ls -la"],
-    [5, "search", "Searched", ["foo", "bar", "baz", "qux", "quux"], "Searched 5 searchs: foo, bar, +3 more"],
+    [
+      5,
+      "search",
+      "Searched",
+      ["foo", "bar", "baz", "qux", "quux"],
+      "Searched 5 searchs: foo, bar, +3 more",
+    ],
     [2, "file", "Read", ["same.ts", "same.ts"], "Read 2 files: same.ts"],
   ];
-  it.each(cases)(
-    "labelWithSamples(%i, %s, %s, %j) => %s",
-    (n, noun, verb, samples, expected) => {
-      expect(labelWithSamples(n, noun, verb, samples)).toBe(expected);
-    },
-  );
+  it.each(cases)("labelWithSamples(%i, %s, %s, %j) => %s", (n, noun, verb, samples, expected) => {
+    expect(labelWithSamples(n, noun, verb, samples)).toBe(expected);
+  });
 });
 
 // --- kindNoun ---
@@ -101,7 +104,9 @@ describe("summarizeSameKind", () => {
       { kind: "execute", filename: "", title: "npm build", mcpServer: "" },
       { kind: "execute", filename: "", title: "npm lint", mcpServer: "" },
     ];
-    expect(summarizeSameKind("execute", infos)).toBe("Ran 3 commands: npm test, npm build, +1 more");
+    expect(summarizeSameKind("execute", infos)).toBe(
+      "Ran 3 commands: npm test, npm build, +1 more",
+    );
   });
 
   it("think single", () => {
@@ -197,11 +202,7 @@ describe("summarize", () => {
 
   const cases: [string, HTMLElement[], string][] = [
     ["empty array", [], "0 tool calls"],
-    [
-      "single tool call",
-      [makeCall("read", "a.ts")],
-      "Read 1 file: a.ts",
-    ],
+    ["single tool call", [makeCall("read", "a.ts")], "Read 1 file: a.ts"],
     [
       "3 consecutive same-kind (read)",
       [makeCall("read", "a.ts"), makeCall("read", "b.ts"), makeCall("read", "c.ts")],
@@ -209,14 +210,15 @@ describe("summarize", () => {
     ],
     [
       "mixed sequence produces mixed summary",
-      [makeCall("read", "a.ts"), makeCall("read", "b.ts"), makeCall("edit", "c.ts"), makeCall("read", "d.ts")],
+      [
+        makeCall("read", "a.ts"),
+        makeCall("read", "b.ts"),
+        makeCall("edit", "c.ts"),
+        makeCall("read", "d.ts"),
+      ],
       "4 operations: 3 reads, 1 edit",
     ],
-    [
-      "single execute with title",
-      [makeCall("execute", "", "npm test")],
-      "Ran 1 command: npm test",
-    ],
+    ["single execute with title", [makeCall("execute", "", "npm test")], "Ran 1 command: npm test"],
   ];
 
   it.each(cases)("%s", (_label, calls, expected) => {

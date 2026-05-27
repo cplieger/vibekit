@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import type * as ToastModule from "./toast.js";
+
 // Each test re-imports the module to reset its module-level state.
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -20,7 +22,7 @@ function toasts(): NodeListOf<Element> {
   return document.querySelectorAll(".vk-toast");
 }
 
-async function loadToast(): Promise<typeof import("./toast.js")> {
+async function loadToast(): Promise<typeof ToastModule> {
   return await import("./toast.js");
 }
 
@@ -115,7 +117,7 @@ describe("toast — auto-dismiss", () => {
     showToast("slow", "info", 10000);
     flushRaf();
     vi.advanceTimersByTime(4000);
-    expect(toasts().length).toBe(1);  // still there past info default
+    expect(toasts().length).toBe(1); // still there past info default
     vi.advanceTimersByTime(7000);
     expect(toasts().length).toBe(0);
   });
@@ -167,7 +169,7 @@ describe("toast — dismissal", () => {
     const close = info("hi");
     flushRaf();
     close();
-    close();  // safe to call again
+    close(); // safe to call again
     close();
     vi.advanceTimersByTime(500);
     expect(toasts().length).toBe(0);
@@ -180,12 +182,12 @@ describe("toast — pause on hover/focus", () => {
     info("hi");
     flushRaf();
     const t = toasts()[0] as HTMLElement;
-    vi.advanceTimersByTime(2000);  // half the duration elapsed
+    vi.advanceTimersByTime(2000); // half the duration elapsed
     t.dispatchEvent(new MouseEvent("mouseenter"));
-    vi.advanceTimersByTime(60000);  // long pause
-    expect(toasts().length).toBe(1);  // still visible
+    vi.advanceTimersByTime(60000); // long pause
+    expect(toasts().length).toBe(1); // still visible
     t.dispatchEvent(new MouseEvent("mouseleave"));
-    vi.advanceTimersByTime(2100);   // remaining ~2s + cleanup margin
+    vi.advanceTimersByTime(2100); // remaining ~2s + cleanup margin
     vi.advanceTimersByTime(500);
     expect(toasts().length).toBe(0);
   });
@@ -209,7 +211,10 @@ describe("toast — pause on hover/focus", () => {
 describe("toast — queue + max-visible", () => {
   it("queues 4th toast when 3 are visible", async () => {
     const { info } = await loadToast();
-    info("1"); info("2"); info("3"); info("4");
+    info("1");
+    info("2");
+    info("3");
+    info("4");
     flushRaf();
     expect(toasts().length).toBe(3);
     // The visible ones are the first 3.
@@ -222,7 +227,10 @@ describe("toast — queue + max-visible", () => {
 
   it("promotes queued toast on dismiss", async () => {
     const { info } = await loadToast();
-    info("1"); info("2"); info("3"); info("4");
+    info("1");
+    info("2");
+    info("3");
+    info("4");
     flushRaf();
     expect(toasts().length).toBe(3);
     (toasts()[0] as HTMLElement).click();
@@ -235,7 +243,9 @@ describe("toast — queue + max-visible", () => {
 
   it("dismissing a queued toast (before mount) removes it from queue", async () => {
     const { info } = await loadToast();
-    info("1"); info("2"); info("3");
+    info("1");
+    info("2");
+    info("3");
     const close4 = info("4");
     flushRaf();
     expect(toasts().length).toBe(3);
@@ -263,7 +273,6 @@ describe("toast — accessibility attributes", () => {
     expect(bar?.getAttribute("aria-hidden")).toBe("true");
   });
 });
-
 
 describe("toast — retry button", () => {
   it("error() with retry renders a button + attaches handler", async () => {
@@ -317,7 +326,11 @@ describe("toast — retry button", () => {
   it("a throwing onClick handler is logged but does not crash", async () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { error } = await loadToast();
-    error("Failed", { onClick: () => { throw new Error("oops"); } });
+    error("Failed", {
+      onClick: () => {
+        throw new Error("oops");
+      },
+    });
     flushRaf();
     const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
     btn.click();

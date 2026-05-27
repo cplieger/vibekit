@@ -1,23 +1,60 @@
-
 /* ==========================================================================
    Reset & Base
    ========================================================================== */
 
 @layer reset {
-* { margin: 0; padding: 0; box-sizing: border-box; }
-/* The universal `*` rule above wipes the UA stylesheet's
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  /* The universal `*` rule above wipes the UA stylesheet's
    `dialog { margin: auto }` centering for modal dialogs, so without
    this rule every showModal()-opened dialog renders anchored to the
    top-left of the viewport. `:modal` only matches dialogs in the
    top layer (i.e. shown via showModal), preserving author-positioned
    non-modal popovers untouched. */
-dialog:modal { margin: auto; }
-::selection { background: color-mix(in srgb, var(--c-accent) 25%, transparent); color: var(--c-text-primary); }
-:where(input, textarea, select) { caret-color: var(--c-accent); }
-:is(.steering-textarea, .auth-input, [id="prompt-input"], .modal-input, .page-textarea, .tool-form-input, .tool-form-select, .git-commit-input):focus { outline: none; border-color: var(--c-accent); }
-:is(.steering-textarea, .auth-input, .git-commit-input, [id="prompt-input"], .modal-input, .page-textarea, .tool-form-input)::placeholder { color: var(--c-text-tertiary); }
+  dialog:modal {
+    margin: auto;
+  }
 
-/* Custom checkbox: appearance:none + design-token colors so checkboxes
+  ::selection {
+    background: color-mix(in srgb, var(--c-accent) 25%, transparent);
+    color: var(--c-text-primary);
+  }
+
+  :where(input, textarea, select) {
+    caret-color: var(--c-accent);
+  }
+
+  :is(
+    .steering-textarea,
+    .auth-input,
+    [id="prompt-input"],
+    .modal-input,
+    .page-textarea,
+    .tool-form-input,
+    .tool-form-select,
+    .git-commit-input
+  ):focus {
+    outline: none;
+    border-color: var(--c-accent);
+  }
+
+  :is(
+    .steering-textarea,
+    .auth-input,
+    .git-commit-input,
+    [id="prompt-input"],
+    .modal-input,
+    .page-textarea,
+    .tool-form-input
+  )::placeholder {
+    color: var(--c-text-tertiary);
+  }
+
+  /* Custom checkbox: appearance:none + design-token colors so checkboxes
  * across the app (file browser, settings toggles, markdown task
  * lists, MCP forms, diff pane) all share one visual language and
  * automatically pick up the active theme's bg / accent / border
@@ -29,63 +66,76 @@ dialog:modal { margin: auto; }
  * Settings → notifications, etc.) keep their opacity:0; width:0
  * sizing from 18-pages.css, so they're invisible regardless of
  * the appearance reset. */
-input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 1rem; height: 1rem;
-  margin: 0;
-  flex-shrink: 0;
-  border: 1px solid var(--c-border);
-  border-radius: 3px;
-  background-color: var(--c-bg-secondary);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 0.75rem;
-  cursor: pointer;
-  transition:
-    background-color var(--dur-micro) var(--ease-micro),
-    border-color     var(--dur-micro) var(--ease-micro);
-}
+  input[type="checkbox"] {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    flex-shrink: 0;
+    border: 1px solid var(--c-border);
+    border-radius: 3px;
+    background-color: var(--c-bg-secondary);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 0.75rem;
+    cursor: pointer;
+    transition:
+      background-color var(--dur-micro) var(--ease-micro),
+      border-color var(--dur-micro) var(--ease-micro);
+  }
 
-input[type="checkbox"]:hover {
-  border-color: var(--c-accent);
-}
+  input[type="checkbox"]:hover {
+    border-color: var(--c-accent);
+  }
 
-input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
-}
+  input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
 
-input[type="checkbox"]:checked {
-  background-color: var(--c-accent);
-  border-color: var(--c-accent);
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
-}
+  input[type="checkbox"]:checked {
+    background-color: var(--c-accent);
+    border-color: var(--c-accent);
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  }
 
-input[type="checkbox"]:indeterminate {
-  background-color: var(--c-accent);
-  border-color: var(--c-accent);
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
-}
+  input[type="checkbox"]:indeterminate {
+    background-color: var(--c-accent);
+    border-color: var(--c-accent);
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
+  }
 
-input[type="checkbox"]:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+  input[type="checkbox"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 
-body {
-  font-family: var(--font-sans); font-size: var(--fs-base);
-  background: var(--c-bg-primary); color: var(--c-text-primary);
-  height: 100vh; overflow: hidden;
-  font-optical-sizing: auto;
-  scrollbar-gutter: stable;
-  text-wrap: pretty;
-  touch-action: pan-x pan-y;
-}
-:where(button) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: var(--font-sans);
+    font-size: var(--fs-base);
+    background: var(--c-bg-primary);
+    color: var(--c-text-primary);
+    height: 100vh;
+    overflow: hidden;
+    font-optical-sizing: auto;
+    scrollbar-gutter: stable;
+    text-wrap: pretty;
+    touch-action: pan-x pan-y;
+  }
 
-[id="app"] { display: grid; grid-template-columns: 1fr; position: fixed; inset: 0; }
+  :where(button) {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-[id="chat-area"] { margin-inline-start: var(--sidebar-w); }
+  [id="app"] {
+    display: grid;
+    grid-template-columns: 1fr;
+    position: fixed;
+    inset: 0;
+  }
 
+  [id="chat-area"] {
+    margin-inline-start: var(--sidebar-w);
+  }
 } /* @layer reset */

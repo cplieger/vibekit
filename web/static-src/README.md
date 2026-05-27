@@ -5,14 +5,14 @@ served by the Go backend.
 
 ## Structure
 
-| Path | Purpose |
-|------|---------|
-| `actions/` | Declarative action framework (mutations, retry, scope, toast) |
-| `handlers/` | SSE message handlers (turn, pending, system) |
-| `wire/` | Generated protocol decoders and types |
-| `css/` | Stylesheets (numbered for load order) |
-| `*.ts` | UI modules (DOM, state, rendering) |
-| `*.test.ts` | Co-located unit tests |
+| Path        | Purpose                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `actions/`  | Declarative action framework (mutations, retry, scope, toast) |
+| `handlers/` | SSE message handlers (turn, pending, system)                  |
+| `wire/`     | Generated protocol decoders and types                         |
+| `css/`      | Stylesheets (numbered for load order)                         |
+| `*.ts`      | UI modules (DOM, state, rendering)                            |
+| `*.test.ts` | Co-located unit tests                                         |
 
 ## Development
 

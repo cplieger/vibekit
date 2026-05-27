@@ -4,9 +4,7 @@
 
 import { apiGet, apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
-import {
-  asObject, decodeArray, optStr, reqStr, type Decoder,
-} from "./validators.js";
+import { asObject, decodeArray, optStr, reqStr, type Decoder } from "./validators.js";
 
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
@@ -15,9 +13,13 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
     state: reqStr(s, "state", "$.mcp_status.server"),
   };
   const oauthUrl = optStr(s, "oauth_url", "$.mcp_status.server");
-  if (oauthUrl !== undefined) out.oauth_url = oauthUrl;
+  if (oauthUrl !== undefined) {
+    out.oauth_url = oauthUrl;
+  }
   const err = optStr(s, "error", "$.mcp_status.server");
-  if (err !== undefined) out.error = err;
+  if (err !== undefined) {
+    out.error = err;
+  }
   return out;
 };
 
@@ -32,7 +34,10 @@ const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = 
 
 export type Transport = "stdio" | "http" | "sse";
 
-export interface KeyPair { name: string; value: string }
+export interface KeyPair {
+  name: string;
+  value: string;
+}
 
 /** Persisted server record. `value` fields come back as "***" when a
  *  secret is stored; send "***" unchanged to preserve it, any other
@@ -82,10 +87,14 @@ interface WireRuntimeStatus {
 /** Exported for testing: adapt a wire status to the domain type. */
 export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   switch (w.state) {
-    case "needs_auth": return { name: w.name, state: "needs_auth", oauth_url: w.oauth_url ?? "" };
-    case "failed":     return { name: w.name, state: "failed", error: w.error ?? "" };
-    case "connected":  return { name: w.name, state: "connected" };
-    default:           return { name: w.name, state: "idle" };
+    case "needs_auth":
+      return { name: w.name, state: "needs_auth", oauth_url: w.oauth_url ?? "" };
+    case "failed":
+      return { name: w.name, state: "failed", error: w.error ?? "" };
+    case "connected":
+      return { name: w.name, state: "connected" };
+    default:
+      return { name: w.name, state: "idle" };
   }
 }
 
@@ -99,7 +108,9 @@ class MCPStateController {
   private serversFetchPending = false;
   private statusFetchPending = false;
 
-  get status(): ReadonlyMap<string, RuntimeStatus> { return this._status; }
+  get status(): ReadonlyMap<string, RuntimeStatus> {
+    return this._status;
+  }
 
   abort(): void {
     this.serversSlot.abort();
@@ -108,14 +119,22 @@ class MCPStateController {
     this.statusFetchPending = false;
   }
 
-  setRenderCallback(cb: () => void): void { this.renderCb = cb; }
+  setRenderCallback(cb: () => void): void {
+    this.renderCb = cb;
+  }
 
-  setStatus(name: string, rs: RuntimeStatus): void { this._status.set(name, rs); }
+  setStatus(name: string, rs: RuntimeStatus): void {
+    this._status.set(name, rs);
+  }
 
-  deleteStatus(name: string): void { this._status.delete(name); }
+  deleteStatus(name: string): void {
+    this._status.delete(name);
+  }
 
   refetchServers(): void {
-    if (this.serversFetchPending) return;
+    if (this.serversFetchPending) {
+      return;
+    }
     this.serversFetchPending = true;
     queueMicrotask(() => {
       this.serversFetchPending = false;
@@ -126,13 +145,17 @@ class MCPStateController {
   private async doRefetchServers(): Promise<void> {
     const signal = this.serversSlot.start();
     const d = await apiGet<{ servers: Server[] }>("/api/mcp", signal);
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     configured = d?.servers ?? [];
     this.renderCb?.();
   }
 
   refetchStatus(): void {
-    if (this.statusFetchPending) return;
+    if (this.statusFetchPending) {
+      return;
+    }
     this.statusFetchPending = true;
     queueMicrotask(() => {
       this.statusFetchPending = false;
@@ -143,9 +166,13 @@ class MCPStateController {
   private async doRefetchStatus(): Promise<void> {
     const signal = this.statusSlot.start();
     const d = await apiGetTyped("/api/mcp/status", decodeMCPStatusResponseLocal, signal);
-    if (signal.aborted) return;
+    if (signal.aborted) {
+      return;
+    }
     this._status.clear();
-    for (const s of d?.servers ?? []) this._status.set(s.name, adaptStatus(s));
+    for (const s of d?.servers ?? []) {
+      this._status.set(s.name, adaptStatus(s));
+    }
     this.renderCb?.();
   }
 }
@@ -153,25 +180,39 @@ class MCPStateController {
 // --- Singleton + delegate exports (preserves public API) ---
 
 const instance = new MCPStateController();
-registerCleanup(() => { instance.abort(); });
+registerCleanup(() => {
+  instance.abort();
+});
 
 // `configured` remains a module-level let (live binding for consumers).
 // `status` is a readonly reference to the controller's internal Map.
 export let configured: readonly Server[] = [];
 export const status: ReadonlyMap<string, RuntimeStatus> = instance.status;
 
-export function setRenderCallback(cb: () => void): void { instance.setRenderCallback(cb); }
-export function setStatus(name: string, rs: RuntimeStatus): void { instance.setStatus(name, rs); }
-export function deleteStatus(name: string): void { instance.deleteStatus(name); }
-export function refetchServers(): void { instance.refetchServers(); }
-export function refetchStatus(): void { instance.refetchStatus(); }
+export function setRenderCallback(cb: () => void): void {
+  instance.setRenderCallback(cb);
+}
+export function setStatus(name: string, rs: RuntimeStatus): void {
+  instance.setStatus(name, rs);
+}
+export function deleteStatus(name: string): void {
+  instance.deleteStatus(name);
+}
+export function refetchServers(): void {
+  instance.refetchServers();
+}
+export function refetchStatus(): void {
+  instance.refetchStatus();
+}
 
 // --- Optimistic mutation helpers ---
 
 /** Patch a configured entry in-place and re-render. Returns the previous entry for rollback. */
 export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
   const idx = configured.findIndex((s) => s.id === id);
-  if (idx === -1) return undefined;
+  if (idx === -1) {
+    return undefined;
+  }
   const prev = { ...configured[idx] } as Server;
   const arr = [...configured];
   arr[idx] = { ...arr[idx], ...patch } as Server;
@@ -184,8 +225,10 @@ export function updateConfiguredEntry(id: string, patch: Partial<Server>): Serve
 export function removeConfiguredEntry(id: string): [Server, number] | undefined {
   const arr = [...configured];
   const idx = arr.findIndex((s) => s.id === id);
-  if (idx === -1) return undefined;
-  const entry = arr[idx]!;
+  if (idx === -1) {
+    return undefined;
+  }
+  const entry = arr[idx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   arr.splice(idx, 1);
   configured = arr;
   instance.renderCb?.();
@@ -201,7 +244,9 @@ export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
   } else {
     // Fall back to id ordering if no positional hint.
     pos = arr.findIndex((s) => s.id > entry.id);
-    if (pos === -1) pos = arr.length;
+    if (pos === -1) {
+      pos = arr.length;
+    }
   }
   arr.splice(pos, 0, entry);
   configured = arr;

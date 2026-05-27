@@ -25,9 +25,7 @@ import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "
 import { formatToolActivity } from "./format-tool-activity.js";
 import { reconcile } from "./reconcile.js";
 
-type CrewEntry =
-  | { kind: "sub"; sub: CrewSubagent }
-  | { kind: "pending"; ps: CrewPendingStage };
+type CrewEntry = { kind: "sub"; sub: CrewSubagent } | { kind: "pending"; ps: CrewPendingStage };
 
 const cards = new Map<string, HTMLDivElement>();
 const cardState = new WeakMap<HTMLDivElement, string>();
@@ -53,7 +51,9 @@ const rowUnbinds = new Map<string, () => void>();
  *  a tool call arrives, updates, or a permission is requested. */
 export function setSubagentActivity(subSessionID: string, text: string): void {
   const el = activityEls.get(subSessionID);
-  if (el !== undefined) el.textContent = text;
+  if (el !== undefined) {
+    el.textContent = text;
+  }
 }
 
 /** Mark a subagent as having a pending permission request. */
@@ -72,19 +72,22 @@ export function addToolToCrewRow(subSessionID: string, tc: ToolCall): boolean {
   let container = toolContainers.get(subSessionID);
   if (container === undefined) {
     for (const card of cards.values()) {
-      const row = card.querySelector(
-        `.crew-row[data-session-id="${CSS.escape(subSessionID)}"]`,
-      );
+      const row = card.querySelector(`.crew-row[data-session-id="${CSS.escape(subSessionID)}"]`);
       if (row !== null) {
         container = getOrCreateToolContainer(row as HTMLDivElement, subSessionID);
         break;
       }
     }
   }
-  if (container === undefined) return false;
+  if (container === undefined) {
+    return false;
+  }
   const el = buildToolCard({
-    id: tc.id, title: tc.title, kind: tc.kind,
-    status: tc.status, live: false,
+    id: tc.id,
+    title: tc.title,
+    kind: tc.kind,
+    status: tc.status,
+    live: false,
   });
   el.classList.add("crew-tool-card");
   container.appendChild(el);
@@ -104,9 +107,7 @@ export function getCrewToolEl(toolCallID: string): HTMLDivElement | undefined {
 /** Resolve a subagent's display name from the current crew state. */
 export function getSubagentName(subSessionID: string): string {
   for (const card of cards.values()) {
-    const row = card.querySelector(
-      `.crew-row[data-session-id="${CSS.escape(subSessionID)}"]`,
-    );
+    const row = card.querySelector(`.crew-row[data-session-id="${CSS.escape(subSessionID)}"]`);
     if (row !== null) {
       const name = row.querySelector(".crew-name");
       return name?.textContent ?? subSessionID;
@@ -115,10 +116,7 @@ export function getSubagentName(subSessionID: string): string {
   return subSessionID;
 }
 
-export function addCrew(
-  messageID: string, crew: Crew,
-  append: (el: HTMLElement) => void,
-): void {
+function addCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => void): void {
   const existing = cards.get(messageID);
   if (existing !== undefined) {
     applyState(existing, crew);
@@ -132,10 +130,7 @@ export function addCrew(
   scroll();
 }
 
-export function updateCrew(
-  messageID: string, crew: Crew,
-  append: (el: HTMLElement) => void,
-): void {
+export function updateCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => void): void {
   const el = cards.get(messageID);
   if (el === undefined) {
     addCrew(messageID, crew, append);
@@ -144,9 +139,7 @@ export function updateCrew(
   applyState(el, crew);
 }
 
-export function buildCrewCardForReplay(
-  messageID: string, crew: Crew,
-): HTMLDivElement {
+export function buildCrewCardForReplay(messageID: string, crew: Crew): HTMLDivElement {
   const el = build(messageID, crew);
   cards.set(messageID, el);
   return el;
@@ -190,18 +183,23 @@ function build(messageID: string, crew: Crew): HTMLDivElement {
 
 function applyState(el: HTMLDivElement, crew: Crew): void {
   const sig = signature(crew);
-  if (cardState.get(el) === sig) return;
+  if (cardState.get(el) === sig) {
+    return;
+  }
   cardState.set(el, sig);
-  const body = el.querySelector(".crew-body") as HTMLDivElement;
-  const count = el.querySelector(".crew-count") as HTMLSpanElement;
+  const body = el.querySelector(".crew-body")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const count = el.querySelector(".crew-count")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
   const done = crew.subagents.filter((s) => s.status === "terminated").length;
   const pending = crew.pending_stages?.length ?? 0;
-  let countText = active > 0
-    ? `${String(active)} running \u00b7 ${String(done)} done`
-    : `${String(crew.subagents.length)} done`;
-  if (pending > 0) countText += ` \u00b7 ${String(pending)} pending`;
+  let countText =
+    active > 0
+      ? `${String(active)} running \u00b7 ${String(done)} done`
+      : `${String(crew.subagents.length)} done`;
+  if (pending > 0) {
+    countText += ` \u00b7 ${String(pending)} pending`;
+  }
   count.textContent = countText;
   el.classList.toggle("crew-done", active === 0 && pending === 0);
 
@@ -210,29 +208,39 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
   // to capture-and-restore. Tool containers stay attached to their
   // parent expand-body across paints.
   const flat: CrewEntry[] = [];
-  for (const sub of crew.subagents) flat.push({ kind: "sub", sub });
-  for (const ps of crew.pending_stages ?? []) flat.push({ kind: "pending", ps });
+  for (const sub of crew.subagents) {
+    flat.push({ kind: "sub", sub });
+  }
+  for (const ps of crew.pending_stages ?? []) {
+    flat.push({ kind: "pending", ps });
+  }
 
   reconcile(body, flat, {
-    key: (e: CrewEntry) => e.kind === "sub" ? `sub:${e.sub.session_id}` : `pending:${e.ps.name}`,
+    key: (e: CrewEntry) => (e.kind === "sub" ? `sub:${e.sub.session_id}` : `pending:${e.ps.name}`),
     mount: (e: CrewEntry) => {
-      if (e.kind === "pending") return buildPendingRow(e.ps);
+      if (e.kind === "pending") {
+        return buildPendingRow(e.ps);
+      }
       const r = buildRow(e.sub);
       const tc = toolContainers.get(e.sub.session_id);
       if (tc !== undefined) {
-        const expandBody = r.querySelector(".crew-row-expand") as HTMLDivElement;
+        const expandBody = r.querySelector(".crew-row-expand")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
         expandBody.appendChild(tc);
       }
       return r;
     },
     update: (row: HTMLElement, e: CrewEntry) => {
-      if (e.kind === "pending") return; // pending row content is static
+      if (e.kind === "pending") {
+        return;
+      } // pending row content is static
       // Sync status-driven row class and the head's status-icon.
       row.className = `crew-row crew-status-${e.sub.status}`;
       const head = row.querySelector<HTMLElement>(":scope > .crew-row-head");
       if (head !== null) {
         const oldIcon = head.querySelector<HTMLElement>(":scope > .crew-icon-status");
-        if (oldIcon !== null) oldIcon.replaceWith(createStatusIcon(e.sub.status));
+        if (oldIcon !== null) {
+          oldIcon.replaceWith(createStatusIcon(e.sub.status));
+        }
       }
       // Sync activity text (mirrors initial paint logic in buildRow).
       const actEl = activityEls.get(e.sub.session_id);
@@ -253,7 +261,10 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
     },
     onRemove: (_: HTMLElement, key: string) => {
       const u = rowUnbinds.get(key);
-      if (u !== undefined) { u(); rowUnbinds.delete(key); }
+      if (u !== undefined) {
+        u();
+        rowUnbinds.delete(key);
+      }
     },
   });
 }
@@ -358,7 +369,9 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   const expand = document.createElement("div");
   expand.className = "crew-row-expand";
   const isExpanded = expandedRows.has(sub.session_id);
-  if (!isExpanded) expand.classList.add("hidden");
+  if (!isExpanded) {
+    expand.classList.add("hidden");
+  }
 
   if (sub.initial_query !== "") {
     const query = document.createElement("div");
@@ -383,21 +396,33 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   rowUnbinds.set(`sub:${sub.session_id}`, bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
-    if (text === "") return;
+    if (text === "") {
+      return;
+    }
     const chatID = getActiveId();
-    if (chatID === "") return;
+    if (chatID === "") {
+      return;
+    }
     const saved = input.value;
     input.value = "";
-    void sendMessage.dispatch({ chatID, subSessionID: sub.session_id, text }, {
-      onError: () => {
-        // Only restore if the user hasn't typed new content since dispatch.
-        if (input.value === "") input.value = saved;
+    void sendMessage.dispatch(
+      { chatID, subSessionID: sub.session_id, text },
+      {
+        onError: () => {
+          // Only restore if the user hasn't typed new content since dispatch.
+          if (input.value === "") {
+            input.value = saved;
+          }
+        },
       },
-    });
+    );
   };
   sendBtn.addEventListener("click", doSend);
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); doSend(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doSend();
+    }
   });
   inputRow.append(input, sendBtn);
   expand.appendChild(inputRow);
@@ -453,9 +478,7 @@ export function titleFor(crew: Crew): string {
   return g.length === 0 ? "Crew" : `Crew: ${g}`;
 }
 
-function getOrCreateToolContainer(
-  row: HTMLDivElement, sessionID: string,
-): HTMLDivElement {
+function getOrCreateToolContainer(row: HTMLDivElement, sessionID: string): HTMLDivElement {
   let container = toolContainers.get(sessionID);
   if (container !== undefined) {
     const expand = row.querySelector(".crew-row-expand");
@@ -477,19 +500,24 @@ function getOrCreateToolContainer(
   return container;
 }
 
-
 /** Update the activity line when a tool call completes. Called from
  *  messages.ts updateToolCall after propagating to the crew-row clone. */
 export function onCrewToolCompleted(subSessionID: string): void {
   // If there's no pending approval, show "Done" or clear the activity.
-  if (pendingApprovals.has(subSessionID)) return;
+  if (pendingApprovals.has(subSessionID)) {
+    return;
+  }
   const el = activityEls.get(subSessionID);
-  if (el === undefined) return;
+  if (el === undefined) {
+    return;
+  }
   // Check if there are still active tools for this subagent.
   const container = toolContainers.get(subSessionID);
   if (container !== undefined) {
     const activeTool = container.querySelector(".tool-status.pending, .tool-status.in_progress");
-    if (activeTool !== null) return; // Still has active tools.
+    if (activeTool !== null) {
+      return;
+    } // Still has active tools.
   }
   el.textContent = "Done";
   el.classList.add("crew-activity-done");

@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -15,12 +18,13 @@ vi.mock("../api-client.js", () => ({
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
 
 vi.mock("../files-shared.js", () => ({
-  joinPath: (dir: string, name: string) => dir ? `${dir}/${name}` : name,
+  joinPath: (dir: string, name: string) => (dir ? `${dir}/${name}` : name),
 }));
 
 vi.mock("../upload.js", () => ({
@@ -135,8 +139,13 @@ describe("files.rename — idempotency key", () => {
 
 describe("forge.start_device_flow — dedupe", () => {
   it("dedupes concurrent dispatches", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ device_code: "abc" }), { status: 200 }));
+          }, 50),
+        ),
     );
     const { startDeviceFlow } = await import("./forge.js");
     const p1 = startDeviceFlow.dispatch(undefined);
@@ -175,7 +184,9 @@ describe("forge.clone_repo — retry + idempotency", () => {
 describe("forge.connect_pat — retry + idempotency", () => {
   it("retries on 503 with same idempotency key", async () => {
     mockFetch
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }),
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
     const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
@@ -249,8 +260,13 @@ describe("chat.cancel_turn — retry on network error", () => {
 
 describe("chat.load_history — dedupe + retry", () => {
   it("dedupes concurrent dispatches", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ chats: [] }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+          }, 50),
+        ),
     );
     const { loadHistory } = await import("./chat.js");
     const p1 = loadHistory.dispatch(undefined);
@@ -263,7 +279,9 @@ describe("chat.load_history — dedupe + retry", () => {
   it("retries on network error", async () => {
     mockFetch
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ chats: [{ id: "c1" }] }), { status: 200 }));
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ chats: [{ id: "c1" }] }), { status: 200 }),
+      );
     const { loadHistory } = await import("./chat.js");
     const p = loadHistory.dispatch(undefined);
     await vi.advanceTimersByTimeAsync(300);
@@ -339,8 +357,13 @@ describe("git.stage — scope serialization", () => {
 
 describe("git.generate_message — dedupe", () => {
   it("dedupes concurrent dispatches for same repo", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ message: "feat: x" }), { status: 200 }));
+          }, 50),
+        ),
     );
     const { generateCommitMessage } = await import("./git-changes.js");
     const p1 = generateCommitMessage.dispatch({ repo: "main" });
@@ -353,8 +376,13 @@ describe("git.generate_message — dedupe", () => {
   });
 
   it("does not dedupe different repos", async () => {
-    mockFetch.mockImplementation(() =>
-      new Promise((r) => setTimeout(() => r(new Response(JSON.stringify({ message: "m" }), { status: 200 })), 50)),
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ message: "m" }), { status: 200 }));
+          }, 50),
+        ),
     );
     const { generateCommitMessage } = await import("./git-changes.js");
     const p1 = generateCommitMessage.dispatch({ repo: "repoA" });
@@ -402,10 +430,13 @@ describe("chat.cancel_turn — dispatch callbacks", () => {
 
 describe("files.download — abort handling", () => {
   it("returns null on cancellation", async () => {
-    mockFetch.mockImplementation((_url: string, opts: RequestInit) =>
-      new Promise((_resolve, reject) => {
-        opts.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }),
+    mockFetch.mockImplementation(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal!.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
     );
     const { downloadFiles } = await import("./files.js");
     const p = downloadFiles.dispatch({ paths: ["/a.ts"] });

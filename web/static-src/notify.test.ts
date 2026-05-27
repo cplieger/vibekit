@@ -16,9 +16,13 @@ describe("urlBase64ToUint8Array round-trip", () => {
       fc.property(fc.uint8Array({ minLength: 0, maxLength: 128 }), (bytes) => {
         const encoded = toUrlBase64(bytes);
         const decoded = urlBase64ToUint8Array(encoded);
-        if (decoded.length !== bytes.length) return false;
+        if (decoded.length !== bytes.length) {
+          return false;
+        }
         for (let i = 0; i < bytes.length; i++) {
-          if (decoded[i] !== bytes[i]) return false;
+          if (decoded[i] !== bytes[i]) {
+            return false;
+          }
         }
         return true;
       }),
@@ -81,7 +85,9 @@ describe("urlBase64ToUint8Array adversarial inputs", () => {
       fc.property(fc.base64String({ minLength: 4, maxLength: 100 }), (input) => {
         const padded = input + "=".repeat((4 - (input.length % 4)) % 4);
         try {
-          const r = urlBase64ToUint8Array(padded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
+          const r = urlBase64ToUint8Array(
+            padded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+          );
           const expectedLen = Math.floor((padded.replace(/=+$/, "").length * 3) / 4);
           return r.length === expectedLen;
         } catch {

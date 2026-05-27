@@ -7,7 +7,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const mockSetThinking = vi.fn();
 const mockGetActiveId = vi.fn(() => "chat-1");
-const mockGetSessions = vi.fn(() => [] as Array<{ id: string; thinking: boolean }>);
+const mockGetSessions = vi.fn(() => [] as { id: string; thinking: boolean }[]);
 const mockLoadList = vi.fn(() => Promise.resolve(true));
 const mockLoadMessages = vi.fn(() => Promise.resolve(true));
 
@@ -41,10 +41,12 @@ vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 vi.mock("../auto-approve.js", () => ({ clearCrewCache: vi.fn() }));
 
 // Capture bus handlers
-const busHandlers = new Map<string, Function>();
+const busHandlers = new Map<string, (...args: unknown[]) => void>();
 vi.mock("../bus.js", () => ({
   onSSE: vi.fn(),
-  onBus: vi.fn((event: string, handler: Function) => { busHandlers.set(event, handler); }),
+  onBus: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    busHandlers.set(event, handler);
+  }),
   BUS_TRANSPORT_GAP: "transport:gap",
 }));
 
@@ -53,7 +55,9 @@ await import("./system.js");
 
 function fireGap(): void {
   const handler = busHandlers.get("transport:gap");
-  if (handler) handler({});
+  if (handler) {
+    handler({});
+  }
 }
 
 describe("BUS_TRANSPORT_GAP handler", () => {

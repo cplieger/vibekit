@@ -44,14 +44,18 @@ interface RepoStatus {
   behind: number;
   has_dirty: boolean;
 }
-interface StatusAllResponse { repos: RepoStatus[] }
+interface StatusAllResponse {
+  repos?: RepoStatus[] | null;
+}
 
 interface ConfiguredForge {
   id: string;
   connected: boolean;
   last_error?: string;
 }
-interface ForgesListResponse { forges: ConfiguredForge[] }
+interface ForgesListResponse {
+  forges?: ConfiguredForge[] | null;
+}
 
 let started = false;
 let lastState: BadgeState = "none";
@@ -59,10 +63,16 @@ let lastTooltip = "";
 
 /** Wire SSE listeners + start the poll. Idempotent. */
 export function initGitBadge(): void {
-  if (started) return;
+  if (started) {
+    return;
+  }
   started = true;
-  onSSE("turn_ended", () => { void refreshGitBadge(); });
-  onSSE("forges_changed", () => { void refreshGitBadge(); });
+  onSSE("turn_ended", () => {
+    void refreshGitBadge();
+  });
+  onSSE("forges_changed", () => {
+    void refreshGitBadge();
+  });
   // pollAction handles cleanup, pause-when-hidden (no need to refresh
   // the badge when the user can't see it), and refresh-on-focus (instant
   // freshness when the user returns to the tab). The action's result is
@@ -103,19 +113,35 @@ function deriveState(
       }
     }
   }
-  if (status === null) return "none";
+  if (status === null) {
+    return "none";
+  }
 
   let hasLocal = false;
   let hasRemote = false;
   for (const r of status.repos ?? []) {
-    if (!r.is_repo) continue;
-    if (r.has_dirty || r.ahead > 0) hasLocal = true;
-    if (r.behind > 0) hasRemote = true;
-    if (hasLocal && hasRemote) break;
+    if (!r.is_repo) {
+      continue;
+    }
+    if (r.has_dirty || r.ahead > 0) {
+      hasLocal = true;
+    }
+    if (r.behind > 0) {
+      hasRemote = true;
+    }
+    if (hasLocal && hasRemote) {
+      break;
+    }
   }
-  if (hasLocal && hasRemote) return "both";
-  if (hasLocal) return "local";
-  if (hasRemote) return "remote";
+  if (hasLocal && hasRemote) {
+    return "both";
+  }
+  if (hasLocal) {
+    return "local";
+  }
+  if (hasRemote) {
+    return "remote";
+  }
   return "none";
 }
 
@@ -126,32 +152,47 @@ function deriveTooltip(
   forges: ForgesListResponse | null,
 ): string {
   if (state === "error") {
-    const errored = (forges?.forges ?? [])
-      .filter((f) => f.connected && f.last_error !== undefined && f.last_error !== "");
+    const errored = (forges?.forges ?? []).filter(
+      (f) => f.connected && f.last_error !== undefined && f.last_error !== "",
+    );
     if (errored.length === 1) {
-      return `Forge auth issue: ${errored[0]!.id}`;
+      return `Forge auth issue: ${errored[0]!.id}`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
     return `${errored.length} forges with auth issues`;
   }
-  if (status === null) return "";
+  if (status === null) {
+    return "";
+  }
 
   let dirty = 0;
   let behind = 0;
   for (const r of status.repos ?? []) {
-    if (!r.is_repo) continue;
-    if (r.has_dirty || r.ahead > 0) dirty++;
-    if (r.behind > 0) behind++;
+    if (!r.is_repo) {
+      continue;
+    }
+    if (r.has_dirty || r.ahead > 0) {
+      dirty++;
+    }
+    if (r.behind > 0) {
+      behind++;
+    }
   }
   switch (state) {
-    case "both":   return `${dirty} repo${dirty === 1 ? "" : "s"} with local changes, ${behind} behind origin`;
-    case "local":  return `${dirty} repo${dirty === 1 ? "" : "s"} with local changes`;
-    case "remote": return `${behind} repo${behind === 1 ? "" : "s"} behind origin`;
-    default:       return "";
+    case "both":
+      return `${dirty} repo${dirty === 1 ? "" : "s"} with local changes, ${behind} behind origin`;
+    case "local":
+      return `${dirty} repo${dirty === 1 ? "" : "s"} with local changes`;
+    case "remote":
+      return `${behind} repo${behind === 1 ? "" : "s"} behind origin`;
+    default:
+      return "";
   }
 }
 
 function applyBadge(state: BadgeState, tooltip: string): void {
-  if (state === lastState && tooltip === lastTooltip) return;
+  if (state === lastState && tooltip === lastTooltip) {
+    return;
+  }
   lastState = state;
   lastTooltip = tooltip;
   const el = $.gitBadge;
@@ -160,7 +201,9 @@ function applyBadge(state: BadgeState, tooltip: string): void {
     el.removeAttribute("data-state");
     // Restore the default sidebar button tooltip when no badge.
     const btn = el.parentElement;
-    if (btn !== null) btn.setAttribute("data-tooltip", "Toggle git");
+    if (btn !== null) {
+      btn.setAttribute("data-tooltip", "Toggle git");
+    }
     return;
   }
   el.classList.remove("hidden");
@@ -170,5 +213,7 @@ function applyBadge(state: BadgeState, tooltip: string): void {
   // sees the rich badge state on hover instead of the static
   // "Toggle git" label.
   const btn = el.parentElement;
-  if (btn !== null) btn.setAttribute("data-tooltip", tooltip);
+  if (btn !== null) {
+    btn.setAttribute("data-tooltip", tooltip);
+  }
 }

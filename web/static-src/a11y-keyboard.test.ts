@@ -8,8 +8,10 @@ describe("a11y: tool-group header keyboard and aria", () => {
   it("header has role=button, tabindex=0, and aria-expanded=true", async () => {
     const { getOrCreateToolGroup, breakToolGroup } = await import("./tool-group.js");
     breakToolGroup();
-    const group = getOrCreateToolGroup((el) => { document.body.appendChild(el); });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const group = getOrCreateToolGroup((el) => {
+      document.body.appendChild(el);
+    });
+    const header = group.querySelector(".tool-group-header")!;
     expect(header.getAttribute("role")).toBe("button");
     expect(header.getAttribute("tabindex")).toBe("0");
     expect(header.getAttribute("aria-expanded")).toBe("true");
@@ -19,8 +21,10 @@ describe("a11y: tool-group header keyboard and aria", () => {
   it("header toggles aria-expanded on Enter key", async () => {
     const { getOrCreateToolGroup, breakToolGroup } = await import("./tool-group.js");
     breakToolGroup();
-    const group = getOrCreateToolGroup((el) => { document.body.appendChild(el); });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const group = getOrCreateToolGroup((el) => {
+      document.body.appendChild(el);
+    });
+    const header = group.querySelector(".tool-group-header")!;
 
     header.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(header.getAttribute("aria-expanded")).toBe("false");
@@ -36,8 +40,10 @@ describe("a11y: tool-group header keyboard and aria", () => {
   it("header toggles aria-expanded on Space key", async () => {
     const { getOrCreateToolGroup, breakToolGroup } = await import("./tool-group.js");
     breakToolGroup();
-    const group = getOrCreateToolGroup((el) => { document.body.appendChild(el); });
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const group = getOrCreateToolGroup((el) => {
+      document.body.appendChild(el);
+    });
+    const header = group.querySelector(".tool-group-header")!;
 
     header.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
     expect(header.getAttribute("aria-expanded")).toBe("false");
@@ -46,9 +52,12 @@ describe("a11y: tool-group header keyboard and aria", () => {
   });
 
   it("maybeCollapseGroup sets aria-expanded=false", async () => {
-    const { getOrCreateToolGroup, breakToolGroup, maybeCollapseGroup } = await import("./tool-group.js");
+    const { getOrCreateToolGroup, breakToolGroup, maybeCollapseGroup } =
+      await import("./tool-group.js");
     breakToolGroup();
-    const group = getOrCreateToolGroup((el) => { document.body.appendChild(el); });
+    const group = getOrCreateToolGroup((el) => {
+      document.body.appendChild(el);
+    });
 
     // Add 3 completed tool-call children (no data-start-ms)
     for (let i = 0; i < 3; i++) {
@@ -61,7 +70,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
       group.appendChild(call);
     }
 
-    const header = group.querySelector(".tool-group-header") as HTMLElement;
+    const header = group.querySelector(".tool-group-header")!;
     expect(header.getAttribute("aria-expanded")).toBe("true");
 
     maybeCollapseGroup(group.querySelector(".tool-call")!);

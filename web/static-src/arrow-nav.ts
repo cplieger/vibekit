@@ -17,7 +17,9 @@ export function wireArrowNav(
 
   container.addEventListener("keydown", (e: KeyboardEvent) => {
     const items = [...container.querySelectorAll<HTMLElement>(selector)];
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      return;
+    }
     const current = document.activeElement as HTMLElement | null;
     const idx = current !== null ? items.indexOf(current) : -1;
 
@@ -47,7 +49,7 @@ export function wireArrowNav(
     }
     if (next >= 0 && next < items.length) {
       e.preventDefault();
-      items[next]!.focus();
+      items[next]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     }
   });
 
@@ -58,7 +60,9 @@ export function wireArrowNav(
   });
   container.addEventListener("focusin", (e: FocusEvent) => {
     const target = e.target as HTMLElement;
-    if (!target.matches(selector)) return;
+    if (!target.matches(selector)) {
+      return;
+    }
     for (const item of container.querySelectorAll<HTMLElement>(selector)) {
       item.setAttribute("tabindex", item === target ? "0" : "-1");
     }

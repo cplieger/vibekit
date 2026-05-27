@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -21,15 +24,21 @@ import { mergePR, closePR } from "./git-prs.js";
 const mockFetch = vi.fn();
 
 function makeGroups() {
-  return [{
-    forge_id: "gh1", forge_kind: "github", forge_host: "github.com",
-    owner: "org", name: "repo", full_name: "org/repo",
-    prs: [
-      { number: 10, title: "PR 10", state: "open", source_branch: "f10", target_branch: "main" },
-      { number: 5, title: "PR 5", state: "open", source_branch: "f5", target_branch: "main" },
-      { number: 3, title: "PR 3", state: "open", source_branch: "f3", target_branch: "main" },
-    ],
-  }];
+  return [
+    {
+      forge_id: "gh1",
+      forge_kind: "github",
+      forge_host: "github.com",
+      owner: "org",
+      name: "repo",
+      full_name: "org/repo",
+      prs: [
+        { number: 10, title: "PR 10", state: "open", source_branch: "f10", target_branch: "main" },
+        { number: 5, title: "PR 5", state: "open", source_branch: "f5", target_branch: "main" },
+        { number: 3, title: "PR 3", state: "open", source_branch: "f3", target_branch: "main" },
+      ],
+    },
+  ];
 }
 
 const paint = vi.fn();

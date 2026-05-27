@@ -3,7 +3,7 @@ services:
     image: ghcr.io/cplieger/vibekit:latest
     container_name: vibekit
     restart: unless-stopped
-    user: "0:0"  # required for config file permissions
+    user: "0:0" # required for config file permissions
 
     environment:
       TZ: "Europe/Paris"

@@ -3,7 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -29,7 +32,9 @@ describe("dispatch callbacks — onSuccess", () => {
     const onSuccess = vi.fn();
     const action = defineAction({
       name: "cb.fail",
-      run: async () => { throw new ActionError("nope"); },
+      run: async () => {
+        throw new ActionError("nope");
+      },
     });
     await action.dispatch({}, { onSuccess });
     expect(onSuccess).not.toHaveBeenCalled();
@@ -38,9 +43,14 @@ describe("dispatch callbacks — onSuccess", () => {
   it("throwing in onSuccess is caught and logged", async () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const action = defineAction({ name: "cb.throw", run: async () => "ok" });
-    const result = await action.dispatch({}, {
-      onSuccess: () => { throw new Error("callback boom"); },
-    });
+    const result = await action.dispatch(
+      {},
+      {
+        onSuccess: () => {
+          throw new Error("callback boom");
+        },
+      },
+    );
     expect(result).toBe("ok"); // dispatch still resolves
     expect(consoleErr).toHaveBeenCalled();
     consoleErr.mockRestore();
@@ -52,7 +62,9 @@ describe("dispatch callbacks — onError", () => {
     const onError = vi.fn();
     const action = defineAction({
       name: "cb.err",
-      run: async () => { throw new ActionError("bad", { status: 500 }); },
+      run: async () => {
+        throw new ActionError("bad", { status: 500 });
+      },
     });
     await action.dispatch("arg", { onError });
     expect(onError).toHaveBeenCalledWith(
@@ -67,7 +79,9 @@ describe("dispatch callbacks — onError", () => {
       name: "cb.cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
         }),
     });
     const p = action.dispatch({}, { onError });
@@ -84,7 +98,6 @@ describe("dispatch callbacks — onError", () => {
   });
 });
 
-
 describe("dispatch callbacks — onSettled", () => {
   it("fires on success", async () => {
     const onSettled = vi.fn();
@@ -97,7 +110,9 @@ describe("dispatch callbacks — onSettled", () => {
     const onSettled = vi.fn();
     const action = defineAction({
       name: "cb.settled.err",
-      run: async () => { throw new ActionError("fail"); },
+      run: async () => {
+        throw new ActionError("fail");
+      },
     });
     await action.dispatch("b", { onSettled });
     expect(onSettled).toHaveBeenCalledWith("b");
@@ -109,7 +124,9 @@ describe("dispatch callbacks — onSettled", () => {
       name: "cb.settled.cancel",
       run: (_args, signal) =>
         new Promise<void>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
         }),
     });
     const p = action.dispatch("c", { onSettled });
@@ -130,7 +147,9 @@ describe("dispatch callbacks — onSettled", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const action = defineAction({ name: "cb.settled.throw-success", run: async () => "ok" });
     await action.dispatch("d", {
-      onSuccess: () => { throw new Error("onSuccess boom"); },
+      onSuccess: () => {
+        throw new Error("onSuccess boom");
+      },
       onSettled,
     });
     expect(onSettled).toHaveBeenCalledWith("d");
@@ -142,10 +161,14 @@ describe("dispatch callbacks — onSettled", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const action = defineAction({
       name: "cb.settled.throw-error",
-      run: async () => { throw new ActionError("fail"); },
+      run: async () => {
+        throw new ActionError("fail");
+      },
     });
     await action.dispatch("e", {
-      onError: () => { throw new Error("onError boom"); },
+      onError: () => {
+        throw new Error("onError boom");
+      },
       onSettled,
     });
     expect(onSettled).toHaveBeenCalledWith("e");

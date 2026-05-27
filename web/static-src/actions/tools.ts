@@ -4,6 +4,7 @@
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const installTools = apiAction<void, { output?: string; error?: string }>({
   name: "tools.install",
   scope: "tools",
@@ -14,7 +15,7 @@ export const installTools = apiAction<void, { output?: string; error?: string }>
   error: "Tool install failed",
 });
 
-export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>, unknown>({
+export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>>({
   name: "tools.save",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -24,6 +25,7 @@ export const saveTools = apiAction<Record<string, Record<string, Record<string, 
   error: "Couldn't save tool config",
 });
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const runDiagnostics = apiAction<void, { report?: string; error?: string }>({
   name: "tools.run_diagnostics",
   dedupe: true,
@@ -33,6 +35,7 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
   error: false,
 });
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const loadTools = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
   name: "tools.load",
   retryable: retryNetwork,
@@ -42,7 +45,7 @@ export const loadTools = apiAction<void, Record<string, Record<string, Record<st
   error: false,
 });
 
-export const seedMcp = apiAction<{ name: string; install?: string }, unknown>({
+export const seedMcp = apiAction<{ name: string; install?: string }>({
   name: "tools.seed_mcp",
   scope: "tools",
   idempotencyKey: true,

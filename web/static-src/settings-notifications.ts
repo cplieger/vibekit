@@ -4,9 +4,14 @@
 // ---------------------------------------------------------------------------
 
 import {
-  requestPermission, setNotificationsEnabled, areNotificationsEnabled,
-  unregisterPush, isAgentFinishedEnabled, setAgentFinishedEnabled,
-  isPermissionNeededEnabled, setPermissionNeededEnabled,
+  requestPermission,
+  setNotificationsEnabled,
+  areNotificationsEnabled,
+  unregisterPush,
+  isAgentFinishedEnabled,
+  setAgentFinishedEnabled,
+  isPermissionNeededEnabled,
+  setPermissionNeededEnabled,
   setNotifyUICallback,
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
@@ -28,7 +33,8 @@ export function initNotificationToggles(): void {
   if (isIOS && !isStandalone) {
     notifyToggle.checked = false;
     notifyToggle.disabled = true;
-    notifyHint.textContent = "Push notifications require adding this app to your home screen. Tap the share button, then \"Add to Home Screen\".";
+    notifyHint.textContent =
+      'Push notifications require adding this app to your home screen. Tap the share button, then "Add to Home Screen".';
     notifyHint.classList.remove("hidden");
     return;
   }
@@ -51,7 +57,8 @@ export function initNotificationToggles(): void {
     updateSub();
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked && "Notification" in window && Notification.permission === "denied") {
-      notifyHint.textContent = "Notifications were blocked on this device. Allow them in your browser settings.";
+      notifyHint.textContent =
+        "Notifications were blocked on this device. Allow them in your browser settings.";
       notifyHint.classList.remove("hidden");
     }
   });
@@ -76,11 +83,14 @@ export function initNotificationToggles(): void {
       // Show sub-options optimistically.
       updateSub();
       // Defer in-memory state updates until PATCH succeeds (Bug 3 fix).
-      void patchSettings({
-        notifications_enabled: true,
-        notify_agent_finished: true,
-        notify_permission: true,
-      }, ...mutatedInputs).then((r) => {
+      void patchSettings(
+        {
+          notifications_enabled: true,
+          notify_agent_finished: true,
+          notify_permission: true,
+        },
+        ...mutatedInputs,
+      ).then((r) => {
         if (r === null) {
           // Action framework handles input rollback; tear down any push
           // subscription that requestPermission may have started.
@@ -100,7 +110,8 @@ export function initNotificationToggles(): void {
             notifyHint.textContent = hint;
             notifyHint.classList.remove("hidden");
           } else if ("Notification" in window && Notification.permission !== "granted") {
-            notifyHint.textContent = "Browser permission is pending. You may need to allow notifications when prompted.";
+            notifyHint.textContent =
+              "Browser permission is pending. You may need to allow notifications when prompted.";
             notifyHint.classList.remove("hidden");
           }
         }
@@ -121,8 +132,12 @@ export function initNotificationToggles(): void {
   const onSubChange = (): void => {
     // Only register inputs that actually changed for rollback (Bug 2 fix).
     const mutatedInputs: HTMLInputElement[] = [];
-    if (finishedToggle.checked !== isAgentFinishedEnabled()) mutatedInputs.push(finishedToggle);
-    if (permissionToggle.checked !== isPermissionNeededEnabled()) mutatedInputs.push(permissionToggle);
+    if (finishedToggle.checked !== isAgentFinishedEnabled()) {
+      mutatedInputs.push(finishedToggle);
+    }
+    if (permissionToggle.checked !== isPermissionNeededEnabled()) {
+      mutatedInputs.push(permissionToggle);
+    }
 
     const bothOff = !finishedToggle.checked && !permissionToggle.checked;
     if (bothOff) {
@@ -131,7 +146,9 @@ export function initNotificationToggles(): void {
     }
 
     // Nothing actually changed — skip the server round-trip.
-    if (mutatedInputs.length === 0) return;
+    if (mutatedInputs.length === 0) {
+      return;
+    }
 
     const patch: Partial<AppSettings> = {
       notify_agent_finished: finishedToggle.checked,

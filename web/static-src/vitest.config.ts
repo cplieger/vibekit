@@ -12,7 +12,7 @@ export default defineConfig({
       // ansi_up is loaded via importmap in the browser; for vitest we
       // point at a stub that exports a no-op AnsiUp (tests don't need
       // real ANSI rendering, just DOM structure).
-      "ansi_up": "./test-stubs/ansi_up.ts",
+      ansi_up: "./test-stubs/ansi_up.ts",
     },
   },
   test: {

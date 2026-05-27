@@ -15,12 +15,12 @@ import (
 // missing/invalid field, assert HTTP 400.
 func TestSubagentCommand_ValidationRejections(t *testing.T) {
 	tests := []struct {
+		payload   any
 		name      string
 		cmdType   api.CommandType
 		chatID    api.ChatID
-		payload   any
-		needsChat bool
 		wantCode  int
+		needsChat bool
 	}{
 		{
 			name:    "spawn_requires_chat_id",
@@ -110,9 +110,9 @@ func TestSubagentCommand_ValidationRejections(t *testing.T) {
 // that verify a 409 Conflict when a chat exists but has no bridge.
 func TestSubagentCommand_NoBridgeReturnsConflict(t *testing.T) {
 	tests := []struct {
+		payload any
 		name    string
 		cmdType api.CommandType
-		payload any
 	}{
 		{
 			name:    "spawn_no_bridge",

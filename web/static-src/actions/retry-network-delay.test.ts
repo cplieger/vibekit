@@ -6,7 +6,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
@@ -38,6 +41,7 @@ describe("networkMode: 'online' (default)", () => {
     let attempts = 0;
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.online.pause",
       retryable: retryNetwork,
@@ -64,6 +68,7 @@ describe("networkMode: 'online' (default)", () => {
 
   it("doesn't pause when online to begin with", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.online.normal",
       retryable: retryNetwork,
@@ -83,6 +88,7 @@ describe("networkMode: 'online' (default)", () => {
     let attempts = 0;
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.online.cancel",
       retryable: retryNetwork,
@@ -113,6 +119,7 @@ describe("networkMode: 'always'", () => {
     let attempts = 0;
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.always.retry",
       retryable: retryNetwork,
@@ -139,6 +146,7 @@ describe("retry.delay as a function", () => {
     const seen: { attempt: number; code: string | undefined }[] = [];
     let runs = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.delay.fn",
       retryable: retryNetwork,
@@ -167,6 +175,7 @@ describe("retry.delay as a function", () => {
   it("respects custom delay values", async () => {
     const start = Date.now();
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.delay.values",
       retryable: retryNetwork,
@@ -187,6 +196,7 @@ describe("retry.delay as a function", () => {
 
   it("can implement Retry-After header pattern", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.delay.retry_after",
       retryable: retryNetwork,
@@ -216,12 +226,15 @@ describe("retry.delay as a function", () => {
 
   it("falls back to 0ms if delay function throws", async () => {
     let attempts = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.delay.fn_throws",
       retryable: retryNetwork,
       retry: {
         count: 1,
-        delay: () => { throw new Error("bad delay fn"); },
+        delay: () => {
+          throw new Error("bad delay fn");
+        },
       },
       error: false,
       run: () => {

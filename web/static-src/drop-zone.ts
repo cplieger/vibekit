@@ -34,7 +34,9 @@ export function installDropZone(opts: DropZoneOptions): void {
   let liveRegion: HTMLElement | null = null;
 
   function ensureLiveRegion(): HTMLElement {
-    if (liveRegion !== null) return liveRegion;
+    if (liveRegion !== null) {
+      return liveRegion;
+    }
     const el = document.createElement("div");
     el.className = "sr-only";
     el.setAttribute("aria-live", "assertive");
@@ -59,14 +61,18 @@ export function installDropZone(opts: DropZoneOptions): void {
     if (dragCounter <= 0) {
       dragCounter = 0;
       opts.overlay.classList.add("hidden");
-      if (liveRegion !== null) liveRegion.textContent = "";
+      if (liveRegion !== null) {
+        liveRegion.textContent = "";
+      }
       opts.onDragLeave?.();
     }
   });
 
   opts.container.addEventListener("dragover", (e: DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer !== null) e.dataTransfer.dropEffect = "copy";
+    if (e.dataTransfer !== null) {
+      e.dataTransfer.dropEffect = "copy";
+    }
     opts.onDragOver?.(e);
   });
 
@@ -74,7 +80,9 @@ export function installDropZone(opts: DropZoneOptions): void {
     e.preventDefault();
     dragCounter = 0;
     opts.overlay.classList.add("hidden");
-    if (liveRegion !== null) liveRegion.textContent = "";
+    if (liveRegion !== null) {
+      liveRegion.textContent = "";
+    }
     if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       opts.onDrop(e.dataTransfer.files);
     }

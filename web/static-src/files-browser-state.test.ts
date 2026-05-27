@@ -5,7 +5,9 @@ import { describe, it, expect, vi } from "vitest";
 // Mock the dom module to avoid element lookups.
 vi.mock("./dom.js", () => ({
   $: new Proxy({}, { get: () => document.createElement("div") }),
-  maybeViewTransition: (fn: () => void) => fn(),
+  maybeViewTransition: (fn: () => void) => {
+    fn();
+  },
   el: () => document.createElement("div"),
 }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
@@ -38,7 +40,9 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "navigate from root pushes to history",
-        steps: (s: FileBrowserState) => { s.navigate("src"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("src");
+        },
         check: (s: FileBrowserState) => {
           expect(s.currentPath).toBe("src");
           expect(s.history).toEqual([".", "src"]);
@@ -86,7 +90,9 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "returns false at start of history",
-        steps: (_s: FileBrowserState) => {},
+        steps: (_s: FileBrowserState) => {
+          /* noop */
+        },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(false);
           expect(s.currentPath).toBe(".");
@@ -95,7 +101,9 @@ describe("FileBrowserState", () => {
       },
       {
         name: "moves back one step",
-        steps: (s: FileBrowserState) => { s.navigate("src"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("src");
+        },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(true);
           expect(s.currentPath).toBe(".");
@@ -128,7 +136,9 @@ describe("FileBrowserState", () => {
     const cases = [
       {
         name: "returns false at end of history",
-        steps: (s: FileBrowserState) => { s.navigate("a"); },
+        steps: (s: FileBrowserState) => {
+          s.navigate("a");
+        },
         check: (s: FileBrowserState) => {
           expect(s.goForward()).toBe(false);
           expect(s.currentPath).toBe("a");

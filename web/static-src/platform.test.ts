@@ -4,8 +4,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { guardAction } from "./platform.js";
 
 describe("guardAction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   const cases = [
     {
@@ -73,7 +77,9 @@ describe("guardAction", () => {
       let elapsed = 0;
       for (const call of tc.calls) {
         const advance = call.advanceMs - elapsed;
-        if (advance > 0) vi.advanceTimersByTime(advance);
+        if (advance > 0) {
+          vi.advanceTimersByTime(advance);
+        }
         elapsed = call.advanceMs;
         guarded();
       }

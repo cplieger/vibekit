@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -93,7 +96,10 @@ describe("conflicts.open_diff", () => {
     // Only one fetch (for actualSha)
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(vi.mocked(openFileDiff)).toHaveBeenCalledWith(
-      "new-file.ts", "", "actual", expect.anything(),
+      "new-file.ts",
+      "",
+      "actual",
+      expect.anything(),
     );
   });
 });
@@ -109,7 +115,9 @@ describe("conflicts.load", () => {
   });
 
   it("does not toast on failure (error: false)", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+    );
     const { loadConflicts } = await import("./conflicts.js");
     await loadConflicts.dispatch("c1");
     expect(toast.error).not.toHaveBeenCalled();

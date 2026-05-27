@@ -35,7 +35,7 @@ let patchQueue: Partial<AppSettings> = {};
 let patchSnapshot: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchGen = 0;
-let patchResolvers: Array<(r: Record<string, unknown> | null) => void> = [];
+let patchResolvers: ((r: Record<string, unknown> | null) => void)[] = [];
 
 /** Last-known value per settings key. Seeded by initSettingsTracking()
  *  on app boot from /api/settings; updated by patchSettings() as we
@@ -68,7 +68,9 @@ export function __testResetTracking(): void {
 
 /** Flush any pending debounced PATCH immediately (fire-and-forget). */
 function flushPendingPatch(): void {
-  if (Object.keys(patchQueue).length === 0) return;
+  if (Object.keys(patchQueue).length === 0) {
+    return;
+  }
   const body = patchQueue;
   const allInputs = patchInputs;
   const resolvers = patchResolvers;
@@ -81,21 +83,27 @@ function flushPendingPatch(): void {
   let result: Record<string, unknown> | null = null;
   void patchAppSettings.dispatch(
     {
-      body: body as Record<string, unknown>,
+      body: body,
       ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
     },
     {
       silent: true,
       onSuccess: (r) => {
         result = r as Record<string, unknown>;
-        if (gen === patchGen) showSaved();
+        if (gen === patchGen) {
+          showSaved();
+        }
       },
       onError: () => {
         Object.assign(lastSentPatch, rollback);
-        if (gen === patchGen) showError();
+        if (gen === patchGen) {
+          showError();
+        }
       },
       onSettled: () => {
-        for (const resolve of resolvers) resolve(result);
+        for (const resolve of resolvers) {
+          resolve(result);
+        }
       },
     },
   );
@@ -109,14 +117,17 @@ registerCleanup(() => {
   }
 });
 
-export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputElement[]): Promise<Record<string, unknown> | null> {
+export function patchSettings(
+  patch: Partial<AppSettings>,
+  ...inputs: HTMLInputElement[]
+): Promise<Record<string, unknown> | null> {
   // Filter out keys whose value matches the last-sent value. JSON
   // equality is good enough for the AppSettings shape (primitives +
   // arrays of strings); avoids reflecting no-op writes back to the
   // server and prevents the "Saving..." animation from firing on
   // bootstrap subscriptions like onSelectionChange's immediate fire.
   const changed: Partial<AppSettings> = {};
-  for (const k of Object.keys(patch) as Array<keyof AppSettings>) {
+  for (const k of Object.keys(patch) as (keyof AppSettings)[]) {
     if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
       if (!(k in patchSnapshot)) {
         Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
@@ -132,10 +143,16 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
   }
   Object.assign(patchQueue, changed);
   for (const input of inputs) {
-    if (!patchInputs.includes(input)) patchInputs.push(input);
+    if (!patchInputs.includes(input)) {
+      patchInputs.push(input);
+    }
   }
-  const p = new Promise<Record<string, unknown> | null>((resolve) => { patchResolvers.push(resolve); });
-  if (patchTimer !== undefined) return p;
+  const p = new Promise<Record<string, unknown> | null>((resolve) => {
+    patchResolvers.push(resolve);
+  });
+  if (patchTimer !== undefined) {
+    return p;
+  }
   showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
@@ -151,21 +168,27 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
     let result: Record<string, unknown> | null = null;
     void patchAppSettings.dispatch(
       {
-        body: body as Record<string, unknown>,
+        body: body,
         ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
       },
       {
         silent: true,
         onSuccess: (r) => {
           result = r as Record<string, unknown>;
-          if (gen === patchGen) showSaved();
+          if (gen === patchGen) {
+            showSaved();
+          }
         },
         onError: () => {
           Object.assign(lastSentPatch, rollback);
-          if (gen === patchGen) showError();
+          if (gen === patchGen) {
+            showError();
+          }
         },
         onSettled: () => {
-          for (const resolve of resolvers) resolve(result);
+          for (const resolve of resolvers) {
+            resolve(result);
+          }
         },
       },
     );
@@ -175,5 +198,6 @@ export function patchSettings(patch: Partial<AppSettings>, ...inputs: HTMLInputE
 
 export async function loadSettings(): Promise<AppSettings> {
   const s = await loadSettingsAction.dispatch(undefined);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   return (s as AppSettings) ?? {};
 }

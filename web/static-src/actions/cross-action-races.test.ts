@@ -5,7 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 import { defineAction, _resetForTest as resetDefine, _internalsForTest } from "./define.js";
@@ -25,8 +28,12 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("dedupe + retry interaction", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("deduped caller's onError fires with the real error after retries exhaust", async () => {
     let attempt = 0;
@@ -83,7 +90,9 @@ describe("dedupe + retry interaction", () => {
       error: false,
       run: () => {
         attempt++;
-        if (attempt < 3) throw new ActionError("timeout", { code: "network" });
+        if (attempt < 3) {
+          throw new ActionError("timeout", { code: "network" });
+        }
         return Promise.resolve("recovered");
       },
     });
@@ -113,7 +122,9 @@ describe("dedupe + retry interaction", () => {
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 20 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch("z");
@@ -134,6 +145,7 @@ describe("onError → dispatch chain in same scope", () => {
   it("recovery action dispatched from onError queues behind and runs after error", async () => {
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const failAction = defineAction<void, string>({
       name: "test.err_chain_fail",
       scope: "err-chain",
@@ -144,6 +156,7 @@ describe("onError → dispatch chain in same scope", () => {
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const recoverAction = defineAction<void, string>({
       name: "test.err_chain_recover",
       scope: "err-chain",
@@ -203,7 +216,9 @@ describe("onError → dispatch chain in same scope", () => {
 
     await p0;
     // Await the chained dispatches directly
+
     await chainP1;
+
     await chainP2;
 
     expect(order).toEqual(["flaky-fail", "flaky-ok-1", "flaky-ok-2"]);
@@ -220,12 +235,19 @@ describe("cancel during scope-queued wait", () => {
     let resolveOccupant: (() => void) | null = null;
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_occ",
       scope: "q-cancel",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => {
+            r("occ");
+          };
+        }),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const victim = defineAction<void, string>({
       name: "test.queue_cancel_victim",
       scope: "q-cancel",
@@ -236,6 +258,7 @@ describe("cancel during scope-queued wait", () => {
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const follower = defineAction<void, string>({
       name: "test.queue_cancel_follower",
       scope: "q-cancel",
@@ -272,12 +295,19 @@ describe("cancel during scope-queued wait", () => {
   it("cancelled queued action fires onSettled but not onError", async () => {
     let resolveOccupant: (() => void) | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_cb_occ",
       scope: "q-cancel-cb",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => {
+            r("occ");
+          };
+        }),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const victim = defineAction<void, string>({
       name: "test.queue_cancel_cb_victim",
       scope: "q-cancel-cb",
@@ -305,12 +335,19 @@ describe("cancel during scope-queued wait", () => {
   it("registry records cancelled status for queued-then-cancelled action", async () => {
     let resolveOccupant: (() => void) | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const occupant = defineAction<void, string>({
       name: "test.queue_cancel_reg_occ",
       scope: "q-cancel-reg",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => {
+            r("occ");
+          };
+        }),
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const victim = defineAction<void, string>({
       name: "test.queue_cancel_reg_victim",
       scope: "q-cancel-reg",
@@ -340,21 +377,29 @@ describe("cancel during scope-queued wait", () => {
 // ===========================================================================
 
 describe("retry exhaustion callbacks fire before next scope entry", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("onSettled fires before the next queued action's run() begins", async () => {
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const retrier = defineAction<void, string>({
       name: "test.retry_cb_order",
       scope: "retry-cb",
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 1, delay: 30 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const follower = defineAction<void, string>({
       name: "test.retry_cb_follower",
       scope: "retry-cb",
@@ -365,8 +410,12 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     });
 
     const pRetrier = retrier.dispatch(undefined, {
-      onError: () => { order.push("retrier-onError"); },
-      onSettled: () => { order.push("retrier-onSettled"); },
+      onError: () => {
+        order.push("retrier-onError");
+      },
+      onSettled: () => {
+        order.push("retrier-onSettled");
+      },
     });
     await Promise.resolve();
     const pFollower = follower.dispatch();
@@ -386,6 +435,7 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     const order: string[] = [];
     let attempt = 0;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const retrier = defineAction<void, string>({
       name: "test.retry_success_order",
       scope: "retry-success",
@@ -393,11 +443,14 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
       retry: { count: 1, delay: 20 },
       run: () => {
         attempt++;
-        if (attempt < 2) throw new ActionError("net", { code: "network" });
+        if (attempt < 2) {
+          throw new ActionError("net", { code: "network" });
+        }
         return Promise.resolve("ok");
       },
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const follower = defineAction<void, string>({
       name: "test.retry_success_follower",
       scope: "retry-success",
@@ -408,7 +461,9 @@ describe("retry exhaustion callbacks fire before next scope entry", () => {
     });
 
     const pRetrier = retrier.dispatch(undefined, {
-      onSuccess: () => { order.push("retrier-onSuccess"); },
+      onSuccess: () => {
+        order.push("retrier-onSuccess");
+      },
     });
     await Promise.resolve();
     const pFollower = follower.dispatch();
@@ -434,7 +489,9 @@ describe("dedupe + cancel interaction", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
@@ -467,7 +524,9 @@ describe("dedupe + cancel interaction", () => {
       error: false,
       run: (_args, signal) =>
         new Promise<string>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
         }),
     });
 
@@ -582,6 +641,7 @@ describe("onSuccess re-dispatch with dedupe", () => {
     });
 
     // Await the chained dispatch directly
+
     const chainedResult = await chainedPromise;
 
     expect(runCount).toBe(2); // Two separate runs
@@ -594,11 +654,16 @@ describe("onSuccess re-dispatch with dedupe", () => {
 // ===========================================================================
 
 describe("retry + cancel race at success boundary", () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("cancel during retry backoff prevents subsequent retry attempt", async () => {
     let attempt = 0;
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cancel_mid_backoff",
       retryable: (err) => err.code !== "cancelled",
@@ -627,12 +692,15 @@ describe("retry + cancel race at success boundary", () => {
   });
 
   it("registry records cancelled (not error) when cancel arrives during retry", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = defineAction<void, string>({
       name: "test.cancel_retry_registry",
       retryable: (err) => err.code !== "cancelled",
       retry: { count: 2, delay: 50 },
       error: false,
-      run: () => { throw new ActionError("fail", { status: 500 }); },
+      run: () => {
+        throw new ActionError("fail", { status: 500 });
+      },
     });
 
     const p = action.dispatch();
@@ -660,11 +728,16 @@ describe("scope + optimistic + cancel interaction", () => {
       name: "test.opt_cancel_rollback",
       scope: "opt-cancel",
       optimistic: (args) => `snapshot-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       error: false,
-      run: (_args, signal) => new Promise<string>((_, reject) => {
-        signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }),
+      run: (_args, signal) =>
+        new Promise<string>((_, reject) => {
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
     });
 
     const p = action.dispatch("x");
@@ -682,17 +755,25 @@ describe("scope + optimistic + cancel interaction", () => {
     const rollbackCalls: string[] = [];
     let resolveOccupant: (() => void) | null = null;
 
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const occupant = defineAction<void, string>({
       name: "test.opt_cancel_occ",
       scope: "opt-cancel-q",
-      run: () => new Promise<string>((r) => { resolveOccupant = () => r("occ"); }),
+      run: () =>
+        new Promise<string>((r) => {
+          resolveOccupant = () => {
+            r("occ");
+          };
+        }),
     });
 
     const victim = defineAction<string, string, string>({
       name: "test.opt_cancel_victim",
       scope: "opt-cancel-q",
       optimistic: (args) => `snap-${args}`,
-      rollback: (_args, op) => { rollbackCalls.push(op ?? "none"); },
+      rollback: (_args, op) => {
+        rollbackCalls.push(op ?? "none");
+      },
       error: false,
       run: () => Promise.resolve("never"),
     });

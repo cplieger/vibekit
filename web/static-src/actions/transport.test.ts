@@ -11,6 +11,7 @@ vi.mock("../toast.js", () => ({
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return {
     ...orig,
@@ -41,7 +42,12 @@ const testAction = () =>
 
 describe("transportAction error classification", () => {
   it("classifies timeout via r.code (not substring)", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 0, error: "Request timed out", code: "timeout" });
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 0,
+      error: "Request timed out",
+      code: "timeout",
+    });
     const action = testAction();
     await action.dispatch({ chatID: "c1" });
     const log = recentLog();
@@ -53,7 +59,12 @@ describe("transportAction error classification", () => {
     // When the server returns code='cancelled' but the client signal is NOT
     // aborted, the dispatcher records as "error" (only signal.aborted triggers
     // the "cancelled" status path). The error carries code='cancelled'.
-    mockSend.mockResolvedValue({ ok: false, status: 0, error: "Request cancelled", code: "cancelled" });
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 0,
+      error: "Request cancelled",
+      code: "cancelled",
+    });
     const action = testAction();
     await action.dispatch({ chatID: "c1" });
     const log = recentLog();
@@ -81,7 +92,12 @@ describe("transportAction error classification", () => {
   });
 
   it("signal.aborted takes precedence", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 0, error: "Request cancelled", code: "network" });
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 0,
+      error: "Request cancelled",
+      code: "network",
+    });
     const action = testAction();
     const promise = action.dispatch({ chatID: "c1" });
     action.cancel();
@@ -95,6 +111,7 @@ describe("transportAction frozen command (FF1 fix)", () => {
   it("dispatching with a frozen command object does NOT throw", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const frozenCmd = Object.freeze({ type: "cancel" as const, chat_id: "c1" });
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument
     const action = transportAction<void>({
       name: "test.frozen_cmd",
       idempotencyKey: true,

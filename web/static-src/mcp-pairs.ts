@@ -13,7 +13,9 @@ export function renderKeyPairList(host: HTMLDivElement, pairs: KeyPair[], kind: 
     appendKeyPair(host, { name: "", value: "" }, kind);
     return;
   }
-  for (const kv of pairs) appendKeyPair(host, kv, kind);
+  for (const kv of pairs) {
+    appendKeyPair(host, kv, kind);
+  }
 }
 
 // Tracks secret inputs the user actively typed into (via input event).
@@ -39,7 +41,9 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
     valIn.dataset["wasSecret"] = "true";
   }
 
-  valIn.addEventListener("input", () => { touchedInputs.add(valIn); });
+  valIn.addEventListener("input", () => {
+    touchedInputs.add(valIn);
+  });
 
   valIn.addEventListener("focus", () => {
     if (valIn.dataset["secret"] === "true" && valIn.value === SECRET_MASK) {
@@ -64,7 +68,9 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
   del.title = "Remove";
   del.setAttribute("aria-label", "Remove");
   del.innerHTML = ICON_CLOSE;
-  del.addEventListener("click", () => row.remove());
+  del.addEventListener("click", () => {
+    row.remove();
+  });
 
   row.append(nameIn, valIn, del);
   host.appendChild(row);
@@ -75,9 +81,13 @@ export function collectKeyPairs(host: HTMLDivElement): KeyPair[] {
   for (const row of host.querySelectorAll<HTMLDivElement>(".mcp-pair-row")) {
     const nameIn = row.querySelector<HTMLInputElement>(".mcp-pair-name");
     const valIn = row.querySelector<HTMLInputElement>(".mcp-pair-value");
-    if (nameIn === null || valIn === null) continue;
+    if (nameIn === null || valIn === null) {
+      continue;
+    }
     const n = nameIn.value.trim();
-    if (n === "") continue;
+    if (n === "") {
+      continue;
+    }
     const v = valIn.dataset["secret"] === "true" ? SECRET_MASK : valIn.value;
     out.push({ name: n, value: v });
   }

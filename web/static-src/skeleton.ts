@@ -8,7 +8,7 @@ export function chatSkeleton(): HTMLDivElement {
   wrap.className = "skeleton-msg-group";
   wrap.setAttribute("aria-hidden", "true");
   // Simulate: user message, tool calls, assistant reply.
-  const patterns: Array<{ side: "left" | "right"; widths: string[]; isTool?: boolean }> = [
+  const patterns: { side: "left" | "right"; widths: string[]; isTool?: boolean }[] = [
     { side: "right", widths: ["60%"] },
     { side: "left", widths: ["40%"] },
     { side: "left", widths: ["35%"], isTool: true },
@@ -19,13 +19,16 @@ export function chatSkeleton(): HTMLDivElement {
     if (p.isTool === true) {
       const tool = document.createElement("div");
       tool.className = "skeleton skeleton-tool";
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       tool.style.width = p.widths[0]!;
       wrap.appendChild(tool);
       continue;
     }
     const row = document.createElement("div");
     row.className = "skeleton-row";
-    if (p.side === "right") row.style.flexDirection = "row-reverse";
+    if (p.side === "right") {
+      row.style.flexDirection = "row-reverse";
+    }
     const avatar = document.createElement("div");
     avatar.className = "skeleton skeleton-avatar";
     const bubble = document.createElement("div");
@@ -53,7 +56,9 @@ export function loadMoreSkeleton(): HTMLDivElement {
   for (let i = 0; i < 3; i++) {
     const row = document.createElement("div");
     row.className = "skeleton-row";
-    if (i === 0) row.style.flexDirection = "row-reverse";
+    if (i === 0) {
+      row.style.flexDirection = "row-reverse";
+    }
     const avatar = document.createElement("div");
     avatar.className = "skeleton skeleton-avatar";
     const bubble = document.createElement("div");

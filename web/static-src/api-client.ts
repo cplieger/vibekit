@@ -30,7 +30,10 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
  *  exceptions. DELETE and 204 responses return an empty object cast to T
  *  (truthy marker) since there's no body to parse. */
 async function request<T>(
-  method: string, path: string, body?: unknown, signal?: AbortSignal,
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T | null> {
   try {
     const init: RequestInit = { method };
@@ -100,7 +103,11 @@ import type { Decoder } from "./validators.js";
  *  and decoder failures (shape mismatch) without try/catch. Used by
  *  apiGetTyped for type-safe API consumption. */
 async function requestTyped<T>(
-  method: string, path: string, decoder: Decoder<T>, body?: unknown, signal?: AbortSignal,
+  method: string,
+  path: string,
+  decoder: Decoder<T>,
+  body?: unknown,
+  signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
   try {
     const init: RequestInit = { method };
@@ -128,7 +135,9 @@ async function requestTyped<T>(
   } catch (e) {
     console.warn("api: fetch failed", method, path, e);
     return {
-      ok: false, status: 0, data: null,
+      ok: false,
+      status: 0,
+      data: null,
       error: e instanceof Error ? e.message : "network error",
     };
   }
@@ -139,7 +148,11 @@ async function requestTyped<T>(
  *  Failures are logged centrally; callers that need the error message
  *  (e.g. to show the user "response shape mismatch") should use
  *  `apiGetTypedRaw`. */
-export async function apiGetTyped<T>(path: string, decoder: Decoder<T>, signal?: AbortSignal): Promise<T | null> {
+export async function apiGetTyped<T>(
+  path: string,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<T | null> {
   const r = await requestTyped<T>("GET", path, decoder, undefined, signal);
   return r.data;
 }
@@ -150,7 +163,10 @@ import { hasErrorString } from "./actions/index.js";
  *  JSON responses. Used by apiPutOrError for forms that need to surface
  *  specific server validation messages (400, 409) inline. */
 async function requestWithError<T>(
-  method: string, path: string, body: unknown, signal?: AbortSignal,
+  method: string,
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
   try {
     const r = await fetch(path, {
@@ -162,7 +178,11 @@ async function requestWithError<T>(
     const raw = await r.text();
     let parsed: unknown = null;
     if (raw !== "") {
-      try { parsed = JSON.parse(raw); } catch { /* non-JSON body */ }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        /* non-JSON body */
+      }
     }
     if (!r.ok) {
       const err = hasErrorString(parsed) ? parsed.error : `HTTP ${String(r.status)}`;
@@ -173,7 +193,9 @@ async function requestWithError<T>(
   } catch (e) {
     console.warn("api: fetch failed", method, path, e);
     return {
-      ok: false, status: 0, data: null,
+      ok: false,
+      status: 0,
+      data: null,
       error: e instanceof Error ? e.message : "network error",
     };
   }
@@ -181,7 +203,11 @@ async function requestWithError<T>(
 
 /** PUT variant that surfaces error details. Use when the UI must show
  *  the server's validation message; otherwise prefer apiAction. */
-export function apiPutOrError<T>(path: string, body: unknown, signal?: AbortSignal): Promise<ApiResult<T>> {
+export function apiPutOrError<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<ApiResult<T>> {
   return requestWithError<T>("PUT", path, body, signal);
 }
 
@@ -199,7 +225,10 @@ export class CancellableSlot {
     return this.ctrl.signal;
   }
   /** Abort without starting a new request. */
-  abort(): void { this.ctrl?.abort(); this.ctrl = null; }
+  abort(): void {
+    this.ctrl?.abort();
+    this.ctrl = null;
+  }
 }
 
 /** Fetch a kiro-cli setting by key, parse it with the provided function,
@@ -217,7 +246,9 @@ export async function fetchKiroSetting<T>(
     signal,
   );
   const raw = d?.value ?? "";
-  if (raw === "") return fallback;
+  if (raw === "") {
+    return fallback;
+  }
   const parsed = parse(raw);
-  return parsed !== null ? parsed : fallback;
+  return parsed ?? fallback;
 }

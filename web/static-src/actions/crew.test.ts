@@ -3,10 +3,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
-  info: vi.fn(), success: vi.fn(), error: vi.fn(), showToast: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
   return { ...orig, send: vi.fn() };
 });
@@ -62,8 +66,8 @@ describe("crew.sendMessage", () => {
       .mockResolvedValueOnce({ ok: true, status: 200 });
 
     const p = sendMessage.dispatch({ chatID: "c1", subSessionID: "s1", text: "retry" });
-    await vi.advanceTimersByTimeAsync(300);  // first retry delay
-    await vi.advanceTimersByTimeAsync(600);  // second retry delay (300*2)
+    await vi.advanceTimersByTimeAsync(300); // first retry delay
+    await vi.advanceTimersByTimeAsync(600); // second retry delay (300*2)
     await p;
     expect(mockSend).toHaveBeenCalledTimes(3);
     expect(recentLog()[0]?.status).toBe("success");
@@ -73,8 +77,10 @@ describe("crew.sendMessage", () => {
     const log: string[] = [];
     mockSend.mockImplementation(async (cmd) => {
       const payload = (cmd as Record<string, unknown>)["payload"] as Record<string, string>;
+
       log.push(`start:${payload["text"]}`);
       await new Promise<void>((r) => setTimeout(r, 50));
+
       log.push(`end:${payload["text"]}`);
       return { ok: true, status: 200 };
     });
@@ -91,8 +97,10 @@ describe("crew.sendMessage", () => {
     const log: string[] = [];
     mockSend.mockImplementation(async (cmd) => {
       const payload = (cmd as Record<string, unknown>)["payload"] as Record<string, string>;
+
       log.push(`start:${payload["text"]}`);
       await new Promise<void>((r) => setTimeout(r, 50));
+
       log.push(`end:${payload["text"]}`);
       return { ok: true, status: 200 };
     });

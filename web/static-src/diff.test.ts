@@ -103,26 +103,20 @@ describe("lineDiff", () => {
       old: "  a",
       new: "a",
       opts: { ignoreWhitespace: true },
-      expected: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "  a" },
-      ],
+      expected: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "  a" }],
     },
     {
       name: "internal whitespace diff with ignoreWhitespace",
       old: "a  b",
       new: "a b",
       opts: { ignoreWhitespace: true },
-      expected: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "a  b" },
-      ],
+      expected: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "a  b" }],
     },
     {
       name: "single line identical",
       old: "hello",
       new: "hello",
-      expected: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "hello" },
-      ],
+      expected: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "hello" }],
     },
   ];
 
@@ -163,9 +157,7 @@ describe("truncateChanged", () => {
         { kind: "add", oldNo: 0, newNo: 2, text: "c" },
       ],
       n: 1,
-      expectedLines: [
-        { kind: "del", oldNo: 1, newNo: 0, text: "a" },
-      ],
+      expectedLines: [{ kind: "del", oldNo: 1, newNo: 0, text: "a" }],
       expectedMore: 2,
     },
     {
@@ -207,9 +199,7 @@ describe("truncateChanged", () => {
         { kind: "add", oldNo: 0, newNo: 2, text: "b" },
       ],
       n: 0,
-      expectedLines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
-      ],
+      expectedLines: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "x" }],
       expectedMore: 2,
     },
     {
@@ -249,7 +239,9 @@ describe("stats", () => {
 describe("lineDiff property-based invariants", () => {
   /** Helper: count lines in a string (matching splitLines logic). */
   function countLines(s: string): number {
-    if (s === "") return 0;
+    if (s === "") {
+      return 0;
+    }
     return s.split("\n").length;
   }
 
@@ -257,94 +249,113 @@ describe("lineDiff property-based invariants", () => {
   function reconstructNew(lines: DiffLine[]): string {
     const parts: string[] = [];
     for (const l of lines) {
-      if (l.kind === "add" || l.kind === "ctx") parts.push(l.text);
+      if (l.kind === "add" || l.kind === "ctx") {
+        parts.push(l.text);
+      }
     }
     return parts.length === 0 ? "" : parts.join("\n");
   }
 
   // Arbitrary for multi-line strings (small inputs — dense LCS path)
-  const smallText = fc.array(fc.string({ minLength: 0, maxLength: 20 }), { minLength: 0, maxLength: 30 })
-    .map(lines => lines.join("\n"));
+  const smallText = fc
+    .array(fc.string({ minLength: 0, maxLength: 20 }), { minLength: 0, maxLength: 30 })
+    .map((lines) => lines.join("\n"));
 
   it("invariant 1: adds + ctx === countLines(newText)", () => {
-    fc.assert(fc.property(smallText, smallText, (a, b) => {
-      const d = lineDiff(a, b);
-      const s = stats(d);
-      expect(s.adds + s.ctx).toBe(countLines(b));
-    }));
+    fc.assert(
+      fc.property(smallText, smallText, (a, b) => {
+        const d = lineDiff(a, b);
+        const s = stats(d);
+        expect(s.adds + s.ctx).toBe(countLines(b));
+      }),
+    );
   });
 
   it("invariant 2: dels + ctx === countLines(oldText)", () => {
-    fc.assert(fc.property(smallText, smallText, (a, b) => {
-      const d = lineDiff(a, b);
-      const s = stats(d);
-      expect(s.dels + s.ctx).toBe(countLines(a));
-    }));
+    fc.assert(
+      fc.property(smallText, smallText, (a, b) => {
+        const d = lineDiff(a, b);
+        const s = stats(d);
+        expect(s.dels + s.ctx).toBe(countLines(a));
+      }),
+    );
   });
 
   it("invariant 3: applying diff reconstructs newText", () => {
-    fc.assert(fc.property(smallText, smallText, (a, b) => {
-      const d = lineDiff(a, b);
-      expect(reconstructNew(d)).toBe(b);
-    }));
+    fc.assert(
+      fc.property(smallText, smallText, (a, b) => {
+        const d = lineDiff(a, b);
+        expect(reconstructNew(d)).toBe(b);
+      }),
+    );
   });
 
   it("invariant 4: lineDiff(a, a) produces only ctx entries", () => {
-    fc.assert(fc.property(smallText, (a) => {
-      const d = lineDiff(a, a);
-      for (const l of d) {
-        expect(l.kind).toBe("ctx");
-      }
-    }));
+    fc.assert(
+      fc.property(smallText, (a) => {
+        const d = lineDiff(a, a);
+        for (const l of d) {
+          expect(l.kind).toBe("ctx");
+        }
+      }),
+    );
   });
 
   it("invariant 5: lineDiff('', b) produces only add entries", () => {
-    fc.assert(fc.property(
-      fc.string({ minLength: 1, maxLength: 100 }),
-      (b) => {
+    fc.assert(
+      fc.property(fc.string({ minLength: 1, maxLength: 100 }), (b) => {
         const d = lineDiff("", b);
         for (const l of d) {
           expect(l.kind).toBe("add");
         }
-      },
-    ));
+      }),
+    );
   });
 
   it("invariant 6: lineDiff(a, '') produces only del entries", () => {
-    fc.assert(fc.property(
-      fc.string({ minLength: 1, maxLength: 100 }),
-      (a) => {
+    fc.assert(
+      fc.property(fc.string({ minLength: 1, maxLength: 100 }), (a) => {
         const d = lineDiff(a, "");
         for (const l of d) {
           expect(l.kind).toBe("del");
         }
-      },
-    ));
+      }),
+    );
   });
 
   // Hirschberg path: generate inputs exceeding SPACE_THRESHOLD (4M cells)
   // 2001 lines × 2001 lines = ~4M+ cells
-  const largeText = fc.array(
-    fc.array(fc.constantFrom("a", "b", "c", "d"), { minLength: 0, maxLength: 5 }).map(cs => cs.join("")),
-    { minLength: 2001, maxLength: 2001 },
-  ).map(lines => lines.join("\n"));
+  const largeText = fc
+    .array(
+      fc
+        .array(fc.constantFrom("a", "b", "c", "d"), { minLength: 0, maxLength: 5 })
+        .map((cs) => cs.join("")),
+      { minLength: 2001, maxLength: 2001 },
+    )
+    .map((lines) => lines.join("\n"));
 
   it("Hirschberg path: invariants 1-3 hold for large inputs", () => {
-    fc.assert(fc.property(largeText, largeText, (a, b) => {
-      const d = lineDiff(a, b);
-      const s = stats(d);
-      expect(s.adds + s.ctx).toBe(countLines(b));
-      expect(s.dels + s.ctx).toBe(countLines(a));
-      expect(reconstructNew(d)).toBe(b);
-    }), { numRuns: 3 }); // fewer runs due to cost
+    fc.assert(
+      fc.property(largeText, largeText, (a, b) => {
+        const d = lineDiff(a, b);
+        const s = stats(d);
+        expect(s.adds + s.ctx).toBe(countLines(b));
+        expect(s.dels + s.ctx).toBe(countLines(a));
+        expect(reconstructNew(d)).toBe(b);
+      }),
+      { numRuns: 3 },
+    ); // fewer runs due to cost
   });
 
   it("Hirschberg path: lineDiff(a, a) produces only ctx entries", () => {
-    fc.assert(fc.property(largeText, (a) => {
-      const d = lineDiff(a, a);
-      for (const l of d) {
-        expect(l.kind).toBe("ctx");
-      }
-    }), { numRuns: 3 });
+    fc.assert(
+      fc.property(largeText, (a) => {
+        const d = lineDiff(a, a);
+        for (const l of d) {
+          expect(l.kind).toBe("ctx");
+        }
+      }),
+      { numRuns: 3 },
+    );
   });
 });

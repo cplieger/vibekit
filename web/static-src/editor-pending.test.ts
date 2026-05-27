@@ -32,7 +32,9 @@ vi.mock("./actions/editor.js", () => ({
 }));
 
 vi.mock("./actions/index.js", () => ({
-  bindLoadingState: () => () => {},
+  bindLoadingState: () => () => {
+    /* noop */
+  },
 }));
 
 vi.mock("./bus.js", () => ({
@@ -77,25 +79,19 @@ function add(text: string, newNo = 0): DiffLine {
 
 describe("buildPartialMergeText", () => {
   it("single hunk accept → uses new lines", () => {
-    const diff: DiffLine[] = [
-      ctx("line1"), del("old"), add("new"), ctx("line3"),
-    ];
+    const diff: DiffLine[] = [ctx("line1"), del("old"), add("new"), ctx("line3")];
     const decisions = new Map([[0, "accept" as const]]);
     expect(buildPartialMergeText(makeState(diff), decisions)).toBe("line1\nnew\nline3");
   });
 
   it("single hunk reject → uses old lines", () => {
-    const diff: DiffLine[] = [
-      ctx("line1"), del("old"), add("new"), ctx("line3"),
-    ];
+    const diff: DiffLine[] = [ctx("line1"), del("old"), add("new"), ctx("line3")];
     const decisions = new Map([[0, "reject" as const]]);
     expect(buildPartialMergeText(makeState(diff), decisions)).toBe("line1\nold\nline3");
   });
 
   it("multi-hunk mixed decisions", () => {
-    const diff: DiffLine[] = [
-      ctx("a"), del("b"), add("B"), ctx("c"), del("d"), add("D"), ctx("e"),
-    ];
+    const diff: DiffLine[] = [ctx("a"), del("b"), add("B"), ctx("c"), del("d"), add("D"), ctx("e")];
     const decisions = new Map([
       [0, "accept" as const],
       [1, "reject" as const],
@@ -113,9 +109,7 @@ describe("buildPartialMergeText", () => {
   });
 
   it("consecutive hunks with no context between them", () => {
-    const diff: DiffLine[] = [
-      del("a"), add("A"), del("b"), add("B"),
-    ];
+    const diff: DiffLine[] = [del("a"), add("A"), del("b"), add("B")];
     const decisions = new Map([[0, "accept" as const]]);
     expect(buildPartialMergeText(makeState(diff), decisions)).toBe("A\nB");
   });
@@ -142,7 +136,7 @@ describe("resolveActivePending", () => {
     // We verify dispatch is called with the correct args.
     const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
-    fileStates.set(path, makeState([]) as any);
+    fileStates.set(path, makeState([]));
     (fileStates.get(path) as any).path = path;
     // Mock getActiveFilePath
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
@@ -160,7 +154,7 @@ describe("resolveActivePending", () => {
   it("closes tab on success", async () => {
     const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
-    fileStates.set(path, makeState([]) as any);
+    fileStates.set(path, makeState([]));
     (fileStates.get(path) as any).path = path;
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
     mockDispatch.mockResolvedValue({ ok: true });
@@ -184,12 +178,13 @@ describe("applyActivePendingPartial", () => {
     const path = "pending:chat1:tc1";
     // Create a state with a huge diff that produces >4MiB merged text
     const bigLine = "x".repeat(1024 * 1024); // 1 MiB per line
-    const diff: DiffLine[] = [
-      ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine),
-    ];
+    const diff: DiffLine[] = [ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine)];
     const state = makeState(diff) as any;
     state.path = path;
-    state.mode = { kind: "diff", diffSource: { oldContent: "", newContent: "", oldLabel: "", newLabel: "", fromGit: false } };
+    state.mode = {
+      kind: "diff",
+      diffSource: { oldContent: "", newContent: "", oldLabel: "", newLabel: "", fromGit: false },
+    };
     state.pendingHunkDecisions = new Map();
     fileStates.set(path, state);
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
@@ -199,7 +194,11 @@ describe("applyActivePendingPartial", () => {
     await applyActivePendingPartial();
 
     expect(showBanner).toHaveBeenCalledWith(
-      "chat1", "partial-merge-too-large", expect.any(String), "warning", true,
+      "chat1",
+      "partial-merge-too-large",
+      expect.any(String),
+      "warning",
+      true,
     );
     expect(mockPartialDispatch).not.toHaveBeenCalled();
   });

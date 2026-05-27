@@ -4,7 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(() => Promise.resolve(null)),
-  withTimeout: vi.fn((signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000)),
+  withTimeout: vi.fn(
+    (signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000),
+  ),
   API_TIMEOUT_MS: 30000,
 }));
 
@@ -32,7 +34,7 @@ function setupDOM(): void {
 }
 
 function panel(): HTMLElement {
-  return document.getElementById("forges-panel") as HTMLElement;
+  return document.getElementById("forges-panel")!;
 }
 
 describe("forge-auth: race condition guards", () => {
@@ -44,12 +46,22 @@ describe("forge-auth: race condition guards", () => {
   it("concurrent renderForgesPanel calls: only the latest render paints", async () => {
     // First call: slow — resolves after the second call starts.
     let resolveFirst!: (v: unknown) => void;
-    const firstPromise = new Promise((r) => { resolveFirst = r; });
-    mockedApiGet.mockReturnValueOnce(firstPromise as any);
+    const firstPromise = new Promise((r) => {
+      resolveFirst = r;
+    });
+    mockedApiGet.mockReturnValueOnce(firstPromise);
 
     // Second call: fast — resolves immediately.
     mockedApiGet.mockResolvedValueOnce({
-      forges: [{ id: "gitlab:gitlab.com", kind: "gitlab", host: "gitlab.com", username: "fast", connected: true }],
+      forges: [
+        {
+          id: "gitlab:gitlab.com",
+          kind: "gitlab",
+          host: "gitlab.com",
+          username: "fast",
+          connected: true,
+        },
+      ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
 
@@ -61,7 +73,15 @@ describe("forge-auth: race condition guards", () => {
 
     // Now resolve the first (stale) call.
     resolveFirst({
-      forges: [{ id: "github:github.com", kind: "github", host: "github.com", username: "stale", connected: true }],
+      forges: [
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "stale",
+          connected: true,
+        },
+      ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await p1;
@@ -113,7 +133,9 @@ describe("forge-auth: 4-section layout", () => {
     await renderForgesPanel();
     // No section should expose a separate Add-a-PAT trigger any more.
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
-      const pat = panel().querySelector(`.forge-kind-section[data-kind='${k}'] [data-forge-add-pat]`);
+      const pat = panel().querySelector(
+        `.forge-kind-section[data-kind='${k}'] [data-forge-add-pat]`,
+      );
       expect(pat, `${k} should not have a separate Add-a-PAT button`).toBeNull();
     }
   });
@@ -121,35 +143,60 @@ describe("forge-auth: 4-section layout", () => {
   it("renders one slim row per connected account, prefers email over username", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", email: "alice@example.com", connected: true },
-        { id: "gitlab:gitlab.com", kind: "gitlab", host: "gitlab.com", username: "bob", connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          email: "alice@example.com",
+          connected: true,
+        },
+        {
+          id: "gitlab:gitlab.com",
+          kind: "gitlab",
+          host: "gitlab.com",
+          username: "bob",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
 
-    const ghRow = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github'] .forge-account-row");
+    const ghRow = panel().querySelector<HTMLElement>(
+      ".forge-kind-section[data-kind='github'] .forge-account-row",
+    );
     expect(ghRow).not.toBeNull();
     expect(ghRow!.querySelector(".forge-account-primary")?.textContent).toBe("alice@example.com");
     expect(ghRow!.querySelector(".forge-account-meta")?.textContent).toContain("@alice");
     expect(ghRow!.querySelector(".forge-account-meta")?.textContent).toContain("github.com");
 
-    const glRow = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='gitlab'] .forge-account-row");
+    const glRow = panel().querySelector<HTMLElement>(
+      ".forge-kind-section[data-kind='gitlab'] .forge-account-row",
+    );
     expect(glRow!.querySelector(".forge-account-primary")?.textContent).toBe("bob");
   });
 
   it("each account row has a Manage link and a Sign out button", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", email: "a@x.io", connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          email: "a@x.io",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
     const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
     const manage = row.querySelector<HTMLAnchorElement>(".forge-account-manage");
-    const signOut = [...row.querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent === "Sign out");
+    const signOut = [...row.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Sign out",
+    );
     expect(manage).not.toBeNull();
     expect(manage!.href).toContain("github.com");
     expect(manage!.href).toContain("settings/profile");
@@ -159,7 +206,14 @@ describe("forge-auth: 4-section layout", () => {
   it("shows error styling and last_error text on a disconnected account", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", connected: false, last_error: "token expired" },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          connected: false,
+          last_error: "token expired",
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
@@ -182,7 +236,9 @@ describe("forge-auth: 4-section layout", () => {
     });
     await renderForgesPanel();
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
-      const badge = panel().querySelector<HTMLElement>(`.forge-kind-section[data-kind='${k}'] .forge-kind-badge`);
+      const badge = panel().querySelector<HTMLElement>(
+        `.forge-kind-section[data-kind='${k}'] .forge-kind-badge`,
+      );
       expect(badge).not.toBeNull();
       const svg = badge!.querySelector("svg");
       expect(svg, `${k} badge should contain an svg`).not.toBeNull();
@@ -201,12 +257,16 @@ describe("forge-auth: 4-section layout", () => {
     // Open the unified add pane on every section via the single
     // "+" button. The pane includes a PAT form for every kind.
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
-      const add = panel().querySelector<HTMLButtonElement>(`.forge-kind-section[data-kind='${k}'] [data-forge-add]`);
+      const add = panel().querySelector<HTMLButtonElement>(
+        `.forge-kind-section[data-kind='${k}'] [data-forge-add]`,
+      );
       add!.click();
     }
     const inputs: Record<string, HTMLInputElement | null> = {};
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
-      const form = panel().querySelector<HTMLFormElement>(`.forge-kind-section[data-kind='${k}'] form.forge-pat-form`);
+      const form = panel().querySelector<HTMLFormElement>(
+        `.forge-kind-section[data-kind='${k}'] form.forge-pat-form`,
+      );
       expect(form, `${k} PAT form should be open`).not.toBeNull();
       inputs[k] = form!.querySelector<HTMLInputElement>("input");
     }
@@ -226,7 +286,9 @@ describe("forge-auth: 4-section layout", () => {
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    const title = panel().querySelector(".forge-kind-section[data-kind='gitea'] .forge-kind-title")?.textContent;
+    const title = panel().querySelector(
+      ".forge-kind-section[data-kind='gitea'] .forge-kind-title",
+    )?.textContent;
     expect(title).toBe("Gitea / Forgejo");
   });
 
@@ -234,7 +296,13 @@ describe("forge-auth: 4-section layout", () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
         // Account with no email — primary should be the username, meta should NOT add @cplieger.
-        { id: "github:github.com", kind: "github", host: "github.com", username: "cplieger", connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "cplieger",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
@@ -267,8 +335,20 @@ describe("forge-auth: 4-section layout", () => {
     // Initial: two connected accounts.
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com",   kind: "github",   host: "github.com",   username: "alice", connected: true },
-        { id: "codeberg:codeberg.org", kind: "codeberg", host: "codeberg.org", username: "bob",   connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          connected: true,
+        },
+        {
+          id: "codeberg:codeberg.org",
+          kind: "codeberg",
+          host: "codeberg.org",
+          username: "bob",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
@@ -279,26 +359,37 @@ describe("forge-auth: 4-section layout", () => {
     });
     await renderForgesPanel();
     // Allow the void revalidateInBackground microtasks to flush.
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     // Two probes fired (one per connected account), pointed at the right URLs.
     const probeCalls = mockedApiPost.mock.calls.filter(
       ([path]) => typeof path === "string" && path.includes("/probe"),
     );
     expect(probeCalls.length).toBe(2);
-    expect(probeCalls.some(([p]) => (p as string).includes("github%3Agithub.com"))).toBe(true);
-    expect(probeCalls.some(([p]) => (p as string).includes("codeberg%3Acodeberg.org"))).toBe(true);
+    expect(probeCalls.some(([p]) => p.includes("github%3Agithub.com"))).toBe(true);
+    expect(probeCalls.some(([p]) => p.includes("codeberg%3Acodeberg.org"))).toBe(true);
   });
 
   it("does not probe disconnected accounts on page open", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", connected: false, last_error: "expired" },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          connected: false,
+          last_error: "expired",
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     const probeCalls = mockedApiPost.mock.calls.filter(
       ([path]) => typeof path === "string" && path.includes("/probe"),
@@ -309,23 +400,36 @@ describe("forge-auth: 4-section layout", () => {
   it("sign-out uses the custom styled confirm dialog (not the native popup)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", email: "a@x.io", connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          email: "a@x.io",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     // Empty re-fetch after delete.
-    mockedApiGet.mockResolvedValue({ forges: [], kinds: ["github", "gitlab", "codeberg", "gitea"] });
+    mockedApiGet.mockResolvedValue({
+      forges: [],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
     mockedConfirm.mockResolvedValueOnce(true);
     // Mock fetch for the action framework's DELETE call.
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
     vi.stubGlobal("fetch", fetchSpy);
 
     await renderForgesPanel();
-    const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
-      .find((b) => b.textContent === "Sign out")!;
+    const signOutBtn = [
+      ...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button"),
+    ].find((b) => b.textContent === "Sign out")!;
     signOutBtn.click();
     // Allow handler microtasks to run.
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(mockedConfirm).toHaveBeenCalled();
     const [msg, label, variant] = mockedConfirm.mock.calls[0]!;
@@ -341,7 +445,13 @@ describe("forge-auth: 4-section layout", () => {
   it("sign-out cancellation does not delete", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
-        { id: "github:github.com", kind: "github", host: "github.com", username: "alice", connected: true },
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          connected: true,
+        },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
@@ -351,10 +461,13 @@ describe("forge-auth: 4-section layout", () => {
 
     await renderForgesPanel();
     fetchSpy.mockClear(); // clear any fetch calls from render
-    const signOutBtn = [...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button")]
-      .find((b) => b.textContent === "Sign out")!;
+    const signOutBtn = [
+      ...panel().querySelectorAll<HTMLButtonElement>(".forge-account-row button"),
+    ].find((b) => b.textContent === "Sign out")!;
     signOutBtn.click();
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(mockedConfirm).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();

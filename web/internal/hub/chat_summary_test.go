@@ -98,17 +98,17 @@ func TestTruncateAt_tableDriven(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
-		n    int
 		want string
+		n    int
 	}{
-		{"zero_returns_empty", "hello", 0, ""},
-		{"negative_returns_empty", "hello", -5, ""},
-		{"n_equals_length", "hello", 5, "hello"},
-		{"n_greater_than_length", "hi", 10, "hi"},
-		{"ascii_cut", "hello world", 5, "hello"},
-		{"multibyte_safe_cut", "héllo", 3, "hél"},
-		{"emoji_rune_boundary", "a🙂b🙂c", 3, "a🙂b"},
-		{"empty_input", "", 5, ""},
+		{"zero_returns_empty", "hello", "", 0},
+		{"negative_returns_empty", "hello", "", -5},
+		{"n_equals_length", "hello", "hello", 5},
+		{"n_greater_than_length", "hi", "hi", 10},
+		{"ascii_cut", "hello world", "hello", 5},
+		{"multibyte_safe_cut", "héllo", "hél", 3},
+		{"emoji_rune_boundary", "a🙂b🙂c", "a🙂b", 3},
+		{"empty_input", "", "", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,7 +1,13 @@
 // Unit tests for tool-schema.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { mcpToolInfo, profileFor, toolTier, formatMCPToolName, renderInfoFor } from "./tool-schema.js";
+import {
+  mcpToolInfo,
+  profileFor,
+  toolTier,
+  formatMCPToolName,
+  renderInfoFor,
+} from "./tool-schema.js";
 import type { ToolKind, ToolTier as TierType } from "./tool-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -9,7 +15,7 @@ import type { ToolKind, ToolTier as TierType } from "./tool-schema.js";
 // ---------------------------------------------------------------------------
 
 describe("mcpToolInfo", () => {
-  const valid: Array<{ input: string; expected: { server: string; tool: string } }> = [
+  const valid: { input: string; expected: { server: string; tool: string } }[] = [
     { input: "mcp__github__create_issue", expected: { server: "github", tool: "create_issue" } },
     { input: "mcp__s3__list_buckets", expected: { server: "s3", tool: "list_buckets" } },
     { input: "mcp__a__b", expected: { server: "a", tool: "b" } },
@@ -28,22 +34,22 @@ describe("mcpToolInfo", () => {
 
   const invalid = [
     "",
-    "mcp_github_tool",         // single underscore
-    "mcp___github__tool",      // triple underscore prefix
-    "mcp__",                   // missing segments
-    "mcp____",                 // empty segments
-    "mcp::github:tool",        // double colon
-    "mcp::",                   // empty colon segments
-    "notmcp__a__b",            // wrong prefix
-    "MCP__a__b",               // case-sensitive prefix
-    "mcp__ __tool",            // space in server
-    "mcp:server:",             // empty tool
-    "mcp::tool",              // empty server
-    "readFile",                // normal tool name
-    "mcp__-invalid__tool",     // leading dash in server
-    "mcp__.invalid__tool",     // leading dot in server
-    "mcp__server__-tool",      // leading dash in tool
-    "mcp__server__.tool",      // leading dot in tool
+    "mcp_github_tool", // single underscore
+    "mcp___github__tool", // triple underscore prefix
+    "mcp__", // missing segments
+    "mcp____", // empty segments
+    "mcp::github:tool", // double colon
+    "mcp::", // empty colon segments
+    "notmcp__a__b", // wrong prefix
+    "MCP__a__b", // case-sensitive prefix
+    "mcp__ __tool", // space in server
+    "mcp:server:", // empty tool
+    "mcp::tool", // empty server
+    "readFile", // normal tool name
+    "mcp__-invalid__tool", // leading dash in server
+    "mcp__.invalid__tool", // leading dot in server
+    "mcp__server__-tool", // leading dash in tool
+    "mcp__server__.tool", // leading dot in tool
   ];
 
   it.each(invalid)("returns null for %j", (input) => {
@@ -58,7 +64,8 @@ describe("mcpToolInfo", () => {
 describe("mcpToolInfo (property-based)", () => {
   // Arbitrary for valid server/tool name segments: starts with alnum, rest is alnum/underscore/dot/dash.
   // Exclude double-underscore sequences since those are the separator in the mcp__ format.
-  const nameSegment = fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9_.\-]{0,20}$/)
+  const nameSegment = fc
+    .stringMatching(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,20}$/)
     .filter((s) => !s.includes("__"));
 
   it("round-trips underscore variant: mcp__<server>__<tool>", () => {
@@ -85,9 +92,9 @@ describe("mcpToolInfo (property-based)", () => {
   });
 
   it("returns null for strings not starting with mcp__ or mcp:", () => {
-    const nonMcp = fc.string({ minLength: 0, maxLength: 100 }).filter(
-      (s) => !s.startsWith("mcp__") && !s.startsWith("mcp:"),
-    );
+    const nonMcp = fc
+      .string({ minLength: 0, maxLength: 100 })
+      .filter((s) => !s.startsWith("mcp__") && !s.startsWith("mcp:"));
     fc.assert(
       fc.property(nonMcp, (s) => {
         expect(mcpToolInfo(s)).toBeNull();
@@ -118,7 +125,12 @@ describe("mcpToolInfo (property-based)", () => {
 
 describe("profileFor", () => {
   // Title-based lookups
-  const titleCases: Array<{ title: string; kind: string; expectedKind: ToolKind; expectedWrites: boolean }> = [
+  const titleCases: {
+    title: string;
+    kind: string;
+    expectedKind: ToolKind;
+    expectedWrites: boolean;
+  }[] = [
     { title: "readFile", kind: "read", expectedKind: "read", expectedWrites: false },
     { title: "readCode", kind: "read", expectedKind: "read", expectedWrites: false },
     { title: "readMultipleFiles", kind: "read", expectedKind: "read", expectedWrites: false },
@@ -138,14 +150,21 @@ describe("profileFor", () => {
     { title: "remote_web_search", kind: "fetch", expectedKind: "fetch", expectedWrites: false },
   ];
 
-  it.each(titleCases)("title=$title → kind=$expectedKind, writesFile=$expectedWrites", ({ title, kind, expectedKind, expectedWrites }) => {
-    const p = profileFor(title, kind);
-    expect(p.kind).toBe(expectedKind);
-    expect(p.writesFile).toBe(expectedWrites);
-  });
+  it.each(titleCases)(
+    "title=$title → kind=$expectedKind, writesFile=$expectedWrites",
+    ({ title, kind, expectedKind, expectedWrites }) => {
+      const p = profileFor(title, kind);
+      expect(p.kind).toBe(expectedKind);
+      expect(p.writesFile).toBe(expectedWrites);
+    },
+  );
 
   // Kind fallback (unknown title)
-  const kindFallbackCases: Array<{ kind: string; expectedKind: ToolKind; expectedWrites: boolean }> = [
+  const kindFallbackCases: {
+    kind: string;
+    expectedKind: ToolKind;
+    expectedWrites: boolean;
+  }[] = [
     { kind: "read", expectedKind: "read", expectedWrites: false },
     { kind: "edit", expectedKind: "edit", expectedWrites: true },
     { kind: "write", expectedKind: "write", expectedWrites: true },
@@ -158,11 +177,14 @@ describe("profileFor", () => {
     { kind: "switch_mode", expectedKind: "switch_mode", expectedWrites: false },
   ];
 
-  it.each(kindFallbackCases)("unknown title + kind=$kind → $expectedKind", ({ kind, expectedKind, expectedWrites }) => {
-    const p = profileFor("unknownTool", kind);
-    expect(p.kind).toBe(expectedKind);
-    expect(p.writesFile).toBe(expectedWrites);
-  });
+  it.each(kindFallbackCases)(
+    "unknown title + kind=$kind → $expectedKind",
+    ({ kind, expectedKind, expectedWrites }) => {
+      const p = profileFor("unknownTool", kind);
+      expect(p.kind).toBe(expectedKind);
+      expect(p.writesFile).toBe(expectedWrites);
+    },
+  );
 
   it("unknown title + unknown kind → other", () => {
     const p = profileFor("unknownTool", "unknownKind");
@@ -188,7 +210,7 @@ describe("profileFor", () => {
 // ---------------------------------------------------------------------------
 
 describe("toolTier", () => {
-  const cases: Array<{ kind: ToolKind; expected: TierType }> = [
+  const cases: { kind: ToolKind; expected: TierType }[] = [
     { kind: "read", expected: "simple" },
     { kind: "edit", expected: "simple" },
     { kind: "write", expected: "simple" },
@@ -213,7 +235,7 @@ describe("toolTier", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatMCPToolName", () => {
-  const cases: Array<{ input: string; expected: string }> = [
+  const cases: { input: string; expected: string }[] = [
     { input: "create_issue", expected: "create issue" },
     { input: "list_buckets", expected: "list buckets" },
     { input: "tool", expected: "tool" },
@@ -234,7 +256,11 @@ describe("formatMCPToolName", () => {
 
 describe("renderInfoFor", () => {
   it("file write with strReplace input", () => {
-    const info = renderInfoFor("strReplace", "edit", { path: "src/main.ts", oldStr: "a", newStr: "b" });
+    const info = renderInfoFor("strReplace", "edit", {
+      path: "src/main.ts",
+      oldStr: "a",
+      newStr: "b",
+    });
     expect(info.kind).toBe("edit");
     expect(info.writesFile).toBe(true);
     expect(info.filePath).toBe("src/main.ts");

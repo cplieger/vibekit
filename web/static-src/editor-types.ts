@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { lineDiff, type DiffLine } from "./diff.js";
+import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
 
@@ -32,14 +33,22 @@ export function isPendingPath(path: string): boolean {
 }
 
 export function parsePendingPath(path: string): { chatID: string; toolCallID: string } {
-  if (!isPendingPath(path)) return { chatID: "", toolCallID: "" };
+  if (!isPendingPath(path)) {
+    return { chatID: "", toolCallID: "" };
+  }
   const rest = path.slice(PENDING_PREFIX.length);
   const split = rest.indexOf(":");
-  if (split === -1) return { chatID: rest, toolCallID: "" };
+  if (split === -1) {
+    return { chatID: rest, toolCallID: "" };
+  }
   return { chatID: rest.slice(0, split), toolCallID: rest.slice(split + 1) };
 }
 
-export function routeForPath(path: string): { readURL: string; writeURL: string; displayPath: string } {
+export function routeForPath(path: string): {
+  readURL: string;
+  writeURL: string;
+  displayPath: string;
+} {
   if (isPlanDraftPath(path)) {
     const id = planDraftChatID(path);
     const url = `/api/chats/${encodeURIComponent(id)}/plan-draft`;
@@ -66,12 +75,24 @@ interface DiffSource {
 
 /** Factory: pending-change diff (on disk vs proposed). */
 export function pendingDiffSource(oldContent: string, newContent: string): DiffSource {
-  return { oldContent, newContent, oldLabel: DIFF_LABEL_DISK, newLabel: DIFF_LABEL_PROPOSED, fromGit: false };
+  return {
+    oldContent,
+    newContent,
+    oldLabel: DIFF_LABEL_DISK,
+    newLabel: DIFF_LABEL_PROPOSED,
+    fromGit: false,
+  };
 }
 
 /** Factory: git diff (ref vs working tree). */
 export function gitDiffSource(ref: string, oldContent: string, newContent: string): DiffSource {
-  return { oldContent, newContent, oldLabel: ref, newLabel: DIFF_LABEL_WORKING_TREE, fromGit: true };
+  return {
+    oldContent,
+    newContent,
+    oldLabel: ref,
+    newLabel: DIFF_LABEL_WORKING_TREE,
+    fromGit: true,
+  };
 }
 
 /** Factory: unsaved-changes diff (saved vs unsaved). */
@@ -83,7 +104,7 @@ export function unsavedDiffSource(oldContent: string, newContent: string): DiffS
 export type FileMode =
   | { kind: "edit"; editing: boolean }
   | { kind: "diff"; diffSource: DiffSource }
-  | { kind: "conflict"; conflict: import("./conflict.js").ConflictFile; editing: true };
+  | { kind: "conflict"; conflict: ConflictFile; editing: true };
 
 export interface FileState {
   path: string;
@@ -113,10 +134,16 @@ class EditorState {
   readonly files = new Map<string, FileState>();
   private activePath = "";
 
-  getActivePath(): string { return this.activePath; }
-  setActivePath(path: string): void { this.activePath = path; }
+  getActivePath(): string {
+    return this.activePath;
+  }
+  setActivePath(path: string): void {
+    this.activePath = path;
+  }
 
-  getOpenFilePaths(): string[] { return [...this.files.keys()]; }
+  getOpenFilePaths(): string[] {
+    return [...this.files.keys()];
+  }
 
   getDirtyPaths(): string[] {
     const out: string[] = [];
@@ -130,8 +157,11 @@ class EditorState {
 
   freshState(path: string): FileState {
     return {
-      path, original: "", current: "",
-      loaded: false, error: "",
+      path,
+      original: "",
+      current: "",
+      loaded: false,
+      error: "",
       mode: { kind: "edit", editing: false },
       suggestions: new Map(),
       returnToGitDiff: null,
@@ -143,8 +173,12 @@ class EditorState {
   }
 
   getCachedDiff(state: FileState): DiffLine[] {
-    if (state.cachedDiff !== null) return state.cachedDiff;
-    if (state.mode.kind !== "diff") return [];
+    if (state.cachedDiff !== null) {
+      return state.cachedDiff;
+    }
+    if (state.mode.kind !== "diff") {
+      return [];
+    }
     const diff = lineDiff(state.mode.diffSource.oldContent, state.mode.diffSource.newContent);
     state.cachedDiff = diff;
     return diff;
@@ -157,15 +191,33 @@ const editorState = new EditorState();
 // --- Exports (delegate to singleton) ---
 
 export const fileStates = editorState.files;
-export function setActiveFilePath(path: string): void { editorState.setActivePath(path); }
-export function getCachedDiff(state: FileState): DiffLine[] { return editorState.getCachedDiff(state); }
-export function freshState(path: string): FileState { return editorState.freshState(path); }
-export function getActiveFilePath(): string { return editorState.getActivePath(); }
-export function getOpenFilePaths(): string[] { return editorState.getOpenFilePaths(); }
-export function getDirtyEditorPaths(): string[] { return editorState.getDirtyPaths(); }
+export function setActiveFilePath(path: string): void {
+  editorState.setActivePath(path);
+}
+export function getCachedDiff(state: FileState): DiffLine[] {
+  return editorState.getCachedDiff(state);
+}
+export function freshState(path: string): FileState {
+  return editorState.freshState(path);
+}
+export function getActiveFilePath(): string {
+  return editorState.getActivePath();
+}
+export function getOpenFilePaths(): string[] {
+  return editorState.getOpenFilePaths();
+}
+export function getDirtyEditorPaths(): string[] {
+  return editorState.getDirtyPaths();
+}
 
 // --- Late-bound closeEditorFile (set by editor-openers.ts at init) ---
 
-let closeFileFn: (path: string) => void = () => {};
-export function registerCloseFile(fn: (path: string) => void): void { closeFileFn = fn; }
-export function closeFile(path: string): void { closeFileFn(path); }
+let closeFileFn: (path: string) => void = () => {
+  /* noop */
+};
+export function registerCloseFile(fn: (path: string) => void): void {
+  closeFileFn = fn;
+}
+export function closeFile(path: string): void {
+  closeFileFn(path);
+}

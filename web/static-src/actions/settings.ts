@@ -14,7 +14,7 @@ import { RETRY_STANDARD } from "./types.js";
 
 // --- Steering save ---
 
-export const saveSteering = apiAction<{ content: string }, unknown>({
+export const saveSteering = apiAction<{ content: string }>({
   name: "settings.save_steering",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -34,13 +34,15 @@ export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement },
   retryable: retryNetwork,
   request: () => ({ method: "POST", path: "/api/logout" }),
   optimistic: ({ emailEl, stAuthEl }) => {
-    const prev = emailEl.textContent ?? "";
+    const prev = emailEl.textContent;
     emailEl.textContent = "";
     stAuthEl.textContent = "not signed in";
     return prev;
   },
   rollback: ({ emailEl, stAuthEl }, op) => {
-    if (op === undefined) return;
+    if (op === undefined) {
+      return;
+    }
     emailEl.textContent = op;
     stAuthEl.textContent = op !== "" ? "signed in" : "not signed in";
   },
@@ -84,7 +86,9 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     return { prevValue: previousValue ?? input.defaultValue };
   },
   rollback: ({ input }, op) => {
-    if (op === undefined) return;
+    if (op === undefined) {
+      return;
+    }
     if (op.prevChecked !== undefined) {
       input.checked = op.prevChecked;
     } else if (op.prevValue !== undefined) {
@@ -96,6 +100,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 
 // --- Load settings (deduped fetch for SSE-triggered reconcile) ---
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const loadSettings = apiAction<void, Record<string, unknown>>({
   name: "settings.load",
   dedupe: true,
@@ -140,7 +145,9 @@ export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
     };
   },
   rollback: (_args, op) => {
-    if (op === undefined) return;
+    if (op === undefined) {
+      return;
+    }
     for (const { el, prevChecked, prevValue } of op.inputs) {
       if (el.type === "checkbox") {
         el.checked = prevChecked;

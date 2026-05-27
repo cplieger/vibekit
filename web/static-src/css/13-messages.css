@@ -13,6 +13,7 @@
   inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+
   /* Smooth user-initiated scrolls (scroll-to-bottom click, keyboard
    * navigation). Streaming auto-scroll calls scrollTo with
    * behavior:"instant" which overrides this — small per-chunk deltas
@@ -103,16 +104,20 @@
     border-color: var(--c-text-tertiary);
     transform: translateY(-1px);
   }
+
   &:active {
     transform: translateY(0);
   }
+
   &.active {
     border-color: var(--c-accent);
     background: var(--c-accent-subtle);
   }
+
   & .picker-name {
     font-weight: var(--fw-medium);
   }
+
   & .picker-meta {
     font-size: var(--fs-xs);
     color: var(--c-text-tertiary);
@@ -192,11 +197,13 @@
      * the chrome's micro-motion language. */
     &.streaming {
       transition: height var(--dur-standard) var(--ease-standard);
+
       /* Last-message padding (Vercel ai-chatbot pattern): half-viewport
        * room below the streaming bubble so chunk-arrival doesn't cram
        * text right against the prompt bar. The .streaming class is
        * removed on turn_ended, releasing the reservation. */
       min-block-size: 50dvh;
+
       /* Subtle accent wash while streaming so the live bubble is
        * visually distinct from completed assistants. Released on
        * turn_ended via the .streaming class removal. */
@@ -273,8 +280,7 @@
       border-radius: var(--r);
       overflow-x: auto;
       margin: var(--sp-2) 0;
-      font-family:
-        "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+      font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
       font-feature-settings:
         "calt" 1,
         "liga" 1;
@@ -317,16 +323,20 @@
       padding-inline-start: 1.5em;
       margin: var(--sp-2) 0;
     }
+
     & ul.task-list {
       list-style: none;
       padding-inline-start: 0;
     }
+
     & li.task-item {
       margin: var(--sp-1) 0;
     }
+
     & li {
       margin: var(--sp-1) 0;
     }
+
     & li > ul,
     & li > ol {
       margin: var(--sp-1) 0;
@@ -371,12 +381,15 @@
       line-height: 1.3;
       color: var(--c-text-primary);
     }
+
     & :first-child {
       margin-block-start: 0;
     }
+
     & :last-child {
       margin-block-end: 0;
     }
+
     & h1 {
       font-size: var(--fs-lg);
     }
@@ -387,21 +400,25 @@
       letter-spacing: 0.05em;
       color: var(--c-text-secondary);
     }
+
     & h3,
     & h4,
     & h5,
     & h6 {
       font-size: var(--fs-md);
     }
+
     & p {
       margin: var(--sp-2) 0;
       overflow-wrap: anywhere;
     }
+
     & hr {
       border: none;
       border-top: 1px solid var(--c-border);
       margin: var(--sp-3) 0;
     }
+
     & img {
       max-width: 100%;
       border-radius: var(--r);
@@ -432,6 +449,7 @@
   margin: var(--sp-1) auto;
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
+
   /* Smooth open/close height transitions thanks to interpolate-size
    * on :root + the standard ease. */
   transition: height var(--dur-standard) var(--ease-standard);
@@ -464,7 +482,9 @@
   transition: color var(--dur-micro) var(--ease-micro);
 }
 
-.reasoning-summary:hover { color: var(--c-text-secondary); }
+.reasoning-summary:hover {
+  color: var(--c-text-secondary);
+}
 
 .reasoning-body {
   max-height: 300px;
@@ -501,10 +521,12 @@
     flex: 1;
     border-block-start: 1px dashed var(--c-border);
   }
+
   & .boundary-icon {
     color: var(--c-accent);
     font-size: 1.1em;
   }
+
   & .boundary-label {
     font-style: italic;
     white-space: nowrap;
@@ -514,12 +536,15 @@
 .boundary-switched .boundary-icon {
   color: var(--c-yellow);
 }
+
 .boundary-failed .boundary-icon {
   color: var(--c-red);
 }
+
 .boundary-failed .boundary-label {
   color: var(--c-red);
 }
+
 .boundary-agent .boundary-icon {
   color: var(--c-accent);
 }
