@@ -64,7 +64,6 @@ type InfraDeps interface {
 	InflightGo(fn func())
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
 	ResolveInsideWorkDir(rel string) (string, error)
-	UtilityPrompt(ctx context.Context, prompt string) (string, error)
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
 }

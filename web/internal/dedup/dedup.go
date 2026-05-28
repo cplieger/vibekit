@@ -1,4 +1,6 @@
-package hub
+// Package dedup provides a bounded, TTL-based idempotency cache for
+// deduplicating repeated requests by request ID.
+package dedup
 
 import (
 	"container/heap"
@@ -6,23 +8,26 @@ import (
 	"time"
 )
 
-const (
-	idempotencyTTL = 5 * time.Minute
-	// idempotencyMaxEntries caps the request_id→result cache. A bug
-	// client that rotates request_id in a tight loop can otherwise
-	// grow the map unboundedly between the 1-minute sweeps.
-	idempotencyMaxEntries = 10_000
-	// idempotencyMaxResult skips caching replies larger than this.
-	// Idempotent retries exist for cheap acks, not megabyte payloads.
-	idempotencyMaxResult = 64 * 1024
-)
+// DefaultTTL is the default time-to-live for cache entries.
+const DefaultTTL = 5 * time.Minute
 
-// idempotencyCache deduplicates repeated command requests by caching
+// DefaultMaxEntries caps the request_id→result cache.
+const DefaultMaxEntries = 10_000
+
+// DefaultMaxResult skips caching replies larger than this.
+const DefaultMaxResult = 64 * 1024
+
+// Entry is a single cached result with its insertion timestamp.
+type Entry struct {
+	Ts     time.Time
+	Result []byte
+}
+
+// Cache deduplicates repeated command requests by caching
 // request_id → result for a bounded TTL. It owns its own mutex so
-// check/record operations don't contend with SSE fan-out or bridge
-// lifecycle operations on Hub.mu.
-type idempotencyCache struct {
-	entries    map[string]idempotencyEntry
+// check/record operations don't contend with other subsystems.
+type Cache struct {
+	entries    map[string]Entry
 	evictHeap  evictionHeap
 	ttl        time.Duration
 	maxEntries int
@@ -51,26 +56,27 @@ func (h *evictionHeap) Pop() any {
 	return item
 }
 
-func newIdempotencyCache() *idempotencyCache {
-	c := &idempotencyCache{
-		entries:    make(map[string]idempotencyEntry),
-		ttl:        idempotencyTTL,
-		maxEntries: idempotencyMaxEntries,
-		maxResult:  idempotencyMaxResult,
+// New creates a Cache with the given TTL, max entries, and max result size.
+func New(ttl time.Duration, maxEntries, maxResult int) *Cache {
+	c := &Cache{
+		entries:    make(map[string]Entry),
+		ttl:        ttl,
+		maxEntries: maxEntries,
+		maxResult:  maxResult,
 	}
 	heap.Init(&c.evictHeap)
 	return c
 }
 
 // Check returns the cached result for reqID if present and not expired.
-func (c *idempotencyCache) Check(reqID string) ([]byte, bool) {
+func (c *Cache) Check(reqID string) ([]byte, bool) {
 	if reqID == "" {
 		return nil, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.entries[reqID]; ok {
-		return e.result, true
+		return e.Result, true
 	}
 	return nil, false
 }
@@ -78,9 +84,8 @@ func (c *idempotencyCache) Check(reqID string) ([]byte, bool) {
 // Record stores a request_id → result mapping. Enforces two bounds:
 // results over maxResult are not cached, and when the map hits
 // maxEntries the oldest entry is evicted via a min-heap in O(log n).
-// Falls back to an O(n) scan if the heap is empty (entries populated
-// externally, e.g. in tests).
-func (c *idempotencyCache) Record(reqID string, result []byte) {
+// Falls back to an O(n) scan if the heap is empty.
+func (c *Cache) Record(reqID string, result []byte) {
 	if reqID == "" || len(result) > c.maxResult {
 		return
 	}
@@ -89,8 +94,6 @@ func (c *idempotencyCache) Record(reqID string, result []byte) {
 	now := time.Now()
 	if _, exists := c.entries[reqID]; !exists && len(c.entries) >= c.maxEntries {
 		evicted := false
-		// Try heap-based O(log n) eviction first. Skip stale keys
-		// that were already pruned by the TTL sweep.
 		for c.evictHeap.Len() > 0 {
 			oldest := heap.Pop(&c.evictHeap).(evictionItem) //nolint:errcheck // heap returns evictionItem
 			if _, ok := c.entries[oldest.key]; ok {
@@ -99,15 +102,12 @@ func (c *idempotencyCache) Record(reqID string, result []byte) {
 				break
 			}
 		}
-		// Fallback: O(n) scan when heap is empty (entries populated
-		// without going through Record, e.g. in tests or after a
-		// heap rebuild race).
 		if !evicted {
 			var oldestKey string
 			var oldestTS time.Time
 			for k, v := range c.entries {
-				if oldestKey == "" || v.ts.Before(oldestTS) {
-					oldestKey, oldestTS = k, v.ts
+				if oldestKey == "" || v.Ts.Before(oldestTS) {
+					oldestKey, oldestTS = k, v.Ts
 				}
 			}
 			if oldestKey != "" {
@@ -115,13 +115,13 @@ func (c *idempotencyCache) Record(reqID string, result []byte) {
 			}
 		}
 	}
-	c.entries[reqID] = idempotencyEntry{ts: now, result: result}
+	c.entries[reqID] = Entry{Ts: now, Result: result}
 	heap.Push(&c.evictHeap, evictionItem{key: reqID, ts: now})
 }
 
 // StartCleaner runs a periodic sweep that removes expired entries.
 // Exits when done is closed.
-func (c *idempotencyCache) StartCleaner(done <-chan struct{}) {
+func (c *Cache) StartCleaner(done <-chan struct{}) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -130,13 +130,11 @@ func (c *idempotencyCache) StartCleaner(done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			c.mu.Lock()
-			pruneExpired(time.Now(), c.ttl, c.entries)
-			// Incrementally clean the heap: pop entries whose keys
-			// are no longer in the map (pruned by TTL above).
+			PruneExpired(time.Now(), c.ttl, c.entries)
 			for c.evictHeap.Len() > 0 {
 				top := c.evictHeap[0]
 				if _, ok := c.entries[top.key]; ok {
-					break // top is still live; stop
+					break
 				}
 				heap.Pop(&c.evictHeap)
 			}
@@ -145,15 +143,13 @@ func (c *idempotencyCache) StartCleaner(done <-chan struct{}) {
 	}
 }
 
-// pruneExpired removes idempotency entries older than ttl relative to
-// now (strictly before cutoff; entries exactly at the boundary are
-// kept). Returns the number of entries removed; exposed as a test hook,
-// production ignores the return value.
-func pruneExpired(now time.Time, ttl time.Duration, entries map[string]idempotencyEntry) int {
+// PruneExpired removes entries older than ttl relative to now.
+// Returns the number of entries removed.
+func PruneExpired(now time.Time, ttl time.Duration, entries map[string]Entry) int {
 	cutoff := now.Add(-ttl)
 	n := 0
 	for k, v := range entries {
-		if v.ts.Before(cutoff) {
+		if v.Ts.Before(cutoff) {
 			delete(entries, k)
 			n++
 		}

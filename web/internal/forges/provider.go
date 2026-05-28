@@ -32,15 +32,47 @@ const (
 // kindMetaEntry holds the per-kind metadata used by the lookup methods.
 type kindMetaEntry struct {
 	CLI, DefaultHost, Title string
+	NewProvider             func(Kind, string) ForgeOps
+	Inject                  func(ctx context.Context, host, token, username string) error
+	Remove                  func(host string) error
+	SetupGit                func(ctx context.Context, host string) error
 }
 
 // kindMeta is the single source of truth for forge kind properties.
 // Adding a new forge requires only a new map entry.
-var kindMeta = map[Kind]kindMetaEntry{
-	KindGitHub:   {"gh", "github.com", "GitHub"},
-	KindGitLab:   {"glab", "gitlab.com", "GitLab"},
-	KindCodeberg: {"tea", "codeberg.org", "Codeberg"},
-	KindGitea:    {"tea", "", "Gitea"},
+var kindMeta map[Kind]kindMetaEntry
+
+func init() {
+	kindMeta = map[Kind]kindMetaEntry{
+		KindGitHub: {
+			CLI: "gh", DefaultHost: "github.com", Title: "GitHub",
+			NewProvider: func(_ Kind, host string) ForgeOps { return newGitHub(host) },
+			Inject:      func(_ context.Context, host, token, username string) error { return writeGHHosts(host, token, username) },
+			Remove:      removeGHHost,
+			SetupGit:    setupGitGH,
+		},
+		KindGitLab: {
+			CLI: "glab", DefaultHost: "gitlab.com", Title: "GitLab",
+			NewProvider: func(_ Kind, host string) ForgeOps { return newGitLab(host) },
+			Inject:      func(_ context.Context, host, token, username string) error { return writeGLabConfig(host, token, username) },
+			Remove:      removeGLabHost,
+			SetupGit:    setupGitGLab,
+		},
+		KindCodeberg: {
+			CLI: "tea", DefaultHost: "codeberg.org", Title: "Codeberg",
+			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
+			Inject:      func(_ context.Context, host, token, username string) error { return writeTeaConfig(host, token, username) },
+			Remove:      removeTeaHost,
+			SetupGit:    setupGitTea,
+		},
+		KindGitea: {
+			CLI: "tea", DefaultHost: "", Title: "Gitea",
+			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
+			Inject:      func(_ context.Context, host, token, username string) error { return writeTeaConfig(host, token, username) },
+			Remove:      removeTeaHost,
+			SetupGit:    setupGitTea,
+		},
+	}
 }
 
 // Valid reports whether k is a known forge kind.
@@ -179,6 +211,25 @@ type Label struct {
 	Description string `json:"description,omitempty"`
 }
 
+// ListState is a typed enum for PR/issue listing state filters.
+type ListState string
+
+const (
+	StateOpen   ListState = "open"
+	StateClosed ListState = "closed"
+	StateMerged ListState = "merged"
+	StateAll    ListState = "all"
+)
+
+// MergeMethod is a typed enum for PR merge strategies.
+type MergeMethod string
+
+const (
+	MergeCommit MergeMethod = "merge"
+	MergeSquash MergeMethod = "squash"
+	MergeRebase MergeMethod = "rebase"
+)
+
 // ForgeOps is the unified abstraction over a specific forge backend.
 // Each implementation shells out to the corresponding CLI tool.
 //
@@ -200,21 +251,20 @@ type ForgeOps interface {
 	// account (owned + member).
 	ListRepos(ctx context.Context) ([]Repo, error)
 
-	// ListPRs lists pull/merge requests for repo. state is one of
-	// stateOpen, stateClosed, stateMerged, "all".
-	ListPRs(ctx context.Context, repo, state string) ([]PR, error)
+	// ListPRs lists pull/merge requests for repo.
+	ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error)
 
 	// CreatePR opens a new pull/merge request.
 	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
 
-	// MergePR merges an open PR. method is "merge" | mergeSquash | mergeRebase.
-	MergePR(ctx context.Context, repo string, number int, method string) error
+	// MergePR merges an open PR.
+	MergePR(ctx context.Context, repo string, number int, method MergeMethod) error
 
 	// ClosePR closes (without merging) an open PR.
 	ClosePR(ctx context.Context, repo string, number int) error
 
-	// ListIssues lists issues for repo. state is stateOpen, stateClosed, "all".
-	ListIssues(ctx context.Context, repo, state string) ([]Issue, error)
+	// ListIssues lists issues for repo.
+	ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error)
 
 	// CreateIssue files a new issue.
 	CreateIssue(ctx context.Context, repo string, p CreateIssueParams) (*Issue, error)

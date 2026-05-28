@@ -29,13 +29,13 @@ func (t *Translator) HandleCommandsAvailable(ctx context.Context, chatID api.Cha
 		Commands: toAvailableCommands(p.Commands),
 		Prompts:  toAvailableCommands(p.Prompts),
 	}))
-	t.deps.MCPRecorder().SignalReady()
+	t.MCP().SignalReady()
 
 	// Persist per-server tool names so the UI can show suggestions in
 	// the disabled-tools section even when the server is disconnected.
 	for _, s := range p.MCPServers {
 		if len(s.Tools) > 0 {
-			t.deps.MCPRecorder().SetKnownTools(ctx, s.Name, s.Tools)
+			t.MCP().SetKnownTools(ctx, s.Name, s.Tools)
 		}
 	}
 }

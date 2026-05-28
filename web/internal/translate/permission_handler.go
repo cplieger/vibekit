@@ -37,7 +37,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 	}
 
 	// Shell safety tier: auto-approve or auto-reject shell commands.
-	if req.Params.ToolCall.Kind == api.ToolKindExecute && subSessionID == "" && t.deps.ConfigDir() != "" {
+	if req.Params.ToolCall.Kind == api.ToolKindExecute && subSessionID == "" && t.configDir != "" {
 		if t.tryShellPolicy(ctx, chatID, req.ID, req.Params.ToolCall.Title, req.Params.Options) {
 			return
 		}
@@ -85,7 +85,7 @@ func (t *Translator) tryAutoApproveCrew(ctx context.Context, chatID api.ChatID, 
 // tryShellPolicy evaluates the shell safety tier and auto-approves or
 // auto-rejects shell commands. Returns true if the permission was handled.
 func (t *Translator) tryShellPolicy(ctx context.Context, chatID api.ChatID, reqID int64, command string, options []api.PermissionOption) bool {
-	shellResult := permissions.EvaluateShellCommand(ctx, t.deps.ConfigDir(), command, t.deps.PermissionRules())
+	shellResult := permissions.EvaluateShellCommand(ctx, t.configDir, command, t.deps.PermissionRules())
 	optionID := FindAllowOnce(options)
 	decision := permissions.AutoDecideShell(shellResult.Decision, optionID != "")
 	switch decision {

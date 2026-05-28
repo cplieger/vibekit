@@ -192,7 +192,7 @@ func (m *Manager) Cleanup(ctx context.Context) {
 		slog.Warn("checkpoint: cleanup wipe failed",
 			"chat_id", m.chatID, "error", err)
 	}
-	m.index.forgetChat(string(m.chatID))
+	m.index.forgetChat(m.chatID)
 	// m.log is retained with the same path on purpose. After
 	// Wipe() the events.jsonl and parent dir are gone, but
 	// m.loaded=false forces the next method call through
@@ -204,7 +204,7 @@ func (m *Manager) Cleanup(ctx context.Context) {
 	// error. The hub never does this in practice (it re-
 	// fetches through Store.get), but the property keeps
 	// the lifecycle simple.
-	m.loaded = false
+	m.loadResult.Store(nil)
 }
 
 // restoreLocked is the core restore implementation. Callers must
@@ -220,26 +220,18 @@ func (m *Manager) restoreLocked(ctx context.Context, tag string, recovering bool
 	}
 	touched := m.state.filesTouchedAtOrAfter(tag)
 	if len(touched) == 0 {
-		// Nothing to revert — either a restore-to-current-state
-		// or a recovery pass on a completed journal. Close any
-		// dangling journal so the next load doesn't keep
-		// triggering recovery forever.
 		return msgCount, m.logRestoreCommittedLocked(ctx, tag, msgCount)
 	}
 
-	// Phase 1: stage. Any failure here aborts without touching
-	// workspace files — stageRestoreLocked cleans up its own
-	// partial work on error so the caller just propagates.
-	stages, err := m.stageRestoreLocked(ctx, touched, tag)
+	// Release m.mu for blob I/O (same pattern as public Restore).
+	m.mu.Unlock()
+	stages, err := m.stageBlobReads(ctx, touched, tag)
+	m.mu.Lock()
 	if err != nil {
 		return 0, err
 	}
 
-	// Journal open: record "about to commit phase 2". fsync in
-	// Append guarantees a crash from here on re-runs the commit.
-	// Skip during recovery: the journal is already open from the
-	// previous crashed attempt, re-opening would accumulate dead
-	// started markers across repeated crashes.
+	// Journal open (skip during recovery — already open).
 	if !recovering {
 		if err := m.logRestoreStartedLocked(ctx, tag, msgCount); err != nil {
 			m.cleanupStages(stages)
@@ -247,19 +239,11 @@ func (m *Manager) restoreLocked(ctx context.Context, tag string, recovering bool
 		}
 	}
 
-	// Phase 2: commit. Each rename/delete is atomic; the loop
-	// isn't, so we rely on the journal + recovery.
-	// applyStagesLocked cleans up any still-staged siblings on
-	// partial failure (via cleanupStages on the tail of `stages`)
-	// so we don't double-cleanup here.
+	// Phase 2: commit.
 	if err := m.applyStagesLocked(stages); err != nil {
 		return 0, err
 	}
 	if err := m.logRestoreCommittedLocked(ctx, tag, msgCount); err != nil {
-		// Filesystem succeeded, journal close failed. On next
-		// load, recovery re-runs the commit — idempotent —
-		// then writes the committed marker. Worst case: the
-		// user restarts and sees no visible difference.
 		slog.Warn("checkpoint: restore_committed append failed",
 			"chat_id", m.chatID, "tag", tag, "error", err)
 	}
@@ -362,77 +346,7 @@ func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag stri
 	return stages, nil
 }
 
-// stageRestoreLocked runs phase 1 of Restore: for each file touched
-// at or after `tag`, read the content that was about to be
-// overwritten (or the not-existed marker) from the blob store and
-// stage it at a random-suffix sibling path. On any error, every
-// already-staged sibling is cleaned up before returning so the
-// workspace is untouched. Callers must hold m.mu.
-//
-// Extracted from restoreLocked so the rollback-on-error policy
-// lives in one place instead of being repeated at every error
-// exit; also lets restoreLocked read linearly as lookup → stage →
-// journal → apply → close.
-func (m *Manager) stageRestoreLocked(ctx context.Context, touched []string, tag string) ([]restoreStage, error) {
-	stages := make([]restoreStage, 0, len(touched))
-	fail := func(err error) ([]restoreStage, error) {
-		m.cleanupStages(stages)
-		return nil, err
-	}
-	for _, path := range touched {
-		if err := ctx.Err(); err != nil {
-			return fail(err)
-		}
-		sha, existed := m.state.contentAtOrBeforeTag(path, tag)
-		abs, pathErr := m.absPath(path)
-		if pathErr != nil {
-			return fail(fmt.Errorf("restore: resolve %s: %w", path, pathErr))
-		}
-		st := restoreStage{path: path, abs: abs, existed: existed}
-		if !existed {
-			stages = append(stages, st)
-			continue
-		}
-		data, getErr := m.blobs.Get(ctx, sha)
-		if getErr != nil {
-			return fail(fmt.Errorf("restore: get blob %s for %s: %w", sha, path, getErr))
-		}
-		parentDir := filepath.Dir(st.abs)
-		if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
-			return fail(fmt.Errorf("restore: mkdir for %s: %w", path, mkErr))
-		}
-		// Random-suffix tmp path: os.CreateTemp via a pattern
-		// ending in "*" produces a unique name the agent can't
-		// pre-plant a symlink at. Deterministic ".vibekit-restore"
-		// siblings would have let an attacker seed the path
-		// between the restore click and the phase-1 write, so
-		// os.WriteFile would follow the symlink and write
-		// outside workDir. Concurrent chats restoring the same
-		// file also collided on the deterministic name; the
-		// random suffix removes both hazards.
-		tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(st.abs)+RestoreStageSuffix)
-		if tErr != nil {
-			return fail(fmt.Errorf("restore: create temp for %s: %w", path, tErr))
-		}
-		if _, wErr := tmpFile.Write(data); wErr != nil {
-			tmpFile.Close()
-			_ = os.Remove(tmpFile.Name())
-			return fail(fmt.Errorf("restore: stage %s: %w", path, wErr))
-		}
-		if sErr := tmpFile.Sync(); sErr != nil {
-			tmpFile.Close()
-			_ = os.Remove(tmpFile.Name())
-			return fail(fmt.Errorf("restore: fsync stage %s: %w", path, sErr))
-		}
-		if cErr := tmpFile.Close(); cErr != nil {
-			_ = os.Remove(tmpFile.Name())
-			return fail(fmt.Errorf("restore: close stage %s: %w", path, cErr))
-		}
-		st.tmp = tmpFile.Name()
-		stages = append(stages, st)
-	}
-	return stages, nil
-}
+
 
 // applyStagesLocked executes phase 2 of Restore. Callers hold m.mu.
 // On any rename/delete failure we log the offending path and

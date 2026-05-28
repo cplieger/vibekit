@@ -15,7 +15,7 @@ import (
 func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		deps, events := newEventCaptureDeps()
-		tr := New(deps)
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 		chatID := api.ChatID("prop-chat")
 
 		type action int

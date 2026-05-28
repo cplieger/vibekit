@@ -24,7 +24,7 @@ func newTestManager(t *testing.T, id string) (*Manager, string) {
 	blobs := newBlobStore(cfg)
 	log := newEventLog(cfg, id)
 	deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
-	return newManager(chatID(id), work, log, deps), work
+	return newManager(id, work, log, deps), work
 }
 
 func TestAdvanceTurnSnapshotTagSequencing(t *testing.T) {
@@ -1160,7 +1160,7 @@ func BenchmarkSnapshotContention(b *testing.B) {
 		blobs := newBlobStore(cfg)
 		log := newEventLog(cfg, id)
 		deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
-		m := newManager(chatID(id), work, log, deps)
+		m := newManager(id, work, log, deps)
 		// Write a file to snapshot.
 		fpath := filepath.Join(work, "file.go")
 		os.WriteFile(fpath, []byte("package main\n"), 0o600)

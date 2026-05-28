@@ -23,7 +23,7 @@ func FuzzCheckpointHTTPRouting(f *testing.F) {
 	cfgDir := f.TempDir()
 	workDir := f.TempDir()
 	s := checkpoint.NewStore(cfgDir, workDir, nil)
-	h.checkpoints = &checkpointAdapter{store: s}
+	h.checkpoints = s
 	defer s.Stop()
 
 	f.Fuzz(func(t *testing.T, path string) {

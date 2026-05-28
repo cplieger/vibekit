@@ -31,7 +31,7 @@ func newCheckpointHub(t *testing.T) (*Hub, *checkpoint.Store, string) {
 	cfgDir := t.TempDir()
 	workDir := t.TempDir()
 	s := checkpoint.NewStore(cfgDir, workDir, nil)
-	h.checkpoints = &checkpointAdapter{store: s}
+	h.checkpoints = s
 	t.Cleanup(func() { s.Stop() })
 	return h, s, workDir
 }

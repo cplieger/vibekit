@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+// Exported status/state constants defining the forge protocol vocabulary.
+const (
+	StatusSuccess  = "success"
+	StatusFailure  = "failure"
+	StatusError    = "error"
+	StatePending   = "pending"
+	StateSkipped   = "skipped"
+	StateCompleted = "completed"
+)
+
+// Internal implementation constants.
 const (
 	stateMerged    = "merged"
 	stateCompleted = "completed"
@@ -121,4 +132,37 @@ func normalizeIssueState(s string) string {
 		return stateClosed
 	}
 	return strings.ToLower(s)
+}
+
+// mapPRFields maps raw provider-specific PR fields into the unified PR struct.
+func mapPRFields(number int, title, body, state, author, source, target, url, createdAt, updatedAt string, mergeable, draft bool) PR {
+	return PR{
+		Number:       number,
+		Title:        title,
+		Body:         body,
+		State:        normalizePRState(state),
+		Author:       author,
+		SourceBranch: source,
+		TargetBranch: target,
+		URL:          url,
+		CreatedAt:    parseRFC3339Millis(createdAt),
+		UpdatedAt:    parseRFC3339Millis(updatedAt),
+		Mergeable:    mergeable,
+		Draft:        draft,
+	}
+}
+
+// mapIssueFields maps raw provider-specific issue fields into the unified Issue struct.
+func mapIssueFields(number int, title, body, state, author, url string, labels []string, createdAt, updatedAt string) Issue {
+	return Issue{
+		Number:    number,
+		Title:     title,
+		Body:      body,
+		State:     normalizeIssueState(state),
+		Author:    author,
+		URL:       url,
+		Labels:    labels,
+		CreatedAt: parseRFC3339Millis(createdAt),
+		UpdatedAt: parseRFC3339Millis(updatedAt),
+	}
 }

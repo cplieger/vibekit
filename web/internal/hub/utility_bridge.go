@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/translate"
 )
 
 // utilityBridge wraps a dedicated kiro-cli bridge for ambient tasks.
@@ -38,9 +37,28 @@ type utilityBridge struct {
 	mu            sync.Mutex
 	promptCount   int
 	started       bool
+	// responseCh receives forwarded agent_chunk notifications from
+	// forwardUtility. Closed when the bridge stops or is recycled.
+	responseCh chan utilityChunkPayload
+	// forwardDone is closed when forwardUtility exits.
+	forwardDone chan struct{}
 }
 
 const maxUtilityPrompts = 20
+
+// utilityUpdateBase extracts the sessionUpdate kind discriminator.
+// Local to utility_bridge to avoid coupling to translate's wire types.
+type utilityUpdateBase struct {
+	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+}
+
+// utilityChunkPayload is the minimal shape the utility bridge needs
+// from an agent_message_chunk notification: just the text content.
+type utilityChunkPayload struct {
+	Content struct {
+		Text string `json:"text"`
+	} `json:"content"`
+}
 
 // reset stops the bridge and clears the per-bridge prompt state so the
 // next UtilityPrompt call starts a fresh bridge. Called from both
@@ -49,8 +67,15 @@ const maxUtilityPrompts = 20
 // mutual exclusion must hold ub.mu themselves — reset does not lock.
 func (ub *utilityBridge) reset() {
 	ub.bridge.Stop()
+	// Wait for forwardUtility to exit (it returns when NotifCh closes
+	// after Stop). This ensures no goroutine leak on recycle.
+	if ub.forwardDone != nil {
+		<-ub.forwardDone
+	}
 	ub.started = false
 	ub.promptCount = 0
+	ub.responseCh = nil
+	ub.forwardDone = nil
 }
 
 // newUtilityBridge constructs a utilityBridge with the initialization
@@ -86,24 +111,33 @@ func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (stri
 	ub.lastActiveAt = time.Now()
 	ub.promptCount++
 
-	resp, err := ub.bridge.Call(ctx, api.MethodPrompt, map[string]any{
-		api.KeySessionID: ub.bridge.SessionID(),
-		"prompt":         []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
-	})
+	resp, err := ub.bridge.Call(ctx, api.MethodPrompt, ub.sessionParams(map[string]any{
+		"prompt": []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
+	}))
 	if err != nil {
 		// Bridge may be dead; reset so next call restarts.
 		ub.reset()
 		return "", fmt.Errorf("utility prompt: %w", err)
 	}
 
-	// Drain the notification channel to consume the response chunks.
-	// The utility bridge has no forward goroutine; we read directly.
+	// Drain the forwarded response channel to consume the response chunks.
 	return ub.drainResponse(ctx, resp)
+}
+
+// sessionParams builds the ACP parameter map with the session ID
+// injected. Mirrors command.SessionParams but works with the raw
+// ACPBridge interface (which doesn't satisfy command.Bridge).
+func (ub *utilityBridge) sessionParams(extra map[string]any) map[string]any {
+	m := map[string]any{api.KeySessionID: ub.bridge.SessionID()}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
 }
 
 func (ub *utilityBridge) start(ctx context.Context) error {
 	bridge := ub.bridgeFactory()
-	model := CheapestModel(ctx, ub.hubModels())
+	model := cheapestModel(ctx, ub.hubModels())
 
 	// Start with the hub's shutdown context as the subprocess lifecycle
 	// context. The per-request ctx is only used for CheapestModel above;
@@ -114,6 +148,13 @@ func (ub *utilityBridge) start(ctx context.Context) error {
 	ub.bridge = bridge
 	ub.started = true
 	ub.lastActiveAt = time.Now()
+
+	// Start the forward goroutine to continuously drain NotifCh.
+	// This prevents the channel from filling up between prompts.
+	ub.responseCh = make(chan utilityChunkPayload, 64)
+	ub.forwardDone = make(chan struct{})
+	go forwardUtility(bridge.NotifCh(), ub.responseCh, ub.forwardDone)
+
 	slog.Info("utility bridge started", "model", model)
 	return nil
 }
@@ -122,23 +163,27 @@ func (ub *utilityBridge) start(ctx context.Context) error {
 func (ub *utilityBridge) Stop() {
 	ub.mu.Lock()
 	started := ub.started
+	forwardDone := ub.forwardDone
 	ub.started = false
 	ub.mu.Unlock()
 	if started {
 		ub.bridge.Stop()
+		if forwardDone != nil {
+			<-forwardDone
+		}
 		slog.Info("utility bridge stopped")
 	}
 }
 
 // drainResponse reads the prompt response and collects assistant
-// text from the notification channel. Returns the concatenated text.
+// text from the forwarded response channel. Returns the concatenated text.
 //
 // kiro-cli does NOT emit a `session/update` sessionUpdate=="end_turn"
 // notification: per ACP, the turn-end signal is the JSON-RPC RESPONSE
 // to session/prompt (which ub.bridge.Call already awaited before this
 // function runs). By the time we get here, the turn is already over;
 // all we need to do is drain whatever chunks are still buffered in
-// notifCh from before the response landed.
+// responseCh from before the response landed.
 //
 // Strategy: keep reading chunks until a short idle period elapses or
 // ctx / the 60 s hard ceiling fire. The idle debounce handles the race
@@ -173,31 +218,11 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 				ub.reset()
 			}
 			return text.String(), ctx.Err()
-		case msg, ok := <-ub.bridge.NotifCh():
+		case chunk, ok := <-ub.responseCh:
 			if !ok {
 				return text.String(), nil
 			}
-			// Peer-initiated requests (fs/*, permission, extensions)
-			// are carried as notifications with an ID on NotifCh.
-			// The utility bridge has no tools and no permission
-			// dialog, so an ID-bearing notification here is unexpected
-			// — log and ignore rather than silently truncating the
-			// accumulated text (the old behaviour) or acking with
-			// success (the old early-return).
-			if msg.ID != nil {
-				slog.Warn("utility bridge: unexpected peer request, ignoring",
-					"method", msg.Method, "id", *msg.ID)
-				continue
-			}
-			if msg.Method == api.MethodSessionUpdate && msg.Params != nil {
-				var base translate.ACPSessionUpdateBase
-				if json.Unmarshal(msg.Params, &base) == nil && base.Kind == api.ACPUpdateAgentChunk {
-					var chunk translate.ACPChunkWire
-					if json.Unmarshal(msg.Params, &chunk) == nil {
-						text.WriteString(chunk.Content.Text)
-					}
-				}
-			}
+			text.WriteString(chunk.Content.Text)
 			// Reset the idle timer on every chunk we accepted.
 			if !idle.Stop() {
 				select {
@@ -215,6 +240,35 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 			// leftover chunks interleaving with their own stream.
 			ub.reset()
 			return text.String(), errors.New("utility prompt timeout")
+		}
+	}
+}
+
+// forwardUtility is a dedicated goroutine that continuously drains
+// the bridge's NotifCh, forwarding agent_chunk text to responseCh.
+// All other notifications (usage stats, peer requests, stale chunks
+// from prior turns) are discarded. This prevents NotifCh from filling
+// up between UtilityPrompt calls, which would block readLoop and
+// deadlock all pending Call waiters on the bridge.
+func forwardUtility(notifCh <-chan *api.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+	defer close(done)
+	defer close(responseCh)
+	for msg := range notifCh {
+		if msg.ID != nil {
+			slog.Warn("utility bridge: unexpected peer request, ignoring",
+				"method", msg.Method, "id", *msg.ID)
+			continue
+		}
+		if msg.Method != api.MethodSessionUpdate || msg.Params == nil {
+			continue
+		}
+		var base utilityUpdateBase
+		if json.Unmarshal(msg.Params, &base) != nil || base.Kind != api.ACPUpdateAgentChunk {
+			continue
+		}
+		var chunk utilityChunkPayload
+		if json.Unmarshal(msg.Params, &chunk) == nil {
+			responseCh <- chunk
 		}
 	}
 }
@@ -237,44 +291,4 @@ func (h *Hub) stopUtilityBridge() {
 
 // --- Model selection (inlined from internal/models) ---
 
-// CheapestModel returns the cheapest reliable model id from the current
-// catalog, or "" if nothing is live. Filters out:
-//   - "auto" (task-based selection, not a real model)
-//   - [Deprecated], [Legacy] (end-of-life)
-//   - [Internal] (not available to all users)
-//   - [Experimental] (unstable, may produce poor results)
-//
-// Selects by lowest RateMultiplier among eligible models. If no model
-// has a rate (all zero, e.g. session/new doesn't send it), falls back
-// to the first eligible entry.
-func CheapestModel(_ context.Context, catalog []api.SessionModel) string {
-	var bestID string
-	var bestRate float64
-	for _, m := range catalog {
-		if m.ID == "" || m.ID == modelAuto {
-			continue
-		}
-		if modelExcluded(m.Name) || modelExcluded(m.Description) {
-			continue
-		}
-		switch {
-		case bestID == "":
-			bestID, bestRate = m.ID, m.RateMultiplier
-		case m.RateMultiplier > 0 && (bestRate == 0 || m.RateMultiplier < bestRate):
-			bestID, bestRate = m.ID, m.RateMultiplier
-		}
-	}
-	return bestID
-}
 
-// excludedTags are the bracketed markers that disqualify a model from
-// ambient-task selection.
-var excludedTags = func() []string {
-	return append(append([]string{}, api.HiddenTags...), "[internal]", "[experimental]")
-}()
-
-// modelExcluded returns true if the text contains any bracketed tag
-// that marks the model as unreliable for ambient tasks.
-func modelExcluded(text string) bool {
-	return api.TagExcluded(text, excludedTags)
-}

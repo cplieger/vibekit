@@ -23,19 +23,9 @@ func TestStubDeps_Contract(t *testing.T) {
 		t.Error("ChatStore() returned nil")
 	}
 
-	// NewMessageID must be non-empty.
-	if d.NewMessageID() == "" {
-		t.Error("NewMessageID() returned empty string")
-	}
-
 	// WorkDir must be non-empty.
 	if d.WorkDir() == "" {
 		t.Error("WorkDir() returned empty string")
-	}
-
-	// ConfigDir must be non-empty.
-	if d.ConfigDir() == "" {
-		t.Error("ConfigDir() returned empty string")
 	}
 
 	// BufferStore must be non-nil.
@@ -78,12 +68,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	t.Run("WorkDir_non_empty", func(t *testing.T) {
 		if d.WorkDir() == "" {
 			t.Error("WorkDir() returned empty string")
-		}
-	})
-
-	t.Run("ConfigDir_non_empty", func(t *testing.T) {
-		if d.ConfigDir() == "" {
-			t.Error("ConfigDir() returned empty string")
 		}
 	})
 
@@ -132,13 +116,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	t.Run("BufferStore_non_nil", func(t *testing.T) {
 		if d.BufferStore() == nil {
 			t.Error("BufferStore() returned nil")
-		}
-	})
-
-	t.Run("NewMessageID_non_empty", func(t *testing.T) {
-		id := d.NewMessageID()
-		if id == "" {
-			t.Error("NewMessageID() returned empty string")
 		}
 	})
 

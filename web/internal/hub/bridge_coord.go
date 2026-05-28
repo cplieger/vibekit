@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -403,4 +404,20 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 	}
 	closeAndRemovePartial(ctx, chatID, buf)
 	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
+}
+
+const stopReasonCancelled = api.StopReasonCancelled
+
+func extractStopReason(resp *api.RPCResponse) api.StopReason {
+	if resp == nil || resp.Result == nil {
+		return ""
+	}
+	var result struct {
+		StopReason api.StopReason `json:"stopReason"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		slog.Debug("turn_ended: parse result", "error", err)
+		return ""
+	}
+	return result.StopReason
 }

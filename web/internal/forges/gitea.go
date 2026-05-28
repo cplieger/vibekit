@@ -148,11 +148,11 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 }
 
 // ListPRs lists pulls for repo.
-func (p *giteaProvider) ListPRs(ctx context.Context, repo, state string) ([]PR, error) {
+func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
 	if state == "" {
-		state = stateOpen
+		state = StateOpen
 	}
-	args := p.withLogin("pulls", "list", "--repo", repo, "--state", state, "--output", "json", "--limit", "100")
+	args := p.withLogin("pulls", "list", "--repo", repo, "--state", string(state), "--output", "json", "--limit", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "tea", args...)
 	if err != nil {
 		return nil, err
@@ -224,7 +224,7 @@ func (p *giteaProvider) CreatePR(ctx context.Context, repo string, params *Creat
 	number := extractPRNumberFromURL(string(out))
 	if number == 0 {
 		// Fallback: list and find newest by source branch.
-		prs, listErr := p.ListPRs(ctx, repo, stateOpen)
+		prs, listErr := p.ListPRs(ctx, repo, StateOpen)
 		if listErr == nil {
 			for i := range prs {
 				if prs[i].SourceBranch == params.SourceBranch {
@@ -254,13 +254,13 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 	return &prs[0], nil
 }
 
-func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
+func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, method MergeMethod) error {
 	style := "merge"
 	switch method {
-	case mergeSquash:
-		style = mergeSquash
-	case mergeRebase:
-		style = mergeRebase
+	case MergeSquash:
+		style = string(MergeSquash)
+	case MergeRebase:
+		style = string(MergeRebase)
 	}
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
@@ -278,15 +278,15 @@ func (p *giteaProvider) ClosePR(ctx context.Context, repo string, number int) er
 		return err
 	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/pulls/%d", p.host, owner, name, number)
-	body := []byte(`{"state":stateClosed}`)
+	body := []byte(`{"state":"closed"}`)
 	return p.apiPatchJSON(ctx, endpoint, body)
 }
 
-func (p *giteaProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
+func (p *giteaProvider) ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error) {
 	if state == "" {
-		state = stateOpen
+		state = StateOpen
 	}
-	args := p.withLogin("issues", "list", "--repo", repo, "--state", state, "--output", "json", "--limit", "100")
+	args := p.withLogin("issues", "list", "--repo", repo, "--state", string(state), "--output", "json", "--limit", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "tea", args...)
 	if err != nil {
 		return nil, err
@@ -346,7 +346,7 @@ func (p *giteaProvider) CreateIssue(ctx context.Context, repo string, params Cre
 	}
 	number := extractIssueNumberFromURL(string(out))
 	if number == 0 {
-		issues, listErr := p.ListIssues(ctx, repo, stateOpen)
+		issues, listErr := p.ListIssues(ctx, repo, StateOpen)
 		if listErr == nil && len(issues) > 0 {
 			// Return the newest issue by creation time.
 			newest := issues[0]
@@ -386,7 +386,7 @@ func (p *giteaProvider) CloseIssue(ctx context.Context, repo string, number int)
 		return err
 	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/issues/%d", p.host, owner, name, number)
-	body := []byte(`{"state":stateClosed}`)
+	body := []byte(`{"state":"closed"}`)
 	return p.apiPatchJSON(ctx, endpoint, body)
 }
 

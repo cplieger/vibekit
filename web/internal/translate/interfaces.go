@@ -17,13 +17,8 @@ import (
 	"vibekit/internal/permissions"
 )
 
-// Compile-time assertions: Deps satisfies all role-based interfaces.
-var (
-	_ StreamingAccess  = (Deps)(nil)
-	_ PermissionAccess = (Deps)(nil)
-	_ BridgeComm       = (Deps)(nil)
-	_ ChatStoreDeps    = (Deps)(nil)
-)
+// Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
+var _ ChatStoreDeps = (Deps)(nil)
 
 // StreamingAccess provides the methods needed by session_streaming.go
 // for content buffering, partial file recovery, and line tracking.
@@ -44,7 +39,6 @@ type PermissionAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
 	ChatStore() api.ChatStore
-	ConfigDir() string
 	NotifyPush(ctx context.Context, body string, kind api.PushKind)
 	ParentACPSession(chatID api.ChatID) string
 	PendingPermsAdd(requestID int64, evt api.ServerEvent)

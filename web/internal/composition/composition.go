@@ -18,6 +18,7 @@ import (
 	"vibekit/internal/auth"
 	"vibekit/internal/bridge"
 	"vibekit/internal/chat"
+	"vibekit/internal/chat/archive"
 	"vibekit/internal/filehandler"
 	"vibekit/internal/fileutil"
 	forgesPkg "vibekit/internal/forges"
@@ -38,7 +39,7 @@ import (
 type App struct {
 	Hub            *hub.Hub
 	Server         *server.Server
-	purgeScheduler *chat.PurgeScheduler
+	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
 }
 
@@ -277,7 +278,7 @@ func sweepStaleTemps(configDir, workDir string) {
 	for _, dir := range []string{
 		configDir,
 		filepath.Join(configDir, "chats"),
-		filepath.Join(configDir, "chats", chat.ArchiveSubdir),
+		filepath.Join(configDir, "chats", archive.Subdir),
 		workDir,
 	} {
 		fileutil.CleanupStaleTemps(dir, tempMaxAge)

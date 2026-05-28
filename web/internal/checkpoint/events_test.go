@@ -422,7 +422,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 			TS:        int64(i),
 		})
 	}
-	conflicts := s.conflicts.slice()
+	conflicts := s.conflicts.Slice()
 	if len(conflicts) != maxInMemoryConflicts {
 		t.Fatalf("len(conflicts) at cap = %d, want %d",
 			len(conflicts), maxInMemoryConflicts)
@@ -433,7 +433,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 
 	// First overflow: drops oldest (TS=0), appends TS=500.
 	s.apply(&event{Kind: kindConflict, Path: "p", Tag: "t", TS: int64(maxInMemoryConflicts)})
-	conflicts = s.conflicts.slice()
+	conflicts = s.conflicts.Slice()
 	if len(conflicts) != maxInMemoryConflicts {
 		t.Errorf("len(conflicts) after 1 overflow = %d, want %d",
 			len(conflicts), maxInMemoryConflicts)
@@ -449,7 +449,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 
 	// Second overflow: ring still sheds oldest and admits newcomer.
 	s.apply(&event{Kind: kindConflict, Path: "p", Tag: "t", TS: int64(maxInMemoryConflicts + 1)})
-	conflicts = s.conflicts.slice()
+	conflicts = s.conflicts.Slice()
 	if conflicts[0].TS != 2 {
 		t.Errorf("oldest TS after 2 overflows = %d, want 2", conflicts[0].TS)
 	}

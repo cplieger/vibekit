@@ -11,6 +11,9 @@ import (
 	"maps"
 	"sync"
 
+	"golang.org/x/sync/singleflight"
+
+	"vibekit/internal/api"
 	checkpointgc "vibekit/internal/checkpoint/gc"
 )
 
@@ -31,7 +34,11 @@ type Store struct {
 	configDir string
 	workDir   string
 	mu        sync.Mutex
+	createSF  singleflight.Group
 }
+
+// Compile-time interface assertion.
+var _ api.CheckpointService = (*Store)(nil)
 
 // NewStore builds a Store rooted at configDir with the given work
 // tree. All chats share the same work tree, the same blob store,
@@ -78,8 +85,8 @@ func (s *Store) Stop() {
 // lives in Manager). Errors are logged but not returned because the
 // prompt path shouldn't stall on a checkpoint failure — the checkpoint
 // exists to serve the user, not gate them.
-func (s *Store) AdvanceTurn(ctx context.Context, chatID string, messageCount int) {
-	if err := s.get(chatID).AdvanceTurn(ctx, messageCount); err != nil {
+func (s *Store) AdvanceTurn(ctx context.Context, chatID api.ChatID, messageCount int) {
+	if err := s.get(string(chatID)).AdvanceTurn(ctx, messageCount); err != nil {
 		slog.Warn("checkpoint: AdvanceTurn failed",
 			"chat_id", chatID, "error", err)
 	}
@@ -88,50 +95,50 @@ func (s *Store) AdvanceTurn(ctx context.Context, chatID string, messageCount int
 // Snapshot captures the pre-write content of relPath (pass-through —
 // logic lives in Manager). The gcLock.RLock coordination lives inside
 // Manager.Snapshot itself so this wrapper is a thin pass-through.
-func (s *Store) Snapshot(ctx context.Context, chatID, relPath string, newContent []byte, messageCount int) (Tag, error) {
-	return s.get(chatID).Snapshot(ctx, relPath, newContent, messageCount)
+func (s *Store) Snapshot(ctx context.Context, chatID api.ChatID, relPath string, newContent []byte, messageCount int) (Tag, error) {
+	return s.get(string(chatID)).Snapshot(ctx, relPath, newContent, messageCount)
 }
 
 // RestorePreview returns paths a Restore would mutate (pass-through —
 // logic lives in Manager).
-func (s *Store) RestorePreview(ctx context.Context, chatID string, tag Tag) ([]string, error) {
-	return s.get(chatID).RestorePreview(ctx, tag)
+func (s *Store) RestorePreview(ctx context.Context, chatID api.ChatID, tag Tag) ([]string, error) {
+	return s.get(string(chatID)).RestorePreview(ctx, tag)
 }
 
 // Restore rolls the workspace back to `tag` (pass-through — logic
 // lives in Manager).
-func (s *Store) Restore(ctx context.Context, chatID string, tag Tag) (int, error) {
-	return s.get(chatID).Restore(ctx, tag)
+func (s *Store) Restore(ctx context.Context, chatID api.ChatID, tag Tag) (int, error) {
+	return s.get(string(chatID)).Restore(ctx, tag)
 }
 
 // CheckoutFile reverts a single file to its content at `tag`
 // (pass-through — logic lives in Manager).
-func (s *Store) CheckoutFile(ctx context.Context, chatID string, tag Tag, relPath string) error {
-	return s.get(chatID).CheckoutFile(ctx, tag, relPath)
+func (s *Store) CheckoutFile(ctx context.Context, chatID api.ChatID, tag Tag, relPath string) error {
+	return s.get(string(chatID)).CheckoutFile(ctx, tag, relPath)
 }
 
 // OldestTag returns the earliest available tag for chatID, or ""
 // (pass-through — logic lives in Manager).
-func (s *Store) OldestTag(ctx context.Context, chatID string) Tag {
-	return Tag(s.get(chatID).OldestTag(ctx))
+func (s *Store) OldestTag(ctx context.Context, chatID api.ChatID) Tag {
+	return Tag(s.get(string(chatID)).OldestTag(ctx))
 }
 
 // Diff returns per-file changes between two tags (pass-through —
 // logic lives in Manager).
-func (s *Store) Diff(ctx context.Context, chatID string, from, to Tag) ([]FileChange, error) {
-	return s.get(chatID).Diff(ctx, from, to)
+func (s *Store) Diff(ctx context.Context, chatID api.ChatID, from, to Tag) ([]FileChange, error) {
+	return s.get(string(chatID)).Diff(ctx, from, to)
 }
 
 // Conflicts returns all conflict_detected events for a chat
 // (pass-through — logic lives in Manager).
-func (s *Store) Conflicts(ctx context.Context, chatID string) ([]ConflictPayload, error) {
-	return s.get(chatID).Conflicts(ctx)
+func (s *Store) Conflicts(ctx context.Context, chatID api.ChatID) ([]ConflictPayload, error) {
+	return s.get(string(chatID)).Conflicts(ctx)
 }
 
 // ReadBlob returns blob content for a chat-scoped SHA (pass-through —
 // logic lives in Manager).
-func (s *Store) ReadBlob(ctx context.Context, chatID, sha string) ([]byte, error) {
-	return s.get(chatID).ReadBlob(ctx, sha)
+func (s *Store) ReadBlob(ctx context.Context, chatID api.ChatID, sha string) ([]byte, error) {
+	return s.get(string(chatID)).ReadBlob(ctx, sha)
 }
 
 // Cleanup removes chatID's event log + parent dir and evicts the
@@ -146,40 +153,58 @@ func (s *Store) ReadBlob(ctx context.Context, chatID, sha string) ([]byte, error
 // interleave with the GC's exclusive Lock() sweep — Cleanup mutates
 // the referenced-blob set from the GC's perspective just as
 // Snapshot does, only in the opposite direction.
-func (s *Store) Cleanup(ctx context.Context, chatID string) {
+func (s *Store) Cleanup(ctx context.Context, chatID api.ChatID) {
+	id := string(chatID)
 	s.mu.Lock()
-	m, ok := s.managers[chatID]
+	m, ok := s.managers[id]
 	if ok {
-		delete(s.managers, chatID)
+		delete(s.managers, id)
 	}
 	s.mu.Unlock()
 	if ok {
 		m.Cleanup(ctx)
 		return
 	}
-	wipe(s.configDir, chatID)
-	s.index.forgetChat(chatID)
+	wipe(s.configDir, id)
+	s.index.forgetChat(id)
 }
 
-// get returns the Manager for chatID, creating one lazily. Every
-// public method routes through this so a manager is always reused
-// across calls and never starts with empty state when an event log
-// already exists on disk.
+// get returns the Manager for chatID, creating one lazily via
+// singleflight so concurrent first-access calls for the same chatID
+// coalesce, and callers for different chatIDs don't block each other.
 func (s *Store) get(rawID string) *Manager {
+	// Fast path: map hit under short lock.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if m, ok := s.managers[rawID]; ok {
+		s.mu.Unlock()
 		return m
 	}
-	log := newEventLog(s.configDir, rawID)
-	deps := &managerDeps{
-		blobs:   s.blobs,
-		index:   s.index,
-		onConf:  s.onConf,
-	}
-	m := newManager(chatID(rawID), s.workDir, log, deps)
-	s.managers[rawID] = m
-	return m
+	s.mu.Unlock()
+
+	// Slow path: create via singleflight keyed by chatID.
+	v, _, _ := s.createSF.Do(rawID, func() (interface{}, error) {
+		// Double-check under lock.
+		s.mu.Lock()
+		if m, ok := s.managers[rawID]; ok {
+			s.mu.Unlock()
+			return m, nil
+		}
+		s.mu.Unlock()
+
+		log := newEventLog(s.configDir, rawID)
+		deps := &managerDeps{
+			blobs:  s.blobs,
+			index:  s.index,
+			onConf: s.onConf,
+		}
+		m := newManager(rawID, s.workDir, log, deps)
+
+		s.mu.Lock()
+		s.managers[rawID] = m
+		s.mu.Unlock()
+		return m, nil
+	})
+	return v.(*Manager)
 }
 
 // cachedChatIDs returns the set of chat IDs that have a cached

@@ -137,8 +137,8 @@ func (p *gitlabProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 }
 
 // ListPRs (MRs) — glab calls them merge requests.
-func (p *gitlabProvider) ListPRs(ctx context.Context, repo, state string) ([]PR, error) {
-	mrState := mrStateForListing(state)
+func (p *gitlabProvider) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
+	mrState := mrStateForListing(string(state))
 	args := p.withHost("mr", "list", "--repo", repo, "--state", mrState, "--output", "json", "--per-page", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "glab", args...)
 	if err != nil {
@@ -194,12 +194,12 @@ func (p *gitlabProvider) viewPR(ctx context.Context, repo string, number int) (*
 	return &pr, nil
 }
 
-func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
+func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, method MergeMethod) error {
 	args := p.withHost("mr", "merge", strconv.Itoa(number), "--repo", repo, "--yes")
 	switch method {
-	case mergeSquash:
+	case MergeSquash:
 		args = append(args, "--squash")
-	case mergeRebase:
+	case MergeRebase:
 		args = append(args, "--rebase")
 	}
 	_, err := runCmd(ctx, CmdTimeout, nil, "glab", args...)
@@ -212,12 +212,13 @@ func (p *gitlabProvider) ClosePR(ctx context.Context, repo string, number int) e
 	return err
 }
 
-func (p *gitlabProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
+func (p *gitlabProvider) ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error) {
+	st := string(state)
 	switch state {
-	case "", stateOpen:
-		state = stateOpened
+	case "", StateOpen:
+		st = stateOpened
 	}
-	args := p.withHost("issue", "list", "--repo", repo, "--state", state, "--output", "json", "--per-page", "100")
+	args := p.withHost("issue", "list", "--repo", repo, "--state", st, "--output", "json", "--per-page", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "glab", args...)
 	if err != nil {
 		return nil, err

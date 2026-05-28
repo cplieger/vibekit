@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/chat/archive"
 )
 
-// --- oldestArchiveMTime ---
+// --- OldestArchiveMTime ---
 
 func TestOldestArchiveMTime(t *testing.T) {
 	cases := []struct {
@@ -93,13 +94,13 @@ func TestOldestArchiveMTime(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
 			wantTime := tc.setup(t, s)
-			got, ok := oldestArchiveMTime(context.Background(), s.dir)
+			got, ok := archive.OldestArchiveMTime(context.Background(), s.dir)
 			if ok != tc.wantOK {
-				t.Fatalf("oldestArchiveMTime ok=%v, want %v", ok, tc.wantOK)
+				t.Fatalf("OldestArchiveMTime ok=%v, want %v", ok, tc.wantOK)
 			}
 			if tc.wantOK {
 				if got.Sub(wantTime) > time.Second || wantTime.Sub(got) > time.Second {
-					t.Errorf("oldestArchiveMTime = %v, want near %v", got, wantTime)
+					t.Errorf("OldestArchiveMTime = %v, want near %v", got, wantTime)
 				}
 			}
 		})
@@ -287,9 +288,11 @@ func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 
 	cancel()
 	// The done channel should close promptly.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	select {
-	case <-p.done:
-	case <-time.After(2 * time.Second):
+	case <-p.Done():
+	case <-timer.C:
 		t.Fatal("scheduler goroutine did not exit after context cancellation")
 	}
 }

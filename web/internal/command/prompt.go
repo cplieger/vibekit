@@ -128,7 +128,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
@@ -150,7 +150,9 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 				name += ellipsis
 			}
 			c.Name = name
-			deps.InflightGo(func() { AsyncRenameChat(deps, chatID, p.Text) })
+			if prompter != nil {
+				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text) })
+			}
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
 		return true
@@ -178,7 +180,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 
 	// 1. Ensure the chat exists, append the user message, auto-rename.
-	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
+	if err := appendUserMessage(deps, d.Prompter(), ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -288,11 +290,11 @@ func IsRetryablePromptError(err error) bool {
 }
 
 // AsyncRenameChat generates a better chat title via the utility bridge.
-func AsyncRenameChat(deps Dependencies, chatID api.ChatID, firstPrompt string) {
+func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt string) {
 	prompt := "Give this chat a 2-3 word title (max 30 characters) based on the topic of the message below. Return ONLY the title.\n\n" + firstPrompt
 	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
 	defer cancel()
-	title, err := deps.UtilityPrompt(ctx, prompt)
+	title, err := prompter.UtilityPrompt(ctx, prompt)
 	if err != nil || strings.TrimSpace(title) == "" {
 		return
 	}

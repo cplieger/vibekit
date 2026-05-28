@@ -82,3 +82,15 @@ type MCPDisconnectedPayload struct {
 type MCPSnapshotServer struct {
 	Name string `json:"name"`
 }
+
+// MCPServerState is the lifecycle status of one configured MCP server.
+// Exported so the hub's mcpRegistry and the /api/mcp/status endpoint
+// share a single typed enum with compile-time safety.
+type MCPServerState string
+
+const (
+	MCPStateIdle      MCPServerState = "idle"       // configured but no bridge running
+	MCPStateConnected MCPServerState = "connected"  // kiro-cli reported server_initialized
+	MCPStateOAuth     MCPServerState = "needs_auth" // kiro-cli sent oauth_request
+	MCPStateFailed    MCPServerState = "failed"     // kiro-cli sent server_init_failure
+)

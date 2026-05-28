@@ -33,6 +33,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+
+	"golang.org/x/sync/singleflight"
 
 	chktypes "vibekit/internal/checkpoint/types"
 )
@@ -47,13 +50,6 @@ var ErrPathEscape = errors.New("path escapes workdir")
 // errors.Is(err, ErrTransient) to distinguish "retry later" from
 // permanent failures (ErrPathEscape, ErrTagNotFound, ErrLogCorrupt).
 var ErrTransient = errors.New("transient checkpoint error")
-
-// chatID is a package-local typed string for chat identifiers.
-// Prevents accidental transposition with other string parameters
-// (workDir, configDir, relPath, sha) at internal call sites. The
-// public Store API keeps bare string parameters; conversion happens
-// at the Store boundary.
-type chatID string
 
 // ConflictBroadcaster is the hook the Manager calls to fan conflict
 // events out to SSE subscribers. Takes the payload by pointer so the
@@ -79,20 +75,25 @@ type managerDeps struct {
 	onConf ConflictBroadcaster
 }
 
+// loadOutcome holds the result of the one-shot event log replay.
+type loadOutcome struct {
+	state *state
+	err   error
+}
+
 // Manager owns one chat's checkpoint log and drives all snapshot /
 // restore / diff operations on behalf of that chat. Safe for
 // concurrent use — every entry point serializes on m.mu.
 type Manager struct {
 	*managerDeps
 
-	loadErr error
-	log     *eventLog
-	state   *state
-	chatID  chatID
-	workDir string
-	mu      sync.Mutex
-	loadMu  sync.Mutex
-	loaded  bool
+	log        *eventLog
+	state      *state
+	chatID     string
+	workDir    string
+	mu         sync.Mutex
+	loadSF     singleflight.Group
+	loadResult atomic.Pointer[loadOutcome]
 }
 
 // newManager builds a Manager instance. Callers go through Store.get;
@@ -102,7 +103,7 @@ type Manager struct {
 // takes the same read lock that runGCOnce blocks against — even
 // future refactors that hand *Manager out to callers that bypass
 // Store.Snapshot inherit the coordination.
-func newManager(id chatID, workDir string, log *eventLog, deps *managerDeps) *Manager {
+func newManager(id string, workDir string, log *eventLog, deps *managerDeps) *Manager {
 	return &Manager{
 		managerDeps: deps,
 		chatID:      id,
@@ -114,86 +115,71 @@ func newManager(id chatID, workDir string, log *eventLog, deps *managerDeps) *Ma
 
 // --- Internals ---
 
-// ensureLoaded replays the event log into state and, if the replay
-// ends on a dangling `restore_started` (crash between phase 2 open
-// and phase 2 close), re-runs the restore. Recovery is idempotent:
-// re-running a restore that already landed is a no-op on every
-// file (renames fail silently when source == target content).
-//
-// After replay, applies all snapshot events to the shared cross-chat
-// index so the conflict detector has this chat's observations without
-// requiring an eager full-scan at startup.
+// ensureLoaded replays the event log into state via singleflight so
+// concurrent callers coalesce on a single replay. After replay, if
+// a dangling restore_started is detected, recovery runs under m.mu.
 //
 // Callers must hold m.mu.
-//
 // INVARIANT: returns with m.mu held.
 func (m *Manager) ensureLoaded(ctx context.Context) error {
-	if m.loaded {
-		return m.loadErr
-	}
-	// Release m.mu during the expensive I/O (event log read + replay)
-	// so concurrent callers on other code paths aren't blocked for the
-	// full replay duration. loadMu serializes the one-shot replay itself.
-	m.mu.Unlock()
-	m.loadMu.Lock()
-	// Early exit if context was cancelled while waiting for loadMu.
-	if err := ctx.Err(); err != nil {
-		m.loadMu.Unlock()
-		m.mu.Lock()
-		return err
-	}
-	// Double-check after acquiring loadMu — another goroutine may have
-	// completed the replay while we waited.
-	if m.loaded {
-		m.loadMu.Unlock()
-		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
-		return m.loadErr
-	}
-	events, err := m.log.Read(ctx)
-	if err != nil {
-		m.loadErr = err
-		m.loaded = true
-		m.loadMu.Unlock()
-		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
-		return err
-	}
-	// Short-circuit if context cancelled before expensive replay.
-	if err := ctx.Err(); err != nil {
-		m.loadMu.Unlock()
-		m.mu.Lock()
-		return err
-	}
-	st := replay(events)
-	// Populate the cross-chat index with this chat's snapshot events.
-	if m.index != nil {
-		for i := range events {
-			m.index.apply(string(m.chatID), &events[i])
+	// Fast path: already loaded.
+	if res := m.loadResult.Load(); res != nil {
+		if res.err != nil {
+			return res.err
 		}
-	}
-	m.loadMu.Unlock()
-	// Re-acquire m.mu for the state swap and any recovery.
-	m.mu.Lock()
-	if m.loaded {
-		// Another goroutine beat us between loadMu.Unlock and mu.Lock.
-		return m.loadErr
-	}
-	m.state = st
-	m.loaded = true
-
-	if m.state.pendingRestore == "" {
 		return nil
 	}
-	// Recovery path: the previous process opened a restore
-	// journal but never closed it. Re-run the restore and
-	// journal the close.
-	tag := m.state.pendingRestore
-	slog.Info("checkpoint: recovering interrupted restore",
-		"chat_id", m.chatID, "tag", tag)
-	if _, err := m.restoreLocked(ctx, tag, true); err != nil {
-		slog.Error("checkpoint: restore recovery failed",
-			"chat_id", m.chatID, "tag", tag, "error", err)
-		m.loadErr = err
+
+	// Slow path: release m.mu, perform replay via singleflight.
+	m.mu.Unlock()
+
+	result, err, _ := m.loadSF.Do("load", func() (interface{}, error) {
+		// Check again — another goroutine may have completed.
+		if res := m.loadResult.Load(); res != nil {
+			return res, nil
+		}
+		events, readErr := m.log.Read(ctx)
+		if readErr != nil {
+			outcome := &loadOutcome{err: readErr}
+			m.loadResult.Store(outcome)
+			return outcome, nil
+		}
+		st := replay(events)
+		if m.index != nil {
+			for i := range events {
+				m.index.apply(m.chatID, &events[i])
+			}
+		}
+		outcome := &loadOutcome{state: st}
+		m.loadResult.Store(outcome)
+		return outcome, nil
+	})
+
+	// Re-acquire m.mu before returning (INVARIANT).
+	m.mu.Lock()
+
+	if err != nil {
 		return err
+	}
+	outcome := result.(*loadOutcome)
+	if outcome.err != nil {
+		return outcome.err
+	}
+	// Apply the loaded state if not yet set on this Manager.
+	if m.state.turn == 0 && len(m.state.orderedTags) == 0 && outcome.state != nil {
+		m.state = outcome.state
+	}
+
+	// Recovery: if a dangling restore_started exists, re-run.
+	if m.state.pendingRestore != "" {
+		tag := m.state.pendingRestore
+		slog.Info("checkpoint: recovering interrupted restore",
+			"chat_id", m.chatID, "tag", tag)
+		if _, recErr := m.restoreLocked(ctx, tag, true); recErr != nil {
+			slog.Error("checkpoint: restore recovery failed",
+				"chat_id", m.chatID, "tag", tag, "error", recErr)
+			return recErr
+		}
 	}
 	return nil
 }

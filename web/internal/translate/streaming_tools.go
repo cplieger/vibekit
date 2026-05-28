@@ -1,59 +1,17 @@
 package translate
 
-// Streaming content handlers for session/update sub-types.
+// Tool call streaming handlers: tool_call, tool_call_update, ext session update.
 
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/buffer"
 )
-
-// maxBufferBytes caps the per-turn content buffer at 32 MiB. Prevents
-// OOM from a pathological agent turn (e.g. cat of a large binary).
-// kiro-cli has its own output limits, so this is defense-in-depth.
-const maxBufferBytes = 32 << 20
-
-// HandleAssistantChunk streams a text delta to clients and accumulates
-// it for later persistence. Reasoning chunks (isReasoning=true) flow
-// into buf.Reasoning; regular content chunks flow into buf.Content.
-// The IsReasoning flag is forwarded on the SSE so the client routes
-// each delta to the correct bubble (reasoning details vs content).
-func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID, raw json.RawMessage, isReasoning bool) {
-	var chunk ACPChunkWire
-	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != api.ContentTypeText || chunk.Content.Text == "" {
-		return
-	}
-	buf := t.deps.BufferStore().GetOrInit(chatID)
-	if !buf.Started {
-		buf.Started = true
-		buf.MessageID = t.deps.NewMessageID()
-		t.deps.OpenPartialFile(ctx, chatID, buf)
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
-			api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
-	}
-	totalLen := buf.Content.Len() + buf.Reasoning.Len()
-	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
-		// Defense-in-depth: cap the buffer so a pathological turn
-		// (e.g. agent cats a huge file) cannot OOM the container.
-		// Silently drop further content; the turn will still end
-		// normally via turn_ended and the truncated message is
-		// persisted.
-		return
-	}
-	if isReasoning {
-		buf.Reasoning.WriteString(chunk.Content.Text)
-	} else {
-		buf.Content.WriteString(chunk.Content.Text)
-	}
-	buf.WritePartial(ctx)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
-		api.MessageChunkPayload{MessageID: buf.MessageID, Delta: chunk.Content.Text, IsReasoning: isReasoning}))
-}
 
 // HandleToolCall adds a tool call to the current assistant message
 // buffer and broadcasts it.
@@ -66,12 +24,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		return
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
-	if !buf.Started {
-		buf.Started = true
-		buf.MessageID = t.deps.NewMessageID()
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
-			api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
-	}
+	t.ensureTurnStarted(ctx, chatID, buf, false)
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {
 		if c.Type == ContentTypeDiff && c.Path != "" {
@@ -159,90 +112,6 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
 }
 
-// HandlePlan persists a plan message directly.
-func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-	var p ACPPlanWire
-	if json.Unmarshal(raw, &p) != nil {
-		return
-	}
-	msg := api.Message{
-		ID:   t.deps.NewMessageID(),
-		Role: api.RoleAssistant,
-		Ts:   time.Now().UnixMilli(),
-		Plan: p.Entries,
-	}
-	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &msg); err != nil {
-		slog.Error("persist plan", "chat_id", chatID, "error", err)
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	allDone := true
-	for _, e := range p.Entries {
-		if e.Status != api.PlanCompleted {
-			allDone = false
-			break
-		}
-	}
-	var plan []api.PlanEntry
-	if !allDone {
-		plan = p.Entries
-	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
-		if !ex {
-			return false
-		}
-		c.CurrentPlan = plan
-		return true
-	}); err != nil {
-		slog.Error("persist plan update", "chat_id", chatID, "error", err)
-	}
-}
-
-// HandleModeUpdate persists the agent's new mode and broadcasts mode_changed.
-func (t *Translator) HandleModeUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-	var p ACPModeUpdateWire
-	if json.Unmarshal(raw, &p) != nil || p.ModeID == "" {
-		return
-	}
-	changed := false
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
-		if !ex || c.CurrentModeID == p.ModeID {
-			return false
-		}
-		c.CurrentModeID = p.ModeID
-		changed = true
-		return true
-	}); err != nil {
-		slog.Error("mode update persist", "chat_id", chatID, "error", err)
-	}
-	if changed {
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventModeChanged, chatID, api.ModeChangedPayload{ModeID: p.ModeID}))
-	}
-}
-
-// HandleSteeringInclusion processes steering_inclusion events.
-func (t *Translator) HandleSteeringInclusion(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-	var p ACPSteeringWire
-	if json.Unmarshal(raw, &p) != nil || len(p.Documents) == 0 {
-		return
-	}
-	names := make([]string, 0, len(p.Documents))
-	for _, d := range p.Documents {
-		name := d.Name
-		if name == "" {
-			name = d.Path
-		}
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return
-	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventSteeringLoaded, chatID, api.SteeringLoadedPayload{Documents: names}))
-}
-
 // HandleExtSessionUpdate handles the extension channel for subagent
 // tool-call chunks.
 func (t *Translator) HandleExtSessionUpdate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
@@ -260,14 +129,7 @@ func (t *Translator) HandleExtSessionUpdate(ctx context.Context, chatID api.Chat
 	}
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	buf := t.deps.BufferStore().GetOrInit(chatID)
-	if !buf.Started {
-		buf.Started = true
-		buf.MessageID = t.deps.NewMessageID()
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID, api.Message{
-			ID: buf.MessageID, Role: api.RoleAssistant,
-			Ts: time.Now().UnixMilli(),
-		}))
-	}
+	t.ensureTurnStarted(ctx, chatID, buf, false)
 	call := api.ToolCall{
 		ID:           p.Update.ToolCallID,
 		Title:        p.Update.Title,
@@ -299,4 +161,20 @@ func (t *Translator) relPath(abs string) string {
 		return abs
 	}
 	return filepath.ToSlash(rel)
+}
+
+// ensureTurnStarted initializes the buffer for a new turn if not already started.
+// openPartial controls whether the partial recovery file is opened (content chunks
+// need it; tool-call-only turns do not).
+func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, openPartial bool) {
+	if buf.Started {
+		return
+	}
+	buf.Started = true
+	buf.MessageID = t.newMsgID()
+	if openPartial {
+		t.deps.OpenPartialFile(ctx, chatID, buf)
+	}
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
+		api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

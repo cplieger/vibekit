@@ -6,7 +6,7 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
-	"vibekit/internal/permissions"
+	"vibekit/internal/ids"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -27,37 +27,11 @@ type LineRecorder interface {
 // Hub satisfies this interface, allowing the Translator to operate
 // without importing the hub package.
 type Deps interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
-	ChatStore() api.ChatStore
-	// NewMessageID returns a new UUIDv7 message ID. Injected via the
-	// interface so tests can control generated IDs.
-	NewMessageID() string
-	ParentACPSession(chatID api.ChatID) string
-	WorkDir() string
-	// BridgeNotify sends a notification to the bridge for the given chat.
-	BridgeNotify(ctx context.Context, chatID api.ChatID, method string, params map[string]any) error
-	// BridgeRespond sends a response to the bridge for the given chat.
-	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
+	StreamingAccess
+	PermissionAccess
+	BridgeComm
 	// MCPRecorder returns the MCP state recorder sub-interface.
 	MCPRecorder() MCPRecorder
-	// PendingPermsAdd tracks a pending permission event for SSE replay.
-	PendingPermsAdd(requestID int64, evt api.ServerEvent)
-	// PendingPermsRemove removes a pending permission by request ID.
-	PendingPermsRemove(requestID int64)
-	// NotifyPush sends a push notification.
-	NotifyPush(ctx context.Context, body string, kind api.PushKind)
-	// ConfigDir returns the configuration directory path.
-	ConfigDir() string
-	// PermissionRules returns the shell command rules.
-	PermissionRules() *permissions.CommandRules
-	// BufferStore returns the buffer store for streaming handlers.
-	BufferStore() BufferAccess
-	// LineTracker returns the line tracker for file-change recording.
-	LineTracker() LineRecorder
-	// OpenPartialFile opens the partial recovery file for a chat.
-	OpenPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer)
-	// IsHookStatusEnabled returns whether hook status display is enabled.
-	IsHookStatusEnabled() bool
 }
 
 // MCPRecorder groups MCP server state tracking methods.
@@ -75,23 +49,41 @@ type MCPRecorder interface {
 // It owns the crew cache and delegates Hub access through Deps.
 type Translator struct {
 	deps      Deps
+	configDir string
+	newMsgID  func() string
 	crewCache *crewCache
 	crewSF    singleflight.Group
 }
 
 // New constructs a Translator with the given Hub dependency surface.
-func New(deps Deps) *Translator {
-	return &Translator{
+func New(deps Deps, configDir string, opts ...Option) *Translator {
+	t := &Translator{
 		deps:      deps,
+		configDir: configDir,
 		crewCache: newCrewCache(),
 	}
+	for _, o := range opts {
+		o(t)
+	}
+	if t.newMsgID == nil {
+		t.newMsgID = ids.NewMessageID
+	}
+	return t
+}
+
+// Option configures a Translator.
+type Option func(*Translator)
+
+// WithIDGenerator overrides the default message ID generator (for tests).
+func WithIDGenerator(fn func() string) Option {
+	return func(t *Translator) { t.newMsgID = fn }
 }
 
 // newEventMessage constructs a standard event message with a fresh ID,
 // RoleEvent, and the current timestamp. Eliminates 5-site boilerplate.
 func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Message {
 	return api.Message{
-		ID:        t.deps.NewMessageID(),
+		ID:        t.newMsgID(),
 		Role:      api.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: kind,
@@ -108,4 +100,9 @@ func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) strin
 		return sessionID
 	}
 	return ""
+}
+
+// MCP returns the MCP state recorder sub-interface.
+func (t *Translator) MCP() MCPRecorder {
+	return t.deps.MCPRecorder()
 }

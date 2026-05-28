@@ -44,17 +44,44 @@ type Bridge = api.CommandBridge
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
 	deps     Dependencies
+	prompter api.UtilityPrompter
 	handlers map[api.CommandType]Handler
 	mu       sync.RWMutex
 }
 
+// Option configures optional Dispatcher capabilities.
+type Option func(*Dispatcher)
+
+// WithPrompter injects the utility prompter used by AsyncRenameChat.
+// If not provided, auto-rename is silently skipped.
+func WithPrompter(p api.UtilityPrompter) Option {
+	return func(d *Dispatcher) { d.prompter = p }
+}
+
+// WithBridge is a documentation-only option indicating the Dispatcher
+// uses BridgeAccess from its Dependencies. Reserved for future use
+// where bridge access may be injected independently.
+func WithBridge(_ BridgeAccess) Option { return func(*Dispatcher) {} }
+
+// WithChat is a documentation-only option indicating the Dispatcher
+// uses ChatAccess from its Dependencies. Reserved for future use
+// where chat access may be injected independently.
+func WithChat(_ ChatAccess) Option { return func(*Dispatcher) {} }
+
 // New constructs a Dispatcher with the given dependencies.
-func New(deps Dependencies) *Dispatcher {
-	return &Dispatcher{
+func New(deps Dependencies, opts ...Option) *Dispatcher {
+	d := &Dispatcher{
 		deps:     deps,
 		handlers: make(map[api.CommandType]Handler),
 	}
+	for _, o := range opts {
+		o(d)
+	}
+	return d
 }
+
+// Prompter returns the utility prompter, or nil if not configured.
+func (d *Dispatcher) Prompter() api.UtilityPrompter { return d.prompter }
 
 // Deps returns the dependencies for use by handler functions.
 func (d *Dispatcher) Deps() Dependencies { return d.deps }

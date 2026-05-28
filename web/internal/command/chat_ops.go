@@ -11,12 +11,10 @@ import (
 
 	"vibekit/internal/api"
 	chktypes "vibekit/internal/checkpoint/types"
-	"vibekit/internal/translate"
 )
 
 // CmdCreateChat creates a new chat with the given metadata.
 func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -39,7 +37,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
 		if exists {
 			return false
 		}
@@ -57,19 +55,18 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 
 // CmdDeleteChat removes a chat and cascades to rewind children.
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
 	// Delete any rewind children (chats whose parent_chat_id points here).
-	childChats := deps.ChatStore().ChildrenOf(ctx, cmd.ChatID)
+	childChats := d.Chat().ChatStore().ChildrenOf(ctx, cmd.ChatID)
 
-	deps.CleanupChatState(ctx, cmd.ChatID)
-	if err := deps.ChatStore().Delete(ctx, cmd.ChatID); err != nil {
+	d.Chat().CleanupChatState(ctx, cmd.ChatID)
+	if err := d.Chat().ChatStore().Delete(ctx, cmd.ChatID); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	for _, childID := range childChats {
-		deps.CleanupChatState(ctx, childID)
-		if err := deps.ChatStore().Delete(ctx, childID); err != nil {
+		d.Chat().CleanupChatState(ctx, childID)
+		if err := d.Chat().ChatStore().Delete(ctx, childID); err != nil {
 			slog.Error("delete chat: cascade child",
 				"parent", cmd.ChatID, "child", childID, keyError, err)
 		}
@@ -81,12 +78,11 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 
 // CmdCancel cancels the active turn, if any.
 func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
-	deps.FlushPendingForChat(ctx, cmd.ChatID, api.ClearReasonCancelled)
-	deps.SupervisedClearTrust(cmd.ChatID, api.ClearReasonCancelled)
-	deps.ClearPendingPermsForChat(cmd.ChatID)
+	d.Supervised().FlushPendingForChat(ctx, cmd.ChatID, api.ClearReasonCancelled)
+	d.Supervised().SupervisedClearTrust(cmd.ChatID, api.ClearReasonCancelled)
+	d.Supervised().ClearPendingPermsForChat(cmd.ChatID)
 
-	sb := deps.GetBridge(cmd.ChatID)
+	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondOK(w, cmd.RequestID)
 		return
@@ -99,8 +95,7 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
 func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
-	sb := deps.GetBridge(cmd.ChatID)
+	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
@@ -110,17 +105,16 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if err := sb.Respond(ctx, p.RequestID, translate.PermissionOutcomeSelected(p.OptionID), nil); err != nil {
+	if err := sb.Respond(ctx, p.RequestID, api.PermissionOutcomeSelected(p.OptionID), nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	deps.RemovePendingPerm(p.RequestID)
+	d.Supervised().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdRestoreCheckpoint rolls the workspace back to the given tag.
 func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
-	if deps.Checkpoints() == nil {
+	if d.Checkpoint().Checkpoints() == nil {
 		api.BadRequest(w, "checkpoints not available")
 		return
 	}
@@ -136,12 +130,12 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		api.BadRequest(w, "invalid tag format")
 		return
 	}
-	messageCount, err := deps.Checkpoints().Restore(ctx, cmd.ChatID, parsedTag)
+	messageCount, err := d.Checkpoint().Checkpoints().Restore(ctx, cmd.ChatID, parsedTag)
 	if err != nil {
 		api.InternalError(w, err)
 		return
 	}
-	mutErr := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	mutErr := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -158,22 +152,20 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		api.InternalError(w, mutErr)
 		return
 	}
-	deps.Broadcast(ctx, api.NewEvent(api.EventCheckpointRestored, cmd.ChatID, api.CheckpointRestoredPayload{
+	d.Chat().Broadcast(ctx, api.NewEvent(api.EventCheckpointRestored, cmd.ChatID, api.CheckpointRestoredPayload{
 		Tag:          p.Tag,
 		MessageCount: messageCount,
 	}))
 	slog.Info("checkpoint restored", "chat_id", cmd.ChatID, "tag", p.Tag, "messages", messageCount)
-	d.Respond(w, cmd.RequestID, map[string]any{
-		"ok":            true,
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
 		"tag":           p.Tag,
 		"message_count": messageCount,
-	})
+	}))
 }
 
 // CmdUndoEdit restores a single file to its contents at the given tag.
 func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
-	if deps.Checkpoints() == nil {
+	if d.Checkpoint().Checkpoints() == nil {
 		api.BadRequest(w, "checkpoints not available")
 		return
 	}
@@ -190,7 +182,7 @@ func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		api.BadRequest(w, "invalid tag format")
 		return
 	}
-	if err := deps.Checkpoints().CheckoutFile(ctx, cmd.ChatID, parsedTag, p.FilePath); err != nil {
+	if err := d.Checkpoint().Checkpoints().CheckoutFile(ctx, cmd.ChatID, parsedTag, p.FilePath); err != nil {
 		api.InternalError(w, err)
 		return
 	}

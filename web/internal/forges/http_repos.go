@@ -65,7 +65,7 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 	if tail == "" {
 		switch r.Method {
 		case http.MethodGet:
-			state := r.URL.Query().Get("state")
+			state := ListState(r.URL.Query().Get("state"))
 			prs, err := p.ListPRs(r.Context(), repo, state)
 			if err != nil {
 				h.writeOpsError(w, err)
@@ -102,7 +102,7 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 			api.MethodNotAllowed(w)
 			return
 		}
-		method := r.URL.Query().Get(fieldMethod)
+		method := MergeMethod(r.URL.Query().Get(fieldMethod))
 		if err := p.MergePR(r.Context(), repo, number, method); err != nil {
 			h.writeOpsError(w, err)
 			return
@@ -127,7 +127,7 @@ func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p For
 	if tail == "" {
 		switch r.Method {
 		case http.MethodGet:
-			state := r.URL.Query().Get("state")
+			state := ListState(r.URL.Query().Get("state"))
 			issues, err := p.ListIssues(r.Context(), repo, state)
 			if err != nil {
 				h.writeOpsError(w, err)

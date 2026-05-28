@@ -49,7 +49,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -265,30 +264,6 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-// filesOrMTimesChangedStatic reports whether the ignore-file list or any
-// tracked file's mtime has advanced since the last load. Operates on
-// passed-in state rather than reading from the struct, so it can run
-// without holding m.mu.
-func filesOrMTimesChangedStatic(cachedFiles []string, cachedMTimes map[string]time.Time, files []string) bool {
-	if !slices.Equal(cachedFiles, files) {
-		return true
-	}
-	for _, f := range files {
-		info, err := os.Stat(f)
-		if err != nil {
-			if _, had := cachedMTimes[f]; had {
-				return true
-			}
-			continue
-		}
-		prev, had := cachedMTimes[f]
-		if !had || !prev.Equal(info.ModTime()) {
-			return true
-		}
-	}
-	return false
-}
-
 // readSettingFiles pulls the agent_ignore_files list out of
 // config.json and resolves each entry against the workspace root.
 // Uses the settings package's parsedMap cache to avoid redundant
@@ -312,91 +287,4 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	return out
 }
 
-// parseIgnoreLine turns one line of a .gitignore into a rule. Empty
-// / comment lines return ok=false.
-func parseIgnoreLine(line string) (rule, bool) {
-	line = strings.TrimRight(line, " \t\r\n")
-	if line == "" || strings.HasPrefix(line, "#") {
-		return rule{}, false
-	}
-	if strings.Count(line, "**") > 4 {
-		slog.Warn("permissions: ignore rule has too many '**', skipping",
-			"pattern", line)
-		return rule{}, false
-	}
-	r := rule{}
-	if strings.HasPrefix(line, "!") {
-		r.negate = true
-		line = line[1:]
-	}
-	if strings.HasPrefix(line, "/") {
-		r.anchored = true
-		line = line[1:]
-	}
-	if strings.HasSuffix(line, "/") {
-		r.dirOnly = true
-		line = strings.TrimSuffix(line, "/")
-	}
-	if !r.anchored && strings.Contains(line, "/") {
-		r.anchored = true
-	}
-	r.pattern = line
-	r.segments = strings.Split(line, "/")
-	return r, true
-}
 
-// matchSegments evaluates a single rule's pattern segments against pre-split path segments.
-func matchSegments(ruleSegs, pathSegs []string, anchored bool) bool {
-	if len(ruleSegs) == 0 {
-		return false
-	}
-	if anchored {
-		return matchAnchored(ruleSegs, pathSegs)
-	}
-	if matchAnchored(ruleSegs, pathSegs) {
-		return true
-	}
-	for i := range pathSegs {
-		if matchAnchored(ruleSegs, pathSegs[i+1:]) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchAnchored walks pattern segments and path segments in lock-step.
-func matchAnchored(pSegs, xSegs []string) bool {
-	if segMatch(pSegs, xSegs) {
-		return true
-	}
-	if len(xSegs) > len(pSegs) && segMatch(pSegs, xSegs[:len(pSegs)]) {
-		return true
-	}
-	return false
-}
-
-// segMatch is the recursive segment matcher.
-func segMatch(p, x []string) bool {
-	for i := range p {
-		if p[i] == "**" {
-			rest := p[i+1:]
-			if len(rest) == 0 {
-				return true
-			}
-			for j := 0; j <= len(x); j++ {
-				if segMatch(rest, x[j:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if i >= len(x) {
-			return false
-		}
-		ok, err := filepath.Match(p[i], x[i])
-		if err != nil || !ok {
-			return false
-		}
-	}
-	return len(p) == len(x)
-}

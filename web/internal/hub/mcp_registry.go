@@ -34,18 +34,18 @@ import (
 	"vibekit/internal/api"
 )
 
-// mcpServerState is the lifecycle status of one configured MCP server.
-type mcpServerState string
+// mcpServerState is an alias for the api-level MCPServerState enum.
+type mcpServerState = api.MCPServerState
 
 const (
-	mcpStateIdle      mcpServerState = "idle"       // configured but no bridge running
-	mcpStateConnected mcpServerState = "connected"  // kiro-cli reported server_initialized
-	mcpStateOAuth     mcpServerState = "needs_auth" // kiro-cli sent oauth_request
-	mcpStateFailed    mcpServerState = "failed"     // kiro-cli sent server_init_failure
+	mcpStateIdle      mcpServerState = "idle"
+	mcpStateConnected mcpServerState = "connected"
+	mcpStateOAuth     mcpServerState = "needs_auth"
+	mcpStateFailed    mcpServerState = "failed"
 )
 
-// Valid reports whether s is one of the known MCP server states.
-func (s mcpServerState) Valid() bool {
+// mcpServerStateValid reports whether s is one of the known MCP server states.
+func mcpServerStateValid(s mcpServerState) bool {
 	switch s {
 	case mcpStateIdle, mcpStateConnected, mcpStateOAuth, mcpStateFailed:
 		return true
@@ -242,10 +242,10 @@ type mcpStatusResponse struct {
 }
 
 type statusServer struct {
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	OAuthURL string `json:"oauth_url,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Name     string             `json:"name"`
+	State    api.MCPServerState `json:"state"`
+	OAuthURL string             `json:"oauth_url,omitempty"`
+	Error    string             `json:"error,omitempty"`
 }
 
 func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -254,7 +254,7 @@ func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	for i, s := range snap {
 		out[i] = statusServer{
 			Name:     s.Name,
-			State:    string(s.State),
+			State:    api.MCPServerState(s.State),
 			OAuthURL: s.OAuthURL,
 			Error:    s.Error,
 		}

@@ -35,7 +35,6 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 	}
 }
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
-func (d *baseDeps) NewMessageID() string               { return "stub-msg-id" }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return "" }
 func (d *baseDeps) WorkDir() string                    { return "/tmp" }
 func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
@@ -46,7 +45,6 @@ func (d *baseDeps) MCPRecorder() MCPRecorder                                    
 func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                             {}
 func (d *baseDeps) PendingPermsRemove(int64)                                           {}
 func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind)                   {}
-func (d *baseDeps) ConfigDir() string                                                  { return "/tmp" }
 func (d *baseDeps) PermissionRules() *permissions.CommandRules                         { return nil }
 func (d *baseDeps) BufferStore() BufferAccess                                          { return d.bufStore }
 func (d *baseDeps) LineTracker() LineRecorder                                          { return d.lineTracker }
@@ -60,7 +58,7 @@ var commandsPayload = json.RawMessage(`{"commands":[{"name":"/help","description
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 
 func BenchmarkTranslator_HandleCrewUpdate(b *testing.B) {
-	tr := New(newBaseDeps())
+	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	msg := &api.RPCResponse{Params: crewPayload}
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chat")
@@ -72,7 +70,7 @@ func BenchmarkTranslator_HandleCrewUpdate(b *testing.B) {
 }
 
 func BenchmarkTranslator_HandleCommandsAvailable(b *testing.B) {
-	tr := New(newBaseDeps())
+	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	msg := &api.RPCResponse{Params: commandsPayload}
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chat")
@@ -84,7 +82,7 @@ func BenchmarkTranslator_HandleCommandsAvailable(b *testing.B) {
 }
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
-	tr := New(newBaseDeps())
+	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chat")
 
@@ -98,7 +96,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 // overhead on the steady-state path (buffer already started).
 func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chunk")
 
@@ -120,7 +118,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 // Measures end-to-end throughput including buffer management.
 func BenchmarkTranslator_FullTurn(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
@@ -150,7 +148,7 @@ var metadataPayload = json.RawMessage(`{"contextUsagePercentage":42.5,"turnDurat
 
 func BenchmarkTranslator_HandleMetadata(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-meta")
 	msg := &api.RPCResponse{Params: metadataPayload}

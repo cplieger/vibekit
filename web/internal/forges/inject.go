@@ -75,24 +75,14 @@ func InjectToken(ctx context.Context, kind Kind, host, token, username string) e
 	if host == "" {
 		return fmt.Errorf("forges: kind %q requires a host for injection", kind)
 	}
-	switch kind {
-	case KindGitHub:
-		if err := writeGHHosts(host, token, username); err != nil {
-			return fmt.Errorf("inject gh: %w", err)
-		}
-		return setupGitGH(ctx, host)
-	case KindGitLab:
-		if err := writeGLabConfig(host, token, username); err != nil {
-			return fmt.Errorf("inject glab: %w", err)
-		}
-		return setupGitGLab(ctx, host)
-	case KindGitea, KindCodeberg:
-		if err := writeTeaConfig(host, token, username); err != nil {
-			return fmt.Errorf("inject tea: %w", err)
-		}
-		return setupGitTea(ctx, host)
+	m, ok := kindMeta[kind]
+	if !ok {
+		return fmt.Errorf("forges: unhandled kind %q", kind)
 	}
-	return fmt.Errorf("forges: unhandled kind %q", kind)
+	if err := m.Inject(ctx, host, token, username); err != nil {
+		return fmt.Errorf("inject %s: %w", m.CLI, err)
+	}
+	return m.SetupGit(ctx, host)
 }
 
 // RemoveToken deletes the credential entry for kind/host from the
@@ -101,15 +91,11 @@ func RemoveToken(_ context.Context, kind Kind, host string) error {
 	if host == "" {
 		host = kind.DefaultHost()
 	}
-	switch kind {
-	case KindGitHub:
-		return removeGHHost(host)
-	case KindGitLab:
-		return removeGLabHost(host)
-	case KindGitea, KindCodeberg:
-		return removeTeaHost(host)
+	m, ok := kindMeta[kind]
+	if !ok {
+		return nil
 	}
-	return nil
+	return m.Remove(host)
 }
 
 // writeYAML writes content atomically with 0600 perms.

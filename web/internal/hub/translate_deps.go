@@ -10,15 +10,11 @@ import (
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
 	"vibekit/internal/command"
-	"vibekit/internal/ids"
 	"vibekit/internal/permissions"
 	"vibekit/internal/translate"
 )
 
 var _ translate.Deps = (*Hub)(nil)
-
-// NewMessageID returns a new UUIDv7 message ID.
-func (h *Hub) NewMessageID() string { return ids.NewMessageID() }
 
 // ChatStore returns the hub's chat store.
 func (h *Hub) ChatStore() api.ChatStore { return h.chatStore }
@@ -87,7 +83,7 @@ func (h *Hub) PendingPermsRemove(requestID int64) {
 
 // NotifyPush sends a push notification.
 func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
-	h.notifyPush(ctx, body, kind)
+	h.coord.NotifyPush(ctx, body, kind)
 }
 
 // PermissionRules returns the shell command rules.

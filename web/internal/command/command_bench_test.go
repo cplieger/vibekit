@@ -46,7 +46,6 @@ func (d *benchDeps) InflightAdd(int)                                            
 func (d *benchDeps) InflightDone()                                                             {}
 func (d *benchDeps) InflightGo(func())                                                         {}
 func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)                              {}
-func (d *benchDeps) UtilityPrompt(context.Context, string) (string, error)                     { return "", nil }
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool                       { return true }
 func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)                               { return "", nil }
 func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)                         {}
@@ -167,9 +166,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.EmitTurnEndedWithStats(context.Background(), "x", nil, 0, 0)
 		if _, err := d.GetOrCreateBridge(context.Background(), "x", "", ""); err != nil {
 			t.Errorf("GetOrCreateBridge returned error: %v", err)
-		}
-		if _, err := d.UtilityPrompt(context.Background(), ""); err != nil {
-			t.Errorf("UtilityPrompt returned error: %v", err)
 		}
 		if _, err := d.ResolveInsideWorkDir(""); err != nil {
 			t.Errorf("ResolveInsideWorkDir returned error: %v", err)

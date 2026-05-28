@@ -25,7 +25,7 @@ func newEventCaptureDeps() (*baseDeps, *[]api.ServerEvent) {
 
 func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
@@ -61,7 +61,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 
 func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
@@ -92,7 +92,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 
 func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start turn + add tool call
@@ -163,7 +163,7 @@ func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)     
 
 func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	tr.HandleCommandsAvailable(context.Background(), chatID, &api.RPCResponse{
@@ -191,7 +191,7 @@ func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)

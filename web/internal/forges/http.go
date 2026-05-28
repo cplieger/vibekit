@@ -235,10 +235,10 @@ func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			map[string]string{api.JSONKeyError: err.Error(), "code": string(ForgeErrCLINotInstalled)})
+			api.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
 	case errors.Is(err, ErrNotLoggedIn):
 		api.WriteJSONStatus(w, http.StatusUnauthorized,
-			map[string]string{api.JSONKeyError: err.Error(), "code": string(ForgeErrNotLoggedIn)})
+			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,

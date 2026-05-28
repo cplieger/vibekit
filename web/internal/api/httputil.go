@@ -16,6 +16,13 @@ func ErrorJSON(msg string) map[string]string {
 	return map[string]string{JSONKeyError: msg}
 }
 
+// ErrorJSONWithCode returns an error response map with an additional
+// machine-readable "code" field. Used by forge handlers that surface
+// a stable error code alongside the human-readable message.
+func ErrorJSONWithCode(msg, code string) map[string]string {
+	return map[string]string{JSONKeyError: msg, "code": code}
+}
+
 // JSONKeyOutput is the standard JSON response key for successful
 // command output. Used by git/ and server/ packages.
 const JSONKeyOutput = "output"

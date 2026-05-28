@@ -19,6 +19,7 @@ import (
 	"vibekit/internal/buffer"
 	"vibekit/internal/checkpoint"
 	"vibekit/internal/command"
+	"vibekit/internal/dedup"
 	"vibekit/internal/ignore"
 	"vibekit/internal/pending"
 	"vibekit/internal/permissions"
@@ -39,11 +40,6 @@ const (
 	// generous ANSI escapes.
 	outputBufferLimit = buffer.DefaultOutputCap
 )
-
-type idempotencyEntry struct {
-	ts     time.Time
-	result []byte
-}
 
 // lifecyclePlane groups Hub fields related to process lifecycle,
 // shutdown coordination, and workspace paths.
@@ -73,7 +69,7 @@ type bridgePlane struct {
 type ssePlane struct {
 	ctrl         *sseController
 	replayBuf    *replayRing
-	idempotency  *idempotencyCache
+	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
 }
 
@@ -106,7 +102,7 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	checkpoints        CheckpointService
+	checkpoints        api.CheckpointService
 	lines              *buffer.LineTracker
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
@@ -155,7 +151,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		sse: &ssePlane{
 			ctrl:         sseC,
 			replayBuf:    sseC.replay,
-			idempotency:  newIdempotencyCache(),
+			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
 		},
 		perm: &permPlane{
@@ -171,8 +167,8 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	for _, o := range opts {
 		o(h)
 	}
-	h.translator = translate.New(h)
-	h.dispatcher = command.New(h)
+	h.translator = translate.New(h, h.lifecycle.configDir)
+	h.dispatcher = command.New(h, command.WithPrompter(h))
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
@@ -187,9 +183,9 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	if lc.configDir != "" {
 		h.perm.rules = permissions.NewCommandRules(lc.configDir)
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		h.checkpoints = &checkpointAdapter{store: checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
+		h.checkpoints = checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
 			h.broadcastConflict(api.ChatID(chatID), p)
-		})}
+		})
 	}
 	go h.cleanIdempotency()
 	go h.cullIdleBridges()

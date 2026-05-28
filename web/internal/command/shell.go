@@ -88,7 +88,9 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		return
 	}
 	if triggerRename {
-		deps.InflightGo(func() { AsyncRenameChat(deps, cmd.ChatID, p.Text) })
+		if prompter := d.Prompter(); prompter != nil {
+			deps.InflightGo(func() { AsyncRenameChat(deps, prompter, cmd.ChatID, p.Text) })
+		}
 	}
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))

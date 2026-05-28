@@ -77,12 +77,6 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		d.NotifyPush(context.Background(), "test body", api.PushKindPermission)
 	})
 
-	t.Run("ConfigDir_returns_without_panic", func(t *testing.T) {
-		d := newDeps(t)
-		// May be empty when no configDir option is set; contract is no panic.
-		_ = d.ConfigDir()
-	})
-
 	t.Run("PermissionRules_returns_without_panic", func(t *testing.T) {
 		d := newDeps(t)
 		// May be nil when configDir is empty; the contract is that it doesn't panic.
@@ -93,14 +87,6 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		d := newDeps(t)
 		if d.BufferStore() == nil {
 			t.Error("BufferStore() returned nil")
-		}
-	})
-
-	t.Run("NewMessageID_non_empty", func(t *testing.T) {
-		d := newDeps(t)
-		id := d.NewMessageID()
-		if id == "" {
-			t.Error("NewMessageID() returned empty string")
 		}
 	})
 
