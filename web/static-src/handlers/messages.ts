@@ -50,6 +50,15 @@ onSSE("tool_call_update", (chatID, p) => {
 // card row in real time (e.g. "Reading file.go", "Running tests",
 // "Thinking..."). The event carries a sub_session_id and an event
 // object with a human-readable label.
+
+/** Typed shape of the subagent_activity SSE payload's event field. */
+interface SubagentActivityEvent {
+  label?: string;
+  title?: string;
+  tool_name?: string;
+  status?: string;
+}
+
 onSSE("subagent_activity", (_chatID, p) => {
   const sid = p.sub_session_id;
   if (sid === "") {
@@ -59,14 +68,10 @@ onSSE("subagent_activity", (_chatID, p) => {
   if (evt === null || evt === undefined || typeof evt !== "object") {
     return;
   }
-  const e = evt as Record<string, unknown>;
+  const e = evt as SubagentActivityEvent;
   // Extract a human-readable label from the activity event. kiro-cli
   // sends various shapes; we look for common fields in priority order.
-  const label =
-    (typeof e["label"] === "string" ? e["label"] : "") ||
-    (typeof e["title"] === "string" ? e["title"] : "") ||
-    (typeof e["tool_name"] === "string" ? e["tool_name"] : "") ||
-    (typeof e["status"] === "string" ? e["status"] : "");
+  const label = e.label ?? e.title ?? e.tool_name ?? e.status ?? "";
   if (label !== "") {
     setSubagentActivity(sid, label);
   }

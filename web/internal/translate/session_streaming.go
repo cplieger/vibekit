@@ -32,7 +32,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	if !buf.Started {
 		buf.Started = true
 		buf.MessageID = t.deps.NewMessageID()
-		t.deps.OpenPartialFile(chatID, buf)
+		t.deps.OpenPartialFile(ctx, chatID, buf)
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
 			api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 	}
@@ -119,7 +119,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 	var outputDelta strings.Builder
 	var diffs []api.ToolDiff
 	for _, item := range tu.Content {
-		if item.Type == jsonFieldContent && item.Content.Text != "" {
+		if item.Type == ContentTypeContent && item.Content.Text != "" {
 			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
 			outputDelta.WriteByte('\n')
 		} else if item.Type == "diff" && item.Path != "" {
@@ -166,7 +166,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 		return
 	}
 	msg := api.Message{
-		ID:   NewMessageID(),
+		ID:   t.deps.NewMessageID(),
 		Role: api.RoleAssistant,
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,

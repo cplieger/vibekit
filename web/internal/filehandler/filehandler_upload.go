@@ -29,16 +29,14 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// "too big, retry smaller" (413) from "invalid multipart"
 		// (400). Client disconnects during upload are dropped at
 		// Debug — there's nothing to respond to.
-		var maxErr *http.MaxBytesError
-		switch {
-		case errors.As(err, &maxErr):
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filehandler: upload too large",
 				"limit", maxUploadSize, "error", err)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				map[string]string{api.JSONKeyError: "upload too large"})
-		case errors.Is(err, context.Canceled):
+		} else if errors.Is(err, context.Canceled) {
 			slog.Debug("filehandler: upload cancelled by client")
-		default:
+		} else {
 			slog.Warn("filehandler: upload form parse failed", "error", err)
 			api.BadRequest(w, "invalid multipart form")
 		}

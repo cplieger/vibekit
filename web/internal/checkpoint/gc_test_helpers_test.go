@@ -7,29 +7,22 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
+
+	checkpointgc "vibekit/internal/checkpoint/gc"
 )
 
 // runBlobGC sweeps unreferenced blobs. Returns the number of blobs
-// removed and the number scanned (for observability). Best-effort;
-// per-entry failures are logged and skipped so a single bad file
-// doesn't stall the whole sweep.
+// removed and the number scanned (for observability).
 //
-// If collectReferencedBlobs returns an error we abort without
-// removing anything: a partial referenced-set would delete blobs
-// owned by the unreadable chat, which is unrecoverable data loss.
-// Better to miss a sweep than corrupt history.
-//
-// This is a convenience wrapper used by tests. Production code calls
-// collectReferencedBlobs + sweepBlobs directly (see Store.runGCOnce)
-// to pass a live cached-manager map for the fast path and hold
-// gcLock only around sweepBlobs.
+// This is a convenience wrapper used by tests. Production code uses
+// the gc.Coordinator which handles collection and sweeping internally.
 func runBlobGC(ctx context.Context, configDir string) (removed, scanned int, err error) {
-	referenced, err := collectReferencedBlobs(ctx, configDir, nil)
-	if err != nil {
-		return 0, 0, err
-	}
 	var mu sync.RWMutex
-	return sweepBlobs(ctx, configDir, referenced, &mu)
+	coord := checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
+		return nil
+	})
+	return coord.RunOnceWithCounts(ctx)
 }
 
 // BenchmarkCollectReferencedBlobs measures GC reference-collection
@@ -43,7 +36,6 @@ func BenchmarkCollectReferencedBlobs(b *testing.B) {
 			if err := os.MkdirAll(chatsDir, 0o755); err != nil {
 				b.Fatal(err)
 			}
-			// Create synthetic event logs for each chat.
 			for c := range chatCount {
 				chatID := fmt.Sprintf("chat-%d", c)
 				log := newEventLog(cfg, chatID)
@@ -55,13 +47,14 @@ func BenchmarkCollectReferencedBlobs(b *testing.B) {
 				}
 			}
 			ctx := context.Background()
+			var mu sync.RWMutex
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				_, err := collectReferencedBlobs(ctx, cfg, nil)
-				if err != nil {
-					b.Fatal(err)
-				}
+				coord := checkpointgc.NewCoordinator(cfg, blobsRoot(cfg), chatsRoot(cfg), 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
+					return nil
+				})
+				_, _, _ = coord.RunOnceWithCounts(ctx)
 			}
 		})
 	}

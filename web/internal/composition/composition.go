@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 	"vibekit/internal/auth"
 	"vibekit/internal/bridge"
 	"vibekit/internal/chat"
@@ -60,8 +61,8 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
 	steer.Generate()
 
-	bridge.SetSessionsDir(api.KiroSessionsCLIDir())
-	bridge.CleanupStaleSessions(context.Background())
+	lockMgr := bridge.NewLockManager(api.KiroSessionsCLIDir())
+	lockMgr.CleanupStaleSessions(context.Background())
 
 	// Wipe legacy shadow-git checkpoint directories.
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
@@ -78,7 +79,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	bridgeFactory := func() api.ACPBridge {
-		return bridge.New(cfg.CLIPath, cfg.WorkDir)
+		return bridge.New(cfg.CLIPath, cfg.WorkDir, bridge.WithLockManager(lockMgr))
 	}
 
 	mcpStore, err := mcpPkg.New(cfg.ConfigDir, nil)
@@ -123,9 +124,8 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		_ = refreshErr
 	}
 
-	gitHandler := git.NewHandler(cfg.WorkDir,
-		git.WithUtilityPrompt(h),
-	)
+	gitHandler := git.NewHandler(cfg.WorkDir)
+	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	fileHandler, err := filehandler.New("/")
 	if err != nil {
 		return nil, err
@@ -134,7 +134,8 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		configured := forgesManager.List(ctx)
 		providers := make([]steering.ForgeProvider, 0, len(configured))
 		for i := range configured {
@@ -147,13 +148,15 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 			}
 			// Best-effort: enumerate repos for this provider via the CLI.
 			if ops, opsErr := forgesPkg.New(f.Kind, f.Host); opsErr == nil {
-				if repos, listErr := ops.ListRepos(ctx); listErr == nil {
+				repoCtx, repoCancel := context.WithTimeout(ctx, 5*time.Second)
+				if repos, listErr := ops.ListRepos(repoCtx); listErr == nil {
 					full := make([]string, 0, len(repos))
 					for j := range repos {
 						full = append(full, repos[j].FullName)
 					}
 					p.Repos = full
 				}
+				repoCancel()
 			}
 			providers = append(providers, p)
 		}
@@ -188,6 +191,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithHub(h),
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
+		server.WithGitAI(gitAIHandler),
 		server.WithFiles(fileHandler),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
@@ -270,9 +274,9 @@ func sweepStaleTemps(configDir, workDir string) {
 	for _, dir := range []string{
 		configDir,
 		filepath.Join(configDir, "chats"),
-		filepath.Join(configDir, "chats", "archive"),
+		filepath.Join(configDir, "chats", chat.ArchiveSubdir),
 		workDir,
 	} {
-		api.CleanupStaleTemps(dir, tempMaxAge)
+		fileutil.CleanupStaleTemps(dir, tempMaxAge)
 	}
 }

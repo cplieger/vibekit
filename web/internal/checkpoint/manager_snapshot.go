@@ -53,15 +53,10 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 	if relPath == "" {
 		return Tag(""), errors.New("snapshot: empty path")
 	}
-	// gcLock.RLock gates blob Put + event Append so the blob GC
-	// can't reap a just-written blob whose event hasn't landed
-	// yet. Moved inside Manager (instead of Store.Snapshot only)
-	// so every caller — including any future path that reaches
-	// Manager.Snapshot directly — inherits the coordination.
-	if m.gcLock != nil {
-		m.gcLock.RLock()
-		defer m.gcLock.RUnlock()
-	}
+	// The 5-minute blob age gate (blobGCMinAge) provides the primary
+	// safety guarantee: a blob written now cannot be reaped for at
+	// least 5 minutes, which is far longer than the event append takes.
+	// No per-snapshot lock is needed.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.ensureLoaded(ctx); err != nil {
@@ -119,7 +114,7 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 	// check whether the disk content we just observed matches
 	// what any OTHER chat last left here. Drift means somebody
 	// else edited it between their write and our read.
-	if obs, conflict := m.index.check(m.chatID, relPath, beforeSHA); conflict {
+	if obs, conflict := m.index.check(string(m.chatID), relPath, beforeSHA); conflict {
 		confEv := event{
 			Kind:        kindConflict,
 			Tag:         tag,
@@ -145,7 +140,7 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 		// of a transient fs error, but silently hiding the
 		// drift from the user is the real bug.
 		if m.onConf != nil {
-			m.onConf(m.chatID, &ConflictPayload{
+			m.onConf(string(m.chatID), &ConflictPayload{
 				Path:        relPath,
 				OtherChat:   obs.chatID,
 				ExpectedSHA: obs.expectedSHA,
@@ -170,7 +165,7 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 		return "", err
 	}
 	m.state.apply(&ev)
-	m.index.apply(m.chatID, &ev)
+	m.index.apply(string(m.chatID), &ev)
 	return Tag(tag), nil
 }
 

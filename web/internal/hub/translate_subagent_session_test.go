@@ -22,7 +22,6 @@ func TestHandleSessionActivity_DropsParentSession(t *testing.T) {
 	sb, _ := h.bridge.mgr.getOrInsert(chatID)
 	sb.bridge = br
 	sb.state = bridgeIdle
-	sb.mu.Unlock()
 
 	parentSess := string(br.SessionID())
 
@@ -34,7 +33,7 @@ func TestHandleSessionActivity_DropsParentSession(t *testing.T) {
 		"event":     map[string]any{"type": "thinking"},
 	})
 	msg := &api.RPCResponse{Params: params}
-	h.handleSessionActivity(context.Background(), chatID, msg)
+	h.translator.HandleSessionActivity(context.Background(), chatID, msg)
 
 	// No event should have been emitted for parent session.
 	after := h.sse.replayBuf.Len()
@@ -56,7 +55,6 @@ func TestHandleSessionActivity_BroadcastsSubagentEvent(t *testing.T) {
 	sb, _ := h.bridge.mgr.getOrInsert(chatID)
 	sb.bridge = br
 	sb.state = bridgeIdle
-	sb.mu.Unlock()
 
 	subSess := "sub-session-123"
 
@@ -67,7 +65,7 @@ func TestHandleSessionActivity_BroadcastsSubagentEvent(t *testing.T) {
 		"event":     map[string]any{"type": "tool_use"},
 	})
 	msg := &api.RPCResponse{Params: params}
-	h.handleSessionActivity(context.Background(), chatID, msg)
+	h.translator.HandleSessionActivity(context.Background(), chatID, msg)
 
 	after := h.sse.replayBuf.Len()
 	if after <= before {

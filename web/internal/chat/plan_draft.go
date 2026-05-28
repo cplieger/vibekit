@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 )
 
 // maxPlanDraftBytes caps a plan draft so a runaway client can't fill the
@@ -90,7 +91,7 @@ func (s *Store) SetPlanDraft(ctx context.Context, chatID api.ChatID, content str
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return api.SaveBytes(draftPath, []byte(content), fileMode)
+	return fileutil.SaveBytes(draftPath, []byte(content), fileMode)
 }
 
 // DeletePlanDraft removes the draft file for chatID. No-op if missing.

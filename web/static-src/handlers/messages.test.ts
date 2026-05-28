@@ -39,24 +39,12 @@ vi.mock("../crew-card.js", () => ({
   setSubagentActivity: mockSetSubagentActivity,
 }));
 
-// Capture SSE handlers
-type SSEHandler = (chatID: string, payload: unknown) => void;
-const sseHandlers = new Map<string, SSEHandler>();
-vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => {
-    sseHandlers.set(event, handler);
-  }),
-}));
+// Capture SSE handlers via shared helper
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
+vi.mock("../bus.js", () => createBusMock());
 
 // Import after mocks
 await import("./messages.js");
-
-function fireSSE(event: string, chatID: string, payload: unknown): void {
-  const handler = sseHandlers.get(event);
-  if (handler) {
-    handler(chatID, payload);
-  }
-}
 
 describe("message_appended", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -140,72 +128,22 @@ describe("tool_call_update", () => {
 describe("subagent_activity", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("sets activity label from event.label", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: { label: "Reading file.go" },
-    });
-    expect(mockSetSubagentActivity).toHaveBeenCalledWith("sub-1", "Reading file.go");
-  });
-
-  it("falls back to event.title", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: { title: "Running tests" },
-    });
-    expect(mockSetSubagentActivity).toHaveBeenCalledWith("sub-1", "Running tests");
-  });
-
-  it("falls back to event.tool_name", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: { tool_name: "bash" },
-    });
-    expect(mockSetSubagentActivity).toHaveBeenCalledWith("sub-1", "bash");
-  });
-
-  it("skips when sub_session_id is empty", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "",
-      event: { label: "test" },
-    });
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-  });
-
-  it("skips when sub_session_id is not a string", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: 123,
-      event: { label: "test" },
-    });
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-  });
-
-  it("skips when event is null", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: null,
-    });
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-  });
-
-  it("skips when event is a non-object primitive", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: "not-an-object",
-    });
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-  });
-
-  it("skips when all label fields are empty", () => {
-    fireSSE("subagent_activity", "chat-1", {
-      sub_session_id: "sub-1",
-      event: { unrelated: "value" },
-    });
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-  });
-
-  it("skips undefined payload", () => {
-    fireSSE("subagent_activity", "chat-1", undefined);
-    expect(mockSetSubagentActivity).not.toHaveBeenCalled();
+  it.each<{ desc: string; payload: unknown; expected: [string, string] | null }>([
+    { desc: "sets activity label from event.label", payload: { sub_session_id: "sub-1", event: { label: "Reading file.go" } }, expected: ["sub-1", "Reading file.go"] },
+    { desc: "falls back to event.title", payload: { sub_session_id: "sub-1", event: { title: "Running tests" } }, expected: ["sub-1", "Running tests"] },
+    { desc: "falls back to event.tool_name", payload: { sub_session_id: "sub-1", event: { tool_name: "bash" } }, expected: ["sub-1", "bash"] },
+    { desc: "skips when sub_session_id is empty", payload: { sub_session_id: "", event: { label: "test" } }, expected: null },
+    { desc: "skips when sub_session_id is not a string", payload: { sub_session_id: 123, event: { label: "test" } }, expected: null },
+    { desc: "skips when event is null", payload: { sub_session_id: "sub-1", event: null }, expected: null },
+    { desc: "skips when event is a non-object primitive", payload: { sub_session_id: "sub-1", event: "not-an-object" }, expected: null },
+    { desc: "skips when all label fields are empty", payload: { sub_session_id: "sub-1", event: { unrelated: "value" } }, expected: null },
+    { desc: "skips undefined payload", payload: undefined, expected: null },
+  ])("$desc", ({ payload, expected }) => {
+    fireSSE("subagent_activity", "chat-1", payload);
+    if (expected) {
+      expect(mockSetSubagentActivity).toHaveBeenCalledWith(...expected);
+    } else {
+      expect(mockSetSubagentActivity).not.toHaveBeenCalled();
+    }
   });
 });

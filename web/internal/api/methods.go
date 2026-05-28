@@ -11,6 +11,7 @@ const (
 	MethodSessionNew  = "session/new"
 	MethodSessionLoad = "session/load"
 	MethodSetModel    = "session/set_model"
+	MethodCancel      = "session/cancel"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so
@@ -25,3 +26,13 @@ const (
 	MethodCommandsExecute = "_kiro.dev/commands/execute"
 	MethodCommandsOptions = "_kiro.dev/commands/options"
 )
+
+// ACP content-block type discriminator constants. The "text" value is
+// used across hub, command, and translate packages; declaring it here
+// provides a single source of truth so a protocol rename is one edit.
+const ContentTypeText = "text"
+
+// KeySessionID is the ACP wire key for the session identifier in
+// parameter maps. Single source of truth; hub and command packages
+// reference this constant instead of bare "sessionId" literals.
+const KeySessionID = "sessionId"

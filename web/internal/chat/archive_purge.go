@@ -159,7 +159,7 @@ func oldestArchiveMTime(ctx context.Context, storeDir string) (time.Time, bool) 
 	if ctx.Err() != nil {
 		return time.Time{}, false
 	}
-	archiveDir := filepath.Join(storeDir, archiveSubdir)
+	archiveDir := filepath.Join(storeDir, ArchiveSubdir)
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

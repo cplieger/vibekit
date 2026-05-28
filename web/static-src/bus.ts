@@ -36,6 +36,14 @@ import type {
 
 // --- Typed SSE surface ---
 
+/** Typed payload for subagent activity events from kiro-cli. */
+export interface SubagentActivityEvent {
+  readonly label?: string;
+  readonly title?: string;
+  readonly tool_name?: string;
+  readonly status?: string;
+}
+
 /** Payload shape per SSE event type. Events with no payload use `undefined`;
  *  events with a well-known shape get their own entry. Events not listed
  *  here fall through to `unknown` and can still be subscribed via `on`. */
@@ -67,7 +75,7 @@ export interface SSEPayloads {
   readonly mode_changed: { readonly mode_id: string };
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
-  readonly subagent_activity: { readonly sub_session_id: string; readonly event: unknown };
+  readonly subagent_activity: { readonly sub_session_id: string; readonly event: SubagentActivityEvent | null };
   /** Reserved for future crew-card auto-refresh; currently unused. */
   readonly session_list_updated: { readonly sessions: unknown[] };
   readonly steering_loaded: { readonly documents: string[] };

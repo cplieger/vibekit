@@ -237,26 +237,22 @@ function showRewindChildPrompt(
       // Promote all children (clear parent_chat_id via server command).
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void send({
             type: "promote_rewind_chat",
             chat_id: cid,
             request_id: `promote-${Date.now()}`,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any);
+          });
         });
       }
     } else {
       // Discard children: dispatch server-side delete for each, then close tabs.
       for (const cid of childIds) {
         void import("./transport.js").then(({ send }) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void send({
             type: "discard_rewind_chat",
             chat_id: cid,
             request_id: `discard-${Date.now()}`,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any);
+          });
         });
         closeTab(cid, { skipOnClose: true });
       }
@@ -605,13 +601,11 @@ function createTabEl(tab: TabSpec): HTMLElement {
     btn.addEventListener("click", () => {
       menu.remove();
       void import("./transport.js").then(({ send }) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         void send({
           type: "promote_rewind_chat",
           chat_id: s.id,
           request_id: `promote-${Date.now()}`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any);
+        });
       });
     });
     menu.appendChild(btn);

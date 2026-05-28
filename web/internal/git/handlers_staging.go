@@ -10,6 +10,7 @@ import (
 	"vibekit/internal/gitexec"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
@@ -18,7 +19,7 @@ import (
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(dir) {
 		api.WriteJSON(w, gitStatusResp{IsRepo: false})
 		return
 	}
@@ -32,7 +33,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 // skips the network fetch (useful for the multi-repo dashboard where
 // fetching N repos in parallel would be costly + noisy).
 func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(dir) {
 		return gitStatusResp{IsRepo: false}
 	}
 	st := gitStatusResp{IsRepo: true}

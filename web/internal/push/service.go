@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -54,6 +55,7 @@ type Service struct {
 	subs        map[string]api.PushSubscription
 	prefs       map[api.PushKind]bool
 	keys        vapidKeys
+	vapidPriv   *ecdsa.PrivateKey
 	subject     string
 	dir         string
 	mu          sync.Mutex
@@ -171,8 +173,8 @@ var kindRegistry = []struct {
 	SettingsKey string
 	DefaultOn   bool
 }{
-	{api.PushKindAgentFinished, "notify_agent_finished", true},
-	{api.PushKindPermission, "notify_permission", true},
+	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
+	{api.PushKindPermission, settings.KeyNotifyPermission, true},
 }
 
 func init() {

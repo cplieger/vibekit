@@ -81,7 +81,7 @@ func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any) er
 
 func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string, mcpServers []map[string]any) error {
 	resp, err := b.Call(ctx, methodSessionLoad, map[string]any{
-		"sessionId": acpSessionID, "cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
+		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
 	})
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)

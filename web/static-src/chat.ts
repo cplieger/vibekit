@@ -12,14 +12,13 @@ import {
   get,
   getSessions,
   setActive,
-  loadList,
-  loadMessages,
   upsertHeader,
   contextSizeFor,
   defaultUsage,
   activeVersion,
   removeChat,
 } from "./store.js";
+import { loadList, loadMessages } from "./store-load.js";
 import { effect } from "./signals.js";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";

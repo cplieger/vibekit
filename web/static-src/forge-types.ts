@@ -73,3 +73,11 @@ export const FORGE_META: Record<
 //  If a unified local+remote registry is needed in the future, the
 //  shape can be reconstructed from /api/git/repos + /api/forges/.../repos
 //  responses or imported from wire/types.gen.ts.)
+
+/** URL template for the account-management page on each forge kind. */
+export const FORGE_URLS: Record<ForgeKind, (host: string) => string> = {
+  github: (host) => `https://${host}/settings/profile`,
+  gitlab: (host) => `https://${host}/-/profile`,
+  codeberg: (host) => `https://${host}/user/settings`,
+  gitea: (host) => (host === "" ? "" : `https://${host}/user/settings`),
+};

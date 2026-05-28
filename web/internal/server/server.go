@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 	"vibekit/internal/metrics"
 	"vibekit/internal/permissions"
 
@@ -29,6 +30,7 @@ type Server struct {
 	mcpConfig     api.RouteHandler
 	chats         api.ChatStore
 	git           api.GitHandler
+	gitAI         api.RouteHandler
 	files         api.FileHandler
 	auth          api.AuthHandler
 	push          api.PushService
@@ -61,6 +63,7 @@ func WithSteering(g api.SteeringGenerator) Option  { return func(s *Server) { s.
 func WithHub(h api.Hub) Option                     { return func(s *Server) { s.hub = h } }
 func WithChats(c api.ChatStore) Option             { return func(s *Server) { s.chats = c } }
 func WithGit(g api.GitHandler) Option              { return func(s *Server) { s.git = g } }
+func WithGitAI(r api.RouteHandler) Option          { return func(s *Server) { s.gitAI = r } }
 func WithFiles(f api.FileHandler) Option           { return func(s *Server) { s.files = f } }
 func WithAuth(a api.AuthHandler) Option            { return func(s *Server) { s.auth = a } }
 func WithPush(p api.PushService) Option            { return func(s *Server) { s.push = p } }
@@ -111,8 +114,11 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	mux.HandleFunc("/api/tools/install", s.handleToolsInstall)
 	s.git.RegisterRoutes(mux)
+	if s.gitAI != nil {
+		s.gitAI.RegisterRoutes(mux)
+	}
 	s.files.RegisterRoutes(mux)
-	api.ServeJSONFile(mux, filepath.Join(s.configDir, "tools.json"), "{}", 0o644)
+	fileutil.ServeJSONFile(mux, filepath.Join(s.configDir, "tools.json"), "{}", 0o644)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	s.mcpConfig.RegisterRoutes(mux)

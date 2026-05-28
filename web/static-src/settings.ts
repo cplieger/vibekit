@@ -37,6 +37,36 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 // purely cosmetic (each save is independent on the server).
 let kiroSettingGen = 0;
 
+/**
+ * Encapsulates the gen-counter + showSaving/showSaved/showError lifecycle
+ * for dispatching a kiro-cli setting change. Deduplicates the identical
+ * pattern used in initExperimentalToggles and initCompactionSettings.
+ */
+function dispatchKiroSetting(
+  key: string,
+  value: string,
+  input: HTMLInputElement,
+  previousValue?: string,
+): void {
+  showSaving();
+  const gen = ++kiroSettingGen;
+  void setKiroSetting
+    .dispatch(
+      { key, value, input, ...(previousValue !== undefined ? { previousValue } : {}) },
+      { silent: true },
+    )
+    .then((r) => {
+      if (gen !== kiroSettingGen) {
+        return;
+      }
+      if (r === null) {
+        showError();
+      } else {
+        showSaved();
+      }
+    });
+}
+
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
@@ -295,8 +325,6 @@ function initExperimentalToggles(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      showSaving();
-      const gen = ++kiroSettingGen;
       const wireValue = flag.inverted
         ? input.checked
           ? "false"
@@ -304,25 +332,7 @@ function initExperimentalToggles(): void {
         : input.checked
           ? "true"
           : "false";
-      void setKiroSetting
-        .dispatch(
-          {
-            key: flag.key,
-            value: wireValue,
-            input,
-          },
-          { silent: true },
-        )
-        .then((r) => {
-          if (gen !== kiroSettingGen) {
-            return;
-          }
-          if (r === null) {
-            showError();
-          } else {
-            showSaved();
-          }
-        });
+      dispatchKiroSetting(flag.key, wireValue, input);
     });
   }
   initCompactionSettings();
@@ -407,28 +417,8 @@ function initCompactionSettings(): void {
       if (!s.isBool) {
         snapshots.set(input, input.value);
       }
-      showSaving();
-      const gen = ++kiroSettingGen;
-      void setKiroSetting
-        .dispatch(
-          {
-            key: s.key,
-            value,
-            input,
-            ...(previousValue !== undefined ? { previousValue } : {}),
-          },
-          { silent: true },
-        )
-        .then((r) => {
-          if (gen !== kiroSettingGen) {
-            return;
-          }
-          if (r === null) {
-            showError();
-          } else {
-            showSaved();
-          }
-        });
+      dispatchKiroSetting(s.key, value, input, previousValue);
+    });
     });
   }
 }

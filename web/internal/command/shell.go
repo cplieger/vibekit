@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/ids"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -114,7 +115,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		"truncated", capped.Truncated)
 
 	content := "```\n" + strings.TrimRight(output, "\n") + "\n```"
-	msgID := NewMessageID()
+	msgID := ids.NewMessageID()
 	assistantMsg := api.Message{
 		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
@@ -127,5 +128,5 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &assistantMsg))
 		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }

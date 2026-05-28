@@ -19,6 +19,11 @@ import {
   sortEntries,
   initEditablePath,
   type FetchDirOpts,
+  FB_ROW,
+  FB_NAME,
+  FB_NAME_LINK,
+  FB_CHECK,
+  FB_META,
 } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { el } from "./dom.js";
@@ -167,7 +172,7 @@ function loadDir(): void {
       update: (row, e: DirEntry) => {
         if (e.kind === "file") {
           // Sync checkbox state to the live `selected` set.
-          const check = row.querySelector<HTMLInputElement>(".fb-check");
+          const check = row.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
           if (check !== null) {
             check.checked = selected.has(e.name);
           }
@@ -177,9 +182,9 @@ function loadDir(): void {
 
     if (sorted.length === 0 && currentPath === ".") {
       const empty = document.createElement("div");
-      empty.className = "fb-row";
+      empty.className = FB_ROW;
       const meta = document.createElement("span");
-      meta.className = "fb-meta";
+      meta.className = FB_META;
       meta.textContent = "Empty";
       empty.appendChild(meta);
       list.appendChild(empty);
@@ -189,14 +194,14 @@ function loadDir(): void {
 
 function upRow(): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "fb-row";
+  row.className = FB_ROW;
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
   icon.innerHTML = FILE_ICONS["folder"] ?? "";
 
   const nameSpan = document.createElement("span");
-  nameSpan.className = "fb-name fb-name-link";
+  nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
   nameSpan.textContent = "..";
   nameSpan.addEventListener("click", () => {
     currentPath = parentPath(currentPath);
@@ -211,12 +216,12 @@ function upRow(): HTMLDivElement {
 
 function entryRow(name: string, isDir: boolean): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "fb-row";
+  row.className = FB_ROW;
 
   // Checkbox for multi-select.
   const check = document.createElement("input");
   check.type = "checkbox";
-  check.className = "fb-check";
+  check.className = FB_CHECK;
   check.checked = selected.has(name);
   check.setAttribute("aria-label", `Select ${name}`);
   check.addEventListener("change", () => {
@@ -233,7 +238,7 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
   icon.innerHTML = isDir ? (FILE_ICONS["folder"] ?? "") : fileIcon(name, false);
 
   const label = document.createElement("span");
-  label.className = "fb-name fb-name-link";
+  label.className = `${FB_NAME} ${FB_NAME_LINK}`;
   label.textContent = name;
   label.addEventListener("click", () => {
     if (isDir) {

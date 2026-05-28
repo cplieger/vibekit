@@ -9,12 +9,22 @@ import (
 	cfgsettings "vibekit/internal/settings"
 )
 
+// PermissionMode represents the permission evaluation strategy.
+type PermissionMode = mode
+
 type mode string
 
 const (
 	modePrompt    mode = "prompt"
 	modeTrustList mode = "trust-list"
 	modeTrustAll  mode = "trust-all"
+)
+
+// Exported constants for cross-package consumers.
+const (
+	ModePrompt    mode = modePrompt
+	ModeTrustList mode = modeTrustList
+	ModeTrustAll  mode = modeTrustAll
 )
 
 // Valid reports whether m is a recognised permission mode value.
@@ -59,6 +69,33 @@ func readSettingsRaw(ctx context.Context, configDir string) (map[string]json.Raw
 		return nil, err
 	}
 	return raw, nil
+}
+
+// permissionSettings holds all permission-relevant keys extracted from
+// a single readSettingsRaw call.
+type permissionSettings struct {
+	raw         map[string]json.RawMessage
+	shellPolicy json.RawMessage
+	hasShell    bool
+}
+
+// readPermissionSettings extracts all permission-relevant keys from
+// config.json in a single unmarshal pass. Both Args and
+// EvaluateShellCommand call this to avoid redundant JSON parsing.
+func readPermissionSettings(ctx context.Context, configDir string) (*permissionSettings, error) {
+	raw, err := readSettingsRaw(ctx, configDir)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return &permissionSettings{}, nil
+	}
+	ps := &permissionSettings{raw: raw}
+	if v, ok := raw["shell_policy"]; ok {
+		ps.shellPolicy = v
+		ps.hasShell = true
+	}
+	return ps, nil
 }
 
 // Args returns the kiro-cli CLI flags corresponding to the current

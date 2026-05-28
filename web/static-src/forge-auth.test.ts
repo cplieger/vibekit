@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(() => Promise.resolve(null)),
+  CancellableSlot: class {
+    start() { return new AbortController().signal; }
+    abort() {}
+  },
   withTimeout: vi.fn(
     (signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000),
   ),

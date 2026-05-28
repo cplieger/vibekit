@@ -976,7 +976,7 @@ func TestCommand_RejectsInvalidRequestID(t *testing.T) {
 		"has space",
 		"has\x00nul",
 		"has/slash",
-		strings.Repeat("a", maxRequestIDBytes+1),
+		strings.Repeat("a", 129),
 	}
 	for _, id := range bad {
 		body, _ := json.Marshal(api.ClientCommand{

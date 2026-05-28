@@ -2,12 +2,9 @@
 // Tests for files.ts: createFile, createFolder, renameFile, deleteFilesBatch, upload.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+
+vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
@@ -18,18 +15,14 @@ vi.mock("../upload.js", () => ({
   uploadFiles: vi.fn(),
 }));
 
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { recentLog } from "./registry.js";
 import * as toast from "../toast.js";
 import { uploadFiles } from "../upload.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

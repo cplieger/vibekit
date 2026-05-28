@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/buffer"
 )
 
 // Compile-time interface assertion.
@@ -53,7 +54,7 @@ const (
 // OOM the container via unbounded stdout. The logout cap matches in
 // spirit: a confirmation banner fits easily in 1 MiB.
 const (
-	whoamiMaxOutput = 64 * 1024
+	whoamiMaxOutput = buffer.DefaultOutputCap
 	logoutMaxOutput = 1 << 20 // 1 MiB
 
 	// stderrCap bounds subprocess stderr capture across every

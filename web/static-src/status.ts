@@ -184,18 +184,21 @@ function getStatusLiveEl(): HTMLElement {
   return statusLiveEl;
 }
 
+/** Maps each ConnectionStatus to its CSS class and custom property color. */
+const STATUS_STYLES: Readonly<Record<ConnectionStatus, { cls: string | null; color: string }>> = {
+  connected: { cls: "connected", color: "var(--c-green)" },
+  disconnected: { cls: "error", color: "var(--c-red)" },
+  connecting: { cls: null, color: "var(--c-yellow)" },
+};
+
 export function setStatus(s: ConnectionStatus): void {
   const dot = $.statusDot;
   dot.classList.remove("connected", "error");
-  if (s === "connected") {
-    dot.classList.add("connected");
-    dot.style.setProperty("--status-color", "var(--c-green)");
-  } else if (s === "disconnected") {
-    dot.classList.add("error");
-    dot.style.setProperty("--status-color", "var(--c-red)");
-  } else {
-    dot.style.setProperty("--status-color", "var(--c-yellow)");
+  const style = STATUS_STYLES[s];
+  if (style.cls) {
+    dot.classList.add(style.cls);
   }
+  dot.style.setProperty("--status-color", style.color);
   dot.setAttribute("aria-label", `Connection: ${s}`);
   $.stWs.textContent = s;
 

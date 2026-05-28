@@ -306,7 +306,7 @@ func TestRingBuffer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &ringBuffer{cap: tc.cap}
+			r := &ringBuffer{Cap: tc.cap}
 			var lastN int
 			for _, w := range tc.writes {
 				n, err := r.Write([]byte(w))
@@ -333,7 +333,7 @@ func TestRingBuffer_Property(t *testing.T) {
 		cap := rapid.IntRange(1, 256).Draw(t, "cap")
 		nWrites := rapid.IntRange(0, 20).Draw(t, "nWrites")
 
-		r := &ringBuffer{cap: cap}
+		r := &ringBuffer{Cap: cap}
 		var concat []byte
 
 		for range nWrites {

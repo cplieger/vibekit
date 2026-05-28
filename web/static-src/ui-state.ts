@@ -7,7 +7,9 @@
 // in /api/settings.
 // ---------------------------------------------------------------------------
 
-const LS_KEY = "vibekit.ui-state";
+import { LS_UI_STATE_KEY } from "./ls-keys.js";
+
+const LS_KEY = LS_UI_STATE_KEY;
 
 export interface UIState {
   tab_order: string[];

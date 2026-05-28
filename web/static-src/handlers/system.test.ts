@@ -16,12 +16,16 @@ vi.mock("../store.js", () => ({
   getActiveId: () => mockGetActiveId(),
   get: vi.fn(),
   setThinking: mockSetThinking,
-  loadList: () => mockLoadList(),
-  loadMessages: mockLoadMessages,
   setCurrentMode: vi.fn(),
   clearMsgIndex: vi.fn(),
   invalidateSession: vi.fn(),
+  sessionsVersion: { value: 0, peek: () => 0 },
   version: { value: 0, peek: () => 0 },
+}));
+
+vi.mock("../store-load.js", () => ({
+  loadList: () => mockLoadList(),
+  loadMessages: mockLoadMessages,
 }));
 
 const mockCloseTab = vi.fn();

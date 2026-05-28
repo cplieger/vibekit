@@ -91,8 +91,7 @@ func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 	}
 	stderrText := errBuf.String()
 	exitCode := -1
-	var ee *exec.ExitError
-	if errors.As(runErr, &ee) {
+	if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 		exitCode = ee.ExitCode()
 	}
 	// Surface "not logged in" with a typed error so callers can
@@ -181,17 +180,21 @@ func shouldStripEnv(key string) bool {
 	return false
 }
 
+// notLoggedInPatterns is the data table of stderr substrings that
+// indicate the forge CLI is not authenticated. Kept at package scope
+// for inspectability and per-entry testability.
+var notLoggedInPatterns = []string{
+	"not logged in",           // gh
+	"no token configured",     // glab
+	"no logins available",     // tea
+	"login required",          // various
+	"authentication required", // various
+}
+
 // isNotLoggedIn detects "not authenticated" errors across all three CLIs.
 func isNotLoggedIn(stderr string) bool {
 	s := strings.ToLower(stderr)
-	patterns := []string{
-		"not logged in",       // gh
-		"no token configured", // glab
-		"no logins available", // tea
-		"login required",      // various
-		"authentication required",
-	}
-	for _, p := range patterns {
+	for _, p := range notLoggedInPatterns {
 		if strings.Contains(s, p) {
 			return true
 		}

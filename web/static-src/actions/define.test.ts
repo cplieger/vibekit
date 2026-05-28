@@ -6,25 +6,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+
 // Mock toast.ts so we can assert on the toast calls without rendering
 // real DOM toasts. Must be at the top before defineAction imports.
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
-import { defineAction, _resetForTest as resetDefine } from "./define.js";
+import { defineAction } from "./define.js";
 import { ActionError, retryNetwork } from "./error.js";
-import { recentLog, _resetForTest as resetRegistry, subscribe, pendingCount } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { recentLog, subscribe, pendingCount } from "./registry.js";
 import * as toast from "../toast.js";
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.clearAllMocks();
 });
 

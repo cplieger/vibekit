@@ -376,11 +376,11 @@ func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
 	// `rm -rf /` prompts. The pair proves we landed on Safe, not
 	// All (which would allow rm) nor None (which would deny ls).
 	r := NewCommandRules(dir)
-	if d := EvaluateShellCommand(context.Background(), dir, "ls", r); d != "allow" {
-		t.Errorf("EvaluateShellCommand(ls) with dir-as-settings = %q, want \"allow\" (safe_commands fail-closed)", d)
+	if d := EvaluateShellCommand(context.Background(), dir, "ls", r); d.Decision != "allow" {
+		t.Errorf("EvaluateShellCommand(ls) with dir-as-settings = %q, want \"allow\" (safe_commands fail-closed)", d.Decision)
 	}
-	if d := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); d != "ask" {
-		t.Errorf("EvaluateShellCommand(rm -rf /) with dir-as-settings = %q, want \"ask\" (safe_commands fail-closed)", d)
+	if d := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); d.Decision != "ask" {
+		t.Errorf("EvaluateShellCommand(rm -rf /) with dir-as-settings = %q, want \"ask\" (safe_commands fail-closed)", d.Decision)
 	}
 
 	// SupervisedDefault: fail CLOSED to false.

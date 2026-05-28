@@ -7,263 +7,131 @@
 import { escText } from "./strings.js";
 import { KNOWN_EXTENSIONS, extToLang } from "./file-extensions.js";
 
-// Unified language alias map: maps fenced-code tags to internal language keys.
-// Extension-based lookups delegate to KNOWN_EXTENSIONS via extToLang().
-const FENCED_ALIASES: Readonly<Record<string, string>> = {
-  javascript: "js",
-  typescript: "ts",
-  python: "py",
-  shell: "sh",
-  rust: "rs",
-  ruby: "rb",
-  cplusplus: "c",
-  "c++": "c",
-};
+// ---------------------------------------------------------------------------
+// SUPPORTED_LANGUAGES: single source of truth for language definitions.
+// Each entry maps an internal language key to its keyword set and aliases.
+// Adding a new language is a single-site change.
+// ---------------------------------------------------------------------------
+interface LangDef {
+  keywords: Set<string>;
+  aliases: string[];
+}
 
-const KEYWORDS: Readonly<Record<string, Set<string>>> = {
-  go: new Set([
-    "package",
-    "import",
-    "func",
-    "var",
-    "const",
-    "type",
-    "struct",
-    "interface",
-    "map",
-    "chan",
+const SUPPORTED_LANGUAGES: ReadonlyMap<string, LangDef> = new Map<string, LangDef>([
+  [
     "go",
-    "defer",
-    "return",
-    "if",
-    "else",
-    "for",
-    "range",
-    "switch",
-    "case",
-    "default",
-    "select",
-    "break",
-    "continue",
-    "fallthrough",
-    "nil",
-    "true",
-    "false",
-    "iota",
-    "make",
-    "new",
-    "append",
-    "len",
-    "cap",
-    "delete",
-    "copy",
-    "close",
-    "panic",
-    "recover",
-    "error",
-  ]),
-  ts: new Set([
-    "import",
-    "export",
-    "from",
-    "const",
-    "let",
-    "var",
-    "function",
-    "class",
-    "interface",
-    "type",
-    "enum",
-    "return",
-    "if",
-    "else",
-    "for",
-    "while",
-    "do",
-    "switch",
-    "case",
-    "default",
-    "break",
-    "continue",
-    "new",
-    "this",
-    "super",
-    "extends",
-    "implements",
-    "async",
-    "await",
-    "yield",
-    "throw",
-    "try",
-    "catch",
-    "finally",
-    "typeof",
-    "instanceof",
-    "in",
-    "of",
-    "void",
-    "null",
-    "undefined",
-    "true",
-    "false",
-    "as",
-    "is",
-    "readonly",
-    "abstract",
-    "static",
-    "private",
-    "protected",
-    "public",
-    "declare",
-    "module",
-    "namespace",
-  ]),
-  js: new Set([
-    "import",
-    "export",
-    "from",
-    "const",
-    "let",
-    "var",
-    "function",
-    "class",
-    "return",
-    "if",
-    "else",
-    "for",
-    "while",
-    "do",
-    "switch",
-    "case",
-    "default",
-    "break",
-    "continue",
-    "new",
-    "this",
-    "super",
-    "extends",
-    "async",
-    "await",
-    "yield",
-    "throw",
-    "try",
-    "catch",
-    "finally",
-    "typeof",
-    "instanceof",
-    "in",
-    "of",
-    "void",
-    "null",
-    "undefined",
-    "true",
-    "false",
-    "delete",
-  ]),
-  py: new Set([
-    "import",
-    "from",
-    "def",
-    "class",
-    "return",
-    "if",
-    "elif",
-    "else",
-    "for",
-    "while",
-    "break",
-    "continue",
-    "pass",
-    "raise",
-    "try",
-    "except",
-    "finally",
-    "with",
-    "as",
-    "yield",
-    "lambda",
-    "and",
-    "or",
-    "not",
-    "in",
-    "is",
-    "None",
-    "True",
-    "False",
-    "global",
-    "nonlocal",
-    "del",
-    "assert",
-    "async",
-    "await",
-  ]),
-  sh: new Set([
-    "if",
-    "then",
-    "else",
-    "elif",
-    "fi",
-    "for",
-    "while",
-    "do",
-    "done",
-    "case",
-    "esac",
-    "in",
-    "function",
-    "return",
-    "exit",
-    "local",
-    "export",
-    "readonly",
-    "unset",
-    "shift",
-    "set",
-    "true",
-    "false",
-    "source",
-  ]),
-  rs: new Set([
-    "fn",
-    "let",
-    "mut",
-    "const",
-    "struct",
-    "enum",
-    "impl",
-    "trait",
-    "pub",
-    "use",
-    "mod",
-    "crate",
-    "self",
-    "super",
-    "return",
-    "if",
-    "else",
-    "for",
-    "while",
-    "loop",
-    "match",
-    "break",
-    "continue",
-    "as",
-    "in",
-    "ref",
-    "move",
-    "async",
-    "await",
-    "unsafe",
-    "where",
-    "type",
-    "true",
-    "false",
-    "None",
-    "Some",
-    "Ok",
-    "Err",
-  ]),
-};
+    {
+      keywords: new Set([
+        "package", "import", "func", "var", "const", "type", "struct", "interface",
+        "map", "chan", "go", "defer", "return", "if", "else", "for", "range",
+        "switch", "case", "default", "select", "break", "continue", "fallthrough",
+        "nil", "true", "false", "iota", "make", "new", "append", "len", "cap",
+        "delete", "copy", "close", "panic", "recover", "error",
+      ]),
+      aliases: [],
+    },
+  ],
+  [
+    "ts",
+    {
+      keywords: new Set([
+        "import", "export", "from", "const", "let", "var", "function", "class",
+        "interface", "type", "enum", "return", "if", "else", "for", "while", "do",
+        "switch", "case", "default", "break", "continue", "new", "this", "super",
+        "extends", "implements", "async", "await", "yield", "throw", "try", "catch",
+        "finally", "typeof", "instanceof", "in", "of", "void", "null", "undefined",
+        "true", "false", "as", "is", "readonly", "abstract", "static", "private",
+        "protected", "public", "declare", "module", "namespace",
+      ]),
+      aliases: ["typescript"],
+    },
+  ],
+  [
+    "js",
+    {
+      keywords: new Set([
+        "import", "export", "from", "const", "let", "var", "function", "class",
+        "return", "if", "else", "for", "while", "do", "switch", "case", "default",
+        "break", "continue", "new", "this", "super", "extends", "async", "await",
+        "yield", "throw", "try", "catch", "finally", "typeof", "instanceof", "in",
+        "of", "void", "null", "undefined", "true", "false", "delete",
+      ]),
+      aliases: ["javascript"],
+    },
+  ],
+  [
+    "py",
+    {
+      keywords: new Set([
+        "import", "from", "def", "class", "return", "if", "elif", "else", "for",
+        "while", "break", "continue", "pass", "raise", "try", "except", "finally",
+        "with", "as", "yield", "lambda", "and", "or", "not", "in", "is", "None",
+        "True", "False", "global", "nonlocal", "del", "assert", "async", "await",
+      ]),
+      aliases: ["python"],
+    },
+  ],
+  [
+    "sh",
+    {
+      keywords: new Set([
+        "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case",
+        "esac", "in", "function", "return", "exit", "local", "export", "readonly",
+        "unset", "shift", "set", "true", "false", "source",
+      ]),
+      aliases: ["shell"],
+    },
+  ],
+  [
+    "rs",
+    {
+      keywords: new Set([
+        "fn", "let", "mut", "const", "struct", "enum", "impl", "trait", "pub",
+        "use", "mod", "crate", "self", "super", "return", "if", "else", "for",
+        "while", "loop", "match", "break", "continue", "as", "in", "ref", "move",
+        "async", "await", "unsafe", "where", "type", "true", "false", "None",
+        "Some", "Ok", "Err",
+      ]),
+      aliases: ["rust"],
+    },
+  ],
+  [
+    "rb",
+    {
+      keywords: new Set<string>(),
+      aliases: ["ruby"],
+    },
+  ],
+  [
+    "c",
+    {
+      keywords: new Set<string>(),
+      aliases: ["cplusplus", "c++"],
+    },
+  ],
+]);
+
+// Derived reverse-index: alias → internal key (built from SUPPORTED_LANGUAGES).
+const FENCED_ALIASES: Readonly<Record<string, string>> = (() => {
+  const m: Record<string, string> = {};
+  for (const [key, def] of SUPPORTED_LANGUAGES) {
+    for (const alias of def.aliases) {
+      m[alias] = key;
+    }
+  }
+  return m;
+})();
+
+// Keyword lookup helper: returns the keyword set for a language key.
+const KEYWORDS: Readonly<Record<string, Set<string>>> = (() => {
+  const m: Record<string, Set<string>> = {};
+  for (const [key, def] of SUPPORTED_LANGUAGES) {
+    if (def.keywords.size > 0) {
+      m[key] = def.keywords;
+    }
+  }
+  return m;
+})();
 
 // Shared keywords for languages without specific sets
 const GENERIC_KW = new Set([
@@ -454,20 +322,20 @@ export function highlightByLang(code: string, lang: string): string {
   if (lang === "" || lang === "md") {
     return escText(code);
   }
-  if (KEYWORDS[lang] === undefined && !(lang in KNOWN_EXTENSIONS) && !(lang in FENCED_ALIASES)) {
-    // Unknown language; pass through as plain text.
-    return escText(code);
-  }
-  const tokens = tokenize(code, lang);
-  let html = "";
-  for (const t of tokens) {
-    if (t.type === "text") {
-      html += escText(t.value);
-    } else {
-      html += `<span class="hl-${t.type}">${escText(t.value)}</span>`;
+  if (SUPPORTED_LANGUAGES.has(lang) || lang in KNOWN_EXTENSIONS || lang in FENCED_ALIASES) {
+    const tokens = tokenize(code, lang);
+    const parts: string[] = [];
+    for (const t of tokens) {
+      if (t.type === "text") {
+        parts.push(escText(t.value));
+      } else {
+        parts.push(`<span class="hl-${t.type}">${escText(t.value)}</span>`);
+      }
     }
+    return parts.join("");
   }
-  return html;
+  // Unknown language; pass through as plain text.
+  return escText(code);
 }
 
 /** Highlight source code by filename (extension-based language detection). */
@@ -491,7 +359,7 @@ export function normalizeLang(tag: string): string {
     return "";
   }
   // Direct hits on our internal set.
-  if (KEYWORDS[s] !== undefined) {
+  if (SUPPORTED_LANGUAGES.has(s)) {
     return s;
   }
   // Lookup from file-extensions registry (covers extensions like "go", "ts", etc.).

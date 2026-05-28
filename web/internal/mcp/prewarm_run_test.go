@@ -28,19 +28,19 @@ func TestRun_DedupsAgainstInFlight(t *testing.T) {
 
 	// Pre-seed the in-flight set so Run's dedup branch returns without
 	// ever spawning a goroutine.
-	p.mu.Lock()
-	p.running["@scope/pkg"] = struct{}{}
-	p.mu.Unlock()
+	p.Lock()
+	p.Running()["@scope/pkg"] = struct{}{}
+	p.Unlock()
 
 	p.Run(context.Background())
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if _, ok := p.running["@scope/pkg"]; !ok {
+	p.Lock()
+	defer p.Unlock()
+	if _, ok := p.Running()["@scope/pkg"]; !ok {
 		t.Error("in-flight entry was removed by Run; dedup branch failed")
 	}
-	if len(p.running) != 1 {
-		t.Errorf("running has %d entries after dedup, want 1", len(p.running))
+	if len(p.Running()) != 1 {
+		t.Errorf("running has %d entries after dedup, want 1", len(p.Running()))
 	}
 }
 
@@ -75,14 +75,14 @@ func TestRun_IgnoresServersWithoutNpxPackage(t *testing.T) {
 	// Seed disabled so Run returns without probing exec.LookPath("npm")
 	// — the test machine may or may not have npm. We only want to
 	// exercise the enumeration + extractNpxPackage gating path.
-	p.disabled.Store(true)
+	p.Disabled.Store(true)
 
 	p.Run(context.Background())
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.running) != 0 {
-		t.Errorf("Run scheduled installs for non-npx servers: %v", p.running)
+	p.Lock()
+	defer p.Unlock()
+	if len(p.Running()) != 0 {
+		t.Errorf("Run scheduled installs for non-npx servers: %v", p.Running())
 	}
 }
 
@@ -93,16 +93,16 @@ func TestNewPrewarmRunner_initialisesEmpty(t *testing.T) {
 
 	p := NewPrewarmRunner(context.Background(), store)
 
-	if p.store != store {
-		t.Error("store not wired through")
+	if p.Lister == nil {
+		t.Error("lister not wired through")
 	}
-	if p.running == nil {
+	if p.Running() == nil {
 		t.Error("running map is nil (nil map would panic on write)")
 	}
-	if len(p.running) != 0 {
-		t.Errorf("new runner has %d in-flight entries, want 0", len(p.running))
+	if len(p.Running()) != 0 {
+		t.Errorf("new runner has %d in-flight entries, want 0", len(p.Running()))
 	}
-	if p.disabled.Load() {
+	if p.Disabled.Load() {
 		t.Error("new runner starts disabled; expected enabled")
 	}
 }
@@ -119,19 +119,19 @@ func TestRun_DisabledShortCircuits(t *testing.T) {
 	}
 
 	p := NewPrewarmRunner(context.Background(), store)
-	p.disabled.Store(true)
+	p.Disabled.Store(true)
 
 	p.Run(context.Background())
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.running) != 0 {
-		t.Errorf("disabled runner scheduled installs: %v", p.running)
+	p.Lock()
+	defer p.Unlock()
+	if len(p.Running()) != 0 {
+		t.Errorf("disabled runner scheduled installs: %v", p.Running())
 	}
 }
 
 // F4 (test-review u12c1): npm-missing graceful degradation sets
-// p.disabled on the first LookPath miss. Covers the actual
+// p.Disabled on the first LookPath miss. Covers the actual
 // LookPath-miss branch; TestRun_DisabledShortCircuits only covers
 // the already-disabled short-circuit.
 func TestRun_DisablesWhenNpmMissing(t *testing.T) {
@@ -148,16 +148,16 @@ func TestRun_DisablesWhenNpmMissing(t *testing.T) {
 	}
 
 	p := NewPrewarmRunner(context.Background(), store)
-	if p.disabled.Load() {
+	if p.Disabled.Load() {
 		t.Fatal("new runner starts disabled; expected enabled")
 	}
 
 	p.Run(context.Background())
 
-	p.mu.Lock()
-	gotDisabled := p.disabled.Load()
-	gotRunning := len(p.running)
-	p.mu.Unlock()
+	p.Lock()
+	gotDisabled := p.Disabled.Load()
+	gotRunning := len(p.Running())
+	p.Unlock()
 	if !gotDisabled {
 		t.Error("Run with no npm did not set disabled=true")
 	}
@@ -166,15 +166,15 @@ func TestRun_DisablesWhenNpmMissing(t *testing.T) {
 	}
 
 	// Second Run is the short-circuit path. It must not spawn
-	// anything and must not panic. Additionally: p.disabled is
+	// anything and must not panic. Additionally: p.Disabled is
 	// sticky (per godoc, container restart required to re-enable).
 	p.Run(context.Background())
-	p.mu.Lock()
-	if !p.disabled.Load() {
+	p.Lock()
+	if !p.Disabled.Load() {
 		t.Error("disabled flag cleared between passes; must remain sticky")
 	}
-	if len(p.running) != 0 {
-		t.Errorf("second Run queued installs: %v", p.running)
+	if len(p.Running()) != 0 {
+		t.Errorf("second Run queued installs: %v", p.Running())
 	}
-	p.mu.Unlock()
+	p.Unlock()
 }

@@ -19,8 +19,8 @@ import {
   get,
   getSessions,
   isThinking,
-  loadList,
 } from "./store.js";
+import { loadList } from "./store-load.js";
 import { effect } from "./signals.js";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
@@ -79,7 +79,11 @@ import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import { applyShareTarget } from "./share-target.js";
 
-import "./handlers/index.js";
+import "./handlers/chat.js";
+import "./handlers/messages.js";
+import "./handlers/pending.js";
+import "./handlers/turn.js";
+import "./handlers/system.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";

@@ -5,10 +5,11 @@
 package checkpoint
 
 import (
-	"errors"
 	"log/slog"
 	"slices"
 	"strconv"
+
+	chktypes "vibekit/internal/checkpoint/types"
 )
 
 // state is the reconstructed view of a chat's checkpoint history at
@@ -222,4 +223,4 @@ func (s *state) allocateTag() string {
 
 // ErrTagNotFound signals that a requested tag isn't in the event log.
 // Separate from a generic error so the HTTP layer can map it to 404.
-var ErrTagNotFound = errors.New("tag not found")
+var ErrTagNotFound = chktypes.ErrTagNotFound

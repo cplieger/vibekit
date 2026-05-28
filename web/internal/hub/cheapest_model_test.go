@@ -1,4 +1,4 @@
-package models
+package hub
 
 import (
 	"context"

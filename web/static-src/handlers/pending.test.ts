@@ -18,15 +18,11 @@ vi.mock("../store.js", () => ({
   setTrustedThisTurn: mockSetTrustedThisTurn,
 }));
 
-// Capture SSE handlers and bus emissions
-type SSEHandler = (chatID: string, payload: unknown) => void;
-const sseHandlers = new Map<string, SSEHandler>();
+// Capture SSE handlers and bus emissions via shared helper
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 const busEmissions: { event: string; payload: unknown }[] = [];
 
-vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => {
-    sseHandlers.set(event, handler);
-  }),
+vi.mock("../bus.js", () => createBusMock({
   emitBus: vi.fn((event: string, payload: unknown) => {
     busEmissions.push({ event, payload });
   }),
@@ -39,13 +35,6 @@ vi.mock("../bus.js", () => ({
 
 // Import after mocks
 await import("./pending.js");
-
-function fireSSE(event: string, chatID: string, payload: unknown): void {
-  const handler = sseHandlers.get(event);
-  if (handler) {
-    handler(chatID, payload);
-  }
-}
 
 describe("pending_change_added", () => {
   beforeEach(() => {

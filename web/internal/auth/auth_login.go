@@ -89,8 +89,7 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 		Region   string `json:"region"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("login: body exceeds limit",
 				"limit_bytes", api.MaxJSONBody)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,

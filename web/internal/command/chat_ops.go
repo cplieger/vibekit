@@ -16,7 +16,7 @@ import (
 
 // ACP method constants used by chat-ops handlers.
 const (
-	methodCancel = "session/cancel"
+	methodCancel = api.MethodCancel
 )
 
 // CmdCreateChat creates a new chat with the given metadata.
@@ -57,7 +57,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdDeleteChat removes a chat and cascades to rewind children.
@@ -88,7 +88,7 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 
 	slog.Info("chat deleted", "chat_id", cmd.ChatID, "cascade_children", len(childChats))
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdCancel cancels the active turn, if any.
@@ -100,13 +100,13 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 	sb := deps.GetBridge(cmd.ChatID)
 	if sb == nil {
-		d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+		d.RespondOK(w, cmd.RequestID)
 		return
 	}
 	if err := sb.Notify(ctx, methodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
@@ -126,7 +126,7 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	deps.RemovePendingPerm(p.RequestID)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdRestoreCheckpoint rolls the workspace back to the given tag.
@@ -207,5 +207,5 @@ func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		return
 	}
 	slog.Info("undo edit", "chat_id", cmd.ChatID, "tag", p.Tag, "file", p.FilePath)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }

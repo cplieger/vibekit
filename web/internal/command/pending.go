@@ -51,7 +51,7 @@ func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.Response
 	}))
 	slog.Info("pending change resolved", "chat_id", cmd.ChatID,
 		"tool_call_id", snap.ToolCallID, "path", snap.Path, "action", p.Action)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdResolveAllPendingChanges settles every op in the chat.
@@ -93,27 +93,17 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 		return
 	}
 
-	resolved := 0
-	for _, snap := range list {
-		_, err := deps.PendingStore().Resolve(ctx, snap.ToolCallID, p.Action)
-		if errors.Is(err, pending.ErrUnknown) {
-			continue
-		}
-		if err != nil {
-			slog.Warn("bulk resolve: one op failed",
-				"chat_id", cmd.ChatID, "tool_call_id", snap.ToolCallID, keyError, err)
-			continue
-		}
+	snaps := deps.PendingStore().AcceptAllForChat(cmd.ChatID)
+	for _, snap := range snaps {
 		deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
 			ToolCallID: snap.ToolCallID,
-			Action:     p.Action,
+			Action:     api.PendingActionAccept,
 			Path:       snap.Path,
 		}))
-		resolved++
 	}
 	slog.Info("bulk pending changes resolved",
-		"chat_id", cmd.ChatID, "action", p.Action, keyResolved, resolved)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: resolved})
+		"chat_id", cmd.ChatID, "action", p.Action, keyResolved, len(snaps))
+	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
 }
 
 // CmdSetSupervisedMode toggles the chat's SupervisedMode flag.
@@ -146,10 +136,10 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	if !changed {
 		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
-			d.RespondErr(w, http.StatusNotFound, errSetSupervisedMode)
+			d.RespondErr(w, http.StatusNotFound, errChatNotFound)
 			return
 		}
-		d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+		d.RespondOK(w, cmd.RequestID)
 		return
 	}
 	if !p.Enabled {
@@ -158,7 +148,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	slog.Info("supervised mode toggled",
 		"chat_id", cmd.ChatID, "enabled", p.Enabled)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdResolvePendingChangePartial settles one staged op with merged text.
@@ -199,7 +189,7 @@ func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.R
 	}))
 	slog.Info("pending change resolved (partial)",
 		"chat_id", cmd.ChatID, "tool_call_id", snap.ToolCallID, "path", snap.Path)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdTrustPendingChanges enables per-turn trust and accepts all outstanding ops.
@@ -215,33 +205,19 @@ func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseW
 	}
 	deps.SupervisedSetTrust(cmd.ChatID)
 
-	resolved := 0
-	for ctx.Err() == nil {
-		list := deps.PendingStore().ListForChat(cmd.ChatID)
-		if len(list) == 0 {
-			break
-		}
-		for _, snap := range list {
-			_, err := deps.PendingStore().Resolve(ctx, snap.ToolCallID, pending.ActionAccept)
-			if errors.Is(err, pending.ErrUnknown) {
-				continue
-			}
-			if err != nil {
-				slog.Warn("trust: resolve op", "chat_id", cmd.ChatID,
-					"tool_call_id", snap.ToolCallID, keyError, err)
-				continue
-			}
-			deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
-				ToolCallID: snap.ToolCallID,
-				Action:     api.PendingActionAccept,
-				Path:       snap.Path,
-			}))
-			resolved++
-		}
+	// Single-pass batch accept: drain current backlog once. New ops arriving
+	// after the trust flag is set will be auto-accepted by the trust mechanism.
+	snaps := deps.PendingStore().AcceptAllForChat(cmd.ChatID)
+	for _, snap := range snaps {
+		deps.Broadcast(ctx, api.NewEvent(api.EventPendingChangeResolved, cmd.ChatID, api.PendingChangeResolvedPayload{
+			ToolCallID: snap.ToolCallID,
+			Action:     api.PendingActionAccept,
+			Path:       snap.Path,
+		}))
 	}
 	slog.Info("trust pending changes",
-		"chat_id", cmd.ChatID, "accepted", resolved)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: resolved})
+		"chat_id", cmd.ChatID, "accepted", len(snaps))
+	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
 }
 
 // CmdClearPendingTrust clears the per-turn trust flag.
@@ -252,5 +228,5 @@ func CmdClearPendingTrust(d *Dispatcher, _ context.Context, w http.ResponseWrite
 	}
 	deps.SupervisedClearTrust(cmd.ChatID, api.ClearReasonUserCleared)
 	slog.Info("clear pending trust", "chat_id", cmd.ChatID)
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }

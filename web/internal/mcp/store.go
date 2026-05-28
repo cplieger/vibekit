@@ -4,7 +4,7 @@
 // # Storage model
 //
 // A single file at <configDir>/mcp.json, mode 0600, written atomically
-// (temp + rename) via api.SaveBytes. The file holds an ordered array of
+// (temp + rename) via fileutil.SaveBytes. The file holds an ordered array of
 // Server records. Order is the display order; no separate index.
 //
 // # Scope
@@ -106,6 +106,59 @@ type Server struct {
 	UpdatedAt     int64     `json:"updated_at"`
 	Prewarm       bool      `json:"prewarm,omitempty"`
 	Enabled       bool      `json:"enabled"`
+}
+
+// NewServer constructs a Server with validated transport-specific fields.
+// Fields inappropriate for the given transport are rejected at creation
+// time rather than deferred to Validate(). Returns an error if the
+// transport is unknown or if transport-incompatible fields are populated.
+func NewServer(transport Transport, name string, opts ...ServerOption) (*Server, error) {
+	if !transport.Valid() {
+		return nil, fmt.Errorf("unknown transport: %q", transport)
+	}
+	s := &Server{
+		Transport: transport,
+		Name:      name,
+		Enabled:   true,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if err := Validate(s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// ServerOption configures a Server during construction via NewServer.
+type ServerOption func(*Server)
+
+// WithCommand sets the command for stdio transport servers.
+func WithCommand(cmd string, args ...string) ServerOption {
+	return func(s *Server) {
+		s.Command = cmd
+		s.Args = args
+	}
+}
+
+// WithURL sets the URL for HTTP transport servers.
+func WithURL(url string) ServerOption {
+	return func(s *Server) { s.URL = url }
+}
+
+// WithOAuthClientID sets the OAuth client ID for HTTP transport servers.
+func WithOAuthClientID(id string) ServerOption {
+	return func(s *Server) { s.OAuthClientID = id }
+}
+
+// WithEnv sets environment variables for stdio transport servers.
+func WithEnv(env []KeyPair) ServerOption {
+	return func(s *Server) { s.Env = env }
+}
+
+// WithHeaders sets HTTP headers for HTTP transport servers.
+func WithHeaders(headers []KeyPair) ServerOption {
+	return func(s *Server) { s.Headers = headers }
 }
 
 // KeyPair is an ordered env-var or header entry. Ordered (vs map) so

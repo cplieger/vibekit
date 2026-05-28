@@ -26,6 +26,7 @@ import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
 import { respondPermission, restoreCheckpoint } from "../actions/chat.js";
 import type { BannerLevel } from "../types.js";
+import type { ErrorCode } from "../wire/types.gen.js";
 
 /** Notify the user and set the badge if the page is hidden. */
 function notifyAndBadge(title: string, body: string): void {
@@ -267,7 +268,7 @@ export interface ErrorRoute {
   dismissible: boolean;
 }
 
-export const ERROR_ROUTES: Readonly<Record<string, ErrorRoute>> = {
+export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_not_found: { surface: "banner", level: "error", dismissible: true },
   agent_config_error: { surface: "banner", level: "error", dismissible: false },
   model_not_found: { surface: "banner", level: "warning", dismissible: true },

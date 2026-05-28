@@ -6,7 +6,7 @@ import "vibekit/internal/api"
 // single-line change with compile-time verification of all consumers.
 const (
 	methodPrompt            = "session/prompt"
-	methodCancel            = "session/cancel"
+	methodCancel            = api.MethodCancel
 	methodUpdate            = "session/update"
 	methodRequestPermission = "session/request_permission"
 	methodSetConfigOption   = "session/setConfigOption"

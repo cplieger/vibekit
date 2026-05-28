@@ -13,57 +13,102 @@
 
 // --- Token enum (matches smd.js constants) ---
 
-export const DOCUMENT = 1 as Token;
-export const PARAGRAPH = 2 as Token;
-export const HEADING_1 = 3 as Token;
-export const HEADING_2 = 4 as Token;
-export const HEADING_3 = 5 as Token;
-export const HEADING_4 = 6 as Token;
-export const HEADING_5 = 7 as Token;
-export const HEADING_6 = 8 as Token;
-export const CODE_BLOCK = 9 as Token;
-export const CODE_FENCE = 10 as Token;
-export const CODE_INLINE = 11 as Token;
-export const ITALIC_AST = 12 as Token;
-export const ITALIC_UND = 13 as Token;
-export const STRONG_AST = 14 as Token;
-export const STRONG_UND = 15 as Token;
-export const STRIKE = 16 as Token;
-export const LINK = 17 as Token;
-export const RAW_URL = 18 as Token;
-export const IMAGE = 19 as Token;
-export const BLOCKQUOTE = 20 as Token;
-export const LINE_BREAK = 21 as Token;
-export const RULE = 22 as Token;
-export const LIST_UNORDERED = 23 as Token;
-export const LIST_ORDERED = 24 as Token;
-export const LIST_ITEM = 25 as Token;
-export const CHECKBOX = 26 as Token;
-export const TABLE = 27 as Token;
-export const TABLE_ROW = 28 as Token;
-export const TABLE_CELL = 29 as Token;
-export const EQUATION_BLOCK = 30 as Token;
-export const EQUATION_INLINE = 31 as Token;
-export const NEWLINE = 101 as Token;
-export const MAYBE_BR = 104 as Token;
-export const MAYBE_EQ_BLOCK = 105 as Token;
+/** All valid token values. Derive the Token type from this object. */
+export const TOKENS = {
+  DOCUMENT: 1,
+  PARAGRAPH: 2,
+  HEADING_1: 3,
+  HEADING_2: 4,
+  HEADING_3: 5,
+  HEADING_4: 6,
+  HEADING_5: 7,
+  HEADING_6: 8,
+  CODE_BLOCK: 9,
+  CODE_FENCE: 10,
+  CODE_INLINE: 11,
+  ITALIC_AST: 12,
+  ITALIC_UND: 13,
+  STRONG_AST: 14,
+  STRONG_UND: 15,
+  STRIKE: 16,
+  LINK: 17,
+  RAW_URL: 18,
+  IMAGE: 19,
+  BLOCKQUOTE: 20,
+  LINE_BREAK: 21,
+  RULE: 22,
+  LIST_UNORDERED: 23,
+  LIST_ORDERED: 24,
+  LIST_ITEM: 25,
+  CHECKBOX: 26,
+  TABLE: 27,
+  TABLE_ROW: 28,
+  TABLE_CELL: 29,
+  EQUATION_BLOCK: 30,
+  EQUATION_INLINE: 31,
+  NEWLINE: 101,
+  MAYBE_BR: 104,
+  MAYBE_EQ_BLOCK: 105,
+} as const satisfies Record<string, number>;
 
-/** Branded numeric type — prevents accidental assignment of arbitrary
- *  numbers to token fields. All valid tokens are the exported constants
- *  below, each cast to Token at declaration. */
-declare const __tokenBrand: unique symbol;
-export type Token = number & { readonly [__tokenBrand]: never };
+/** Token type derived from the TOKENS constant object. */
+export type Token = (typeof TOKENS)[keyof typeof TOKENS];
+
+// Re-export individual constants for backward compatibility.
+export const DOCUMENT: Token = TOKENS.DOCUMENT;
+export const PARAGRAPH: Token = TOKENS.PARAGRAPH;
+export const HEADING_1: Token = TOKENS.HEADING_1;
+export const HEADING_2: Token = TOKENS.HEADING_2;
+export const HEADING_3: Token = TOKENS.HEADING_3;
+export const HEADING_4: Token = TOKENS.HEADING_4;
+export const HEADING_5: Token = TOKENS.HEADING_5;
+export const HEADING_6: Token = TOKENS.HEADING_6;
+export const CODE_BLOCK: Token = TOKENS.CODE_BLOCK;
+export const CODE_FENCE: Token = TOKENS.CODE_FENCE;
+export const CODE_INLINE: Token = TOKENS.CODE_INLINE;
+export const ITALIC_AST: Token = TOKENS.ITALIC_AST;
+export const ITALIC_UND: Token = TOKENS.ITALIC_UND;
+export const STRONG_AST: Token = TOKENS.STRONG_AST;
+export const STRONG_UND: Token = TOKENS.STRONG_UND;
+export const STRIKE: Token = TOKENS.STRIKE;
+export const LINK: Token = TOKENS.LINK;
+export const RAW_URL: Token = TOKENS.RAW_URL;
+export const IMAGE: Token = TOKENS.IMAGE;
+export const BLOCKQUOTE: Token = TOKENS.BLOCKQUOTE;
+export const LINE_BREAK: Token = TOKENS.LINE_BREAK;
+export const RULE: Token = TOKENS.RULE;
+export const LIST_UNORDERED: Token = TOKENS.LIST_UNORDERED;
+export const LIST_ORDERED: Token = TOKENS.LIST_ORDERED;
+export const LIST_ITEM: Token = TOKENS.LIST_ITEM;
+export const CHECKBOX: Token = TOKENS.CHECKBOX;
+export const TABLE: Token = TOKENS.TABLE;
+export const TABLE_ROW: Token = TOKENS.TABLE_ROW;
+export const TABLE_CELL: Token = TOKENS.TABLE_CELL;
+export const EQUATION_BLOCK: Token = TOKENS.EQUATION_BLOCK;
+export const EQUATION_INLINE: Token = TOKENS.EQUATION_INLINE;
+export const NEWLINE: Token = TOKENS.NEWLINE;
+export const MAYBE_BR: Token = TOKENS.MAYBE_BR;
+export const MAYBE_EQ_BLOCK: Token = TOKENS.MAYBE_EQ_BLOCK;
 
 // --- Attr enum ---
 
-export const HREF = 1 as unknown as Attr;
-export const SRC = 2 as unknown as Attr;
-export const LANG = 4 as unknown as Attr;
-export const CHECKED = 8 as unknown as Attr;
-export const START = 16 as unknown as Attr;
+/** All valid attribute values. */
+export const ATTRS = {
+  HREF: 1,
+  SRC: 2,
+  LANG: 4,
+  CHECKED: 8,
+  START: 16,
+} as const satisfies Record<string, number>;
 
-declare const __attrBrand: unique symbol;
-export type Attr = number & { readonly [__attrBrand]: never };
+/** Attr type derived from the ATTRS constant object. */
+export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
+
+export const HREF: Attr = ATTRS.HREF;
+export const SRC: Attr = ATTRS.SRC;
+export const LANG: Attr = ATTRS.LANG;
+export const CHECKED: Attr = ATTRS.CHECKED;
+export const START: Attr = ATTRS.START;
 
 export const TOKEN_ARRAY_CAP = 24;
 

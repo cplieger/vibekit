@@ -96,12 +96,9 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     return reg;
   },
   rollback: () => {
-    // Uncheck the toggle so the visual state reflects the failed registration.
-    const el = document.getElementById("notify-toggle") as HTMLInputElement | null;
-    if (el === null) {
-      return;
-    }
-    el.checked = false;
+    // Emit a custom event so the UI layer can handle the visual rollback
+    // without coupling this action to a specific DOM element ID.
+    document.dispatchEvent(new CustomEvent("notify:registration-failed"));
   },
   error: "Couldn't enable push notifications",
 });

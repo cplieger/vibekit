@@ -1,12 +1,14 @@
 package hub
 
 import (
-	"vibekit/internal/metrics"
 	"maps"
 	"sync"
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/metrics"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // bridgeManager owns the per-chat bridge map and provides thread-safe
@@ -14,9 +16,10 @@ import (
 // reducing Hub's direct field count and clarifying the ownership
 // boundary: bridgeManager owns the map; Hub owns dispatch.
 type bridgeManager struct {
-	bridges map[api.ChatID]*sharedBridge
-	factory api.ACPBridgeFactory
-	mu      sync.Mutex
+	bridges  map[api.ChatID]*sharedBridge
+	factory  api.ACPBridgeFactory
+	mu       sync.Mutex
+	spawnSF  singleflight.Group
 }
 
 func newBridgeManager(factory api.ACPBridgeFactory) *bridgeManager {
@@ -35,9 +38,9 @@ func (bm *bridgeManager) get(chatID api.ChatID) *sharedBridge {
 
 // getOrInsert returns an existing bridge for chatID if present.
 // If not, it creates a new sharedBridge via the factory, inserts it
-// into the map, and returns (newBridge, false). The new bridge is
-// returned with state=bridgeStarting and mu locked — the caller MUST
-// unlock sb.mu after completing initialization.
+// into the map, and returns (newBridge, false). With singleflight in
+// GetOrCreateBridge, concurrent callers coalesce so the new bridge
+// no longer needs to be returned locked.
 func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
@@ -45,7 +48,6 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 		return existing, true
 	}
 	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting}
-	sb.mu.Lock()
 	bm.bridges[chatID] = sb
 	bm.mu.Unlock()
 	metrics.BridgeSpawns.Inc()

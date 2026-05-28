@@ -1,15 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
-import { defineAction, _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
+vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+
+import { defineAction } from "./define.js";
 import {
   registerCleanup,
   _cancelAllForTest as cancelAllPending,
@@ -17,9 +13,7 @@ import {
 } from "./cleanup.js";
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.clearAllMocks();
 });
 

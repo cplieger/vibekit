@@ -25,14 +25,12 @@ type ToolEntry =
       isBuiltin: boolean;
     };
 
-type MethodKind = "go" | "npm" | "pip" | "cargo" | "apt" | "binary" | "runtimes" | "custom" | "mcp";
-
 interface MethodSchema {
   fields: { version: boolean; pkg: boolean; install: boolean; binaries: boolean };
   hints: { cat: string; version: string; pkg: string; install: string };
 }
 
-const INSTALL_METHODS: Readonly<Record<MethodKind, MethodSchema>> = {
+const INSTALL_METHODS = {
   go: {
     fields: { version: true, pkg: true, install: false, binaries: true },
     hints: {
@@ -115,7 +113,13 @@ const INSTALL_METHODS: Readonly<Record<MethodKind, MethodSchema>> = {
       install: "Install command, e.g. pip install --user ha-mcp",
     },
   },
-};
+} as const satisfies Readonly<Record<string, MethodSchema>>;
+
+type MethodKind = keyof typeof INSTALL_METHODS;
+
+function isMethodKind(v: string): v is MethodKind {
+  return v in INSTALL_METHODS;
+}
 
 // Modal form fields that only this module touches. Queried lazily via
 // getters so the module can import before DOMContentLoaded.
@@ -328,9 +332,9 @@ class ToolsManager {
   }
 
   private updateToolFormVisibility(): void {
-    const cat = f.cat.value as MethodKind;
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    const schema = INSTALL_METHODS[cat] ?? INSTALL_METHODS.custom;
+    const catVal = f.cat.value;
+    const cat: MethodKind = isMethodKind(catVal) ? catVal : "custom";
+    const schema = INSTALL_METHODS[cat];
     toggleLabel("tool-version-label", schema.fields.version);
     toggleLabel("tool-package-label", schema.fields.pkg);
     toggleLabel("tool-install-label", schema.fields.install);
@@ -374,14 +378,14 @@ class ToolsManager {
   }
 
   private saveToolFromModal(): void {
-    const uiCat = f.cat.value as MethodKind;
+    const uiCatVal = f.cat.value;
+    const uiCat: MethodKind = isMethodKind(uiCatVal) ? uiCatVal : "custom";
     const cat = uiCat === "mcp" ? "custom" : uiCat;
     const name = f.name.value.trim();
     if (name === "") {
       return;
     }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    const { fields } = INSTALL_METHODS[uiCat] ?? INSTALL_METHODS.custom;
+    const { fields } = INSTALL_METHODS[uiCat];
     const version = f.version.value.trim();
     if (fields.version && version === "") {
       return;

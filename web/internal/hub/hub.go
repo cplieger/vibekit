@@ -37,7 +37,7 @@ const (
 	// buffers (agent terminals and the PTY shell scrollback). 64 KB
 	// covers a full terminal screen at 200 cols × 50 rows with
 	// generous ANSI escapes.
-	outputBufferLimit = 64 * 1024
+	outputBufferLimit = buffer.DefaultOutputCap
 )
 
 type idempotencyEntry struct {
@@ -87,10 +87,12 @@ type permPlane struct {
 
 // Hub is the central coordinator.
 type Hub struct {
-	lifecycle *lifecyclePlane
-	bridge    *bridgePlane
-	sse       *ssePlane
-	perm      *permPlane
+	lifecycle    *lifecyclePlane
+	bridge       *bridgePlane
+	sse          *ssePlane
+	perm         *permPlane
+	bufLifecycle *buffer.Lifecycle
+	coord        *BridgeCoordinator
 
 	push               api.PushService
 	chatStore          api.ChatStore
@@ -174,9 +176,14 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
+	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
+	h.bufLifecycle = &buffer.Lifecycle{
+		ConfigDir: lc.configDir,
+		Store:     h.bridge.assistantBufs,
+	}
 	if lc.configDir != "" {
 		h.perm.rules = permissions.NewCommandRules(lc.configDir)
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
@@ -187,6 +194,15 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	go h.cleanIdempotency()
 	go h.cullIdleBridges()
 	return h
+}
+
+// UtilityPrompt delegates to the utility bridge, satisfying
+// api.UtilityPrompter. The bridge is lazily constructed on first call.
+func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
+	h.bridge.utilityOnce.Do(func() {
+		h.bridge.utility = newUtilityBridge(h.bridge.factory, h.Models, h.lifecycle.shutdownCtx)
+	})
+	return h.bridge.utility.UtilityPrompt(ctx, prompt)
 }
 
 // Rules returns the shared CommandRules instance so callers outside
@@ -450,17 +466,10 @@ func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 // broadcastConflict fans a cross-chat drift event out to SSE
 // subscribers. Wired into checkpoint.NewStore; every call is the
 // result of a Snapshot detecting drift, so we just wrap the
-// payload into a ServerEvent. The checkpoint package doesn't
-// import api/ to avoid a cycle; we do the shape translation here.
+// payload into a ServerEvent. Since api.ConflictDetectedPayload is
+// a type alias for checkpoint.ConflictPayload, no field copy needed.
 func (h *Hub) broadcastConflict(chatID api.ChatID, p *checkpoint.ConflictPayload) {
-	h.Broadcast(context.Background(), api.NewEvent(api.EventConflictDetected, chatID, api.ConflictDetectedPayload{
-		Path:        p.Path,
-		OtherChat:   p.OtherChat,
-		ExpectedSHA: p.ExpectedSHA,
-		ActualSHA:   p.ActualSHA,
-		Tag:         p.Tag,
-		TS:          p.TS,
-	}))
+	h.Broadcast(context.Background(), api.NewEvent(api.EventConflictDetected, chatID, *p))
 }
 
 // parentACPSession returns the ACP session id of the running bridge

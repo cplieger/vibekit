@@ -954,12 +954,12 @@ func TestHandlePRFetch_InvalidHeadRejected(t *testing.T) {
 // --- handleCommitMessage: nil guard ---
 
 func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
-	// Without WithUtilityPrompt, commit-message generation must fail
-	// cleanly instead of nil-derefing. The nil guard runs before any
-	// git subprocess (checked before `git diff --cached --stat`), so
-	// this test only needs an empty Handler and a minimal JSON body;
-	// no fixture repo required.
-	h := NewHandler(t.TempDir())
+	// With the AIHandler design, the prompter is non-nil by
+	// construction (NewAIHandler requires it). A nil-prompter
+	// AIHandler hits "no staged changes" before reaching the
+	// prompter call (tempdir isn't a repo), so we verify that
+	// the handler doesn't panic and returns the expected git error.
+	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	defer func() {
@@ -967,12 +967,10 @@ func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
 			t.Fatalf("panicked with nil utilityPrompt: %v", r)
 		}
 	}()
-	h.handleCommitMessage(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503 (utility unavailable)", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "utility bridge not available") {
-		t.Errorf("body %q missing 'utility bridge not available'", rec.Body.String())
+	a.handleCommitMessage(rec, req)
+	// Tempdir isn't a repo → "no staged changes" before prompter is called.
+	if !strings.Contains(rec.Body.String(), "no_staged_changes") {
+		t.Errorf("body %q missing 'no_staged_changes'", rec.Body.String())
 	}
 }
 
@@ -1438,10 +1436,10 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 // --- handlePRDescription validation (no git subprocess needed) ---
 
 func TestHandlePRDescription_MalformedBodyRejected(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader("{not"))
 	rec := httptest.NewRecorder()
-	h.handlePRDescription(rec, req)
+	a.handlePRDescription(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -1451,11 +1449,10 @@ func TestHandlePRDescription_MalformedBodyRejected(t *testing.T) {
 }
 
 func TestHandlePRDescription_NilUtilityPromptReturnsError(t *testing.T) {
-	// Mirrors TestHandleCommitMessage_NilUtilityPromptReturnsError:
-	// without WithUtilityPrompt, the handler must fail cleanly with a
-	// JSON error instead of nil-derefing. Pins the fail-fast guard
-	// that skips the git subprocesses when the bridge isn't wired.
-	h := NewHandler(t.TempDir())
+	// With the AIHandler design, the prompter is non-nil by
+	// construction. A nil-prompter AIHandler hits "no changes"
+	// before reaching the prompter call (tempdir isn't a repo).
+	a := &AIHandler{workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	defer func() {
@@ -1463,12 +1460,10 @@ func TestHandlePRDescription_NilUtilityPromptReturnsError(t *testing.T) {
 			t.Fatalf("panicked with nil utilityPrompt: %v", r)
 		}
 	}()
-	h.handlePRDescription(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503 (utility unavailable)", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "utility bridge not available") {
-		t.Errorf("body %q missing 'utility bridge not available'", rec.Body.String())
+	a.handlePRDescription(rec, req)
+	// Tempdir isn't a repo → "no changes" before prompter is called.
+	if !strings.Contains(rec.Body.String(), "no_changes") {
+		t.Errorf("body %q missing 'no_changes'", rec.Body.String())
 	}
 }
 
@@ -1491,7 +1486,6 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 		{func(h *Handler) http.HandlerFunc { return h.handleStage }, "stage"},
 		{func(h *Handler) http.HandlerFunc { return h.handleUnstage }, "unstage"},
 		{func(h *Handler) http.HandlerFunc { return h.handleDiscard }, "discard"},
-		{func(h *Handler) http.HandlerFunc { return h.handlePRDescription }, "pr-description"},
 		{func(h *Handler) http.HandlerFunc { return h.handlePush }, "push"},
 		{func(h *Handler) http.HandlerFunc { return h.handlePull }, "pull"},
 		{func(h *Handler) http.HandlerFunc { return h.handleStash }, "stash"},
@@ -1531,25 +1525,22 @@ func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string) (string, error
 }
 
 func TestWithUtilityPrompt_WiresCallback(t *testing.T) {
-	// After WithUtilityPrompt, handleCommitMessage must proceed past
-	// the nil guard. In a non-repo tempdir it short-circuits at the
-	// "no staged changes" branch — the marker that the guard passed.
+	// After constructing AIHandler with a prompter, handleCommitMessage
+	// must proceed past the nil guard. In a non-repo tempdir it
+	// short-circuits at the "no staged changes" branch.
 	mp := &mockPrompter{result: "feat: stub"}
-	h := NewHandler(t.TempDir(), WithUtilityPrompt(mp))
+	a := NewAIHandler(t.TempDir(), mp)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message",
 		strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
-	h.handleCommitMessage(rec, req)
+	a.handleCommitMessage(rec, req)
 	// Tempdir isn't a repo so we hit "no staged changes" before the
-	// callback fires — the nil guard is gone.
+	// callback fires.
 	if mp.called {
 		t.Errorf("utilityPrompt called before staged-changes check (guard order changed)")
 	}
 	if !strings.Contains(rec.Body.String(), "no_staged_changes") {
 		t.Errorf("body %q missing 'no_staged_changes'; guard order may have changed", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "utility bridge not available") {
-		t.Errorf("WithUtilityPrompt did not wire callback; body = %q", rec.Body.String())
 	}
 }
 

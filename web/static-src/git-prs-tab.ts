@@ -26,33 +26,11 @@ import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
+import { escAttr as escapeHTML } from "./strings.js";
 
 // --- Types ---
 
-interface PR {
-  number: number;
-  title: string;
-  state: string;
-  draft?: boolean;
-  mergeable?: boolean;
-  source_branch: string;
-  target_branch: string;
-  url?: string;
-  author?: string;
-  created_at?: number;
-  updated_at?: number;
-}
-
-interface RepoGroup {
-  forge_id: string;
-  forge_kind: ForgeKind;
-  forge_host: string;
-  owner: string;
-  name: string;
-  full_name: string;
-  prs: PR[];
-  error?: string;
-}
+import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -117,7 +95,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   const myGen = ++refreshGen;
   refreshController?.abort();
   refreshController = new AbortController();
-  const { signal } = refreshController;
+  const signal = AbortSignal.any([refreshController.signal, AbortSignal.timeout(20_000)]);
   // Honour external signal (e.g. from action framework).
   // Capture local ref to avoid stale closure over module-level refreshController.
   const myController = refreshController;
@@ -803,13 +781,4 @@ function computeMergeBlockReason(pr: PR): string {
   return "";
 }
 
-function escapeHTML(s: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
-}
+

@@ -59,6 +59,8 @@ class FollowController {
   private scrollHandler: (() => void) | null = null;
   private rowPool: HTMLDivElement[] = [];
   private poolSize = 0;
+  /** Per-line highlight cache: avoids re-parsing HTML on every scroll frame. */
+  private highlightCache = new Map<string, DocumentFragment>();
 
   init(): void {
     $.followAlongBtn.addEventListener("click", () => {
@@ -359,6 +361,7 @@ class FollowController {
     const content = resp.content ?? "";
     this.lines = content.split("\n");
     this.filePath = path;
+    this.highlightCache.clear();
 
     const codeWrap = view.querySelector(".follow-code");
     if (codeWrap === null) {
@@ -456,7 +459,16 @@ class FollowController {
       const isActive = lineNum === this.currentLine;
       row.classList.toggle("follow-active-line", isActive);
       (row.children[0] as HTMLElement).textContent = String(lineNum).padStart(gutterWidth, " ");
-      (row.children[1] as HTMLElement).innerHTML = highlight(this.lines[lineIdx] ?? "", fname);
+      const textSpan = row.children[1] as HTMLElement;
+      const lineContent = this.lines[lineIdx] ?? "";
+      const cached = this.highlightCache.get(lineContent);
+      if (cached !== undefined) {
+        textSpan.replaceChildren(cached.cloneNode(true));
+      } else {
+        const frag = document.createRange().createContextualFragment(highlight(lineContent, fname));
+        this.highlightCache.set(lineContent, frag);
+        textSpan.replaceChildren(frag.cloneNode(true));
+      }
     }
 
     code.style.paddingTop = `${win.paddingTopPx}px`;

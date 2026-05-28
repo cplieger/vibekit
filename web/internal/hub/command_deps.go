@@ -23,7 +23,7 @@ func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
 	if sb == nil {
 		return nil
 	}
-	return &bridgeAdapter{sb: sb}
+	return sb
 }
 
 // GetOrCreateBridge ensures a bridge exists for the chat.
@@ -32,7 +32,7 @@ func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, m
 	if err != nil {
 		return nil, err
 	}
-	return &bridgeAdapter{sb: sb}, nil
+	return sb, nil
 }
 
 // CloseBridge tears down the bridge for a chat.
@@ -127,18 +127,13 @@ func (h *Hub) ResolveInsideWorkDir(rel string) (string, error) {
 
 // PrimeIfNeeded primes the bridge with history if needed.
 func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b command.Bridge) {
-	ba, ok := b.(*bridgeAdapter)
+	sb, ok := b.(*sharedBridge)
 	if !ok {
-		slog.Error("hub: PrimeIfNeeded called with non-bridgeAdapter Bridge",
+		slog.Error("hub: PrimeIfNeeded called with non-sharedBridge Bridge",
 			"type", fmt.Sprintf("%T", b))
 		return
 	}
-	h.primeIfNeeded(ctx, chatID, ba.sb)
-}
-
-// LinesClear clears line tracking for a chat.
-func (h *Hub) LinesClear(chatID api.ChatID) {
-	h.lines.Clear(chatID)
+	h.primeIfNeeded(ctx, chatID, sb)
 }
 
 // IsEmptyTurn checks if a prompt response is an empty turn.
@@ -151,56 +146,4 @@ func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, res
 	h.emitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
 }
 
-// bridgeAdapter wraps *sharedBridge to satisfy command.Bridge.
-type bridgeAdapter struct {
-	sb *sharedBridge
-}
 
-func (a *bridgeAdapter) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
-	return a.sb.bridge.Call(ctx, method, params)
-}
-
-func (a *bridgeAdapter) Notify(ctx context.Context, method string, params any) error {
-	return a.sb.bridge.Notify(ctx, method, params)
-}
-
-func (a *bridgeAdapter) Respond(ctx context.Context, requestID int64, result any, err error) error {
-	return a.sb.bridge.Respond(ctx, requestID, result, err)
-}
-
-func (a *bridgeAdapter) SessionID() string {
-	return string(a.sb.bridge.SessionID())
-}
-
-func (a *bridgeAdapter) TryAcquireForPrompt() bool {
-	return a.sb.tryAcquireForPrompt()
-}
-
-func (a *bridgeAdapter) ReleaseAfterPrompt() {
-	a.sb.releaseAfterPrompt()
-}
-
-func (a *bridgeAdapter) SetLastActive() {
-	a.sb.mu.Lock()
-	a.sb.lastActiveAt = time.Now()
-	a.sb.mu.Unlock()
-}
-
-func (a *bridgeAdapter) SetPrompting() {
-	a.sb.mu.Lock()
-	a.sb.lastActiveAt = time.Now()
-	a.sb.state = bridgePrompting
-	a.sb.mu.Unlock()
-}
-
-func (a *bridgeAdapter) IsPrimed() bool {
-	a.sb.mu.Lock()
-	defer a.sb.mu.Unlock()
-	return a.sb.primed
-}
-
-func (a *bridgeAdapter) SetPrimed() {
-	a.sb.mu.Lock()
-	a.sb.primed = true
-	a.sb.mu.Unlock()
-}

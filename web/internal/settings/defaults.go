@@ -11,6 +11,23 @@ package settings
 
 import "log/slog"
 
+// Exported constants for settings key names. All consumers should
+// reference these instead of bare string literals to prevent drift.
+const (
+	KeyAgentIgnoreFiles    = "agent_ignore_files"
+	KeyAutoUpdate          = "auto_update"
+	KeyDebugLogs           = "debug_logs"
+	KeyLastModel           = "last_model"
+	KeyModelEffort         = "model_effort"
+	KeyNotificationsEnabled = "notifications_enabled"
+	KeyNotifyAgentFinished = "notify_agent_finished"
+	KeyNotifyPermission    = "notify_permission"
+	KeyPermissionMode      = "permission_mode"
+	KeyShellPolicy         = "shell_policy"
+	KeySupervisedDefault   = "supervised_default"
+	KeyTrustTools          = "trust_tools"
+)
+
 // DefaultSettings returns the canonical defaults the GET /api/settings
 // handler emits when config.json is missing or unreadable. Keep this
 // aligned with the frontend's `AppSettings` interface in
@@ -40,18 +57,18 @@ func DefaultSettings() map[string]any {
 // etc.) live in a separate file (~/.kiro/settings/config.json) and
 // are not part of this set.
 var KnownKeys = map[string]struct{}{
-	"agent_ignore_files":    {},
-	"auto_update":           {},
-	"debug_logs":            {},
-	"last_model":            {},
-	"model_effort":          {},
-	"notifications_enabled": {},
-	"notify_agent_finished": {},
-	"notify_permission":     {},
-	"permission_mode":       {},
-	"shell_policy":          {},
-	"supervised_default":    {},
-	"trust_tools":           {},
+	KeyAgentIgnoreFiles:     {},
+	KeyAutoUpdate:           {},
+	KeyDebugLogs:            {},
+	KeyLastModel:            {},
+	KeyModelEffort:          {},
+	KeyNotificationsEnabled: {},
+	KeyNotifyAgentFinished:  {},
+	KeyNotifyPermission:     {},
+	KeyPermissionMode:       {},
+	KeyShellPolicy:          {},
+	KeySupervisedDefault:    {},
+	KeyTrustTools:           {},
 }
 
 // WarnUnknownKeys logs a warning for each top-level key in keys that

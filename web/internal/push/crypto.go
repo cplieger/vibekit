@@ -62,13 +62,16 @@ func deriveKeyNonce(shared, authSecret, clientPub, serverPub, salt []byte) (cek,
 }
 
 // vapidHeader constructs the VAPID Authorization header (RFC 8292) for
-// the given endpoint using the service's VAPID key pair.
+// the given endpoint using the service's cached VAPID key pair.
 func (s *Service) vapidHeader(endpoint string) (string, error) {
+	return buildVAPIDHeaderFromKey(s.vapidPriv, s.keys.PublicKey, s.subject, endpoint)
+}
+
+// buildVAPIDHeaderFromKey constructs a VAPID Authorization header (RFC 8292)
+// from a pre-decoded ECDSA private key. Used by vapidHeader with the
+// cached key to avoid per-push base64 decode + ECDH→ECDSA conversion.
+func buildVAPIDHeaderFromKey(priv *ecdsa.PrivateKey, pubKeyB64, subject, endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
-	if err != nil {
-		return "", err
-	}
-	priv, err := s.decodeVAPIDPrivateKey()
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +83,7 @@ func (s *Service) vapidHeader(endpoint string) (string, error) {
 		Exp int64  `json:"exp"`
 	}{
 		Aud: u.Scheme + "://" + u.Host,
-		Sub: s.subject,
+		Sub: subject,
 		Exp: now + vapidExpWindow,
 	}
 	claimsJSON, err := json.Marshal(claims)
@@ -99,5 +102,5 @@ func (s *Service) vapidHeader(endpoint string) (string, error) {
 	copy(sig[32-len(rBytes):32], rBytes)
 	copy(sig[64-len(sBytes):64], sBytes)
 
-	return "vapid t=" + unsigned + "." + base64.RawURLEncoding.EncodeToString(sig) + ", k=" + s.keys.PublicKey, nil
+	return "vapid t=" + unsigned + "." + base64.RawURLEncoding.EncodeToString(sig) + ", k=" + pubKeyB64, nil
 }

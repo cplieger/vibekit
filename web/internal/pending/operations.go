@@ -36,9 +36,7 @@ func (s *Store) Add(ctx context.Context, p *AddParams) (waitCh <-chan struct{}, 
 	if p.Path == "" {
 		return nil, nil, ErrEmptyPath
 	}
-	switch p.Kind {
-	case KindCreate, KindEdit, KindDelete:
-	default:
+	if !p.Kind.Valid() {
 		return nil, nil, ErrBadKind
 	}
 
@@ -177,6 +175,38 @@ func (s *Store) Resolve(_ context.Context, toolCallID string, action api.Pending
 	// here keeps the lock hold-time minimal.
 	close(op.resume)
 	return snap, nil
+}
+
+// AcceptAllForChat accepts every pending op for the chat in a single
+// lock acquisition, mirroring RejectAllForChat's O(1)-lock batch
+// semantics. Returns the snapshots of accepted ops for broadcasting.
+func (s *Store) AcceptAllForChat(chatID api.ChatID) []api.PendingChange {
+	s.mu.Lock()
+	ids := s.byChat[chatID]
+	if len(ids) == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	ops := make([]*op, 0, len(ids))
+	snaps := make([]api.PendingChange, 0, len(ids))
+	for _, id := range ids {
+		op := s.ops[id]
+		op.accepted = true
+		ops = append(ops, op)
+		snaps = append(snaps, op.Snapshot())
+		delete(s.ops, id)
+	}
+	delete(s.byChat, chatID)
+	delete(s.pathIndex, chatID)
+	s.mu.Unlock()
+
+	for _, op := range ops {
+		if op.cancelStop != nil {
+			op.cancelStop()
+		}
+		close(op.resume)
+	}
+	return snaps
 }
 
 // RejectAllForChat flushes every pending op for the chat, closing

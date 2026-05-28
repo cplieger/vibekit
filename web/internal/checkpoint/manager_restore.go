@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // RestorePreview returns the list of files that would be touched by
@@ -62,11 +64,43 @@ func (m *Manager) RestorePreview(ctx context.Context, tag Tag) ([]string, error)
 // "already at target state").
 func (m *Manager) Restore(ctx context.Context, tag Tag) (int, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if err := m.loadAndValidateTag(ctx, string(tag)); err != nil {
+		m.mu.Unlock()
 		return 0, err
 	}
-	return m.restoreLocked(ctx, string(tag), false)
+	msgCount, touched, err := m.collectRestoreInfoLocked(string(tag))
+	m.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	if len(touched) == 0 {
+		// Nothing to revert. Close any dangling journal.
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return msgCount, m.logRestoreCommittedLocked(ctx, string(tag), msgCount)
+	}
+
+	// Phase 1: stage blob reads without the lock.
+	stages, err := m.stageBlobReads(ctx, touched, string(tag))
+	if err != nil {
+		return 0, err
+	}
+
+	// Re-acquire lock for journal + phase 2.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.logRestoreStartedLocked(ctx, string(tag), msgCount); err != nil {
+		m.cleanupStages(stages)
+		return 0, fmt.Errorf("restore: journal open: %w", err)
+	}
+	if err := m.applyStagesLocked(stages); err != nil {
+		return 0, err
+	}
+	if err := m.logRestoreCommittedLocked(ctx, string(tag), msgCount); err != nil {
+		slog.Warn("checkpoint: restore_committed append failed",
+			"chat_id", m.chatID, "tag", tag, "error", err)
+	}
+	return msgCount, nil
 }
 
 // CheckoutFile reverts a single file to its content at `tag`. Used
@@ -77,16 +111,21 @@ func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) err
 	if relPath == "" {
 		return errors.New("checkout: empty path")
 	}
+	// Phase 0: snapshot state under lock.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if err := m.loadAndValidateTag(ctx, string(tag)); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	sha, existed := m.state.contentAtOrBeforeTag(relPath, string(tag))
 	abs, err := m.absPath(relPath)
 	if err != nil {
+		m.mu.Unlock()
 		return err
 	}
+	m.mu.Unlock()
+
+	// Phase 1: blob I/O without the lock.
 	if !existed {
 		if rmErr := os.Remove(abs); rmErr != nil && !os.IsNotExist(rmErr) {
 			return fmt.Errorf("checkout: remove %s: %w", relPath, rmErr)
@@ -153,7 +192,7 @@ func (m *Manager) Cleanup(ctx context.Context) {
 		slog.Warn("checkpoint: cleanup wipe failed",
 			"chat_id", m.chatID, "error", err)
 	}
-	m.index.forgetChat(m.chatID)
+	m.index.forgetChat(string(m.chatID))
 	// m.log is retained with the same path on purpose. After
 	// Wipe() the events.jsonl and parent dir are gone, but
 	// m.loaded=false forces the next method call through
@@ -225,6 +264,102 @@ func (m *Manager) restoreLocked(ctx context.Context, tag string, recovering bool
 			"chat_id", m.chatID, "tag", tag, "error", err)
 	}
 	return msgCount, nil
+}
+
+// collectRestoreInfoLocked snapshots the state needed for a restore
+// under m.mu. Returns msgCount, touched files, and any error.
+// Caller must hold m.mu.
+func (m *Manager) collectRestoreInfoLocked(tag string) (int, []string, error) {
+	msgCount, ok := m.state.tags[tag]
+	if !ok {
+		return 0, nil, fmt.Errorf("%w: %q", ErrTagNotFound, tag)
+	}
+	touched := m.state.filesTouchedAtOrAfter(tag)
+	return msgCount, touched, nil
+}
+
+// restorePlan holds the pre-computed info for one file in a restore.
+type restorePlan struct {
+	path    string
+	abs     string
+	sha     string
+	existed bool
+}
+
+// collectRestorePlans builds the plan for each file under m.mu.
+// Caller must hold m.mu.
+func (m *Manager) collectRestorePlans(touched []string, tag string) ([]restorePlan, error) {
+	plans := make([]restorePlan, 0, len(touched))
+	for _, path := range touched {
+		sha, existed := m.state.contentAtOrBeforeTag(path, tag)
+		abs, pathErr := m.absPath(path)
+		if pathErr != nil {
+			return nil, fmt.Errorf("restore: resolve %s: %w", path, pathErr)
+		}
+		plans = append(plans, restorePlan{path: path, abs: abs, sha: sha, existed: existed})
+	}
+	return plans, nil
+}
+
+// stageBlobReads performs blob I/O and temp-file staging WITHOUT
+// holding m.mu. This is the unlock-before-I/O pattern that prevents
+// blocking other Manager methods during restore's disk reads.
+// Uses bounded-concurrency errgroup (limit 8) matching the Diff
+// method's pattern for parallel blob reads.
+func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag string) ([]restoreStage, error) {
+	// Collect plans under lock.
+	m.mu.Lock()
+	plans, err := m.collectRestorePlans(touched, tag)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform blob reads and staging without the lock, concurrently.
+	stages := make([]restoreStage, len(plans))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for i, p := range plans {
+		stages[i] = restoreStage{path: p.path, abs: p.abs, existed: p.existed}
+		if !p.existed {
+			continue
+		}
+		g.Go(func() error {
+			data, getErr := m.blobs.Get(gctx, p.sha)
+			if getErr != nil {
+				return fmt.Errorf("restore: get blob %s for %s: %w", p.sha, p.path, getErr)
+			}
+			parentDir := filepath.Dir(p.abs)
+			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+				return fmt.Errorf("restore: mkdir for %s: %w", p.path, mkErr)
+			}
+			tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(p.abs)+restoreStageSuffix)
+			if tErr != nil {
+				return fmt.Errorf("restore: create temp for %s: %w", p.path, tErr)
+			}
+			if _, wErr := tmpFile.Write(data); wErr != nil {
+				tmpFile.Close()
+				_ = os.Remove(tmpFile.Name())
+				return fmt.Errorf("restore: stage %s: %w", p.path, wErr)
+			}
+			if sErr := tmpFile.Sync(); sErr != nil {
+				tmpFile.Close()
+				_ = os.Remove(tmpFile.Name())
+				return fmt.Errorf("restore: fsync stage %s: %w", p.path, sErr)
+			}
+			if cErr := tmpFile.Close(); cErr != nil {
+				_ = os.Remove(tmpFile.Name())
+				return fmt.Errorf("restore: close stage %s: %w", p.path, cErr)
+			}
+			stages[i].tmp = tmpFile.Name()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		m.cleanupStages(stages)
+		return nil, err
+	}
+	return stages, nil
 }
 
 // stageRestoreLocked runs phase 1 of Restore: for each file touched

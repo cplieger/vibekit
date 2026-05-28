@@ -88,7 +88,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
       appendToOutputBox(outputBox, opts.output);
     }
   } else {
-    el.innerHTML += buildDetails(opts);
+    el.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
       appendOutput(el, opts.output);
     }

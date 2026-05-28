@@ -14,13 +14,32 @@ import type {
   Usage,
   ToolCall,
   PendingChange,
-  Crew,
 } from "./types.js";
-import { apiGetTyped } from "./api-client.js";
-import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
-import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { signal, batch } from "./signals.js";
-import { registerCleanup } from "./actions/index.js";
+import {
+  streamingTextSigs,
+  streamingReasoningSigs,
+  toolCallSigs,
+  crewSigs,
+} from "./store-signals.js";
+
+// Re-export signal accessors from store-signals.ts for backward compat.
+export {
+  SignalMap,
+  getStreamingSig,
+  getReasoningSig,
+  getToolCallSig,
+  getCrewSig,
+  ensureStreamingSig,
+  ensureReasoningSig,
+  ensureToolCallSig,
+  ensureCrewSig,
+  clearStreamingSig,
+  clearReasoningSig,
+  clearToolCallSig,
+  clearCrewSig,
+  clearAllSignals,
+} from "./store-signals.js";
 
 // --- Reactive version counters: effects subscribe to the relevant signal ---
 /** Session list changes: add, remove, reorder, name, model, mode changes. */
@@ -32,123 +51,6 @@ export const messagesVersion = signal(0);
 
 /** @deprecated Alias for backwards compat in tests. Bumps all three. */
 export const version = sessionsVersion;
-
-/** Per-message-id streaming text signal. Created lazily on first chunk
- *  when a message is already mounted (so reconcile doesn't re-walk the
- *  whole list every chunk). The streaming bubble in messages.ts
- *  subscribes to its own signal via effect(). The signal is removed
- *  on finalize / chat-switch. */
-const streamingTextSig = new Map<string, ReturnType<typeof signal<string>>>();
-
-/** Per-message-id reasoning signal. Sibling of streamingTextSig: the
- *  reasoning details element subscribes to this. Reasoning chunks
- *  (chunk.is_reasoning=true) update this signal; content chunks update
- *  streamingTextSig. Both grow in parallel during extended-thinking
- *  turns. */
-const streamingReasoningSig = new Map<string, ReturnType<typeof signal<string>>>();
-
-/** Per-tool-call signal. Tool-card mounts subscribe to their own signal
- *  via effect(); status / output / diff updates bypass the global
- *  reconcile loop entirely. Created on first upsert when the tool's
- *  parent message is already mounted. */
-const toolCallSig = new Map<string, ReturnType<typeof signal<ToolCall>>>();
-
-/** Per-crew-message signal. Crew event messages mount subscribes to
- *  this; subsequent kiro-cli list_update snapshots fan out via the
- *  signal without re-running the global reconcile loop. Created on
- *  first mount in messages.ts. */
-const crewSig = new Map<string, ReturnType<typeof signal<Crew>>>();
-
-export function getStreamingSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
-  return streamingTextSig.get(messageID);
-}
-
-export function getReasoningSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
-  return streamingReasoningSig.get(messageID);
-}
-
-export function getToolCallSig(toolID: string): ReturnType<typeof signal<ToolCall>> | undefined {
-  return toolCallSig.get(toolID);
-}
-
-export function getCrewSig(messageID: string): ReturnType<typeof signal<Crew>> | undefined {
-  return crewSig.get(messageID);
-}
-
-/** Get or create the content signal for a message id. Initialized to the
- *  current full content. */
-export function ensureStreamingSig(
-  messageID: string,
-  initial: string,
-): ReturnType<typeof signal<string>> {
-  let sig = streamingTextSig.get(messageID);
-  if (sig === undefined) {
-    sig = signal(initial);
-    streamingTextSig.set(messageID, sig);
-  }
-  return sig;
-}
-
-/** Get or create the reasoning signal for a message id. Initialized to
- *  the current full reasoning. */
-export function ensureReasoningSig(
-  messageID: string,
-  initial: string,
-): ReturnType<typeof signal<string>> {
-  let sig = streamingReasoningSig.get(messageID);
-  if (sig === undefined) {
-    sig = signal(initial);
-    streamingReasoningSig.set(messageID, sig);
-  }
-  return sig;
-}
-
-/** Get or create the signal for a tool call id. Initialized to the
- *  current ToolCall snapshot. */
-export function ensureToolCallSig(
-  toolID: string,
-  initial: ToolCall,
-): ReturnType<typeof signal<ToolCall>> {
-  let sig = toolCallSig.get(toolID);
-  if (sig === undefined) {
-    sig = signal(initial);
-    toolCallSig.set(toolID, sig);
-  }
-  return sig;
-}
-
-/** Get or create the signal for a crew event message id. Initialized
- *  to the current Crew snapshot. */
-export function ensureCrewSig(messageID: string, initial: Crew): ReturnType<typeof signal<Crew>> {
-  let sig = crewSig.get(messageID);
-  if (sig === undefined) {
-    sig = signal(initial);
-    crewSig.set(messageID, sig);
-  }
-  return sig;
-}
-
-/** Remove the content signal for a message id. */
-export function clearStreamingSig(messageID: string): void {
-  streamingTextSig.delete(messageID);
-}
-
-/** Remove the reasoning signal for a message id. */
-export function clearReasoningSig(messageID: string): void {
-  streamingReasoningSig.delete(messageID);
-}
-
-/** Remove the per-tool signal. Called when the tool's parent message
- *  unmounts or on chat switch. */
-export function clearToolCallSig(toolID: string): void {
-  toolCallSig.delete(toolID);
-}
-
-/** Remove the per-crew signal. Called when the crew event message
- *  unmounts or on chat switch. */
-export function clearCrewSig(messageID: string): void {
-  crewSig.delete(messageID);
-}
 
 function emitSessions(): void {
   sessionsVersion.value = sessionsVersion.peek() + 1;
@@ -189,18 +91,6 @@ let _activeId = "";
 let sessionIndex = new Map<string, Session>();
 const msgIndex = new Map<string, Map<string, number>>();
 const _queuedAttachments = new Map<string, unknown[][]>();
-let listController: AbortController | null = null;
-const msgControllers = new Map<string, AbortController>();
-
-// Abort any in-flight chat-list / message fetches when the page unloads.
-// One sweep aborts the active list fetch + every per-chat message stream.
-registerCleanup(() => listController?.abort());
-registerCleanup(() => {
-  for (const c of msgControllers.values()) {
-    c.abort();
-  }
-  msgControllers.clear();
-});
 
 // --- Accessors ---
 export function getSessions(): Session[] {
@@ -347,29 +237,6 @@ export function setQueuedPrompt(id: string, text: string | undefined): void {
   emitActive();
 }
 
-// --- Inline decoders ---
-const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
-  const o = asObject(v, "$.chat_list");
-  const out: { chats?: ChatHeader[] } = {};
-  if (o["chats"] !== undefined) {
-    out.chats = decodeArray(o["chats"], decodeChatHeader, "$.chat_list.chats");
-  }
-  return out;
-};
-
-const decodeChatGetResponseLocal: Decoder<{
-  chat: ChatHeader;
-  messages: Message[];
-  has_more: boolean;
-}> = (v) => {
-  const o = asObject(v, "$.chat_get");
-  return {
-    chat: decodeChatHeader(o["chat"]),
-    messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
-    has_more: reqBool(o, "has_more", "$.chat_get"),
-  };
-};
-
 // --- Index helpers ---
 export function clearMsgIndex(sessionID: string): void {
   msgIndex.delete(sessionID);
@@ -387,7 +254,8 @@ export function invalidateSession(chatID: string): void {
   emitMessages();
 }
 
-function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
+/** Rebuild the message index for a session. Exported for store-load.ts. */
+export function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
   for (let i = 0; i < messages.length; i++) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -407,110 +275,6 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
     msgIndex.set(sessionID, mi);
   }
   return mi;
-}
-
-// --- Load operations ---
-export async function loadList(): Promise<boolean> {
-  listController?.abort();
-  const controller = new AbortController();
-  listController = controller;
-  const knownBefore = new Set(sessionIndex.keys());
-  const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, controller.signal);
-  if (controller.signal.aborted) {
-    listController = null;
-    return false;
-  }
-  if (d?.chats === undefined) {
-    listController = null;
-    return false;
-  }
-  const next: Session[] = [];
-  for (const h of d.chats) {
-    const existing = get(h.id);
-    const parent_chat_id = h.parent_chat_id ?? existing?.parent_chat_id;
-    const session: Session = {
-      id: h.id,
-      name: h.name,
-      agent: h.agent ?? "",
-      model: h.model ?? "",
-      acp_session_id: h.acp_session_id ?? "",
-      current_mode_id: h.current_mode_id ?? "",
-      available_modes: h.available_modes ?? [],
-      available_models: h.available_models ?? [],
-      auto_approve_crew: h.auto_approve_crew ?? existing?.auto_approve_crew ?? false,
-      supervised_mode: h.supervised_mode ?? false,
-      pending_changes: existing?.pending_changes ?? [],
-      usage: h.usage,
-      message_count: h.message_count,
-      messages: existing?.messages ?? [],
-      has_more:
-        existing !== undefined
-          ? existing.has_more || h.message_count > existing.messages.length
-          : h.message_count > 0,
-      thinking: existing?.thinking ?? false,
-      working_label: existing?.working_label ?? "Thinking",
-      ...(parent_chat_id !== undefined && { parent_chat_id }),
-      ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
-      ...(existing?.trusted_this_turn !== undefined && {
-        trusted_this_turn: existing.trusted_this_turn,
-      }),
-      ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
-      ...(h.oldest_checkpoint_tag !== undefined && {
-        oldest_checkpoint_tag: h.oldest_checkpoint_tag,
-      }),
-    };
-    next.push(session);
-  }
-  // Preserve sessions added by SSE (upsertHeader) during the await.
-  const nextIds = new Set(next.map((s) => s.id));
-  for (const [id, s] of sessionIndex) {
-    if (!knownBefore.has(id) && !nextIds.has(id)) {
-      next.push(s);
-    }
-  }
-  setSessions(next);
-  listController = null;
-  emitSessions();
-  return true;
-}
-
-export async function loadMessages(chatID: string, before?: number, limit = 50): Promise<boolean> {
-  msgControllers.get(chatID)?.abort();
-  const controller = new AbortController();
-  msgControllers.set(chatID, controller);
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (before !== undefined) {
-    params.set("before", String(before));
-  }
-  const d = await apiGetTyped(
-    `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
-    decodeChatGetResponseLocal,
-    controller.signal,
-  );
-  if (controller.signal.aborted) {
-    msgControllers.delete(chatID);
-    return false;
-  }
-  if (d === null) {
-    msgControllers.delete(chatID);
-    return false;
-  }
-  const session = get(chatID);
-  if (session === undefined) {
-    msgControllers.delete(chatID);
-    return false;
-  }
-  if (before !== undefined) {
-    session.messages = [...d.messages, ...session.messages];
-  } else {
-    session.messages = d.messages;
-  }
-  session.message_count = d.chat.message_count;
-  session.has_more = d.has_more;
-  rebuildMsgIndex(chatID, session.messages);
-  msgControllers.delete(chatID);
-  emitMessages();
-  return true;
 }
 
 // --- SSE-driven mutations ---
@@ -652,12 +416,8 @@ export function upsertMessage(chatID: string, msg: Message): void {
     return;
   }
   s.messages[idx] = msg;
-  // Crew-only update: fan out via the per-crew signal so the card
-  // re-renders without walking the entire message list. Falls back to
-  // emit() if the crew message hasn't been mounted yet (rare; the
-  // mount creates the signal so subsequent updates flow through it).
   if (msg.event_kind === "crew" && msg.crew !== undefined) {
-    const sig = crewSig.get(msg.id);
+    const sig = crewSigs.get(msg.id);
     if (sig !== undefined) {
       sig.value = msg.crew;
       return;
@@ -784,21 +544,19 @@ export function appendChunk(
     msg.content = (msg.content ?? "") + delta;
   }
 
-  // First chunk for this message: bump global so reconcile can mount
-  // the new bubble. Subsequent chunks fan out via per-message signal.
   if (isNew) {
     scheduleMessages();
     return;
   }
   if (isReasoning) {
-    const sig = streamingReasoningSig.get(messageID);
+    const sig = streamingReasoningSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
     } else {
       scheduleMessages();
     }
   } else {
-    const sig = streamingTextSig.get(messageID);
+    const sig = streamingTextSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
     } else {
@@ -828,18 +586,11 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
-    // New tool added to existing message — bump global so reconcile
-    // mounts it. The signal is created on mount (see toolSpec.mount).
     scheduleMessages();
     return;
   }
   msg.tool_calls[tcIdx] = call;
-  // Existing tool updated — fan out via per-tool signal directly.
-  // This bypasses the global reconcile loop so a 50-tool message
-  // doesn't walk all 50 on every status flip. Falls back to
-  // scheduleRender if no signal exists yet (e.g. the mount hasn't
-  // subscribed yet because reconcile is still pending).
-  const sig = toolCallSig.get(call.id);
+  const sig = toolCallSigs.get(call.id);
   if (sig !== undefined) {
     sig.value = call;
   } else {

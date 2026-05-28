@@ -58,16 +58,24 @@ const (
 	kindConflict eventKind = "conflict_detected"
 )
 
+// validKinds is the single source of truth for known event kinds.
+// Adding a new kind to the const block above AND this map is the
+// only step needed; valid() is a map lookup.
+var validKinds = map[eventKind]struct{}{
+	kindTurnStart:        {},
+	kindSnapshot:         {},
+	kindRestore:          {},
+	kindRestoreStarted:   {},
+	kindRestoreCommitted: {},
+	kindConflict:         {},
+}
+
 // valid reports whether k is a known event kind. Used at the Append
 // boundary to reject invalid kinds at write time rather than
 // discovering them at replay time (where the damage is permanent).
 func (k eventKind) valid() bool {
-	switch k {
-	case kindTurnStart, kindSnapshot, kindRestore,
-		kindRestoreStarted, kindRestoreCommitted, kindConflict:
-		return true
-	}
-	return false
+	_, ok := validKinds[k]
+	return ok
 }
 
 // event is the on-disk representation. One per line, serialized via
@@ -148,7 +156,7 @@ func (l *eventLog) Append(ctx context.Context, ev *event) error {
 	defer l.mu.Unlock()
 	parent := filepath.Dir(l.path)
 	if mkErr := os.MkdirAll(parent, 0o700); mkErr != nil {
-		return fmt.Errorf("mkdir event log: %w", mkErr)
+		return fmt.Errorf("mkdir event log: %w", errors.Join(ErrTransient, mkErr))
 	}
 	// O_CREATE here may create events.jsonl on first Append for a
 	// chat. We sync the parent dir post-write to persist the new
@@ -159,7 +167,7 @@ func (l *eventLog) Append(ctx context.Context, ev *event) error {
 	}
 	f, openErr := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if openErr != nil {
-		return fmt.Errorf("open event log: %w", openErr)
+		return fmt.Errorf("open event log: %w", errors.Join(ErrTransient, openErr))
 	}
 	// close errors post-Sync are genuinely ignorable; _ = f.Close
 	// makes the intent explicit (vs defer f.Close() silently

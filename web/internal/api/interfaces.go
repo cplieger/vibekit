@@ -2,15 +2,26 @@
 // components. All cross-component calls go through these interfaces,
 // enabling testability (mock any component) and swappability.
 //
-// This package imports only stdlib. Implementation packages import api,
-// never the reverse.
+// This package contains three concern groups:
+//
+//  1. Domain types and interfaces — the contract surface (interfaces.go,
+//     domain_chat.go, events.go, commands.go, domain_rpc.go, mcp.go,
+//     push_types.go, methods.go, strings.go).
+//  2. HTTP response/request helpers (httputil.go, decode.go,
+//     fileio_serve.go) — WriteJSON, BadRequest, RequireMethod, etc.
+//  3. File I/O utilities (fileio.go) — SaveBytes, SaveJSON,
+//     CleanupStaleTemps.
+//
+// Implementation packages import api, never the reverse. Domain types
+// Tag, FileChange, and ConflictPayload live in checkpoint/types (a
+// leaf package with zero internal dependencies).
 package api
 
 import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/checkpoint"
+	checkpoint "vibekit/internal/checkpoint/types"
 )
 
 // --- Persistence ---
@@ -66,6 +77,32 @@ type ChatStore interface {
 }
 
 // --- Communication ---
+
+// CommandBridge abstracts the per-chat ACP bridge for command handlers.
+// Declared here (consumer-side) so both command and hub can reference
+// the same contract without circular imports.
+type CommandBridge interface {
+	// Call sends an RPC call to kiro-cli.
+	Call(ctx context.Context, method string, params any) (*RPCResponse, error)
+	// Notify sends a one-way notification to kiro-cli.
+	Notify(ctx context.Context, method string, params any) error
+	// Respond sends a permission response to kiro-cli.
+	Respond(ctx context.Context, requestID int64, result any, err error) error
+	// SessionID returns the current ACP session ID.
+	SessionID() SessionID
+	// TryAcquireForPrompt attempts to lock the bridge for prompting.
+	TryAcquireForPrompt() bool
+	// ReleaseAfterPrompt releases the prompt lock.
+	ReleaseAfterPrompt()
+	// SetLastActive updates the last-active timestamp.
+	SetLastActive()
+	// SetPrompting sets the bridge state to prompting (for recovery).
+	SetPrompting()
+	// IsPrimed reports whether the bridge has been primed.
+	IsPrimed() bool
+	// SetPrimed marks the bridge as primed.
+	SetPrimed()
+}
 
 // Broadcaster sends events to all connected SSE clients.
 type Broadcaster interface {

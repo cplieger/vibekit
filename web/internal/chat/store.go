@@ -27,12 +27,16 @@ var _ api.ChatStore = (*Store)(nil)
 
 // fileMode is the on-disk mode for chat files. The parent dir uses 0o700
 // because chat content may contain secrets the user pasted into prompts.
+// ArchiveSubdir is the subdirectory name under the chats directory where
+// archived chats are stored. Exported so composition-layer code (e.g.
+// sweepStaleTemps) can reference it without hardcoding the literal.
+const ArchiveSubdir = "archive"
+
 const (
 	fileMode        = 0o600
 	dirMode         = 0o700
 	chatFileSuffix  = ".json"
 	planDraftSuffix = ".plan.md"
-	archiveSubdir   = "archive"
 )
 
 // maxChatFileBytes caps the size of a single chat file loaded by `load`.

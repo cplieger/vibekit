@@ -65,11 +65,12 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 // AutoApproveCrew set. Returns true if the permission was handled.
 func (t *Translator) tryAutoApproveCrew(ctx context.Context, chatID api.ChatID, subSessionID string, reqID int64, options []api.PermissionOption, toolTitle string) bool {
 	chat, ok := t.deps.ChatStore().Get(ctx, chatID)
-	if !ok || !chat.AutoApproveCrew {
+	if !ok {
 		return false
 	}
 	optionID := FindAllowOnce(options)
-	if optionID == "" {
+	decision := permissions.AutoDecideCrew(chat.AutoApproveCrew, optionID != "")
+	if decision != permissions.DecisionAllow {
 		return false
 	}
 	if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeSelected(optionID), nil); err != nil {
@@ -88,18 +89,16 @@ func (t *Translator) tryAutoApproveCrew(ctx context.Context, chatID api.ChatID, 
 // tryShellPolicy evaluates the shell safety tier and auto-approves or
 // auto-rejects shell commands. Returns true if the permission was handled.
 func (t *Translator) tryShellPolicy(ctx context.Context, chatID api.ChatID, reqID int64, command string, options []api.PermissionOption) bool {
-	decision := permissions.EvaluateShellCommand(ctx, t.deps.ConfigDir(), command, t.deps.PermissionRules())
+	shellResult := permissions.EvaluateShellCommand(ctx, t.deps.ConfigDir(), command, t.deps.PermissionRules())
+	optionID := FindAllowOnce(options)
+	decision := permissions.AutoDecideShell(shellResult.Decision, optionID != "")
 	switch decision {
-	case permissions.ShellAllow:
-		optionID := FindAllowOnce(options)
-		if optionID == "" {
-			return false
-		}
+	case permissions.DecisionAllow:
 		if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeSelected(optionID), nil); err == nil {
 			slog.Info("shell policy auto-approved", "chat_id", chatID, "command", command)
 			return true
 		}
-	case permissions.ShellDeny:
+	case permissions.DecisionDeny:
 		if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeCancelled(), nil); err != nil {
 			slog.Error("shell policy deny: respond failed", "chat_id", chatID, "error", err)
 		}

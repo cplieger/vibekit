@@ -51,7 +51,7 @@ func (sh *slashHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validChatID(api.ChatID(req.ChatID)) {
-		api.BadRequest(w, "invalid chat_id")
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 

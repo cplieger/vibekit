@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	jsonKeyOutput = "output"
+	jsonKeyOutput = api.JSONKeyOutput
 	refHEAD       = "HEAD"
 )
 
@@ -69,8 +69,7 @@ func gitShowCmd(ctx context.Context, dir, ref, path string) (string, error) {
 	if err == nil {
 		return out, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 128 {
 		// "not a git repository" is a repo-level failure, not a
 		// path-not-found. Let it fall through as a generic error.
 		if strings.Contains(out, "not a git repository") {

@@ -224,6 +224,11 @@ func (r *mcpRegistry) nameIsEnabled(ctx context.Context, name string) bool {
 }
 
 // statusServer is the JSON shape for /api/mcp/status entries.
+// mcpStatusResponse is the typed response for the MCP status endpoint.
+type mcpStatusResponse struct {
+	Servers []statusServer `json:"servers"`
+}
+
 type statusServer struct {
 	Name     string `json:"name"`
 	State    string `json:"state"`
@@ -242,7 +247,7 @@ func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 			Error:    s.Error,
 		}
 	}
-	api.WriteJSON(w, map[string]any{"servers": out})
+	api.WriteJSON(w, mcpStatusResponse{Servers: out})
 }
 
 // startNotifier launches the single long-lived goroutine that drains

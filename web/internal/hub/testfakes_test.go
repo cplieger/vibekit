@@ -90,6 +90,10 @@ func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 
 func (b *fakeBridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
 
+
+// newNoopBridge returns a zero-value fakeBridge suitable for benchmarks
+// where the bridge is never actually called. Replaces the former stubBridge type.
+func newNoopBridge() api.ACPBridge { return &fakeBridge{notifCh: make(chan *api.RPCResponse)} }
 // --- Fake ChatStore (in-memory, broadcasts via attached Hub) ---
 
 type fakeChatStore struct {

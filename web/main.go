@@ -8,6 +8,7 @@ package main
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"vibekit/internal/api"
 	"vibekit/internal/auth"
@@ -50,6 +51,20 @@ func main() {
 // in main itself would skip the defer).
 func runMain() int {
 	cfg := composition.ConfigFromEnv()
+
+	// Wire the kiro home resolver into the api package so it doesn't
+	// need to read os.Getenv directly (library-composition principle).
+	api.SetKiroHomeResolver(func() string {
+		if h := os.Getenv("KIRO_HOME"); h != "" {
+			return h
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ".kiro"
+		}
+		return filepath.Join(home, ".kiro")
+	})
+
 	app, err := composition.Build(&cfg, staticFS)
 	if err != nil {
 		slog.Error("build", "error", err)

@@ -564,17 +564,24 @@ func TestDecodeVAPIDPrivateKey_WrongLength(t *testing.T) {
 	}
 }
 
-// TestVAPIDHeader_InvalidKeyPropagatesError pins the vapidHeader →
-// decodeVAPIDPrivateKey error forwarding so a future refactor can't
-// accidentally swallow the error.
+// TestVAPIDHeader_InvalidKeyPropagatesError verifies that a service
+// constructed with an invalid VAPID key is marked unhealthy at startup.
+// With the cached key approach, invalid keys are caught at construction
+// time rather than at per-push time.
 func TestVAPIDHeader_InvalidKeyPropagatesError(t *testing.T) {
 	dir := t.TempDir()
+	// Write an invalid key file so loadKeys finds it but can't decode it.
+	badKeys := `{"privateKey":"broken","publicKey":"also-broken"}`
+	if err := os.WriteFile(filepath.Join(dir, "vapid-keys.json"), []byte(badKeys), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s := New(context.Background(), dir, "mailto:test@example.com")
-
-	s.keys.PrivateKey = "broken"
-
-	if _, err := s.vapidHeader("https://fcm.googleapis.com/fcm/send/abc"); err == nil {
-		t.Fatal("vapidHeader with broken key = nil error, want error")
+	if s.vapidPriv != nil {
+		t.Fatal("vapidPriv should be nil for invalid key")
+	}
+	// The service should be unhealthy.
+	if s.healthy {
+		t.Fatal("service should be unhealthy with invalid VAPID key")
 	}
 }
 

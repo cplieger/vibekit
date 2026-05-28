@@ -28,6 +28,11 @@ import {
   sortEntries,
   initEditablePath,
   type FetchDirOpts,
+  FB_ROW,
+  FB_NAME,
+  FB_NAME_LINK,
+  FB_CHECK,
+  FB_META,
 } from "./files-shared.js";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
@@ -40,82 +45,14 @@ import {
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { FileBrowserState } from "./files-state.js";
+export { FileBrowserState } from "./files-state.js";
 
 type FbEntry = { kind: "parent" } | { kind: "entry"; entry: FileEntry };
 
 /** Per-browser abort holder — prevents picker from aborting browser fetches. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 registerCleanup(() => browserFetchHolder.controllerHolder.current?.abort());
-
-export class FileBrowserState {
-  currentPath = ".";
-  history: string[] = ["."];
-  historyIdx = 0;
-  selected = new Set<string>();
-  lastClickedName = "";
-  entries: FileEntry[] = [];
-  entryMap = new Map<string, FileEntry>();
-  dirWritable = true;
-  sortedNames: string[] = [];
-
-  navigate(path: string): void {
-    this.currentPath = path;
-    this.selected.clear();
-    this.lastClickedName = "";
-    this.history.length = this.historyIdx + 1;
-    this.history.push(path);
-    this.historyIdx = this.history.length - 1;
-  }
-
-  goBack(): boolean {
-    if (this.historyIdx <= 0) {
-      return false;
-    }
-    this.historyIdx--;
-    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    this.selected.clear();
-    this.lastClickedName = "";
-    return true;
-  }
-
-  goForward(): boolean {
-    if (this.historyIdx >= this.history.length - 1) {
-      return false;
-    }
-    this.historyIdx++;
-    this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    this.selected.clear();
-    this.lastClickedName = "";
-    return true;
-  }
-
-  reset(): void {
-    this.currentPath = ".";
-    this.history.length = 0;
-    this.history.push(".");
-    this.historyIdx = 0;
-    this.selected.clear();
-    this.lastClickedName = "";
-    this.entries = [];
-    this.entryMap.clear();
-    this.dirWritable = true;
-    this.sortedNames = [];
-  }
-
-  selectEntry(name: string): void {
-    this.selected.add(name);
-    this.lastClickedName = name;
-  }
-
-  deselectEntry(name: string): void {
-    this.selected.delete(name);
-    this.lastClickedName = name;
-  }
-
-  deselectAll(): void {
-    this.selected.clear();
-  }
-}
 
 const state = new FileBrowserState();
 
@@ -355,7 +292,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
         // Sync metadata that can change when the directory was re-fetched
         // (size, modTime, mode). Selection state is driven by
         // updateRowHighlights() — leave that out of update.
-        const meta = row.querySelector(".fb-meta");
+        const meta = row.querySelector(`.${FB_META}`);
         if (meta !== null) {
           const parts: string[] = [];
           if (!e.entry.isDir) {
@@ -389,24 +326,24 @@ function renderList(opts: { transition?: boolean } = {}): void {
 
 function parentRow(): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "fb-row";
+  row.className = FB_ROW;
 
   const checkSpan = document.createElement("span");
-  checkSpan.className = "fb-check";
+  checkSpan.className = FB_CHECK;
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
   icon.innerHTML = FILE_ICONS["folder"] ?? "";
 
   const nameSpan = document.createElement("span");
-  nameSpan.className = "fb-name fb-name-link";
+  nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
   nameSpan.textContent = "..";
   nameSpan.addEventListener("click", () => {
     navigate(parentPath(state.currentPath));
   });
 
   const metaSpan = document.createElement("span");
-  metaSpan.className = "fb-meta";
+  metaSpan.className = FB_META;
 
   row.append(checkSpan, icon, nameSpan, metaSpan);
   return row;
@@ -414,14 +351,14 @@ function parentRow(): HTMLDivElement {
 
 function entryRow(entry: FileEntry): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "fb-row";
+  row.className = FB_ROW;
   row.setAttribute("role", "listitem");
   row.dataset["name"] = entry.name;
   row.dataset["isDir"] = String(entry.isDir);
 
   const check = document.createElement("input");
   check.type = "checkbox";
-  check.className = "fb-check";
+  check.className = FB_CHECK;
   check.checked = state.selected.has(entry.name);
   check.addEventListener("change", () => {
     if (check.checked) {
@@ -438,7 +375,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   icon.innerHTML = fileIcon(entry.name, entry.isDir);
 
   const name = document.createElement("span");
-  name.className = "fb-name fb-name-link";
+  name.className = `${FB_NAME} ${FB_NAME_LINK}`;
   name.textContent = entry.name;
   name.addEventListener("click", (e: MouseEvent) => {
     if (e.shiftKey && state.lastClickedName !== "") {
@@ -453,7 +390,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   });
 
   const meta = document.createElement("span");
-  meta.className = "fb-meta";
+  meta.className = FB_META;
   const parts: string[] = [];
   if (!entry.isDir) {
     parts.push(formatSize(entry.size));
@@ -491,7 +428,7 @@ function updateRowHighlights(): void {
       continue;
     }
     el.classList.toggle("fb-row-selected", state.selected.has(name));
-    const check = el.querySelector<HTMLInputElement>(".fb-check");
+    const check = el.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
     if (check !== null) {
       check.checked = state.selected.has(name);
     }
@@ -550,7 +487,7 @@ function startInlineRename(targetName: string): void {
     return;
   }
 
-  const nameEl = row.querySelector(".fb-name")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const nameEl = row.querySelector(`.${FB_NAME}`)!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const original = nameEl.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
   const input = document.createElement("input");
@@ -569,7 +506,7 @@ function startInlineRename(targetName: string): void {
   let committed = false;
   const restore = (text: string): HTMLElement => {
     const span = document.createElement("span");
-    span.className = "fb-name fb-name-link";
+    span.className = `${FB_NAME} ${FB_NAME_LINK}`;
     span.textContent = text;
     input.replaceWith(span);
     return span;

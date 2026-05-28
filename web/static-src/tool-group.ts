@@ -13,6 +13,11 @@ import { setUserScrolledUp } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
 
+/** CSS class names for tool-group collapse state machine. */
+export const CLS_COLLAPSED = "tool-group-collapsed";
+export const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
+export const CLS_USER_TOGGLED = "tool-group-user-toggled";
+
 class ToolGroupTracker {
   private currentGroup: HTMLDivElement | null = null;
   private lastWasToolCall = false;
@@ -137,8 +142,8 @@ function updateHeader(group: HTMLElement): void {
   }
   const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
   const collapsed =
-    group.classList.contains("tool-group-collapsed") ||
-    group.classList.contains("tool-group-auto-collapsed");
+    group.classList.contains(CLS_COLLAPSED) ||
+    group.classList.contains(CLS_AUTO_COLLAPSED);
   const summary = summarize(calls);
   header.textContent = collapsed ? `${summary} (collapsed)` : summary;
 }
@@ -296,13 +301,13 @@ function dedup(arr: string[]): string[] {
 // --- Collapse / expand ---
 
 function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
-  group.classList.add("tool-group-user-toggled");
-  const wasAuto = group.classList.contains("tool-group-auto-collapsed");
+  group.classList.add(CLS_USER_TOGGLED);
+  const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
   if (wasAuto) {
-    group.classList.remove("tool-group-auto-collapsed");
+    group.classList.remove(CLS_AUTO_COLLAPSED);
   }
-  group.classList.toggle("tool-group-collapsed");
-  const collapsedNow = group.classList.contains("tool-group-collapsed");
+  group.classList.toggle(CLS_COLLAPSED);
+  const collapsedNow = group.classList.contains(CLS_COLLAPSED);
   _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
   updateHeader(group);
   if (!collapsedNow || wasAuto) {
@@ -315,10 +320,10 @@ export function maybeCollapseGroup(el: HTMLElement): void {
   if (group === null) {
     return;
   }
-  if (group.classList.contains("tool-group-auto-collapsed")) {
+  if (group.classList.contains(CLS_AUTO_COLLAPSED)) {
     return;
   }
-  if (group.classList.contains("tool-group-user-toggled")) {
+  if (group.classList.contains(CLS_USER_TOGGLED)) {
     return;
   }
   const calls = group.querySelectorAll(":scope > .tool-call");
@@ -330,7 +335,7 @@ export function maybeCollapseGroup(el: HTMLElement): void {
       return;
     }
   }
-  group.classList.add("tool-group-auto-collapsed");
+  group.classList.add(CLS_AUTO_COLLAPSED);
   const header = group.querySelector<HTMLElement>(".tool-group-header");
   header?.setAttribute("aria-expanded", "false");
   updateHeader(group);

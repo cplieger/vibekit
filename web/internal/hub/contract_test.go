@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/bridge"
 )
 
 // --- Bridge contract test ---
@@ -114,6 +115,14 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 func TestFakeBridge_Contract(t *testing.T) {
 	BridgeContractTest(t, func() api.ACPBridge {
+		return newFakeBridge()
+	})
+}
+
+// TestFakeBridge_SharedContract runs the exported ACPBridgeContractTest
+// from the bridge package against fakeBridge to detect pre-Start drift.
+func TestFakeBridge_SharedContract(t *testing.T) {
+	bridge.ACPBridgeContractTest(t, func() api.ACPBridge {
 		return newFakeBridge()
 	})
 }

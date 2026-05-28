@@ -1,15 +1,53 @@
 package git
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"vibekit/internal/api"
-	"vibekit/internal/gitexec"
 )
+
+// AIHandler registers the AI-backed git endpoints (commit-message,
+// pr-description). Separated from Handler because these have a
+// fundamentally different dependency profile: they need an AI bridge
+// but no git subprocess execution beyond basic diff/log.
+type AIHandler struct {
+	prompter api.UtilityPrompter
+	workDir  string
+}
+
+// NewAIHandler returns an AIHandler. The prompter must be non-nil.
+func NewAIHandler(workDir string, prompter api.UtilityPrompter) *AIHandler {
+	return &AIHandler{
+		prompter: prompter,
+		workDir:  workDir,
+	}
+}
+
+// RegisterRoutes registers the AI-backed git endpoints.
+func (a *AIHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/git/commit-message", a.handleCommitMessage)
+	mux.HandleFunc("/api/git/pr-description", a.handlePRDescription)
+}
+
+// repoDir resolves a client-supplied repo name against workDir (same
+// logic as Handler.repoDir).
+func (a *AIHandler) repoDir(repo string) string {
+	return resolveRepoDir(a.workDir, repo)
+}
+
+// getRecentCommits returns the last n non-merge commits as "hash subject" lines.
+func getRecentCommits(ctx context.Context, dir string, n int) string {
+	out, err := gitCmd(ctx, dir, "log", "--oneline", "--no-merges",
+		"-n"+strconv.Itoa(n))
+	if err != nil || strings.TrimSpace(out) == "" {
+		return "No commit history available"
+	}
+	return strings.TrimSpace(out)
+}
 
 // diffTruncatedSuffix is the canonical suffix appended when a diff
 // exceeds the byte cap for prompt construction.
@@ -24,7 +62,7 @@ func truncateDiff(diff string, maxBytes int) string {
 	return diff
 }
 
-func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
+func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
 	}
@@ -32,15 +70,7 @@ func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 	if !decodePostBody(w, r, &body, "bad request") {
 		return
 	}
-	// Fail fast when the utility bridge isn't wired: the AI-backed
-	// endpoints require a UtilityPrompter passed via WithUtilityPrompt
-	// at construction time. Skip the git subprocesses below — their
-	// output would only be used to build a prompt we can't send.
-	if h.prompter == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
-		return
-	}
-	dir := h.repoDir(body.Repo)
+	dir := a.repoDir(body.Repo)
 
 	// Check for staged changes.
 	diff, err := gitCmd(r.Context(), dir, "diff", "--cached", "--stat")
@@ -61,7 +91,7 @@ func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 
 	prompt := buildCommitPrompt(commitHistory, fullDiff)
 
-	result, err := h.prompter.UtilityPrompt(r.Context(), prompt)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -76,7 +106,7 @@ func (h *Handler) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 // request doesn't supply one.
 const defaultPRBase = "main"
 
-func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
+func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
 	}
@@ -87,13 +117,7 @@ func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 	if !decodePostBody(w, r, &body, "bad request") {
 		return
 	}
-	// Fail fast when the utility bridge isn't wired (see
-	// handleCommitMessage for the rationale).
-	if h.prompter == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
-		return
-	}
-	dir := h.repoDir(body.Repo)
+	dir := a.repoDir(body.Repo)
 
 	// Get the base branch (default: main).
 	base := defaultPRBase
@@ -131,7 +155,7 @@ func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 
 	prompt := buildPRPrompt(log, diff)
 
-	result, err := h.prompter.UtilityPrompt(r.Context(), prompt)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -146,72 +170,4 @@ func (h *Handler) handlePRDescription(w http.ResponseWriter, r *http.Request) {
 	result = strings.TrimSpace(result)
 
 	api.WriteJSON(w, map[string]string{jsonKeyOutput: result})
-}
-
-// handlePRFetch fetches a pull request's head ref into a local branch
-// named "pr-<number>". Works for GitHub + Gitea family (both expose
-// pull/{n}/head refs); GitLab's equivalent is merge-requests/{n}/head.
-// We derive the ref shape from the remote URL.
-//
-// Payload: {"repo": "name", "number": 42, "head": "feature-branch"}.
-// "head" is a best-effort label for the local branch — when set, we
-// use it as the local branch name; otherwise we fall back to
-// pr-<number>.
-func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		Repo   string `json:"repo"`
-		Head   string `json:"head"`
-		Number int    `json:"number"`
-	}
-	if !decodePostBody(w, r, &body, "bad request") {
-		return
-	}
-	if body.Number <= 0 || body.Number > 10_000_000 {
-		slog.Warn("git pr-fetch: invalid PR number rejected", "repo", body.Repo, "number", body.Number)
-		api.BadRequest(w, "invalid PR number")
-		return
-	}
-	// body.Head is optional; when set it's used as a local branch name,
-	// so apply the same validation as handleCheckout via the shared
-	// isValidGitRef helper to block flag smuggling and ref-injection.
-	if body.Head != "" && !isValidGitRef(body.Head) {
-		slog.Warn("git pr-fetch: invalid head rejected", "repo", body.Repo, "number", body.Number, "head", body.Head)
-		api.BadRequest(w, "invalid head name")
-		return
-	}
-	dir := h.repoDir(body.Repo)
-	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
-	if err != nil {
-		slog.Warn("git pr-fetch: origin lookup failed", "repo", body.Repo, "pr", body.Number, "error", err)
-		writeCmdResult(w, remote, err)
-		return
-	}
-	refShape := prRefShape(remote)
-	local := "pr-" + strconv.Itoa(body.Number)
-	if body.Head != "" {
-		local = body.Head
-	}
-	args := []string{"fetch", "origin", fmt.Sprintf(refShape, body.Number) + ":" + local}
-	slog.Info("git pr-fetch", "repo", body.Repo, "number", body.Number, "local", local)
-	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
-	writeCmdResult(w, out, err)
-}
-
-// prRefShape picks the right ref-spec template based on the origin
-// URL host. GitHub + Gitea/Gogs/Forgejo expose "refs/pull/<n>/head";
-// GitLab uses "refs/merge-requests/<n>/head". We match on the host
-// segment only (not the full URL) so a GitHub-hosted repo whose path
-// contains the substring "gitlab" (e.g. github.com/gitlab/tooling)
-// still picks the GitHub shape. For unknown or unparseable remotes
-// we default to the GitHub shape — it's the most common and a failed
-// fetch surfaces a clear error to the user.
-func prRefShape(remote string) string {
-	host := gitexec.ParseRemoteHost(remote)
-	if strings.Contains(host, "gitlab") {
-		return "refs/merge-requests/%d/head"
-	}
-	return "refs/pull/%d/head"
 }

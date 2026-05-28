@@ -6,48 +6,18 @@
 package checkpoint
 
 import (
-	"errors"
 	"slices"
 	"strings"
+
+	chktypes "vibekit/internal/checkpoint/types"
 )
 
-// Tag is a validated checkpoint tag with grammar "N" or "N.K" where
-// N is the turn number and K is the tool index within that turn.
-// Using a defined type prevents transposition with chatID or relPath
-// parameters. Tags are constructed via ParseTag at the system boundary.
-type Tag string
+// Tag is a validated checkpoint tag. Re-exported from the types
+// sub-package for backward compatibility within this package.
+type Tag = chktypes.Tag
 
-// ParseTag validates and returns a Tag. Returns an error if the input
-// doesn't match the "N" or "N.K" grammar.
-func ParseTag(s string) (Tag, error) {
-	if s == "" {
-		return "", errors.New("checkpoint: empty tag")
-	}
-	turnStr, toolStr, hasDot := strings.Cut(s, ".")
-	if !hasDot {
-		toolStr = ""
-	}
-	if !isDigits(turnStr) || (hasDot && !isDigits(toolStr)) {
-		return "", errors.New("checkpoint: invalid tag format")
-	}
-	return Tag(s), nil
-}
-
-// String returns the tag's string representation.
-func (t Tag) String() string { return string(t) }
-
-// isDigits reports whether s is a non-empty string of ASCII digits.
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
+// ParseTag validates and returns a Tag.
+var ParseTag = chktypes.ParseTag
 
 // oldestTag returns the earliest tag in the log, or "" if no tags.
 // O(1) thanks to the maintained orderedTags slice.

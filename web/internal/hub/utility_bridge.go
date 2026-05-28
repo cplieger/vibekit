@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/models"
 	"vibekit/internal/translate"
 )
 
@@ -34,6 +33,7 @@ type utilityBridge struct {
 	bridge        api.ACPBridge
 	bridgeFactory api.ACPBridgeFactory
 	hubModels     func() []api.SessionModel
+	shutdownCtx   context.Context
 	lastActiveAt  time.Time
 	mu            sync.Mutex
 	promptCount   int
@@ -55,10 +55,11 @@ func (ub *utilityBridge) reset() {
 
 // newUtilityBridge constructs a utilityBridge with the initialization
 // invariants explicit: started=false, promptCount=0, lastActiveAt=zero.
-func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.SessionModel) *utilityBridge {
+func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, shutdownCtx context.Context) *utilityBridge {
 	return &utilityBridge{
 		bridgeFactory: factory,
 		hubModels:     hubModels,
+		shutdownCtx:   shutdownCtx,
 	}
 }
 
@@ -66,12 +67,7 @@ func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.Sessi
 // text response. Lazily starts the bridge on first call. Thread-safe;
 // concurrent callers serialize. The bridge is recycled after
 // maxUtilityPrompts to prevent context accumulation.
-func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
-	h.bridge.utilityOnce.Do(func() {
-		h.bridge.utility = newUtilityBridge(h.bridge.factory, h.Models)
-	})
-	ub := h.bridge.utility
-
+func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
 	ub.mu.Lock()
 	defer ub.mu.Unlock()
 
@@ -83,7 +79,7 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) 
 	}
 
 	if !ub.started {
-		if err := h.startUtilityBridge(ctx, ub); err != nil {
+		if err := ub.start(ctx); err != nil {
 			return "", fmt.Errorf("utility bridge start: %w", err)
 		}
 	}
@@ -91,8 +87,8 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) 
 	ub.promptCount++
 
 	resp, err := ub.bridge.Call(ctx, methodPrompt, map[string]any{
-		"sessionId": ub.bridge.SessionID(),
-		"prompt":    []map[string]any{{"type": contentTypeText, contentTypeText: utilitySystemPrompt + prompt}},
+		api.KeySessionID: ub.bridge.SessionID(),
+		"prompt":    []map[string]any{{"type": api.ContentTypeText, api.ContentTypeText: utilitySystemPrompt + prompt}},
 	})
 	if err != nil {
 		// Bridge may be dead; reset so next call restarts.
@@ -105,14 +101,14 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) 
 	return ub.drainResponse(ctx, resp)
 }
 
-func (h *Hub) startUtilityBridge(ctx context.Context, ub *utilityBridge) error {
+func (ub *utilityBridge) start(ctx context.Context) error {
 	bridge := ub.bridgeFactory()
-	model := models.CheapestModel(ctx, ub.hubModels())
+	model := CheapestModel(ctx, ub.hubModels())
 
 	// Start with the hub's shutdown context as the subprocess lifecycle
 	// context. The per-request ctx is only used for CheapestModel above;
 	// the bridge subprocess must outlive individual requests.
-	if err := bridge.Start(h.lifecycle.shutdownCtx, &api.StartOpts{Model: model}); err != nil {
+	if err := bridge.Start(ub.shutdownCtx, &api.StartOpts{Model: model}); err != nil {
 		return err
 	}
 	ub.bridge = bridge
@@ -120,6 +116,18 @@ func (h *Hub) startUtilityBridge(ctx context.Context, ub *utilityBridge) error {
 	ub.lastActiveAt = time.Now()
 	slog.Info("utility bridge started", "model", model)
 	return nil
+}
+
+// Stop stops the utility bridge if it is running. Thread-safe.
+func (ub *utilityBridge) Stop() {
+	ub.mu.Lock()
+	started := ub.started
+	ub.started = false
+	ub.mu.Unlock()
+	if started {
+		ub.bridge.Stop()
+		slog.Info("utility bridge stopped")
+	}
 }
 
 // drainResponse reads the prompt response and collects assistant
@@ -219,12 +227,49 @@ func (h *Hub) stopUtilityBridge() {
 	if ub == nil {
 		return
 	}
-	ub.mu.Lock()
-	started := ub.started
-	ub.started = false
-	ub.mu.Unlock()
-	if started {
-		ub.bridge.Stop()
-		slog.Info("utility bridge stopped")
+	ub.Stop()
+}
+
+// --- Model selection (inlined from internal/models) ---
+
+// CheapestModel returns the cheapest reliable model id from the current
+// catalog, or "" if nothing is live. Filters out:
+//   - "auto" (task-based selection, not a real model)
+//   - [Deprecated], [Legacy] (end-of-life)
+//   - [Internal] (not available to all users)
+//   - [Experimental] (unstable, may produce poor results)
+//
+// Selects by lowest RateMultiplier among eligible models. If no model
+// has a rate (all zero, e.g. session/new doesn't send it), falls back
+// to the first eligible entry.
+func CheapestModel(_ context.Context, catalog []api.SessionModel) string {
+	var bestID string
+	var bestRate float64
+	for _, m := range catalog {
+		if m.ID == "" || m.ID == "auto" {
+			continue
+		}
+		if modelExcluded(m.Name) || modelExcluded(m.Description) {
+			continue
+		}
+		switch {
+		case bestID == "":
+			bestID, bestRate = m.ID, m.RateMultiplier
+		case m.RateMultiplier > 0 && (bestRate == 0 || m.RateMultiplier < bestRate):
+			bestID, bestRate = m.ID, m.RateMultiplier
+		}
 	}
+	return bestID
+}
+
+// excludedTags are the bracketed markers that disqualify a model from
+// ambient-task selection.
+var excludedTags = func() []string {
+	return append(append([]string{}, api.HiddenTags...), "[internal]", "[experimental]")
+}()
+
+// modelExcluded returns true if the text contains any bracketed tag
+// that marks the model as unreliable for ambient tasks.
+func modelExcluded(text string) bool {
+	return api.TagExcluded(text, excludedTags)
 }

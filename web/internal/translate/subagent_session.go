@@ -56,7 +56,7 @@ func (t *Translator) HandleInboxNotification(ctx context.Context, chatID api.Cha
 		}
 	}
 	evt := api.Message{
-		ID:        NewMessageID(),
+		ID:        t.deps.NewMessageID(),
 		Role:      api.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: api.EventInbox,

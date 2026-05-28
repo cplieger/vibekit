@@ -50,7 +50,11 @@ type CommandType =
   | "undo_edit"
   | "message_subagent"
   | "set_auto_approve_crew"
-  | "rename_chat";
+  | "rename_chat"
+  | "set_effort"
+  | "promote_rewind_chat"
+  | "discard_rewind_chat"
+  | "rewind_chat";
 
 export interface Command {
   type: CommandType;
@@ -106,7 +110,11 @@ export type TypedCommand =
   | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
-  | { type: "rename_chat"; chat_id: string; payload: { name: string } };
+  | { type: "rename_chat"; chat_id: string; payload: { name: string } }
+  | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
+  | { type: "promote_rewind_chat"; chat_id: string; request_id: string }
+  | { type: "discard_rewind_chat"; chat_id: string; request_id: string }
+  | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { turn_index: number } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",
@@ -166,6 +174,9 @@ export const BACKOFF_CAP_MS = 30_000;
 
 const HIDDEN_ABORT_MS = 30_000;
 
+/** Default timeout for bridge command channel (long-running agent turns). */
+export const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // TransportController: owns all SSE connection state as instance fields.
 // ---------------------------------------------------------------------------
@@ -175,6 +186,27 @@ type ConnState =
   | { phase: "connecting"; source: EventSource }
   | { phase: "connected"; source: EventSource }
   | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout>; backoffMs: number };
+
+/** Valid state transitions for the SSE connection state machine. */
+type Transition =
+  | { from: "idle"; to: "connecting" }
+  | { from: "connecting"; to: "connected" }
+  | { from: "connecting"; to: "idle" }
+  | { from: "connected"; to: "idle" }
+  | { from: "idle"; to: "reconnecting" }
+  | { from: "reconnecting"; to: "connecting" }
+  | { from: "reconnecting"; to: "idle" };
+
+/** Allowed transitions encoded as a set for O(1) lookup. */
+const VALID_TRANSITIONS = new Set<`${ConnState["phase"]}->${ConnState["phase"]}`>([
+  "idle->connecting",
+  "connecting->connected",
+  "connecting->idle",
+  "connected->idle",
+  "idle->reconnecting",
+  "reconnecting->connecting",
+  "reconnecting->idle",
+]);
 
 class TransportController {
   private onMsg: MsgHandler = () => {
@@ -198,6 +230,30 @@ class TransportController {
       ctrl.abort();
     }
     this.inflight.clear();
+  }
+
+  /** Validate and perform a state transition, cleaning up resources from
+   *  the previous state as a side effect. Invalid transitions log a warning
+   *  and return false without mutating state. */
+  private transition(to: ConnState): boolean {
+    const key = `${this.conn.phase}->${to.phase}` as `${ConnState["phase"]}->${ConnState["phase"]}`;
+    if (!VALID_TRANSITIONS.has(key)) {
+      console.warn(`transport: invalid transition ${key}`);
+      return false;
+    }
+    // Cleanup outgoing state.
+    if (this.conn.phase === "reconnecting") {
+      clearTimeout(this.conn.timer);
+    }
+    if (this.conn.phase === "connecting" || this.conn.phase === "connected") {
+      try {
+        this.conn.source.close();
+      } catch {
+        /* best-effort */
+      }
+    }
+    this.conn = to;
+    return true;
   }
 
   init(msg: MsgHandler, status: StatusHandler): void {
@@ -239,6 +295,13 @@ class TransportController {
   // --- SSE ---
 
   private connectSSE(): void {
+    // Transition to connecting — cleanup of prior state handled by transition().
+    this.onStatus("connecting");
+    const source = new EventSource("/api/events");
+    // Force transition: connectSSE is called from multiple entry points
+    // (init, scheduleReconnect callback, visibility handlers). The prior
+    // state may be idle, reconnecting, or even connecting/connected (on
+    // forced reconnect). We handle cleanup inline for the forced case.
     if (this.conn.phase === "reconnecting") {
       clearTimeout(this.conn.timer);
     }
@@ -249,9 +312,6 @@ class TransportController {
         /* best-effort */
       }
     }
-
-    this.onStatus("connecting");
-    const source = new EventSource("/api/events");
     this.conn = { phase: "connecting", source };
     source.onopen = (): void => {
       this.conn = { phase: "connected", source };
@@ -336,7 +396,7 @@ class TransportController {
 
   async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
     const requestID = newRequestID();
-    const timeoutMs = opts?.timeoutMs ?? 15 * 60 * 1000;
+    const timeoutMs = opts?.timeoutMs ?? COMMAND_TIMEOUT_MS;
     const ctrl = new AbortController();
     this.inflight.add(ctrl);
 

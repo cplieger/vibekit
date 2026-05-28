@@ -30,13 +30,18 @@ const (
 	PushKindPermission    PushKind = "permission"
 )
 
+// pushKinds is the authoritative set of valid push notification kinds.
+// PushKind.Valid() derives from this set; adding a new kind requires
+// only a new entry here.
+var pushKinds = map[PushKind]struct{}{
+	PushKindAgentFinished: {},
+	PushKindPermission:    {},
+}
+
 // Valid reports whether k is a known push notification kind.
 // Used at the settings-load boundary to reject corrupted keys
 // at load time rather than at send time.
 func (k PushKind) Valid() bool {
-	switch k {
-	case PushKindAgentFinished, PushKindPermission:
-		return true
-	}
-	return false
+	_, ok := pushKinds[k]
+	return ok
 }

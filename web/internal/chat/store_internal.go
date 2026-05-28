@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 )
 
 // --- Unexported Store methods ---
@@ -72,7 +73,7 @@ func (s *Store) pathFor(chatID api.ChatID) (string, error) {
 
 // archivePath returns the path to the archive subdirectory.
 func (s *Store) archivePath() string {
-	return filepath.Join(s.dir, archiveSubdir)
+	return filepath.Join(s.dir, ArchiveSubdir)
 }
 
 // archivePathFor validates chatID and returns the path to the archived
@@ -81,7 +82,7 @@ func (s *Store) archivePathFor(chatID api.ChatID) (string, error) {
 	if !chatIDPattern(chatID) {
 		return "", errInvalidChatID(chatID)
 	}
-	return filepath.Join(s.dir, archiveSubdir, string(chatID)+chatFileSuffix), nil
+	return filepath.Join(s.dir, ArchiveSubdir, string(chatID)+chatFileSuffix), nil
 }
 
 // load reads a chat file into memory. Returns nil, os.ErrNotExist if the
@@ -106,5 +107,5 @@ func (s *Store) save(chat *api.Chat) error {
 	if err != nil {
 		return err
 	}
-	return api.SaveBytes(path, data, fileMode)
+	return fileutil.SaveBytes(path, data, fileMode)
 }

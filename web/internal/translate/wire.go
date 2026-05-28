@@ -103,3 +103,7 @@ const (
 	jsonFieldText    = "text"
 	jsonFieldType    = "type"
 )
+
+// ContentTypeContent is the ACP content-block type discriminator value "content".
+// Distinct from jsonFieldContent which is the JSON field *name* "content".
+const ContentTypeContent = "content"

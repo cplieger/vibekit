@@ -24,11 +24,15 @@ import {
   stash,
   stashPop,
   unstage,
-  commit as commitAction,
-  generateCommitMessage,
 } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { escAttr as escapeHTML } from "./strings.js";
+import {
+  renderRecentCommits,
+  renderCommitArea,
+  type CommitDeps,
+} from "./git-changes-commit.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -50,24 +54,7 @@ class CancelledError extends Error {
 
 // --- Wire types ---
 
-interface FileEntry {
-  path: string;
-  status: string;
-  staged: boolean;
-  display: string;
-}
-
-interface RepoStatus {
-  repo: string;
-  is_repo: boolean;
-  branch: string;
-  remote: string;
-  ahead: number;
-  behind: number;
-  files: FileEntry[];
-  has_dirty: boolean;
-  stashes: number;
-}
+import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -110,6 +97,11 @@ let bindingCleanups: (() => void)[] = [];
 
 // Deferred paint: set when paint bails due to focused textarea.
 let paintDeferred = false;
+
+/** Build the deps object for commit rendering functions. */
+function commitDeps(): CommitDeps {
+  return { commitMessages, bindingCleanups, diffAbort, refreshChanges, assertOk };
+}
 
 // --- Public API ---
 
@@ -175,7 +167,8 @@ export async function refreshChanges(): Promise<void> {
   const ctrl = new AbortController();
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
-  const data = await apiGet<StatusAllResponse>("/api/git/status-all", ctrl.signal);
+  const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
+  const data = await apiGet<StatusAllResponse>("/api/git/status-all", signal);
   if (gen < refreshGeneration) {
     return;
   } // stale — a newer call supersedes
@@ -483,11 +476,11 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   // Commit area (only if there are staged files)
   const stagedCount = r.files.filter((f) => f.staged).length;
   if (stagedCount > 0) {
-    body.appendChild(renderCommitArea(r));
+    body.appendChild(renderCommitArea(r, commitDeps()));
   }
 
   // Recent commits sub-section (collapsed by default; expand → fetch).
-  body.appendChild(renderRecentCommits(r));
+  body.appendChild(renderRecentCommits(r, commitDeps()));
 
   section.appendChild(body);
   return section;
@@ -755,12 +748,12 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const loadDiff = (): void => {
     loadedDiff = true;
     diffDrawer.textContent = "Loading diff…";
-    const signal = diffAbort?.signal;
+    const signal = diffAbort ? AbortSignal.any([diffAbort.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
     void apiGet<{ diff?: string }>(
       `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
       signal,
     ).then((data) => {
-      if (signal?.aborted) {
+      if (signal.aborted) {
         return;
       }
       if (data === null) {
@@ -839,153 +832,16 @@ function renderDiffWithColors(diff: string): DocumentFragment {
   return frag;
 }
 
-function renderRecentCommits(r: RepoStatus): HTMLElement {
-  // Collapsible sub-section: header is a button; body holds either
-  // a "Loading..." indicator, the rendered commits list, or an
-  // error message. Lazy-load: only fetch when the user expands.
-  const wrap = document.createElement("details");
-  wrap.className = "git-recent-commits";
-
-  const summary = document.createElement("summary");
-  summary.className = "git-recent-commits-summary";
-  summary.textContent = "Recent commits";
-  wrap.appendChild(summary);
-
-  const body = document.createElement("div");
-  body.className = "git-recent-commits-body";
-  body.textContent = "Loading…";
-  wrap.appendChild(body);
-
-  let loaded = false;
-  wrap.addEventListener("toggle", () => {
-    if (!wrap.open || loaded) {
-      return;
-    }
-    loaded = true;
-    void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
-      `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
-      diffAbort?.signal,
-    ).then((data) => {
-      if (diffAbort?.signal.aborted) {
-        return;
-      }
-      if (data === null) {
-        body.textContent = "Failed to load.";
-        return;
-      }
-      const entries = data.entries ?? [];
-      if (entries.length === 0) {
-        body.textContent = "No commits.";
-        return;
-      }
-      body.replaceChildren();
-      const list = document.createElement("ul");
-      list.className = "git-recent-commits-list";
-      for (const line of entries.slice(0, 20)) {
-        const li = document.createElement("li");
-        li.className = "git-recent-commits-row";
-        // line shape: "<sha> <subject>"
-        const sp = line.indexOf(" ");
-        if (sp > 0) {
-          const sha = document.createElement("code");
-          sha.className = "git-recent-commits-sha";
-          sha.textContent = line.slice(0, sp);
-          li.appendChild(sha);
-          const sub = document.createElement("span");
-          sub.className = "git-recent-commits-subject";
-          sub.textContent = line.slice(sp + 1);
-          li.appendChild(sub);
-        } else {
-          li.textContent = line;
-        }
-        list.appendChild(li);
-      }
-      body.appendChild(list);
-    });
-  });
-
-  return wrap;
-}
-
-function renderCommitArea(r: RepoStatus): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "git-commit-area";
-
-  const ta = document.createElement("textarea");
-  ta.className = "git-commit-input";
-  ta.placeholder = "Commit message…";
-  ta.rows = 2;
-  ta.dataset["repo"] = r.repo;
-  // Bug 1: Restore previously typed commit message.
-  const saved = commitMessages.get(r.repo);
-  if (saved) {
-    ta.value = saved;
-  }
-  wrap.appendChild(ta);
-
-  const row = document.createElement("div");
-  row.className = "git-commit-row";
-
-  const ai = document.createElement("button");
-  ai.type = "button";
-  ai.className = "btn-small";
-  ai.textContent = "✨ AI message";
-  ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
-  ai.addEventListener("click", () => {
-    void withAsyncFeedback(ai, async () => {
-      const msg = await generateCommitMessage.dispatch({ repo: r.repo });
-      assertOk(msg);
-      commitMessages.set(r.repo, msg.message ?? "");
-      if (ta.isConnected) {
-        ta.value = msg.message ?? "";
-      }
-    });
-  });
-  row.appendChild(ai);
-  bindingCleanups.push(bindLoadingState("git.generate_message", ai));
-
-  const commit = document.createElement("button");
-  commit.type = "button";
-  commit.className = "btn-small btn-primary";
-  commit.textContent = "Commit";
-  commit.addEventListener("click", () => {
-    void withAsyncFeedback(commit, async () => {
-      const message = ta.value.trim();
-      if (message === "") {
-        throw new Error("Commit message required");
-      }
-      assertOk(await commitAction.dispatch({ repo: r.repo, message }));
-      ta.value = "";
-      commitMessages.delete(r.repo);
-      await refreshChanges();
-    });
-  });
-  row.appendChild(commit);
-  bindingCleanups.push(bindLoadingState("git.commit", commit));
-
-  wrap.appendChild(row);
-  return wrap;
-}
-
 // --- Helpers ---
+
+const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
 
 /** Heuristic: branches named "main", "master", "develop", "trunk"
  *  aren't feature branches and shouldn't trigger the post-push
  *  "Open PR" hint. Anything else is treated as a feature branch
  *  candidate. */
 function isFeatureBranch(branch: string): boolean {
-  if (branch === "") {
-    return false;
-  }
-  switch (branch.toLowerCase()) {
-    case "main":
-    case "master":
-    case "develop":
-    case "trunk":
-      return false;
-    default:
-      return true;
-  }
+  return branch !== "" && !DEFAULT_BRANCHES.has(branch.toLowerCase());
 }
 
 /** Banner shown briefly after a successful push: invites the user to
@@ -1023,32 +879,17 @@ function statusLetter(s: string): string {
   return "?";
 }
 
+const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  M: "Modified",
+  A: "Added",
+  D: "Deleted",
+  R: "Renamed",
+  "?": "Untracked",
+  U: "Unmerged",
+};
+
 function describeStatus(s: string): string {
-  switch (s.charAt(0)) {
-    case "M":
-      return "Modified";
-    case "A":
-      return "Added";
-    case "D":
-      return "Deleted";
-    case "R":
-      return "Renamed";
-    case "?":
-      return "Untracked";
-    case "U":
-      return "Unmerged";
-    default:
-      return s;
-  }
+  return GIT_STATUS_LABELS[s.charAt(0)] ?? s;
 }
 
-function escapeHTML(s: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
-}
+

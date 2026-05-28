@@ -371,6 +371,10 @@ type Chat struct {
 	// decided to emit it.
 	SupervisedMode  bool `json:"supervised_mode,omitempty"`
 	AutoApproveCrew bool `json:"auto_approve_crew,omitempty"`
+	// CrewMessageIDs maps group key → message ID for crew event messages.
+	// Persisted alongside the chat so the crew cache is warm after restart
+	// without requiring a history walk.
+	CrewMessageIDs map[string]string `json:"crew_message_ids,omitempty"`
 	// RewindFromTurn records which turn index this chat was rewound
 	// from. Zero when not a rewind chat. Used by the sidebar to show
 	// "rewind from turn N" label.

@@ -9,28 +9,23 @@ import (
 	"fmt"
 
 	"golang.org/x/sync/errgroup"
+
+	chktypes "vibekit/internal/checkpoint/types"
 )
 
-// FileStatus is a typed string for diff result statuses. Prevents
-// typos like "a" or "Modified" from compiling — the client switches
-// on these exact string values.
-type FileStatus string
+// FileStatus is a typed string for diff result statuses. Re-exported
+// from the types sub-package for backward compatibility.
+type FileStatus = chktypes.FileStatus
 
 const (
-	FileAdded    FileStatus = "A"
-	FileModified FileStatus = "M"
-	FileDeleted  FileStatus = "D"
+	FileAdded    = chktypes.FileAdded
+	FileModified = chktypes.FileModified
+	FileDeleted  = chktypes.FileDeleted
 )
 
-// FileChange is one entry returned by Diff. Mirrors the shape the
-// client already consumes — the diff endpoint response format is
-// preserved across the rewrite.
-type FileChange struct {
-	Status       FileStatus `json:"status"` // "A" added, "M" modified, "D" deleted
-	Path         string     `json:"path"`
-	LinesAdded   int        `json:"lines_added"`
-	LinesRemoved int        `json:"lines_removed"`
-}
+// FileChange is one entry returned by Diff. Re-exported from the
+// types sub-package for backward compatibility.
+type FileChange = chktypes.FileChange
 
 // Diff returns per-file changes between two tags. Walks the event
 // log for every file touched in (from, to], compares the stored
@@ -120,7 +115,7 @@ func (m *Manager) Diff(ctx context.Context, from, to Tag) ([]FileChange, error) 
 			}
 			fromData := m.safeGetBlob(gctx, e.fromSHA)
 			toData := m.safeGetBlob(gctx, e.toSHA)
-			added, removed := countLineDelta(fromData, toData)
+			added, removed := countLineDelta(gctx, fromData, toData)
 			fc.LinesAdded = added
 			fc.LinesRemoved = removed
 			out[i] = fc

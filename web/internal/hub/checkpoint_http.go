@@ -65,7 +65,7 @@ func (h *Hub) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/checkpoints/")
 	chatID, sub, ok := strings.Cut(rest, "/")
 	if !ok || chatID == "" || !validChatID(api.ChatID(chatID)) {
-		api.BadRequest(w, "invalid chat id")
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	cid := api.ChatID(chatID)
@@ -117,7 +117,7 @@ func (h *Hub) handleCheckpointDiff(w http.ResponseWriter, r *http.Request, chatI
 		api.InternalError(w, err)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"files": files})
+	api.WriteJSON(w, api.CheckpointDiffResponse[checkpoint.FileChange]{Files: files})
 }
 
 // handleCheckpointRestorePreview answers restore-preview?tag=.
@@ -148,7 +148,7 @@ func (h *Hub) handleCheckpointRestorePreview(w http.ResponseWriter, r *http.Requ
 	if files == nil {
 		files = []string{}
 	}
-	api.WriteJSON(w, map[string]any{"files": files})
+	api.WriteJSON(w, api.CheckpointRestorePreviewResponse{Files: files})
 }
 
 // handleCheckpointConflicts replays every conflict event for a
@@ -163,10 +163,10 @@ func (h *Hub) handleCheckpointConflicts(w http.ResponseWriter, r *http.Request, 
 	if conflicts == nil {
 		// Return an empty slice (not null) so the client can
 		// iterate without a nil check.
-		api.WriteJSON(w, map[string]any{"conflicts": []any{}})
+		api.WriteJSON(w, api.CheckpointConflictsResponse[checkpoint.ConflictPayload]{Conflicts: []checkpoint.ConflictPayload{}})
 		return
 	}
-	api.WriteJSON(w, map[string]any{"conflicts": conflicts})
+	api.WriteJSON(w, api.CheckpointConflictsResponse[checkpoint.ConflictPayload]{Conflicts: conflicts})
 }
 
 // handleCheckpointBlob returns the raw bytes of a chat-owned blob.

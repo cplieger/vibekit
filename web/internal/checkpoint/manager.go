@@ -33,12 +33,27 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	chktypes "vibekit/internal/checkpoint/types"
 )
 
 // ErrPathEscape signals that a workspace-relative path resolves
 // outside the workdir boundary. Distinct from a generic error so
 // callers can classify the failure without string matching.
 var ErrPathEscape = errors.New("path escapes workdir")
+
+// ErrTransient signals a retryable I/O failure (disk full, permission
+// denied temporarily, NFS stale handle). Callers can use
+// errors.Is(err, ErrTransient) to distinguish "retry later" from
+// permanent failures (ErrPathEscape, ErrTagNotFound, ErrLogCorrupt).
+var ErrTransient = errors.New("transient checkpoint error")
+
+// chatID is a package-local typed string for chat identifiers.
+// Prevents accidental transposition with other string parameters
+// (workDir, configDir, relPath, sha) at internal call sites. The
+// public Store API keeps bare string parameters; conversion happens
+// at the Store boundary.
+type chatID string
 
 // ConflictBroadcaster is the hook the Manager calls to fan conflict
 // events out to SSE subscribers. Takes the payload by pointer so the
@@ -51,16 +66,20 @@ type ConflictBroadcaster func(chatID string, payload *ConflictPayload)
 // staging files can reference it instead of hardcoding the pattern.
 const restoreStageSuffix = ".vibekit-restore-*"
 
-// ConflictPayload is what the broadcaster receives per conflict.
-// Exported because the server's SSE wiring lives outside the
-// package and needs the shape.
-type ConflictPayload struct {
-	Path        string `json:"path"`
-	OtherChat   string `json:"other_chat"`
-	ExpectedSHA string `json:"expected_sha"`
-	ActualSHA   string `json:"actual_sha"`
-	Tag         string `json:"tag"`
-	TS          int64  `json:"ts"`
+// ConflictPayload is re-exported from the types sub-package for
+// backward compatibility within this package.
+type ConflictPayload = chktypes.ConflictPayload
+
+// GCCoordination defines the lock protocol between snapshot writes
+// and GC sweeps. The Manager takes AcquireSnapshotLock (shared) for
+// the duration of blob Put + event Append; the GC coordinator takes
+// AcquireGCLock (exclusive) for each fanout sweep. This makes the
+// coordination contract explicit and testable.
+type GCCoordination interface {
+	AcquireSnapshotLock()
+	ReleaseSnapshotLock()
+	AcquireGCLock()
+	ReleaseGCLock()
 }
 
 // managerDeps bundles the shared infrastructure that every Manager
@@ -70,7 +89,7 @@ type managerDeps struct {
 	blobs  *blobStore
 	index  *crossChatIndex
 	onConf ConflictBroadcaster
-	gcLock *sync.RWMutex
+	gcCoord GCCoordination
 }
 
 // Manager owns one chat's checkpoint log and drives all snapshot /
@@ -82,7 +101,7 @@ type Manager struct {
 	loadErr error
 	log     *eventLog
 	state   *state
-	chatID  string
+	chatID  chatID
 	workDir string
 	mu      sync.Mutex
 	loadMu  sync.Mutex
@@ -96,10 +115,10 @@ type Manager struct {
 // takes the same read lock that runGCOnce blocks against — even
 // future refactors that hand *Manager out to callers that bypass
 // Store.Snapshot inherit the coordination.
-func newManager(chatID, workDir string, log *eventLog, deps *managerDeps) *Manager {
+func newManager(id chatID, workDir string, log *eventLog, deps *managerDeps) *Manager {
 	return &Manager{
 		managerDeps: deps,
-		chatID:      chatID,
+		chatID:      id,
 		workDir:     workDir,
 		log:         log,
 		state:       newState(),
@@ -130,6 +149,12 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 	// full replay duration. loadMu serializes the one-shot replay itself.
 	m.mu.Unlock()
 	m.loadMu.Lock()
+	// Early exit if context was cancelled while waiting for loadMu.
+	if err := ctx.Err(); err != nil {
+		m.loadMu.Unlock()
+		m.mu.Lock()
+		return err
+	}
 	// Double-check after acquiring loadMu — another goroutine may have
 	// completed the replay while we waited.
 	if m.loaded {
@@ -145,11 +170,17 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
 		return err
 	}
+	// Short-circuit if context cancelled before expensive replay.
+	if err := ctx.Err(); err != nil {
+		m.loadMu.Unlock()
+		m.mu.Lock()
+		return err
+	}
 	st := replay(events)
 	// Populate the cross-chat index with this chat's snapshot events.
 	if m.index != nil {
 		for i := range events {
-			m.index.apply(m.chatID, &events[i])
+			m.index.apply(string(m.chatID), &events[i])
 		}
 	}
 	m.loadMu.Unlock()

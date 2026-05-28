@@ -536,7 +536,7 @@ func TestStoreSnapshotDuringGC(t *testing.T) {
 	// Run GC sweeps in parallel with snapshots.
 	for range 3 {
 		wg.Go(func() {
-			s.gc.runOnce(context.Background())
+			s.gc.RunOnce(context.Background())
 		})
 	}
 	wg.Wait()

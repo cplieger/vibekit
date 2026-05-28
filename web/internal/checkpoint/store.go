@@ -10,34 +10,26 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
-	"time"
+
+	checkpointgc "vibekit/internal/checkpoint/gc"
 )
 
 // Store is the hub's entry point. One Store per vibekit process;
 // internally it hands out one Manager per chatID and keeps the
 // shared blob store + cross-chat index alive.
 //
-// The gcLock coordinates snapshot writes against the blob GC: GC
-// takes Lock() for the duration of a sweep, Snapshot takes
-// RLock() for the full blob Put + event Append window. That closes
-// the theoretical race where GC could reap a just-written blob
-// whose event hasn't landed yet. Many concurrent snapshots proceed
-// in parallel; a GC blocks them briefly while it runs (sub-second
-// on reasonable chat counts).
-//
-// Every Manager is constructed with a pointer to the same gcLock
-// so the coordination applies even if a caller reaches Manager
-// methods directly (not through Store.Snapshot). That's defensive
-// against future refactors that plumb *Manager out of Store.get.
+// The 5-minute blob age gate (blobGCMinAge) provides the primary safety
+// guarantee against removing in-flight blobs: a blob written now cannot
+// be reaped for at least 5 minutes, which is far longer than the event
+// append takes. No per-sweep lock is needed.
 type Store struct {
 	blobs     *blobStore
 	index     *crossChatIndex
 	onConf    ConflictBroadcaster
-	gc        *gcCoordinator
+	gc        *checkpointgc.Coordinator
 	managers  map[string]*Manager
 	configDir string
 	workDir   string
-	gcLock    sync.RWMutex
 	mu        sync.Mutex
 }
 
@@ -58,7 +50,7 @@ func NewStore(configDir, workDir string, onConf ConflictBroadcaster) *Store {
 		onConf:    onConf,
 		managers:  make(map[string]*Manager),
 	}
-	s.gc = newGCCoordinator(configDir, &s.gcLock, s.cachedChatIDs)
+	s.gc = checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), blobGCInterval, nil, s.cachedBlobRefs)
 	return s
 }
 
@@ -81,7 +73,28 @@ func (s *Store) Stop() {
 	s.gc.Stop()
 }
 
-const blobGCInterval = 1 * time.Hour
+// --- GCCoordination implementation ---
+// The 5-minute blob age gate (blobGCMinAge) provides the primary safety
+// guarantee against removing in-flight blobs. The lock-based coordination
+// is no longer needed; these methods are retained as no-ops to satisfy
+// the GCCoordination interface contract for existing test code.
+
+// AcquireSnapshotLock is a no-op; the age gate provides safety.
+func (s *Store) AcquireSnapshotLock() {}
+
+// ReleaseSnapshotLock is a no-op; the age gate provides safety.
+func (s *Store) ReleaseSnapshotLock() {}
+
+// AcquireGCLock is a no-op; the age gate provides safety.
+func (s *Store) AcquireGCLock() {}
+
+// ReleaseGCLock is a no-op; the age gate provides safety.
+func (s *Store) ReleaseGCLock() {}
+
+// Compile-time assertion that Store implements GCCoordination.
+var _ GCCoordination = (*Store)(nil)
+
+
 
 // AdvanceTurn delegates to Manager.AdvanceTurn. Errors are logged
 // but not returned because the prompt path shouldn't stall on a
@@ -161,8 +174,6 @@ func (s *Store) ReadBlob(ctx context.Context, chatID, sha string) ([]byte, error
 // the referenced-blob set from the GC's perspective just as
 // Snapshot does, only in the opposite direction.
 func (s *Store) Cleanup(ctx context.Context, chatID string) {
-	s.gcLock.RLock()
-	defer s.gcLock.RUnlock()
 	s.mu.Lock()
 	m, ok := s.managers[chatID]
 	if ok {
@@ -181,21 +192,21 @@ func (s *Store) Cleanup(ctx context.Context, chatID string) {
 // public method routes through this so a manager is always reused
 // across calls and never starts with empty state when an event log
 // already exists on disk.
-func (s *Store) get(chatID string) *Manager {
+func (s *Store) get(rawID string) *Manager {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if m, ok := s.managers[chatID]; ok {
+	if m, ok := s.managers[rawID]; ok {
 		return m
 	}
-	log := newEventLog(s.configDir, chatID)
+	log := newEventLog(s.configDir, rawID)
 	deps := &managerDeps{
-		blobs:  s.blobs,
-		index:  s.index,
-		onConf: s.onConf,
-		gcLock: &s.gcLock,
+		blobs:   s.blobs,
+		index:   s.index,
+		onConf:  s.onConf,
+		gcCoord: s,
 	}
-	m := newManager(chatID, s.workDir, log, deps)
-	s.managers[chatID] = m
+	m := newManager(chatID(rawID), s.workDir, log, deps)
+	s.managers[rawID] = m
 	return m
 }
 
@@ -207,6 +218,18 @@ func (s *Store) cachedChatIDs() map[string]*Manager {
 	defer s.mu.Unlock()
 	out := make(map[string]*Manager, len(s.managers))
 	maps.Copy(out, s.managers)
+	return out
+}
+
+// cachedBlobRefs returns the cached managers as gc.BlobRefer
+// interface values for the GC coordinator.
+func (s *Store) cachedBlobRefs() map[string]checkpointgc.BlobRefer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]checkpointgc.BlobRefer, len(s.managers))
+	for k, v := range s.managers {
+		out[k] = v
+	}
 	return out
 }
 

@@ -404,7 +404,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 // id would read as "." or ".." must be skipped rather than driving
 // filesystem operations.
 func TestCleanupStaleSessions_InvalidIDsIgnored(t *testing.T) {
-	dir := setFakeHome(t)
+	lm, dir := newTestLockManager(t)
 	// `..lock` → id = `.` (invalid). `...lock` → id = `..` (invalid).
 	// Both should remain untouched after the cleanup pass.
 	invalid := []string{"..lock", "...lock"}
@@ -415,7 +415,7 @@ func TestCleanupStaleSessions_InvalidIDsIgnored(t *testing.T) {
 		}
 	}
 
-	CleanupStaleSessions(context.Background())
+	lm.CleanupStaleSessions(context.Background())
 
 	for _, name := range invalid {
 		path := filepath.Join(dir, name)
@@ -1084,7 +1084,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 		wantNotIdle bool
 	}{
 		{name: "not-idle by code", code: -32001, message: "session busy", wantNotIdle: true},
-		{name: "not-idle by message", code: -32099, message: "not idle", wantNotIdle: true},
+		{name: "not-idle by message only", code: -32099, message: "not idle", wantNotIdle: false, wantMsg: "not idle"},
 		{name: "parse error", code: -32700, message: "parse error", wantNotIdle: false, wantMsg: "parse error"},
 		{name: "invalid request", code: -32600, message: "invalid request", wantNotIdle: false, wantMsg: "invalid request"},
 		{name: "method not found", code: -32601, message: "method not found", wantNotIdle: false, wantMsg: "method not found"},

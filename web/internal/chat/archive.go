@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 )
 
 // Archive moves a chat from the active directory to the archive
@@ -230,7 +231,7 @@ func (s *Store) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, su
 	if err != nil {
 		return err
 	}
-	return api.SaveBytes(path, data, fileMode)
+	return fileutil.SaveBytes(path, data, fileMode)
 }
 
 // PurgeArchived deletes archived chats older than maxAge.

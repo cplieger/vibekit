@@ -14,9 +14,17 @@ import (
 	"vibekit/internal/gitexec"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 
 	"golang.org/x/sync/errgroup"
 )
+
+// maxRepoEntries caps how many directory entries we inspect under
+// workDir. A misconfigured or rogue-scripted clone producing tens of
+// thousands of entries would otherwise do an O(N) os.Stat sweep on
+// every page load; cap + log gives us a visible Loki signal without
+// degrading the whole UI.
+const maxRepoEntries = 1024
 
 // allRepoStatus mirrors gitStatusResp but adds the repo name so the
 // front-end multi-repo dashboard can group by source. Defined here
@@ -38,7 +46,6 @@ type allRepoStatus struct {
 // network. The fetch still runs on per-repo refresh through the
 // single-repo /api/git/status endpoint.
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
-	const maxRepoEntries = 1024
 	ctx := r.Context()
 
 	type entry struct {
@@ -46,7 +53,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		dir  string
 	}
 	var repos []entry
-	if api.IsGitRepo(h.workDir) {
+	if fileutil.IsGitRepo(h.workDir) {
 		repos = append(repos, entry{name: ".", dir: h.workDir})
 	}
 	if entries, err := os.ReadDir(h.workDir); err == nil {
@@ -68,7 +75,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 			name := e.Name()
 			dir := filepath.Join(h.workDir, name)
 			g.Go(func() error {
-				if api.IsGitRepo(dir) {
+				if fileutil.IsGitRepo(dir) {
 					mu.Lock()
 					found = append(found, entry{name: name, dir: dir})
 					mu.Unlock()
@@ -96,14 +103,8 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
-	// Cap how many directory entries we inspect under workDir. A
-	// misconfigured or rogue-scripted clone producing tens of thousands
-	// of entries would otherwise do an O(N) os.Stat sweep on every
-	// page load; cap + log gives us a visible Loki signal without
-	// degrading the whole UI.
-	const maxRepoEntries = 1024
 	var repos []string
-	if api.IsGitRepo(h.workDir) {
+	if fileutil.IsGitRepo(h.workDir) {
 		repos = append(repos, ".")
 	}
 	entries, err := os.ReadDir(h.workDir)
@@ -127,7 +128,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 			}
 			name := e.Name()
 			g.Go(func() error {
-				if api.IsGitRepo(filepath.Join(h.workDir, name)) {
+				if fileutil.IsGitRepo(filepath.Join(h.workDir, name)) {
 					mu.Lock()
 					found = append(found, name)
 					mu.Unlock()
@@ -162,7 +163,7 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(repoFromQuery(r))
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(dir) {
 		api.BadRequest(w, "not a git repo")
 		return
 	}
@@ -418,7 +419,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "cannot re-clone workspace root")
 		return
 	}
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(dir) {
 		api.BadRequest(w, "not a git repo")
 		return
 	}

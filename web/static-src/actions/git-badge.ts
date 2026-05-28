@@ -4,17 +4,14 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError } from "./index.js";
+import type { GitRepoStatusBadge } from "../git-types.js";
 
-// --- Response types (mirrored from git-badge.ts) ---
+/** Single source of truth for the /api/forges endpoint path. */
+export const API_PATH_FORGES = "/api/forges" as const;
 
-interface RepoStatus {
-  repo: string;
-  is_repo: boolean;
-  branch: string;
-  ahead: number;
-  behind: number;
-  has_dirty: boolean;
-}
+// --- Response types (derived from git-types.ts) ---
+
+type RepoStatus = GitRepoStatusBadge;
 interface StatusAllResponse {
   repos: RepoStatus[];
 }
@@ -46,7 +43,7 @@ const fetchStatusAll = apiAction<void, StatusAllResponse>({
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 const fetchForges = apiAction<void, ForgesListResponse>({
   name: "git-badge.forges",
-  request: () => ({ method: "GET", path: "/api/forges" }),
+  request: () => ({ method: "GET", path: API_PATH_FORGES }),
   error: false,
   success: false,
 });

@@ -46,6 +46,12 @@ export function initNotificationToggles(): void {
   const unbindPatch = bindLoadingState("settings.patch", notifyToggle, { preserveDisabled: true });
   registerCleanup(unbindPatch);
 
+  // Listen for registration-failed events from the action layer to
+  // roll back the toggle without coupling the action to this DOM element.
+  document.addEventListener("notify:registration-failed", () => {
+    notifyToggle.checked = false;
+  });
+
   const updateSub = (): void => {
     notifySubOptions.classList.toggle("hidden", !notifyToggle.checked);
   };

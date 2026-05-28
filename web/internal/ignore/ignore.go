@@ -60,14 +60,12 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// maxIgnoreFileSize caps each listed ignore file. Real .gitignore
-// files are kilobytes; 1 MiB is defensive. A user pointing the
-// setting at /proc/kcore, a log file, or a symlinked binary should
-// not pin the process at peak memory on every stale-cache refresh.
-const maxIgnoreFileSize = 1 << 20
+// maxIgnoreFileSize caps each listed ignore file — delegates to
+// settings.MaxBytes (1 MiB) so the cap is maintained in one place.
+const maxIgnoreFileSize = cfgsettings.MaxBytes
 
-// settingsFilename is the canonical filename for the user's settings.
-const settingsFilename = "config.json"
+// settingsFilename delegates to settings.Filename — single source of truth.
+const settingsFilename = cfgsettings.Filename
 
 // Matcher evaluates read paths against a set of ignore files
 // listed in the server settings. Patterns are re-parsed on demand
@@ -310,7 +308,7 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 		slog.Warn("permissions: parse config.json for agent_ignore_files", "error", err)
 		return nil
 	}
-	v, ok := raw["agent_ignore_files"]
+	v, ok := raw[cfgsettings.KeyAgentIgnoreFiles]
 	if !ok {
 		return nil
 	}

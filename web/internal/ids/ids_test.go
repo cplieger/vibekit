@@ -3,6 +3,9 @@ package ids
 import (
 	"math"
 	"testing"
+	"time"
+
+	"pgregory.net/rapid"
 )
 
 func TestNew(t *testing.T) {
@@ -81,4 +84,64 @@ func TestNew_PanicOnBadEncoding(t *testing.T) {
 		}
 	}()
 	New(8, Encoding(99))
+}
+
+func TestNewMessageID_RapidInvariants(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		id := NewMessageID()
+
+		// Length must be 36 (standard UUID format).
+		if len(id) != 36 {
+			t.Fatalf("len=%d, want 36", len(id))
+		}
+
+		// Dash positions: 8, 13, 18, 23.
+		for _, pos := range []int{8, 13, 18, 23} {
+			if id[pos] != '-' {
+				t.Fatalf("id[%d]=%c, want '-'", pos, id[pos])
+			}
+		}
+
+		// Version nibble (position 14) must be '7'.
+		if id[14] != '7' {
+			t.Fatalf("version nibble=%c, want '7'", id[14])
+		}
+
+		// Variant nibble (position 19) must be 8, 9, a, or b.
+		v := id[19]
+		if v != '8' && v != '9' && v != 'a' && v != 'b' {
+			t.Fatalf("variant nibble=%c, want 8/9/a/b", v)
+		}
+
+		// All non-dash characters must be hex digits.
+		for i, c := range id {
+			if i == 8 || i == 13 || i == 18 || i == 23 {
+				continue
+			}
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				t.Fatalf("non-hex char %c at position %d", c, i)
+			}
+		}
+	})
+}
+
+func TestNewMessageID_TimeOrdering(t *testing.T) {
+	id1 := NewMessageID()
+	time.Sleep(2 * time.Millisecond)
+	id2 := NewMessageID()
+
+	if id2 <= id1 {
+		t.Errorf("time ordering violated: id1=%s >= id2=%s", id1, id2)
+	}
+}
+
+func TestNewMessageID_Uniqueness(t *testing.T) {
+	seen := make(map[string]struct{}, 10000)
+	for i := range 10000 {
+		id := NewMessageID()
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate id after %d iterations: %s", i, id)
+		}
+		seen[id] = struct{}{}
+	}
 }

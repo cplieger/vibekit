@@ -104,7 +104,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdSetAutoApproveCrew toggles the auto-approve crew flag.
@@ -140,7 +140,7 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 			return
 		}
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdTerminateSubagent terminates a subagent session.
@@ -186,7 +186,7 @@ func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdListSessions lists active subagent sessions.

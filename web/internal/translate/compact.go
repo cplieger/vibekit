@@ -11,28 +11,37 @@ import (
 	"vibekit/internal/api"
 )
 
+// CompactionStatus is a typed string enum for compaction status values.
+type CompactionStatus string
+
+const (
+	CompactionStarted   CompactionStatus = "started"
+	CompactionCompleted CompactionStatus = "completed"
+	CompactionFailed    CompactionStatus = "failed"
+)
+
 // HandleCompactionStatus processes compaction status notifications.
 func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var p struct {
 		Summary *string `json:"summary"`
 		Status  struct {
-			Type  string `json:"type"`
-			Error string `json:"error"`
+			Type  CompactionStatus `json:"type"`
+			Error string           `json:"error"`
 		} `json:"status"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return
 	}
 	switch p.Status.Type {
-	case "started":
+	case CompactionStarted:
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventCompactionStarted, chatID, api.CompactionStartedPayload{}))
-	case "completed":
+	case CompactionCompleted:
 		summary := ""
 		if p.Summary != nil {
 			summary = *p.Summary
 		}
 		evt := api.Message{
-			ID:        NewMessageID(),
+			ID:        t.deps.NewMessageID(),
 			Role:      api.RoleEvent,
 			Ts:        time.Now().UnixMilli(),
 			EventKind: api.EventCompacted,
@@ -51,13 +60,13 @@ func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.Chat
 			slog.Error("compaction: set watermark", "chat_id", chatID, "error", err)
 		}
 		t.injectContextRecovery(ctx, chatID)
-	case "failed":
+	case CompactionFailed:
 		errMsg := p.Status.Error
 		if errMsg == "" {
 			errMsg = "compaction failed"
 		}
 		evt := api.Message{
-			ID:        NewMessageID(),
+			ID:        t.deps.NewMessageID(),
 			Role:      api.RoleEvent,
 			Ts:        time.Now().UnixMilli(),
 			EventKind: api.EventCompactFailed,
@@ -67,6 +76,8 @@ func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.Chat
 			slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 		}
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{Code: api.ErrCodeCompactionFailed, Message: errMsg}))
+	default:
+		slog.Warn("compaction: unknown status type", "type", p.Status.Type, "chat_id", chatID)
 	}
 }
 

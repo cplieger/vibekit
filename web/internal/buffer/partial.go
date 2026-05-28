@@ -6,107 +6,103 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"vibekit/internal/api"
 )
 
-// PartialState represents the lifecycle state of the crash-recovery
-// partial file writer.
-type PartialState int
+// writeThrottleInterval is the minimum time between fsync operations.
+// Losing the last 500ms of streaming content on a crash is acceptable
+// since the model will re-emit it on retry.
+const writeThrottleInterval = 500 * time.Millisecond
 
-const (
-	PartialIdle     PartialState = iota // not started; no fd
-	PartialWriting                      // fd open, writing snapshots
-	PartialDisabled                     // error occurred; fd closed, no further writes
-)
-
-// Compile-time assertion: update String() when adding variants.
-var _ [PartialDisabled + 1]struct{} = [3]struct{}{}
-
-// String returns a human-readable name for the partial file lifecycle state.
-func (s PartialState) String() string {
-	switch s {
-	case PartialIdle:
-		return "idle"
-	case PartialWriting:
-		return "writing"
-	case PartialDisabled:
-		return "disabled"
-	default:
-		return "partialState(unknown)"
-	}
-}
-
-// PartialWriter encapsulates the crash-recovery partial file lifecycle.
-type PartialWriter struct {
-	file  *os.File
-	state PartialState
-}
-
-// Open transitions from Idle to Writing by opening the partial file.
-func (pw *PartialWriter) Open(path string) {
-	if pw.state == PartialWriting {
-		panic("PartialWriter.Open called in Writing state (missing CloseAndRemove)")
-	}
-	if pw.state != PartialIdle {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		slog.Warn("partial: open failed", "path", path, "error", err)
-		pw.state = PartialDisabled
-		return
-	}
-	pw.file = f
-	pw.state = PartialWriting
+// WritingPartial is the active-state handle for the crash-recovery
+// partial file. It is only obtainable via OpenPartial, making it
+// impossible to call Write on an idle or disabled writer at compile time.
+type WritingPartial struct {
+	file      *os.File
+	disabled  bool
+	lastWrite time.Time
 }
 
 // Write rewrites the partial file with the given snapshot data.
-func (pw *PartialWriter) Write(ctx context.Context, snap *PartialSnapshot) {
-	if pw.state == PartialDisabled {
-		slog.Warn("PartialWriter.Write called in Disabled state", "message_id", snap.MessageID)
+// Writes are throttled to at most once per writeThrottleInterval to
+// reduce fsync pressure during fast model output.
+func (wp *WritingPartial) Write(ctx context.Context, snap *PartialSnapshot) {
+	if wp.disabled {
+		slog.Warn("WritingPartial.Write called in disabled state", "message_id", snap.MessageID)
 		return
 	}
-	if pw.state != PartialWriting {
+	if time.Since(wp.lastWrite) < writeThrottleInterval {
 		return
 	}
-	if err := pw.writeOnce(ctx, snap); err != nil {
+	if err := wp.writeOnce(ctx, snap); err != nil {
 		slog.Warn("partial snapshot write failed; "+
 			"further partial updates disabled for this turn",
 			"message_id", snap.MessageID, "error", err)
-		_ = pw.file.Close()
-		pw.file = nil
-		pw.state = PartialDisabled
+		_ = wp.file.Close()
+		wp.file = nil
+		wp.disabled = true
 	}
 }
 
-// CloseAndRemove closes the fd (if open) and removes the file at path.
-func (pw *PartialWriter) CloseAndRemove(path string) {
-	if pw.file != nil {
-		pw.file.Close()
-		pw.file = nil
+// Flush writes the final snapshot unconditionally (ignoring throttle),
+// ensuring the last state is captured before the partial file is removed.
+func (wp *WritingPartial) Flush(ctx context.Context, snap *PartialSnapshot) {
+	if wp.disabled {
+		return
 	}
-	pw.state = PartialIdle
+	if err := wp.writeOnce(ctx, snap); err != nil {
+		slog.Warn("partial flush failed", "message_id", snap.MessageID, "error", err)
+	}
+}
+
+// CloseAndRemove closes the fd and removes the file at path.
+func (wp *WritingPartial) CloseAndRemove(ctx context.Context, path string) {
+	if wp.file != nil {
+		wp.file.Close()
+		wp.file = nil
+	}
 	if path != "" {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		os.Remove(path)
 	}
 }
 
-func (pw *PartialWriter) writeOnce(_ context.Context, snap *PartialSnapshot) error {
+func (wp *WritingPartial) writeOnce(_ context.Context, snap *PartialSnapshot) error {
 	data, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
-	if _, err := pw.file.Seek(0, io.SeekStart); err != nil {
+	if _, err := wp.file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if err := pw.file.Truncate(0); err != nil {
+	if err := wp.file.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := pw.file.Write(data); err != nil {
+	if _, err := wp.file.Write(data); err != nil {
 		return err
 	}
-	return pw.file.Sync()
+	wp.lastWrite = time.Now()
+	return wp.file.Sync()
+}
+
+// OpenPartial transitions from idle to writing by opening the partial
+// file. Returns nil if the file cannot be opened or the context is
+// cancelled — callers check for nil to detect degraded mode.
+func OpenPartial(ctx context.Context, path string) *WritingPartial {
+	if err := ctx.Err(); err != nil {
+		slog.Warn("partial: open skipped (context cancelled)", "path", path, "error", err)
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		slog.Warn("partial: open failed", "path", path, "error", err)
+		return nil
+	}
+	return &WritingPartial{file: f}
 }
 
 // PartialSnapshot is the JSON shape written to .partial files.

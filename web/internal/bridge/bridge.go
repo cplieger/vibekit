@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"vibekit/internal/api"
+	"vibekit/internal/buffer"
 	"vibekit/internal/version"
 )
 
@@ -30,7 +31,7 @@ const scannerLineCap = 16 << 20
 // the rest. 64 KiB is generous for panic traces and progress lines;
 // anything longer is almost certainly binary garbage and not worth
 // carrying into Loki.
-const stderrLineCap = 64 * 1024
+const stderrLineCap = buffer.DefaultOutputCap
 
 // errBridgeExited is the sentinel Call returns when a caller's waiter
 // is unblocked by readLoop's post-exit drain or by the done-channel
@@ -75,6 +76,7 @@ type Bridge struct {
 	sessionID    api.SessionID
 	workDir      string
 	cliPath      string
+	lockMgr      *LockManager
 	nextID       atomic.Int64
 	stopOnce     sync.Once
 	mu           sync.Mutex
@@ -83,14 +85,28 @@ type Bridge struct {
 }
 
 // New returns a fresh bridge. Call Start before any other method.
-func New(cliPath, workDir string) *Bridge {
-	return &Bridge{
+// lockMgr may be nil if session lock management is not needed.
+func New(cliPath, workDir string, opts ...BridgeOption) *Bridge {
+	b := &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
 		pending: make(map[int64]chan *api.RPCResponse),
 		notifCh: make(chan *api.RPCResponse, 256),
 		done:    make(chan struct{}),
 	}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
+}
+
+// BridgeOption configures a Bridge at construction time.
+type BridgeOption func(*Bridge)
+
+// WithLockManager sets the LockManager used for stale-lock removal
+// during session load.
+func WithLockManager(lm *LockManager) BridgeOption {
+	return func(b *Bridge) { b.lockMgr = lm }
 }
 
 // SessionID returns the bridge's ACP session id. Safe to call from
@@ -149,8 +165,8 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	sessionID := b.sessionID
 	b.mu.Unlock()
 	_, err := b.Call(ctx, methodSetModel, map[string]any{
-		"sessionId": sessionID,
-		"modelId":   modelID,
+		api.KeySessionID: sessionID,
+		"modelId":        modelID,
 	})
 	if err != nil {
 		return err

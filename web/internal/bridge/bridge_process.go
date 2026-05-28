@@ -29,7 +29,9 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 		if !validSessionID(opts.SessionID) {
 			return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 		}
-		RemoveStaleLock(ctx, opts.SessionID)
+		if b.lockMgr != nil {
+			b.lockMgr.RemoveStaleLock(ctx, opts.SessionID)
+		}
 	}
 	if err := b.startProcess(opts.Agent, opts.Model, opts.ExtraArgs); err != nil {
 		return err
@@ -186,6 +188,29 @@ func (b *Bridge) forwardStderr(r io.Reader) {
 	// terminal condition; no need to log.
 }
 
+// jsonLevelMap maps structured JSON "level" field values to slog levels.
+var jsonLevelMap = map[string]slog.Level{
+	"ERROR":   slog.LevelError,
+	"WARN":    slog.LevelWarn,
+	"WARNING": slog.LevelWarn,
+	"DEBUG":   slog.LevelDebug,
+}
+
+// stderrKeywordRule maps an unstructured keyword to a slog level.
+type stderrKeywordRule struct {
+	Keyword string
+	Level   slog.Level
+}
+
+// stderrKeywordRules defines the keyword-to-level classification for
+// unstructured stderr lines. Order matters: first match wins.
+var stderrKeywordRules = []stderrKeywordRule{
+	{"panic", slog.LevelError},
+	{"fatal", slog.LevelError},
+	{"error", slog.LevelError},
+	{"warn", slog.LevelWarn},
+}
+
 // classifyStderrLevel determines the slog level for a kiro-cli stderr line.
 func classifyStderrLevel(line string) slog.Level {
 	// Strategy 1: try structured JSON with a "level" field.
@@ -194,34 +219,19 @@ func classifyStderrLevel(line string) slog.Level {
 			Level string `json:"level"`
 		}
 		if json.Unmarshal([]byte(line), &structured) == nil && structured.Level != "" {
-			switch strings.ToUpper(structured.Level) {
-			case "ERROR":
-				return slog.LevelError
-			case "WARN", "WARNING":
-				return slog.LevelWarn
-			case "DEBUG":
-				return slog.LevelDebug
-			default:
-				return slog.LevelInfo
+			if lvl, ok := jsonLevelMap[strings.ToUpper(structured.Level)]; ok {
+				return lvl
 			}
+			return slog.LevelInfo
 		}
 	}
 
 	// Strategy 2: word-boundary matching for unstructured lines.
-	// Require the keyword to appear at the start of the line or
-	// followed by a colon/bracket to avoid false positives like
-	// "0 errors found" or "ErrorBoundary component loaded".
 	low := strings.ToLower(line)
-	for _, kw := range []string{"panic", "fatal"} {
-		if matchesKeyword(low, kw) {
-			return slog.LevelError
+	for _, rule := range stderrKeywordRules {
+		if matchesKeyword(low, rule.Keyword) {
+			return rule.Level
 		}
-	}
-	if matchesKeyword(low, "error") {
-		return slog.LevelError
-	}
-	if matchesKeyword(low, "warn") {
-		return slog.LevelWarn
 	}
 	return slog.LevelInfo
 }

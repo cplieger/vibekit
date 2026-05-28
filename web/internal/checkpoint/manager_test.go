@@ -16,17 +16,25 @@ import (
 	"pgregory.net/rapid"
 )
 
+// rwMutexCoord implements GCCoordination for tests using a raw RWMutex.
+type rwMutexCoord struct{ mu *sync.RWMutex }
+
+func (c *rwMutexCoord) AcquireSnapshotLock() { c.mu.RLock() }
+func (c *rwMutexCoord) ReleaseSnapshotLock() { c.mu.RUnlock() }
+func (c *rwMutexCoord) AcquireGCLock()       { c.mu.Lock() }
+func (c *rwMutexCoord) ReleaseGCLock()       { c.mu.Unlock() }
+
 // newTestManager builds a Manager over a temp config + workspace.
 // Returns the manager and the workspace root (for writing files
 // directly to simulate agent edits or user edits).
-func newTestManager(t *testing.T, chatID string) (*Manager, string) {
+func newTestManager(t *testing.T, id string) (*Manager, string) {
 	t.Helper()
 	cfg := t.TempDir()
 	work := t.TempDir()
 	blobs := newBlobStore(cfg)
-	log := newEventLog(cfg, chatID)
+	log := newEventLog(cfg, id)
 	deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
-	return newManager(chatID, work, log, deps), work
+	return newManager(chatID(id), work, log, deps), work
 }
 
 func TestAdvanceTurnSnapshotTagSequencing(t *testing.T) {
@@ -712,7 +720,7 @@ func TestCountLineDelta_EmptyInputs(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAdd, gotRemove := countLineDelta([]byte(tt.from), []byte(tt.to))
+			gotAdd, gotRemove := countLineDelta(context.Background(), []byte(tt.from), []byte(tt.to))
 			if gotAdd != tt.wantAdd || gotRemove != tt.wantRemove {
 				t.Errorf("countLineDelta(%q,%q) = (%d,%d), want (%d,%d)",
 					tt.from, tt.to, gotAdd, gotRemove, tt.wantAdd, tt.wantRemove)
@@ -727,7 +735,7 @@ func TestCountLineDelta_ReorderIsNotUnchanged(t *testing.T) {
 	// approach would return (0,0) here.
 	from := []byte("a\nb\n")
 	to := []byte("b\na\n")
-	add, remove := countLineDelta(from, to)
+	add, remove := countLineDelta(context.Background(), from, to)
 	if add != 1 || remove != 1 {
 		t.Errorf("countLineDelta(reorder) = (%d,%d), want (1,1)", add, remove)
 	}
@@ -856,11 +864,11 @@ func TestCountLineDelta_DegradedFallbackForExtremelyLargeInputs(t *testing.T) {
 	// branch for free.
 	const n = 5_000
 	big := bytes.Repeat([]byte("a\n"), n)
-	add, remove := countLineDelta(big, nil)
+	add, remove := countLineDelta(context.Background(), big, nil)
 	if add != 0 || remove != n {
 		t.Errorf("countLineDelta(big, nil) = (%d, %d), want (0, %d)", add, remove, n)
 	}
-	add, remove = countLineDelta(nil, big)
+	add, remove = countLineDelta(context.Background(), nil, big)
 	if add != n || remove != 0 {
 		t.Errorf("countLineDelta(nil, big) = (%d, %d), want (%d, 0)", add, remove, n)
 	}
@@ -869,7 +877,7 @@ func TestCountLineDelta_DegradedFallbackForExtremelyLargeInputs(t *testing.T) {
 	// fallback reports everything as changed in both directions.
 	a := bytes.Repeat([]byte("a\n"), n)
 	b := bytes.Repeat([]byte("b\n"), n)
-	add, remove = countLineDelta(a, b)
+	add, remove = countLineDelta(context.Background(), a, b)
 	if add != n || remove != n {
 		t.Errorf("countLineDelta(oversized, oversized) = (%d, %d), want (%d, %d)", add, remove, n, n)
 	}
@@ -905,7 +913,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 		b.Run(fmt.Sprintf("%d_lines", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				countLineDelta(from, to)
+				countLineDelta(context.Background(), from, to)
 			}
 		})
 	}
@@ -917,7 +925,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 	b.Run("near_cap_fallback", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			countLineDelta(from, to)
+			countLineDelta(context.Background(), from, to)
 		}
 	})
 }
@@ -1099,7 +1107,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		fromBytes := []byte(strings.Join(from, "\n"))
 		toBytes := []byte(strings.Join(to, "\n"))
 
-		added, removed := countLineDelta(fromBytes, toBytes)
+		added, removed := countLineDelta(context.Background(), fromBytes, toBytes)
 
 		// Invariant 1: non-negativity.
 		if added < 0 || removed < 0 {
@@ -1117,7 +1125,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		}
 
 		// Invariant 3: symmetry — swap(from,to) swaps (added,removed).
-		added2, removed2 := countLineDelta(toBytes, fromBytes)
+		added2, removed2 := countLineDelta(context.Background(), toBytes, fromBytes)
 		if added2 != removed || removed2 != added {
 			t.Fatalf("symmetry: delta(%q,%q)=(%d,%d) but delta(%q,%q)=(%d,%d)",
 				fromBytes, toBytes, added, removed,
@@ -1125,7 +1133,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		}
 
 		// Invariant 4: identity — countLineDelta(x,x) == (0,0).
-		selfAdd, selfRem := countLineDelta(fromBytes, fromBytes)
+		selfAdd, selfRem := countLineDelta(context.Background(), fromBytes, fromBytes)
 		if selfAdd != 0 || selfRem != 0 {
 			t.Fatalf("identity: delta(x,x)=(%d,%d), want (0,0)", selfAdd, selfRem)
 		}
@@ -1138,7 +1146,7 @@ func FuzzCountLineDelta(f *testing.F) {
 	f.Add([]byte("x\n"), []byte(""))
 	f.Add([]byte("same\n"), []byte("same\n"))
 	f.Fuzz(func(t *testing.T, from, to []byte) {
-		added, removed := countLineDelta(from, to)
+		added, removed := countLineDelta(context.Background(), from, to)
 		if added < 0 || removed < 0 {
 			t.Fatalf("negative delta: added=%d removed=%d", added, removed)
 		}
@@ -1156,15 +1164,15 @@ func FuzzCountLineDelta(f *testing.F) {
 func BenchmarkSnapshotContention(b *testing.B) {
 	// Create 4 managers simulating 4 concurrent chats sharing a gcLock.
 	var gcLock sync.RWMutex
+	coord := &rwMutexCoord{mu: &gcLock}
 
-	setup := func(chatID string) (*Manager, string) {
+	setup := func(id string) (*Manager, string) {
 		cfg := b.TempDir()
 		work := b.TempDir()
 		blobs := newBlobStore(cfg)
-		log := newEventLog(cfg, chatID)
-		deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
-		m := newManager(chatID, work, log, deps)
-		m.gcLock = &gcLock
+		log := newEventLog(cfg, id)
+		deps := &managerDeps{blobs: blobs, index: newCrossChatIndex(), gcCoord: coord}
+		m := newManager(chatID(id), work, log, deps)
 		// Write a file to snapshot.
 		fpath := filepath.Join(work, "file.go")
 		os.WriteFile(fpath, []byte("package main\n"), 0o600)

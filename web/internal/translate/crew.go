@@ -75,3 +75,41 @@ func MarshalCrew(c *api.Crew) []byte {
 	}
 	return b
 }
+
+// crewFromWire converts a wire-format CrewNotifPayload into the domain
+// type *api.Crew. This is the single place where wire→domain field
+// mapping lives; when kiro-cli adds fields to the notification, only
+// this adapter changes.
+func crewFromWire(p *CrewNotifPayload) *api.Crew {
+	crew := &api.Crew{
+		Group:     p.Subagents[0].Group,
+		Subagents: make([]api.CrewSubagent, len(p.Subagents)),
+	}
+	for i := range p.Subagents {
+		s := &p.Subagents[i]
+		crew.Subagents[i] = api.CrewSubagent{
+			SessionID:    s.SessionID,
+			SessionName:  s.SessionName,
+			AgentName:    s.AgentName,
+			InitialQuery: s.InitialQuery,
+			Status:       api.CrewStatus(s.Status.Type),
+			StatusMsg:    s.Status.Message,
+			Group:        s.Group,
+			Role:         s.Role,
+			DependsOn:    s.DependsOn,
+		}
+	}
+	if len(p.PendingStages) > 0 {
+		crew.PendingStages = make([]api.CrewPendingStage, len(p.PendingStages))
+		for i := range p.PendingStages {
+			ps := &p.PendingStages[i]
+			crew.PendingStages[i] = api.CrewPendingStage{
+				Name:      ps.Name,
+				AgentName: ps.AgentName,
+				Role:      ps.Role,
+				DependsOn: ps.DependsOn,
+			}
+		}
+	}
+	return crew
+}

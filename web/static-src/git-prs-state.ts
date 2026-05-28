@@ -6,29 +6,10 @@
 
 // --- Types ---
 
-interface PR {
-  number: number;
-  title: string;
-  state: string;
-  draft?: boolean;
-  mergeable?: boolean;
-  source_branch: string;
-  target_branch: string;
-  url?: string;
-  author?: string;
-  created_at?: number;
-  updated_at?: number;
-}
+import type { GitPR as PR, GitRepoGroup } from "./git-types.js";
 
-interface RepoGroup {
-  forge_id: string;
+interface RepoGroup extends Omit<GitRepoGroup, "forge_kind"> {
   forge_kind: string;
-  forge_host: string;
-  owner: string;
-  name: string;
-  full_name: string;
-  prs: PR[];
-  error?: string;
 }
 
 export interface PRRemoveResult {

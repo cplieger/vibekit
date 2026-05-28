@@ -22,7 +22,7 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID) {
 	h.translator.ClearCrewCache(chatID)
 	h.bridge.assistantBufs.Delete(chatID)
 	h.lifecycle.mu.Unlock()
-	h.closeAndRemovePartial(chatID, buf)
+	h.closeAndRemovePartial(ctx, chatID, buf)
 	if h.checkpoints != nil {
 		h.checkpoints.Cleanup(ctx, chatID)
 	}

@@ -19,7 +19,7 @@ func (t *Translator) HandleMCPInitialized(ctx context.Context, _ api.ChatID, msg
 		slog.Debug("mcp: invalid server_initialized payload", "error", err)
 		return
 	}
-	t.deps.MCPRecordConnected(ctx, p.ServerName)
+	t.deps.MCPRecorder().RecordConnected(ctx, p.ServerName)
 }
 
 // HandleMCPOAuth processes MCP oauth_request notifications.
@@ -32,7 +32,7 @@ func (t *Translator) HandleMCPOAuth(ctx context.Context, _ api.ChatID, msg *api.
 		slog.Debug("mcp: invalid oauth_request payload", "error", err)
 		return
 	}
-	t.deps.MCPRecordOAuth(ctx, p.ServerName, p.OAuthURL)
+	t.deps.MCPRecorder().RecordOAuth(ctx, p.ServerName, p.OAuthURL)
 }
 
 // HandleMCPInitFailure processes MCP server_init_failure notifications.
@@ -45,5 +45,5 @@ func (t *Translator) HandleMCPInitFailure(ctx context.Context, _ api.ChatID, msg
 		slog.Debug("mcp: invalid server_init_failure payload", "error", err)
 		return
 	}
-	t.deps.MCPRecordInitFailure(ctx, p.ServerName, p.Error)
+	t.deps.MCPRecorder().RecordInitFailure(ctx, p.ServerName, p.Error)
 }

@@ -184,17 +184,15 @@ export function pollAction<TArgs, TResult>(
       clearTimeout(timer);
       timer = undefined;
     }
-    if (pauseWhenHidden && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", onVisibility);
-    }
-    if (refreshOnFocus && typeof window !== "undefined") {
-      window.removeEventListener("focus", onFocus);
-    }
+    listenerCtrl.abort();
   }
+
+  // AbortController for event listeners — abort() removes all at once.
+  const listenerCtrl = new AbortController();
 
   // Wire listeners.
   if (pauseWhenHidden && typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener("visibilitychange", onVisibility, { signal: listenerCtrl.signal });
     // Initialize paused state from current visibility — if the page
     // loaded while hidden, don't fire the first poll until it's visible.
     if (document.hidden) {
@@ -202,7 +200,7 @@ export function pollAction<TArgs, TResult>(
     }
   }
   if (refreshOnFocus && typeof window !== "undefined") {
-    window.addEventListener("focus", onFocus);
+    window.addEventListener("focus", onFocus, { signal: listenerCtrl.signal });
   }
 
   // Auto-cleanup on framework beforeunload drain. The hook is

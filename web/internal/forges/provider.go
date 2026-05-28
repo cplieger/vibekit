@@ -29,53 +29,41 @@ const (
 	KindCodeberg Kind = "codeberg" // synonym for KindGitea, host=codeberg.org
 )
 
+// kindMetaEntry holds the per-kind metadata used by the lookup methods.
+type kindMetaEntry struct {
+	CLI, DefaultHost, Title string
+}
+
+// kindMeta is the single source of truth for forge kind properties.
+// Adding a new forge requires only a new map entry.
+var kindMeta = map[Kind]kindMetaEntry{
+	KindGitHub:   {"gh", "github.com", "GitHub"},
+	KindGitLab:   {"glab", "gitlab.com", "GitLab"},
+	KindCodeberg: {"tea", "codeberg.org", "Codeberg"},
+	KindGitea:    {"tea", "", "Gitea"},
+}
+
 // Valid reports whether k is a known forge kind.
 func (k Kind) Valid() bool {
-	switch k {
-	case KindGitHub, KindGitLab, KindGitea, KindCodeberg:
-		return true
-	}
-	return false
+	_, ok := kindMeta[k]
+	return ok
 }
 
 // CLI returns the CLI tool name backing this kind.
 func (k Kind) CLI() string {
-	switch k {
-	case KindGitHub:
-		return "gh"
-	case KindGitLab:
-		return "glab"
-	case KindGitea, KindCodeberg:
-		return "tea"
-	}
-	return ""
+	return kindMeta[k].CLI
 }
 
 // DefaultHost returns the canonical hostname for the kind, or "" if
 // no default exists (self-hosted Gitea/Forgejo).
 func (k Kind) DefaultHost() string {
-	switch k {
-	case KindGitHub:
-		return "github.com"
-	case KindGitLab:
-		return "gitlab.com"
-	case KindCodeberg:
-		return "codeberg.org"
-	}
-	return ""
+	return kindMeta[k].DefaultHost
 }
 
 // Title returns the human-readable display name for the kind.
 func (k Kind) Title() string {
-	switch k {
-	case KindGitHub:
-		return "GitHub"
-	case KindGitLab:
-		return "GitLab"
-	case KindCodeberg:
-		return "Codeberg"
-	case KindGitea:
-		return "Gitea"
+	if m, ok := kindMeta[k]; ok {
+		return m.Title
 	}
 	return string(k)
 }

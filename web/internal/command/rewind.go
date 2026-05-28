@@ -192,7 +192,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		return
 	}
 	var p api.SetEffortCommand
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !validEffortLevel(p.Level) {
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
 		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
 		return
 	}
@@ -208,7 +208,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	result, err := bridge.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
 		keyCommand: map[string]any{
 			keyCommand: "effort",
-			"args":     []string{p.Level},
+			"args":     []string{string(p.Level)},
 		},
 	})
 	if err != nil {
@@ -220,12 +220,4 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
 	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, "level": p.Level})
-}
-
-var validEffortLevels = map[string]bool{
-	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
-}
-
-func validEffortLevel(level string) bool {
-	return validEffortLevels[level]
 }

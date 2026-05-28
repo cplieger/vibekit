@@ -24,62 +24,79 @@ func kiroSettingsPath() string {
 	return api.KiroSettingsPath("settings.json")
 }
 
-// hookStatusCache caches the hooks.showStatus setting from
-// ~/.kiro/settings/settings.json with mtime-based invalidation.
-// Reduces per-tool-call cost from os.ReadFile+json.Unmarshal to a
-// single os.Stat in the common case (file changes at most once per
-// user session).
-type hookStatusCache struct {
-	mtime   time.Time
-	path    string
-	size    int64
-	mu      sync.Mutex
-	enabled bool
-	valid   bool
+// cachedBoolField reads a boolean value from a JSON file with
+// mtime-based cache invalidation. Reduces per-call cost from
+// os.ReadFile+json.Unmarshal to a single os.Stat in the common case.
+type cachedBoolField struct {
+	path       string
+	key        string
+	defaultVal bool
+	mu         sync.Mutex
+	mtime      time.Time
+	size       int64
+	value      bool
+	valid      bool
 }
 
-func newHookStatusCache(path string) *hookStatusCache {
-	return &hookStatusCache{path: path, enabled: true}
+func newCachedBoolField(path, key string, defaultVal bool) *cachedBoolField {
+	return &cachedBoolField{path: path, key: key, defaultVal: defaultVal, value: defaultVal}
 }
 
-func (c *hookStatusCache) get() bool {
+func (c *cachedBoolField) get() bool {
 	if c.path == "" {
-		return true
+		return c.defaultVal
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	info, err := os.Stat(c.path)
 	if err != nil {
-		return true
+		return c.defaultVal
 	}
 	if c.valid && info.ModTime().Equal(c.mtime) && info.Size() == c.size {
-		return c.enabled
+		return c.value
 	}
 	// Cache miss — re-read and parse.
 	data, err := os.ReadFile(c.path) // #nosec G304 -- fixed path
 	if err != nil {
-		return true
+		return c.defaultVal
 	}
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil {
-		return true
+		return c.defaultVal
 	}
-	v, ok := raw["hooks.showStatus"]
+	v, ok := raw[c.key]
 	if !ok {
-		c.enabled = true
+		c.value = c.defaultVal
 	} else {
-		var enabled bool
-		if json.Unmarshal(v, &enabled) != nil {
-			c.enabled = true
+		var parsed bool
+		if json.Unmarshal(v, &parsed) != nil {
+			c.value = c.defaultVal
 		} else {
-			c.enabled = enabled
+			c.value = parsed
 		}
 	}
 	c.mtime = info.ModTime()
 	c.size = info.Size()
 	c.valid = true
-	return c.enabled
+	return c.value
+}
+
+// hookStatusCache caches the hooks.showStatus setting from
+// ~/.kiro/settings/settings.json with mtime-based invalidation.
+// Reduces per-tool-call cost from os.ReadFile+json.Unmarshal to a
+// single os.Stat in the common case (file changes at most once per
+// user session).
+type hookStatusCache struct {
+	field *cachedBoolField
+}
+
+func newHookStatusCache(path string) *hookStatusCache {
+	return &hookStatusCache{field: newCachedBoolField(path, "hooks.showStatus", true)}
+}
+
+func (c *hookStatusCache) get() bool {
+	return c.field.get()
 }
 
 // isHookStatusEnabled reads the kiro-cli hooks.showStatus setting.

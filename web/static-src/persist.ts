@@ -8,6 +8,7 @@
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 import { registerCleanup } from "./actions/index.js";
+import type { EffortLevel } from "./model-switcher.js";
 
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
@@ -27,7 +28,7 @@ export interface AppSettings {
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
   shell_policy?: "no_commands" | "safe_commands" | "all_commands";
-  model_effort?: { last_model: string; effort: string };
+  model_effort?: { last_model: string; effort: EffortLevel };
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -71,6 +72,13 @@ function flushPendingPatch(): void {
   if (Object.keys(patchQueue).length === 0) {
     return;
   }
+  executePatch();
+}
+
+/** Shared dispatch body: drains the queue, dispatches the PATCH, and
+ *  resolves all pending promises. Used by both flushPendingPatch (sync
+ *  flush on beforeunload) and the debounce timer callback. */
+function executePatch(): void {
   const body = patchQueue;
   const allInputs = patchInputs;
   const resolvers = patchResolvers;
@@ -156,42 +164,7 @@ export function patchSettings(
   showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
-    const body = patchQueue;
-    const allInputs = patchInputs;
-    const resolvers = patchResolvers;
-    const rollback = patchSnapshot;
-    patchQueue = {};
-    patchSnapshot = {};
-    patchInputs = [];
-    patchResolvers = [];
-    const gen = ++patchGen;
-    let result: Record<string, unknown> | null = null;
-    void patchAppSettings.dispatch(
-      {
-        body: body,
-        ...(allInputs.length > 0 ? { inputs: allInputs } : {}),
-      },
-      {
-        silent: true,
-        onSuccess: (r) => {
-          result = r as Record<string, unknown>;
-          if (gen === patchGen) {
-            showSaved();
-          }
-        },
-        onError: () => {
-          Object.assign(lastSentPatch, rollback);
-          if (gen === patchGen) {
-            showError();
-          }
-        },
-        onSettled: () => {
-          for (const resolve of resolvers) {
-            resolve(result);
-          }
-        },
-      },
-    );
+    executePatch();
   }, 300);
   return p;
 }

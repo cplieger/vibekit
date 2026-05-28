@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/ids"
 	"vibekit/internal/permissions"
 )
 
@@ -96,7 +97,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
 	}
 	evt := api.Message{
-		ID: NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
+		ID: ids.NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
 		EventKind: api.EventInterrupted, Content: "Session refreshed, retrying...",
 	}
 	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
@@ -116,7 +117,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	sb2.SetPrompting()
 	defer sb2.ReleaseAfterPrompt()
 	deps.AdvanceCheckpointTurn(ctx, chatID)
-	params["sessionId"] = sb2.SessionID()
+	params[api.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
@@ -244,7 +245,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
 	deps.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, creditsDelta, float64(elapsed.Milliseconds()))
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.
@@ -271,15 +272,13 @@ func IsRetryablePromptError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var te *api.TransportError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*api.TransportError](err); ok {
 		return te.Retryable
 	}
 	if errors.Is(err, api.ErrNotIdle) {
 		return true
 	}
-	var re *api.RPCError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*api.RPCError](err); ok {
 		switch re.Code {
 		case api.RPCCodeNotIdle:
 			return true

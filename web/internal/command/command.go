@@ -93,9 +93,6 @@ type Dependencies interface {
 	// PrimeIfNeeded primes the bridge with history if needed.
 	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
 
-	// LinesClear clears line tracking for a chat.
-	LinesClear(chatID api.ChatID)
-
 	// IsEmptyTurn checks if a prompt response is an empty turn.
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 
@@ -103,29 +100,10 @@ type Dependencies interface {
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
 }
 
-// Bridge abstracts the per-chat ACP bridge for command handlers.
-type Bridge interface {
-	// Call sends an RPC call to kiro-cli.
-	Call(ctx context.Context, method string, params any) (*api.RPCResponse, error)
-	// Notify sends a one-way notification to kiro-cli.
-	Notify(ctx context.Context, method string, params any) error
-	// Respond sends a permission response to kiro-cli.
-	Respond(ctx context.Context, requestID int64, result any, err error) error
-	// SessionID returns the current ACP session ID.
-	SessionID() string
-	// TryAcquireForPrompt attempts to lock the bridge for prompting.
-	TryAcquireForPrompt() bool
-	// ReleaseAfterPrompt releases the prompt lock.
-	ReleaseAfterPrompt()
-	// SetLastActive updates the last-active timestamp.
-	SetLastActive()
-	// SetPrompting sets the bridge state to prompting (for recovery).
-	SetPrompting()
-	// IsPrimed reports whether the bridge has been primed.
-	IsPrimed() bool
-	// SetPrimed marks the bridge as primed.
-	SetPrimed()
-}
+// Bridge is the per-chat ACP bridge contract for command handlers.
+// The canonical definition lives in api.CommandBridge; this alias
+// preserves backward compatibility within the command package.
+type Bridge = api.CommandBridge
 
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
@@ -165,9 +143,24 @@ func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
 	api.WriteRawJSON(w, data)
 }
 
+// RespondOK writes the standard {"ok":true} success response and
+// caches it for idempotent replay. Shorthand for the most common
+// command success case.
+func (d *Dispatcher) RespondOK(w http.ResponseWriter, reqID string) {
+	d.Respond(w, reqID, responseOK)
+}
+
+// errorResponse is the typed wire shape for JSON error responses.
+// Using a struct instead of map[string]string makes the shape explicit,
+// enables json.Marshal's cached struct encoder, and provides a single
+// place to add future fields (e.g. code, retryable).
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
 // RespondErr writes a JSON error response with the given status code.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	api.WriteJSONStatus(w, code, map[string]string{keyError: err.Error()})
+	api.WriteJSONStatus(w, code, errorResponse{Error: err.Error()})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
@@ -187,7 +180,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.deps.Draining() {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{keyError: "shutting down"})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
 
@@ -198,7 +191,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{keyError: "request body too large"})
+				errorResponse{Error: "request body too large"})
 			return
 		}
 		api.BadRequest(w, "invalid json")
@@ -219,7 +212,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Centralised chat_id validation.
 	if cmd.ChatID != "" && !validChatID(cmd.ChatID) {
-		api.BadRequest(w, "invalid chat_id")
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 

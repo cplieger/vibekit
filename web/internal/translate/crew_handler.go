@@ -33,36 +33,7 @@ func (t *Translator) HandleCrewUpdate(ctx context.Context, chatID api.ChatID, ms
 			return
 		}
 	}
-	crew := &api.Crew{
-		Group:     groupKey,
-		Subagents: make([]api.CrewSubagent, len(p.Subagents)),
-	}
-	for i := range p.Subagents {
-		s := &p.Subagents[i]
-		crew.Subagents[i] = api.CrewSubagent{
-			SessionID:    s.SessionID,
-			SessionName:  s.SessionName,
-			AgentName:    s.AgentName,
-			InitialQuery: s.InitialQuery,
-			Status:       api.CrewStatus(s.Status.Type),
-			StatusMsg:    s.Status.Message,
-			Group:        s.Group,
-			Role:         s.Role,
-			DependsOn:    s.DependsOn,
-		}
-	}
-	if len(p.PendingStages) > 0 {
-		crew.PendingStages = make([]api.CrewPendingStage, len(p.PendingStages))
-		for i := range p.PendingStages {
-			ps := &p.PendingStages[i]
-			crew.PendingStages[i] = api.CrewPendingStage{
-				Name:      ps.Name,
-				AgentName: ps.AgentName,
-				Role:      ps.Role,
-				DependsOn: ps.DependsOn,
-			}
-		}
-	}
+	crew := crewFromWire(&p)
 	t.PersistCrew(ctx, chatID, crew)
 }
 
@@ -76,7 +47,7 @@ func (t *Translator) PersistCrew(ctx context.Context, chatID api.ChatID, crew *a
 		return
 	}
 	if existingID == "" {
-		id := NewMessageID()
+		id := t.deps.NewMessageID()
 		evt := api.Message{
 			ID:        id,
 			Role:      api.RoleEvent,
@@ -89,6 +60,7 @@ func (t *Translator) PersistCrew(ctx context.Context, chatID api.ChatID, crew *a
 			return
 		}
 		t.crewCache.remember(chatID, crew.Group, id)
+		t.persistCrewIndex(ctx, chatID, crew.Group, id)
 		return
 	}
 	if err := t.deps.ChatStore().UpdateMessage(ctx, chatID, existingID, func(m *api.Message) {
@@ -98,7 +70,23 @@ func (t *Translator) PersistCrew(ctx context.Context, chatID api.ChatID, crew *a
 	}
 }
 
-// lookupCrewMessage tries the in-memory cache first; falls back to a
+// persistCrewIndex updates the chat's CrewMessageIDs map so the index
+// survives restarts without requiring a history walk.
+func (t *Translator) persistCrewIndex(ctx context.Context, chatID api.ChatID, groupKey, messageID string) {
+	_ = t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+		if !ex {
+			return false
+		}
+		if c.CrewMessageIDs == nil {
+			c.CrewMessageIDs = make(map[string]string)
+		}
+		c.CrewMessageIDs[groupKey] = messageID
+		return true
+	})
+}
+
+// lookupCrewMessage tries the in-memory cache first, then the
+// persisted CrewMessageIDs index, and falls back to a bounded
 // history walk on miss.
 func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, groupKey string) (id string, digest []byte) {
 	if cached, ok := t.crewCache.lookup(chatID, groupKey); ok {
@@ -112,6 +100,19 @@ func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, g
 			}
 		}
 	}
+	// Try the persisted index (warm after restart without history walk).
+	chat, chatOk := t.deps.ChatStore().Get(ctx, chatID)
+	if chatOk && chat.CrewMessageIDs != nil {
+		if indexed, exists := chat.CrewMessageIDs[groupKey]; exists {
+			for i := range chat.Messages {
+				m := &chat.Messages[i]
+				if m.ID == indexed && m.Crew != nil {
+					t.crewCache.remember(chatID, groupKey, indexed)
+					return indexed, MarshalCrew(m.Crew)
+				}
+			}
+		}
+	}
 	id, digest = t.walkCrewHistory(ctx, chatID, groupKey)
 	if id != "" {
 		t.crewCache.remember(chatID, groupKey, id)
@@ -119,14 +120,23 @@ func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, g
 	return id, digest
 }
 
+// maxCrewScanDepth caps the reverse history scan to avoid O(n) worst
+// case on long chats. A crew message older than this is stale.
+const maxCrewScanDepth = 200
+
 // walkCrewHistory scans messages in reverse for the latest crew with
-// a matching group.
+// a matching group, bounded by maxCrewScanDepth.
 func (t *Translator) walkCrewHistory(ctx context.Context, chatID api.ChatID, groupKey string) (id string, digest []byte) {
 	chat, ok := t.deps.ChatStore().Get(ctx, chatID)
 	if !ok {
 		return "", nil
 	}
+	scanned := 0
 	for i := range slices.Backward(chat.Messages) {
+		if scanned >= maxCrewScanDepth {
+			break
+		}
+		scanned++
 		m := &chat.Messages[i]
 		if m.Role != api.RoleEvent || m.EventKind != api.EventCrew || m.Crew == nil {
 			continue

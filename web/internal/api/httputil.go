@@ -10,6 +10,10 @@ import (
 // JSONKeyError is the standard JSON error response key.
 const JSONKeyError = "error"
 
+// JSONKeyOutput is the standard JSON response key for successful
+// command output. Used by git/ and server/ packages.
+const JSONKeyOutput = "output"
+
 // MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
 const MaxJSONBody = 1024 * 1024
 
@@ -20,7 +24,9 @@ func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
 
 // --- JSON response writers ---
 
-func jsonHeaders(w http.ResponseWriter) {
+// JSONHeaders sets the standard JSON response headers (Content-Type
+// and X-Content-Type-Options). Exported for use by internal/fileutil.
+func JSONHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
@@ -35,7 +41,7 @@ func WriteJSON(w http.ResponseWriter, v any) {
 // non-marshalable value in v (a programmer bug), so they're logged at
 // Warn so Loki picks them up.
 func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
-	jsonHeaders(w)
+	JSONHeaders(w)
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Warn("api: json encode failed after status committed",
@@ -49,7 +55,7 @@ func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
 // slash-command results) where json.Marshal would be a redundant
 // round-trip. Write errors are best-effort (client may have hung up).
 func WriteRawJSON(w http.ResponseWriter, data []byte) {
-	jsonHeaders(w)
+	JSONHeaders(w)
 	if _, err := w.Write(data); err != nil {
 		slog.Debug("api: raw json write failed", "error", err)
 	}

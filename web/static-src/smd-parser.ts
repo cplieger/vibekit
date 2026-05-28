@@ -87,7 +87,7 @@ import {
   end_tokens_to_indent,
 } from "./smd-parser-types.js";
 
-const MAYBE_URL = 102 as Token;
+const MAYBE_URL = 102 as Token; // local-only token, not in TOKENS
 
 // --- Parser constructor ---
 

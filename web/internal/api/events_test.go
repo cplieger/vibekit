@@ -18,7 +18,7 @@ func TestWorkingLabelForKind(t *testing.T) {
 		{ToolKind("think"), "", "Reasoning"},
 		{ToolKind("other"), "", "Thinking"},
 		{ToolKind(""), "", "Thinking"},
-		{ToolKind("mcp"), "", "Thinking"},
+		{ToolKind("mcp"), "", "Running"},
 	}
 	for _, tt := range tests {
 		got := WorkingLabelForKind(tt.kind, tt.title)

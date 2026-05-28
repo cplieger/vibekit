@@ -42,7 +42,7 @@ func (t *Translator) HandleAgentSwitched(ctx context.Context, chatID api.ChatID,
 		}
 	}
 	evt := api.Message{
-		ID:        NewMessageID(),
+		ID:        t.deps.NewMessageID(),
 		Role:      api.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: api.EventAgentSwitched,

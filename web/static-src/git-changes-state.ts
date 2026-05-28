@@ -6,24 +6,7 @@
 
 // --- Types ---
 
-interface FileEntry {
-  path: string;
-  status: string;
-  staged: boolean;
-  display: string;
-}
-
-interface RepoStatus {
-  repo: string;
-  is_repo: boolean;
-  branch: string;
-  remote: string;
-  ahead: number;
-  behind: number;
-  files: FileEntry[];
-  has_dirty: boolean;
-  stashes: number;
-}
+import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
 
 export interface StageResult {
   repo: string;

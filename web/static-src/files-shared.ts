@@ -4,6 +4,13 @@
 
 import { apiGet } from "./api-client.js";
 
+// --- CSS class constants for the file browser UI ---
+export const FB_ROW = "fb-row";
+export const FB_NAME = "fb-name";
+export const FB_NAME_LINK = "fb-name-link";
+export const FB_CHECK = "fb-check";
+export const FB_META = "fb-meta";
+
 export interface FileEntry {
   name: string;
   isDir: boolean;
@@ -148,9 +155,9 @@ export function displayPath(currentPath: string): string {
 /** Build an error row element safely (no innerHTML with user content). */
 export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
   const row = document.createElement("div");
-  row.className = "fb-row";
+  row.className = FB_ROW;
   const span = document.createElement("span");
-  span.className = "fb-meta";
+  span.className = FB_META;
   span.textContent = msg;
   row.appendChild(span);
   if (onRetry !== undefined) {

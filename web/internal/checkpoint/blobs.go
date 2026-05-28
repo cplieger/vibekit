@@ -94,7 +94,7 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 	}
 	parent := filepath.Dir(p)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return "", fmt.Errorf("mkdir blob parent: %w", err)
+		return "", fmt.Errorf("mkdir blob parent: %w", errors.Join(ErrTransient, err))
 	}
 	// Atomic write: create under a .tmp-<suffix> sibling, then
 	// rename into place. The suffix lets two goroutines storing
@@ -103,7 +103,7 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 	// since the content is identical).
 	tmp, err := os.CreateTemp(parent, "blob-*")
 	if err != nil {
-		return "", fmt.Errorf("create temp blob: %w", err)
+		return "", fmt.Errorf("create temp blob: %w", errors.Join(ErrTransient, err))
 	}
 	cleanupTmp := true
 	defer func() {

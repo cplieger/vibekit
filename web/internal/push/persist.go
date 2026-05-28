@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }
@@ -23,6 +24,13 @@ func (s *Service) subsPath() string { return filepath.Join(s.dir, "push-subs.jso
 func (s *Service) loadKeys() {
 	data, err := os.ReadFile(s.keysPath())
 	if err == nil && json.Unmarshal(data, &s.keys) == nil && s.keys.PublicKey != "" {
+		priv, decErr := s.decodeVAPIDPrivateKey()
+		if decErr != nil {
+			slog.Error("push: decode VAPID private key at startup", "error", decErr)
+			s.healthy = false
+			return
+		}
+		s.vapidPriv = priv
 		return
 	}
 	priv, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -40,9 +48,16 @@ func (s *Service) loadKeys() {
 		s.healthy = false
 		return
 	}
-	if saveErr := api.SaveBytes(s.keysPath(), data, 0o600); saveErr != nil {
+	if saveErr := fileutil.SaveBytes(s.keysPath(), data, 0o600); saveErr != nil {
 		slog.Warn("push: persist VAPID keys failed", "error", saveErr)
 	}
+	ecdsaKey, decErr := s.decodeVAPIDPrivateKey()
+	if decErr != nil {
+		slog.Error("push: decode generated VAPID key", "error", decErr)
+		s.healthy = false
+		return
+	}
+	s.vapidPriv = ecdsaKey
 	slog.Info("push: generated VAPID keys")
 }
 
@@ -105,7 +120,7 @@ func (s *Service) writeSubsSnapshot(subs []api.PushSubscription) {
 		slog.Error("push: marshal subscriptions", "error", err)
 		return
 	}
-	if saveErr := api.SaveBytes(s.subsPath(), data, 0o600); saveErr != nil {
+	if saveErr := fileutil.SaveBytes(s.subsPath(), data, 0o600); saveErr != nil {
 		slog.Warn("push: persist subscriptions failed", "error", saveErr)
 	}
 }

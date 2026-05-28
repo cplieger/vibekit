@@ -5,7 +5,44 @@ import (
 	"strings"
 )
 
+// --- Message/Request ID validation ---
+
+// maxMessageIDBytes caps the length of client-supplied message ids.
+const maxMessageIDBytes = 128
+
+// maxRequestIDBytes caps client-supplied request_id length.
+const maxRequestIDBytes = 128
+
+// validMessageIDRe restricts client-supplied ids to a safe character set.
+var validMessageIDRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
+
+// ValidMessageID reports whether id is safe to echo on SSE and store
+// on disk as the ID field of a message. This is the single source of
+// truth; hub and command packages delegate here.
+func ValidMessageID(id string) bool {
+	if id == "" || len(id) > maxMessageIDBytes {
+		return false
+	}
+	return validMessageIDRe.MatchString(id)
+}
+
+// ValidRequestID reports whether the given request_id is safe to use
+// as an idempotency cache key. Empty is valid (field is optional).
+func ValidRequestID(id string) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) > maxRequestIDBytes {
+		return false
+	}
+	return validMessageIDRe.MatchString(id)
+}
+
 // --- Chat ID validation ---
+
+// ErrMsgInvalidChatID is the single source of truth for the HTTP error
+// message returned when a chat ID fails validation.
+const ErrMsgInvalidChatID = "invalid chat_id"
 
 // ValidChatID reports whether id is a valid chat identifier. Accepts
 // ULIDs, UUIDs, and the legacy "chat-<ms>" shape: alphanumerics, hyphens,
