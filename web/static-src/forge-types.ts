@@ -28,20 +28,6 @@ export const DEFAULT_HOST: Record<ForgeKind, string> = {
   gitea: "",
 };
 
-/** Human-readable label for a forge kind (e.g. "GitHub", "Gitea / Forgejo"). */
-export function forgeKindLabel(kind: ForgeKind): string {
-  switch (kind) {
-    case "github":
-      return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "codeberg":
-      return "Codeberg";
-    case "gitea":
-      return "Gitea / Forgejo";
-  }
-}
-
 /** Centralized metadata for each forge kind. Single source of truth for
  *  display names and icon glyphs. */
 export const FORGE_META: Record<

@@ -44,6 +44,15 @@ const (
 	mcpStateFailed    mcpServerState = "failed"     // kiro-cli sent server_init_failure
 )
 
+// Valid reports whether s is one of the known MCP server states.
+func (s mcpServerState) Valid() bool {
+	switch s {
+	case mcpStateIdle, mcpStateConnected, mcpStateOAuth, mcpStateFailed:
+		return true
+	}
+	return false
+}
+
 // mcpServerRuntime is the registry's per-server record.
 type mcpServerRuntime struct {
 	Name     string
@@ -198,7 +207,7 @@ func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string
 // clearAll wipes the runtime registry and broadcasts mcp_disconnected
 // for each server that had state. Called when the last bridge exits;
 // MCP subprocesses are scoped to kiro-cli, so nothing is live anymore.
-func (r *mcpRegistry) clearAll() {
+func (r *mcpRegistry) clearAll(ctx context.Context) {
 	r.mu.Lock()
 	prev := r.servers
 	r.servers = make(map[string]*mcpServerRuntime)
@@ -208,7 +217,10 @@ func (r *mcpRegistry) clearAll() {
 		return
 	}
 	for name := range prev {
-		r.hub.Broadcast(context.Background(), api.NewEvent(api.EventMCPDisconnected, "", api.MCPDisconnectedPayload{Server: name}))
+		if ctx.Err() != nil {
+			break
+		}
+		r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPDisconnected, "", api.MCPDisconnectedPayload{Server: name}))
 	}
 	r.signalChange()
 }

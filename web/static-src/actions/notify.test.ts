@@ -2,23 +2,16 @@
 // Tests for notify.ts action configuration and error paths.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-}));
 
 vi.mock("../push-util.js", () => ({
   urlBase64ToUint8Array: (s: string) => new Uint8Array(s.length),
-}));
 
 import { unsubscribePush, registerPush } from "./notify.js";
 import { apiGet } from "../api-client.js";

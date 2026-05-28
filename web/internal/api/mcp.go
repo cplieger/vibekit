@@ -29,7 +29,7 @@ type MCPConfig interface {
 	EnabledNames(ctx context.Context) map[string]struct{}
 	// SetKnownTools persists the tool list for a server so the UI can
 	// show suggestions in the per-tool deny section.
-	SetKnownTools(name string, tools []string)
+	SetKnownTools(ctx context.Context, name string, tools []string)
 }
 
 // --- SSE payloads ---

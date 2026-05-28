@@ -3,6 +3,8 @@ package permissions
 import (
 	"strings"
 	"testing"
+
+	"vibekit/internal/permissions/eval"
 )
 
 // FuzzEvaluateShellCommand exercises the full shell-command security
@@ -41,22 +43,22 @@ func FuzzEvaluateShellCommand(f *testing.F) {
 	f.Fuzz(func(t *testing.T, command string) {
 		// Exercise all three policies with nil rules (no explicit
 		// allow/deny) to test the built-in decision logic.
-		for _, policy := range []shellPolicy{policyNone, policySafe, policyAll} {
-			decision := evaluateShellCommand(policy, command, nil)
+		for _, policy := range []eval.ShellPolicy{eval.PolicyNone, eval.PolicySafe, eval.PolicyAll} {
+			decision := eval.EvaluateShellCommand(policy, command, nil)
 
 			// Invariant 2: result must be a known decision.
 			switch decision {
 			case ShellAllow, ShellAsk, ShellDeny:
 				// ok
 			default:
-				t.Fatalf("evaluateShellCommand(%q, %q, nil) = %q; want allow|ask|deny",
+				t.Fatalf("eval.EvaluateShellCommand(%q, %q, nil) = %q; want allow|ask|deny",
 					policy, command, decision)
 			}
 
 			// Invariant 3: metachar guard under safe_commands.
-			if policy == policySafe && hasShellMetacharacter(command) {
+			if policy == eval.PolicySafe && hasShellMetacharacter(command) {
 				if decision == ShellAllow {
-					t.Errorf("evaluateShellCommand(safe_commands, %q, nil) = allow; "+
+					t.Errorf("eval.EvaluateShellCommand(safe_commands, %q, nil) = allow; "+
 						"metachar-bearing command must never auto-approve without explicit allow rule",
 						command)
 				}
@@ -104,8 +106,8 @@ func FuzzMatchPattern(f *testing.F) {
 
 		// Invariant 1: metachar-free pattern must not match a
 		// metachar-bearing command.
-		if !strings.ContainsAny(pattern, shellMetacharacters) &&
-			strings.ContainsAny(command, shellMetacharacters) {
+		if !strings.ContainsAny(pattern, eval.ShellMetacharacters) &&
+			strings.ContainsAny(command, eval.ShellMetacharacters) {
 			if result {
 				t.Errorf("matchPattern(%q, %q) = true, but metachar-free pattern must not match metachar-bearing command",
 					pattern, command)

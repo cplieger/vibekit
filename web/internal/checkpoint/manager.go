@@ -60,27 +60,15 @@ type chatID string
 // hot path doesn't copy ~90 bytes per call.
 type ConflictBroadcaster func(chatID string, payload *ConflictPayload)
 
-// restoreStageSuffix is the temp-file pattern used by both
+// RestoreStageSuffix is the temp-file pattern used by both
 // CheckoutFile and stageRestoreLocked for two-phase atomic writes.
 // Single constant so cleanup tooling or tests that glob for orphaned
 // staging files can reference it instead of hardcoding the pattern.
-const restoreStageSuffix = ".vibekit-restore-*"
+const RestoreStageSuffix = ".vibekit-restore-*"
 
 // ConflictPayload is re-exported from the types sub-package for
 // backward compatibility within this package.
 type ConflictPayload = chktypes.ConflictPayload
-
-// GCCoordination defines the lock protocol between snapshot writes
-// and GC sweeps. The Manager takes AcquireSnapshotLock (shared) for
-// the duration of blob Put + event Append; the GC coordinator takes
-// AcquireGCLock (exclusive) for each fanout sweep. This makes the
-// coordination contract explicit and testable.
-type GCCoordination interface {
-	AcquireSnapshotLock()
-	ReleaseSnapshotLock()
-	AcquireGCLock()
-	ReleaseGCLock()
-}
 
 // managerDeps bundles the shared infrastructure that every Manager
 // in a Store receives. These are identical for every Manager the
@@ -89,7 +77,6 @@ type managerDeps struct {
 	blobs  *blobStore
 	index  *crossChatIndex
 	onConf ConflictBroadcaster
-	gcCoord GCCoordination
 }
 
 // Manager owns one chat's checkpoint log and drives all snapshot /
@@ -162,7 +149,7 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 		m.mu.Lock() // INVARIANT: re-acquire m.mu before returning to satisfy caller's invariant.
 		return m.loadErr
 	}
-	events, err := m.log.Read()
+	events, err := m.log.Read(ctx)
 	if err != nil {
 		m.loadErr = err
 		m.loaded = true

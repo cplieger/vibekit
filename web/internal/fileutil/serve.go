@@ -82,10 +82,10 @@ func serveJSONGet(w http.ResponseWriter, path, name, fallback string) {
 func serveJSONPut(w http.ResponseWriter, r *http.Request, path, name string, mu *sync.Mutex, perm os.FileMode) {
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		mediaType, _, err := mime.ParseMediaType(ct)
-		if err != nil || mediaType != "application/json" {
+		if err != nil || mediaType != api.MIMETypeJSON {
 			slog.Warn("serveJSONFile: unexpected content-type",
 				"route", name, "content_type", ct)
-			api.BadRequest(w, "expected application/json")
+			api.BadRequest(w, "expected "+api.MIMETypeJSON)
 			return
 		}
 	}

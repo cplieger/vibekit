@@ -11,22 +11,24 @@ import {
   dequeuePrompt,
   peekQueuedAttachments,
 } from "../store.js";
-import { apiAction } from "../actions/index.js";
 import {
   notifyIfHidden,
   setBadge,
   isAgentFinishedEnabled,
   isPermissionNeededEnabled,
+  NOTIFY_TITLE,
 } from "../notify.js";
-import { showPermissionDialog } from "../messages.js";
+import { showPermissionDialog } from "../permission.js";
 import { sendPromptTo } from "../chat-commands.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
-import { respondPermission, restoreCheckpoint } from "../actions/chat.js";
-import type { BannerLevel } from "../types.js";
-import type { ErrorCode } from "../wire/types.gen.js";
+import { respondPermission } from "../actions/chat.js";
+import { ErrorRoute, ERROR_ROUTES } from "./error-routing.js";
+export type { ErrorRoute };
+export { ERROR_ROUTES };
+export { wireCheckpointRestore } from "./checkpoint-restore.js";
 
 /** Notify the user and set the badge if the page is hidden. */
 function notifyAndBadge(title: string, body: string): void {
@@ -109,7 +111,7 @@ onSSE("turn_ended", (chatID, p) => {
       _lastNotifyMs.set(chatID, now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
-      notifyAndBadge("Vibekit", `${name}: Agent finished`);
+      notifyAndBadge(NOTIFY_TITLE, `${name}: Agent finished`);
     }
   }
 
@@ -199,7 +201,7 @@ onSSE("turn_ended", (chatID, p) => {
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
-    notifyAndBadge("Vibekit", `Permission needed: ${p.title ?? "Tool"}`);
+    notifyAndBadge(NOTIFY_TITLE, `Permission needed: ${p.title ?? "Tool"}`);
   }
   // Mark the subagent row as having a pending approval.
   const subSid = p.sub_session_id;
@@ -260,24 +262,7 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
   return undefined;
 }
 
-// --- Data-driven error classification table ---
-
-export interface ErrorRoute {
-  surface: "banner" | "send-error";
-  level: BannerLevel;
-  dismissible: boolean;
-}
-
-export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
-  agent_not_found: { surface: "banner", level: "error", dismissible: true },
-  agent_config_error: { surface: "banner", level: "error", dismissible: false },
-  model_not_found: { surface: "banner", level: "warning", dismissible: true },
-  rate_limit: { surface: "banner", level: "warning", dismissible: true },
-  compaction_failed: { surface: "banner", level: "error", dismissible: true },
-  switch_failed: { surface: "send-error", level: "error", dismissible: false },
-  bridge_start_failed: { surface: "send-error", level: "error", dismissible: false },
-  prompt_failed: { surface: "send-error", level: "error", dismissible: false },
-};
+// --- Data-driven error classification (imported from error-routing.ts) ---
 
 onSSE("error", (chatID, p) => {
   // Unfreeze thinking so send-state can settle correctly.
@@ -293,93 +278,21 @@ onSSE("error", (chatID, p) => {
   }
 
   const route = ERROR_ROUTES[code];
-  if (route?.surface === "banner") {
-    showBanner(chatID, code, msg, route.level, route.dismissible);
-  } else if (route?.surface === "send-error") {
-    setLastError(`${code}: ${msg}`);
-  } else {
+  if (route === undefined) {
     // Unknown codes: fall through to send-button blocker.
     setLastError(msg !== "" ? `${code}: ${msg}` : code);
-  }
-});
-
-// --- Checkpoint restore (event delegation on messages container) ---
-
-/** Wire checkpoint restore buttons via event delegation. Called once at
- *  startup from app.ts. */
-export function wireCheckpointRestore(messagesEl: HTMLElement): void {
-  messagesEl.addEventListener("click", (e: MouseEvent) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>(".checkpoint-restore");
-    if (btn === null) {
-      return;
-    }
-    const tag: string | undefined = btn.dataset["tag"];
-    const chatID = getActiveId();
-    if (tag === undefined || chatID === "") {
-      return;
-    }
-    void confirmAndRestore(chatID, tag);
-  });
-}
-
-async function confirmAndRestore(chatID: string, tag: string): Promise<void> {
-  // Two-phase confirm: if the restore would touch any file with
-  // unsaved edits in the editor, surface them BEFORE the generic
-  // restore prompt. The check is advisory — the server always
-  // proceeds; we just give the user a chance to cancel.
-  const preview = await fetchRestorePreview(chatID, tag);
-  const dirty = await intersectDirty(preview);
-  if (dirty.length > 0) {
-    const sample = dirty.slice(0, 3).join(", ");
-    const more = dirty.length > 3 ? ` (+${String(dirty.length - 3)} more)` : "";
-    const ok = await confirmDestructive(
-      `Restore would overwrite unsaved edits in ${sample}${more}. Continue anyway?`,
-      "Discard and restore",
-    );
-    if (!ok) {
-      return;
-    }
-  } else if (
-    !(await confirmDestructive(
-      "Restore to this checkpoint? Current file changes will be reverted.",
-      "Restore",
-    ))
-  ) {
     return;
   }
-  void restoreCheckpoint.dispatch({ chatID, tag });
-}
-
-/** Action for fetching restore preview (best-effort, no toast). */
-const fetchRestorePreviewAction = apiAction<{ chatID: string; tag: string }, { files?: string[] }>({
-  name: "checkpoint.preview",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  request: ({ chatID, tag }) => ({
-    method: "GET",
-    path: `/api/checkpoints/${encodeURIComponent(chatID)}/restore-preview?tag=${encodeURIComponent(tag)}`,
-  }),
-  success: false,
-  error: false,
+  switch (route.surface) {
+    case "banner":
+      showBanner(chatID, code, msg, route.level, route.dismissible);
+      break;
+    case "send-error":
+      setLastError(`${code}: ${msg}`);
+      break;
+    default:
+      route.surface satisfies never;
+  }
 });
 
-async function fetchRestorePreview(chatID: string, tag: string): Promise<string[]> {
-  // Best-effort: network failure or a server without preview
-  // support (older build) falls through to the normal confirm
-  // dialog so restores never get wedged by the advisory step.
-  const resp = await fetchRestorePreviewAction.dispatch({ chatID, tag });
-  return resp?.files ?? [];
-}
-
-async function intersectDirty(preview: string[]): Promise<string[]> {
-  if (preview.length === 0) {
-    return [];
-  }
-  const { getDirtyEditorPaths } = await import("../editor-core.js");
-  const dirty = new Set(getDirtyEditorPaths());
-  return preview.filter((p) => dirty.has(p));
-}
-
-async function confirmDestructive(msg: string, btn: string): Promise<boolean> {
-  const { confirm: confirmDialog } = await import("../confirm.js");
-  return confirmDialog(msg, btn, "destructive");
-}
+// --- Checkpoint restore (extracted to handlers/checkpoint-restore.ts) ---

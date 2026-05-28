@@ -8,7 +8,7 @@
 
 import { $ } from "./dom.js";
 import { getActive, activeVersion } from "./store.js";
-import { effect } from "./signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { setAutoApproveCrew } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 import type { Session } from "./types.js";

@@ -34,12 +34,25 @@ const (
 // logging and circuit-breaker logic previously inlined in readLoop.
 type parseErrTracker struct {
 	windowStart time.Time
+	lastErrorAt time.Time
 	total       int
 	consecutive int
 }
 
+// parseErrDecay is the duration after which the storm window resets if
+// no new errors arrive. Prevents long-lived bridges from accumulating
+// stale error counts that trigger false circuit-breaks.
+const parseErrDecay = 5 * time.Minute
+
 // Record notes a parse error and returns the action readLoop should take.
 func (t *parseErrTracker) Record() parseErrAction {
+	now := time.Now()
+	// Decay: if the last error was long ago, reset the storm window.
+	if !t.lastErrorAt.IsZero() && now.Sub(t.lastErrorAt) > parseErrDecay {
+		t.total = 0
+		t.windowStart = time.Time{}
+	}
+	t.lastErrorAt = now
 	t.total++
 	t.consecutive++
 	if t.consecutive >= parseErrMaxConsecutive {
@@ -47,12 +60,12 @@ func (t *parseErrTracker) Record() parseErrAction {
 	}
 	if t.total <= parseErrBurst {
 		if t.total == parseErrBurst {
-			t.windowStart = time.Now()
+			t.windowStart = now
 		}
 		return parseErrLog
 	}
 	if time.Since(t.windowStart) > parseErrWindow {
-		t.windowStart = time.Now()
+		t.windowStart = now
 		return parseErrSummarize
 	}
 	return parseErrSuppress

@@ -36,9 +36,9 @@ import (
 func (h *Hub) handleFSRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
 	var handler func(context.Context, api.ChatID, *api.RPCResponse)
 	switch msg.Method {
-	case methodFSRead:
+	case api.MethodFSRead:
 		handler = h.respondFSRead
-	case methodFSWrite:
+	case api.MethodFSWrite:
 		handler = h.respondFSWrite
 	default:
 		return false

@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"vibekit/internal/mcp/prewarm"
 )
 
 // List returns a deep copy of every server with secrets masked. Safe to
@@ -216,14 +218,47 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 // Called when kiro-cli reports commands/available with per-server tool
 // names. Persists to mcp.json so the UI can show suggestions even when
 // the server is disconnected. No-op if the server name isn't found.
-func (s *Store) SetKnownTools(name string, tools []string) {
+func (s *Store) SetKnownTools(ctx context.Context, name string, tools []string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var found *Server
 	for _, srv := range s.servers {
 		if srv.Name == name {
+			found = srv
 			srv.KnownTools = tools
-			_ = s.persist(s.ctx)
-			return
+			break
 		}
 	}
+	if found == nil {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	// Persist outside the lock: KnownTools is a non-critical UI cache
+	// field, so concurrent readers are not blocked during disk I/O.
+	// On failure the in-memory state is ahead of disk — acceptable for
+	// suggestion data that will be re-populated on next bridge start.
+	if err := s.persist(ctx); err != nil {
+		slog.Warn("mcp: persist after SetKnownTools failed", "server", name, "error", err)
+		return
+	}
+	s.notifyChange(ctx)
+}
+
+// EnabledServers returns the prewarm-relevant view of enabled servers.
+// Satisfies prewarm.ServerLister so the Store can be passed directly
+// to prewarm.NewRunner without an adapter.
+func (s *Store) EnabledServers(ctx context.Context) []prewarm.ServerInfo {
+	servers := s.EnabledRaw(ctx)
+	out := make([]prewarm.ServerInfo, len(servers))
+	for i, srv := range servers {
+		out[i] = prewarm.ServerInfo{
+			Prewarm:   srv.Prewarm,
+			Enabled:   srv.Enabled,
+			Transport: string(srv.Transport),
+			Command:   srv.Command,
+			Args:      srv.Args,
+		}
+	}
+	return out
 }

@@ -4,9 +4,7 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"time"
 
 	"vibekit/internal/api"
 )
@@ -20,16 +18,41 @@ const (
 	CompactionFailed    CompactionStatus = "failed"
 )
 
+// contextRecoveryMeta is the typed _meta payload that signals kiro-cli
+// to skip this prompt during compaction. The struct ensures the nested
+// key names ("kiro", "contextRecovery") are compile-time checked.
+type contextRecoveryMeta struct {
+	Kiro struct {
+		ContextRecovery bool `json:"contextRecovery"`
+	} `json:"kiro"`
+}
+
+// newContextRecoveryMeta returns the _meta value for context-recovery prompts.
+func newContextRecoveryMeta() contextRecoveryMeta {
+	var m contextRecoveryMeta
+	m.Kiro.ContextRecovery = true
+	return m
+}
+
+// Valid reports whether s is one of the known compaction statuses.
+func (s CompactionStatus) Valid() bool {
+	switch s {
+	case CompactionStarted, CompactionCompleted, CompactionFailed:
+		return true
+	}
+	return false
+}
+
 // HandleCompactionStatus processes compaction status notifications.
 func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		Summary *string `json:"summary"`
 		Status  struct {
 			Type  CompactionStatus `json:"type"`
 			Error string           `json:"error"`
 		} `json:"status"`
-	}
-	if err := json.Unmarshal(msg.Params, &p); err != nil {
+	}](msg, "compaction/status")
+	if !ok {
 		return
 	}
 	switch p.Status.Type {
@@ -40,15 +63,12 @@ func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.Chat
 		if p.Summary != nil {
 			summary = *p.Summary
 		}
-		evt := api.Message{
-			ID:        t.deps.NewMessageID(),
-			Role:      api.RoleEvent,
-			Ts:        time.Now().UnixMilli(),
-			EventKind: api.EventCompacted,
-			Content:   summary,
-		}
+		evt := t.newEventMessage(api.EventCompacted, summary)
 		if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 			slog.Error("compaction: append event", "chat_id", chatID, "error", err)
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 			if !ex {
@@ -65,13 +85,7 @@ func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.Chat
 		if errMsg == "" {
 			errMsg = "compaction failed"
 		}
-		evt := api.Message{
-			ID:        t.deps.NewMessageID(),
-			Role:      api.RoleEvent,
-			Ts:        time.Now().UnixMilli(),
-			EventKind: api.EventCompactFailed,
-			Content:   errMsg,
-		}
+		evt := t.newEventMessage(api.EventCompactFailed, errMsg)
 		if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 			slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 		}
@@ -95,7 +109,7 @@ func (t *Translator) injectContextRecovery(ctx context.Context, chatID api.ChatI
 		"Model: " + chat.Model
 	if err := t.deps.BridgeNotify(ctx, chatID, api.MethodPrompt, map[string]any{
 		"prompt": []map[string]any{api.TextBlock(block)},
-		"_meta":  map[string]any{"kiro": map[string]any{"contextRecovery": true}},
+		"_meta":  newContextRecoveryMeta(),
 	}); err != nil {
 		slog.Debug("context recovery: notify failed", "chat_id", chatID, "error", err)
 	}

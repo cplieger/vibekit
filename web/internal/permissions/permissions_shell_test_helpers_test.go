@@ -10,13 +10,17 @@
 
 package permissions
 
-import "strings"
+import (
+	"strings"
+
+	"vibekit/internal/permissions/eval"
+)
 
 // hasShellMetacharacter reports whether s contains any shell
-// metacharacter from shellMetacharacters. Fuzz tests use this to
+// metacharacter from eval.ShellMetacharacters. Fuzz tests use this to
 // decide whether a generated command should be auto-approved under
 // policySafe (no metacharacters → safe) without parsing the command
 // into (cmd, args).
 func hasShellMetacharacter(s string) bool {
-	return strings.ContainsAny(s, shellMetacharacters)
+	return strings.ContainsAny(s, eval.ShellMetacharacters)
 }

@@ -49,8 +49,8 @@ func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) ses
 // translateACPEvent on first use (lazy init avoids a constructor).
 func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
-		methodUpdate:             h.handleSessionUpdate,
-		methodRequestPermission:  h.translator.HandlePermissionRequest,
+		api.MethodSessionUpdate:         h.handleSessionUpdate,
+		api.MethodRequestPermission:  h.translator.HandlePermissionRequest,
 		methodMetadataLegacy:     h.translator.HandleMetadata,
 		methodMetadata:           h.translator.HandleMetadata,
 		methodCommandsAvailable:  h.translator.HandleCommandsAvailable,

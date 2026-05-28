@@ -6,6 +6,14 @@ import { RETRY_STANDARD } from "./types.js";
 import { withTimeout } from "../api-client.js";
 import type { Conflict } from "../conflicts.js";
 
+/** Timeout for individual blob fetches — shorter than API_TIMEOUT_MS (30s)
+ *  because blobs are small payloads; 15s is a generous upper bound that
+ *  avoids blocking the UI on a stalled connection. */
+const BLOB_FETCH_TIMEOUT_MS = 15_000;
+
+/** Base path for checkpoint API endpoints. */
+export const API_CHECKPOINTS = "/api/checkpoints";
+
 interface OpenDiffArgs {
   chatID: string;
   path: string;
@@ -21,10 +29,10 @@ async function fetchBlob(chatID: string, sha: string, signal: AbortSignal): Prom
   if (sha === "") {
     return "";
   }
-  const path = `/api/checkpoints/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`;
+  const path = `${API_CHECKPOINTS}/${encodeURIComponent(chatID)}/blob/${encodeURIComponent(sha)}`;
   let resp: Response;
   try {
-    resp = await fetch(path, { signal: withTimeout(signal, 15_000) });
+    resp = await fetch(path, { signal: withTimeout(signal, BLOB_FETCH_TIMEOUT_MS) });
   } catch (e) {
     throw classifyFetchError(e, signal);
   }
@@ -69,7 +77,7 @@ export const loadConflicts = apiAction<string, { conflicts?: Conflict[] }>({
   dedupe: (args) => args,
   request: (chatID) => ({
     method: "GET",
-    path: `/api/checkpoints/${encodeURIComponent(chatID)}/conflicts`,
+    path: `${API_CHECKPOINTS}/${encodeURIComponent(chatID)}/conflicts`,
   }),
   error: false,
 });

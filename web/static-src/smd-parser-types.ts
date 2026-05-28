@@ -54,41 +54,16 @@ export const TOKENS = {
 /** Token type derived from the TOKENS constant object. */
 export type Token = (typeof TOKENS)[keyof typeof TOKENS];
 
-// Re-export individual constants for backward compatibility.
-export const DOCUMENT: Token = TOKENS.DOCUMENT;
-export const PARAGRAPH: Token = TOKENS.PARAGRAPH;
-export const HEADING_1: Token = TOKENS.HEADING_1;
-export const HEADING_2: Token = TOKENS.HEADING_2;
-export const HEADING_3: Token = TOKENS.HEADING_3;
-export const HEADING_4: Token = TOKENS.HEADING_4;
-export const HEADING_5: Token = TOKENS.HEADING_5;
-export const HEADING_6: Token = TOKENS.HEADING_6;
-export const CODE_BLOCK: Token = TOKENS.CODE_BLOCK;
-export const CODE_FENCE: Token = TOKENS.CODE_FENCE;
-export const CODE_INLINE: Token = TOKENS.CODE_INLINE;
-export const ITALIC_AST: Token = TOKENS.ITALIC_AST;
-export const ITALIC_UND: Token = TOKENS.ITALIC_UND;
-export const STRONG_AST: Token = TOKENS.STRONG_AST;
-export const STRONG_UND: Token = TOKENS.STRONG_UND;
-export const STRIKE: Token = TOKENS.STRIKE;
-export const LINK: Token = TOKENS.LINK;
-export const RAW_URL: Token = TOKENS.RAW_URL;
-export const IMAGE: Token = TOKENS.IMAGE;
-export const BLOCKQUOTE: Token = TOKENS.BLOCKQUOTE;
-export const LINE_BREAK: Token = TOKENS.LINE_BREAK;
-export const RULE: Token = TOKENS.RULE;
-export const LIST_UNORDERED: Token = TOKENS.LIST_UNORDERED;
-export const LIST_ORDERED: Token = TOKENS.LIST_ORDERED;
-export const LIST_ITEM: Token = TOKENS.LIST_ITEM;
-export const CHECKBOX: Token = TOKENS.CHECKBOX;
-export const TABLE: Token = TOKENS.TABLE;
-export const TABLE_ROW: Token = TOKENS.TABLE_ROW;
-export const TABLE_CELL: Token = TOKENS.TABLE_CELL;
-export const EQUATION_BLOCK: Token = TOKENS.EQUATION_BLOCK;
-export const EQUATION_INLINE: Token = TOKENS.EQUATION_INLINE;
-export const NEWLINE: Token = TOKENS.NEWLINE;
-export const MAYBE_BR: Token = TOKENS.MAYBE_BR;
-export const MAYBE_EQ_BLOCK: Token = TOKENS.MAYBE_EQ_BLOCK;
+// Re-export individual constants via destructuring.
+export const {
+  DOCUMENT, PARAGRAPH, HEADING_1, HEADING_2, HEADING_3,
+  HEADING_4, HEADING_5, HEADING_6, CODE_BLOCK, CODE_FENCE,
+  CODE_INLINE, ITALIC_AST, ITALIC_UND, STRONG_AST, STRONG_UND,
+  STRIKE, LINK, RAW_URL, IMAGE, BLOCKQUOTE, LINE_BREAK, RULE,
+  LIST_UNORDERED, LIST_ORDERED, LIST_ITEM, CHECKBOX, TABLE,
+  TABLE_ROW, TABLE_CELL, EQUATION_BLOCK, EQUATION_INLINE,
+  NEWLINE, MAYBE_BR, MAYBE_EQ_BLOCK,
+} = TOKENS;
 
 // --- Attr enum ---
 
@@ -104,11 +79,7 @@ export const ATTRS = {
 /** Attr type derived from the ATTRS constant object. */
 export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
 
-export const HREF: Attr = ATTRS.HREF;
-export const SRC: Attr = ATTRS.SRC;
-export const LANG: Attr = ATTRS.LANG;
-export const CHECKED: Attr = ATTRS.CHECKED;
-export const START: Attr = ATTRS.START;
+export const { HREF, SRC, LANG, CHECKED, START } = ATTRS;
 
 export const TOKEN_ARRAY_CAP = 24;
 
@@ -126,7 +97,7 @@ export interface Renderer<T> {
 
 export interface Parser {
   renderer: Renderer<unknown>;
-  textBuf: string[];
+  textBuf: string;
   pending: string;
   tokens: Uint32Array;
   len: number;
@@ -146,11 +117,11 @@ export interface Parser {
 // --- Pure utility functions ---
 
 export function add_text(p: Parser): void {
-  if (p.textBuf.length === 0) {
+  if (p.textBuf === "") {
     return;
   }
-  p.renderer.add_text(p.renderer.data, p.textBuf.join(""));
-  p.textBuf.length = 0;
+  p.renderer.add_text(p.renderer.data, p.textBuf);
+  p.textBuf = "";
 }
 
 export function end_token(p: Parser): void {

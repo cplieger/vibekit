@@ -17,9 +17,6 @@ import (
 	"vibekit/internal/permissions"
 )
 
-// ACP method constant for prompt.
-const methodPrompt = api.MethodPrompt
-
 // validatePromptPayload parses and validates the prompt command payload.
 func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, error) {
 	var p api.PromptCommand
@@ -76,7 +73,7 @@ func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, 
 		}
 		return false
 	}, func() (*api.RPCResponse, error) {
-		return sb.Call(ctx, methodPrompt, params)
+		return sb.Call(ctx, api.MethodPrompt, params)
 	})
 }
 
@@ -225,7 +222,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams := BuildPromptParams(deps, sb, &p)
+	promptParams := BuildPromptParams(ctx, deps, sb, &p)
 	resp, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -249,9 +246,9 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.
-func BuildPromptParams(deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(p.Text, p.Attachments, deps.ResolveInsideWorkDir),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
 	kiroMeta := map[string]any{}
 	if p.ActiveFile != "" {

@@ -2080,3 +2080,52 @@ func TestHandlePull_ValidationMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		// Generate arbitrary UTF-8 strings (0-500 chars).
+		subject := rapid.String().Draw(rt, "subject")
+		if len(subject) > 500 {
+			subject = subject[:500]
+		}
+
+		hasBody := rapid.Bool().Draw(rt, "hasBody")
+		var input string
+		if hasBody {
+			body := rapid.String().Draw(rt, "body")
+			if len(body) > 200 {
+				body = body[:200]
+			}
+			input = subject + "\n\n" + body
+		} else {
+			input = subject
+		}
+
+		// Optionally wrap with fence/prefix/quotes.
+		wrapper := rapid.IntRange(0, 4).Draw(rt, "wrapper")
+		switch wrapper {
+		case 1:
+			lang := rapid.StringMatching(`[a-z]{0,10}`).Draw(rt, "lang")
+			input = "```" + lang + "\n" + input + "\n```"
+		case 2:
+			input = "COMMIT MESSAGE: " + input
+		case 3:
+			input = `"` + input + `"`
+		case 4:
+			input = "  \n\t" + input + "\n  "
+		}
+
+		result := extractCommitMessage(input)
+
+		// Invariant 1: subject line <= 72 chars.
+		firstLine, _, _ := strings.Cut(result, "\n")
+		if len(firstLine) > 72 {
+			rt.Fatalf("subject %q is %d chars, want <=72", firstLine, len(firstLine))
+		}
+
+		// Invariant 2: no leading/trailing whitespace.
+		if result != strings.TrimSpace(result) {
+			rt.Fatalf("result has leading/trailing whitespace: %q", result)
+		}
+	})
+}

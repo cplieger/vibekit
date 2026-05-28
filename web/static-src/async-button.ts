@@ -76,14 +76,22 @@ export async function withAsyncFeedback(
     resetTimers.delete(btn);
   }
 
-  const origHTML = btn.innerHTML;
+  const origNodes = [...btn.childNodes].map((n) => n.cloneNode(true));
   const origDisabled = btn.disabled;
   const origAriaBusy = btn.getAttribute("aria-busy");
+
+  const spinnerEl = document.createElement("span");
+  spinnerEl.className = "spinner-sm btn-async-spinner";
+  spinnerEl.setAttribute("aria-hidden", "true");
 
   btn.dataset["asyncStatus"] = "pending";
   btn.disabled = true;
   btn.setAttribute("aria-busy", "true");
-  btn.innerHTML = opts.keepLabel === true ? `${SPINNER_HTML} ${origHTML}` : SPINNER_HTML;
+  if (opts.keepLabel === true) {
+    btn.prepend(spinnerEl, document.createTextNode(" "));
+  } else {
+    btn.replaceChildren(spinnerEl);
+  }
 
   let ok = true;
   try {
@@ -107,7 +115,9 @@ export async function withAsyncFeedback(
   }
 
   btn.dataset["asyncStatus"] = ok ? "success" : "error";
-  btn.innerHTML = ok ? CHECK_HTML : X_HTML;
+  const glyphTpl = document.createElement("template");
+  glyphTpl.innerHTML = ok ? CHECK_HTML : X_HTML;
+  btn.replaceChildren(glyphTpl.content);
   if (origAriaBusy === null) {
     btn.removeAttribute("aria-busy");
   } else {
@@ -121,7 +131,7 @@ export async function withAsyncFeedback(
     if (!btn.isConnected) {
       return;
     }
-    btn.innerHTML = origHTML;
+    btn.replaceChildren(...origNodes.map((n) => n.cloneNode(true)));
     btn.disabled = origDisabled;
     delete btn.dataset["asyncStatus"];
   }, reset);

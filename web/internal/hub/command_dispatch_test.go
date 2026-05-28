@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"testing"
 	"unicode"
+
+	"vibekit/internal/api"
 )
 
 var safeRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
@@ -18,7 +20,7 @@ func FuzzValidMessageID(f *testing.F) {
 	f.Add("has\x00null")
 
 	f.Fuzz(func(t *testing.T, id string) {
-		result := validMessageID(id)
+		result := api.ValidMessageID(id)
 		if result {
 			// Invariant 1: accepted IDs have length in [1, 128].
 			if len(id) == 0 || len(id) > 128 {
@@ -40,7 +42,7 @@ func FuzzValidMessageID(f *testing.F) {
 			t.Error("empty string accepted")
 		}
 		// Idempotent.
-		if validMessageID(id) != result {
+		if api.ValidMessageID(id) != result {
 			t.Error("non-idempotent result")
 		}
 	})

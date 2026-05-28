@@ -41,6 +41,7 @@ import {
   freshState,
   isPendingPath,
   parsePendingPath,
+  makePendingPath,
   planDraftChatID,
   unsavedDiffSource,
   gitDiffSource,
@@ -89,7 +90,7 @@ export function initEditor(): void {
   });
 
   onBus(BUS_PENDING_RESOLVED, (p) => {
-    const targetPath = `pending:${p.chatID}:${p.toolCallID}`;
+    const targetPath = makePendingPath(p.chatID, p.toolCallID);
     if (fileStates.has(targetPath)) {
       closeEditorFile(targetPath);
     }

@@ -11,12 +11,7 @@ import (
 	"vibekit/internal/api"
 )
 
-// ACP method names for slash-command extensions.
-const (
-	methodCommandsExecute = api.MethodCommandsExecute
-	methodCommandsOptions = api.MethodCommandsOptions
-	keyCommand            = "command"
-)
+const keyCommand = "command"
 
 // RegisterSlashRoutes wires the slash-command execute endpoint into mux.
 // The /api/slash/options endpoint (typeahead completion) was removed
@@ -57,13 +52,13 @@ func (sh *slashHandler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	b := sh.deps.GetBridge(api.ChatID(req.ChatID))
 	if b == nil {
-		api.Conflict(w, "no active bridge")
+		api.Conflict(w, errNoBridge.Error())
 		return
 	}
 
 	cmd := strings.TrimPrefix(req.Command, "/")
 
-	resp, err := b.Call(r.Context(), methodCommandsExecute, SessionParams(b, map[string]any{
+	resp, err := b.Call(r.Context(), api.MethodCommandsExecute, SessionParams(b, map[string]any{
 		keyCommand: cmd,
 	}))
 	if err != nil {

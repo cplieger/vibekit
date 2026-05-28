@@ -10,15 +10,6 @@ import (
 	"vibekit/internal/api"
 )
 
-// ACP method constants for subagent operations.
-const (
-	methodSpawn       = api.MethodSpawn
-	methodMessageSend = "message/send"
-	methodTerminate   = "session/terminate"
-	methodAttach      = "session/attach"
-	methodList        = "session/list"
-)
-
 // CmdSpawnSubagent spawns a new subagent session.
 func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
@@ -43,7 +34,7 @@ func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
-	resp, err := sb.Call(ctx, methodSpawn, SessionParams(sb, map[string]any{
+	resp, err := sb.Call(ctx, api.MethodSpawn, SessionParams(sb, map[string]any{
 		"task":  p.Task,
 		keyName: p.Name,
 	}))
@@ -95,7 +86,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	_, err := sb.Call(ctx, methodMessageSend, map[string]any{
+	_, err := sb.Call(ctx, api.MethodMessageSend, map[string]any{
 		keySessionID: p.SubSessionID,
 		"content":    p.Text,
 	})
@@ -145,12 +136,12 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 
 // CmdTerminateSubagent terminates a subagent session.
 func CmdTerminateSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	callSubagentMethod(d, ctx, w, cmd, methodTerminate)
+	callSubagentMethod(d, ctx, w, cmd, api.MethodTerminate)
 }
 
 // CmdAttachSubagent attaches to a subagent session.
 func CmdAttachSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	callSubagentMethod(d, ctx, w, cmd, methodAttach)
+	callSubagentMethod(d, ctx, w, cmd, api.MethodAttach)
 }
 
 // callSubagentMethod is the shared handler for terminate/attach.
@@ -202,7 +193,7 @@ func CmdListSessions(d *Dispatcher, ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
-	resp, err := sb.Call(ctx, methodList, map[string]any{
+	resp, err := sb.Call(ctx, api.MethodList, map[string]any{
 		"cwd": deps.WorkDir(),
 	})
 	if err != nil {

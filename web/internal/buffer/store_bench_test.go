@@ -70,3 +70,20 @@ func BenchmarkBufferTrackFileChanges(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkLineTrackerEviction(b *testing.B) {
+	lt := NewLineTracker()
+	chatID := api.ChatID("eviction-chat")
+
+	// Pre-populate to capacity (500 files).
+	for i := range maxFilesPerChat {
+		lt.Record(chatID, fmt.Sprintf("pre-file-%d.go", i), 1, 10, i, "edit")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		// Each Record triggers eviction since we're at capacity with a new file.
+		lt.Record(chatID, fmt.Sprintf("new-file-%d.go", i), 1, 10, maxFilesPerChat+i, "edit")
+	}
+}

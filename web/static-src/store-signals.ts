@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolCall, Crew } from "./types.js";
-import { signal } from "./signals.js";
+import { signal } from "./lib/reactive/index.js";
 
 // --- Generic SignalMap ---
 

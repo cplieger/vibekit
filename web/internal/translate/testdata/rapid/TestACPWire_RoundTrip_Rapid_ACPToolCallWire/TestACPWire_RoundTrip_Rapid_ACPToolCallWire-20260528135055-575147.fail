@@ -1,0 +1,23 @@
+# 2026/05/28 13:50:55.903779 [TestACPWire_RoundTrip_Rapid/ACPToolCallWire] [rapid] draw id: "0000"
+# 2026/05/28 13:50:55.903805 [TestACPWire_RoundTrip_Rapid/ACPToolCallWire] [rapid] draw title: ""
+# 2026/05/28 13:50:55.903901 [TestACPWire_RoundTrip_Rapid/ACPToolCallWire] round-trip mismatch: {ToolCallID:0000 Title: Kind:shell Status:in_progress RawInput:[] Locations:[] Content:[]} != {ToolCallID:0000 Title: Kind:shell Status:in_progress RawInput:[110 117 108 108] Locations:[] Content:[]}
+# 
+v0.4.8#2185083562504866251
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0

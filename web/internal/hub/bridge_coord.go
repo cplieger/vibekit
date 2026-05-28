@@ -2,7 +2,6 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -28,7 +27,7 @@ type BridgeCoordinator struct {
 	mcpConfig      api.MCPConfig
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
-	preBridgeSpawn func()
+	preBridgeSpawn func(context.Context)
 	permArgsFn     func() []string
 }
 
@@ -58,8 +57,11 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 		return sb, nil
 	}
 
-	// Coalesce concurrent spawn attempts for the same chatID.
-	v, err, _ := bc.bridge.mgr.spawnSF.Do(string(chatID), func() (any, error) {
+	// Coalesce concurrent spawn attempts for the same chatID+overrides.
+	// Including overrides in the key ensures callers with different
+	// agent/model parameters don't coalesce onto the wrong bridge.
+	sfKey := string(chatID) + "\x00" + agentOverride + "\x00" + modelOverride
+	v, err, _ := bc.bridge.mgr.spawnSF.Do(sfKey, func() (any, error) {
 		// Double-check after winning the singleflight race.
 		sb, existed := bc.bridge.mgr.getOrInsert(chatID)
 		if existed {
@@ -94,7 +96,7 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 		}
 
 		if bc.preBridgeSpawn != nil {
-			bc.preBridgeSpawn()
+			bc.preBridgeSpawn(ctx)
 		}
 
 		if chat.ACPSessionID != "" {
@@ -213,7 +215,7 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 	lastBridge := bc.bridge.mgr.count() == 0
 
 	if lastBridge {
-		bc.mcpRegistry.clearAll()
+		bc.mcpRegistry.clearAll(bc.lifecycle.shutdownCtx)
 	}
 }
 
@@ -237,7 +239,7 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	}
 
 	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason)
-	_, err := sb.bridge.Call(ctx, methodPrompt, command.SessionParams(sb, map[string]any{
+	_, err := sb.bridge.Call(ctx, api.MethodPrompt, command.SessionParams(sb, map[string]any{
 		"prompt": []map[string]any{api.TextBlock(prime)},
 	}))
 	if err != nil {
@@ -245,33 +247,31 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	}
 }
 
+// modelEffortSetting is the typed representation of the model_effort
+// config key. Used by RestoreEffort to avoid ad-hoc JSON parsing.
+type modelEffortSetting struct {
+	LastModel string `json:"last_model"`
+	Effort    string `json:"effort"`
+}
+
 // RestoreEffort reads the persisted model_effort from config.json and
 // dispatches /effort to the bridge if the stored model matches.
 func (bc *BridgeCoordinator) RestoreEffort(ctx context.Context, chatID api.ChatID, model string, b api.ACPBridge) {
-	data, err := settings.ReadBytes(ctx, bc.lifecycle.configDir)
-	if err != nil || data == nil {
+	var me modelEffortSetting
+	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyModelEffort, "restore_effort", &me) {
 		return
 	}
-	var cfg struct {
-		ModelEffort struct {
-			LastModel string `json:"last_model"`
-			Effort    string `json:"effort"`
-		} `json:"model_effort"`
-	}
-	if json.Unmarshal(data, &cfg) != nil {
-		return
-	}
-	if cfg.ModelEffort.LastModel != model || cfg.ModelEffort.Effort == "" {
+	if me.LastModel != model || me.Effort == "" {
 		return
 	}
 	bc.lifecycle.inflight.Go(func() {
 		_, _ = b.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
 			"command": map[string]any{
 				"command": "effort",
-				"args":    []string{cfg.ModelEffort.Effort},
+				"args":    []string{me.Effort},
 			},
 		})
-		slog.Debug("effort restored", "chat", chatID, "model", model, "level", cfg.ModelEffort.Effort)
+		slog.Debug("effort restored", "chat", chatID, "model", model, "level", me.Effort)
 	})
 }
 
@@ -402,5 +402,5 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 		return
 	}
 	closeAndRemovePartial(ctx, chatID, buf)
-	bc.broadcast(context.Background(), api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
+	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
 }

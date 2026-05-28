@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 
 	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"vibekit/internal/sessions"
 	"vibekit/internal/version"
 )
 
@@ -31,24 +31,13 @@ const scannerLineCap = 16 << 20
 // the rest. 64 KiB is generous for panic traces and progress lines;
 // anything longer is almost certainly binary garbage and not worth
 // carrying into Loki.
-const stderrLineCap = buffer.DefaultOutputCap
+const stderrLineCap = 64 * 1024
 
 // errBridgeExited is the sentinel Call returns when a caller's waiter
 // is unblocked by readLoop's post-exit drain or by the done-channel
 // race-guard. Kept as a var-level errors.New rather than fmt.Errorf
 // so callers can errors.Is against it without allocating per-call.
 var errBridgeExited = errors.New("ACP bridge exited")
-
-// ErrNotIdle is the sentinel for "session not idle" errors from
-// kiro-cli. Re-exported from api for backward compatibility within
-// this package and external callers that reference bridge.ErrNotIdle.
-var ErrNotIdle = api.ErrNotIdle
-
-// TransportError wraps bridge-level transport failures (pipe closed,
-// write timeout, process exited) with explicit retryability semantics.
-// Re-exported from api so callers can use either bridge.TransportError
-// or api.TransportError interchangeably.
-type TransportError = api.TransportError
 
 // ACP RPC method names — re-exported from api for package-local use.
 // The canonical definitions live in api/methods.go so the full protocol
@@ -76,7 +65,7 @@ type Bridge struct {
 	sessionID    api.SessionID
 	workDir      string
 	cliPath      string
-	lockMgr      *LockManager
+	lockMgr      *sessions.Manager
 	nextID       atomic.Int64
 	stopOnce     sync.Once
 	mu           sync.Mutex
@@ -103,10 +92,10 @@ func New(cliPath, workDir string, opts ...BridgeOption) *Bridge {
 // BridgeOption configures a Bridge at construction time.
 type BridgeOption func(*Bridge)
 
-// WithLockManager sets the LockManager used for stale-lock removal
-// during session load.
-func WithLockManager(lm *LockManager) BridgeOption {
-	return func(b *Bridge) { b.lockMgr = lm }
+// WithSessionManager sets the sessions.Manager used for stale-lock
+// removal during session load.
+func WithSessionManager(mgr *sessions.Manager) BridgeOption {
+	return func(b *Bridge) { b.lockMgr = mgr }
 }
 
 // SessionID returns the bridge's ACP session id. Safe to call from

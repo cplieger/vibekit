@@ -12,10 +12,8 @@ import (
 	"maps"
 	"net/http"
 	"sync"
-	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/pending"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope.
@@ -25,79 +23,16 @@ const maxCommandBody = 5 * 1024 * 1024
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
 
 // Dependencies defines what the Dispatcher needs from its host (Hub).
+// Composed from the role-based sub-interfaces declared in interfaces.go.
 type Dependencies interface {
-	// CheckDedup returns a cached response for the given request ID, if any.
-	CheckDedup(reqID string) ([]byte, bool)
-	// RecordDedup caches a response for idempotent replay.
-	RecordDedup(reqID string, result []byte)
-	// Draining reports whether the server is shutting down.
+	BridgeAccess
+	ChatAccess
+	CheckpointAccess
+	SupervisedAccess
+	InfraDeps
 	Draining() bool
-
-	// ChatStore returns the chat persistence layer.
-	ChatStore() api.ChatStore
-	// Broadcast sends an SSE event to all connected clients.
-	Broadcast(ctx context.Context, evt api.ServerEvent)
-
-	// GetBridge returns the active bridge for a chat, or nil.
-	GetBridge(chatID api.ChatID) Bridge
-	// GetOrCreateBridge ensures a bridge exists for the chat.
-	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, model string) (Bridge, error)
-	// CloseBridge tears down the bridge for a chat.
-	CloseBridge(chatID api.ChatID)
-
-	// PendingStore returns the pending-changes store.
-	PendingStore() *pending.Store
-	// SupervisedSetTrust sets the per-turn trust flag for a chat.
-	SupervisedSetTrust(chatID api.ChatID)
-	// SupervisedClearTrust clears the per-turn trust flag.
-	SupervisedClearTrust(chatID api.ChatID, reason api.ClearReason)
-	// ChatInSupervisedMode reports whether the chat has supervised mode on.
-	ChatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool
-	// FlushPendingForChat rejects all outstanding pending ops for a chat.
-	FlushPendingForChat(ctx context.Context, chatID api.ChatID, reason api.ClearReason)
-	// ClearPendingPermsForChat drops unresolved permission_needed entries.
-	ClearPendingPermsForChat(chatID api.ChatID)
-	// RemovePendingPerm removes a single pending permission by request ID.
-	RemovePendingPerm(requestID int64)
-
-	// Checkpoints returns the checkpoint service, or nil if unavailable.
-	Checkpoints() api.CheckpointService
-	// AdvanceCheckpointTurn bumps the checkpoint turn counter.
-	AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID)
-
-	// WorkDir returns the workspace directory.
-	WorkDir() string
-	// ConfigDir returns the configuration directory.
-	ConfigDir() string
-	// ShutdownCtx returns the context cancelled on shutdown.
-	ShutdownCtx() context.Context
-	// InflightAdd increments the inflight counter.
-	InflightAdd(delta int)
-	// InflightDone decrements the inflight counter.
-	InflightDone()
-	// InflightGo runs fn under the inflight WaitGroup.
-	InflightGo(fn func())
-
-	// CleanupChatState tears down all in-memory state for a chat.
-	CleanupChatState(ctx context.Context, chatID api.ChatID)
-
-	// UtilityPrompt sends a prompt to the utility bridge.
-	UtilityPrompt(ctx context.Context, prompt string) (string, error)
-
-	// MCPWaitForReady blocks until MCP servers are ready or timeout.
-	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
-
-	// ResolveInsideWorkDir validates a path is inside the workspace.
-	ResolveInsideWorkDir(rel string) (string, error)
-
-	// PrimeIfNeeded primes the bridge with history if needed.
-	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
-
-	// IsEmptyTurn checks if a prompt response is an empty turn.
-	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
-
-	// EmitTurnEndedWithStats broadcasts turn_ended with usage stats.
-	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
+	CheckDedup(reqID string) ([]byte, bool)
+	RecordDedup(reqID string, result []byte)
 }
 
 // Bridge is the per-chat ACP bridge contract for command handlers.

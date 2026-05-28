@@ -8,15 +8,6 @@
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
 import { truncate } from "../strings.js";
-import {
-  stageFiles,
-  rollbackStage,
-  unstageFiles,
-  rollbackUnstage,
-  removeFiles,
-  rollbackRemove,
-} from "../git-changes-state.js";
-import type { StageResult, RemoveResult } from "../git-changes-state.js";
 
 // --- Wire types ---
 
@@ -31,14 +22,10 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 // --- Actions ---
 
 /** Stage files (used for both "stage all" and single-file stage). */
-export const stage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
+export const stage = apiAction<GitRepoFilesArgs>({
   name: "git.stage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
-  optimistic: (args) => stageFiles(args.repo, args.files),
-  rollback: (_args, op) => {
-    rollbackStage(op);
-  },
   error: (args) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
@@ -49,14 +36,10 @@ export const stage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
-export const discard = apiAction<GitRepoFilesArgs, unknown, RemoveResult>({
+export const discard = apiAction<GitRepoFilesArgs>({
   name: "git.discard",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
-  optimistic: (args) => removeFiles(args.repo, args.files),
-  rollback: (_args, op) => {
-    rollbackRemove(op);
-  },
   error: (args) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
@@ -66,14 +49,10 @@ export const discard = apiAction<GitRepoFilesArgs, unknown, RemoveResult>({
 });
 
 /** Unstage a file. */
-export const unstage = apiAction<GitRepoFilesArgs, unknown, StageResult>({
+export const unstage = apiAction<GitRepoFilesArgs>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
-  optimistic: (args) => unstageFiles(args.repo, args.files),
-  rollback: (_args, op) => {
-    rollbackUnstage(op);
-  },
   error: (args) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1

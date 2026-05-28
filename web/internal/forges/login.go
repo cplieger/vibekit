@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"vibekit/internal/api"
 )
 
 // DeviceFlowResponse describes a started OAuth device flow.
@@ -64,7 +66,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("device flow: build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", api.MIMETypeJSON)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient().Do(req)
@@ -118,7 +120,7 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 	if err != nil {
 		return PollResult{}, fmt.Errorf("poll: build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", api.MIMETypeJSON)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient().Do(req)
@@ -218,8 +220,12 @@ func Logout(ctx context.Context, kind Kind, host string) error {
 	return RemoveToken(ctx, kind, host)
 }
 
-// httpClient returns the HTTP client used for OAuth requests. Bounded
-// timeout to avoid pinning request goroutines on a slow forge.
+// oauthHTTPClient is the shared HTTP client for OAuth requests. Reused
+// across calls to benefit from connection pooling. Bounded timeout to
+// avoid pinning request goroutines on a slow forge.
+var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// httpClient returns the HTTP client used for OAuth requests.
 func httpClient() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second}
+	return oauthHTTPClient
 }

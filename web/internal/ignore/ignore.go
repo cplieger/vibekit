@@ -46,7 +46,6 @@ package ignore
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -292,28 +291,11 @@ func filesOrMTimesChangedStatic(cachedFiles []string, cachedMTimes map[string]ti
 
 // readSettingFiles pulls the agent_ignore_files list out of
 // config.json and resolves each entry against the workspace root.
+// Uses the settings package's parsedMap cache to avoid redundant
+// json.Unmarshal calls when multiple callers read config.json.
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
-	data, err := cfgsettings.ReadBytes(ctx, m.configDir)
-	if err != nil {
-		slog.Warn("permissions: read config.json for agent_ignore_files", "error", err)
-		return nil
-	}
-	if data == nil {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("permissions: parse config.json for agent_ignore_files", "error", err)
-		return nil
-	}
-	v, ok := raw[cfgsettings.KeyAgentIgnoreFiles]
-	if !ok {
-		return nil
-	}
 	var list []string
-	if err := json.Unmarshal(v, &list); err != nil {
-		slog.Warn("permissions: agent_ignore_files malformed, ignore matcher disabled",
-			"error", err)
+	if !cfgsettings.FieldInto(ctx, m.configDir, cfgsettings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
 		return nil
 	}
 	out := make([]string, 0, len(list))

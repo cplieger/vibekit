@@ -2,24 +2,28 @@ package bridge
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"vibekit/internal/api"
 	"vibekit/internal/sessions"
+
+	"pgregory.net/rapid"
 )
 
-// newTestLockManager creates a LockManager pointing at a fresh t.TempDir
-// and returns both the manager and the sessions directory path.
-func newTestLockManager(t *testing.T) (*LockManager, string) {
+// newTestSessionManager creates a sessions.Manager pointing at a fresh
+// t.TempDir and returns both the manager and the sessions directory path.
+func newTestSessionManager(t *testing.T) (*sessions.Manager, string) {
 	t.Helper()
 	home := t.TempDir()
 	dir := filepath.Join(home, ".kiro", "sessions", "cli")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir sessions dir: %v", err)
 	}
-	return NewLockManager(dir), dir
+	return sessions.New(dir), dir
 }
 
 // stubIsKiroCLI replaces the package-level sessions.IsKiroCLI probe
@@ -31,28 +35,28 @@ func stubIsKiroCLI(t *testing.T, returns bool) {
 	t.Cleanup(func() { sessions.IsKiroCLI = orig })
 }
 
-func TestLockManager_Dir(t *testing.T) {
+func TestSessionManager_Dir(t *testing.T) {
 	want := "/tmp/test-sessions"
-	lm := NewLockManager(want)
-	if got := lm.Dir(); got != want {
-		t.Errorf("LockManager.Dir() = %q, want %q", got, want)
+	mgr := sessions.New(want)
+	if got := mgr.Dir(); got != want {
+		t.Errorf("Manager.Dir() = %q, want %q", got, want)
 	}
 }
 
-func TestLockManager_Dir_Empty(t *testing.T) {
-	lm := NewLockManager("")
-	if got := lm.Dir(); got != "" {
-		t.Errorf("LockManager.Dir() with empty = %q, want empty", got)
+func TestSessionManager_Dir_Empty(t *testing.T) {
+	mgr := sessions.New("")
+	if got := mgr.Dir(); got != "" {
+		t.Errorf("Manager.Dir() with empty = %q, want empty", got)
 	}
 }
 
-func TestLockManager_RemoveStaleLock_EmptyDir(t *testing.T) {
-	lm := NewLockManager("")
-	lm.RemoveStaleLock(context.Background(), "anything")
+func TestSessionManager_RemoveStaleLock_EmptyDir(t *testing.T) {
+	mgr := sessions.New("")
+	mgr.RemoveStaleLock(context.Background(), "anything")
 }
 
-func TestLockManager_RemoveStaleLock_InvalidSessionID(t *testing.T) {
-	lm, dir := newTestLockManager(t)
+func TestSessionManager_RemoveStaleLock_InvalidSessionID(t *testing.T) {
+	mgr, dir := newTestSessionManager(t)
 	outside := filepath.Join(filepath.Dir(dir), "outside.lock")
 	if err := os.WriteFile(outside, []byte("keep me"), 0o644); err != nil {
 		t.Fatalf("plant: %v", err)
@@ -62,16 +66,16 @@ func TestLockManager_RemoveStaleLock_InvalidSessionID(t *testing.T) {
 		"", strings.Repeat("x", 129),
 	}
 	for _, sid := range cases {
-		lm.RemoveStaleLock(context.Background(), sid)
+		mgr.RemoveStaleLock(context.Background(), sid)
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Errorf("outside file touched by invalid session id: %v", err)
 	}
 }
 
-func TestLockManager_CleanupStaleSessions_EmptyDir(t *testing.T) {
-	lm := NewLockManager("")
-	lm.CleanupStaleSessions(context.Background())
+func TestSessionManager_CleanupStale_EmptyDir(t *testing.T) {
+	mgr := sessions.New("")
+	mgr.CleanupStale(context.Background())
 }
 
 func TestValidSessionID(t *testing.T) {
@@ -93,8 +97,62 @@ func TestValidSessionID(t *testing.T) {
 		{in: strings.Repeat("a", 129), want: false},
 	}
 	for _, tc := range cases {
-		if got := validSessionID(tc.in); got != tc.want {
-			t.Errorf("validSessionID(%q) = %v, want %v", tc.in, got, tc.want)
+		if got := api.ValidSessionID(tc.in); got != tc.want {
+			t.Errorf("ValidSessionID(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestCleanupStale_RapidSafety(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		mgr, dir := newTestSessionManager(t)
+
+		// Generate 1-10 lock files with random content shapes.
+		n := rapid.IntRange(1, 10).Draw(rt, "numFiles")
+
+		// Plant a file with an invalid session ID that must never be touched.
+		invalidPath := filepath.Join(filepath.Dir(dir), "outside.lock")
+		if err := os.WriteFile(invalidPath, []byte("keep"), 0o644); err != nil {
+			t.Fatalf("plant: %v", err)
+		}
+
+		for i := range n {
+			sid := rapid.StringMatching(`[a-zA-Z0-9_-]{1,20}`).Draw(rt, fmt.Sprintf("sid_%d", i))
+			// Vary content: valid JSON, malformed JSON, empty, huge PID, negative PID.
+			contentKind := rapid.IntRange(0, 4).Draw(rt, fmt.Sprintf("kind_%d", i))
+			var content string
+			switch contentKind {
+			case 0:
+				pid := rapid.IntRange(1, 99999).Draw(rt, fmt.Sprintf("pid_%d", i))
+				content = fmt.Sprintf(`{"pid":%d}`, pid)
+			case 1:
+				content = `not json at all`
+			case 2:
+				content = `{"pid":0}`
+			case 3:
+				content = `{"pid":-1}`
+			case 4:
+				content = ``
+			}
+
+			lockPath := filepath.Join(dir, sid+".lock")
+			if err := os.WriteFile(lockPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("write lock: %v", err)
+			}
+		}
+
+		// Stub IsKiroCLI — doesn't matter much since flock probe
+		// determines staleness in test env, but must not panic.
+		orig := sessions.IsKiroCLI
+		sessions.IsKiroCLI = func(pid int) bool { return pid == 1 }
+		defer func() { sessions.IsKiroCLI = orig }()
+
+		// Run cleanup — must not panic on any content shape.
+		mgr.CleanupStale(context.Background())
+
+		// Invariant: file outside the sessions dir is never touched.
+		if _, err := os.Stat(invalidPath); err != nil {
+			t.Fatal("outside file was touched by cleanup")
+		}
+	})
 }

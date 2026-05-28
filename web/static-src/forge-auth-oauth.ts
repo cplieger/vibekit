@@ -28,6 +28,10 @@ export function abortPoll(): void {
   pollController = null;
 }
 
+const POLL_MAX_ATTEMPTS = 60;
+const POLL_BACKOFF_CAP_SEC = 60;
+const POLL_MIN_INTERVAL_SEC = 5;
+
 export async function startGitHubDeviceFlow(
   host: HTMLElement,
   deps: OAuthFlowDeps,
@@ -47,7 +51,7 @@ export async function startGitHubDeviceFlow(
     return;
   }
   renderDevicePrompt(host, start, deps);
-  void pollGitHubDevice(host, start.device_code, Math.max(start.interval, 5), signal, deps);
+  void pollGitHubDevice(host, start.device_code, Math.max(start.interval, POLL_MIN_INTERVAL_SEC), signal, deps);
 }
 
 function renderDevicePrompt(
@@ -85,7 +89,6 @@ async function pollGitHubDevice(
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
   let attempts = 0;
   let backoff = intervalSec;
-  const MAX_ATTEMPTS = 60;
 
   while (!signal.aborted && host.isConnected) {
     await sleepWithSignal(backoff * 1000, signal);
@@ -93,7 +96,7 @@ async function pollGitHubDevice(
       return;
     }
     attempts++;
-    if (attempts > MAX_ATTEMPTS) {
+    if (attempts > POLL_MAX_ATTEMPTS) {
       if (statusEl !== null) {
         statusEl.textContent = "Timed out waiting for approval. Try again.";
       }
@@ -109,7 +112,7 @@ async function pollGitHubDevice(
       if (statusEl !== null) {
         statusEl.textContent = "Network error. Retrying…";
       }
-      backoff = Math.min(backoff * 2, 60);
+      backoff = Math.min(backoff * 2, POLL_BACKOFF_CAP_SEC);
       continue;
     }
     // Reset backoff on successful network response.
@@ -143,14 +146,19 @@ function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
     return Promise.resolve();
   }
   return new Promise<void>((resolve) => {
+    const ac = new AbortController();
     const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
+      ac.abort();
       resolve();
     }, ms);
-    const onAbort = (): void => {
-      clearTimeout(t);
-      resolve();
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        ac.abort();
+        resolve();
+      },
+      { signal: ac.signal },
+    );
   });
 }

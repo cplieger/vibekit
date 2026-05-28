@@ -15,9 +15,18 @@ var commitPrefixes = [...]string{
 	"feat", "fix", "sec", "refactor", "chore", "docs", "test", "perf", "ci",
 }
 
+// promptKind is a typed key for the promptTemplates map. Using a named
+// type instead of bare strings makes typos a compile error.
+type promptKind string
+
+const (
+	promptCommit promptKind = "commit"
+	promptPR     promptKind = "pr"
+)
+
 // promptTemplates holds the AI prompt templates keyed by purpose.
-var promptTemplates = map[string]*template.Template{
-	"commit": template.Must(template.New("commit").Parse(`Generate a Git commit message. Return ONLY the message, no fences.
+var promptTemplates = map[promptKind]*template.Template{
+	promptCommit: template.Must(template.New("commit").Parse(`Generate a Git commit message. Return ONLY the message, no fences.
 
 FORMAT:
 <type>(<scope>): <subject max 72 chars, imperative mood>
@@ -41,7 +50,7 @@ STAGED DIFF:
 
 Respond with only the commit message:`)),
 
-	"pr": template.Must(template.New("pr").Parse(`Generate a pull request description for the following changes. Return ONLY the description text.
+	promptPR: template.Must(template.New("pr").Parse(`Generate a pull request description for the following changes. Return ONLY the description text.
 
 FORMAT:
 ## Summary
@@ -69,7 +78,7 @@ Generate the PR description:`)),
 // possibly with a missing section).
 func buildCommitPrompt(commitHistory, fullDiff string) string {
 	var b strings.Builder
-	if err := promptTemplates["commit"].Execute(&b, map[string]any{
+	if err := promptTemplates[promptCommit].Execute(&b, map[string]any{
 		"Prefixes":      commitPrefixes[:],
 		"CommitHistory": commitHistory,
 		"Diff":          fullDiff,
@@ -83,7 +92,7 @@ func buildCommitPrompt(commitHistory, fullDiff string) string {
 // See buildCommitPrompt for the error-handling rationale.
 func buildPRPrompt(log, diff string) string {
 	var b strings.Builder
-	if err := promptTemplates["pr"].Execute(&b, map[string]any{
+	if err := promptTemplates[promptPR].Execute(&b, map[string]any{
 		"Log":  log,
 		"Diff": diff,
 	}); err != nil {

@@ -26,7 +26,7 @@ import (
 func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	b.lifecycleCtx = ctx
 	if opts.SessionID != "" {
-		if !validSessionID(opts.SessionID) {
+		if !api.ValidSessionID(opts.SessionID) {
 			return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 		}
 		if b.lockMgr != nil {
@@ -104,7 +104,7 @@ func (b *Bridge) startProcess(agent, model string, extraArgs []string) error {
 	if agent != "" {
 		args = append(args, "--agent", agent)
 	}
-	if model != "" && model != "auto" {
+	if model != "" && model != api.ModelAuto {
 		args = append(args, "--model", model)
 	}
 	// Lifecycle is owned by Stop(), not by a context. The

@@ -32,6 +32,16 @@ export function isPendingPath(path: string): boolean {
   return path.startsWith(PENDING_PREFIX);
 }
 
+/** Construct a plan-draft virtual path from a chat ID. */
+export function makePlanDraftPath(chatID: string): string {
+  return PLAN_DRAFT_PREFIX + chatID;
+}
+
+/** Construct a pending-change virtual path from chat + tool-call IDs. */
+export function makePendingPath(chatID: string, toolCallID: string): string {
+  return `${PENDING_PREFIX}${chatID}:${toolCallID}`;
+}
+
 export function parsePendingPath(path: string): { chatID: string; toolCallID: string } {
   if (!isPendingPath(path)) {
     return { chatID: "", toolCallID: "" };

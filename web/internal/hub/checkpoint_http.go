@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"vibekit/internal/api"
 	"vibekit/internal/checkpoint"
@@ -40,15 +41,14 @@ func (h *Hub) registerCheckpointRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/checkpoints/", h.handleCheckpoint)
 }
 
-// Supported sub-resources. New routes are added here rather than in
-// separate Handlers so the /api/checkpoints/{chatID}/ prefix check
-// stays in one place.
-const (
-	checkpointDiffPath           = "diff"
-	checkpointRestorePreviewPath = "restore-preview"
-	checkpointConflictsPath      = "conflicts"
-	checkpointBlobPath           = "blob"
-)
+// checkpointRoutes maps sub-resource names to their handler methods.
+// Adding a new sub-resource is a single map entry — no separate const
+// declaration needed.
+var checkpointRoutes = map[string]func(*Hub, http.ResponseWriter, *http.Request, api.ChatID){
+	"diff":            (*Hub).handleCheckpointDiff,
+	"restore-preview": (*Hub).handleCheckpointRestorePreview,
+	"conflicts":       (*Hub).handleCheckpointConflicts,
+}
 
 // handleCheckpoint routes the GET sub-resources. Anything else
 // returns 404 so future sub-resources can be added without
@@ -64,7 +64,7 @@ func (h *Hub) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/checkpoints/")
 	chatID, sub, ok := strings.Cut(rest, "/")
-	if !ok || chatID == "" || !validChatID(api.ChatID(chatID)) {
+	if !ok || chatID == "" || !api.ValidChatID(chatID) {
 		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
@@ -72,22 +72,19 @@ func (h *Hub) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
 	// `blob` takes an extra path segment. Split the sub once more
 	// to route blob/{sha} without polluting the Cut logic above.
 	first, rest2, hasRest := strings.Cut(sub, "/")
-	switch first {
-	case checkpointDiffPath:
-		h.handleCheckpointDiff(w, r, cid)
-	case checkpointRestorePreviewPath:
-		h.handleCheckpointRestorePreview(w, r, cid)
-	case checkpointConflictsPath:
-		h.handleCheckpointConflicts(w, r, cid)
-	case checkpointBlobPath:
+	if handler, ok := checkpointRoutes[first]; ok {
+		handler(h, w, r, cid)
+		return
+	}
+	if first == "blob" {
 		if !hasRest || rest2 == "" {
 			api.BadRequest(w, "blob sha required")
 			return
 		}
 		h.handleCheckpointBlob(w, r, cid, rest2)
-	default:
-		api.NotFound(w, "unknown checkpoint sub-resource")
+		return
 	}
+	api.NotFound(w, "unknown checkpoint sub-resource")
 }
 
 // handleCheckpointDiff answers diff?from=&to=.
@@ -108,7 +105,9 @@ func (h *Hub) handleCheckpointDiff(w http.ResponseWriter, r *http.Request, chatI
 		api.BadRequest(w, "invalid to tag")
 		return
 	}
-	files, err := h.checkpoints.Diff(r.Context(), chatID, fromTag, toTag)
+	diffCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	files, err := h.checkpoints.Diff(diffCtx, chatID, fromTag, toTag)
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrTagNotFound) {
 			api.NotFound(w, "tag not found")
@@ -117,7 +116,7 @@ func (h *Hub) handleCheckpointDiff(w http.ResponseWriter, r *http.Request, chatI
 		api.InternalError(w, err)
 		return
 	}
-	api.WriteJSON(w, api.CheckpointDiffResponse[checkpoint.FileChange]{Files: files})
+	api.WriteJSON(w, api.CheckpointDiffResponse{Files: files})
 }
 
 // handleCheckpointRestorePreview answers restore-preview?tag=.
@@ -136,7 +135,9 @@ func (h *Hub) handleCheckpointRestorePreview(w http.ResponseWriter, r *http.Requ
 		api.BadRequest(w, "invalid tag format")
 		return
 	}
-	files, err := h.checkpoints.RestorePreview(r.Context(), chatID, parsedTag)
+	previewCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	files, err := h.checkpoints.RestorePreview(previewCtx, chatID, parsedTag)
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrTagNotFound) {
 			api.NotFound(w, "tag not found")
@@ -163,10 +164,10 @@ func (h *Hub) handleCheckpointConflicts(w http.ResponseWriter, r *http.Request, 
 	if conflicts == nil {
 		// Return an empty slice (not null) so the client can
 		// iterate without a nil check.
-		api.WriteJSON(w, api.CheckpointConflictsResponse[checkpoint.ConflictPayload]{Conflicts: []checkpoint.ConflictPayload{}})
+		api.WriteJSON(w, api.CheckpointConflictsResponse{Conflicts: []checkpoint.ConflictPayload{}})
 		return
 	}
-	api.WriteJSON(w, api.CheckpointConflictsResponse[checkpoint.ConflictPayload]{Conflicts: conflicts})
+	api.WriteJSON(w, api.CheckpointConflictsResponse{Conflicts: conflicts})
 }
 
 // handleCheckpointBlob returns the raw bytes of a chat-owned blob.

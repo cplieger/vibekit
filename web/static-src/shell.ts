@@ -14,7 +14,8 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { getScrollEl, setShellRunCallback } from "./messages.js";
+import { getScrollEl } from "./messages.js";
+import { setShellRunCallback, setCopyCallback } from "./code-blocks.js";
 import { ShellWS, encoder } from "./shell-ws.js";
 
 const shellWS = new ShellWS();

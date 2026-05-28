@@ -9,20 +9,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"pgregory.net/rapid"
 )
-
-// rwMutexCoord implements GCCoordination for tests using a raw RWMutex.
-type rwMutexCoord struct{ mu *sync.RWMutex }
-
-func (c *rwMutexCoord) AcquireSnapshotLock() { c.mu.RLock() }
-func (c *rwMutexCoord) ReleaseSnapshotLock() { c.mu.RUnlock() }
-func (c *rwMutexCoord) AcquireGCLock()       { c.mu.Lock() }
-func (c *rwMutexCoord) ReleaseGCLock()       { c.mu.Unlock() }
 
 // newTestManager builds a Manager over a temp config + workspace.
 // Returns the manager and the workspace root (for writing files
@@ -383,8 +373,8 @@ func TestCrossChatRestoreIsolated(t *testing.T) {
 }
 
 func TestIsHexHash(t *testing.T) {
-	if !isHexHash("") {
-		t.Error(`isHexHash("") should be true (empty = "no blob")`)
+	if isHexHash("") {
+		t.Error(`isHexHash("") should be false (empty is not a valid hash)`)
 	}
 	if !isHexHash("a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90") {
 		t.Error("valid 64-char hex should pass")
@@ -1162,16 +1152,14 @@ func FuzzCountLineDelta(f *testing.F) {
 }
 
 func BenchmarkSnapshotContention(b *testing.B) {
-	// Create 4 managers simulating 4 concurrent chats sharing a gcLock.
-	var gcLock sync.RWMutex
-	coord := &rwMutexCoord{mu: &gcLock}
+	// Create 4 managers simulating 4 concurrent chats.
 
 	setup := func(id string) (*Manager, string) {
 		cfg := b.TempDir()
 		work := b.TempDir()
 		blobs := newBlobStore(cfg)
 		log := newEventLog(cfg, id)
-		deps := &managerDeps{blobs: blobs, index: newCrossChatIndex(), gcCoord: coord}
+		deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
 		m := newManager(chatID(id), work, log, deps)
 		// Write a file to snapshot.
 		fpath := filepath.Join(work, "file.go")
@@ -1196,38 +1184,5 @@ func BenchmarkSnapshotContention(b *testing.B) {
 				i++
 			}
 		})
-	})
-
-	b.Run("with_gc_contention", func(b *testing.B) {
-		managers := make([]*Manager, 4)
-		for i := range 4 {
-			m, _ := setup(fmt.Sprintf("gc-chat-%d", i))
-			managers[i] = m
-		}
-		// Background goroutine simulating GC pauses.
-		done := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case <-done:
-					return
-				default:
-					gcLock.Lock()
-					time.Sleep(time.Millisecond)
-					gcLock.Unlock()
-					time.Sleep(5 * time.Millisecond)
-				}
-			}
-		}()
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			i := 0
-			for pb.Next() {
-				m := managers[i%4]
-				m.Snapshot(context.Background(), "file.go", nil, 1)
-				i++
-			}
-		})
-		close(done)
 	})
 }

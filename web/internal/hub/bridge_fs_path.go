@@ -4,7 +4,9 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 
 	"vibekit/internal/api"
@@ -80,5 +82,40 @@ func (h *Hub) respondBridge(ctx context.Context, chatID api.ChatID, msg *api.RPC
 	}
 	if wErr := sb.bridge.Respond(ctx, *msg.ID, result, err); wErr != nil {
 		slog.Error("fs response write failed", "chat_id", chatID, "method", msg.Method, "error", wErr)
+	}
+}
+
+// --- ACP request/response helpers (consolidated from bridge_respond.go) ---
+
+func parseRequest(msg *api.RPCResponse, v any) error {
+	if msg.Params == nil {
+		return io.ErrUnexpectedEOF
+	}
+	return json.Unmarshal(msg.Params, v)
+}
+
+func respondOK(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCResponse, result any) {
+	if msg.ID == nil {
+		return
+	}
+	sb := h.bridge.mgr.get(chatID)
+	if sb == nil {
+		return
+	}
+	if err := sb.bridge.Respond(ctx, *msg.ID, result, nil); err != nil {
+		slog.Warn("respondOK: bridge respond failed", "error", err)
+	}
+}
+
+func respondErr(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCResponse, errMsg string) {
+	if msg.ID == nil {
+		return
+	}
+	sb := h.bridge.mgr.get(chatID)
+	if sb == nil {
+		return
+	}
+	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{Code: -1, Message: errMsg}); err != nil {
+		slog.Warn("respondErr: bridge respond failed", "error", err)
 	}
 }

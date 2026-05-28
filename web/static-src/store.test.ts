@@ -481,6 +481,8 @@ describe("Store setLastQueuedAttachments", () => {
 import {
   appendChunk,
   upsertToolCall,
+} from "./store.js";
+import {
   ensureStreamingSig,
   getStreamingSig,
   clearStreamingSig,
@@ -492,7 +494,7 @@ import {
   ensureCrewSig,
   getCrewSig,
   clearCrewSig,
-} from "./store.js";
+} from "./store-signals.js";
 import type { ToolCall, Crew } from "./types.js";
 
 describe("streaming signals", () => {

@@ -16,6 +16,11 @@ import (
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
 const ShellOutputCap = 1 * 1024 * 1024
 
+// ShellTimeout is the default timeout for user-initiated `!cmd` shell
+// interceptions. Exposed as a package-level constant so tests and
+// future settings overrides can reference the default.
+const ShellTimeout = 30 * time.Second
+
 // ShellCappedBuffer writes to an underlying bytes.Buffer, rejecting
 // bytes past the cap.
 type ShellCappedBuffer struct {
@@ -89,10 +94,12 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
 	start := time.Now()
 
-	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
+	// Derive timeout from the request context so both client disconnect
+	// and server shutdown cancel the shell process.
+	shellCtx, cancel := context.WithTimeout(ctx, ShellTimeout)
 	defer cancel()
 
-	shellProc := exec.CommandContext(ctx, "sh", "-c", shellCmd) //nolint:gosec // G702: user-initiated shell command
+	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd) //nolint:gosec // G702: user-initiated shell command
 	shellProc.Dir = deps.WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped

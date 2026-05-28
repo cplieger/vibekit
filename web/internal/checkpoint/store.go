@@ -50,7 +50,7 @@ func NewStore(configDir, workDir string, onConf ConflictBroadcaster) *Store {
 		onConf:    onConf,
 		managers:  make(map[string]*Manager),
 	}
-	s.gc = checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), blobGCInterval, nil, s.cachedBlobRefs)
+	s.gc = checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), FileEvents, blobGCInterval, nil, s.cachedBlobRefs)
 	return s
 }
 
@@ -73,33 +73,11 @@ func (s *Store) Stop() {
 	s.gc.Stop()
 }
 
-// --- GCCoordination implementation ---
-// The 5-minute blob age gate (blobGCMinAge) provides the primary safety
-// guarantee against removing in-flight blobs. The lock-based coordination
-// is no longer needed; these methods are retained as no-ops to satisfy
-// the GCCoordination interface contract for existing test code.
 
-// AcquireSnapshotLock is a no-op; the age gate provides safety.
-func (s *Store) AcquireSnapshotLock() {}
-
-// ReleaseSnapshotLock is a no-op; the age gate provides safety.
-func (s *Store) ReleaseSnapshotLock() {}
-
-// AcquireGCLock is a no-op; the age gate provides safety.
-func (s *Store) AcquireGCLock() {}
-
-// ReleaseGCLock is a no-op; the age gate provides safety.
-func (s *Store) ReleaseGCLock() {}
-
-// Compile-time assertion that Store implements GCCoordination.
-var _ GCCoordination = (*Store)(nil)
-
-
-
-// AdvanceTurn delegates to Manager.AdvanceTurn. Errors are logged
-// but not returned because the prompt path shouldn't stall on a
-// checkpoint failure — the checkpoint exists to serve the user,
-// not gate them.
+// AdvanceTurn delegates to Manager.AdvanceTurn (pass-through — logic
+// lives in Manager). Errors are logged but not returned because the
+// prompt path shouldn't stall on a checkpoint failure — the checkpoint
+// exists to serve the user, not gate them.
 func (s *Store) AdvanceTurn(ctx context.Context, chatID string, messageCount int) {
 	if err := s.get(chatID).AdvanceTurn(ctx, messageCount); err != nil {
 		slog.Warn("checkpoint: AdvanceTurn failed",
@@ -107,56 +85,51 @@ func (s *Store) AdvanceTurn(ctx context.Context, chatID string, messageCount int
 	}
 }
 
-// Snapshot captures the pre-write content of relPath + the content
-// the caller is about to write, and returns the assigned tag.
-// Errors bubble because the caller (bridge_fs) logs them already.
-//
-// The gcLock.RLock coordination lives inside Manager.Snapshot
-// itself (via the shared gcLock pointer passed to newManager) so
-// this wrapper is a thin pass-through — no double-locking, no
-// gc bypass risk if a future caller reaches the Manager directly.
+// Snapshot captures the pre-write content of relPath (pass-through —
+// logic lives in Manager). The gcLock.RLock coordination lives inside
+// Manager.Snapshot itself so this wrapper is a thin pass-through.
 func (s *Store) Snapshot(ctx context.Context, chatID, relPath string, newContent []byte, messageCount int) (Tag, error) {
 	return s.get(chatID).Snapshot(ctx, relPath, newContent, messageCount)
 }
 
-// RestorePreview returns the workspace-relative paths that a
-// Restore(chatID, tag) call would mutate. Used by the client to
-// warn the user before committing to the rollback.
+// RestorePreview returns paths a Restore would mutate (pass-through —
+// logic lives in Manager).
 func (s *Store) RestorePreview(ctx context.Context, chatID string, tag Tag) ([]string, error) {
 	return s.get(chatID).RestorePreview(ctx, tag)
 }
 
-// Restore rolls the workspace back to `tag` for chatID and returns
-// the message-count watermark captured at `tag`.
+// Restore rolls the workspace back to `tag` (pass-through — logic
+// lives in Manager).
 func (s *Store) Restore(ctx context.Context, chatID string, tag Tag) (int, error) {
 	return s.get(chatID).Restore(ctx, tag)
 }
 
-// CheckoutFile reverts a single file to its content at `tag`. Used
-// by the per-file Undo button.
+// CheckoutFile reverts a single file to its content at `tag`
+// (pass-through — logic lives in Manager).
 func (s *Store) CheckoutFile(ctx context.Context, chatID string, tag Tag, relPath string) error {
 	return s.get(chatID).CheckoutFile(ctx, tag, relPath)
 }
 
-// OldestTag returns the earliest available tag for chatID, or "".
+// OldestTag returns the earliest available tag for chatID, or ""
+// (pass-through — logic lives in Manager).
 func (s *Store) OldestTag(ctx context.Context, chatID string) Tag {
 	return Tag(s.get(chatID).OldestTag(ctx))
 }
 
-// Diff returns per-file changes between two tags. See Manager.Diff.
+// Diff returns per-file changes between two tags (pass-through —
+// logic lives in Manager).
 func (s *Store) Diff(ctx context.Context, chatID string, from, to Tag) ([]FileChange, error) {
 	return s.get(chatID).Diff(ctx, from, to)
 }
 
-// Conflicts returns all conflict_detected events for a chat. Used
-// by the client at page load to replay outstanding badges.
+// Conflicts returns all conflict_detected events for a chat
+// (pass-through — logic lives in Manager).
 func (s *Store) Conflicts(ctx context.Context, chatID string) ([]ConflictPayload, error) {
 	return s.get(chatID).Conflicts(ctx)
 }
 
-// ReadBlob returns blob content for a chat-scoped SHA. The chat
-// must reference the SHA in its event log — prevents cross-chat
-// blob probing via raw SHAs.
+// ReadBlob returns blob content for a chat-scoped SHA (pass-through —
+// logic lives in Manager).
 func (s *Store) ReadBlob(ctx context.Context, chatID, sha string) ([]byte, error) {
 	return s.get(chatID).ReadBlob(ctx, sha)
 }
@@ -203,7 +176,6 @@ func (s *Store) get(rawID string) *Manager {
 		blobs:   s.blobs,
 		index:   s.index,
 		onConf:  s.onConf,
-		gcCoord: s,
 	}
 	m := newManager(chatID(rawID), s.workDir, log, deps)
 	s.managers[rawID] = m

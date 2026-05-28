@@ -5,19 +5,16 @@ package translate
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"slices"
-	"time"
 
 	"vibekit/internal/api"
 )
 
 // HandleCrewUpdate processes subagent list update notifications.
 func (t *Translator) HandleCrewUpdate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p CrewNotifPayload
-	if err := json.Unmarshal(msg.Params, &p); err != nil {
-		slog.Debug("crew: bad payload", "error", err)
+	p, ok := unmarshalParams[CrewNotifPayload](msg, "subagent/list_update")
+	if !ok {
 		return
 	}
 	if len(p.Subagents) == 0 {
@@ -39,28 +36,32 @@ func (t *Translator) HandleCrewUpdate(ctx context.Context, chatID api.ChatID, ms
 
 // PersistCrew finds-or-creates the per-group crew message and mutates
 // it in place. Identical snapshots are short-circuited by JSON-digest
-// comparison.
+// comparison. Concurrent updates for the same chat+group are coalesced
+// via singleflight to prevent race conditions on the read-modify-write
+// sequence.
 func (t *Translator) PersistCrew(ctx context.Context, chatID api.ChatID, crew *api.Crew) {
+	sfKey := string(chatID) + ":" + crew.Group
+	t.crewSF.Do(sfKey, func() (any, error) { //nolint:errcheck // result unused
+		t.doPersistCrew(ctx, chatID, crew)
+		return nil, nil
+	})
+}
+
+func (t *Translator) doPersistCrew(ctx context.Context, chatID api.ChatID, crew *api.Crew) {
 	existingID, existingDigest := t.lookupCrewMessage(ctx, chatID, crew.Group)
 	newDigest := MarshalCrew(crew)
 	if existingID != "" && bytes.Equal(existingDigest, newDigest) {
 		return
 	}
 	if existingID == "" {
-		id := t.deps.NewMessageID()
-		evt := api.Message{
-			ID:        id,
-			Role:      api.RoleEvent,
-			Ts:        time.Now().UnixMilli(),
-			EventKind: api.EventCrew,
-			Crew:      crew,
-		}
+		evt := t.newEventMessage(api.EventCrew, "")
+		evt.Crew = crew
 		if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 			slog.Error("crew: append event", "chat_id", chatID, "error", err)
 			return
 		}
-		t.crewCache.remember(chatID, crew.Group, id)
-		t.persistCrewIndex(ctx, chatID, crew.Group, id)
+		t.crewCache.remember(chatID, crew.Group, evt.ID)
+		t.persistCrewIndex(ctx, chatID, crew.Group, evt.ID)
 		return
 	}
 	if err := t.deps.ChatStore().UpdateMessage(ctx, chatID, existingID, func(m *api.Message) {
@@ -87,22 +88,24 @@ func (t *Translator) persistCrewIndex(ctx context.Context, chatID api.ChatID, gr
 
 // lookupCrewMessage tries the in-memory cache first, then the
 // persisted CrewMessageIDs index, and falls back to a bounded
-// history walk on miss.
+// history walk on miss. Fetches the chat once to avoid redundant
+// ChatStore.Get calls across the three lookup paths.
 func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, groupKey string) (id string, digest []byte) {
+	chat, chatOk := t.deps.ChatStore().Get(ctx, chatID)
+	if !chatOk {
+		return "", nil
+	}
+
 	if cached, ok := t.crewCache.lookup(chatID, groupKey); ok {
-		chat, chatOk := t.deps.ChatStore().Get(ctx, chatID)
-		if chatOk {
-			for i := range chat.Messages {
-				m := &chat.Messages[i]
-				if m.ID == cached && m.Crew != nil {
-					return cached, MarshalCrew(m.Crew)
-				}
+		for i := range chat.Messages {
+			m := &chat.Messages[i]
+			if m.ID == cached && m.Crew != nil {
+				return cached, MarshalCrew(m.Crew)
 			}
 		}
 	}
 	// Try the persisted index (warm after restart without history walk).
-	chat, chatOk := t.deps.ChatStore().Get(ctx, chatID)
-	if chatOk && chat.CrewMessageIDs != nil {
+	if chat.CrewMessageIDs != nil {
 		if indexed, exists := chat.CrewMessageIDs[groupKey]; exists {
 			for i := range chat.Messages {
 				m := &chat.Messages[i]
@@ -113,7 +116,7 @@ func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, g
 			}
 		}
 	}
-	id, digest = t.walkCrewHistory(ctx, chatID, groupKey)
+	id, digest = t.walkCrewHistoryFromChat(chat, groupKey)
 	if id != "" {
 		t.crewCache.remember(chatID, groupKey, id)
 	}
@@ -124,13 +127,9 @@ func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, g
 // case on long chats. A crew message older than this is stale.
 const maxCrewScanDepth = 200
 
-// walkCrewHistory scans messages in reverse for the latest crew with
+// walkCrewHistoryFromChat scans messages in reverse for the latest crew with
 // a matching group, bounded by maxCrewScanDepth.
-func (t *Translator) walkCrewHistory(ctx context.Context, chatID api.ChatID, groupKey string) (id string, digest []byte) {
-	chat, ok := t.deps.ChatStore().Get(ctx, chatID)
-	if !ok {
-		return "", nil
-	}
+func (t *Translator) walkCrewHistoryFromChat(chat *api.Chat, groupKey string) (id string, digest []byte) {
 	scanned := 0
 	for i := range slices.Backward(chat.Messages) {
 		if scanned >= maxCrewScanDepth {

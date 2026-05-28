@@ -121,7 +121,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	if chat.ParentChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest,
-			errors.New("not a rewind chat (no parent)"))
+			errNotRewindChat)
 		return
 	}
 
@@ -146,7 +146,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	})
 
 	slog.Info("rewind promoted", "rewind", cmd.ChatID, "deleted_parent", parentID)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true})
+	d.Respond(w, cmd.RequestID, responseWith(nil))
 }
 
 // CmdDiscardRewindChat discards a rewind chat and returns to the parent.
@@ -164,7 +164,7 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	if chat.ParentChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest,
-			errors.New("not a rewind chat (no parent)"))
+			errNotRewindChat)
 		return
 	}
 
@@ -199,8 +199,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 
 	bridge := deps.GetBridge(cmd.ChatID)
 	if bridge == nil {
-		d.RespondErr(w, http.StatusConflict,
-			errors.New("no active bridge for this chat"))
+		d.RespondErr(w, http.StatusConflict, errNoBridge)
 		return
 	}
 
@@ -219,5 +218,5 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	_ = result // success; kiro-cli applies the effort level to the session
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, "level": p.Level})
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"level": p.Level}))
 }

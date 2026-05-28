@@ -59,8 +59,23 @@ vi.mock("./permission.js", () => ({
   hidePermission: vi.fn(),
 }));
 
-const { EVENT_BOUNDARY_META, checkpointTagForTurn } = await import("./messages.js");
+const { checkpointTagForTurn } = await import("./messages.js");
+const { EVENT_RENDER_MAP } = await import("./messages-events.js");
 const { formatToolActivity } = await import("./format-tool-activity.js");
+
+/** Derive boundary metadata from EVENT_RENDER_MAP for test assertions. */
+const EVENT_BOUNDARY_META: Readonly<
+  Partial<
+    Record<
+      string,
+      { boundary: string; icon: string; defaultLabel: string; labelFn?: (c: string) => string }
+    >
+  >
+> = Object.fromEntries(
+  Object.entries(EVENT_RENDER_MAP)
+    .filter(([, v]) => v.kind === "boundary")
+    .map(([k, v]) => [k, v as { boundary: string; icon: string; defaultLabel: string; labelFn?: (c: string) => string }]),
+);
 
 describe("EVENT_BOUNDARY_META", () => {
   it("has entries for all expected event kinds", () => {

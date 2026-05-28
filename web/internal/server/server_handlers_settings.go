@@ -72,7 +72,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			api.WriteJSON(w, settings.DefaultSettings())
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", api.MIMETypeJSON)
 		_, _ = w.Write(data)
 	case http.MethodPut, http.MethodPatch:
 		api.LimitBody(w, r, api.MaxJSONBody)
@@ -190,13 +190,13 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 		api.PushKindAgentFinished: true,
 		api.PushKindPermission:    true,
 	}
-	if v, ok := patch["notify_agent_finished"]; ok {
+	if v, ok := patch[settings.KeyNotifyAgentFinished]; ok {
 		var af bool
 		if json.Unmarshal(v, &af) == nil {
 			prefs[api.PushKindAgentFinished] = af
 		}
 	}
-	if v, ok := patch["notify_permission"]; ok {
+	if v, ok := patch[settings.KeyNotifyPermission]; ok {
 		var pn bool
 		if json.Unmarshal(v, &pn) == nil {
 			prefs[api.PushKindPermission] = pn
@@ -208,7 +208,7 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 // syncDebugLogs flips the process-wide slog level when the user
 // toggles the Debug logs setting.
 func (s *Server) syncDebugLogs(patch map[string]json.RawMessage) {
-	v, ok := patch["debug_logs"]
+	v, ok := patch[settings.KeyDebugLogs]
 	if !ok {
 		return
 	}

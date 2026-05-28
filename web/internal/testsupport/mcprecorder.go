@@ -12,4 +12,4 @@ func (*NopMCPRecorder) RecordConnected(context.Context, string)           {}
 func (*NopMCPRecorder) RecordOAuth(context.Context, string, string)       {}
 func (*NopMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 func (*NopMCPRecorder) SignalReady()                                      {}
-func (*NopMCPRecorder) SetKnownTools(string, []string)                    {}
+func (*NopMCPRecorder) SetKnownTools(context.Context, string, []string)                    {}

@@ -15,30 +15,8 @@ import { reconcile } from "./reconcile.js";
 
 // --- Types ---
 
-export interface RegistryEntry {
-  name: string;
-  title?: string;
-  description?: string;
-  version?: string;
-  repository?: string;
-  packages?: {
-    registry_type: string;
-    identifier: string;
-    version?: string;
-    env_vars?: { name: string; description?: string; required?: boolean; secret?: boolean }[];
-  }[];
-  remotes?: {
-    type: string;
-    url: string;
-    headers?: {
-      name: string;
-      description?: string;
-      value?: string;
-      required?: boolean;
-      secret?: boolean;
-    }[];
-  }[];
-}
+/** Derived from the action's wire type — single source of truth. */
+export type RegistryEntry = RegistrySearchResult["servers"][number];
 
 /** Callback to switch the modal to a different panel mode. */
 export type SwitchModeFn = (kind: string, slug: string, identifier: string, fields: InstallField[]) => void;

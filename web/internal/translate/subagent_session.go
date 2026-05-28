@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"time"
 
 	"vibekit/internal/api"
 )
@@ -55,13 +54,7 @@ func (t *Translator) HandleInboxNotification(ctx context.Context, chatID api.Cha
 			content = string(raw)
 		}
 	}
-	evt := api.Message{
-		ID:        t.deps.NewMessageID(),
-		Role:      api.RoleEvent,
-		Ts:        time.Now().UnixMilli(),
-		EventKind: api.EventInbox,
-		Content:   content,
-	}
+	evt := t.newEventMessage(api.EventInbox, content)
 	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("inbox: append event", "chat_id", chatID, "error", err)
 		return

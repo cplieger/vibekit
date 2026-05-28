@@ -89,14 +89,42 @@ const (
 // WorkingLabelForKind maps a tool kind to a human-readable label.
 // Matches ASAI's VV() function from the frontend reducer.
 func WorkingLabelForKind(kind ToolKind, title string) string {
-	label, ok := workingLabels[kind]
-	if !ok {
+	//exhaustive:enforce
+	switch kind {
+	case ToolKindExecute, ToolKindShell:
+		label := "Running"
+		if title != "" {
+			return label + " " + title
+		}
+		return label
+	case ToolKindRead:
+		return "Reading"
+	case ToolKindSearch:
+		return "Searching"
+	case ToolKindFetch:
+		return "Fetching"
+	case ToolKindEdit, ToolKindWrite:
+		return "Writing"
+	case ToolKindThink:
+		return "Reasoning"
+	case ToolKindDelete:
+		return "Deleting"
+	case ToolKindMove:
+		return "Moving"
+	case ToolKindCommand:
+		return "Running"
+	case ToolKindBrowser:
+		return "Browsing"
+	case ToolKindSwitchMode:
+		return "Switching"
+	case ToolKindMCP:
+		return "Running"
+	case ToolKindHook:
+		return "Running hook"
+	case ToolKindOther:
 		return WorkingLabelThinking
 	}
-	if (kind == ToolKindExecute || kind == ToolKindShell) && title != "" {
-		return label + " " + title
-	}
-	return label
+	return WorkingLabelThinking
 }
 
 // Working-label constants. Centralised so hub callers reference these
@@ -105,22 +133,3 @@ const (
 	WorkingLabelThinking = "Thinking"
 	WorkingLabelApproval = "Waiting for approval"
 )
-
-var workingLabels = map[ToolKind]string{
-	ToolKindExecute:    "Running",
-	ToolKindShell:      "Running",
-	ToolKindRead:       "Reading",
-	ToolKindSearch:     "Searching",
-	ToolKindFetch:      "Fetching",
-	ToolKindEdit:       "Writing",
-	ToolKindThink:      "Reasoning",
-	ToolKindWrite:      "Writing",
-	ToolKindDelete:     "Deleting",
-	ToolKindMove:       "Moving",
-	ToolKindCommand:    "Running",
-	ToolKindBrowser:    "Browsing",
-	ToolKindSwitchMode: "Switching",
-	ToolKindMCP:        "Running",
-	ToolKindHook:       "Running hook",
-	ToolKindOther:      "Thinking",
-}

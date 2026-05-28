@@ -13,7 +13,7 @@ const (
 	dirSnapshots = "snapshots"
 	dirBlobs     = "blobs"
 	dirChats     = "chats"
-	fileEvents   = "events.jsonl"
+	FileEvents   = "events.jsonl"
 
 	// contentCap bounds the bytes a single file read will load into
 	// memory for both snapshot (pre-write capture) and blob retrieval
@@ -44,5 +44,5 @@ func chatsRoot(configDir string) string {
 
 // chatLogPath returns the path to a specific chat's event log.
 func chatLogPath(configDir, chatID string) string {
-	return filepath.Join(configDir, dirSnapshots, dirChats, chatID, fileEvents)
+	return filepath.Join(configDir, dirSnapshots, dirChats, chatID, FileEvents)
 }

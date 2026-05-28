@@ -55,3 +55,17 @@ func sanitizeRepoPaths(paths []string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// validateFilePath reports whether path is safe for use in git show /
+// git diff operations. Rejects leading dashes (flag smuggling), path
+// traversal (..), control bytes (invisible chars that break log
+// readability), and absolute paths.
+func validateFilePath(path string) bool {
+	if strings.HasPrefix(path, "-") ||
+		strings.Contains(path, "..") ||
+		strings.IndexFunc(path, func(r rune) bool { return r < 0x20 || r == 0x7f }) != -1 ||
+		strings.HasPrefix(path, "/") {
+		return false
+	}
+	return true
+}

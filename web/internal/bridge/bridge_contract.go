@@ -37,4 +37,18 @@ func ACPBridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 			t.Errorf("CurrentMode() = %q before Start, want empty", got)
 		}
 	})
+
+	t.Run("Modes_nil_before_Start", func(t *testing.T) {
+		b := newBridge()
+		if got := b.Modes(); got != nil {
+			t.Errorf("Modes() = %v before Start, want nil", got)
+		}
+	})
+
+	t.Run("Models_nil_before_Start", func(t *testing.T) {
+		b := newBridge()
+		if got := b.Models(); got != nil {
+			t.Errorf("Models() = %v before Start, want nil", got)
+		}
+	})
 }

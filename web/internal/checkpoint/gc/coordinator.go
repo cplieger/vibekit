@@ -24,29 +24,32 @@ type BlobRefer interface {
 // Coordinator manages the blob GC goroutine lifecycle. One instance
 // per Store; constructed at Store creation time.
 type Coordinator struct {
-	cached    func() map[string]BlobRefer
-	stopCh    chan struct{}
-	configDir string
-	blobsDir  string
-	chatsDir  string
-	interval  time.Duration
-	done      sync.WaitGroup
-	mu        sync.Mutex
-	running   bool
+	cached       func() map[string]BlobRefer
+	stopCh       chan struct{}
+	configDir    string
+	blobsDir     string
+	chatsDir     string
+	eventsFile   string
+	interval     time.Duration
+	done         sync.WaitGroup
+	mu           sync.Mutex
+	running      bool
+	lastRefCount int
 }
 
 // NewCoordinator builds a Coordinator. cached returns the current set
 // of cached managers (for the fast-path collection phase). The 5-minute
 // blob age gate (blobGCMinAge) provides the primary safety guarantee
 // against removing in-flight blobs; no per-sweep lock is needed.
-func NewCoordinator(configDir, blobsDir, chatsDir string, interval time.Duration, gcLock *sync.RWMutex, cached func() map[string]BlobRefer) *Coordinator {
+func NewCoordinator(configDir, blobsDir, chatsDir, eventsFile string, interval time.Duration, gcLock *sync.RWMutex, cached func() map[string]BlobRefer) *Coordinator {
 	return &Coordinator{
-		configDir: configDir,
-		blobsDir:  blobsDir,
-		chatsDir:  chatsDir,
-		interval:  interval,
-		cached:    cached,
-		stopCh:    make(chan struct{}),
+		configDir:  configDir,
+		blobsDir:   blobsDir,
+		chatsDir:   chatsDir,
+		eventsFile: eventsFile,
+		interval:   interval,
+		cached:     cached,
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -251,7 +254,7 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 		}
 		return nil, err
 	}
-	referenced := map[string]struct{}{}
+	referenced := make(map[string]struct{}, max(gc.lastRefCount, 1024))
 
 	var uncached []string
 	for _, e := range entries {
@@ -281,6 +284,7 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 		}
 	}
 
+	gc.lastRefCount = len(referenced)
 	return referenced, nil
 }
 
@@ -296,23 +300,13 @@ func (gc *Coordinator) collectUncachedBlobs(ctx context.Context, chatIDs []strin
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			eventsPath := filepath.Join(gc.chatsDir, chatID, "events.jsonl")
-			events, readErr := readEventLog(eventsPath)
+			eventsPath := filepath.Join(gc.chatsDir, chatID, gc.eventsFile)
+			shas, readErr := streamEventSHAs(eventsPath)
 			if readErr != nil {
 				slog.Error("checkpoint gc: blocked by unreadable chat log",
 					"chat_id", chatID, "error", readErr,
 					"action", "sweep aborted to avoid mass blob deletion")
 				return fmt.Errorf("read event log for %s: %w", chatID, readErr)
-			}
-			var shas []string
-			for j := range events {
-				ev := &events[j]
-				if ev.BeforeSHA != "" {
-					shas = append(shas, ev.BeforeSHA)
-				}
-				if ev.AfterSHA != "" {
-					shas = append(shas, ev.AfterSHA)
-				}
 			}
 			results[i] = chatRefs{shas: shas}
 			return nil

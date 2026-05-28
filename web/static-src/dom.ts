@@ -20,6 +20,12 @@ export function el<T extends HTMLElement>(id: string): T {
   return e as T;
 }
 
+/** Like el() but returns null when the element doesn't exist.
+ *  Use for elements that are conditionally present in the DOM. */
+export function maybeEl<T extends HTMLElement>(id: string): T | null {
+  return document.getElementById(id) as T | null;
+}
+
 // Lazy singleton: elements are queried on first access via getter.
 // This allows the module to be imported before DOMContentLoaded
 // as long as no property is accessed until the DOM is ready.

@@ -19,6 +19,7 @@ var (
 	errPromptTooLong    = errors.New("prompt too long")
 	errMissingMessageID = errors.New("missing message_id")
 	errNoBridge         = errors.New("no bridge")
+	errNotRewindChat    = errors.New("not a rewind chat (no parent)")
 	errBusy             = errors.New("busy")
 	ErrChatNotFound     = errors.New("chat not found")
 

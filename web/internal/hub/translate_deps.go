@@ -69,9 +69,9 @@ func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errM
 func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
 }
-func (r *hubMCPRecorder) SetKnownTools(name string, tools []string) {
+func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools []string) {
 	if r.h.mcpConfig != nil {
-		r.h.mcpConfig.SetKnownTools(name, tools)
+		r.h.mcpConfig.SetKnownTools(ctx, name, tools)
 	}
 }
 

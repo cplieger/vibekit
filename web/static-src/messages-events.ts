@@ -7,7 +7,7 @@
 
 import type { Message, EventKind, Crew } from "./types.js";
 import { ensureCrewSig, clearCrewSig } from "./store-signals.js";
-import { effect } from "./signals.js";
+import { effect } from "./lib/reactive/index.js";
 import {
   updateCrew as updateCrewInternal,
   buildCrewCardForReplay,
@@ -78,25 +78,7 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
   },
 } satisfies Record<EventKind, EventRenderStrategy>;
 
-/** Legacy compat export — the old Partial<Record<EventKind, ...>> shape.
- *  Consumers that only need boundary metadata can use this. */
-export const EVENT_BOUNDARY_META: Readonly<
-  Partial<
-    Record<
-      EventKind,
-      {
-        readonly boundary: BoundaryKind;
-        readonly icon: string;
-        readonly defaultLabel: string;
-        readonly labelFn?: (content: string) => string;
-      }
-    >
-  >
-> = Object.fromEntries(
-  Object.entries(EVENT_RENDER_MAP)
-    .filter(([, v]) => v.kind === "boundary")
-    .map(([k, v]) => [k, v as Extract<EventRenderStrategy, { kind: "boundary" }>]),
-) as Readonly<Partial<Record<EventKind, { readonly boundary: BoundaryKind; readonly icon: string; readonly defaultLabel: string; readonly labelFn?: (content: string) => string }>>>;
+// (EVENT_BOUNDARY_META removed — consumers query EVENT_RENDER_MAP directly)
 
 // ---------------------------------------------------------------------------
 // Crew effect tracking (owned here, disposed by messages.ts on unmount)

@@ -27,8 +27,8 @@ export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortS
 /** Internal fetch wrapper shared by apiGet/apiPost/apiDelete.
  *  Applies a timeout signal (via withTimeout), logs failures centrally,
  *  and returns null on any non-2xx or network error — callers never see
- *  exceptions. DELETE and 204 responses return an empty object cast to T
- *  (truthy marker) since there's no body to parse. */
+ *  exceptions. DELETE and 204 responses return null since there's no
+ *  body to parse. */
 async function request<T>(
   method: string,
   path: string,
@@ -47,9 +47,9 @@ async function request<T>(
       console.warn("api: non-ok", method, path, r.status);
       return null;
     }
-    // No body (DELETE or empty 204): return a truthy marker cast to T.
+    // No body (DELETE or empty 204): return null.
     if (method === "DELETE" || r.status === 204) {
-      return {} as T;
+      return null;
     }
     return (await r.json()) as T;
   } catch (e) {
@@ -70,8 +70,19 @@ export function apiPost<T>(path: string, body?: unknown, signal?: AbortSignal): 
 
 /** DELETE `path`. Returns true on success, false on failure. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
-  const result = await request<object>("DELETE", path, undefined, signal);
-  return result !== null;
+  try {
+    const init: RequestInit = { method: "DELETE" };
+    init.signal = withTimeout(signal, API_TIMEOUT_MS);
+    const r = await fetch(path, init);
+    if (!r.ok) {
+      console.warn("api: non-ok", "DELETE", path, r.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn("api: fetch failed", "DELETE", path, e);
+    return false;
+  }
 }
 
 /** Result shape for apiPostOrError / apiPutOrError: on 2xx `ok` is true

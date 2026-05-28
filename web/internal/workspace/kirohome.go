@@ -1,5 +1,5 @@
 // Path helpers for kiro-cli's per-user state directory.
-package api
+package workspace
 
 import (
 	"os"

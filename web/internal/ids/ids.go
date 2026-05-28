@@ -25,26 +25,49 @@ const (
 // New returns a random identifier. byteLen controls entropy (output
 // length is ceil(byteLen*8/5) characters). Panics if crypto/rand fails.
 func New(byteLen int, enc Encoding) string {
+	s, err := NewE(byteLen, enc)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// NewE is like New but returns an error instead of panicking when
+// crypto/rand fails. Prefer this in library code where the caller
+// can handle the failure gracefully.
+func NewE(byteLen int, enc Encoding) (string, error) {
 	b := make([]byte, byteLen)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Errorf("ids: crypto/rand.Read: %w", err))
+		return "", fmt.Errorf("ids: crypto/rand.Read: %w", err)
 	}
 	switch enc {
 	case HexUpper:
-		return base32.HexEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
+		return base32.HexEncoding.WithPadding(base32.NoPadding).EncodeToString(b), nil
 	case StdLower:
 		s := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
-		return strings.ToLower(s)
+		return strings.ToLower(s), nil
 	default:
-		panic(fmt.Errorf("ids: unknown encoding %d", enc))
+		return "", fmt.Errorf("ids: unknown encoding %d", enc)
 	}
 }
 
 // NewMessageID returns a UUIDv7 (RFC 9562): time-ordered, globally
 // unique, standard format.
 func NewMessageID() string {
+	s, err := NewMessageIDE()
+	if err != nil {
+		panic(fmt.Errorf("ids: NewMessageIDE: %w", err))
+	}
+	return s
+}
+
+// NewMessageIDE is like NewMessageID but returns an error instead of
+// panicking when crypto/rand fails.
+func NewMessageIDE() (string, error) {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("ids: crypto/rand.Read: %w", err)
+	}
 	ms := uint64(time.Now().UnixMilli())
 	b[0] = byte(ms >> 40) //nolint:gosec // G115: ID encoding
 	b[1] = byte(ms >> 32) //nolint:gosec // G115: ID encoding
@@ -64,5 +87,5 @@ func NewMessageID() string {
 	hex.Encode(buf[19:23], b[8:10])
 	buf[23] = '-'
 	hex.Encode(buf[24:36], b[10:16])
-	return string(buf[:])
+	return string(buf[:]), nil
 }

@@ -30,23 +30,36 @@ type ShellEvalResult struct {
 // decision with the reason.
 func EvaluateShellCommand(ctx context.Context, configDir, command string, rules *CommandRules) ShellEvalResult {
 	policy := readShellPolicy(ctx, configDir)
-	decision := evaluateShellCommand(policy, command, rules)
-	reason := shellEvalReason(policy, command, decision, rules)
+
+	// Single rule evaluation up front — avoids redundant scans.
+	var ruleMode string
+	var ruleMatched bool
+	if rules != nil {
+		ruleMode, ruleMatched = rules.Evaluate(command)
+	}
+
+	var matcher eval.RuleMatcher
+	if rules != nil {
+		matcher = rules
+	}
+	decision := eval.EvaluateShellCommand(eval.ShellPolicy(policy), command, matcher)
+	reason := shellEvalReason(policy, decision, ruleMode, ruleMatched)
 	slog.Debug("permissions: shell policy decision",
 		"command", command, "policy", policy, "decision", decision, "reason", reason)
 	return ShellEvalResult{Decision: decision, Reason: reason}
 }
 
-// shellEvalReason derives a short reason tag for the decision.
-func shellEvalReason(policy shellPolicy, command string, decision ShellDecision, rules *CommandRules) string {
+// shellEvalReason derives a short reason tag for the decision using
+// the pre-computed rule evaluation result, avoiding redundant scans.
+func shellEvalReason(policy shellPolicy, decision ShellDecision, ruleMode string, ruleMatched bool) string {
 	switch {
-	case rules != nil && rules.MatchesDeny(command):
+	case ruleMatched && ruleMode == "deny":
 		return "rule:deny"
 	case policy == policyNone:
 		return "policy:no_commands"
 	case policy == policyAll:
 		return "policy:all_commands"
-	case decision == ShellAllow && rules != nil && rules.MatchesAllow(command):
+	case decision == ShellAllow && ruleMatched && ruleMode == "allow":
 		return "rule:allow"
 	case decision == ShellAllow:
 		return "builtin:safe"

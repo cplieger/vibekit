@@ -27,12 +27,14 @@ import {
   getActiveId,
   messagesVersion,
   activeVersion,
+} from "./store.js";
+import {
   ensureStreamingSig,
   clearStreamingSig,
   ensureReasoningSig,
   clearReasoningSig,
-} from "./store.js";
-import { effect } from "./signals.js";
+} from "./store-signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
 import {
@@ -81,10 +83,7 @@ import { attachTurnActions, initTurnActionCallbacks } from "./messages-turn-acti
 // ---------------------------------------------------------------------------
 
 export { getScrollEl, scrollToBottom, setLoadMore };
-export { showPermissionDialog } from "./permission.js";
-export { setShellRunCallback } from "./code-blocks.js";
 export type { BoundaryKind } from "./messages-events.js";
-export { EVENT_BOUNDARY_META } from "./messages-events.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -237,7 +236,15 @@ function paint(): void {
   staggerIndex.clear();
   const isChatSwitch = lastActiveId !== session.id;
   if (!isChatSwitch && lastNewestId !== undefined) {
-    const idx = session.messages.findIndex((m) => m.id === lastNewestId);
+    // Reverse scan: lastNewestId is always near the tail (set at end of
+    // previous paint), so scanning backward is O(1) amortized.
+    let idx = -1;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i]?.id === lastNewestId) {
+        idx = i;
+        break;
+      }
+    }
     if (idx >= 0) {
       for (let i = idx + 1; i < session.messages.length; i++) {
         const id = session.messages[i]?.id;

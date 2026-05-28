@@ -9,20 +9,30 @@ import { HOST_LOCKED_KINDS, DEFAULT_HOST } from "./forge-types.js";
 import { connectPAT } from "./actions/forge.js";
 import { bindLoadingState } from "./actions/index.js";
 
-const PAT_HELP_LINKS: Record<ForgeKind, { url: string; label: string } | null> = {
+type PATHelp =
+  | { kind: "link"; url: string; label: string }
+  | { kind: "text"; text: string };
+
+const PAT_HELP: Record<ForgeKind, PATHelp> = {
   github: {
+    kind: "link",
     url: "https://github.com/settings/tokens?type=beta",
     label: "Create a GitHub fine-grained token",
   },
   gitlab: {
+    kind: "link",
     url: "https://gitlab.com/-/profile/personal_access_tokens?scopes=api,read_repository,write_repository",
     label: "Create a GitLab token",
   },
   codeberg: {
+    kind: "link",
     url: "https://codeberg.org/user/settings/applications",
     label: "Create a Codeberg token",
   },
-  gitea: null,
+  gitea: {
+    kind: "text",
+    text: "Create a token at /user/settings/applications on your Gitea or Forgejo host.",
+  },
 };
 
 export interface PATFormDeps {
@@ -46,24 +56,24 @@ export function renderPATForm(
 ): void {
   hostEl.innerHTML = "";
 
-  const helpLink = PAT_HELP_LINKS[kind];
-  if (helpLink !== null) {
-    const help = document.createElement("p");
-    help.className = "forge-help";
-    const a = document.createElement("a");
-    a.href = helpLink.url;
-    a.target = "_blank";
-    a.rel = "noreferrer";
-    a.textContent = helpLink.label;
-    help.appendChild(a);
-    hostEl.appendChild(help);
-  } else if (kind === "gitea") {
-    const help = document.createElement("p");
-    help.className = "forge-help";
-    help.textContent =
-      "Create a token at /user/settings/applications on your Gitea or Forgejo host.";
-    hostEl.appendChild(help);
+  const help = PAT_HELP[kind];
+  const helpEl = document.createElement("p");
+  helpEl.className = "forge-help";
+  switch (help.kind) {
+    case "link": {
+      const a = document.createElement("a");
+      a.href = help.url;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.textContent = help.label;
+      helpEl.appendChild(a);
+      break;
+    }
+    case "text":
+      helpEl.textContent = help.text;
+      break;
   }
+  hostEl.appendChild(helpEl);
 
   const form = document.createElement("form");
   form.className = "forge-pat-form";

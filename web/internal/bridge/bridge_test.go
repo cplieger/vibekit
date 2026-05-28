@@ -404,7 +404,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 // id would read as "." or ".." must be skipped rather than driving
 // filesystem operations.
 func TestCleanupStaleSessions_InvalidIDsIgnored(t *testing.T) {
-	lm, dir := newTestLockManager(t)
+	mgr, dir := newTestSessionManager(t)
 	// `..lock` → id = `.` (invalid). `...lock` → id = `..` (invalid).
 	// Both should remain untouched after the cleanup pass.
 	invalid := []string{"..lock", "...lock"}
@@ -415,7 +415,7 @@ func TestCleanupStaleSessions_InvalidIDsIgnored(t *testing.T) {
 		}
 	}
 
-	lm.CleanupStaleSessions(context.Background())
+	mgr.CleanupStale(context.Background())
 
 	for _, name := range invalid {
 		path := filepath.Join(dir, name)
@@ -1135,12 +1135,12 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 					t.Fatal("expected error, got nil")
 				}
 				if tc.wantNotIdle {
-					if !errors.Is(r.err, ErrNotIdle) {
-						t.Errorf("err = %v, want ErrNotIdle", r.err)
+					if !errors.Is(r.err, api.ErrNotIdle) {
+						t.Errorf("err = %v, want api.ErrNotIdle", r.err)
 					}
 				} else {
-					if errors.Is(r.err, ErrNotIdle) {
-						t.Errorf("err = %v, should NOT be ErrNotIdle", r.err)
+					if errors.Is(r.err, api.ErrNotIdle) {
+						t.Errorf("err = %v, should NOT be api.ErrNotIdle", r.err)
 					}
 					if !strings.Contains(r.err.Error(), tc.wantMsg) {
 						t.Errorf("err = %v, want to contain %q", r.err, tc.wantMsg)
@@ -1191,4 +1191,36 @@ func FuzzNormalizeMCPServers(f *testing.F) {
 			t.Fatalf("json.Marshal(output) failed: %v", err)
 		}
 	})
+}
+
+func BenchmarkBridgeRespond(b *testing.B) {
+	// Create a Bridge with a pipe-based writer (no real process).
+	_, pw, err := os.Pipe()
+	if err != nil {
+		b.Fatalf("os.Pipe: %v", err)
+	}
+	defer pw.Close()
+
+	br := &Bridge{
+		stdin:   pw,
+		done:    make(chan struct{}),
+		pending: make(map[int64]chan *api.RPCResponse),
+		notifCh: make(chan *api.RPCResponse, 16),
+	}
+
+	ctx := context.Background()
+	// Typical tool result payload (~500 bytes).
+	result := map[string]any{
+		"content": strings.Repeat("x", 400),
+		"status":  "success",
+		"meta":    map[string]string{"tool": "file_write", "path": "/workspace/main.go"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := br.Respond(ctx, 42, result, nil); err != nil {
+			b.Fatalf("Respond: %v", err)
+		}
+	}
 }

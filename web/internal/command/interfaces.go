@@ -17,15 +17,6 @@ import (
 	"vibekit/internal/pending"
 )
 
-// Compile-time assertions: Dependencies embeds all role-based interfaces.
-var (
-	_ BridgeAccess     = (Dependencies)(nil)
-	_ ChatAccess       = (Dependencies)(nil)
-	_ CheckpointAccess = (Dependencies)(nil)
-	_ SupervisedAccess = (Dependencies)(nil)
-	_ InfraDeps        = (Dependencies)(nil)
-)
-
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
 // cancel, subagent, slash, and permission handlers.
 type BridgeAccess interface {
@@ -71,9 +62,6 @@ type InfraDeps interface {
 	InflightAdd(delta int)
 	InflightDone()
 	InflightGo(fn func())
-	Draining() bool
-	CheckDedup(reqID string) ([]byte, bool)
-	RecordDedup(reqID string, result []byte)
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
 	ResolveInsideWorkDir(rel string) (string, error)
 	UtilityPrompt(ctx context.Context, prompt string) (string, error)

@@ -24,27 +24,26 @@
 // hosts works (e.g. github.com + ghe.example.com).
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiPost, CancellableSlot } from "./api-client.js";
+import { apiGetTyped, apiPost, CancellableSlot } from "./api-client.js";
+import type { Decoder } from "./validators.js";
+import { asObject, decodeArray } from "./validators.js";
+import { decodeConfiguredForge, decodeRepo } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import {
-  ICON_DOWNLOAD,
   ICON_EXTERNAL,
   ICON_PLUS_16,
-  ICON_REPO,
-  ICON_TRASH,
 } from "./icons.js";
-import { withAsyncFeedback } from "./async-button.js";
 import type {
   ConfiguredForge,
   ForgeKind,
   Repo,
 } from "./wire/types.gen.js";
-import { HOST_LOCKED_KINDS, DEFAULT_HOST, FORGE_META, FORGE_URLS, forgeKindLabel } from "./forge-types.js";
+import { HOST_LOCKED_KINDS, DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import {
   signOut,
 } from "./actions/forge.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { signal, effect } from "./signals.js";
+import { signal, effect } from "./lib/reactive/index.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
@@ -52,10 +51,13 @@ import {
   renderRepoRow,
   renderRepoState,
   renderRepoActions,
-  cloneAllForAccount,
-  deleteAllForAccount,
   type RepoDeps,
 } from "./forge-auth-repos.js";
+import {
+  buildAccountReposDetails as buildAccountReposDetailsImpl,
+  updateAccountReposDetails as updateAccountReposDetailsImpl,
+  type ReposRenderDeps,
+} from "./forge-auth-repos-render.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -69,6 +71,56 @@ interface RepoListResponse {
 interface LocalReposResponse {
   repos: string[];
 }
+
+// --- Response decoders ------------------------------------------------
+
+const FORGE_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
+
+const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
+  const o = asObject(v, "$.forges_list");
+  const out: ForgesListResponse = {
+    forges: decodeArray(o["forges"], decodeConfiguredForge, "$.forges_list.forges"),
+    kinds: decodeArray(o["kinds"], (el) => {
+      if (typeof el !== "string" || !(FORGE_KINDS as readonly string[]).includes(el)) {
+        throw new TypeError(`expected ForgeKind, got ${JSON.stringify(el)}`);
+      }
+      return el as ForgeKind;
+    }, "$.forges_list.kinds"),
+  };
+  if (o["oauth"] !== undefined) {
+    const oauthObj = asObject(o["oauth"], "$.forges_list.oauth");
+    const partial: Partial<Record<ForgeKind, boolean>> = {};
+    for (const [k, val] of Object.entries(oauthObj)) {
+      if ((FORGE_KINDS as readonly string[]).includes(k) && typeof val === "boolean") {
+        partial[k as ForgeKind] = val;
+      }
+    }
+    out.oauth = partial;
+  }
+  return out;
+};
+
+const decodeRepoListResponse: Decoder<RepoListResponse> = (v) => {
+  const o = asObject(v, "$.repo_list");
+  return { repos: decodeArray(o["repos"], decodeRepo, "$.repo_list.repos") };
+};
+
+const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
+  const o = asObject(v, "$.local_repos");
+  return {
+    repos: decodeArray(o["repos"], (el) => {
+      if (typeof el !== "string") {
+        throw new TypeError(`expected string, got ${typeof el}`);
+      }
+      return el;
+    }, "$.local_repos.repos"),
+  };
+};
+
+// --- iconEl helper (template-based SVG cloning) -----------------------
+
+import { iconEl } from "./icon-el.js";
+export { iconEl };
 
 // --- Module state -----------------------------------------------------
 
@@ -204,7 +256,7 @@ export async function renderForgesPanel(
   const myGen = ++renderGen;
   const signal = panelSlot.start();
 
-  const data = await apiGet<ForgesListResponse>("/api/forges", signal);
+  const data = await apiGetTyped("/api/forges", decodeForgesListResponse, signal);
   if (signal.aborted || myGen !== renderGen) {
     return;
   }
@@ -250,7 +302,7 @@ export async function renderForgesPanel(
 }
 
 async function refreshLocalNames(signal?: AbortSignal): Promise<Set<string>> {
-  const r = await apiGet<LocalReposResponse>("/api/git/repos", signal);
+  const r = await apiGetTyped("/api/git/repos", decodeLocalReposResponse, signal);
   return new Set((r?.repos ?? []).filter((n) => n !== "."));
 }
 
@@ -263,8 +315,9 @@ async function refreshReposByForge(
     forges
       .filter((f) => f.connected)
       .map(async (f) => {
-        const r = await apiGet<RepoListResponse>(
+        const r = await apiGetTyped(
           `/api/forges/${encodeURIComponent(f.id)}/repos`,
+          decodeRepoListResponse,
           signal,
         );
         map[f.id] = r?.repos ?? [];
@@ -291,7 +344,7 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   if (signal.aborted) {
     return;
   }
-  const data = await apiGet<ForgesListResponse>("/api/forges", signal);
+  const data = await apiGetTyped("/api/forges", decodeForgesListResponse, signal);
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (signal.aborted) {
     return;
@@ -425,11 +478,11 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
   header.className = "forge-kind-header";
   const badge = document.createElement("span");
   badge.className = `forge-kind-badge forge-kind-${kind}`;
-  badge.innerHTML = KIND_ICONS[kind];
+  badge.replaceChildren(iconEl(KIND_ICONS[kind]));
   header.appendChild(badge);
   const title = document.createElement("h3");
   title.className = "forge-kind-title";
-  title.textContent = forgeKindLabel(kind);
+  title.textContent = kindTitle(kind);
   header.appendChild(title);
 
   const addBtn = document.createElement("button");
@@ -438,7 +491,7 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
   addBtn.dataset["forgeAdd"] = kind;
   addBtn.setAttribute("aria-label", "Add an account");
   addBtn.setAttribute("data-tooltip", "Add an account");
-  addBtn.innerHTML = ICON_PLUS_16;
+  addBtn.replaceChildren(iconEl(ICON_PLUS_16));
   addBtn.addEventListener("click", () => {
     onAddAccount(kind, section);
   });
@@ -560,7 +613,9 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
     manage.target = "_blank";
     manage.rel = "noreferrer";
     manage.className = "btn-small forge-account-manage";
-    manage.innerHTML = `<span>Manage</span>${ICON_EXTERNAL}`;
+    const manageLabel = document.createElement("span");
+    manageLabel.textContent = "Manage";
+    manage.replaceChildren(manageLabel, iconEl(ICON_EXTERNAL));
     manage.setAttribute("data-tooltip", "Manage account on forge");
     manage.setAttribute("aria-label", "Manage account on forge");
     actions.appendChild(manage);
@@ -583,162 +638,11 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
 // --- Account repos (details) ------------------------------------------
 
 function buildAccountReposDetails(a: ConfiguredForge, repos: Repo[]): HTMLElement {
-  const details = document.createElement("details");
-  details.className = "forge-account-repos";
-  details.dataset["accountId"] = a.id;
-  if (expandOnNextPaint.has(a.id)) {
-    details.open = true;
-    expandOnNextPaint.delete(a.id);
-  }
-
-  const summary = document.createElement("summary");
-  summary.className = "forge-account-repos-summary";
-  summary.innerHTML = `
-    <span class="forge-account-repos-chevron" aria-hidden="true">▸</span>
-    <span class="forge-account-repos-icon" aria-hidden="true">${ICON_REPO}</span>
-    <span class="forge-account-repos-label"></span>
-  `;
-  setAccountSummaryLabel(summary, repos);
-  refreshAccountSummaryButtons(summary, repos);
-  details.appendChild(summary);
-
-  if (repos.length === 0) {
-    const none = document.createElement("div");
-    none.className = "forge-account-repos-empty";
-    none.textContent = "No repositories accessible to this account.";
-    details.appendChild(none);
-    return details;
-  }
-
-  const list = document.createElement("ul");
-  list.className = "forge-account-repos-list";
-  details.appendChild(list);
-  reconcile(list, sortRepos(repos), repoSpec);
-  return details;
+  return buildAccountReposDetailsImpl(a, repos, reposRenderDeps);
 }
 
 function updateAccountReposDetails(details: HTMLElement, a: ConfiguredForge, repos: Repo[]): void {
-  if (expandOnNextPaint.has(a.id)) {
-    (details as HTMLDetailsElement).open = true;
-    expandOnNextPaint.delete(a.id);
-  }
-  const summary = details.querySelector<HTMLElement>(":scope > .forge-account-repos-summary");
-  if (summary !== null) {
-    setAccountSummaryLabel(summary, repos);
-    refreshAccountSummaryButtons(summary, repos);
-  }
-
-  // Empty-state placeholder vs list <ul>.
-  const emptyEl = details.querySelector<HTMLElement>(":scope > .forge-account-repos-empty");
-  let list = details.querySelector<HTMLElement>(":scope > .forge-account-repos-list");
-  if (repos.length === 0) {
-    list?.remove();
-    if (emptyEl === null) {
-      const none = document.createElement("div");
-      none.className = "forge-account-repos-empty";
-      none.textContent = "No repositories accessible to this account.";
-      details.appendChild(none);
-    }
-    return;
-  }
-  emptyEl?.remove();
-  if (list === null) {
-    list = document.createElement("ul");
-    list.className = "forge-account-repos-list";
-    details.appendChild(list);
-  }
-  reconcile(list, sortRepos(repos), repoSpec);
-}
-
-function sortRepos(repos: Repo[]): Repo[] {
-  // Cloned first, then alpha by full_name. Stable for surgical
-  // updates: a single repo flipping cloned-state moves between
-  // groups, but the rest stay put. Reconcile preserves identity
-  // during the move.
-  return [...repos].sort((x, y) => {
-    const xc = lastLocalNames.has(x.name);
-    const yc = lastLocalNames.has(y.name);
-    if (xc !== yc) {
-      return xc ? -1 : 1;
-    }
-    return x.full_name.localeCompare(y.full_name);
-  });
-}
-
-function setAccountSummaryLabel(summary: HTMLElement, repos: Repo[]): void {
-  const total = repos.length;
-  const cloned = repos.filter((r) => lastLocalNames.has(r.name)).length;
-  const label = summary.querySelector<HTMLElement>(".forge-account-repos-label");
-  if (label !== null) {
-    label.textContent = `${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally`;
-  }
-}
-
-/** Rebuild cloneAll/deleteAll buttons in the summary. Skips a button
- *  that is currently mid-async (`aria-busy="true"`) so a
- *  withAsyncFeedback loop's textContent updates don't get clobbered;
- *  the next bumpState after the action completes will refresh it. */
-function refreshAccountSummaryButtons(summary: HTMLElement, repos: Repo[]): void {
-  const cloneable = repos.filter(
-    (r) => !lastLocalNames.has(r.name) && typeof r.clone_url === "string" && r.clone_url !== "",
-  );
-  const clonedRepos = repos.filter((r) => lastLocalNames.has(r.name));
-
-  const oldCloneAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
-  if (oldCloneAll?.getAttribute("aria-busy") !== "true") {
-    oldCloneAll?.remove();
-    if (cloneable.length > 0) {
-      summary.appendChild(makeCloneAllButton(cloneable));
-    }
-  }
-
-  const oldDeleteAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
-  if (oldDeleteAll?.getAttribute("aria-busy") !== "true") {
-    oldDeleteAll?.remove();
-    if (clonedRepos.length > 0) {
-      summary.appendChild(makeDeleteAllButton(clonedRepos));
-    }
-  }
-}
-
-function makeCloneAllButton(cloneable: Repo[]): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small forge-account-repos-clone-all";
-  btn.innerHTML = `${ICON_DOWNLOAD}<span>${cloneable.length}</span>`;
-  btn.setAttribute(
-    "data-tooltip",
-    `Clone every uncloned repo on this account (${cloneable.length})`,
-  );
-  btn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn, repoDeps)).then(() => {
-      bumpState();
-    });
-  });
-  return btn;
-}
-
-function makeDeleteAllButton(clonedRepos: Repo[]): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small btn-danger forge-account-repos-delete-all";
-  btn.innerHTML = `${ICON_TRASH}<span>${clonedRepos.length}</span>`;
-  btn.setAttribute(
-    "data-tooltip",
-    `Remove every locally-cloned repo on this account (${clonedRepos.length})`,
-  );
-  btn.setAttribute("aria-label", `Delete ${clonedRepos.length} local clones`);
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn, repoDeps)).then(() => {
-      bumpState();
-    });
-  });
-  return btn;
+  updateAccountReposDetailsImpl(details, a, repos, reposRenderDeps);
 }
 
 // --- Repo row ---------------------------------------------------------
@@ -749,6 +653,14 @@ const repoDeps: RepoDeps = {
   addCloned: (name) => { lastLocalNames.add(name); },
   removeCloned: (name) => { lastLocalNames.delete(name); },
   bumpState,
+};
+
+const reposRenderDeps: ReposRenderDeps = {
+  get lastLocalNames() { return lastLocalNames; },
+  expandOnNextPaint,
+  bumpState,
+  repoDeps,
+  repoSpec,
 };
 
 const oauthDeps: OAuthFlowDeps = {

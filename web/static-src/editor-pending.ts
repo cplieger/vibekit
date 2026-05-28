@@ -116,12 +116,20 @@ export async function applyActivePendingPartial(): Promise<void> {
   }
 }
 
+/** Detect the dominant line ending in a string. */
+function detectEOL(text: string): string {
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const lf = (text.match(/(?<!\r)\n/g) ?? []).length;
+  return crlf > lf ? "\r\n" : "\n";
+}
+
 /** @internal Exported for testing. */
 export function buildPartialMergeText(
   state: FileState,
   decisions: Map<number, "accept" | "reject">,
 ): string {
   const diff = getCachedDiff(state);
+  const eol = detectEOL(state.original ?? "");
   const out: string[] = [];
   let hunkIdx = 0;
   let inHunk = false;
@@ -156,7 +164,7 @@ export function buildPartialMergeText(
   if (inHunk) {
     flushHunk();
   }
-  return out.join("\n");
+  return out.join(eol);
 }
 
 /** Pre-fill the chat input with a discuss template for the staged change. */

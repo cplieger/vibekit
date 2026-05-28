@@ -138,6 +138,10 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// ring buffer. This ensures permission dialogs survive reconnects.
 	h.replayPendingPermissions(w, flusher, chatFilter)
 
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Replay every outstanding Supervised-mode staged op so the
 	// client rebuilds its pending pill and per-card Accept/Reject
 	// buttons exactly as they were before the disconnect.
@@ -146,6 +150,11 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 	}, chatFilter)
+
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Replay per-turn trust state. Without this, a reconnect mid-turn
 	// silently reverts the Supervised pill to plain "Supervised" even
 	// though the perTurnTrust flag is still active — the user would
@@ -155,6 +164,11 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 	}, chatFilter)
+
+	if ctx.Err() != nil {
+		return
+	}
+
 	flusher.Flush()
 
 	keepalive := time.NewTicker(keepaliveInterval)

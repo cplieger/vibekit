@@ -75,18 +75,7 @@ type ChatStoreDeps interface {
 // Typed accessors on Translator for narrow interface access.
 // These allow handler methods to document and use only the
 // subset of Deps they actually need.
-
-// Streaming returns the StreamingAccess subset of deps.
-func (t *Translator) Streaming() StreamingAccess { return t.deps }
-
-// Permission returns the PermissionAccess subset of deps.
-func (t *Translator) Permission() PermissionAccess { return t.deps }
-
-// BridgeComms returns the BridgeComm subset of deps.
-func (t *Translator) BridgeComms() BridgeComm { return t.deps }
-
-// MCP returns the MCPState subset of deps.
-func (t *Translator) MCP() MCPState { return t.deps.MCPRecorder() }
-
-// ChatDeps returns the ChatStoreDeps subset of deps.
-func (t *Translator) ChatDeps() ChatStoreDeps { return t.deps }
+//
+// NOTE: Currently unused by handlers (all use t.deps directly).
+// Retained as documentation of the role-based decomposition;
+// handlers may adopt them in a future cycle.

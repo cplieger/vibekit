@@ -339,7 +339,7 @@ export function handleCodeBlock(p: Parser, char: string, pending_with_char: stri
     case "\n  \t":
     case "\n \t":
     case "\n\t":
-      p.textBuf.push("\n");
+      p.textBuf += "\n";
       p.pending = "";
       return;
     case "\n":
@@ -354,7 +354,7 @@ export function handleCodeBlock(p: Parser, char: string, pending_with_char: stri
         end_token(p);
         p.pending = char;
       } else {
-        p.textBuf.push(char);
+        p.textBuf += char;
       }
   }
 }
@@ -384,7 +384,7 @@ export function handleCodeFence(p: Parser, char: string, pending_with_char: stri
       }
       break;
   }
-  p.textBuf.push(p.pending);
+  p.textBuf += p.pending;
   p.pending = char;
   p.fence_end = 1;
 }
@@ -402,18 +402,18 @@ export function handleCodeInline(p: Parser, char: string, pending_with_char: str
       }
       return;
     case "\n":
-      p.textBuf.push(p.pending);
+      p.textBuf += p.pending;
       p.pending = "";
       p.token = LINE_BREAK;
       p.blockquote_idx = 0;
       add_text(p);
       return;
     case " ":
-      p.textBuf.push(p.pending);
+      p.textBuf += p.pending;
       p.pending = char;
       return;
     default:
-      p.textBuf.push(pending_with_char);
+      p.textBuf += pending_with_char;
       p.pending = "";
   }
 }
@@ -521,9 +521,9 @@ export function handleMaybeEqBlock(p: Parser, char: string): void {
   } else {
     p.token = p.tokens[p.len] as Token;
     if (p.pending.startsWith("\\")) {
-      p.textBuf.push("[");
+      p.textBuf += "[";
     } else {
-      p.textBuf.push("$");
+      p.textBuf += "$";
     }
     p.pending = "";
     p.write(p, char);
@@ -535,8 +535,7 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
     add_text(p);
     add_token(p, RAW_URL);
     p.pending = pending_with_char;
-    p.textBuf.length = 0;
-    p.textBuf.push(pending_with_char);
+    p.textBuf = pending_with_char;
     return;
   }
   const http = "http:/";
@@ -582,7 +581,7 @@ export function handleRawURL(p: Parser, char: string, pending_with_char: string)
     end_token(p);
     p.pending = char;
   } else {
-    p.textBuf.push(char);
+    p.textBuf += char;
     p.pending = pending_with_char;
   }
 }
@@ -607,7 +606,7 @@ export function handleMaybeBR(p: Parser, char: string, pending_with_char: string
     }
   }
   p.token = p.tokens[p.len] as Token;
-  p.textBuf.push("<");
+  p.textBuf += "<";
   p.pending = p.pending.slice(1);
   p.write(p, char);
   return true;
@@ -635,11 +634,10 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         default: {
           const cc = char.charCodeAt(0);
           p.pending = "";
-          p.textBuf.push(
+          p.textBuf +=
             is_digit(cc) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122)
               ? pending_with_char
-              : char,
-          );
+              : char;
           return true;
         }
       }
@@ -687,9 +685,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         p.fence_start += 1;
         add_text(p);
         add_token(p, CODE_INLINE);
-        p.textBuf.length = 0;
+        p.textBuf = "";
         if (char !== " " && char !== "\n") {
-          p.textBuf.push(char);
+          p.textBuf += char;
         }
         p.pending = "";
       }

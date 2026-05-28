@@ -18,6 +18,40 @@ type gitlabProvider struct {
 	host string
 }
 
+// gitlabMR is the wire struct for GitLab merge request JSON responses.
+// Shared between ListPRs (array) and viewPR (single object).
+type gitlabMR struct {
+	Title        string                    `json:"title"`
+	Description  string                    `json:"description"`
+	State        string                    `json:"state"`
+	Author       struct{ Username string } `json:"author"`
+	SourceBranch string                    `json:"source_branch"`
+	TargetBranch string                    `json:"target_branch"`
+	WebURL       string                    `json:"web_url"`
+	CreatedAt    string                    `json:"created_at"`
+	UpdatedAt    string                    `json:"updated_at"`
+	MergeStatus  string                    `json:"merge_status"`
+	IID          int                       `json:"iid"`
+	Draft        bool                      `json:"draft"`
+}
+
+func (r *gitlabMR) toPR() PR {
+	return PR{
+		Number:       r.IID,
+		Title:        r.Title,
+		Body:         r.Description,
+		State:        normalizePRState(r.State),
+		Author:       r.Author.Username,
+		SourceBranch: r.SourceBranch,
+		TargetBranch: r.TargetBranch,
+		URL:          r.WebURL,
+		CreatedAt:    parseRFC3339Millis(r.CreatedAt),
+		UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
+		Mergeable:    r.MergeStatus == "can_be_merged",
+		Draft:        r.Draft,
+	}
+}
+
 func newGitLab(host string) *gitlabProvider {
 	if host == "" {
 		host = KindGitLab.DefaultHost()
@@ -110,40 +144,13 @@ func (p *gitlabProvider) ListPRs(ctx context.Context, repo, state string) ([]PR,
 	if err != nil {
 		return nil, err
 	}
-	var raw []struct {
-		Title        string                    `json:"title"`
-		Description  string                    `json:"description"`
-		State        string                    `json:"state"`
-		Author       struct{ Username string } `json:"author"`
-		SourceBranch string                    `json:"source_branch"`
-		TargetBranch string                    `json:"target_branch"`
-		WebURL       string                    `json:"web_url"`
-		CreatedAt    string                    `json:"created_at"`
-		UpdatedAt    string                    `json:"updated_at"`
-		MergeStatus  string                    `json:"merge_status"`
-		IID          int                       `json:"iid"`
-		Draft        bool                      `json:"draft"`
-	}
+	var raw []gitlabMR
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("glab mr list: decode: %w", err)
 	}
 	prs := make([]PR, 0, len(raw))
 	for i := range raw {
-		r := &raw[i]
-		prs = append(prs, PR{
-			Number:       r.IID,
-			Title:        r.Title,
-			Body:         r.Description,
-			State:        normalizePRState(r.State),
-			Author:       r.Author.Username,
-			SourceBranch: r.SourceBranch,
-			TargetBranch: r.TargetBranch,
-			URL:          r.WebURL,
-			CreatedAt:    parseRFC3339Millis(r.CreatedAt),
-			UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
-			Mergeable:    r.MergeStatus == "can_be_merged",
-			Draft:        r.Draft,
-		})
+		prs = append(prs, raw[i].toPR())
 	}
 	return prs, nil
 }
@@ -179,37 +186,12 @@ func (p *gitlabProvider) CreatePR(ctx context.Context, repo string, params *Crea
 // viewPR fetches a single MR by number.
 func (p *gitlabProvider) viewPR(ctx context.Context, repo string, number int) (*PR, error) {
 	args := p.withHost("mr", "view", strconv.Itoa(number), "--repo", repo, "--output", "json")
-	var r struct {
-		Title        string                    `json:"title"`
-		Description  string                    `json:"description"`
-		State        string                    `json:"state"`
-		Author       struct{ Username string } `json:"author"`
-		SourceBranch string                    `json:"source_branch"`
-		TargetBranch string                    `json:"target_branch"`
-		WebURL       string                    `json:"web_url"`
-		CreatedAt    string                    `json:"created_at"`
-		UpdatedAt    string                    `json:"updated_at"`
-		MergeStatus  string                    `json:"merge_status"`
-		IID          int                       `json:"iid"`
-		Draft        bool                      `json:"draft"`
-	}
+	var r gitlabMR
 	if err := runJSON(ctx, CmdTimeout, &r, "glab", args...); err != nil {
 		return nil, err
 	}
-	return &PR{
-		Number:       r.IID,
-		Title:        r.Title,
-		Body:         r.Description,
-		State:        normalizePRState(r.State),
-		Author:       r.Author.Username,
-		SourceBranch: r.SourceBranch,
-		TargetBranch: r.TargetBranch,
-		URL:          r.WebURL,
-		CreatedAt:    parseRFC3339Millis(r.CreatedAt),
-		UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
-		Mergeable:    r.MergeStatus == "can_be_merged",
-		Draft:        r.Draft,
-	}, nil
+	pr := r.toPR()
+	return &pr, nil
 }
 
 func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, method string) error {

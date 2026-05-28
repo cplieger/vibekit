@@ -50,7 +50,7 @@ func TestSelectIdleBridges_allZeroTimesSkipped(t *testing.T) {
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	factory := func() api.ACPBridge { return newNoopBridge() }
-	bm := newBridgeManager(factory)
+	bm := newBridgeManager(factory, nil)
 
 	// Pre-populate with some bridges so "exists" path is exercised.
 	for i := range 100 {
@@ -72,7 +72,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	b.Run("create", func(b *testing.B) {
 		// Use a separate manager so creates don't accumulate unboundedly.
-		bm2 := newBridgeManager(factory)
+		bm2 := newBridgeManager(factory, nil)
 		var mu sync.Mutex
 		var counter int
 
@@ -125,7 +125,7 @@ func BenchmarkBridgeManagerDrain(b *testing.B) {
 		b.Run(fmt.Sprintf("bridges_%d", n), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				bm := newBridgeManager(factory)
+				bm := newBridgeManager(factory, nil)
 				for i := range n {
 					sb, existed := bm.getOrInsert(api.ChatID(fmt.Sprintf("chat-%d", i)))
 					if !existed {

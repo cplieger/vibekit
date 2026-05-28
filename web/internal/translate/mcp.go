@@ -4,19 +4,16 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
-	"log/slog"
 
 	"vibekit/internal/api"
 )
 
 // HandleMCPInitialized processes MCP server_initialized notifications.
 func (t *Translator) HandleMCPInitialized(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		ServerName string `json:"serverName"`
-	}
-	if err := json.Unmarshal(msg.Params, &p); err != nil || p.ServerName == "" {
-		slog.Debug("mcp: invalid server_initialized payload", "error", err)
+	}](msg, "mcp/server_initialized")
+	if !ok || p.ServerName == "" {
 		return
 	}
 	t.deps.MCPRecorder().RecordConnected(ctx, p.ServerName)
@@ -24,12 +21,11 @@ func (t *Translator) HandleMCPInitialized(ctx context.Context, _ api.ChatID, msg
 
 // HandleMCPOAuth processes MCP oauth_request notifications.
 func (t *Translator) HandleMCPOAuth(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		ServerName string `json:"serverName"`
 		OAuthURL   string `json:"oauthUrl"`
-	}
-	if err := json.Unmarshal(msg.Params, &p); err != nil || p.ServerName == "" || p.OAuthURL == "" {
-		slog.Debug("mcp: invalid oauth_request payload", "error", err)
+	}](msg, "mcp/oauth_request")
+	if !ok || p.ServerName == "" || p.OAuthURL == "" {
 		return
 	}
 	t.deps.MCPRecorder().RecordOAuth(ctx, p.ServerName, p.OAuthURL)
@@ -37,12 +33,11 @@ func (t *Translator) HandleMCPOAuth(ctx context.Context, _ api.ChatID, msg *api.
 
 // HandleMCPInitFailure processes MCP server_init_failure notifications.
 func (t *Translator) HandleMCPInitFailure(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		ServerName string `json:"serverName"`
 		Error      string `json:"error"`
-	}
-	if err := json.Unmarshal(msg.Params, &p); err != nil || p.ServerName == "" {
-		slog.Debug("mcp: invalid server_init_failure payload", "error", err)
+	}](msg, "mcp/server_init_failure")
+	if !ok || p.ServerName == "" {
 		return
 	}
 	t.deps.MCPRecorder().RecordInitFailure(ctx, p.ServerName, p.Error)

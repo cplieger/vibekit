@@ -11,8 +11,8 @@ import type { ToolCall, ToolStatus, ToolDiff } from "./types.js";
 import {
   ensureToolCallSig,
   clearToolCallSig,
-} from "./store.js";
-import { effect } from "./signals.js";
+} from "./store-signals.js";
+import { effect } from "./lib/reactive/index.js";
 import type { ReconcileSpec } from "./reconcile.js";
 import { ICON_CHEVRON_UP } from "./icons.js";
 import {

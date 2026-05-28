@@ -74,7 +74,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 
 	list := deps.PendingStore().ListForChat(cmd.ChatID)
 	if len(list) == 0 {
-		d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: 0})
+		d.Respond(w, cmd.RequestID, resolvedResponse{OK: true, Resolved: 0})
 		return
 	}
 
@@ -89,7 +89,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 		}
 		slog.Info("bulk pending changes resolved",
 			"chat_id", cmd.ChatID, "action", p.Action, keyResolved, len(snaps))
-		d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
+		d.Respond(w, cmd.RequestID, resolvedResponse{OK: true, Resolved: len(snaps)})
 		return
 	}
 
@@ -103,7 +103,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 	}
 	slog.Info("bulk pending changes resolved",
 		"chat_id", cmd.ChatID, "action", p.Action, keyResolved, len(snaps))
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
+	d.Respond(w, cmd.RequestID, resolvedResponse{OK: true, Resolved: len(snaps)})
 }
 
 // CmdSetSupervisedMode toggles the chat's SupervisedMode flag.
@@ -217,7 +217,7 @@ func CmdTrustPendingChanges(d *Dispatcher, ctx context.Context, w http.ResponseW
 	}
 	slog.Info("trust pending changes",
 		"chat_id", cmd.ChatID, "accepted", len(snaps))
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, keyResolved: len(snaps)})
+	d.Respond(w, cmd.RequestID, resolvedResponse{OK: true, Resolved: len(snaps)})
 }
 
 // CmdClearPendingTrust clears the per-turn trust flag.

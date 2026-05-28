@@ -104,3 +104,28 @@ func FuzzValidMessageID(f *testing.F) {
 		_ = ValidMessageID(id)
 	})
 }
+
+func FuzzValidChatID(f *testing.F) {
+	f.Add("")
+	f.Add("abc-123_456")
+	f.Add(strings.Repeat("a", 128))
+	f.Add(strings.Repeat("a", 129))
+	f.Add("has space")
+	f.Add("has/slash")
+	f.Add("../traversal")
+	f.Fuzz(func(t *testing.T, id string) {
+		result := validChatID(api.ChatID(id))
+		// Path separators must always be rejected.
+		if strings.ContainsAny(id, "/\\") && result {
+			t.Errorf("validChatID(%q) = true, contains path separator", id)
+		}
+		// Over 128 bytes must be rejected.
+		if len(id) > 128 && result {
+			t.Errorf("validChatID(%q) = true, len=%d > 128", id, len(id))
+		}
+		// Empty must be rejected.
+		if id == "" && result {
+			t.Error("validChatID(\"\") = true, want false")
+		}
+	})
+}

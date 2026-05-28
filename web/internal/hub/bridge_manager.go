@@ -20,12 +20,14 @@ type bridgeManager struct {
 	factory  api.ACPBridgeFactory
 	mu       sync.Mutex
 	spawnSF  singleflight.Group
+	inflight *sync.WaitGroup
 }
 
-func newBridgeManager(factory api.ACPBridgeFactory) *bridgeManager {
+func newBridgeManager(factory api.ACPBridgeFactory, inflight *sync.WaitGroup) *bridgeManager {
 	return &bridgeManager{
-		bridges: make(map[api.ChatID]*sharedBridge),
-		factory: factory,
+		bridges:  make(map[api.ChatID]*sharedBridge),
+		factory:  factory,
+		inflight: inflight,
 	}
 }
 
@@ -125,10 +127,19 @@ func (bm *bridgeManager) closeAndStop(ids []api.ChatID) []culledBridge {
 	}
 	bm.mu.Unlock()
 	// Stop runs outside the lock so a slow Stop doesn't block other
-	// bridgeMgr operations. Fire-and-forget, matching the original
-	// inline cull behaviour.
+	// bridgeMgr operations. Tracked via inflight WaitGroup so
+	// Hub.Shutdown waits for all cull-triggered stops.
 	for _, c := range culled {
-		go c.sb.bridge.Stop()
+		c := c
+		if bm.inflight != nil {
+			bm.inflight.Add(1)
+			go func() {
+				defer bm.inflight.Done()
+				c.sb.bridge.Stop()
+			}()
+		} else {
+			go c.sb.bridge.Stop()
+		}
 	}
 	return culled
 }

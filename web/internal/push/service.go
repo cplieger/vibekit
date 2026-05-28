@@ -24,19 +24,15 @@ var _ api.PushService = (*Service)(nil)
 // DefaultTitle is the notification title used for all Web Push messages.
 const DefaultTitle = "Vibekit"
 
-// Notification kind constants. Kept as aliases to the canonical
 // pushDebounce is the per-kind quiet window; pushResponseCap bounds
 // body drain for keep-alive-friendly reads; pushBodyCap caps the
 // combined title+body payload so an accidental megabyte send doesn't
-// get silently rejected by the push vendor; vapidExpWindow gives
-// headroom under RFC 8292's 24h ceiling so clock skew / slow transit
-// don't push us over at the vendor.
+// get silently rejected by the push vendor.
 const (
 	pushDebounce    = 5 * time.Second
 	pushResponseCap = 64 << 10 // 64 KiB — vendors return tiny bodies
 	pushBodyCap     = 3000     // title+body ceiling; pre-pad room under 4096 record
 	pushFanOutLimit = 3        // max concurrent push sends per notification
-	vapidExpWindow  = 12 * 60 * 60
 )
 
 type vapidKeys struct {
@@ -46,20 +42,21 @@ type vapidKeys struct {
 
 // Service manages push subscriptions and sends notifications.
 type Service struct {
-	ctx         context.Context
-	prefsFlight singleflight.Group
-	saveCh      chan saveRequest
-	cancel      context.CancelFunc
-	client      *http.Client
-	lastPush    map[api.PushKind]time.Time
-	subs        map[string]api.PushSubscription
-	prefs       map[api.PushKind]bool
-	keys        vapidKeys
-	vapidPriv   *ecdsa.PrivateKey
-	subject     string
-	dir         string
-	mu          sync.Mutex
-	healthy     bool
+	ctx           context.Context
+	prefsFlight   singleflight.Group
+	saveCh        chan saveRequest
+	writeLoopDone chan struct{}
+	cancel        context.CancelFunc
+	client        *http.Client
+	lastPush      map[api.PushKind]time.Time
+	subs          map[string]api.PushSubscription
+	prefs         map[api.PushKind]bool
+	keys          vapidKeys
+	vapidPriv     *ecdsa.PrivateKey
+	subject       string
+	dir           string
+	mu            sync.Mutex
+	healthy       bool
 }
 
 // saveRequest pairs a subscription snapshot with a done channel
@@ -76,15 +73,16 @@ func New(ctx context.Context, configDir, subject string) *Service {
 		prefs[kr.Kind] = kr.DefaultOn
 	}
 	s := &Service{
-		subs:     make(map[string]api.PushSubscription),
-		lastPush: make(map[api.PushKind]time.Time),
-		subject:  subject,
-		dir:      configDir,
-		ctx:      ctx,
-		cancel:   cancel,
-		prefs:    prefs,
-		saveCh:   make(chan saveRequest, 1),
-		healthy:  true,
+		subs:          make(map[string]api.PushSubscription),
+		lastPush:      make(map[api.PushKind]time.Time),
+		subject:       subject,
+		dir:           configDir,
+		ctx:           ctx,
+		cancel:        cancel,
+		prefs:         prefs,
+		saveCh:        make(chan saveRequest, 1),
+		writeLoopDone: make(chan struct{}),
+		healthy:       true,
 	}
 	// pushClient reuses one connection pool across sends. Small
 	// idle pool — only 3 vendor hosts in practice. CheckRedirect
@@ -122,10 +120,13 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	return s
 }
 
-// Close cancels any in-flight pushes and prevents new ones from
-// reaching the wire. Call from the hub's shutdown path so pending
+// Close cancels any in-flight pushes and waits for the write loop to
+// drain pending saves. Call from the hub's shutdown path so pending
 // sends don't hold the shutdown up to 10s each.
-func (s *Service) Close() { s.cancel() }
+func (s *Service) Close() {
+	s.cancel()
+	<-s.writeLoopDone
+}
 
 func (s *Service) PublicKey() string { return s.keys.PublicKey }
 
@@ -139,7 +140,7 @@ func (s *Service) Subscribe(sub api.PushSubscription) {
 	s.mu.Lock()
 	s.subs[sub.Endpoint] = sub
 	s.mu.Unlock()
-	s.saveSubs(s.ctx)
+	s.saveSubsAsync(s.ctx)
 	// Log only the host so the per-subscriber token in the URL
 	// path doesn't leak into Loki. Host alone is enough to
 	// distinguish Chrome/Firefox/Safari subscribers for debugging.
@@ -154,7 +155,7 @@ func (s *Service) Unsubscribe(endpoint string) {
 	s.mu.Lock()
 	delete(s.subs, endpoint)
 	s.mu.Unlock()
-	s.saveSubs(s.ctx)
+	s.saveSubsAsync(s.ctx)
 }
 
 func (s *Service) HasSubscribers() bool {
@@ -205,6 +206,7 @@ func (s *Service) ReloadPreferences(ctx context.Context) {
 // Serialises all disk writes through a single goroutine, eliminating
 // the need for writeMu.
 func (s *Service) writeLoop() {
+	defer close(s.writeLoopDone)
 	for {
 		select {
 		case req, ok := <-s.saveCh:
@@ -235,11 +237,17 @@ func (s *Service) writeLoop() {
 // a corrupted config.json silently reverting user toggles leaves a
 // diagnostic trail.
 func (s *Service) loadPreferences(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Build local prefs map without holding mu — settings.Field does disk I/O.
+	local := make(map[api.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey, kr.SettingsKey); ok {
-			s.prefs[kr.Kind] = v
+			local[kr.Kind] = v
+		} else {
+			local[kr.Kind] = kr.DefaultOn
 		}
 	}
+	// Single swap under mu — narrows critical section to one map assignment.
+	s.mu.Lock()
+	s.prefs = local
+	s.mu.Unlock()
 }

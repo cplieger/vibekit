@@ -4,20 +4,9 @@ import "vibekit/internal/api"
 
 // ACP method name constants. Centralised so a protocol rename is a
 // single-line change with compile-time verification of all consumers.
-const (
-	methodPrompt            = api.MethodPrompt
-	methodCancel            = api.MethodCancel
-	methodUpdate            = "session/update"
-	methodRequestPermission = "session/request_permission"
-	methodSetConfigOption   = "session/setConfigOption"
-	methodSpawn             = api.MethodSpawn
-	methodTerminate         = "session/terminate"
-	methodAttach            = "session/attach"
-	methodList              = "session/list"
-	methodMessageSend       = "message/send"
-	methodCommandsExecute   = api.MethodCommandsExecute
-	methodCommandsOptions   = api.MethodCommandsOptions
-)
+
+// Compile-time assertion that api method constants are accessible.
+var _ = api.MethodPrompt
 
 // kiro-cli extension notification method names. These are the
 // _kiro.dev/* namespace methods dispatched in initDispatch. Declared
@@ -43,12 +32,6 @@ const (
 	methodMCPServerInitFailure = "_kiro.dev/mcp/server_init_failure"
 	methodMCPOAuthRequest      = "_kiro.dev/mcp/oauth_request"
 	methodClearStatus          = "_kiro.dev/clear/status"
-)
-
-// File-system protocol method names (ACP fs/* namespace).
-const (
-	methodFSRead  = api.MethodFSRead
-	methodFSWrite = api.MethodFSWrite
 )
 
 // Terminal protocol method names (ACP terminal/* namespace).

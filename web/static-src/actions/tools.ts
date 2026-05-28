@@ -3,6 +3,7 @@
 
 import { apiAction, retryNetwork } from "./index.js";
 import { RETRY_STANDARD } from "./types.js";
+import { MCP_API } from "./mcp.js";
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const installTools = apiAction<void, { output?: string; error?: string }>({
@@ -53,7 +54,7 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
   retry: RETRY_STANDARD,
   request: ({ name, install }) => ({
     method: "POST",
-    path: "/api/mcp",
+    path: MCP_API,
     body: {
       name,
       transport: "stdio",

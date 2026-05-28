@@ -69,7 +69,7 @@ func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any) er
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return fmt.Errorf("parse session/new: %w", err)
 	}
-	if !validSessionID(result.SessionID) {
+	if !api.ValidSessionID(result.SessionID) {
 		return fmt.Errorf("session/new returned invalid session id: %q", result.SessionID)
 	}
 	b.mu.Lock()

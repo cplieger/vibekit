@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { getActive, activeVersion } from "./store.js";
-import { effect } from "./signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import {

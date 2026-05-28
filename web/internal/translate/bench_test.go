@@ -145,3 +145,22 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 		deps.bufStore.Delete(chatID)
 	}
 }
+
+var metadataPayload = json.RawMessage(`{"contextUsagePercentage":42.5,"turnDurationMs":1234,"meteringUsage":[{"unitSingular":"token","unitPlural":"tokens","value":500}]}`)
+
+func BenchmarkTranslator_HandleMetadata(b *testing.B) {
+	deps := newBaseDeps()
+	tr := New(deps)
+	ctx := context.Background()
+	chatID := api.ChatID("bench-meta")
+	msg := &api.RPCResponse{Params: metadataPayload}
+
+	// Pre-create a chat so Mutate finds it.
+	_ = deps.store.Mutate(ctx, chatID, func(_ *api.Chat, _ bool) bool { return true })
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		tr.HandleMetadata(ctx, chatID, msg)
+	}
+}

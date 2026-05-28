@@ -9,11 +9,11 @@
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
-import { ICON_EDIT, ICON_CLOSE } from "./icons.js";
+import { ICON_EDIT, ICON_CLOSE, iconEl } from "./icons.js";
 import { installTools, saveTools, seedMcp, loadTools as loadToolsAction } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, el } from "./dom.js";
-import { reconcile } from "./reconcile.js";
+import { reconcile } from "./lib/reactive/reconcile.js";
 
 type ToolEntry =
   | { kind: "label"; sec: string; isBuiltin: boolean }
@@ -187,7 +187,11 @@ class ToolsManager {
         this.renderToolsList();
       },
       onError: () => {
-        $.toolsList.innerHTML = '<div class="list-empty">Failed to load tools</div>';
+        $.toolsList.replaceChildren();
+        const errDiv = document.createElement("div");
+        errDiv.className = "list-empty";
+        errDiv.textContent = "Failed to load tools";
+        $.toolsList.appendChild(errDiv);
       },
     });
   }
@@ -246,7 +250,10 @@ class ToolsManager {
 
     if (flat.length === 0) {
       container.replaceChildren();
-      container.innerHTML = '<div class="list-empty">No tools configured</div>';
+      const emptyDiv = document.createElement("div");
+      emptyDiv.className = "list-empty";
+      emptyDiv.textContent = "No tools configured";
+      container.appendChild(emptyDiv);
       return;
     }
 
@@ -306,7 +313,7 @@ class ToolsManager {
     editBtn.className = "list-row-btn";
     editBtn.setAttribute("data-tooltip", "Edit");
     editBtn.setAttribute("aria-label", `Edit ${name}`);
-    editBtn.innerHTML = ICON_EDIT;
+    editBtn.replaceChildren(iconEl(ICON_EDIT));
     editBtn.addEventListener("click", () => {
       this.openToolModal(sec, name);
     });
@@ -314,7 +321,7 @@ class ToolsManager {
     delBtn.className = "list-row-btn";
     delBtn.setAttribute("data-tooltip", "Delete");
     delBtn.setAttribute("aria-label", `Delete ${name}`);
-    delBtn.innerHTML = ICON_CLOSE;
+    delBtn.replaceChildren(iconEl(ICON_CLOSE));
     delBtn.addEventListener("click", () => {
       void (async () => {
         const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");

@@ -10,8 +10,9 @@
 // Open: button to open the current file in a proper editor tab.
 // ---------------------------------------------------------------------------
 
-import { $ } from "./dom.js";
+import { $, el } from "./dom.js";
 import { onSSE } from "./bus.js";
+import { computeVirtualWindow, computeScrollTarget } from "./lib/virtual-scroll.js";
 import {
   openTab,
   closeTab,
@@ -26,7 +27,7 @@ import { escText } from "./strings.js";
 import { highlight } from "./highlight.js";
 import { openFile } from "./editor-openers.js";
 import { getActiveId, activeVersion } from "./store.js";
-import { effect } from "./signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { profileFor } from "./tool-schema.js";
 import type { ToolLocation } from "./types.js";
 import { registerCleanup } from "./actions/index.js";
@@ -508,40 +509,8 @@ class FollowController {
 // Pure geometry helpers (stateless, unit-testable without DOM)
 // ---------------------------------------------------------------------------
 
-export interface VirtualWindow {
-  startLine: number;
-  endLine: number;
-  paddingTopPx: number;
-  paddingBottomPx: number;
-}
-
-export function computeVirtualWindow(
-  totalLines: number,
-  lineHeight: number,
-  scrollTop: number,
-  viewportHeight: number,
-  bufferLines: number,
-): VirtualWindow {
-  const startLine = Math.max(0, Math.floor(scrollTop / lineHeight) - bufferLines);
-  const visibleCount = Math.ceil(viewportHeight / lineHeight) + bufferLines * 2;
-  const endLine = Math.min(totalLines, startLine + visibleCount);
-  const totalHeight = totalLines * lineHeight;
-  return {
-    startLine,
-    endLine,
-    paddingTopPx: startLine * lineHeight,
-    paddingBottomPx: Math.max(0, totalHeight - endLine * lineHeight),
-  };
-}
-
-export function computeScrollTarget(
-  line: number,
-  lineHeight: number,
-  viewportHeight: number,
-): number {
-  const targetTop = (line - 1) * lineHeight;
-  return Math.max(0, targetTop - viewportHeight / 2);
-}
+export type { VirtualWindow } from "./lib/virtual-scroll.js";
+export { computeVirtualWindow, computeScrollTarget } from "./lib/virtual-scroll.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (stateless)
@@ -553,7 +522,7 @@ function basename(path: string): string {
 }
 
 function getView(): HTMLDivElement {
-  return document.getElementById("follow-view") as HTMLDivElement;
+  return el<HTMLDivElement>("follow-view");
 }
 
 function scrollToLine(line: number): void {

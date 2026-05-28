@@ -58,3 +58,25 @@ export interface GitRepoGroup {
   prs: GitPR[];
   error?: string;
 }
+
+// --- Status label utilities (single source of truth) ---
+
+export const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  M: "Modified",
+  A: "Added",
+  D: "Deleted",
+  R: "Renamed",
+  "?": "Untracked",
+  U: "Unmerged",
+};
+
+export function statusLetter(s: string): string {
+  if (s.length >= 1) {
+    return s.charAt(0);
+  }
+  return "?";
+}
+
+export function describeStatus(s: string): string {
+  return GIT_STATUS_LABELS[s.charAt(0)] ?? s;
+}

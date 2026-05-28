@@ -2,7 +2,6 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"vibekit/internal/api"
@@ -11,7 +10,7 @@ import (
 
 // HandlePermissionRequest processes session/request_permission from kiro-cli.
 func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var req struct {
+	type permReq struct {
 		Params struct {
 			SessionID string `json:"sessionId"`
 			ToolCall  struct {
@@ -23,15 +22,12 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 		} `json:"params"`
 		ID int64 `json:"id"`
 	}
-	if json.Unmarshal(msg.Params, &req) != nil {
+	req, ok := unmarshalParams[permReq](msg, "session/request_permission")
+	if !ok {
 		return
 	}
 
-	subSessionID := ""
-	parent := t.deps.ParentACPSession(chatID)
-	if req.Params.SessionID != "" && parent != "" && req.Params.SessionID != parent {
-		subSessionID = req.Params.SessionID
-	}
+	subSessionID := t.deriveSubSession(chatID, req.Params.SessionID)
 
 	// Auto-approve crew permissions when the chat has the flag set.
 	if subSessionID != "" && chatID != "" {

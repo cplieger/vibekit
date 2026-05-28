@@ -10,13 +10,8 @@ import (
 	"net/http"
 
 	"vibekit/internal/api"
-	"vibekit/internal/checkpoint"
+	chktypes "vibekit/internal/checkpoint/types"
 	"vibekit/internal/translate"
-)
-
-// ACP method constants used by chat-ops handlers.
-const (
-	methodCancel = api.MethodCancel
 )
 
 // CmdCreateChat creates a new chat with the given metadata.
@@ -64,14 +59,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	// Delete any rewind children (chats whose parent_chat_id points here).
-	var childChats []string
-	chatList := deps.ChatStore().List(ctx)
-	for i := range chatList {
-		hdr := &chatList[i]
-		if hdr.ParentChatID == cmd.ChatID {
-			childChats = append(childChats, hdr.ID)
-		}
-	}
+	childChats := deps.ChatStore().ChildrenOf(ctx, cmd.ChatID)
 
 	deps.CleanupChatState(ctx, cmd.ChatID)
 	if err := deps.ChatStore().Delete(ctx, cmd.ChatID); err != nil {
@@ -80,8 +68,8 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 
 	for _, childID := range childChats {
-		deps.CleanupChatState(ctx, api.ChatID(childID))
-		if err := deps.ChatStore().Delete(ctx, api.ChatID(childID)); err != nil {
+		deps.CleanupChatState(ctx, childID)
+		if err := deps.ChatStore().Delete(ctx, childID); err != nil {
 			slog.Error("delete chat: cascade child",
 				"parent", cmd.ChatID, "child", childID, keyError, err)
 		}
@@ -103,7 +91,7 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		d.RespondOK(w, cmd.RequestID)
 		return
 	}
-	if err := sb.Notify(ctx, methodCancel, SessionParams(sb)); err != nil {
+	if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	d.RespondOK(w, cmd.RequestID)
@@ -143,7 +131,7 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		api.BadRequest(w, "tag is required")
 		return
 	}
-	parsedTag, err := checkpoint.ParseTag(p.Tag)
+	parsedTag, err := chktypes.ParseTag(p.Tag)
 	if err != nil {
 		api.BadRequest(w, "invalid tag format")
 		return
@@ -197,7 +185,7 @@ func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		api.BadRequest(w, "tag and file_path are required")
 		return
 	}
-	parsedTag, err := checkpoint.ParseTag(p.Tag)
+	parsedTag, err := chktypes.ParseTag(p.Tag)
 	if err != nil {
 		api.BadRequest(w, "invalid tag format")
 		return

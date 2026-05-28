@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	jsonKeyOutput = api.JSONKeyOutput
-	refHEAD       = "HEAD"
+	jsonKeyOutput  = api.JSONKeyOutput
+	refHEAD        = "HEAD"
+	msgNotAGitRepo = "not a git repo"
 )
 
 // --- git error taxonomy ---

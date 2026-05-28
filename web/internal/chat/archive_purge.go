@@ -29,7 +29,106 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vibekit/internal/api"
 )
+
+// PurgeArchived deletes archived chats older than maxAge.
+func (s *Store) PurgeArchived(ctx context.Context, maxAge time.Duration) {
+	archiveDir := s.archivePath()
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Error("chat purge_archived: readdir",
+				"dir", archiveDir, "error", err)
+		}
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+
+	// Collect valid entries first (cheap, no I/O beyond the ReadDir above).
+	type purgeEntry struct {
+		name string
+		path string
+	}
+	var valid []purgeEntry
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), chatFileSuffix) {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), chatFileSuffix)
+		if !chatIDPattern(api.ChatID(name)) {
+			continue
+		}
+		valid = append(valid, purgeEntry{name: name, path: filepath.Join(archiveDir, e.Name())})
+	}
+	if len(valid) == 0 {
+		return
+	}
+
+	// Bounded-parallel purge matching readHeadersParallel's worker pool.
+	const maxWorkers = 8
+	var purgedCount, keptCount, errCount int32
+	var mu sync.Mutex
+
+	boundedParallel(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
+		m := s.lock(api.ChatID(entry.name))
+		m.Lock()
+		info, err := os.Stat(entry.path)
+		if err != nil {
+			m.Unlock()
+			if !errors.Is(err, os.ErrNotExist) {
+				mu.Lock()
+				errCount++
+				mu.Unlock()
+				slog.Warn("chat purge_archived: stat",
+					"name", entry.name, "error", err)
+			}
+			return
+		}
+		if !info.ModTime().Before(cutoff) {
+			m.Unlock()
+			mu.Lock()
+			keptCount++
+			mu.Unlock()
+			return
+		}
+		if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			m.Unlock()
+			mu.Lock()
+			errCount++
+			mu.Unlock()
+			slog.Warn("chat purge_archived: remove",
+				"chat_id", entry.name, "error", err)
+			return
+		}
+		draftPath := filepath.Join(archiveDir, entry.name+planDraftSuffix)
+		if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("chat purge_archived: remove plan-draft",
+				"chat_id", entry.name, "error", err)
+		}
+		m.Unlock()
+		if s.onPurge != nil {
+			s.onPurge(api.ChatID(entry.name))
+		}
+		mu.Lock()
+		purgedCount++
+		mu.Unlock()
+	})
+
+	purged := int(purgedCount)
+	kept := int(keptCount)
+	errs := int(errCount)
+	if errs > 0 {
+		slog.Warn("chat purge_archived: pass complete with errors",
+			"purged", purged, "kept", kept, "errors", errs,
+			"max_age", maxAge)
+	} else {
+		slog.Info("chat purge_archived: pass complete",
+			"purged", purged, "kept", kept,
+			"max_age", maxAge)
+	}
+}
 
 // PurgeScheduler owns the archive-purge lifecycle. Uses a dedicated
 // goroutine with a trigger channel for true collapse semantics.

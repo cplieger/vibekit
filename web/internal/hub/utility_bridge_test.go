@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+
+	"pgregory.net/rapid"
 )
 
 func TestUtilityBridge_LazyStart(t *testing.T) {
@@ -223,4 +225,47 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	if promptCalls != goroutines {
 		t.Errorf("expected %d session/prompt calls, got %d", goroutines, promptCalls)
 	}
+}
+
+func TestCheapestModel_RapidInvariants(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.IntRange(0, 20).Draw(rt, "catalogSize")
+		catalog := make([]api.SessionModel, n)
+		for i := range n {
+			catalog[i] = api.SessionModel{
+				ID:             rapid.StringMatching(`[a-z0-9-]{1,20}`).Draw(rt, fmt.Sprintf("id_%d", i)),
+				Name:           rapid.String().Draw(rt, fmt.Sprintf("name_%d", i)),
+				Description:    rapid.String().Draw(rt, fmt.Sprintf("desc_%d", i)),
+				RateMultiplier: rapid.Float64Range(0, 10).Draw(rt, fmt.Sprintf("rate_%d", i)),
+			}
+		}
+
+		ctx := context.Background()
+		result := CheapestModel(ctx, catalog)
+
+		if result == "" {
+			// Either empty catalog or all models excluded/auto.
+			return
+		}
+
+		// Result must be present in catalog.
+		var found bool
+		for _, m := range catalog {
+			if m.ID == result {
+				found = true
+				// Must not be "auto".
+				if m.ID == "auto" {
+					rt.Fatal("selected 'auto' model")
+				}
+				// Must not be excluded.
+				if modelExcluded(m.Name) || modelExcluded(m.Description) {
+					rt.Fatalf("selected excluded model %q", m.ID)
+				}
+				break
+			}
+		}
+		if !found {
+			rt.Fatalf("result %q not in catalog", result)
+		}
+	})
 }

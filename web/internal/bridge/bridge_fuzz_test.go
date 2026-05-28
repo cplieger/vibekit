@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"vibekit/internal/api"
 )
 
 // FuzzValidSessionID exercises the ACP session-id path-traversal
@@ -25,7 +27,7 @@ func FuzzValidSessionID(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
-		result := validSessionID(s)
+		result := api.ValidSessionID(s)
 		if !result {
 			return // rejected — no invariant to check
 		}

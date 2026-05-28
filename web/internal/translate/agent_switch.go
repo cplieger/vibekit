@@ -4,22 +4,20 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"time"
 
 	"vibekit/internal/api"
 )
 
 // HandleAgentSwitched handles the agent/switched notification.
 func (t *Translator) HandleAgentSwitched(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		AgentName         string `json:"agentName"`
 		PreviousAgentName string `json:"previousAgentName"`
 		WelcomeMessage    string `json:"welcomeMessage"`
 		Model             string `json:"model"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil || p.AgentName == "" {
+	}](msg, "agent/switched")
+	if !ok || p.AgentName == "" {
 		return
 	}
 	if chatID != "" {
@@ -41,13 +39,7 @@ func (t *Translator) HandleAgentSwitched(ctx context.Context, chatID api.ChatID,
 			slog.Error("agent_switched: persist", "error", err)
 		}
 	}
-	evt := api.Message{
-		ID:        t.deps.NewMessageID(),
-		Role:      api.RoleEvent,
-		Ts:        time.Now().UnixMilli(),
-		EventKind: api.EventAgentSwitched,
-		Content:   p.WelcomeMessage,
-	}
+	evt := t.newEventMessage(api.EventAgentSwitched, p.WelcomeMessage)
 	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("agent_switched: append event", "chat_id", chatID, "error", err)
 	}

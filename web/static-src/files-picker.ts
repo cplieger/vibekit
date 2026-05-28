@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { closeModal, openModal } from "./modals.js";
-import { fileIcon, FILE_ICONS } from "./icons.js";
+import { fileIcon, FILE_ICONS, iconEl } from "./icons.js";
 import {
   fetchDir,
   joinPath,
@@ -198,7 +198,7 @@ function upRow(): HTMLDivElement {
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
-  icon.innerHTML = FILE_ICONS["folder"] ?? "";
+  icon.replaceChildren(iconEl(FILE_ICONS["folder"] ?? ""));
 
   const nameSpan = document.createElement("span");
   nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
@@ -235,7 +235,7 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
-  icon.innerHTML = isDir ? (FILE_ICONS["folder"] ?? "") : fileIcon(name, false);
+  icon.replaceChildren(iconEl(isDir ? (FILE_ICONS["folder"] ?? "") : fileIcon(name, false)));
 
   const label = document.createElement("span");
   label.className = `${FB_NAME} ${FB_NAME_LINK}`;

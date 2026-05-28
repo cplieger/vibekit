@@ -876,7 +876,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(tc.text, tc.attachments, h.ResolveInsideWorkDir)
+			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}

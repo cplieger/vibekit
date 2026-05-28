@@ -13,11 +13,7 @@ import {
   type RuntimeState,
   configured,
   status,
-  refetchServers,
-  refetchStatus,
-  setRenderCallback,
-  setStatus,
-  deleteStatus,
+  mcpState,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
@@ -215,7 +211,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
       {
         silent: true,
         onSuccess: () => {
-          refetchServers();
+          mcpState.refetchServers();
         },
       },
     );
@@ -286,7 +282,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
         { id: s.id },
         {
           onSuccess: () => {
-            refetchServers();
+            mcpState.refetchServers();
           },
         },
       );
@@ -318,7 +314,7 @@ async function openEditModal(id: string): Promise<void> {
 
 export function initMCP(): void {
   buildSectionScaffold();
-  setRenderCallback(renderSection);
+  mcpState.setRenderCallback(renderSection);
 
   const close = el<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => {
@@ -340,14 +336,14 @@ export function initMCP(): void {
   observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
 
   onSSE("mcp_config_changed", () => {
-    refetchServers();
+    mcpState.refetchServers();
   });
   onSSE("mcp_connected", (_chat, p) => {
-    setStatus(p.server, { name: p.server, state: "connected" });
+    mcpState.setStatus(p.server, { name: p.server, state: "connected" });
     renderSection();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    setStatus(p.server, {
+    mcpState.setStatus(p.server, {
       name: p.server,
       state: "needs_auth",
       oauth_url: p.url,
@@ -355,7 +351,7 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_failed", (_chat, p) => {
-    setStatus(p.server, {
+    mcpState.setStatus(p.server, {
       name: p.server,
       state: "failed",
       error: p.error,
@@ -363,15 +359,15 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_disconnected", (_chat, p) => {
-    deleteStatus(p.server);
+    mcpState.deleteStatus(p.server);
     renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
     updatePrewarmStatus(p.package, p.state);
   });
 
-  refetchServers();
-  refetchStatus();
+  mcpState.refetchServers();
+  mcpState.refetchStatus();
 }
 
 // --- Prewarm progress indicator ---

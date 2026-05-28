@@ -119,7 +119,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	// First path segment is either "refresh" / "oauth" (handled
 	// above by direct registration) or a forge ID. ID is "kind:host"
 	// — the colon could be percent-encoded but we keep it literal.
-	id, sub, _ := splitFirst(tail, "/")
+	id, sub, _ := splitFirst(tail)
 	if h.manager.Get(id) == nil {
 		api.NotFound(w, "unknown forge id")
 		return
@@ -136,7 +136,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	op, rest, _ := splitFirst(sub, "/")
+	op, rest, _ := splitFirst(sub)
 	switch op {
 	case "probe":
 		h.handleProbe(w, r, id)
@@ -196,7 +196,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		api.MethodNotAllowed(w)
 		return
 	}
-	op, _, _ := splitFirst(sub, "/")
+	op, _, _ := splitFirst(sub)
 	if op != "pat" {
 		api.NotFound(w, "unknown login method")
 		return
@@ -258,6 +258,6 @@ func splitID(id string) (kind Kind, ref string) {
 
 // splitFirst splits s at the first '/' separator, returning
 // (head, tail, found). If '/' is not present, returns (s, "", false).
-func splitFirst(s, _ string) (head, tail string, found bool) {
+func splitFirst(s string) (head, tail string, found bool) {
 	return strings.Cut(s, "/")
 }

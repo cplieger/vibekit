@@ -17,6 +17,6 @@ func TestNopMCPRecorder_NoPanic(t *testing.T) {
 	r.RecordOAuth(context.Background(), "server1", "https://example.com/oauth")
 	r.RecordInitFailure(context.Background(), "server1", "timeout")
 	r.SignalReady()
-	r.SetKnownTools("server1", []string{"tool1", "tool2"})
-	r.SetKnownTools("server1", nil)
+	r.SetKnownTools(context.Background(), "server1", []string{"tool1", "tool2"})
+	r.SetKnownTools(context.Background(), "server1", nil)
 }

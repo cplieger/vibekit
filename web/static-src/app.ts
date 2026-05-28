@@ -21,7 +21,7 @@ import {
   isThinking,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { effect } from "./signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
@@ -86,6 +86,8 @@ import "./handlers/turn.js";
 import "./handlers/system.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
+import { copyClipboard } from "./actions/messages.js";
+import { setCopyCallback } from "./code-blocks.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
@@ -156,6 +158,7 @@ function init(): void {
   setupInput();
   initUI();
   initShellPanel();
+  setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
   initEditor();
   initFileBrowser();
   initFilePicker();

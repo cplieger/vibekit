@@ -56,6 +56,7 @@ func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 func TestSubscribeUnsubscribe(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	sub := api.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub.Keys.P256dh = "dGVzdA"
@@ -77,6 +78,7 @@ func TestSubscriptionPersistence(t *testing.T) {
 	s1 := New(context.Background(), dir, "mailto:test@example.com")
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/a"})
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://updates.push.services.mozilla.com/b"})
+	s1.flushSaves()
 	s1.Close()
 
 	s2 := New(context.Background(), dir, "mailto:test@example.com")
@@ -357,6 +359,7 @@ func TestTruncate(t *testing.T) {
 func TestSend_PreferenceFiltering(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	// Subscribe so Send actually reaches the preflight stage;
 	// without subs the early-exit wouldn't prove the gate ran.
 	s.Subscribe(api.PushSubscription{
@@ -430,6 +433,7 @@ func TestSend_Debounce(t *testing.T) {
 func TestSend_DebouncePerType(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	// Mark agent_finished as just-sent.
 	s.mu.Lock()
@@ -455,6 +459,7 @@ func TestSend_DebouncePerType(t *testing.T) {
 func TestSend_UnknownKindRejected(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
 	s.Send(context.Background(), "title", "body", "what-is-this")
 	s.mu.Lock()
@@ -478,6 +483,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	sub1 := api.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub1.Keys.Auth = "old"
@@ -702,8 +708,10 @@ func TestSend_StatusCodePruning(t *testing.T) {
 func TestSaveSubs_Perm0o600(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	// Use an allowed endpoint so the file survives a future reload.
 	s.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/perm-check"})
+	s.flushSaves()
 
 	info, err := os.Stat(filepath.Join(dir, "push-subs.json"))
 	if err != nil {

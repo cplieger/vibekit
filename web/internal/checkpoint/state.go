@@ -68,6 +68,7 @@ func newState() *state {
 // helper so the invariants for one event kind aren't entangled with
 // another.
 func (s *state) apply(e *event) {
+	//exhaustive:enforce
 	switch e.Kind {
 	case kindTurnStart:
 		s.turn = e.Turn

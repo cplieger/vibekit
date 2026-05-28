@@ -3,7 +3,6 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { escText } from "./strings.js";
 import { apiGet, apiPost } from "./api-client.js";
 import { isSafeUrl } from "./utils-url.js";
 import { registerCleanup } from "./actions/index.js";
@@ -92,7 +91,11 @@ export class RollingOutput {
   append(text: string): void {
     this.full += (this.full !== "" ? "\n" : "") + text;
     const lines = this.full.split("\n").filter((l) => l.trim() !== "");
-    this.bar.innerHTML = escText(lines.slice(-4).join("\n")) + EXPAND_HINT;
+    const textNode = document.createTextNode(lines.slice(-4).join("\n"));
+    const hintNode = new DOMParser()
+      .parseFromString(EXPAND_HINT, "text/html")
+      .body.firstChild!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    this.bar.replaceChildren(textNode, document.importNode(hintNode, true));
     this.bar.classList.remove("hidden");
   }
 
@@ -236,14 +239,17 @@ function doLogin(
         // whoami parse bug is the usual reason we end up here. Reload
         // so checkAuthAndStart runs again with the tolerant parser.
         if (d.error === "already_logged_in") {
-          status.innerHTML =
-            "You're already signed in. " +
-            '<button type="button" id="login-reload" class="btn-small" ' +
-            'style="margin-inline-start:var(--sp-2)">Reload</button>';
-          const reloadBtn = document.getElementById("login-reload");
-          reloadBtn?.addEventListener("click", () => {
+          status.textContent = "";
+          status.append("You\u2019re already signed in. ");
+          const reloadBtn = document.createElement("button");
+          reloadBtn.type = "button";
+          reloadBtn.className = "btn-small";
+          reloadBtn.style.marginInlineStart = "var(--sp-2)";
+          reloadBtn.textContent = "Reload";
+          reloadBtn.addEventListener("click", () => {
             location.reload();
           });
+          status.append(reloadBtn);
           return;
         }
         const detail = d.raw !== undefined ? `\n\nCLI output:\n${d.raw}` : "";
@@ -252,12 +258,30 @@ function doLogin(
       }
       if (d.url !== undefined) {
         const codeText = d.code !== undefined ? `Code: ${d.code}` : "";
-        const urlHtml = isSafeUrl(d.url)
-          ? `<a href="${escText(d.url)}" target="_blank" rel="noopener" style="color:var(--c-accent)">Open login page</a>`
-          : `<span style="color:var(--c-text-tertiary)">${escText(d.url)}</span>`;
-        status.innerHTML =
-          `${escText(codeText)}<br>${urlHtml}<br>` +
-          `<span style="color:var(--c-text-tertiary)">Complete login in the browser, then come back.</span>`;
+        status.textContent = "";
+        if (codeText) {
+          status.append(codeText);
+          status.append(document.createElement("br"));
+        }
+        if (isSafeUrl(d.url)) {
+          const link = document.createElement("a");
+          link.href = d.url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.style.color = "var(--c-accent)";
+          link.textContent = "Open login page";
+          status.append(link);
+        } else {
+          const span = document.createElement("span");
+          span.style.color = "var(--c-text-tertiary)";
+          span.textContent = d.url;
+          status.append(span);
+        }
+        status.append(document.createElement("br"));
+        const hint = document.createElement("span");
+        hint.style.color = "var(--c-text-tertiary)";
+        hint.textContent = "Complete login in the browser, then come back.";
+        status.append(hint);
         const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
         const ctrl = new AbortController();
         loginPollAbort = ctrl;

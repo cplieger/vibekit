@@ -17,7 +17,7 @@
 import type { ActionInstance, RegistryListener } from "./types.js";
 
 const MAX_LOG_SIZE = 200;
-const MAX_LOG_HARD = 1000;
+const MAX_LOG_HARD = MAX_LOG_SIZE * 5; // 1000 — hard cap is always 5× soft cap
 
 // Module-level state. The registry is intentionally a singleton — at
 // most one log per page; subscribers are tab-scoped.

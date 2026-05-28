@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	pushPkg "vibekit/internal/push"
 	"vibekit/internal/server"
 	"vibekit/internal/steering"
+	"vibekit/internal/workspace"
 )
 
 // Compile-time interface satisfaction checks.
@@ -52,9 +54,9 @@ func main() {
 func runMain() int {
 	cfg := composition.ConfigFromEnv()
 
-	// Wire the kiro home resolver into the api package so it doesn't
+	// Wire the kiro home resolver into the workspace package so it doesn't
 	// need to read os.Getenv directly (library-composition principle).
-	api.SetKiroHomeResolver(func() string {
+	workspace.SetKiroHomeResolver(func() string {
 		if h := os.Getenv("KIRO_HOME"); h != "" {
 			return h
 		}
@@ -65,7 +67,7 @@ func runMain() int {
 		return filepath.Join(home, ".kiro")
 	})
 
-	app, err := composition.Build(&cfg, staticFS)
+	app, err := composition.Build(context.Background(), &cfg, staticFS)
 	if err != nil {
 		slog.Error("build", "error", err)
 		return 1

@@ -32,6 +32,10 @@ func resolveSwitchModel(chat *api.Chat, p api.SwitchModelCommand) (model string,
 	return p.Model, true
 }
 
+// hubResponseOK is the canonical success response shape for hub
+// commands that go through the dedup cache via h.respond.
+var hubResponseOK = map[string]bool{"ok": true}
+
 func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
 	if !h.requireChatID(w, cmd) {
 		return
@@ -44,7 +48,7 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 		}
 	}
 
-	if !validIdent(p.Model) {
+	if !api.ValidIdent(p.Model) {
 		h.respondErr(w, http.StatusBadRequest, command.ErrInvalidPayload)
 		return
 	}
@@ -61,13 +65,13 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 	if isSwitch {
 		if h.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
 			h.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
-			h.respond(w, cmd.RequestID, map[string]bool{"ok": true})
+			h.respond(w, cmd.RequestID, hubResponseOK)
 			return
 		}
 	}
 
 	// Fallback: full bridge restart.
-	h.flushInFlightTurnOnSwitch(ctx, cmd.ChatID)
+	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID, h.closeAndRemovePartial)
 	h.coord.CloseBridge(cmd.ChatID)
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, chat.Agent, model)
@@ -95,10 +99,5 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 			"chat_id", cmd.ChatID, "model", model)
 	}
 
-	h.respond(w, cmd.RequestID, map[string]bool{"ok": true})
-}
-
-// flushInFlightTurnOnSwitch delegates to the BridgeCoordinator.
-func (h *Hub) flushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID) {
-	h.coord.FlushInFlightTurnOnSwitch(ctx, chatID, h.closeAndRemovePartial)
+	h.respond(w, cmd.RequestID, hubResponseOK)
 }

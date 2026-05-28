@@ -57,7 +57,7 @@ func TestCrossChatConflictDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	evs, err := mB.log.Read()
+	evs, err := mB.log.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestNoFalseConflictWhenChatReadsOwnWrite(t *testing.T) {
 	if _, err := mB.Snapshot(ctx, "shared.go", nil, 1); err != nil {
 		t.Fatal(err)
 	}
-	evs, _ := mB.log.Read()
+	evs, _ := mB.log.Read(context.Background())
 	for _, e := range evs {
 		if e.Kind == kindConflict {
 			t.Errorf("false-positive conflict for clean hand-off: %+v", e)
@@ -145,7 +145,7 @@ func TestNoConflictForSameChatDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	evs, err := m.log.Read()
+	evs, err := m.log.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func TestStoreSnapshotDuringGC(t *testing.T) {
 
 	// The chat's log should contain no conflict events.
 	log := newEventLog(cfg, "c")
-	evs, err := log.Read()
+	evs, err := log.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

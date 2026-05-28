@@ -9,6 +9,7 @@ import {
   ICON_GLOBE,
   ICON_TRASH,
 } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -71,9 +72,13 @@ export function renderRepoState(cloned: boolean): HTMLElement {
   const state = document.createElement("span");
   state.className = "forge-account-repo-state";
   if (cloned) {
-    state.innerHTML = `<span class="git-sources-cloned-dot" aria-label="Cloned" data-tooltip="Cloned and tracked"></span>`;
+    const dot = document.createElement("span");
+    dot.className = "git-sources-cloned-dot";
+    dot.setAttribute("aria-label", "Cloned");
+    dot.setAttribute("data-tooltip", "Cloned and tracked");
+    state.appendChild(dot);
   } else {
-    state.innerHTML = ICON_GLOBE;
+    state.appendChild(iconEl(ICON_GLOBE));
     state.setAttribute("data-tooltip", "Remote, not cloned");
     state.setAttribute("aria-label", "Remote, not cloned");
   }
@@ -90,7 +95,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
     open.target = "_blank";
     open.rel = "noreferrer";
     open.className = "btn-small icon-only";
-    open.innerHTML = ICON_EXTERNAL;
+    open.replaceChildren(iconEl(ICON_EXTERNAL));
     open.setAttribute("data-tooltip", "Open on forge");
     open.setAttribute("aria-label", "Open on forge");
     actions.appendChild(open);
@@ -100,7 +105,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
     const trash = document.createElement("button");
     trash.type = "button";
     trash.className = "btn-small btn-danger icon-only";
-    trash.innerHTML = ICON_TRASH;
+    trash.replaceChildren(iconEl(ICON_TRASH));
     trash.setAttribute("data-tooltip", "Remove local copy");
     trash.setAttribute("aria-label", "Remove local copy");
     trash.addEventListener("click", () => {
@@ -111,7 +116,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
     const clone = document.createElement("button");
     clone.type = "button";
     clone.className = "btn-small icon-only";
-    clone.innerHTML = ICON_DOWNLOAD;
+    clone.replaceChildren(iconEl(ICON_DOWNLOAD));
     clone.setAttribute("data-tooltip", "Clone into workspace");
     clone.setAttribute("aria-label", "Clone into workspace");
     clone.addEventListener("click", () => {

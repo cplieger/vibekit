@@ -143,7 +143,7 @@ func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) err
 	// Random-suffix tmp via os.CreateTemp closes the symlink-TOCTOU
 	// that a deterministic ".vibekit-restore" sibling would open
 	// (see restoreLocked for the full rationale).
-	tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(abs)+restoreStageSuffix)
+	tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(abs)+RestoreStageSuffix)
 	if tErr != nil {
 		return fmt.Errorf("checkout: create temp for %s: %w", relPath, tErr)
 	}
@@ -333,7 +333,7 @@ func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag stri
 			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
 				return fmt.Errorf("restore: mkdir for %s: %w", p.path, mkErr)
 			}
-			tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(p.abs)+restoreStageSuffix)
+			tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(p.abs)+RestoreStageSuffix)
 			if tErr != nil {
 				return fmt.Errorf("restore: create temp for %s: %w", p.path, tErr)
 			}
@@ -410,7 +410,7 @@ func (m *Manager) stageRestoreLocked(ctx context.Context, touched []string, tag 
 		// outside workDir. Concurrent chats restoring the same
 		// file also collided on the deterministic name; the
 		// random suffix removes both hazards.
-		tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(st.abs)+restoreStageSuffix)
+		tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(st.abs)+RestoreStageSuffix)
 		if tErr != nil {
 			return fail(fmt.Errorf("restore: create temp for %s: %w", path, tErr))
 		}

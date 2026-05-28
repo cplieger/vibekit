@@ -93,11 +93,16 @@ type ACPSessionUpdateBase struct {
 // JSON field name constants — the wire protocol uses these strings
 // in many places; constants keep them in one place and silence
 // goconst warnings.
-const (
-	jsonFieldName    = "name"
-	jsonFieldContent = "content"
-)
+const jsonFieldContent = "content"
 
 // ContentTypeContent is the ACP content-block type discriminator value "content".
 // Distinct from jsonFieldContent which is the JSON field *name* "content".
 const ContentTypeContent = "content"
+
+// ContentTypeDiff is the ACP content-block type for file-change diffs
+// in tool_call and tool_call_update payloads.
+const ContentTypeDiff = "diff"
+
+// ExtUpdateToolCallChunk is the extension session-update subtype for
+// subagent tool-call streaming chunks.
+const ExtUpdateToolCallChunk = "tool_call_chunk"

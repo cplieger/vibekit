@@ -159,7 +159,7 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string) {
 func (*captureMCPRecorder) RecordOAuth(context.Context, string, string)       {}
 func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 func (*captureMCPRecorder) SignalReady()                                      {}
-func (*captureMCPRecorder) SetKnownTools(string, []string)                    {}
+func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)                    {}
 
 func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 	deps, events := newEventCaptureDeps()
@@ -186,6 +186,50 @@ func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no commands_updated event emitted; got events: %v", eventTypes(*events))
+	}
+}
+
+func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(deps)
+	chatID := api.ChatID("c-reason")
+
+	// Send a reasoning chunk (isReasoning=true)
+	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+		"content": map[string]any{"type": "text", "text": "thinking..."},
+	}), true)
+
+	// Verify buffer has reasoning content but no regular content
+	buf := deps.bufStore.GetOrInit(chatID)
+	if buf.Reasoning.String() != "thinking..." {
+		t.Errorf("Reasoning = %q, want %q", buf.Reasoning.String(), "thinking...")
+	}
+	if buf.Content.Len() != 0 {
+		t.Errorf("Content should be empty, got %q", buf.Content.String())
+	}
+
+	// Verify the chunk event has IsReasoning=true
+	var found bool
+	for _, evt := range *events {
+		if evt.Type == "message_chunk" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no message_chunk event emitted")
+	}
+
+	// Send a regular text chunk (isReasoning=false)
+	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+		"content": map[string]any{"type": "text", "text": "answer"},
+	}), false)
+
+	if buf.Content.String() != "answer" {
+		t.Errorf("Content = %q, want %q", buf.Content.String(), "answer")
+	}
+	if buf.Reasoning.String() != "thinking..." {
+		t.Errorf("Reasoning changed unexpectedly: %q", buf.Reasoning.String())
 	}
 }
 

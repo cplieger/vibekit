@@ -240,9 +240,6 @@ func (m *Manager) ReferencedBlobs(ctx context.Context) []string {
 // SHA-256. Used at the ReadBlob entrypoint to reject malformed
 // input before it reaches the filesystem.
 func isHexHash(s string) bool {
-	if s == "" {
-		return true // empty = "no blob" marker
-	}
 	if len(s) != 64 {
 		return false
 	}

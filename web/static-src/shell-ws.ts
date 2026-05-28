@@ -97,10 +97,17 @@ export class ShellWS {
   private openWaiters: { resolve: () => void; reject: (e: Error) => void }[] = [];
   private reconnectAttempt = 0;
   private connectGen = 0;
+  private unregisterCleanup: (() => void) | null = null;
 
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
     this.callbacks = cb;
+    if (this.unregisterCleanup === null) {
+      this.unregisterCleanup = registerCleanup(() => {
+        this.cancelReconnect();
+        this.disconnect();
+      });
+    }
   }
 
   /** Mark the shell as active (open). Controls whether reconnect fires. */
@@ -145,11 +152,6 @@ export class ShellWS {
     this.cancelReconnect();
     this.callbacks?.onOpen();
     this.notifySocketOpen();
-
-    registerCleanup(() => {
-      this.cancelReconnect();
-      this.disconnect();
-    });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (e.data instanceof ArrayBuffer) {

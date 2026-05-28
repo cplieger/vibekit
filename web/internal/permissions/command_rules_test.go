@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"vibekit/internal/permissions/eval"
+
 	"pgregory.net/rapid"
 )
 
@@ -411,13 +413,13 @@ func TestEvaluateShellCommand_Regressions(t *testing.T) {
 	for _, g := range groups {
 		t.Run(g.name, func(t *testing.T) {
 			// Special case: UnknownPolicyPromptsAsDefault calls the
-			// unexported evaluateShellCommand directly.
+			// eval sub-package's EvaluateShellCommand directly.
 			if g.name == "UnknownPolicyPromptsAsDefault" {
-				if got := evaluateShellCommand(shellPolicy("future_mode"), "ls", nil); got != ShellAsk {
-					t.Errorf("evaluateShellCommand(future_mode, ls) = %q, want %q", got, ShellAsk)
+				if got := eval.EvaluateShellCommand(eval.ShellPolicy("future_mode"), "ls", nil); got != ShellAsk {
+					t.Errorf("eval.EvaluateShellCommand(future_mode, ls) = %q, want %q", got, ShellAsk)
 				}
-				if got := evaluateShellCommand(shellPolicy("custom"), "rm -rf /", nil); got != ShellAsk {
-					t.Errorf("evaluateShellCommand(custom, rm -rf /) = %q, want %q", got, ShellAsk)
+				if got := eval.EvaluateShellCommand(eval.ShellPolicy("custom"), "rm -rf /", nil); got != ShellAsk {
+					t.Errorf("eval.EvaluateShellCommand(custom, rm -rf /) = %q, want %q", got, ShellAsk)
 				}
 				return
 			}
@@ -567,9 +569,9 @@ func TestExtractBaseCommand_WhitespaceVariants(t *testing.T) {
 		{"\tls", "ls"},
 	}
 	for _, tt := range cases {
-		got := extractBaseCommand(tt.in)
+		got := eval.ExtractBaseCommand(tt.in)
 		if got != tt.want {
-			t.Errorf("extractBaseCommand(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Errorf("ExtractBaseCommand(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -1232,7 +1234,11 @@ func BenchmarkEvaluateSafeCommand(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				evaluateSafeCommand(tc.command, r)
+				var matcher eval.RuleMatcher
+				if r != nil {
+					matcher = r
+				}
+				eval.EvaluateSafeCommand(tc.command, matcher)
 			}
 		})
 	}
@@ -1273,9 +1279,9 @@ func TestHasWriteOption_ComprehensiveMatrix(t *testing.T) {
 		{"cmd --outputter=yes", false},
 	}
 	for _, tc := range cases {
-		got := hasWriteOption(tc.command)
+		got := eval.HasWriteOption(tc.command)
 		if got != tc.want {
-			t.Errorf("hasWriteOption(%q) = %v, want %v", tc.command, got, tc.want)
+			t.Errorf("HasWriteOption(%q) = %v, want %v", tc.command, got, tc.want)
 		}
 	}
 }
@@ -1286,9 +1292,9 @@ func TestEvaluateShellCommand_PolicyMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		command := rapid.StringMatching(`[a-z \-]{1,30}`).Draw(rt, "command")
 
-		dNone := evaluateShellCommand(policyNone, command, nil)
-		dSafe := evaluateShellCommand(policySafe, command, nil)
-		dAll := evaluateShellCommand(policyAll, command, nil)
+		dNone := eval.EvaluateShellCommand(eval.PolicyNone, command, nil)
+		dSafe := eval.EvaluateShellCommand(eval.PolicySafe, command, nil)
+		dAll := eval.EvaluateShellCommand(eval.PolicyAll, command, nil)
 
 		// no_commands must never allow (pin the invariant).
 		if dNone == ShellAllow {
@@ -1389,8 +1395,8 @@ func TestMetaPolicy_InvariantConsistency(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotRejects := metaGuard.PatternRejectsCommand(tc.pattern, tc.command)
-			gotDisqualify := metaGuard.CommandDisqualified(tc.command)
+			gotRejects := eval.MetaGuard.PatternRejectsCommand(tc.pattern, tc.command)
+			gotDisqualify := eval.MetaGuard.CommandDisqualified(tc.command)
 
 			if gotRejects != tc.wantPatternRejects {
 				t.Errorf("PatternRejectsCommand(%q, %q) = %v, want %v",
@@ -1403,7 +1409,7 @@ func TestMetaPolicy_InvariantConsistency(t *testing.T) {
 
 			// Cross-method invariant: if CommandDisqualified(c) is true AND
 			// pattern is metachar-free, then PatternRejectsCommand(p, c) must be true.
-			if gotDisqualify && !strings.ContainsAny(tc.pattern, shellMetacharacters) {
+			if gotDisqualify && !strings.ContainsAny(tc.pattern, eval.ShellMetacharacters) {
 				if !gotRejects {
 					t.Errorf("invariant violation: CommandDisqualified(%q)=true and pattern %q is metachar-free, "+
 						"but PatternRejectsCommand=false", tc.command, tc.pattern)

@@ -100,7 +100,7 @@ type Hub struct {
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
 	permArgsFn         func() []string
-	preBridgeSpawn     func() // optional; fired before each new bridge starts
+	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
@@ -149,7 +149,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		lifecycle: lc,
 		bridge: &bridgePlane{
 			factory:       factory,
-			mgr:           newBridgeManager(factory),
+			mgr:           newBridgeManager(factory, &lc.inflight),
 			assistantBufs: buffer.NewStore(),
 		},
 		sse: &ssePlane{
@@ -310,10 +310,11 @@ func (h *Hub) SetMCPOnChange(fn func()) { h.mcpRegistry.SetOnChange(fn) }
 // per-repo steering inventory is on disk by the time kiro-cli reads
 // it during session creation.
 //
-// The callback runs synchronously on the spawn path, so it must be
-// fast (the existing steering.Generate is bounded by the workspace
-// walk + skip-if-unchanged write — typically a few milliseconds).
-func (h *Hub) SetPreBridgeSpawn(fn func()) { h.preBridgeSpawn = fn }
+// The callback receives the per-request context so it can short-circuit
+// on client disconnection. It runs synchronously on the spawn path, so
+// it must be fast (the existing steering.Generate is bounded by the
+// workspace walk + skip-if-unchanged write — typically a few ms).
+func (h *Hub) SetPreBridgeSpawn(fn func(context.Context)) { h.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).
@@ -372,7 +373,7 @@ func (h *Hub) Shutdown() {
 	// then returns "change rejected by user" to a kiro-cli that's
 	// already dead, which is harmless.
 	for _, id := range h.listChatIDsWithPending() {
-		h.flushPendingForChat(context.Background(), id, api.ClearReasonShutdown)
+		h.flushPendingForChat(h.lifecycle.shutdownCtx, id, api.ClearReasonShutdown)
 	}
 
 	// 1c. Cancel the push service's request context so any pending
@@ -427,7 +428,7 @@ func (h *Hub) PushMCPConfig() {
 	servers := h.mcpConfig.ACPServers(ctx)
 	snapshot := h.bridge.mgr.all()
 	for _, sb := range snapshot {
-		if err := sb.bridge.Notify(ctx, methodSetConfigOption, command.SessionParams(sb, map[string]any{
+		if err := sb.bridge.Notify(ctx, api.MethodSetConfigOption, command.SessionParams(sb, map[string]any{
 			"option": "mcpServers",
 			"value":  servers,
 		})); err != nil {
@@ -469,7 +470,7 @@ func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 // payload into a ServerEvent. Since api.ConflictDetectedPayload is
 // a type alias for checkpoint.ConflictPayload, no field copy needed.
 func (h *Hub) broadcastConflict(chatID api.ChatID, p *checkpoint.ConflictPayload) {
-	h.Broadcast(context.Background(), api.NewEvent(api.EventConflictDetected, chatID, *p))
+	h.Broadcast(h.lifecycle.shutdownCtx, api.NewEvent(api.EventConflictDetected, chatID, *p))
 }
 
 // parentACPSession returns the ACP session id of the running bridge
@@ -518,7 +519,16 @@ func (h *Hub) cullIdleBridges() {
 // its own mutex. Exported via lowercase to keep the hot path testable
 // without driving a real ticker.
 func (h *Hub) cullIdleBridgesOnce() {
-	toClose := h.bridge.mgr.selectIdle(bridgeIdleTimeout)
+	count := h.bridge.mgr.count()
+	timeout := bridgeIdleTimeout
+	if count > 5 {
+		adaptive := bridgeIdleTimeout / time.Duration(count)
+		if adaptive < 5*time.Minute {
+			adaptive = 5 * time.Minute
+		}
+		timeout = adaptive
+	}
+	toClose := h.bridge.mgr.selectIdle(timeout)
 	for _, c := range h.bridge.mgr.closeAndStop(toClose) {
 		slog.Info("culled idle bridge", "chat_id", c.chatID,
 			"idle_since", c.sb.lastActiveAt.Format(time.RFC3339))

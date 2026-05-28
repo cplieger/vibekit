@@ -96,7 +96,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
   tokens[0] = DOCUMENT;
   return {
     renderer: renderer as Renderer<unknown>,
-    textBuf: [],
+    textBuf: "",
     pending: "",
     tokens,
     len: 0,
@@ -294,14 +294,14 @@ export function parser_write(p: Parser, chunk: string): void {
       char === "h" &&
       (p.pending === " " || p.pending === "")
     ) {
-      p.textBuf.push(p.pending);
+      p.textBuf += p.pending;
       p.pending = char;
       p.token = MAYBE_URL;
       continue;
     }
 
     // No check hit — shift pending forward and keep going.
-    p.textBuf.push(p.pending);
+    p.textBuf += p.pending;
     p.pending = char;
   }
 

@@ -24,6 +24,7 @@ type Option func(*Handler)
 // Handler implements git HTTP endpoints (non-AI operations).
 type Handler struct {
 	fetchFlight singleflight.Group
+	repoFlight  singleflight.Group
 	workDir     string
 	timeouts    gitexec.Timeouts
 }

@@ -27,6 +27,7 @@ import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
 import { registerCleanup, hasErrorString } from "./actions/index.js";
+import { computeBackoff, BACKOFF_CAP_MS } from "./lib/backoff.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -170,8 +171,6 @@ interface GapInfo {
   head: number;
 }
 
-export const BACKOFF_CAP_MS = 30_000;
-
 const HIDDEN_ABORT_MS = 30_000;
 
 /** Default timeout for bridge command channel (long-running agent turns). */
@@ -294,14 +293,11 @@ class TransportController {
 
   // --- SSE ---
 
-  private connectSSE(): void {
-    // Transition to connecting — cleanup of prior state handled by transition().
-    this.onStatus("connecting");
-    const source = new EventSource("/api/events");
-    // Force transition: connectSSE is called from multiple entry points
-    // (init, scheduleReconnect callback, visibility handlers). The prior
-    // state may be idle, reconnecting, or even connecting/connected (on
-    // forced reconnect). We handle cleanup inline for the forced case.
+  /** Tear down the current connection state, transitioning to idle.
+   *  Handles cleanup of EventSource and reconnect timers regardless of
+   *  current phase. Called before (re)connecting to ensure a clean slate. */
+  private teardown(): void {
+    if (this.conn.phase === "idle") return;
     if (this.conn.phase === "reconnecting") {
       clearTimeout(this.conn.timer);
     }
@@ -312,6 +308,13 @@ class TransportController {
         /* best-effort */
       }
     }
+    this.conn = { phase: "idle" };
+  }
+
+  private connectSSE(): void {
+    this.teardown();
+    this.onStatus("connecting");
+    const source = new EventSource("/api/events");
     this.conn = { phase: "connecting", source };
     source.onopen = (): void => {
       this.conn = { phase: "connected", source };
@@ -467,15 +470,10 @@ class TransportController {
 }
 
 // ---------------------------------------------------------------------------
-// Backoff computation (pure, exported for testing).
+// Backoff computation — re-exported from lib/backoff.ts for backward compat.
 // ---------------------------------------------------------------------------
 
-/** Compute the next backoff delay given the previous backoffMs.
- *  Doubles from 500ms up to a 30s cap; delay is randomized within [0, next). */
-export function computeBackoff(prevBackoffMs: number): { delay: number; backoffMs: number } {
-  const next = Math.min(prevBackoffMs === 0 ? 500 : prevBackoffMs * 2, BACKOFF_CAP_MS);
-  return { delay: Math.floor(Math.random() * next), backoffMs: next };
-}
+export { computeBackoff, BACKOFF_CAP_MS } from "./lib/backoff.js";
 
 // ---------------------------------------------------------------------------
 // Singleton instance + function exports that form the module's public API.

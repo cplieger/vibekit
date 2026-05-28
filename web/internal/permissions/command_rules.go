@@ -71,6 +71,12 @@ const (
 	RuleDeny  RuleMode = "deny"
 )
 
+// Filename constants — single source of truth for the on-disk paths.
+const (
+	commandRulesFile     = "command-rules.json"
+	commandWhitelistFile = "command-whitelist.json" // legacy, migration only
+)
+
 // Rule is one pattern + mode + priority. JSON wire format is the source
 // of truth; changing field tags is a breaking change for anyone who
 // hand-edited the file. Priority determines evaluation order: higher
@@ -173,15 +179,14 @@ func (r *CommandRules) Add(pattern string, mode RuleMode, priority ...int) error
 		prevPrio := e.Priority
 		r.entries[i].Mode = mode
 		r.entries[i].Priority = prio
-		r.entriesPtr.Store(&r.entries)
 		if err := r.saveLocked(); err != nil {
 			r.entries[i].Mode = prevMode
 			r.entries[i].Priority = prevPrio
-			r.entriesPtr.Store(&r.entries)
 			slog.Warn("command rules: save failed, rolled back mode/priority change",
 				"pattern", pattern, "error", err)
 			return err
 		}
+		r.entriesPtr.Store(&r.entries)
 		return nil
 	}
 	r.entries = append(r.entries, Rule{
@@ -190,14 +195,13 @@ func (r *CommandRules) Add(pattern string, mode RuleMode, priority ...int) error
 		Priority:  prio,
 		CreatedAt: time.Now().UnixMilli(),
 	})
-	r.entriesPtr.Store(&r.entries)
 	if err := r.saveLocked(); err != nil {
 		r.entries = r.entries[:len(r.entries)-1]
-		r.entriesPtr.Store(&r.entries)
 		slog.Warn("command rules: save failed, rolled back add",
 			"pattern", pattern, "mode", mode, "error", err)
 		return err
 	}
+	r.entriesPtr.Store(&r.entries)
 	return nil
 }
 
@@ -213,28 +217,24 @@ func (r *CommandRules) Remove(pattern string) error {
 		}
 		saved := e
 		r.entries = append(r.entries[:i], r.entries[i+1:]...)
-		r.entriesPtr.Store(&r.entries)
 		if err := r.saveLocked(); err != nil {
-			// Re-insert at the original index so List() and
-			// the Permissions UI see the same ordering as
-			// disk.
 			r.entries = slices.Insert(r.entries, i, saved)
-			r.entriesPtr.Store(&r.entries)
 			slog.Warn("command rules: save failed, rolled back remove",
 				"pattern", pattern, "mode", saved.Mode, "error", err)
 			return err
 		}
+		r.entriesPtr.Store(&r.entries)
 		return nil
 	}
 	return nil
 }
 
 func (r *CommandRules) path() string {
-	return filepath.Join(r.configDir, "command-rules.json")
+	return filepath.Join(r.configDir, commandRulesFile)
 }
 
 func (r *CommandRules) legacyPath() string {
-	return filepath.Join(r.configDir, "command-whitelist.json")
+	return filepath.Join(r.configDir, commandWhitelistFile)
 }
 
 func (r *CommandRules) load() {

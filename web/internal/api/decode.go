@@ -15,10 +15,10 @@ import (
 // response has already been written to w.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if ct := r.Header.Get("Content-Type"); ct != "" &&
-		!strings.HasPrefix(ct, "application/json") {
+		!strings.HasPrefix(ct, MIMETypeJSON) {
 		slog.Debug("api: decode bad content-type",
 			"method", r.Method, "path", r.URL.Path, "content_type", ct)
-		BadRequest(w, "expected application/json")
+		BadRequest(w, "expected "+MIMETypeJSON)
 		return false
 	}
 	LimitBody(w, r, MaxJSONBody)

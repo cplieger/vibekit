@@ -4,14 +4,13 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 
 	"vibekit/internal/api"
 )
 
 // HandleCommandsAvailable processes the commands/available notification.
 func (t *Translator) HandleCommandsAvailable(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	type commandsParams struct {
 		Commands   []map[string]any `json:"commands"`
 		Prompts    []map[string]any `json:"prompts"`
 		Tools      []any            `json:"tools"`
@@ -21,7 +20,8 @@ func (t *Translator) HandleCommandsAvailable(ctx context.Context, chatID api.Cha
 			Tools  []string `json:"tools"`
 		} `json:"mcpServers"`
 	}
-	if err := json.Unmarshal(msg.Params, &p); err != nil {
+	p, ok := unmarshalParams[commandsParams](msg, "commands/available")
+	if !ok {
 		return
 	}
 
@@ -35,7 +35,7 @@ func (t *Translator) HandleCommandsAvailable(ctx context.Context, chatID api.Cha
 	// the disabled-tools section even when the server is disconnected.
 	for _, s := range p.MCPServers {
 		if len(s.Tools) > 0 {
-			t.deps.MCPRecorder().SetKnownTools(s.Name, s.Tools)
+			t.deps.MCPRecorder().SetKnownTools(ctx, s.Name, s.Tools)
 		}
 	}
 }
@@ -50,7 +50,7 @@ func toAvailableCommands(in []map[string]any) []api.AvailableCommand {
 	out := make([]api.AvailableCommand, 0, len(in))
 	for _, raw := range in {
 		ac := api.AvailableCommand{}
-		if name, ok := raw[jsonFieldName].(string); ok {
+		if name, ok := raw[api.JSONKeyName].(string); ok {
 			ac.Name = name
 		}
 		if desc, ok := raw["description"].(string); ok {
@@ -59,7 +59,7 @@ func toAvailableCommands(in []map[string]any) []api.AvailableCommand {
 		// Stash any other fields under Meta so the wire shape is lossless.
 		var meta map[string]any
 		for k, v := range raw {
-			if k == jsonFieldName || k == "description" {
+			if k == api.JSONKeyName || k == "description" {
 				continue
 			}
 			if meta == nil {

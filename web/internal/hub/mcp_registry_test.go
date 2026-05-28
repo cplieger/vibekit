@@ -34,7 +34,7 @@ func (f *fakeMCPConfig) EnabledNames(_ context.Context) map[string]struct{} {
 	}
 	return out
 }
-func (f *fakeMCPConfig) SetKnownTools(_ string, _ []string) {}
+func (f *fakeMCPConfig) SetKnownTools(_ context.Context, _ string, _ []string) {}
 
 func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 	cs := newFakeChatStore()
@@ -111,7 +111,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h.mcpRegistry.recordConnected(context.Background(), "b")
 
 	before := h.sse.replayBuf.Len()
-	h.mcpRegistry.clearAll()
+	h.mcpRegistry.clearAll(context.Background())
 
 	if len(h.mcpRegistry.Snapshot()) != 0 {
 		t.Error("clearAll left entries in registry")
@@ -131,7 +131,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	before := h.sse.replayBuf.Len()
-	h.mcpRegistry.clearAll()
+	h.mcpRegistry.clearAll(context.Background())
 	if h.sse.replayBuf.Len() != before {
 		t.Error("clearAll on empty registry emitted events")
 	}
@@ -179,7 +179,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 	h.mcpRegistry.recordConnected(context.Background(), "a")
 	h.mcpRegistry.recordOAuth(context.Background(), "a", "url")
 	h.mcpRegistry.recordInitFailure(context.Background(), "a", "err")
-	h.mcpRegistry.clearAll()
+	h.mcpRegistry.clearAll(context.Background())
 
 	// With debounced onChange, rapid-fire mutations coalesce into
 	// fewer callbacks. Wait for at least one callback to confirm

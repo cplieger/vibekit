@@ -127,5 +127,5 @@ func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	relPath := filepath.Join(".kiro", "hooks", safeName+".json")
 	slog.Info("hook created from chat", keyName, p.Name, "path", relPath)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, "path": relPath})
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"path": relPath}))
 }

@@ -11,10 +11,10 @@
 import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { ICON_TRASH } from "./icons.js";
+import { ICON_TRASH, iconEl } from "./icons.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { reconcile } from "./reconcile.js";
+import { reconcile } from "./lib/reactive/reconcile.js";
 
 interface ArchivedHeader {
   id: string;
@@ -205,7 +205,7 @@ class HistoryController {
     delBtn.setAttribute("data-tooltip", "Delete permanently");
     delBtn.setAttribute("aria-label", `Delete ${chat.name}`);
     delBtn.setAttribute("data-action", "delete");
-    delBtn.innerHTML = ICON_TRASH;
+    delBtn.replaceChildren(iconEl(ICON_TRASH));
 
     row.append(nameWrap, date, delBtn);
     this.rowUnbinds.set(chat.id, bindLoadingState("chat.delete_archived", delBtn));

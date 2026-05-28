@@ -91,7 +91,7 @@ func readPermissionSettings(ctx context.Context, configDir string) (*permissionS
 		return &permissionSettings{}, nil
 	}
 	ps := &permissionSettings{raw: raw}
-	if v, ok := raw["shell_policy"]; ok {
+	if v, ok := raw[cfgsettings.KeyShellPolicy]; ok {
 		ps.shellPolicy = v
 		ps.hasShell = true
 	}
@@ -137,7 +137,7 @@ func read(ctx context.Context, configDir string) settings {
 		return settings{Mode: modeTrustAll}
 	}
 	var s settings
-	if m, ok := raw["permission_mode"]; ok {
+	if m, ok := raw[cfgsettings.KeyPermissionMode]; ok {
 		if err := json.Unmarshal(m, &s.Mode); err != nil {
 			slog.Warn("permissions: parse mode", "error", err)
 			return settings{Mode: modeTrustAll}
@@ -147,7 +147,7 @@ func read(ctx context.Context, configDir string) settings {
 			s.Mode = modeTrustAll
 		}
 	}
-	if t, ok := raw["trust_tools"]; ok {
+	if t, ok := raw[cfgsettings.KeyTrustTools]; ok {
 		if err := json.Unmarshal(t, &s.TrustTools); err != nil {
 			slog.Warn("permissions: parse trust_tools", "error", err)
 		}
@@ -210,7 +210,7 @@ func isToolNameChar(r rune) bool {
 // Supervised-mode flag applied to newly-auto-created chats.
 func SupervisedDefault(ctx context.Context, configDir string) bool {
 	var b bool
-	if !cfgsettings.FieldInto(ctx, configDir, "supervised_default", "supervised_default", &b) {
+	if !cfgsettings.FieldInto(ctx, configDir, cfgsettings.KeySupervisedDefault, cfgsettings.KeySupervisedDefault, &b) {
 		return false
 	}
 	return b

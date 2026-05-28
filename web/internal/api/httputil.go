@@ -20,6 +20,13 @@ func ErrorJSON(msg string) map[string]string {
 // command output. Used by git/ and server/ packages.
 const JSONKeyOutput = "output"
 
+// JSONKeyName is the standard JSON field name for "name" in ACP wire
+// format. Used in content blocks, command descriptors, and MCP entries.
+const JSONKeyName = "name"
+
+// MIMETypeJSON is the standard MIME type for JSON content.
+const MIMETypeJSON = "application/json"
+
 // MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
 const MaxJSONBody = 1024 * 1024
 
@@ -33,7 +40,7 @@ func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
 // JSONHeaders sets the standard JSON response headers (Content-Type
 // and X-Content-Type-Options). Exported for use by internal/fileutil.
 func JSONHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", MIMETypeJSON)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 

@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"vibekit/internal/api"
+	"vibekit/internal/testsupport"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -954,4 +957,14 @@ func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for control char in OAuthClientID")
 	}
+}
+
+// TestStore_MCPConfigContract runs the shared MCPConfig contract test
+// against the real mcp.Store to catch drift between the fake and the
+// production implementation.
+func TestStore_MCPConfigContract(t *testing.T) {
+	testsupport.MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
+		t.Helper()
+		return newTestStore(t)
+	})
 }

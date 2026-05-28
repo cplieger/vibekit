@@ -93,7 +93,7 @@ func (s *Service) loadSubs() {
 	s.mu.Unlock()
 }
 
-func (s *Service) saveSubs(ctx context.Context) {
+func (s *Service) saveSubsAsync(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -104,8 +104,46 @@ func (s *Service) saveSubs(ctx context.Context) {
 		subs = append(subs, sub)
 	}
 	s.mu.Unlock()
-	// Send to the writer goroutine and wait for completion.
+	// Fire-and-forget: send to the writer goroutine without waiting.
 	done := make(chan struct{})
+	select {
+	case s.saveCh <- saveRequest{subs: subs, done: done}:
+	case <-s.ctx.Done():
+	}
+}
+
+// saveSubs sends the current subscription snapshot to the write loop
+// and blocks until the write completes. Used by pruneStale where
+// durability confirmation is needed before the next push cycle.
+func (s *Service) saveSubs(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	subs := make([]api.PushSubscription, 0, len(s.subs))
+	for _, sub := range s.subs {
+		subs = append(subs, sub)
+	}
+	s.mu.Unlock()
+	done := make(chan struct{})
+	select {
+	case s.saveCh <- saveRequest{subs: subs, done: done}:
+		<-done
+	case <-s.ctx.Done():
+	}
+}
+
+// flushSaves blocks until any pending async save completes by sending
+// a synchronous no-op through the write loop. Exported for tests that
+// need to verify persistence after Subscribe/Unsubscribe.
+func (s *Service) flushSaves() {
+	done := make(chan struct{})
+	s.mu.Lock()
+	subs := make([]api.PushSubscription, 0, len(s.subs))
+	for _, sub := range s.subs {
+		subs = append(subs, sub)
+	}
+	s.mu.Unlock()
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
 		<-done

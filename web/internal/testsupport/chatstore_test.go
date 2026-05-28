@@ -90,3 +90,33 @@ func TestNopChatStore_Contract(t *testing.T) {
 		_ = s.UpdateMessage(context.Background(), "x", "m", func(*api.Message) {})
 	})
 }
+
+// TestNopChatStore_ConcurrentSafety verifies NopChatStore is safe to use
+// from multiple goroutines without external synchronization.
+func TestNopChatStore_ConcurrentSafety(t *testing.T) {
+	s := NopChatStore{}
+	const goroutines = 10
+	done := make(chan struct{})
+	for range goroutines {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			ctx := context.Background()
+			_, _ = s.Get(ctx, "x")
+			_ = s.List(ctx)
+			_ = s.BuildHistory(ctx, "x")
+			_ = s.Mutate(ctx, "x", func(*api.Chat, bool) bool { return false })
+			_ = s.Delete(ctx, "x")
+			_ = s.Archive(ctx, "x")
+			_ = s.ListArchived(ctx)
+			_ = s.RestoreArchived(ctx, "x")
+			_ = s.UpdateArchivedSummary(ctx, "x", "s")
+			_, _ = s.LoadArchived(ctx, "x")
+			_ = s.DeleteArchived(ctx, "x")
+			_ = s.AppendMessage(ctx, "x", &api.Message{})
+			_ = s.UpdateMessage(ctx, "x", "m", func(*api.Message) {})
+		}()
+	}
+	for range goroutines {
+		<-done
+	}
+}

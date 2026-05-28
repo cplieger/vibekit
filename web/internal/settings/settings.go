@@ -42,7 +42,9 @@ type cache struct {
 	sfGroup   singleflight.Group
 	configDir string
 	data      []byte
-	parsed    map[string]json.RawMessage // cached parsed map, invalidated on mtime change
+	parsed    map[string]json.RawMessage // cached parsed map, invalidated on gen change
+	parsedGen uint64                     // gen at which parsed was computed
+	gen       uint64                     // monotonic counter, incremented on every successful load
 	size      int64
 	mu        sync.Mutex
 }
@@ -85,6 +87,7 @@ func (c *cache) load() ([]byte, error) {
 				c.data = nil
 				c.mtime = time.Time{}
 				c.size = 0
+				c.gen++
 				c.mu.Unlock()
 				return result{data: nil, err: nil}, nil
 			}
@@ -104,6 +107,7 @@ func (c *cache) load() ([]byte, error) {
 				c.data = nil
 				c.mtime = time.Time{}
 				c.size = 0
+				c.gen++
 				c.mu.Unlock()
 				return result{data: nil, err: nil}, nil
 			}
@@ -119,6 +123,7 @@ func (c *cache) load() ([]byte, error) {
 		c.data = data
 		c.mtime = info.ModTime()
 		c.size = info.Size()
+		c.gen++
 		c.mu.Unlock()
 
 		return result{data: data, err: nil}, nil
@@ -205,13 +210,12 @@ func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessag
 	}
 	c := getCache(configDir)
 	c.mu.Lock()
-	// If the cached parsed map corresponds to the current data slice, reuse it.
-	// ReadBytes returns c.data directly, so same-length + same-pointer means same content.
-	if c.parsed != nil && len(data) > 0 && len(c.data) == len(data) {
+	if c.parsed != nil && c.parsedGen == c.gen {
 		m := c.parsed
 		c.mu.Unlock()
 		return m, nil
 	}
+	curGen := c.gen
 	c.mu.Unlock()
 
 	var raw map[string]json.RawMessage
@@ -221,6 +225,7 @@ func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessag
 
 	c.mu.Lock()
 	c.parsed = raw
+	c.parsedGen = curGen
 	c.mu.Unlock()
 	return raw, nil
 }

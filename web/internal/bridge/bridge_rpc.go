@@ -138,25 +138,25 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCR
 	data = append(data, '\n')
 	if writeErr := b.writeFrame(data); writeErr != nil {
 		b.deregisterPending(id)
-		return nil, &TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, &api.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case resp := <-ch:
 		if resp == bridgeExitedResp {
-			return nil, &TransportError{Err: errBridgeExited, Retryable: true}
+			return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can
-			// use errors.Is(err, api.ErrNotIdle) without string matching.
+			// use errors.Is(err, api.api.ErrNotIdle) without string matching.
 			if resp.Error.Code == api.RPCCodeNotIdle {
-				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, ErrNotIdle)
+				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, api.ErrNotIdle)
 			}
 			return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
 		return resp, nil
 	case <-b.done:
 		b.deregisterPending(id)
-		return nil, &TransportError{Err: errBridgeExited, Retryable: true}
+		return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
 		return nil, ctx.Err()

@@ -15,27 +15,12 @@ import type {
   ToolCall,
   PendingChange,
 } from "./types.js";
-import { signal, batch } from "./signals.js";
+import { signal, batch } from "./lib/reactive/index.js";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
   toolCallSigs,
   crewSigs,
-} from "./store-signals.js";
-
-// Re-export signal accessors from store-signals.ts for backward compat.
-export {
-  getStreamingSig,
-  getReasoningSig,
-  getCrewSig,
-  ensureStreamingSig,
-  ensureReasoningSig,
-  ensureToolCallSig,
-  ensureCrewSig,
-  clearStreamingSig,
-  clearReasoningSig,
-  clearToolCallSig,
-  clearCrewSig,
 } from "./store-signals.js";
 
 // --- Reactive version counters: effects subscribe to the relevant signal ---
@@ -46,16 +31,13 @@ export const activeVersion = signal(0);
 /** Message list changes: append, upsert (non-streaming), tool calls. */
 export const messagesVersion = signal(0);
 
-/** @deprecated Alias for backwards compat in tests. Bumps all three. */
-export const version = sessionsVersion;
-
-function emitSessions(): void {
+export function emitSessions(): void {
   sessionsVersion.value = sessionsVersion.peek() + 1;
 }
 function emitActive(): void {
   activeVersion.value = activeVersion.peek() + 1;
 }
-function emitMessages(): void {
+export function emitMessages(): void {
   messagesVersion.value = messagesVersion.peek() + 1;
 }
 function scheduleMessages(): void {

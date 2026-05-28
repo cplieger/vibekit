@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"vibekit/internal/workspace"
 )
 
 // kiroSettingsPath returns the path to kiro-cli's settings file.
-// Resolves through api.KiroHome() so vibekit and kiro-cli agree on
+// Resolves through workspace.KiroHome() so vibekit and kiro-cli agree on
 // the location regardless of whether KIRO_HOME is set.
 func kiroSettingsPath() string {
-	if api.KiroHome() == ".kiro" {
+	if workspace.KiroHome() == ".kiro" {
 		// Defensive fallback inside KiroHome — when both KIRO_HOME
 		// and HOME are unset, returning a relative path here means
 		// we'd read from CWD/settings/settings.json which is wrong.
@@ -21,7 +21,7 @@ func kiroSettingsPath() string {
 		// defaults".
 		return ""
 	}
-	return api.KiroSettingsPath("settings.json")
+	return workspace.KiroSettingsPath("settings.json")
 }
 
 // cachedBoolField reads a boolean value from a JSON file with

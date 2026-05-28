@@ -18,7 +18,7 @@ import { kindTitle, FORGE_META } from "./forge-types.js";
 import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_REFRESH } from "./icons.js";
+import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
@@ -338,19 +338,7 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
 // --- Empty-state markup helpers ---
 
-const ICON_PR_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="6" cy="6" r="3"/>' +
-  '<circle cx="6" cy="18" r="3"/>' +
-  '<line x1="6" y1="9" x2="6" y2="15"/>' +
-  '<circle cx="18" cy="18" r="3"/>' +
-  '<path d="M18 9a9 9 0 00-9-9"/>' +
-  "</svg>";
 
-const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `

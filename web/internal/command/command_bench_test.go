@@ -54,6 +54,129 @@ func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool              
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
 }
 
+// TestBenchDeps_NoPanic verifies that every benchDeps method can be called
+// with zero-value arguments without panicking.
+func TestBenchDeps_NoPanic(t *testing.T) {
+	d := newBenchDeps()
+
+	// Dedup round-trip.
+	if _, ok := d.CheckDedup("unknown"); ok {
+		t.Error("CheckDedup returned true for unknown key")
+	}
+	d.RecordDedup("k", []byte("v"))
+	if got, ok := d.CheckDedup("k"); !ok || string(got) != "v" {
+		t.Errorf("RecordDedup+CheckDedup round-trip failed: got %q, ok=%v", got, ok)
+	}
+
+	// Boolean/scalar returns.
+	if d.Draining() {
+		t.Error("Draining() = true, want false")
+	}
+	if d.WorkDir() == "" {
+		t.Error("WorkDir() returned empty")
+	}
+	if d.ConfigDir() == "" {
+		t.Error("ConfigDir() returned empty")
+	}
+	if d.ShutdownCtx() == nil {
+		t.Error("ShutdownCtx() returned nil")
+	}
+	if !d.MCPWaitForReady(context.Background(), time.Millisecond) {
+		t.Error("MCPWaitForReady returned false")
+	}
+
+	// No-op methods must not panic.
+	d.Broadcast(context.Background(), api.ServerEvent{})
+	d.CloseBridge("x")
+	d.SupervisedSetTrust("x")
+	d.SupervisedClearTrust("x", "")
+	d.FlushPendingForChat(context.Background(), "x", "")
+	d.ClearPendingPermsForChat("x")
+	d.RemovePendingPerm(0)
+	d.AdvanceCheckpointTurn(context.Background(), "x")
+	d.InflightAdd(1)
+	d.InflightDone()
+	d.InflightGo(func() {})
+	d.CleanupChatState(context.Background(), "x")
+	d.PrimeIfNeeded(context.Background(), "x", nil)
+}
+
+// TestBenchDeps_Contract documents which methods intentionally return nil
+// (safe only because benchmarks don't invoke handlers that call them) vs.
+// which return usable values needed by the dispatch path.
+func TestBenchDeps_Contract(t *testing.T) {
+	d := newBenchDeps()
+
+	// --- Safe usable values (dispatch path depends on these) ---
+	t.Run("usable_values", func(t *testing.T) {
+		if _, ok := d.CheckDedup("miss"); ok {
+			t.Error("CheckDedup should return false for unknown")
+		}
+		d.RecordDedup("r1", []byte("data"))
+		if got, ok := d.CheckDedup("r1"); !ok || string(got) != "data" {
+			t.Errorf("dedup round-trip failed: %q ok=%v", got, ok)
+		}
+		if d.Draining() {
+			t.Error("Draining must be false for benchmarks")
+		}
+		if d.WorkDir() == "" {
+			t.Error("WorkDir must be non-empty")
+		}
+		if d.ShutdownCtx() == nil {
+			t.Error("ShutdownCtx must be non-nil")
+		}
+	})
+
+	// --- Intentionally nil (safe only for dispatch-overhead benchmarks) ---
+	t.Run("intentionally_nil", func(t *testing.T) {
+		if d.ChatStore() != nil {
+			t.Error("ChatStore expected nil for bench stub")
+		}
+		if d.PendingStore() != nil {
+			t.Error("PendingStore expected nil for bench stub")
+		}
+		if d.GetBridge("any") != nil {
+			t.Error("GetBridge expected nil for bench stub")
+		}
+		if d.Checkpoints() != nil {
+			t.Error("Checkpoints expected nil for bench stub")
+		}
+	})
+
+	// --- No-panic on zero-value calls ---
+	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
+		d.Broadcast(context.Background(), api.ServerEvent{})
+		d.CloseBridge("x")
+		d.SupervisedSetTrust("x")
+		d.SupervisedClearTrust("x", "")
+		if d.ChatInSupervisedMode(context.Background(), "x") {
+			t.Error("ChatInSupervisedMode should be false")
+		}
+		d.FlushPendingForChat(context.Background(), "x", "")
+		d.ClearPendingPermsForChat("x")
+		d.RemovePendingPerm(0)
+		d.AdvanceCheckpointTurn(context.Background(), "x")
+		d.InflightAdd(1)
+		d.InflightDone()
+		d.InflightGo(func() {})
+		d.CleanupChatState(context.Background(), "x")
+		d.PrimeIfNeeded(context.Background(), "x", nil)
+		if d.IsEmptyTurn(nil, "x") {
+			t.Error("IsEmptyTurn should be false")
+		}
+		d.EmitTurnEndedWithStats(context.Background(), "x", nil, 0, 0)
+		if _, err := d.GetOrCreateBridge(context.Background(), "x", "", ""); err != nil {
+			t.Errorf("GetOrCreateBridge returned error: %v", err)
+		}
+		if _, err := d.UtilityPrompt(context.Background(), ""); err != nil {
+			t.Errorf("UtilityPrompt returned error: %v", err)
+		}
+		if _, err := d.ResolveInsideWorkDir(""); err != nil {
+			t.Errorf("ResolveInsideWorkDir returned error: %v", err)
+		}
+	})
+}
+
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	deps := newBenchDeps()
 	d := New(deps)

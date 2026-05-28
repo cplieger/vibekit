@@ -74,7 +74,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	}
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {
-		if c.Type == "diff" && c.Path != "" {
+		if c.Type == ContentTypeDiff && c.Path != "" {
 			diffs = append(diffs, api.ToolDiff{
 				Path: t.relPath(c.Path), OldText: c.OldText, NewText: c.NewText,
 			})
@@ -122,7 +122,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
 			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
 			outputDelta.WriteByte('\n')
-		} else if item.Type == "diff" && item.Path != "" {
+		} else if item.Type == ContentTypeDiff && item.Path != "" {
 			diffs = append(diffs, api.ToolDiff{
 				Path: t.relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
@@ -173,6 +173,9 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 	}
 	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &msg); err != nil {
 		slog.Error("persist plan", "chat_id", chatID, "error", err)
+	}
+	if ctx.Err() != nil {
+		return
 	}
 	allDone := true
 	for _, e := range p.Entries {
@@ -252,14 +255,10 @@ func (t *Translator) HandleExtSessionUpdate(ctx context.Context, chatID api.Chat
 			Kind2      string `json:"kind"`
 		} `json:"update"`
 	}
-	if json.Unmarshal(msg.Params, &p) != nil || p.Update.Kind != "tool_call_chunk" {
+	if json.Unmarshal(msg.Params, &p) != nil || p.Update.Kind != ExtUpdateToolCallChunk {
 		return
 	}
-	subSessionID := ""
-	parent := t.deps.ParentACPSession(chatID)
-	if p.SessionID != "" && parent != "" && p.SessionID != parent {
-		subSessionID = p.SessionID
-	}
+	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	if !buf.Started {
 		buf.Started = true

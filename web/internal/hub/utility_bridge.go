@@ -86,7 +86,7 @@ func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (stri
 	ub.lastActiveAt = time.Now()
 	ub.promptCount++
 
-	resp, err := ub.bridge.Call(ctx, methodPrompt, map[string]any{
+	resp, err := ub.bridge.Call(ctx, api.MethodPrompt, map[string]any{
 		api.KeySessionID: ub.bridge.SessionID(),
 		"prompt":         []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
 	})
@@ -164,9 +164,14 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 	for {
 		select {
 		case <-ctx.Done():
-			// Caller cancelled; drop the bridge so the abandoned
-			// turn doesn't pollute subsequent calls.
-			ub.reset()
+			// Caller cancelled. Only reset the bridge if the
+			// cancellation came from the request context (user
+			// navigated away), not from shutdownCtx (graceful
+			// shutdown). During shutdown, stopUtilityBridge handles
+			// cleanup; an extra reset here would race with Stop().
+			if ub.shutdownCtx.Err() == nil {
+				ub.reset()
+			}
 			return text.String(), ctx.Err()
 		case msg, ok := <-ub.bridge.NotifCh():
 			if !ok {
@@ -184,7 +189,7 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 					"method", msg.Method, "id", *msg.ID)
 				continue
 			}
-			if msg.Method == methodUpdate && msg.Params != nil {
+			if msg.Method == api.MethodSessionUpdate && msg.Params != nil {
 				var base translate.ACPSessionUpdateBase
 				if json.Unmarshal(msg.Params, &base) == nil && base.Kind == api.ACPUpdateAgentChunk {
 					var chunk translate.ACPChunkWire
@@ -246,7 +251,7 @@ func CheapestModel(_ context.Context, catalog []api.SessionModel) string {
 	var bestID string
 	var bestRate float64
 	for _, m := range catalog {
-		if m.ID == "" || m.ID == "auto" {
+		if m.ID == "" || m.ID == modelAuto {
 			continue
 		}
 		if modelExcluded(m.Name) || modelExcluded(m.Description) {

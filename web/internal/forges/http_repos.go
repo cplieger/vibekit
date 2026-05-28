@@ -29,12 +29,12 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 		api.WriteJSON(w, map[string]any{"repos": repos})
 		return
 	}
-	owner, after, ok := splitFirst(rest, "/")
+	owner, after, ok := splitFirst(rest)
 	if !ok || owner == "" {
 		api.BadRequest(w, "missing repo owner")
 		return
 	}
-	name, after2, _ := splitFirst(after, "/")
+	name, after2, _ := splitFirst(after)
 	if name == "" {
 		api.BadRequest(w, "missing repo name")
 		return
@@ -44,7 +44,7 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 		api.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
 		return
 	}
-	op, tail, _ := splitFirst(after2, "/")
+	op, tail, _ := splitFirst(after2)
 	switch op {
 	case "prs":
 		h.handlePRs(w, r, provider, repo, tail)
@@ -90,7 +90,7 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 		}
 		return
 	}
-	numStr, op, _ := splitFirst(tail, "/")
+	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
 		api.BadRequest(w, "invalid PR number")
@@ -152,7 +152,7 @@ func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p For
 		}
 		return
 	}
-	numStr, op, _ := splitFirst(tail, "/")
+	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
 		api.BadRequest(w, "invalid issue number")

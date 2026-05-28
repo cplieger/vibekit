@@ -13,9 +13,9 @@ import {
   setSessions,
   get,
   getSessions,
-  sessionsVersion,
-  messagesVersion,
   rebuildMsgIndex,
+  emitSessions,
+  emitMessages,
 } from "./store.js";
 
 // --- Inline decoders ---
@@ -52,14 +52,6 @@ registerCleanup(() => {
   }
   msgControllers.clear();
 });
-
-// --- Helpers ---
-function emitSessions(): void {
-  sessionsVersion.value = sessionsVersion.peek() + 1;
-}
-function emitMessages(): void {
-  messagesVersion.value = messagesVersion.peek() + 1;
-}
 
 // --- Load operations ---
 export async function loadList(): Promise<boolean> {

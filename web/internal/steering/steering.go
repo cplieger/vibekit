@@ -19,6 +19,7 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/fileutil"
+	"vibekit/internal/workspace"
 )
 
 // Read caps bound untrusted workspace input so a crafted repo can't
@@ -148,7 +149,7 @@ func (g *Generator) Generate(ctx context.Context) {
 	b.WriteString("- Git operations are available via the Git panel\n")
 
 	content := []byte(b.String())
-	steeringFile := api.KiroSteeringPath("environment.md")
+	steeringFile := workspace.KiroSteeringPath("environment.md")
 
 	// Skip if the rendered content is byte-identical. MCP event
 	// storms fire Generate multiple times per second; rewriting
@@ -189,7 +190,7 @@ func readCappedFile(path string, limit int64) ([]byte, error) {
 }
 
 func (g *Generator) CustomPath() string {
-	return api.KiroSteeringPath("custom.md")
+	return workspace.KiroSteeringPath("custom.md")
 }
 
 type toolEntry struct {

@@ -19,7 +19,7 @@ import (
 // the gc.Coordinator which handles collection and sweeping internally.
 func runBlobGC(ctx context.Context, configDir string) (removed, scanned int, err error) {
 	var mu sync.RWMutex
-	coord := checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
+	coord := checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), FileEvents, 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
 		return nil
 	})
 	return coord.RunOnceWithCounts(ctx)
@@ -51,7 +51,7 @@ func BenchmarkCollectReferencedBlobs(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				coord := checkpointgc.NewCoordinator(cfg, blobsRoot(cfg), chatsRoot(cfg), 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
+				coord := checkpointgc.NewCoordinator(cfg, blobsRoot(cfg), chatsRoot(cfg), FileEvents, 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
 					return nil
 				})
 				_, _, _ = coord.RunOnceWithCounts(ctx)

@@ -2,9 +2,9 @@
 // MCP state: wire types, secret sentinel, in-memory state, server fetch.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiGetTyped, CancellableSlot } from "./api-client.js";
+import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
-import { asObject, decodeArray, optStr, reqStr, type Decoder } from "./validators.js";
+import { asObject, decodeArray, optBool, optStr, reqBool, reqNum, reqStr, type Decoder } from "./validators.js";
 
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
@@ -27,6 +27,45 @@ const decodeMCPStatusResponseLocal: Decoder<{ servers: WireRuntimeStatus[] }> = 
   const o = asObject(v, "$.mcp_status");
   return {
     servers: decodeArray(o["servers"], decodeWireRuntimeStatus, "$.mcp_status.servers"),
+  };
+};
+
+const decodeKeyPair: Decoder<KeyPair> = (v) => {
+  const o = asObject(v, "$.kp");
+  return { name: reqStr(o, "name", "$.kp"), value: reqStr(o, "value", "$.kp") };
+};
+
+const decodeServer: Decoder<Server> = (v) => {
+  const o = asObject(v, "$.server");
+  const p = "$.server";
+  const out: Server = {
+    id: reqStr(o, "id", p),
+    name: reqStr(o, "name", p),
+    transport: reqStr(o, "transport", p) as Transport,
+    enabled: reqBool(o, "enabled", p),
+    created_at: reqNum(o, "created_at", p),
+    updated_at: reqNum(o, "updated_at", p),
+  };
+  const command = optStr(o, "command", p);
+  if (command !== undefined) out.command = command;
+  const url = optStr(o, "url", p);
+  if (url !== undefined) out.url = url;
+  const oauthClientId = optStr(o, "oauth_client_id", p);
+  if (oauthClientId !== undefined) out.oauth_client_id = oauthClientId;
+  const prewarm = optBool(o, "prewarm", p);
+  if (prewarm !== undefined) out.prewarm = prewarm;
+  if (Array.isArray(o["args"])) out.args = (o["args"] as unknown[]).map((x) => String(x));
+  if (Array.isArray(o["env"])) out.env = decodeArray(o["env"], decodeKeyPair, `${p}.env`);
+  if (Array.isArray(o["headers"])) out.headers = decodeArray(o["headers"], decodeKeyPair, `${p}.headers`);
+  if (Array.isArray(o["disabled_tools"])) out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
+  if (Array.isArray(o["known_tools"])) out.known_tools = (o["known_tools"] as unknown[]).map((x) => String(x));
+  return out;
+};
+
+const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
+  const o = asObject(v, "$.mcp_servers");
+  return {
+    servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers"),
   };
 };
 
@@ -79,7 +118,7 @@ export const SECRET_MASK = "***";
 
 interface WireRuntimeStatus {
   name: string;
-  state: RuntimeState | (string & {});
+  state: string;
   oauth_url?: string;
   error?: string;
 }
@@ -144,7 +183,7 @@ class MCPStateController {
 
   private async doRefetchServers(): Promise<void> {
     const signal = this.serversSlot.start();
-    const d = await apiGet<{ servers: Server[] }>("/api/mcp", signal);
+    const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, signal);
     if (signal.aborted) {
       return;
     }
@@ -177,9 +216,10 @@ class MCPStateController {
   }
 }
 
-// --- Singleton + delegate exports (preserves public API) ---
+// --- Singleton export ---
 
 const instance = new MCPStateController();
+export const mcpState = instance;
 registerCleanup(() => {
   instance.abort();
 });
@@ -188,22 +228,6 @@ registerCleanup(() => {
 // `status` is a readonly reference to the controller's internal Map.
 export let configured: readonly Server[] = [];
 export const status: ReadonlyMap<string, RuntimeStatus> = instance.status;
-
-export function setRenderCallback(cb: () => void): void {
-  instance.setRenderCallback(cb);
-}
-export function setStatus(name: string, rs: RuntimeStatus): void {
-  instance.setStatus(name, rs);
-}
-export function deleteStatus(name: string): void {
-  instance.deleteStatus(name);
-}
-export function refetchServers(): void {
-  instance.refetchServers();
-}
-export function refetchStatus(): void {
-  instance.refetchStatus();
-}
 
 // --- Optimistic mutation helpers ---
 

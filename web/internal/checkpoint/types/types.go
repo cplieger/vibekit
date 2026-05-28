@@ -84,3 +84,11 @@ type ConflictPayload struct {
 	Tag         string `json:"tag"`
 	TS          int64  `json:"ts"`
 }
+
+// BlobRef is the minimal struct for extracting blob SHA references from
+// the event JSONL log. Shared between the checkpoint and gc packages to
+// keep the JSON tag contract as a single source of truth.
+type BlobRef struct {
+	BeforeSHA string `json:"before_sha,omitempty"`
+	AfterSHA  string `json:"after_sha,omitempty"`
+}

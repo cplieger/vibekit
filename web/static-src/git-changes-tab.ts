@@ -12,7 +12,7 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH } from "./icons.js";
+import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_CLEAN, ICON_FILTER } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
@@ -55,6 +55,7 @@ class CancelledError extends Error {
 // --- Wire types ---
 
 import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
+import { statusLetter, describeStatus } from "./git-types.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -67,11 +68,14 @@ let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
-let diffAbort: AbortController | null = null;
+/** Long-lived abort controller for diff/log fetches — only aborted on
+ *  tab teardown, NOT on every repaint. Individual diff fetches create
+ *  their own per-fetch controllers with a timeout. */
+const diffAbortCtrl = new AbortController();
 registerCleanup(() => {
   refreshAbort?.abort();
 });
-registerCleanup(() => diffAbort?.abort());
+registerCleanup(() => { diffAbortCtrl.abort(); });
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -100,7 +104,7 @@ let paintDeferred = false;
 
 /** Build the deps object for commit rendering functions. */
 function commitDeps(): CommitDeps {
-  return { commitMessages, bindingCleanups, diffAbort, refreshChanges, assertOk };
+  return { commitMessages, bindingCleanups, diffAbort: diffAbortCtrl, refreshChanges, assertOk };
 }
 
 // --- Public API ---
@@ -212,10 +216,6 @@ function paintInner(): void {
   }
   bindingCleanups = [];
 
-  // Abort any in-flight diff fetches from the previous paint.
-  diffAbort?.abort();
-  diffAbort = new AbortController();
-
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
   // Build per-repo path index for finer pruning of expandedDiffPaths.
@@ -255,6 +255,14 @@ function paintInner(): void {
     const repoPaths = activePathsByRepo.get(repo);
     if (!repoPaths?.has(path)) {
       expandedDiffPaths.delete(k);
+    }
+  }
+  // Cap expandedDiffPaths to prevent unbounded growth over long sessions.
+  if (expandedDiffPaths.size > 200) {
+    const excess = expandedDiffPaths.size - 200;
+    const iter = expandedDiffPaths.values();
+    for (let i = 0; i < excess; i++) {
+      expandedDiffPaths.delete(iter.next().value!);
     }
   }
 
@@ -339,22 +347,7 @@ function paintInner(): void {
 
 // --- Empty-state markup helpers ---
 
-const ICON_REPO_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
-  '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
-  "</svg>";
 
-const ICON_CLEAN =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
-  '<polyline points="22 4 12 14.01 9 11.01"/>' +
-  "</svg>";
-
-const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -751,12 +744,13 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const loadDiff = (): void => {
     loadedDiff = true;
     diffDrawer.textContent = "Loading diff…";
-    const signal = diffAbort ? AbortSignal.any([diffAbort.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+    const perFetch = new AbortController();
+    const signal = AbortSignal.any([perFetch.signal, AbortSignal.timeout(10_000)]);
     void apiGet<{ diff?: string }>(
       `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
       signal,
     ).then((data) => {
-      if (signal.aborted) {
+      if (perFetch.signal.aborted) {
         return;
       }
       if (data === null) {
@@ -875,24 +869,6 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
   return hint;
 }
 
-function statusLetter(s: string): string {
-  if (s.length >= 1) {
-    return s.charAt(0);
-  }
-  return "?";
-}
 
-const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
-  M: "Modified",
-  A: "Added",
-  D: "Deleted",
-  R: "Renamed",
-  "?": "Untracked",
-  U: "Unmerged",
-};
-
-function describeStatus(s: string): string {
-  return GIT_STATUS_LABELS[s.charAt(0)] ?? s;
-}
 
 

@@ -53,6 +53,7 @@ type sharedBridge struct {
 
 // tryAcquireForPrompt attempts to transition from idle to prompting.
 // Returns true if the transition succeeded (caller owns the prompt slot).
+// Also sets lastActiveAt so callers don't need a separate SetLastActive call.
 func (sb *sharedBridge) tryAcquireForPrompt() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -60,6 +61,7 @@ func (sb *sharedBridge) tryAcquireForPrompt() bool {
 		return false
 	}
 	sb.state = bridgePrompting
+	sb.lastActiveAt = time.Now()
 	return true
 }
 

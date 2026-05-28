@@ -30,19 +30,26 @@ func AutoDecideCrew(autoApproveCrew bool, hasAllowOnce bool) AutoDecision {
 	return DecisionAllow
 }
 
+// shellDecisionMap maps each ShellDecision to its corresponding
+// AutoDecision outcome. New ShellDecision values must be added here;
+// unlisted values fall through to DecisionNone.
+var shellDecisionMap = map[ShellDecision]AutoDecision{
+	ShellAllow: DecisionAllow,
+	ShellDeny:  DecisionDeny,
+}
+
 // AutoDecideShell evaluates whether a shell command permission
 // request should be auto-approved or auto-denied based on the
 // shell safety policy. Returns DecisionAllow, DecisionDeny, or
 // DecisionNone (prompt the user).
 func AutoDecideShell(decision ShellDecision, hasAllowOnce bool) AutoDecision {
-	switch decision {
-	case ShellAllow:
-		if !hasAllowOnce {
-			return DecisionNone
-		}
-		return DecisionAllow
-	case ShellDeny:
-		return DecisionDeny
+	outcome, ok := shellDecisionMap[decision]
+	if !ok {
+		return DecisionNone
 	}
-	return DecisionNone
+	// ShellAllow requires an allow_once option to be present.
+	if outcome == DecisionAllow && !hasAllowOnce {
+		return DecisionNone
+	}
+	return outcome
 }

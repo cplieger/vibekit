@@ -16,7 +16,7 @@
 import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_SPINNER, ICON_HOURGLASS, ICON_ALERT } from "./icons.js";
+import { ICON_SEND, ICON_SPINNER, ICON_HOURGLASS, ICON_ALERT, iconEl } from "./icons.js";
 import { collapseAll } from "./pill-expand.js";
 
 type Submit = (text: string) => void;
@@ -105,7 +105,7 @@ class PromptInputController {
 
   private applyButtonState(): void {
     const k = this.state.kind;
-    $.sendBtn.innerHTML = STATE_ICON[k];
+    $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
     const tooltip = this.state.kind === "blocked" ? this.state.reason : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);

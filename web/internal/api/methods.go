@@ -33,10 +33,26 @@ const (
 	MethodSpawn  = "session/spawn"
 )
 
+// Session-level ACP method names — streaming updates, permissions,
+// config, and subagent lifecycle.
+const (
+	MethodSessionUpdate      = "session/update"
+	MethodRequestPermission  = "session/request_permission"
+	MethodSetConfigOption    = "session/setConfigOption"
+	MethodTerminate          = "session/terminate"
+	MethodAttach             = "session/attach"
+	MethodList               = "session/list"
+	MethodMessageSend        = "message/send"
+)
+
 // ACP content-block type discriminator constants. The "text" value is
 // used across hub, command, and translate packages; declaring it here
 // provides a single source of truth so a protocol rename is one edit.
 const ContentTypeText = "text"
+
+// ModelAuto is the sentinel model value meaning "keep current / use
+// task-based selection". Used by bridge, hub, and model-switch logic.
+const ModelAuto = "auto"
 
 // ACP content-block JSON field name constants. These are the wire-format
 // keys inside a content block object (distinct from ContentTypeText which

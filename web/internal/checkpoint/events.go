@@ -58,24 +58,16 @@ const (
 	kindConflict eventKind = "conflict_detected"
 )
 
-// validKinds is the single source of truth for known event kinds.
-// Adding a new kind to the const block above AND this map is the
-// only step needed; valid() is a map lookup.
-var validKinds = map[eventKind]struct{}{
-	kindTurnStart:        {},
-	kindSnapshot:         {},
-	kindRestore:          {},
-	kindRestoreStarted:   {},
-	kindRestoreCommitted: {},
-	kindConflict:         {},
-}
-
-// valid reports whether k is a known event kind. Used at the Append
-// boundary to reject invalid kinds at write time rather than
-// discovering them at replay time (where the damage is permanent).
+// valid reports whether k is a known event kind. Uses an exhaustive
+// switch so the go-exhaustive linter catches missing cases when a new
+// kind is added to the const block above.
 func (k eventKind) valid() bool {
-	_, ok := validKinds[k]
-	return ok
+	//exhaustive:enforce
+	switch k {
+	case kindTurnStart, kindSnapshot, kindRestore, kindRestoreStarted, kindRestoreCommitted, kindConflict:
+		return true
+	}
+	return false
 }
 
 // event is the on-disk representation. One per line, serialized via
@@ -277,7 +269,7 @@ var warnedLargeLogs sync.Map
 // model, so truncation would lose rollback history. The warn below
 // fires at most once per process per chat so long-lived heavy
 // chats don't drown Loki in duplicate breadcrumbs.
-func (l *eventLog) Read() ([]event, error) {
+func (l *eventLog) Read(ctx context.Context) ([]event, error) {
 	f, err := os.Open(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -310,6 +302,13 @@ func (l *eventLog) Read() ([]event, error) {
 			continue
 		}
 		out = append(out, ev)
+		// Amortized ctx check every 1000 events so shutdown/disconnect
+		// short-circuits long replays without per-line atomic overhead.
+		if len(out)%1000 == 0 {
+			if err := ctx.Err(); err != nil {
+				return out, err
+			}
+		}
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {

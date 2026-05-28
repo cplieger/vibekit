@@ -44,11 +44,15 @@ const PARSE_SLICE_BYTES = 4096;
  *  callbacks). React's scheduler uses the same trick. */
 const yieldChannel = new MessageChannel();
 let yieldQueue: (() => void)[] = [];
+const MAX_DRAIN_PER_TICK = 4;
 yieldChannel.port1.onmessage = () => {
-  const fns = yieldQueue;
-  yieldQueue = [];
+  const count = Math.min(MAX_DRAIN_PER_TICK, yieldQueue.length);
+  const fns = yieldQueue.splice(0, count);
   for (const fn of fns) {
     fn();
+  }
+  if (yieldQueue.length > 0) {
+    yieldChannel.port2.postMessage(null);
   }
 };
 function nextTick(fn: () => void): void {

@@ -2,10 +2,13 @@ package translate
 
 import (
 	"context"
+	"time"
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
 	"vibekit/internal/permissions"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // BufferAccess is the consumer-side interface for buffer store access.
@@ -65,7 +68,7 @@ type MCPRecorder interface {
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
 	SignalReady()
-	SetKnownTools(name string, tools []string)
+	SetKnownTools(ctx context.Context, name string, tools []string)
 }
 
 // Translator holds stateful translate logic extracted from Hub.
@@ -73,6 +76,7 @@ type MCPRecorder interface {
 type Translator struct {
 	deps      Deps
 	crewCache *crewCache
+	crewSF    singleflight.Group
 }
 
 // New constructs a Translator with the given Hub dependency surface.
@@ -81,4 +85,27 @@ func New(deps Deps) *Translator {
 		deps:      deps,
 		crewCache: newCrewCache(),
 	}
+}
+
+// newEventMessage constructs a standard event message with a fresh ID,
+// RoleEvent, and the current timestamp. Eliminates 5-site boilerplate.
+func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Message {
+	return api.Message{
+		ID:        t.deps.NewMessageID(),
+		Role:      api.RoleEvent,
+		Ts:        time.Now().UnixMilli(),
+		EventKind: kind,
+		Content:   content,
+	}
+}
+
+// deriveSubSession determines whether a notification belongs to a
+// subagent session. Returns the sessionID if it differs from the
+// parent ACP session (indicating a subagent), or "" for the parent.
+func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) string {
+	parent := t.deps.ParentACPSession(chatID)
+	if sessionID != "" && parent != "" && sessionID != parent {
+		return sessionID
+	}
+	return ""
 }

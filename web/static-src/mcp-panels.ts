@@ -5,7 +5,7 @@
 
 import { $, el } from "./dom.js";
 import { closeModal } from "./modals.js";
-import { type Server, type KeyPair, type Transport, refetchServers } from "./mcp-state.js";
+import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
@@ -15,7 +15,6 @@ import {
 } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
-export { simplifyName } from "./mcp-panels-search.js";
 
 // --- Add / edit modal ---
 
@@ -165,7 +164,7 @@ async function submitServer(
     return false;
   }
   closeModal($.mcpModal);
-  refetchServers();
+  mcpState.refetchServers();
   return true;
 }
 

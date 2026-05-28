@@ -12,7 +12,7 @@ import { toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import * as uiState from "./ui-state.js";
-import { fileIcon, FILE_ICONS } from "./icons.js";
+import { fileIcon, FILE_ICONS, iconEl } from "./icons.js";
 import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
@@ -333,7 +333,7 @@ function parentRow(): HTMLDivElement {
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
-  icon.innerHTML = FILE_ICONS["folder"] ?? "";
+  icon.replaceChildren(iconEl(FILE_ICONS["folder"] ?? ""));
 
   const nameSpan = document.createElement("span");
   nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
@@ -372,7 +372,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
 
   const icon = document.createElement("span");
   icon.className = "fb-icon";
-  icon.innerHTML = fileIcon(entry.name, entry.isDir);
+  icon.replaceChildren(iconEl(fileIcon(entry.name, entry.isDir)));
 
   const name = document.createElement("span");
   name.className = `${FB_NAME} ${FB_NAME_LINK}`;

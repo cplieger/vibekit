@@ -136,3 +136,72 @@ func TestCSPImportMapHash(t *testing.T) {
 			want, cspPolicy)
 	}
 }
+
+func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
+	f.Add("POST", "http://example.com", "example.com")
+	f.Add("GET", "http://attacker.example", "example.com")
+	f.Add("POST", "http://attacker.example", "example.com")
+	f.Add("POST", "", "example.com")
+	f.Add("DELETE", "http://example.com:8080", "example.com")
+	f.Add("PUT", "null", "example.com")
+	f.Add("PATCH", "http://example.com", "example.com:443")
+
+	h := securityMiddleware(helloMux())
+
+	f.Fuzz(func(t *testing.T, method, origin, host string) {
+		if method == "" {
+			return
+		}
+		req := httptest.NewRequest(method, "http://"+host+"/x", http.NoBody)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		// Invariant 1: no panics (implicit).
+		// Invariant 2: GET always 200.
+		if method == http.MethodGet && rec.Code != http.StatusOK {
+			t.Errorf("GET with origin=%q got %d, want 200", origin, rec.Code)
+		}
+	})
+}
+
+func TestCSPPolicy_StructuralInvariants(t *testing.T) {
+	directives := make(map[string]string)
+	for _, part := range strings.Split(cspPolicy, "; ") {
+		fields := strings.SplitN(part, " ", 2)
+		name := fields[0]
+		if _, dup := directives[name]; dup {
+			t.Errorf("duplicate directive: %s", name)
+		}
+		val := ""
+		if len(fields) > 1 {
+			val = fields[1]
+		}
+		directives[name] = val
+	}
+
+	required := []string{"default-src", "script-src", "style-src", "connect-src", "frame-ancestors", "img-src"}
+	for _, d := range required {
+		if _, ok := directives[d]; !ok {
+			t.Errorf("missing required directive: %s", d)
+		}
+	}
+
+	if fa := directives["frame-ancestors"]; fa != "'none'" {
+		t.Errorf("frame-ancestors = %q, want 'none'", fa)
+	}
+
+	if ds := directives["default-src"]; ds != "'self'" {
+		t.Errorf("default-src = %q, want 'self'", ds)
+	}
+
+	// script-src must contain exactly one sha256 token.
+	scriptSrc := directives["script-src"]
+	sha256Re := regexp.MustCompile(`'sha256-[A-Za-z0-9+/=]+'`)
+	matches := sha256Re.FindAllString(scriptSrc, -1)
+	if len(matches) != 1 {
+		t.Errorf("script-src has %d sha256 tokens, want exactly 1: %q", len(matches), scriptSrc)
+	}
+}

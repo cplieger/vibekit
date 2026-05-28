@@ -63,7 +63,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	}
 	c, ok := rt.store.Get(r.Context(), api.ChatID(id))
 	if !ok {
-		api.NotFound(w, "chat not found")
+		api.NotFound(w, errMsgChatNotFound)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ap
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
 	if !ok {
-		api.NotFound(w, "chat not found")
+		api.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	filename := safeExportName(c.Name, string(chatID))
@@ -197,10 +197,10 @@ func (rt *Router) getPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 
 // putPlanDraft serves PUT for the plan-draft sub-resource.
 func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, api.MIMETypeJSON) {
 		slog.Warn("chat plan_draft: unexpected content-type",
 			"chat_id", chatID, "content_type", ct)
-		api.BadRequest(w, "expected application/json")
+		api.BadRequest(w, "expected "+api.MIMETypeJSON)
 		return
 	}
 	api.LimitBody(w, r, maxPlanDraftBytes+4096) // + json envelope overhead
