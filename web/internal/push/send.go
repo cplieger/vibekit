@@ -147,6 +147,14 @@ func (s *Service) pruneStale(stale []string) {
 // push performs RFC 8291 encryption and delivers the payload to a
 // single subscriber endpoint via HTTP POST with VAPID authentication.
 func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []byte) (int, error) {
+	// Defense-in-depth: bound payload size before any allocation. The
+	// IETF web-push spec caps record size at 4096 bytes; pushBodyCap=3000
+	// is the project's pre-pad ceiling. This early check makes the
+	// `make([]byte, 2+len(payload))` allocation below provably bounded
+	// and silences CodeQL's go/allocation-size-overflow rule.
+	if len(payload) > pushBodyCap {
+		return 0, fmt.Errorf("payload too large: %d bytes (max %d)", len(payload), pushBodyCap)
+	}
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
 		return 0, fmt.Errorf("decode p256dh: %w", err)
