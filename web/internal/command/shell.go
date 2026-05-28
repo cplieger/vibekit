@@ -79,7 +79,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		return
 	}
 	if !persisted {
-		d.RespondErr(w, http.StatusConflict, errChatNotFound)
+		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
 		return
 	}
 	if triggerRename {

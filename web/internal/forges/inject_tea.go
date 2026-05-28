@@ -201,7 +201,7 @@ func readTeaToken(host string) (string, error) {
 // setupGitTea writes a git credential helper that pulls the token
 // from tea's config. tea has no built-in setup-git, so we install a
 // small helper script.
-func setupGitTea(host string) error {
+func setupGitTea(ctx context.Context, host string) error {
 	token, err := readTeaToken(host)
 	if err != nil {
 		return err
@@ -235,7 +235,7 @@ func setupGitTea(host string) error {
 	cfgData, _ := os.ReadFile(gitCfg)
 	if !strings.Contains(string(cfgData), "credential.helper = store") &&
 		!strings.Contains(string(cfgData), "helper = store") {
-		_, err := runCmd(context.Background(), CmdTimeout, nil, "git",
+		_, err := runCmd(ctx, CmdTimeout, nil, "git",
 			"config", "--global", "credential.helper", "store")
 		if err != nil {
 			return fmt.Errorf("git config credential.helper: %w", err)

@@ -88,7 +88,7 @@ func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (stri
 
 	resp, err := ub.bridge.Call(ctx, methodPrompt, map[string]any{
 		api.KeySessionID: ub.bridge.SessionID(),
-		"prompt":    []map[string]any{{"type": api.ContentTypeText, api.ContentTypeText: utilitySystemPrompt + prompt}},
+		"prompt":         []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
 	})
 	if err != nil {
 		// Bridge may be dead; reset so next call restarts.

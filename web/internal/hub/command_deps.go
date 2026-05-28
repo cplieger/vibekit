@@ -19,7 +19,7 @@ var _ command.Dependencies = (*Hub)(nil)
 
 // GetBridge returns the active bridge for a chat, or nil.
 func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
-	sb := h.getBridge(chatID)
+	sb := h.coord.GetBridge(chatID)
 	if sb == nil {
 		return nil
 	}
@@ -28,7 +28,7 @@ func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
 
 // GetOrCreateBridge ensures a bridge exists for the chat.
 func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, model string) (command.Bridge, error) {
-	sb, err := h.getOrCreateBridge(ctx, chatID, agent, model)
+	sb, err := h.coord.GetOrCreateBridge(ctx, chatID, agent, model)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, m
 
 // CloseBridge tears down the bridge for a chat.
 func (h *Hub) CloseBridge(chatID api.ChatID) {
-	h.closeBridge(chatID)
+	h.coord.CloseBridge(chatID)
 }
 
 // PendingStore returns the pending-changes store.
@@ -133,7 +133,7 @@ func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b command.Br
 			"type", fmt.Sprintf("%T", b))
 		return
 	}
-	h.primeIfNeeded(ctx, chatID, sb)
+	h.coord.PrimeIfNeeded(ctx, chatID, sb)
 }
 
 // IsEmptyTurn checks if a prompt response is an empty turn.
@@ -145,5 +145,3 @@ func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	h.emitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
 }
-
-

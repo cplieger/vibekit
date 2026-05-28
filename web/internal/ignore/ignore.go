@@ -116,8 +116,8 @@ func NewMatcher(configDir, workDir string) *Matcher {
 // agent reads. `rel` is the workspace-relative path (forward
 // slashes). `isDir` is a hint for directory-only patterns; false
 // is the safe default (matches files).
-func (m *Matcher) Matches(rel string, isDir bool) bool {
-	m.refresh()
+func (m *Matcher) Matches(ctx context.Context, rel string, isDir bool) bool {
+	m.refresh(ctx)
 
 	m.mu.Lock()
 	rules := m.rules
@@ -160,14 +160,12 @@ func (m *Matcher) Matches(rel string, isDir bool) bool {
 // refresh re-reads the file list from config.json and re-parses
 // ignore files whose mtimes have advanced. Uses singleflight to
 // deduplicate concurrent refresh I/O — the first caller in a burst
-// does the work; others share its result. Uses context.Background()
-// internally because the I/O is local filesystem (sub-millisecond);
-// this prevents a single caller's context cancellation from poisoning
-// the shared singleflight result.
-func (m *Matcher) refresh() {
+// does the work; others share its result. Accepts ctx so callers'
+// cancellation propagates to the singleflight-guarded I/O path.
+func (m *Matcher) refresh(ctx context.Context) {
 	//nolint:errcheck // doRefresh has no error return; singleflight result is discarded.
 	m.sfGroup.Do("refresh", func() (any, error) {
-		m.doRefresh()
+		m.doRefresh(ctx)
 		return nil, nil
 	})
 }
@@ -181,7 +179,7 @@ func (m *Matcher) refresh() {
 // already serializes concurrent refreshes. The mutex is taken only for
 // the final pointer swap of rules/files/mtimes, minimizing the window
 // where Matches() callers block.
-func (m *Matcher) doRefresh() {
+func (m *Matcher) doRefresh(ctx context.Context) {
 	// Fast path: stat config.json. If mtime hasn't advanced, reuse
 	// the cached file list and only check ignore-file mtimes.
 	settingsPath := filepath.Join(m.configDir, settingsFilename)
@@ -209,7 +207,7 @@ func (m *Matcher) doRefresh() {
 	var newSettingsMTime time.Time
 	var newSettingsSize int64
 	if settingsChanged {
-		files = m.readSettingFiles(context.Background())
+		files = m.readSettingFiles(ctx)
 		if settingsErr == nil {
 			newSettingsMTime = settingsInfo.ModTime()
 			newSettingsSize = settingsInfo.Size()

@@ -119,7 +119,10 @@ export function initChangesTab(): void {
   });
 
   // Fire deferred paint when commit textarea loses focus.
-  document.addEventListener("focusout", (e) => {
+  // Scoped to the mount container so the listener is tied to the tab's
+  // DOM lifetime. focusout bubbles, so it reaches the container.
+  const changesMount = document.getElementById("git-changes-mount");
+  changesMount?.addEventListener("focusout", (e) => {
     if (
       paintDeferred &&
       e.target instanceof HTMLTextAreaElement &&
@@ -127,7 +130,7 @@ export function initChangesTab(): void {
     ) {
       paint();
     }
-  });
+  }, { passive: true });
 
   const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
   if (refreshBtn !== null) {

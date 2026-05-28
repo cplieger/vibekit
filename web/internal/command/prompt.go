@@ -18,13 +18,13 @@ import (
 )
 
 // ACP method constant for prompt.
-const methodPrompt = "session/prompt"
+const methodPrompt = api.MethodPrompt
 
 // validatePromptPayload parses and validates the prompt command payload.
 func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, error) {
 	var p api.PromptCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	if p.Text == "" {
 		return p, http.StatusBadRequest, errEmptyPrompt
@@ -36,10 +36,10 @@ func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, erro
 		return p, http.StatusBadRequest, errMissingMessageID
 	}
 	if !ValidMessageID(p.MessageID) {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	if !ValidIdent(p.Agent) || !ValidIdent(p.Model) {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	return p, 0, nil
 }
@@ -165,7 +165,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, errMissingChatID)
+		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return
 	}
 	p, code, vErr := validatePromptPayload(cmd)

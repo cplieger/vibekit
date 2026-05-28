@@ -1,6 +1,7 @@
 package fileutil
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -196,7 +197,10 @@ func CleanupStaleTemps(dir string, maxAge time.Duration) {
 // IsGitRepo reports whether dir contains a .git entry (directory for
 // regular repos, regular file for worktrees and submodules, or a
 // symlink to either — os.Stat follows symlinks).
-func IsGitRepo(dir string) bool {
+func IsGitRepo(ctx context.Context, dir string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	_, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil
 }

@@ -60,7 +60,7 @@ func hubForFSTest(t *testing.T, workDir string) (*Hub, *respondingBridge) {
 	h := New(workDir, factory, cs, func() []string { return nil })
 	cs.SetBroadcaster(h)
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}

@@ -10,6 +10,12 @@ import (
 // JSONKeyError is the standard JSON error response key.
 const JSONKeyError = "error"
 
+// ErrorJSON returns the canonical error response map for JSON encoding.
+// Use with WriteJSONStatus to write error responses consistently.
+func ErrorJSON(msg string) map[string]string {
+	return map[string]string{JSONKeyError: msg}
+}
+
 // JSONKeyOutput is the standard JSON response key for successful
 // command output. Used by git/ and server/ packages.
 const JSONKeyOutput = "output"

@@ -90,18 +90,12 @@ type ACPSessionUpdateBase struct {
 	Kind api.ACPUpdateKind `json:"sessionUpdate"`
 }
 
-// ContentTypeText is the ACP content-block discriminator for plain
-// text chunks.
-const ContentTypeText = "text"
-
 // JSON field name constants — the wire protocol uses these strings
 // in many places; constants keep them in one place and silence
 // goconst warnings.
 const (
 	jsonFieldName    = "name"
 	jsonFieldContent = "content"
-	jsonFieldText    = "text"
-	jsonFieldType    = "type"
 )
 
 // ContentTypeContent is the ACP content-block type discriminator value "content".

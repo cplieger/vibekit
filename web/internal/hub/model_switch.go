@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"vibekit/internal/api"
+	"vibekit/internal/command"
 )
 
 // resolveSwitchModel returns the effective model after applying the
@@ -38,19 +39,19 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 	var p api.SwitchModelCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			h.respondErr(w, http.StatusBadRequest, errInvalidPayload)
+			h.respondErr(w, http.StatusBadRequest, command.ErrInvalidPayload)
 			return
 		}
 	}
 
 	if !validIdent(p.Model) {
-		h.respondErr(w, http.StatusBadRequest, errInvalidPayload)
+		h.respondErr(w, http.StatusBadRequest, command.ErrInvalidPayload)
 		return
 	}
 
 	chat, ok := h.chatStore.Get(ctx, cmd.ChatID)
 	if !ok {
-		h.respondErr(w, http.StatusNotFound, errChatNotFound)
+		h.respondErr(w, http.StatusNotFound, command.ErrChatNotFound)
 		return
 	}
 
@@ -67,9 +68,9 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 
 	// Fallback: full bridge restart.
 	h.flushInFlightTurnOnSwitch(ctx, cmd.ChatID)
-	h.closeBridge(cmd.ChatID)
+	h.coord.CloseBridge(cmd.ChatID)
 
-	sb, err := h.getOrCreateBridge(ctx, cmd.ChatID, chat.Agent, model)
+	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, chat.Agent, model)
 	if err != nil {
 		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: err.Error()}))
 		h.respondErr(w, http.StatusInternalServerError, err)

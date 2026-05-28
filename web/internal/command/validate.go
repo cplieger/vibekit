@@ -13,19 +13,19 @@ const maxPromptBytes = 512 * 1024
 
 // Static command errors returned to the client.
 var (
-	errMissingChatID    = errors.New("missing chat_id")
-	errInvalidPayload   = errors.New("invalid payload")
+	ErrMissingChatID    = errors.New("missing chat_id")
+	ErrInvalidPayload   = errors.New("invalid payload")
 	errEmptyPrompt      = errors.New("empty prompt")
 	errPromptTooLong    = errors.New("prompt too long")
 	errMissingMessageID = errors.New("missing message_id")
 	errNoBridge         = errors.New("no bridge")
 	errBusy             = errors.New("busy")
-	errChatNotFound     = errors.New("chat not found")
+	ErrChatNotFound     = errors.New("chat not found")
 
 	errResolveBadAction = errors.New("action must be accept or reject")
 	errResolveMissingID = errors.New("tool_call_id is required")
 	errResolveUnknown   = errors.New("no such pending change")
-	errMergedTooLarge    = fmt.Errorf("merged_text exceeds %d byte cap", pending.Cap)
+	errMergedTooLarge   = fmt.Errorf("merged_text exceeds %d byte cap", pending.Cap)
 
 	errTaskRequired      = errors.New("task is required")
 	errSubSessionAndText = errors.New("sub_session_id and text are required")

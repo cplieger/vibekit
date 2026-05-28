@@ -53,7 +53,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		dir  string
 	}
 	var repos []entry
-	if fileutil.IsGitRepo(h.workDir) {
+	if fileutil.IsGitRepo(ctx, h.workDir) {
 		repos = append(repos, entry{name: ".", dir: h.workDir})
 	}
 	if entries, err := os.ReadDir(h.workDir); err == nil {
@@ -66,7 +66,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 			mu    sync.Mutex
 			found []entry
 		)
-		g, _ := errgroup.WithContext(ctx)
+		g, scanCtx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 		for _, e := range entries {
 			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -75,7 +75,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 			name := e.Name()
 			dir := filepath.Join(h.workDir, name)
 			g.Go(func() error {
-				if fileutil.IsGitRepo(dir) {
+				if fileutil.IsGitRepo(scanCtx, dir) {
 					mu.Lock()
 					found = append(found, entry{name: name, dir: dir})
 					mu.Unlock()
@@ -104,7 +104,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	var repos []string
-	if fileutil.IsGitRepo(h.workDir) {
+	if fileutil.IsGitRepo(r.Context(), h.workDir) {
 		repos = append(repos, ".")
 	}
 	entries, err := os.ReadDir(h.workDir)
@@ -120,7 +120,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 			mu    sync.Mutex
 			found []string
 		)
-		g, _ := errgroup.WithContext(r.Context())
+		g, gctx := errgroup.WithContext(r.Context())
 		g.SetLimit(8)
 		for _, e := range entries {
 			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -128,7 +128,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 			}
 			name := e.Name()
 			g.Go(func() error {
-				if fileutil.IsGitRepo(filepath.Join(h.workDir, name)) {
+				if fileutil.IsGitRepo(gctx, filepath.Join(h.workDir, name)) {
 					mu.Lock()
 					found = append(found, name)
 					mu.Unlock()
@@ -163,7 +163,7 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(repoFromQuery(r))
-	if !fileutil.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(r.Context(), dir) {
 		api.BadRequest(w, "not a git repo")
 		return
 	}
@@ -384,7 +384,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: "remove failed"})
+		api.WriteJSON(w, api.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
@@ -419,14 +419,14 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "cannot re-clone workspace root")
 		return
 	}
-	if !fileutil.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(r.Context(), dir) {
 		api.BadRequest(w, "not a git repo")
 		return
 	}
 	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: "no origin remote"})
+		api.WriteJSON(w, api.ErrorJSON("no origin remote"))
 		return
 	}
 	// Defense-in-depth: the origin URL came from git config and could
@@ -437,7 +437,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// os.RemoveAll so a rejected reclone leaves the working tree
 	// intact.
 	if !isAllowedRemoteScheme(remote) {
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: "origin has unsupported scheme for re-clone"})
+		api.WriteJSON(w, api.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -445,7 +445,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// partial delete doesn't strand the repo in an unreclonable state.
 	if rmErr := os.RemoveAll(dir); rmErr != nil {
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: "remove failed"})
+		api.WriteJSON(w, api.ErrorJSON("remove failed"))
 		return
 	}
 	// `--` barrier: the origin URL came from git config, but a prior

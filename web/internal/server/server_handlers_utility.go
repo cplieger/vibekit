@@ -13,7 +13,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -34,7 +34,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 	prompt += "Error: " + body.Error
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: "generation failed"})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
 		return
 	}
 	api.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
@@ -47,7 +47,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: api.ErrMsgUtilityUnavailable})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -89,7 +89,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	sb.WriteString("\n```\n\nMerged:")
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String())
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{api.JSONKeyError: "generation failed"})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
 		return
 	}
 	api.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})

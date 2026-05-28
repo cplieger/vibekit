@@ -101,7 +101,7 @@ func (h *Hub) respondFSRead(ctx context.Context, chatID api.ChatID, msg *api.RPC
 				"chat_id", chatID, "path", p.Path, "abs", abs, "error", relErr)
 		} else {
 			isDir := statErr == nil && info.IsDir()
-			if h.perm.ignore.Matches(rel, isDir) {
+			if h.perm.ignore.Matches(ctx, rel, isDir) {
 				h.respondFSError(ctx, chatID, msg, errIgnored)
 				return
 			}

@@ -59,7 +59,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	if len(c.Messages) != 1 || c.Messages[0].EventKind != api.EventModelSwitched {
 		t.Errorf("expected model_switched event, got %+v", c.Messages)
 	}
-	sb := h.getBridge("c1")
+	sb := h.coord.GetBridge("c1")
 	if sb == nil {
 		t.Fatal("no bridge after switch")
 	}
@@ -209,7 +209,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		return true
 	})
 	// Create a bridge first so the fast path has something to call.
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "old-model")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	}
 
 	// The bridge should still be the same instance (no restart).
-	sb2 := h.getBridge("c1")
+	sb2 := h.coord.GetBridge("c1")
 	if sb2 == nil {
 		t.Fatal("bridge gone after fast-path switch")
 	}

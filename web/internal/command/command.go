@@ -167,7 +167,7 @@ func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
 // 400 response if not. Returns true when the chat ID is present.
 func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand) bool {
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, errMissingChatID)
+		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return false
 	}
 	return true

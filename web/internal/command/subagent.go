@@ -12,7 +12,7 @@ import (
 
 // ACP method constants for subagent operations.
 const (
-	methodSpawn       = "session/spawn"
+	methodSpawn       = api.MethodSpawn
 	methodMessageSend = "message/send"
 	methodTerminate   = "session/terminate"
 	methodAttach      = "session/attach"
@@ -28,7 +28,7 @@ func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 	var p api.SpawnSubagentCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -80,7 +80,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 	var p api.MessageSubagentCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -118,7 +118,7 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 	}
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -136,7 +136,7 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 	}
 	if !changed {
 		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
-			d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 			return
 		}
 	}
@@ -164,7 +164,7 @@ func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 	}
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}

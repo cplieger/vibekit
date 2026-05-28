@@ -73,7 +73,7 @@ func (h *Hub) respondBridge(ctx context.Context, chatID api.ChatID, msg *api.RPC
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
 	}
-	sb := h.getBridge(chatID)
+	sb := h.coord.GetBridge(chatID)
 	if sb == nil {
 		slog.Warn("fs response dropped: no bridge", "chat_id", chatID, "method", msg.Method)
 		return

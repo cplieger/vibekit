@@ -177,7 +177,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	if err != nil {
 		api.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
-			statusError:     err.Error(),
+			statusError: err.Error(),
 			"forge":     f,
 		})
 		return
@@ -221,7 +221,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		Token:    body.Token,
 		Username: body.Username,
 	}); err != nil {
-		api.WriteJSONStatus(w, http.StatusBadRequest, map[string]string{api.JSONKeyError: err.Error()})
+		api.WriteJSONStatus(w, http.StatusBadRequest, api.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()
@@ -242,7 +242,7 @@ func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	default:
 		slog.Debug("forges: ops error", "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: err.Error()})
+			api.ErrorJSON(err.Error()))
 	}
 }
 

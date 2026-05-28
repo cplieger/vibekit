@@ -9,6 +9,7 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
+	"vibekit/internal/command"
 	"vibekit/internal/push"
 	"vibekit/internal/settings"
 )
@@ -236,8 +237,8 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	}
 
 	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason)
-	_, err := sb.bridge.Call(ctx, methodPrompt, sessionParams(sb, map[string]any{
-		"prompt": []map[string]any{{"type": api.ContentTypeText, api.ContentTypeText: prime}},
+	_, err := sb.bridge.Call(ctx, methodPrompt, command.SessionParams(sb, map[string]any{
+		"prompt": []map[string]any{api.TextBlock(prime)},
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)

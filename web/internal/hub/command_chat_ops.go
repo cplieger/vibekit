@@ -15,7 +15,7 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID) {
 	h.flushPendingForChat(ctx, chatID, api.ClearReasonChatDeleted)
 	h.perm.supervised.ClearTrust(chatID, api.ClearReasonChatDeleted)
 	h.clearPendingPermsForChat(chatID)
-	h.closeBridge(chatID)
+	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()
 	buf := h.bridge.assistantBufs.Get(chatID)

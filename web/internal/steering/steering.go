@@ -6,6 +6,7 @@ package steering
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -94,7 +95,7 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 // rather than racing. Skips the write when the rendered content is
 // byte-identical to the existing file (avoids mtime bumps from
 // frequent MCP-event triggered regenerations).
-func (g *Generator) Generate() {
+func (g *Generator) Generate(ctx context.Context) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -131,7 +132,7 @@ func (g *Generator) Generate() {
 	if forgeFn != nil {
 		writeForges(&b, forges)
 	}
-	writeWorkspace(&b, g.workDir)
+	writeWorkspace(ctx, &b, g.workDir)
 
 	b.WriteString("## Limitations\n\n")
 	b.WriteString("- Shell commands run in the container, not on the host\n")

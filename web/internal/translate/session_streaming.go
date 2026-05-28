@@ -25,7 +25,7 @@ const maxBufferBytes = 32 << 20
 // each delta to the correct bubble (reasoning details vs content).
 func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID, raw json.RawMessage, isReasoning bool) {
 	var chunk ACPChunkWire
-	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != ContentTypeText || chunk.Content.Text == "" {
+	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != api.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)

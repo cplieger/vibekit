@@ -172,6 +172,7 @@ type KeyPair struct {
 // Store holds the persisted list in memory plus the coordination
 // needed to serialise writes and notify watchers on changes.
 type Store struct {
+	ctx      context.Context
 	path     string
 	onChange func(context.Context)
 	servers  []*Server
@@ -182,9 +183,12 @@ type Store struct {
 // onChange is invoked on a fresh goroutine (without the store mutex
 // held) whenever the persisted set is mutated; nil is valid if no one
 // cares. The callback is free to call back into the store — it won't
-// deadlock on the caller's write lock.
-func New(configDir string, onChange func(context.Context)) (*Store, error) {
+// deadlock on the caller's write lock. The ctx is stored for use in
+// fire-and-forget persist paths (e.g. SetKnownTools) so writes are
+// cancellable on shutdown.
+func New(ctx context.Context, configDir string, onChange func(context.Context)) (*Store, error) {
 	s := &Store{
+		ctx:      ctx,
 		path:     filepath.Join(configDir, "mcp.json"),
 		onChange: onChange,
 		servers:  []*Server{},

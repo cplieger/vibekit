@@ -427,7 +427,7 @@ func (h *Hub) PushMCPConfig() {
 	servers := h.mcpConfig.ACPServers(ctx)
 	snapshot := h.bridge.mgr.all()
 	for _, sb := range snapshot {
-		if err := sb.bridge.Notify(ctx, methodSetConfigOption, sessionParams(sb, map[string]any{
+		if err := sb.bridge.Notify(ctx, methodSetConfigOption, command.SessionParams(sb, map[string]any{
 			"option": "mcpServers",
 			"value":  servers,
 		})); err != nil {

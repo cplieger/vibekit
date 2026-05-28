@@ -222,7 +222,7 @@ func (s *Store) SetKnownTools(name string, tools []string) {
 	for _, srv := range s.servers {
 		if srv.Name == name {
 			srv.KnownTools = tools
-			_ = s.persist(context.Background())
+			_ = s.persist(s.ctx)
 			return
 		}
 	}

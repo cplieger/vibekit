@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
 	"vibekit/internal/auth"
 	"vibekit/internal/bridge"
 	"vibekit/internal/chat"
 	"vibekit/internal/filehandler"
+	"vibekit/internal/fileutil"
 	forgesPkg "vibekit/internal/forges"
 	"vibekit/internal/git"
 	"vibekit/internal/hub"
@@ -56,10 +56,10 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
 
-	logctl.Install(cfg.ConfigDir)
+	logctl.Install(context.Background(), cfg.ConfigDir)
 
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
-	steer.Generate()
+	steer.Generate(context.Background())
 
 	lockMgr := bridge.NewLockManager(api.KiroSessionsCLIDir())
 	lockMgr.CleanupStaleSessions(context.Background())
@@ -82,7 +82,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		return bridge.New(cfg.CLIPath, cfg.WorkDir, bridge.WithLockManager(lockMgr))
 	}
 
-	mcpStore, err := mcpPkg.New(cfg.ConfigDir, nil)
+	mcpStore, err := mcpPkg.New(context.Background(), cfg.ConfigDir, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +114,8 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
-	h.SetMCPOnChange(func() { steer.Generate() })
-	h.SetPreBridgeSpawn(func() { steer.Generate() })
+	h.SetMCPOnChange(func() { steer.Generate(h.ShutdownCtx()) })
+	h.SetPreBridgeSpawn(func() { steer.Generate(h.ShutdownCtx()) })
 
 	forgesManager := forgesPkg.NewManager()
 	if refreshErr := forgesManager.Refresh(context.Background()); refreshErr != nil {

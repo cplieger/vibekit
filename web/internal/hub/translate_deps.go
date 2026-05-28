@@ -9,6 +9,7 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
+	"vibekit/internal/command"
 	"vibekit/internal/ids"
 	"vibekit/internal/permissions"
 	"vibekit/internal/translate"
@@ -36,7 +37,7 @@ func (h *Hub) BridgeNotify(ctx context.Context, chatID api.ChatID, method string
 	if sb == nil {
 		return nil
 	}
-	return sb.bridge.Notify(ctx, method, sessionParams(sb, params))
+	return sb.bridge.Notify(ctx, method, command.SessionParams(sb, params))
 }
 
 // BridgeRespond sends a response to the bridge for the given chat.

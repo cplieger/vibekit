@@ -2,6 +2,7 @@ package fileutil
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -88,7 +89,7 @@ func TestIsGitRepo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			tt.setup(t, dir)
-			got := IsGitRepo(dir)
+			got := IsGitRepo(context.Background(), dir)
 			if got != tt.want {
 				t.Errorf("IsGitRepo(%s) = %v, want %v", tt.name, got, tt.want)
 			}

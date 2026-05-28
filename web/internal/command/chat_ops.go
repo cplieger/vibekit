@@ -28,7 +28,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	var p api.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -37,11 +37,11 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		name = api.DefaultChatName
 	}
 	if len(name) > api.MaxChatNameBytes {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	if !ValidIdent(p.Agent) || !ValidIdent(p.Model) {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
@@ -119,7 +119,7 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	var p api.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	if err := sb.Respond(ctx, p.RequestID, translate.PermissionOutcomeSelected(p.OptionID), nil); err != nil {

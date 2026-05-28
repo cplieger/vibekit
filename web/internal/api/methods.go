@@ -27,10 +27,34 @@ const (
 	MethodCommandsOptions = "_kiro.dev/commands/options"
 )
 
+// Session-level ACP method names — prompt and subagent spawn.
+const (
+	MethodPrompt = "session/prompt"
+	MethodSpawn  = "session/spawn"
+)
+
 // ACP content-block type discriminator constants. The "text" value is
 // used across hub, command, and translate packages; declaring it here
 // provides a single source of truth so a protocol rename is one edit.
 const ContentTypeText = "text"
+
+// ACP content-block JSON field name constants. These are the wire-format
+// keys inside a content block object (distinct from ContentTypeText which
+// is the field VALUE). Single source of truth for hub, command, and
+// translate packages.
+const (
+	ContentKeyType = "type"
+	ContentKeyText = "text"
+)
+
+// TextBlock returns a canonical ACP text content block:
+//
+//	{"type": "text", "text": content}
+//
+// Eliminates ad-hoc map construction across hub, command, and translate.
+func TextBlock(content string) map[string]any {
+	return map[string]any{ContentKeyType: ContentTypeText, ContentKeyText: content}
+}
 
 // KeySessionID is the ACP wire key for the session identifier in
 // parameter maps. Single source of truth; hub and command packages

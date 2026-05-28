@@ -31,13 +31,13 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	var p api.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.TurnIndex < 0 {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
 	parent, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 
@@ -116,7 +116,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 	if chat.ParentChatID == "" {
@@ -159,7 +159,7 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 	if chat.ParentChatID == "" {
@@ -193,7 +193,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	}
 	var p api.SetEffortCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 

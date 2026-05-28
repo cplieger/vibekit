@@ -266,7 +266,7 @@ func TestRealMCPConfig_Contract(t *testing.T) {
 	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
 		t.Helper()
 		dir := t.TempDir()
-		s, err := mcp.New(dir, nil)
+		s, err := mcp.New(context.Background(), dir, nil)
 		if err != nil {
 			t.Fatalf("mcp.New: %v", err)
 		}

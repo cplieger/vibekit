@@ -45,23 +45,3 @@ func NewPrewarmRunner(ctx context.Context, store *Store) *PrewarmRunner {
 	r := prewarm.NewRunner(ctx, &storeAdapter{store: store})
 	return r
 }
-
-// extractNpxPackage delegates to the sub-package for backward compat with tests.
-func extractNpxPackage(s *Server) string {
-	return prewarm.ExtractNpxPackage(prewarm.ServerInfo{
-		Prewarm:   s.Prewarm,
-		Enabled:   s.Enabled,
-		Transport: string(s.Transport),
-		Command:   s.Command,
-		Args:      s.Args,
-	})
-}
-
-// npmPkgSpecRe re-exports the regex for test access.
-var npmPkgSpecRe = prewarm.NpmPkgSpecRe
-
-// tailOutput re-exports for test access.
-var tailOutput = prewarm.TailOutput
-
-// ringBuffer re-exports for test access.
-type ringBuffer = prewarm.RingBuffer

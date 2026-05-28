@@ -45,7 +45,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("filehandler: readdir failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: errReadFailed})
+			api.ErrorJSON(errReadFailed))
 		return
 	}
 	entries, err := f.ReadDir(-1)
@@ -53,7 +53,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("filehandler: readdir failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: errReadFailed})
+			api.ErrorJSON(errReadFailed))
 		return
 	}
 	files := listEntries(r.Context(), entries, resolved)

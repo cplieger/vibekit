@@ -159,7 +159,7 @@ func (rt *Router) handleArchive(w http.ResponseWriter, r *http.Request, chatID a
 	if err := rt.store.Archive(r.Context(), chatID); err != nil {
 		slog.Error("chat archive failed", "chat_id", chatID, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "archive failed"})
+			api.ErrorJSON("archive failed"))
 		return
 	}
 	api.Ok(w)
@@ -189,7 +189,7 @@ func (rt *Router) getPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 	if err != nil {
 		slog.Error("chat plan_draft: read failed", "chat_id", chatID, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "read failed"})
+			api.ErrorJSON("read failed"))
 		return
 	}
 	api.WriteJSON(w, map[string]string{"content": content})
@@ -214,7 +214,7 @@ func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 			slog.Warn("chat plan_draft: body too large",
 				"chat_id", chatID, "limit", maxPlanDraftBytes+4096, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{api.JSONKeyError: "request body too large"})
+				api.ErrorJSON("request body too large"))
 			return
 		}
 		api.BadRequest(w, "invalid json")
@@ -226,13 +226,12 @@ func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 	}
 	err := rt.store.SetPlanDraft(r.Context(), chatID, body.Content)
 	if err != nil {
-		var ce *StoreError
-		if errors.As(err, &ce) {
+		if _, ok := errors.AsType[*StoreError](err); ok {
 			writeChatErr(w, err)
 		} else {
 			slog.Error("chat plan_draft: save failed", "chat_id", chatID, "error", err)
 			api.WriteJSONStatus(w, http.StatusInternalServerError,
-				map[string]string{api.JSONKeyError: "save failed"})
+				api.ErrorJSON("save failed"))
 		}
 		return
 	}
@@ -245,7 +244,7 @@ func (rt *Router) deletePlanDraftHTTP(w http.ResponseWriter, r *http.Request, ch
 	if err := rt.store.DeletePlanDraft(r.Context(), chatID); err != nil {
 		slog.Error("chat plan_draft: delete failed", "chat_id", chatID, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "delete failed"})
+			api.ErrorJSON("delete failed"))
 		return
 	}
 	slog.Debug("chat plan_draft: delete http", "chat_id", chatID)

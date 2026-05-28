@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Message, EventKind, Crew } from "./types.js";
-import { ensureCrewSig, clearCrewSig } from "./store.js";
+import { ensureCrewSig, clearCrewSig } from "./store-signals.js";
 import { effect } from "./signals.js";
 import {
   updateCrew as updateCrewInternal,

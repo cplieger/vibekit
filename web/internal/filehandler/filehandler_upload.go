@@ -33,7 +33,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("filehandler: upload too large",
 				"limit", maxUploadSize, "error", err)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{api.JSONKeyError: "upload too large"})
+				api.ErrorJSON("upload too large"))
 		} else if errors.Is(err, context.Canceled) {
 			slog.Debug("filehandler: upload cancelled by client")
 		} else {
@@ -65,7 +65,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if err := h.root.MkdirAll(h.relPath(resolvedDir), 0o755); err != nil {
 		slog.Warn("filehandler: upload mkdir failed", "path", resolvedDir, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "upload failed"})
+			api.ErrorJSON("upload failed"))
 		return
 	}
 	formFiles := r.MultipartForm.File["files"]
@@ -82,7 +82,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("filehandler: upload write failed",
 			"dir", resolvedDir, "uploaded", len(uploaded), "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "upload failed"})
+			api.ErrorJSON("upload failed"))
 		return
 	}
 	slog.Info("filehandler: upload",

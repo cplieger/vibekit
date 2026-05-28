@@ -199,7 +199,7 @@ type ACPBridgeFactory func() ACPBridge
 
 // SteeringGenerator generates steering files for kiro-cli.
 type SteeringGenerator interface {
-	Generate()
+	Generate(ctx context.Context)
 	CustomPath() string
 }
 

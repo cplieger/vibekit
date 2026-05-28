@@ -20,7 +20,7 @@ func validIdent(s string) bool {
 // validChatID reports whether id is safe to use as a chat identifier.
 // Delegates to api.ValidChatID — the single source of truth for chat
 // ID validation. Empty strings are rejected separately via
-// errMissingChatID so the error message is more specific.
+// command.ErrMissingChatID so the error message is more specific.
 func validChatID(id api.ChatID) bool {
 	return api.ValidChatID(string(id))
 }

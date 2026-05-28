@@ -23,7 +23,7 @@ func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 		c.Messages = []api.Message{{Role: api.RoleUser, Content: "hi"}}
 		return true
 	})
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 	before := append([]string(nil), br.calls...)
 	br.mu.Unlock()
 
-	h.primeIfNeeded(context.Background(), "c1", sb)
+	h.coord.PrimeIfNeeded(context.Background(), "c1", sb)
 
 	br.mu.Lock()
 	after := append([]string(nil), br.calls...)
@@ -54,13 +54,13 @@ func TestPrimeIfNeeded_SwitchSendsPromptWithHistory(t *testing.T) {
 		}
 		return true
 	})
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
 	sb.primeReason = primeReasonSwitch
 
-	h.primeIfNeeded(context.Background(), "c1", sb)
+	h.coord.PrimeIfNeeded(context.Background(), "c1", sb)
 
 	br.mu.Lock()
 	calls := append([]string(nil), br.calls...)
@@ -77,7 +77,7 @@ func TestPrimeIfNeeded_EmptyHistoryEarlyReturn(t *testing.T) {
 	// Chat with no messages → BuildHistory returns "" → primeIfNeeded
 	// must return before inspecting primeReason.
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestPrimeIfNeeded_EmptyHistoryEarlyReturn(t *testing.T) {
 	before := len(br.calls)
 	br.mu.Unlock()
 
-	h.primeIfNeeded(context.Background(), "c1", sb)
+	h.coord.PrimeIfNeeded(context.Background(), "c1", sb)
 
 	br.mu.Lock()
 	after := len(br.calls)

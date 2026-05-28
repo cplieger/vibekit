@@ -12,14 +12,12 @@ const (
 	keyOptions  = "options"
 	keyResolved = "resolved"
 	keySessions = "sessions"
-	keyText     = "text"
-	keyType     = "type"
+	keyText     = api.ContentKeyText
+	keyType     = api.ContentKeyType
 )
 
 // keySessionID references the canonical api.KeySessionID constant.
 const keySessionID = api.KeySessionID
-
-
 
 // ellipsis is the truncation suffix for display strings (session
 // titles, prompt previews, shell command labels). Kept as a constant

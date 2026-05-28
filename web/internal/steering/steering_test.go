@@ -1,6 +1,7 @@
 package steering
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestWriteTools_Sorted(t *testing.T) {
 func TestWriteWorkspace_Empty(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	if !strings.Contains(b.String(), "Empty.") {
 		t.Error("expected 'Empty.' for empty workspace")
 	}
@@ -86,7 +87,7 @@ func TestWriteWorkspace_WithFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch"), 0o644)
 
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "go.mod") {
 		t.Error("missing go.mod in notable files")
@@ -102,7 +103,7 @@ func TestWriteWorkspace_WithGitRepo(t *testing.T) {
 	os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "myrepo") {
 		t.Error("missing git repo")
@@ -118,7 +119,7 @@ func TestWriteWorkspace_WithDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "src") {
 		t.Error("missing src directory")
@@ -253,7 +254,7 @@ func TestClassifyEntries(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644)
 
 	entries, _ := os.ReadDir(dir)
-	repos, dirs := classifyEntries(entries, dir)
+	repos, dirs := classifyEntries(context.Background(), entries, dir)
 
 	if len(repos) != 1 || repos[0] != "repo1" {
 		t.Errorf("repos = %v, want [repo1]", repos)
@@ -337,7 +338,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
 	})
 
-	g.Generate()
+	g.Generate(context.Background())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
 	out, err := os.ReadFile(steeringPath)
@@ -384,7 +385,7 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 
 	g := New(workDir, configDir)
 	// Deliberately do NOT call SetMCPSnapshot.
-	g.Generate()
+	g.Generate(context.Background())
 
 	out, _ := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
 	if strings.Contains(string(out), "Connected integrations") {
@@ -404,7 +405,7 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 
 	g := New(workDir, configDir)
 	g.SetMCPSnapshot(func() MCPSnapshot { return MCPSnapshot{} })
-	g.Generate()
+	g.Generate(context.Background())
 
 	out, _ := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
 	if strings.Contains(string(out), "Connected integrations") {
@@ -422,7 +423,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	configDir := t.TempDir()
 
 	g := New(workDir, configDir)
-	g.Generate()
+	g.Generate(context.Background())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
 	info1, err := os.Stat(steeringPath)
@@ -433,7 +434,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 
 	// Second Generate must be a no-op — content is identical,
 	// so api.SaveBytes is never called and mtime stays put.
-	g.Generate()
+	g.Generate(context.Background())
 
 	info2, err := os.Stat(steeringPath)
 	if err != nil {
@@ -569,7 +570,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2 * n)
 	for range n {
-		go func() { defer wg.Done(); g.Generate() }()
+		go func() { defer wg.Done(); g.Generate(context.Background()) }()
 		go func() {
 			defer wg.Done()
 			g.SetMCPSnapshot(func() MCPSnapshot {
@@ -745,7 +746,7 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	out := b.String()
 	checks := []string{
 		"Always-loaded steering",
@@ -773,7 +774,7 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	}
 	// Repo exists but has no .kiro/steering/.
 	var b strings.Builder
-	writeWorkspace(&b, dir)
+	writeWorkspace(context.Background(), &b, dir)
 	out := b.String()
 	if strings.Contains(out, "Per-repo .kiro protocol") {
 		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)

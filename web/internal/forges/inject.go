@@ -90,7 +90,7 @@ func InjectToken(ctx context.Context, kind Kind, host, token, username string) e
 		if err := writeTeaConfig(host, token, username); err != nil {
 			return fmt.Errorf("inject tea: %w", err)
 		}
-		return setupGitTea(host)
+		return setupGitTea(ctx, host)
 	}
 	return fmt.Errorf("forges: unhandled kind %q", kind)
 }

@@ -204,7 +204,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	out, err := s.cliRunner.Run(ctx, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: "diagnostic command failed"})
+		api.WriteJSON(w, api.ErrorJSON("diagnostic command failed"))
 		return
 	}
 	api.WriteJSON(w, map[string]string{"report": string(out)})
@@ -250,7 +250,7 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		out, err := s.cliRunner.Run(ctx, "settings", key, value)
 		if err != nil {
-			api.WriteJSON(w, map[string]string{api.JSONKeyError: strings.TrimSpace(string(out))})
+			api.WriteJSON(w, api.ErrorJSON(strings.TrimSpace(string(out))))
 			return
 		}
 		api.Ok(w)

@@ -25,10 +25,8 @@ import {
 
 // Re-export signal accessors from store-signals.ts for backward compat.
 export {
-  SignalMap,
   getStreamingSig,
   getReasoningSig,
-  getToolCallSig,
   getCrewSig,
   ensureStreamingSig,
   ensureReasoningSig,
@@ -38,7 +36,6 @@ export {
   clearReasoningSig,
   clearToolCallSig,
   clearCrewSig,
-  clearAllSignals,
 } from "./store-signals.js";
 
 // --- Reactive version counters: effects subscribe to the relevant signal ---

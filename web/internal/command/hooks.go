@@ -39,7 +39,7 @@ type hookCreatePayload struct {
 // validateHookPayload decodes + validates a CmdCreateHook payload.
 func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
-		return p, "", http.StatusBadRequest, errInvalidPayload
+		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
 	if len(p.Name) > MaxHookField || len(p.Description) > MaxHookField ||
 		len(p.EventType) > MaxHookField || len(p.ActionType) > MaxHookField ||

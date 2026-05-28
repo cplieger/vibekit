@@ -1,6 +1,7 @@
 package steering
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,15 +11,15 @@ import (
 	"vibekit/internal/fileutil"
 )
 
-func writeWorkspace(b *strings.Builder, workDir string) {
+func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	entries, err := os.ReadDir(workDir)
 	if err != nil || len(entries) == 0 {
 		b.WriteString("## Workspace\n\nEmpty.\n\n")
 		return
 	}
-	repos, dirs := classifyEntries(entries, workDir)
+	repos, dirs := classifyEntries(ctx, entries, workDir)
 	foundFiles := findNotableFiles(workDir)
-	isRoot := fileutil.IsGitRepo(workDir)
+	isRoot := fileutil.IsGitRepo(ctx, workDir)
 	b.WriteString("## Workspace\n\n")
 	if isRoot {
 		b.WriteString("The workspace root (`/workspace`) is itself a git repository.\n\n")
@@ -212,13 +213,13 @@ func kindFromHost(host string) string {
 	return ""
 }
 
-func classifyEntries(entries []os.DirEntry, workDir string) (repos, dirs []string) {
+func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string) (repos, dirs []string) {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") || !e.IsDir() {
 			continue
 		}
-		if fileutil.IsGitRepo(filepath.Join(workDir, name)) {
+		if fileutil.IsGitRepo(ctx, filepath.Join(workDir, name)) {
 			repos = append(repos, name)
 		} else {
 			dirs = append(dirs, name)

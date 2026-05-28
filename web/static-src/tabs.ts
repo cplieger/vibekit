@@ -64,6 +64,14 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   history: ICON_TAB_HISTORY,
 };
 
+/** Parse an SVG string into a DOM node via DOMParser.
+ *  Used instead of innerHTML to avoid XSS surface in the tab rendering path. */
+const svgParser = new DOMParser();
+function iconEl(svg: string): Node {
+  const doc = svgParser.parseFromString(svg, "image/svg+xml");
+  return document.importNode(doc.documentElement, true);
+}
+
 /** Default view selector for each tab kind. Callers can omit `view` from
  *  TabSpec when the standard mapping applies. */
 export const TAB_VIEWS: Record<TabKind, string> = {
@@ -213,14 +221,31 @@ function showRewindChildPrompt(
   overlay.className = "modal-overlay";
   const card = document.createElement("div");
   card.className = "modal-card";
-  card.innerHTML = `
-    <p style="margin:0 0 var(--sp-3)">This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. What would you like to do?</p>
-    <div style="display:flex;gap:var(--sp-2);justify-content:flex-end">
-      <button class="btn-secondary" data-action="keep">Keep branches</button>
-      <button class="btn-danger" data-action="discard">Discard all</button>
-      <button class="btn-ghost" data-action="cancel">Cancel</button>
-    </div>
-  `;
+
+  const p = document.createElement("p");
+  p.style.cssText = "margin:0 0 var(--sp-3)";
+  p.textContent = `This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. What would you like to do?`;
+
+  const btnRow = document.createElement("div");
+  btnRow.style.cssText = "display:flex;gap:var(--sp-2);justify-content:flex-end";
+
+  const keepBtn = document.createElement("button");
+  keepBtn.className = "btn-secondary";
+  keepBtn.dataset["action"] = "keep";
+  keepBtn.textContent = "Keep branches";
+
+  const discardBtn = document.createElement("button");
+  discardBtn.className = "btn-danger";
+  discardBtn.dataset["action"] = "discard";
+  discardBtn.textContent = "Discard all";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "btn-ghost";
+  cancelBtn.dataset["action"] = "cancel";
+  cancelBtn.textContent = "Cancel";
+
+  btnRow.append(keepBtn, discardBtn, cancelBtn);
+  card.append(p, btnRow);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
@@ -562,7 +587,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const icon = document.createElement("span");
   icon.className = "tab-icon";
-  icon.innerHTML = ICONS[tab.kind];
+  icon.replaceChildren(iconEl(ICONS[tab.kind]));
 
   const name = document.createElement("span");
   name.className = "tab-name";
@@ -570,7 +595,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const close = document.createElement("button");
   close.className = "tab-close";
-  close.innerHTML = ICON_CLOSE;
+  close.replaceChildren(iconEl(ICON_CLOSE));
   close.setAttribute("aria-label", `Close ${tab.name}`);
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();

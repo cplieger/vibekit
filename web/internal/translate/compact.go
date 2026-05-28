@@ -93,8 +93,8 @@ func (t *Translator) injectContextRecovery(ctx context.Context, chatID api.ChatI
 		"Chat: " + chat.Name + "\n" +
 		"Agent: " + chat.Agent + "\n" +
 		"Model: " + chat.Model
-	if err := t.deps.BridgeNotify(ctx, chatID, "session/prompt", map[string]any{
-		"prompt": []map[string]any{{jsonFieldType: ContentTypeText, jsonFieldText: block}},
+	if err := t.deps.BridgeNotify(ctx, chatID, api.MethodPrompt, map[string]any{
+		"prompt": []map[string]any{api.TextBlock(block)},
 		"_meta":  map[string]any{"kiro": map[string]any{"contextRecovery": true}},
 	}); err != nil {
 		slog.Debug("context recovery: notify failed", "chat_id", chatID, "error", err)

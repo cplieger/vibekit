@@ -22,7 +22,7 @@ func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.Response
 	}
 	var p api.ResolvePendingChangeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	if p.ToolCallID == "" {
@@ -62,7 +62,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 	}
 	var p api.ResolveAllPendingChangesCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	switch p.Action {
@@ -114,7 +114,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	var p api.SetSupervisedModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
@@ -136,7 +136,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 	if !changed {
 		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
-			d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 			return
 		}
 		d.RespondOK(w, cmd.RequestID)
@@ -159,7 +159,7 @@ func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.R
 	}
 	var p api.ResolvePendingChangePartialCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 	if p.ToolCallID == "" {

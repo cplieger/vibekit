@@ -1,7 +1,4 @@
-package mcp
-
-// Tests for prewarm.go: the npx package extractor that decides which
-// packages to `npm install -g` on boot and on config change.
+package prewarm
 
 import (
 	"strings"
@@ -16,101 +13,101 @@ import (
 func TestExtractNpxPackage(t *testing.T) {
 	cases := []struct {
 		name string
-		srv  *Server
+		srv  ServerInfo
 		want string
 	}{
 		{
 			name: "NotNpx",
-			srv: &Server{
-				Transport: TransportStdio, Command: "node",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "node",
 				Args: []string{"script.js"}, Prewarm: true, Enabled: true,
 			},
 			want: "",
 		},
 		{
 			name: "NotStdio",
-			srv: &Server{
-				Transport: TransportHTTP, Command: "npx",
+			srv: ServerInfo{
+				Transport: "http", Command: "npx",
 				Args: []string{"@scope/pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "",
 		},
 		{
 			name: "PrewarmOff",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-y", "@scope/pkg"}, Prewarm: false, Enabled: true,
 			},
 			want: "",
 		},
 		{
 			name: "Disabled",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-y", "@scope/pkg"}, Prewarm: true, Enabled: false,
 			},
 			want: "",
 		},
 		{
 			name: "WithMinusY",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-y", "@scope/pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "@scope/pkg",
 		},
 		{
 			name: "WithLongYes",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"--yes", "some-pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "some-pkg",
 		},
 		{
 			name: "WithoutYesFlag",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"some-pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "some-pkg",
 		},
 		{
 			name: "SkipsBlankArgs",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"", "-y", "  ", "target"}, Prewarm: true, Enabled: true,
 			},
 			want: "target",
 		},
 		{
 			name: "WhitespaceCommand",
-			srv: &Server{
-				Transport: TransportStdio, Command: "  npx  ",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "  npx  ",
 				Args: []string{"pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "pkg",
 		},
 		{
 			name: "RejectsFlagInjectionViaRegistry",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-y", "--registry=http://evil.example", "legit-pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "",
 		},
 		{
 			name: "RejectsShortFlagInjection",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-p=foo", "--quiet", "real-pkg"}, Prewarm: true, Enabled: true,
 			},
 			want: "",
 		},
 		{
 			name: "RejectsDashPrefixedAlone",
-			srv: &Server{
-				Transport: TransportStdio, Command: "npx",
+			srv: ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args: []string{"-y", "--registry=http://evil.example"}, Prewarm: true, Enabled: true,
 			},
 			want: "",
@@ -118,8 +115,8 @@ func TestExtractNpxPackage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := extractNpxPackage(tc.srv); got != tc.want {
-				t.Errorf("extractNpxPackage() = %q, want %q", got, tc.want)
+			if got := ExtractNpxPackage(tc.srv); got != tc.want {
+				t.Errorf("ExtractNpxPackage() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -127,10 +124,8 @@ func TestExtractNpxPackage(t *testing.T) {
 
 // FuzzExtractNpxPackage targets the security-sensitive npx package
 // extractor with random Args slices. The function must either return a
-// string matching the safe-package regex or "" (rejected). Any other
-// output indicates a bypass vector.
+// string matching the safe-package regex or "" (rejected).
 func FuzzExtractNpxPackage(f *testing.F) {
-	// Seed corpus from known interesting inputs.
 	f.Add("-y", "@scope/pkg")
 	f.Add("--yes", "some-pkg")
 	f.Add("-y", "--registry=http://evil.example")
@@ -142,62 +137,45 @@ func FuzzExtractNpxPackage(f *testing.F) {
 	f.Add("--yes", "@modelcontextprotocol/server-github")
 
 	f.Fuzz(func(t *testing.T, arg1, arg2 string) {
-		s := &Server{
-			Transport: TransportStdio,
+		s := ServerInfo{
+			Transport: "stdio",
 			Command:   "npx",
 			Args:      []string{arg1, arg2},
 			Prewarm:   true,
 			Enabled:   true,
 		}
-		got := extractNpxPackage(s)
+		got := ExtractNpxPackage(s)
 		if got == "" {
-			return // rejected — valid outcome
+			return
 		}
-		// If non-empty, it must match the safe-package regex.
-		if !npmPkgSpecRe.MatchString(got) {
-			t.Errorf("extractNpxPackage returned %q which does not match npmPkgSpecRe", got)
+		if !NpmPkgSpecRe.MatchString(got) {
+			t.Errorf("ExtractNpxPackage returned %q which does not match NpmPkgSpecRe", got)
 		}
 	})
 }
 
 func TestTailOutput_ShortStays(t *testing.T) {
-	if got := tailOutput([]byte("short"), 1024); got != "short" {
+	if got := TailOutput([]byte("short"), 1024); got != "short" {
 		t.Errorf("got %q, want 'short'", got)
 	}
 }
 
 func TestTailOutput_LongTruncated(t *testing.T) {
-	got := tailOutput([]byte("0123456789"), 4)
+	got := TailOutput([]byte("0123456789"), 4)
 	if got != "…6789" {
 		t.Errorf("got %q, want '…6789'", got)
 	}
 }
 
-// Regression: Q3. tailOutput previously sliced mid-UTF-8-rune when
-// the cut landed inside a multi-byte character; the invalid
-// continuation-byte prefix then went through slog/Loki as a broken
-// sequence. npm emits box-drawing / emoji in progress output, so this
-// matters in practice. The fix advances past continuation bytes so
-// the tail always starts on a rune boundary.
 func TestTailOutput_AdvancesPastUTF8ContinuationBytes(t *testing.T) {
-	// "αβγ" is 6 bytes: 0xCE 0xB1 0xCE 0xB2 0xCE 0xB3. Cut at n=5
-	// lands on the 0xB1 continuation byte; the function should skip
-	// forward to the start of the next rune.
 	in := []byte("αβγ")
-	got := tailOutput(in, 5)
+	got := TailOutput(in, 5)
 	rest := strings.TrimPrefix(got, "…")
 	if !utf8.ValidString(rest) {
 		t.Errorf("tail not valid UTF-8 after ellipsis: %q", got)
 	}
 }
 
-// SEC-u12c1-001 regression: reject npm package specs that carry
-// URL / git / file / npm-alias suffixes. These bypass the
-// leading-dash guard because they put the redirect inside the
-// @-suffix (e.g. `legit@npm:malicious`). Any such form returned from
-// extractNpxPackage would be fed to `npm install -g` and run
-// attacker-served preinstall/postinstall scripts inside the vibekit
-// container.
 func TestExtractNpxPackage_RejectsUnsafePackageSpecs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -211,22 +189,19 @@ func TestExtractNpxPackage_RejectsUnsafePackageSpecs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{
-				Transport: TransportStdio, Command: "npx",
+			s := ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args:    []string{"-y", tc.arg},
 				Enabled: true, Prewarm: true,
 			}
-			if got := extractNpxPackage(s); got != "" {
-				t.Errorf("extractNpxPackage(%q) = %q, want empty (unsafe spec must be rejected)",
+			if got := ExtractNpxPackage(s); got != "" {
+				t.Errorf("ExtractNpxPackage(%q) = %q, want empty (unsafe spec must be rejected)",
 					tc.arg, got)
 			}
 		})
 	}
 }
 
-// SEC-u12c1-001 positive control: legitimate package specs still
-// pass the tightened regex. Prevents false-positive regressions on
-// routine adds.
 func TestExtractNpxPackage_AcceptsSafePackageSpecs(t *testing.T) {
 	cases := []string{
 		"package-name",
@@ -238,23 +213,19 @@ func TestExtractNpxPackage_AcceptsSafePackageSpecs(t *testing.T) {
 	}
 	for _, arg := range cases {
 		t.Run(arg, func(t *testing.T) {
-			s := &Server{
-				Transport: TransportStdio, Command: "npx",
+			s := ServerInfo{
+				Transport: "stdio", Command: "npx",
 				Args:    []string{"-y", arg},
 				Enabled: true, Prewarm: true,
 			}
-			if got := extractNpxPackage(s); got != arg {
-				t.Errorf("extractNpxPackage(%q) = %q, want %q",
+			if got := ExtractNpxPackage(s); got != arg {
+				t.Errorf("ExtractNpxPackage(%q) = %q, want %q",
 					arg, got, arg)
 			}
 		})
 	}
 }
 
-// u12c2-f1: ringBuffer bounds memory for rogue npm postinstall
-// output. Three contracts: writes under cap accumulate, writes
-// over cap keep only the tail, and the byte count reported by
-// Write matches the input length (io.Writer contract).
 func TestRingBuffer(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -306,7 +277,7 @@ func TestRingBuffer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &ringBuffer{Cap: tc.cap}
+			r := &RingBuffer{Cap: tc.cap}
 			var lastN int
 			for _, w := range tc.writes {
 				n, err := r.Write([]byte(w))
@@ -325,15 +296,12 @@ func TestRingBuffer(t *testing.T) {
 	}
 }
 
-// TestRingBuffer_Property verifies the core invariant via property-based
-// testing: after any sequence of writes, Bytes() returns the last
-// min(totalWritten, cap) bytes of the concatenated input.
 func TestRingBuffer_Property(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		cap := rapid.IntRange(1, 256).Draw(t, "cap")
 		nWrites := rapid.IntRange(0, 20).Draw(t, "nWrites")
 
-		r := &ringBuffer{Cap: cap}
+		r := &RingBuffer{Cap: cap}
 		var concat []byte
 
 		for range nWrites {
@@ -360,10 +328,6 @@ func TestRingBuffer_Property(t *testing.T) {
 	})
 }
 
-// u12c2-f5: extractNpxPackage returns "" (silent skip, NOT a
-// panic or the npx binary name) when Args doesn't contain a
-// real package spec. Multiple inputs reach the same final return:
-// Args with only -y/--yes, empty Args, or only blank entries.
 func TestExtractNpxPackage_NoPackageAfterYes_returnsEmpty(t *testing.T) {
 	cases := []struct {
 		name string
@@ -377,12 +341,12 @@ func TestExtractNpxPackage_NoPackageAfterYes_returnsEmpty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{
-				Transport: TransportStdio, Command: "npx", Args: tc.args,
+			s := ServerInfo{
+				Transport: "stdio", Command: "npx", Args: tc.args,
 				Enabled: true, Prewarm: true,
 			}
-			if got := extractNpxPackage(s); got != "" {
-				t.Errorf("extractNpxPackage(args=%v) = %q, want empty",
+			if got := ExtractNpxPackage(s); got != "" {
+				t.Errorf("ExtractNpxPackage(args=%v) = %q, want empty",
 					tc.args, got)
 			}
 		})

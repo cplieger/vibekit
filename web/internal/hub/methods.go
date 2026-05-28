@@ -5,12 +5,12 @@ import "vibekit/internal/api"
 // ACP method name constants. Centralised so a protocol rename is a
 // single-line change with compile-time verification of all consumers.
 const (
-	methodPrompt            = "session/prompt"
+	methodPrompt            = api.MethodPrompt
 	methodCancel            = api.MethodCancel
 	methodUpdate            = "session/update"
 	methodRequestPermission = "session/request_permission"
 	methodSetConfigOption   = "session/setConfigOption"
-	methodSpawn             = "session/spawn"
+	methodSpawn             = api.MethodSpawn
 	methodTerminate         = "session/terminate"
 	methodAttach            = "session/attach"
 	methodList              = "session/list"

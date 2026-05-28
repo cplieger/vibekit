@@ -69,7 +69,7 @@ func serveJSONGet(w http.ResponseWriter, path, name, fallback string) {
 		slog.Warn("serveJSONFile: read failed",
 			"route", name, "path", path, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "read failed"})
+			api.ErrorJSON("read failed"))
 		return
 	}
 	if _, werr := w.Write(data); werr != nil {
@@ -99,7 +99,7 @@ func serveJSONPut(w http.ResponseWriter, r *http.Request, path, name string, mu 
 				"content_length", r.Header.Get("Content-Length"),
 				"error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{api.JSONKeyError: "request body too large"})
+				api.ErrorJSON("request body too large"))
 			return
 		}
 		slog.Warn("serveJSONFile: invalid json",
@@ -116,7 +116,7 @@ func serveJSONPut(w http.ResponseWriter, r *http.Request, path, name string, mu 
 		slog.Error("serveJSONFile: save failed",
 			"route", name, "path", path, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "save failed"})
+			api.ErrorJSON("save failed"))
 		return
 	}
 	slog.Info("serveJSONFile: saved",

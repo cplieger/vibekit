@@ -90,7 +90,7 @@ func writeChatErr(w http.ResponseWriter, err error) {
 			api.NotFound(w, errMsgChatNotFound)
 		case ErrKindTooLarge:
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{api.JSONKeyError: ce.Error()})
+				api.ErrorJSON(ce.Error()))
 		case ErrKindIDInUse:
 			api.Conflict(w, ce.Error())
 		default:
