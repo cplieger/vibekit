@@ -71,7 +71,7 @@ RUN mkdir -p static/vendor/xterm && \
 # running binary can report what tag it was built from. Defaults to "dev"
 # for local test builds; CI sets it to the date-sha tag.
 ARG BUILD_VERSION=dev
-RUN /tmp/package/lib/tsgo --project static-src/tsconfig.json \
+RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json \
     && /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json
 
 # Concatenate per-feature CSS splits into the served bundle.
