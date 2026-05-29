@@ -158,22 +158,22 @@ if needs_kiro_cli_install; then
     if ! install_kiro_cli; then
         printf "WARNING: kiro-cli install failed\n"
     fi
-    # Same boot also runs setup-tools.sh foreground so the rest of the
-    # /config/tools/ surface (gh, yq, anything user-added) is in sync
-    # with the freshly installed kiro-cli before vibekit starts.
-    if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes + .lsp | length > 0' "$MANIFEST" >/dev/null 2>&1; then
-        printf "Installing/updating additional tools (log: %s)\n" "$LOG"
-        bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" || \
-            printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"
-    fi
-else
-    AUTO_UPDATE=$(jq -r '.auto_update // true' "$CONFIG_DIR/config.json" 2>/dev/null || echo "true")
-    if [ "$AUTO_UPDATE" = "true" ]; then
-        printf "Tools installed, updating in background (log: %s)\n" "$LOG"
-        bash /opt/vibekit/setup-tools.sh > "$LOG" 2>&1 &
-    else
-        printf "Tools installed, auto-update disabled\n"
-    fi
+fi
+
+# Run setup-tools.sh FOREGROUND on every boot. This ensures LSPs and
+# other on-demand tools are on PATH before kiro-cli spawns its first
+# bridge (kiro-cli scans PATH for language servers at code-intelligence
+# init time — if an LSP isn't present yet, it won't be detected).
+#
+# Performance: setup-tools.sh skips already-installed tools (just a
+# file-existence check per entry). The only cost on a warm boot is the
+# version-update network probes (~1s each for entries with auto_update
+# enabled). This is acceptable vs. the alternative of LSPs being
+# silently missing on the first chat after a restart.
+if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes + .lsp | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+    printf "Running setup-tools.sh (log: %s)\n" "$LOG"
+    bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" || \
+        printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"
 fi
 
 # Launch the ACP web UI server (foreground)
