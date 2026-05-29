@@ -22,7 +22,7 @@
     },
     {
       "matchPackageNames": ["@typescript/native-preview"],
-      "followTag": "beta",
+      "followTag": "latest",
       "ignoreUnstable": false
     },
     {

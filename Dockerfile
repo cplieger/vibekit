@@ -20,13 +20,13 @@ RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 # tsgo for TypeScript compilation (native binary, no Node needed). Tracks
-# the `beta` dist-tag on @typescript/native-preview — Microsoft's curated
+# the `latest` dist-tag on @typescript/native-preview — Microsoft's curated
 # stabler channel — rather than the daily `latest` channel. The linux-x64
 # platform tarball below is published in lockstep with the metapackage at
 # the same version string, so the URL resolves identically. See
 # .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260421.2
+ARG TSGO_VERSION=7.0.0-dev.20260527.2
 RUN curl -fsSL \
     "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
     | tar -xz -C /tmp
