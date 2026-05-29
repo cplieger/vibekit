@@ -139,7 +139,7 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 				fieldRepo:   "cli/cli",
 			},
 			actionInstall: "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | " +
-				"tar -xz -C ${TOOLS} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh",
+				"tar -xz -C ${BIN} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh",
 		}, nil
 	case "glab":
 		return map[string]any{
@@ -150,7 +150,7 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 				fieldRepo:   "gitlab-org/cli",
 			},
 			actionInstall: "curl -fsSL https://gitlab.com/gitlab-org/cli/-/releases/${VERSION}/downloads/glab_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | " +
-				"tar -xz -C ${TOOLS} --strip-components=1 bin/glab",
+				"tar -xz -C ${BIN} --strip-components=1 bin/glab",
 		}, nil
 	case cliTea:
 		return map[string]any{
