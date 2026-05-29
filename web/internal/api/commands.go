@@ -65,7 +65,7 @@ type PromptCommand struct {
 	MessageID   string       `json:"message_id"` // client-generated ULID
 	Agent       string       `json:"agent,omitempty"`
 	Model       string       `json:"model,omitempty"`
-	ActiveFile  string       `json:"active_file,omitempty"` // editor/follow-along active file path
+	ActiveFile  string       `json:"active_file,omitempty"` // editor active file path
 	OpenFiles   []string     `json:"open_files,omitempty"`  // all open editor tabs
 	Attachments []Attachment `json:"attachments,omitempty"` // files attached via pill row
 }

@@ -49,10 +49,16 @@ export function initNotificationToggles(): void {
   // Listen for registration-failed events from the action layer to
   // roll back the toggle without coupling the action to this DOM element.
   const notifyAC = new AbortController();
-  document.addEventListener("notify:registration-failed", () => {
-    notifyToggle.checked = false;
-  }, { signal: notifyAC.signal });
-  registerCleanup(() => notifyAC.abort());
+  document.addEventListener(
+    "notify:registration-failed",
+    () => {
+      notifyToggle.checked = false;
+    },
+    { signal: notifyAC.signal },
+  );
+  registerCleanup(() => {
+    notifyAC.abort();
+  });
 
   const updateSub = (): void => {
     notifySubOptions.classList.toggle("hidden", !notifyToggle.checked);

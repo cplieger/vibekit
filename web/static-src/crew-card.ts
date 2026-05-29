@@ -28,7 +28,9 @@ import { reconcile } from "./reconcile.js";
 /** Fail-fast querySelector — throws if the element is missing. */
 function q(parent: Element, sel: string): Element {
   const e = parent.querySelector(sel);
-  if (e === null) throw new Error(`Missing: ${sel}`);
+  if (e === null) {
+    throw new Error(`Missing: ${sel}`);
+  }
   return e;
 }
 

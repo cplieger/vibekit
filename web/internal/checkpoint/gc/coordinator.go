@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -24,24 +25,29 @@ type BlobRefer interface {
 // Coordinator manages the blob GC goroutine lifecycle. One instance
 // per Store; constructed at Store creation time.
 type Coordinator struct {
-	cached       func() map[string]BlobRefer
-	stopCh       chan struct{}
-	configDir    string
-	blobsDir     string
-	chatsDir     string
-	eventsFile   string
-	interval     time.Duration
-	done         sync.WaitGroup
-	mu           sync.Mutex
+	cached     func() map[string]BlobRefer
+	stopCh     chan struct{}
+	configDir  string
+	blobsDir   string
+	chatsDir   string
+	eventsFile string
+	interval   time.Duration
+	done       sync.WaitGroup
+	mu         sync.Mutex
+	// lastRefCount is read/written from collectReferencedBlobs which
+	// concurrent RunOnce callers can enter in parallel. The value is
+	// only used as a map-preallocation hint — staleness across reads
+	// is harmless — but the read/write pair is still a data race
+	// without explicit synchronisation.
+	lastRefCount atomic.Int64
 	running      bool
-	lastRefCount int
 }
 
 // NewCoordinator builds a Coordinator. cached returns the current set
 // of cached managers (for the fast-path collection phase). The 5-minute
 // blob age gate (blobGCMinAge) provides the primary safety guarantee
 // against removing in-flight blobs; no per-sweep lock is needed.
-func NewCoordinator(configDir, blobsDir, chatsDir, eventsFile string, interval time.Duration, gcLock *sync.RWMutex, cached func() map[string]BlobRefer) *Coordinator {
+func NewCoordinator(configDir, blobsDir, chatsDir, eventsFile string, interval time.Duration, _ *sync.RWMutex, cached func() map[string]BlobRefer) *Coordinator {
 	return &Coordinator{
 		configDir:  configDir,
 		blobsDir:   blobsDir,
@@ -254,7 +260,7 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 		}
 		return nil, err
 	}
-	referenced := make(map[string]struct{}, max(gc.lastRefCount, 1024))
+	referenced := make(map[string]struct{}, max(int(gc.lastRefCount.Load()), 1024))
 
 	var uncached []string
 	for _, e := range entries {
@@ -284,7 +290,7 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 		}
 	}
 
-	gc.lastRefCount = len(referenced)
+	gc.lastRefCount.Store(int64(len(referenced)))
 	return referenced, nil
 }
 

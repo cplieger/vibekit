@@ -11,17 +11,17 @@ func (allowMatcher) MatchesDeny(string) bool         { return false }
 
 func BenchmarkEvaluateShellCommand(b *testing.B) {
 	cases := []struct {
+		rules   RuleMatcher
 		name    string
 		policy  ShellPolicy
 		command string
-		rules   RuleMatcher
 	}{
-		{"safe_builtin", PolicySafe, "ls -la", nil},
-		{"safe_prefix", PolicySafe, "git status --short", nil},
-		{"metachar_disqualified", PolicySafe, "echo hello; rm -rf /", nil},
-		{"write_option", PolicySafe, "curl -o output.txt http://example.com", nil},
-		{"unknown_ask", PolicySafe, "terraform apply", nil},
-		{"with_allow_rule", PolicySafe, "npm install", allowMatcher{}},
+		{name: "safe_builtin", policy: PolicySafe, command: "ls -la", rules: nil},
+		{name: "safe_prefix", policy: PolicySafe, command: "git status --short", rules: nil},
+		{name: "metachar_disqualified", policy: PolicySafe, command: "echo hello; rm -rf /", rules: nil},
+		{name: "write_option", policy: PolicySafe, command: "curl -o output.txt http://example.com", rules: nil},
+		{name: "unknown_ask", policy: PolicySafe, command: "terraform apply", rules: nil},
+		{name: "with_allow_rule", policy: PolicySafe, command: "npm install", rules: allowMatcher{}},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {

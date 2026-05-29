@@ -60,7 +60,7 @@ func RunCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, cli, args...) //nolint:gosec // G702: user-initiated git command
+	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Env = SanitizeEnv(os.Environ())
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Env, extraEnv...)

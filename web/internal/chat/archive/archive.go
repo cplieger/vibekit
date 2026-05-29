@@ -63,10 +63,10 @@ type StoreAccess interface {
 
 // Service implements the archive lifecycle operations.
 type Service struct {
-	store        StoreAccess
-	onArchive    func(chatID api.ChatID)
-	onPurge      func(chatID api.ChatID)
-	listSF       singleflight.Group
+	store     StoreAccess
+	onArchive func(chatID api.ChatID)
+	onPurge   func(chatID api.ChatID)
+	listSF    singleflight.Group
 }
 
 // New creates an archive Service backed by the given StoreAccess.
@@ -296,13 +296,13 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	}
 	m := s.store.Lock(chatID)
 	m.Lock()
-	if err := os.Remove(chatPath); err != nil { //nolint:gosec // G703: path within workspace root
+	if err := os.Remove(chatPath); err != nil {
 		m.Unlock()
 		return err
 	}
 	archiveDir := s.archivePath()
 	draftPath := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path within workspace root
+	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("chat delete_archived: remove plan-draft",
 			"chat_id", chatID, "error", err)
 	}

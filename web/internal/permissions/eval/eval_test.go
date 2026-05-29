@@ -2,13 +2,6 @@ package eval
 
 import "testing"
 
-// nilMatcher is a RuleMatcher that never matches.
-type nilMatcher struct{}
-
-func (nilMatcher) Evaluate(string) (string, bool) { return "", false }
-func (nilMatcher) MatchesAllow(string) bool        { return false }
-func (nilMatcher) MatchesDeny(string) bool         { return false }
-
 // fixedMatcher returns a fixed mode for any command.
 type fixedMatcher struct {
 	mode    string

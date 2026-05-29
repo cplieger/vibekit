@@ -22,6 +22,8 @@ import {
   setName,
   peekQueuedAttachments,
   setLastQueuedAttachments,
+  activeVersion,
+  sessionsVersion,
 } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -188,6 +190,89 @@ describe("Store idempotency (property-based)", () => {
       }),
       { numRuns: 50 },
     );
+  });
+});
+
+describe("setActive emits version bumps", () => {
+  // Regression: messages.ts paint() effect watches activeVersion. Without
+  // setActive bumping activeVersion the messages renderer doesn't re-run
+  // on chat switch and #messages keeps the previous chat's children
+  // (visible as stale messages bleeding through under the new chat's
+  // model picker until a new message arrives in the new chat).
+  it("bumps activeVersion when active changes", () => {
+    setSessions([
+      {
+        id: "a",
+        name: "A",
+        agent: "kiro_default",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        available_modes: [],
+        message_count: 0,
+        messages: [],
+        pending_changes: [],
+        prompt_queue: [],
+        supervised: false,
+        thinking: false,
+        usage: {
+          context_size: 0,
+          tokens_total: 0,
+          credits: 0,
+          turns: 0,
+          last_turn_credits: 0,
+          messages: 0,
+          tools: 0,
+          last_turn_at: 0,
+        },
+        working_label: "Thinking",
+        oldest_checkpoint_tag: "",
+        has_more: false,
+      } as unknown as Session,
+      {
+        id: "b",
+        name: "B",
+        agent: "kiro_default",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        available_modes: [],
+        message_count: 0,
+        messages: [],
+        pending_changes: [],
+        prompt_queue: [],
+        supervised: false,
+        thinking: false,
+        usage: {
+          context_size: 0,
+          tokens_total: 0,
+          credits: 0,
+          turns: 0,
+          last_turn_credits: 0,
+          messages: 0,
+          tools: 0,
+          last_turn_at: 0,
+        },
+        working_label: "Thinking",
+        oldest_checkpoint_tag: "",
+        has_more: false,
+      } as unknown as Session,
+    ]);
+    setActive("a");
+    const beforeActive = activeVersion.peek();
+    const beforeSessions = sessionsVersion.peek();
+    setActive("b");
+    expect(activeVersion.peek()).toBeGreaterThan(beforeActive);
+    expect(sessionsVersion.peek()).toBeGreaterThan(beforeSessions);
+  });
+
+  it("is a no-op when active id is unchanged", () => {
+    setSessions([]);
+    setActive("");
+    const before = { active: activeVersion.peek(), sessions: sessionsVersion.peek() };
+    setActive("");
+    expect(activeVersion.peek()).toBe(before.active);
+    expect(sessionsVersion.peek()).toBe(before.sessions);
   });
 });
 
@@ -478,10 +563,7 @@ describe("Store setLastQueuedAttachments", () => {
 // Per-message + per-tool + per-crew signal architecture
 // ---------------------------------------------------------------------------
 
-import {
-  appendChunk,
-  upsertToolCall,
-} from "./store.js";
+import { appendChunk, upsertToolCall } from "./store.js";
 import {
   ensureStreamingSig,
   getStreamingSig,

@@ -419,7 +419,6 @@ function initCompactionSettings(): void {
       }
       dispatchKiroSetting(s.key, value, input, previousValue);
     });
-    });
   }
 }
 

@@ -18,7 +18,6 @@ import {
   ICON_TAB_GIT,
   ICON_TAB_FILES,
   ICON_TAB_EDITOR,
-  ICON_TAB_FOLLOW,
   ICON_TAB_HISTORY,
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
@@ -41,7 +40,6 @@ export const TAB_VIEWS = {
   git: "#git-view",
   files: "#files-view",
   editor: "#editor-view",
-  follow: "#follow-view",
   history: "#history-view",
 } as const;
 
@@ -76,7 +74,6 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   git: ICON_TAB_GIT,
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
-  follow: ICON_TAB_FOLLOW,
   history: ICON_TAB_HISTORY,
 };
 

@@ -7,7 +7,6 @@
 //   /git                          git panel
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
-//   /follow                       follow-along viewer (agent file operations)
 //   /history                      archived chats (full-page view)
 //   /settings                     Settings (General tab)
 //   /settings/tools               Settings → Tools
@@ -42,9 +41,6 @@ interface RouteFile {
   path: string;
   line?: number;
 }
-interface RouteFollow {
-  kind: "follow";
-}
 interface RouteHistory {
   kind: "history";
 }
@@ -53,14 +49,7 @@ interface RouteSettings {
   tab: SettingsTab;
 }
 
-export type Route =
-  | RouteChat
-  | RouteGit
-  | RouteFiles
-  | RouteFile
-  | RouteFollow
-  | RouteHistory
-  | RouteSettings;
+export type Route = RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteSettings;
 
 // --- Parse current URL into a Route ---
 
@@ -87,9 +76,6 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "history":
       return { kind: "history" };
-
-    case "follow":
-      return { kind: "follow" };
 
     case "settings":
       return { kind: "settings", tab: parseSettingsTab(segments[1]) };
@@ -164,8 +150,6 @@ export function buildPath(route: Route): string {
       return "/git";
     case "history":
       return "/history";
-    case "follow":
-      return "/follow";
     case "files":
       return route.path === "." || route.path === ""
         ? "/files"

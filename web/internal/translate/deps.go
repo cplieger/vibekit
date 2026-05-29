@@ -49,10 +49,10 @@ type MCPRecorder interface {
 // It owns the crew cache and delegates Hub access through Deps.
 type Translator struct {
 	deps      Deps
-	configDir string
+	crewSF    singleflight.Group
 	newMsgID  func() string
 	crewCache *crewCache
-	crewSF    singleflight.Group
+	configDir string
 }
 
 // New constructs a Translator with the given Hub dependency surface.

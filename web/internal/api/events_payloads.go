@@ -61,10 +61,16 @@ const PermissionKindAllowOnce = "allow_once"
 // streaming deltas). IsReasoning distinguishes reasoning deltas from
 // regular content deltas — both flow through the same SSE event but
 // land on different fields client-side (Message.Reasoning vs Content).
+// BlockIndex addresses the chronological content block this delta
+// belongs to (Anthropic's content_block_delta.index): consecutive text
+// chunks share an index; a tool_call between text segments bumps the
+// next text chunk to a new index. Clients use this to accumulate
+// deltas into the right block in Message.Blocks.
 type MessageChunkPayload struct {
 	MessageID   string `json:"message_id"`
 	Delta       string `json:"delta"`
 	IsReasoning bool   `json:"is_reasoning,omitempty"`
+	BlockIndex  int    `json:"block_index"`
 }
 
 // CheckpointRestoredPayload is the payload for type="checkpoint_restored".
@@ -119,10 +125,14 @@ const (
 	RPCCodeBridgeExited = -32000
 )
 
-// ToolCallPayload is the payload for type="tool_call".
+// ToolCallPayload is the payload for type="tool_call". BlockIndex is
+// the position of the tool_use block in the assistant message's
+// chronological Blocks array — the client uses it to insert the tool
+// card at the right spot relative to surrounding text blocks.
 type ToolCallPayload struct {
-	MessageID string   `json:"message_id"`
-	ToolCall  ToolCall `json:"tool_call"`
+	MessageID  string   `json:"message_id"`
+	ToolCall   ToolCall `json:"tool_call"`
+	BlockIndex int      `json:"block_index"`
 }
 
 // ToolCallUpdatePayload is the payload for type="tool_call_update".

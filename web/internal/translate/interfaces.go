@@ -18,7 +18,7 @@ import (
 )
 
 // Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
-var _ ChatStoreDeps = (Deps)(nil)
+var _ ChatStoreDeps = Deps(nil)
 
 // StreamingAccess provides the methods needed by session_streaming.go
 // for content buffering, partial file recovery, and line tracking.

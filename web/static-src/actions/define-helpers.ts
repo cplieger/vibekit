@@ -3,7 +3,7 @@
 // without instantiating the full action framework.
 // ---------------------------------------------------------------------------
 
-import type { ActionErrorLike, ToastSpec } from "./types.js";
+import type { ToastSpec } from "./types.js";
 
 /** Invoke a callback safely — errors are caught and logged without
  *  disrupting the dispatch lifecycle. Eliminates repetitive try/catch

@@ -69,7 +69,6 @@ import {
   installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { initFollowAlong } from "./follow.js";
 import { initAutoApprove } from "./auto-approve.js";
 import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
@@ -456,7 +455,6 @@ function setupInput(): void {
   // The model switcher owns its button click, popover, queue, and
   // outside-click dismissal. See model-switcher.ts.
   initModelSwitcher();
-  initFollowAlong();
   initAutoApprove();
   initSupervisedPill();
 
@@ -523,15 +521,6 @@ function applyRoute(route: Route): void {
       void import("./history.js")
         .then(({ showHistoryView }) => {
           showHistoryView();
-        })
-        .catch(() => {
-          /* noop */
-        });
-      break;
-    case "follow":
-      void import("./follow.js")
-        .then(({ showFollowView }) => {
-          showFollowView();
         })
         .catch(() => {
           /* noop */

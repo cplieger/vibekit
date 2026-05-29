@@ -93,7 +93,6 @@ type ACPSessionUpdateBase struct {
 // JSON field name constants — the wire protocol uses these strings
 // in many places; constants keep them in one place and silence
 // goconst warnings.
-const jsonFieldContent = "content"
 
 // ContentTypeContent is the ACP content-block type discriminator value "content".
 // Distinct from jsonFieldContent which is the JSON field *name* "content".

@@ -33,10 +33,9 @@ func FuzzStoreLifecycle(f *testing.F) {
 					delete(active, chatID)
 				}
 			case 2: // Get
-				buf := store.Get(chatID)
-				if active[chatID] && buf == nil {
-					// May have been taken by a prior op in this iteration
-				}
+				// May return nil if a prior Take in this iteration removed
+				// the chat — that's expected; we just exercise the path.
+				_ = store.Get(chatID)
 			case 3: // Delete
 				store.Delete(chatID)
 				delete(active, chatID)

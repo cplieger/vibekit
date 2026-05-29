@@ -16,23 +16,11 @@ import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_CLEAN, ICON_FILTER } from "./icons.
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
-import {
-  stage,
-  discard,
-  pull,
-  push,
-  stash,
-  stashPop,
-  unstage,
-} from "./actions/git-changes.js";
+import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { escAttr as escapeHTML } from "./strings.js";
-import {
-  renderRecentCommits,
-  renderCommitArea,
-  type CommitDeps,
-} from "./git-changes-commit.js";
+import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -75,7 +63,9 @@ const diffAbortCtrl = new AbortController();
 registerCleanup(() => {
   refreshAbort?.abort();
 });
-registerCleanup(() => { diffAbortCtrl.abort(); });
+registerCleanup(() => {
+  diffAbortCtrl.abort();
+});
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -126,15 +116,19 @@ export function initChangesTab(): void {
   // Scoped to the mount container so the listener is tied to the tab's
   // DOM lifetime. focusout bubbles, so it reaches the container.
   const changesMount = document.getElementById("git-changes-mount");
-  changesMount?.addEventListener("focusout", (e) => {
-    if (
-      paintDeferred &&
-      e.target instanceof HTMLTextAreaElement &&
-      e.target.classList.contains("git-commit-input")
-    ) {
-      paint();
-    }
-  }, { passive: true });
+  changesMount?.addEventListener(
+    "focusout",
+    (e) => {
+      if (
+        paintDeferred &&
+        e.target instanceof HTMLTextAreaElement &&
+        e.target.classList.contains("git-commit-input")
+      ) {
+        paint();
+      }
+    },
+    { passive: true },
+  );
 
   const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
   if (refreshBtn !== null) {
@@ -262,7 +256,11 @@ function paintInner(): void {
     const excess = expandedDiffPaths.size - 200;
     const iter = expandedDiffPaths.values();
     for (let i = 0; i < excess; i++) {
-      expandedDiffPaths.delete(iter.next().value!);
+      const next = iter.next();
+      if (next.done === true) {
+        break;
+      }
+      expandedDiffPaths.delete(next.value);
     }
   }
 
@@ -346,8 +344,6 @@ function paintInner(): void {
 }
 
 // --- Empty-state markup helpers ---
-
-
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -868,7 +864,3 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
   hint.appendChild(btn);
   return hint;
 }
-
-
-
-

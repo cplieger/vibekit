@@ -31,11 +31,13 @@ const (
 
 // kindMetaEntry holds the per-kind metadata used by the lookup methods.
 type kindMetaEntry struct {
-	CLI, DefaultHost, Title string
-	NewProvider             func(Kind, string) ForgeOps
-	Inject                  func(ctx context.Context, host, token, username string) error
-	Remove                  func(host string) error
-	SetupGit                func(ctx context.Context, host string) error
+	NewProvider func(Kind, string) ForgeOps
+	Inject      func(ctx context.Context, host, token, username string) error
+	Remove      func(host string) error
+	SetupGit    func(ctx context.Context, host string) error
+	CLI         string
+	DefaultHost string
+	Title       string
 }
 
 // kindMeta is the single source of truth for forge kind properties.
@@ -47,30 +49,38 @@ func init() {
 		KindGitHub: {
 			CLI: "gh", DefaultHost: "github.com", Title: "GitHub",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitHub(host) },
-			Inject:      func(_ context.Context, host, token, username string) error { return writeGHHosts(host, token, username) },
-			Remove:      removeGHHost,
-			SetupGit:    setupGitGH,
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeGHHosts(host, token, username)
+			},
+			Remove:   removeGHHost,
+			SetupGit: setupGitGH,
 		},
 		KindGitLab: {
 			CLI: "glab", DefaultHost: "gitlab.com", Title: "GitLab",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitLab(host) },
-			Inject:      func(_ context.Context, host, token, username string) error { return writeGLabConfig(host, token, username) },
-			Remove:      removeGLabHost,
-			SetupGit:    setupGitGLab,
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeGLabConfig(host, token, username)
+			},
+			Remove:   removeGLabHost,
+			SetupGit: setupGitGLab,
 		},
 		KindCodeberg: {
-			CLI: "tea", DefaultHost: "codeberg.org", Title: "Codeberg",
+			CLI: cliTea, DefaultHost: "codeberg.org", Title: "Codeberg",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
-			Inject:      func(_ context.Context, host, token, username string) error { return writeTeaConfig(host, token, username) },
-			Remove:      removeTeaHost,
-			SetupGit:    setupGitTea,
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeTeaConfig(host, token, username)
+			},
+			Remove:   removeTeaHost,
+			SetupGit: setupGitTea,
 		},
 		KindGitea: {
 			CLI: "tea", DefaultHost: "", Title: "Gitea",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
-			Inject:      func(_ context.Context, host, token, username string) error { return writeTeaConfig(host, token, username) },
-			Remove:      removeTeaHost,
-			SetupGit:    setupGitTea,
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeTeaConfig(host, token, username)
+			},
+			Remove:   removeTeaHost,
+			SetupGit: setupGitTea,
 		},
 	}
 }
@@ -292,6 +302,9 @@ const CmdTimeout = 30 * time.Second
 
 // ListTimeout is for paginated listings that may take longer.
 const ListTimeout = 60 * time.Second
+
+// cliTea is the gitea/forgejo CLI binary name.
+const cliTea = "tea"
 
 // ErrNotInstalled signals the backing CLI is not on PATH.
 var ErrNotInstalled = errors.New("forges: CLI not installed")

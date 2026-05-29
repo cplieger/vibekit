@@ -26,11 +26,11 @@ import (
 
 // ServerInfo is the narrow view of an MCP server that prewarm needs.
 type ServerInfo struct {
-	Prewarm   bool
-	Enabled   bool
 	Transport string
 	Command   string
 	Args      []string
+	Prewarm   bool
+	Enabled   bool
 }
 
 // ServerLister provides the list of enabled servers for prewarm evaluation.

@@ -26,7 +26,8 @@ type chatEntry struct {
 // sfDo is a typed wrapper around singleflight.Group.Do.
 func sfDo[T any](sf *singleflight.Group, key string, fn func() T) T {
 	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
-	return v.(T)
+	t, _ := v.(T)
+	return t
 }
 
 // boundedParallel dispatches fn over items with up to maxWorkers concurrent
@@ -101,7 +102,7 @@ func readHeadersParallel(
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes size cap.
 func readCappedFile(path, label string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // G304,G703: path built from validated chat ID
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}

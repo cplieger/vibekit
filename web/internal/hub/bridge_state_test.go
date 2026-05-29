@@ -7,12 +7,12 @@ import (
 
 func TestBridgeState_Transitions(t *testing.T) {
 	cases := []struct {
-		state bridgeState
 		want  string
+		state bridgeState
 	}{
-		{bridgeIdle, "idle"},
-		{bridgeStarting, "starting"},
-		{bridgePrompting, "prompting"},
+		{want: "idle", state: bridgeIdle},
+		{want: "starting", state: bridgeStarting},
+		{want: "prompting", state: bridgePrompting},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {

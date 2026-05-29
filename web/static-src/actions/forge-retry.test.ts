@@ -6,7 +6,9 @@
 // - connectPAT: retryable + retry config, auto-retries, idempotency key reused
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 import * as toast from "../toast.js";
 import { _resetForTest as resetDefine, IDEMPOTENCY_HEADER } from "./define.js";

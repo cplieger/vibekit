@@ -47,6 +47,13 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
   // Background fan-out for revalidation; partial failure is expected.
   "forge-auth.ts", // await apiPost in revalidateInBackground (probe per forge)
 
+  // OAuth poll loop — runs inside a polling timer that surfaces its own
+  // status/error UI; not user-initiated mutations through actions.
+  "forge-auth-oauth.ts",
+
+  // Modal dialogs surface errors inline rather than via toast.
+  "modals.ts",
+
   // Inline dialog mutations: error surfaces in the dialog status line,
   // not via toast. Intentionally excluded from the action framework.
   "git-prs-tab.ts", // await apiPost for PR creation + description generation (inline dialog)

@@ -16,7 +16,7 @@ func TestSaveBytes_RapidRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		data := rapid.SliceOf(rapid.Byte()).Draw(t, "data")
 		// Use a restricted set of valid file permissions.
-		perm := os.FileMode(rapid.SampledFrom([]os.FileMode{0o600, 0o644, 0o755}).Draw(t, "perm"))
+		perm := rapid.SampledFrom([]os.FileMode{0o600, 0o644, 0o755}).Draw(t, "perm")
 
 		counter++
 		path := filepath.Join(dir, fmt.Sprintf("testfile-%d", counter))

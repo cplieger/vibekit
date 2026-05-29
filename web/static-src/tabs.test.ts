@@ -11,8 +11,12 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_EDITOR: "",
-  ICON_TAB_FOLLOW: "",
   ICON_TAB_HISTORY: "",
+  ICON_SEND: "",
+  ICON_SPINNER: "",
+  ICON_HOURGLASS: "",
+  ICON_ALERT: "",
+  iconEl: () => document.createElement("span"),
 }));
 vi.mock("./ui-state.js", () => ({
   save: vi.fn(),

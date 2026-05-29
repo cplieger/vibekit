@@ -20,7 +20,7 @@ const (
 // request should be auto-approved based on the chat's
 // AutoApproveCrew flag. Returns DecisionAllow if the flag is set
 // and an allow_once option exists; DecisionNone otherwise.
-func AutoDecideCrew(autoApproveCrew bool, hasAllowOnce bool) AutoDecision {
+func AutoDecideCrew(autoApproveCrew, hasAllowOnce bool) AutoDecision {
 	if !autoApproveCrew {
 		return DecisionNone
 	}

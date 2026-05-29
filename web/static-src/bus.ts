@@ -17,7 +17,8 @@ import type {
   ChatHeader,
   Message,
   MessageChunkPayload,
-  ToolCall,
+  ToolCallPayload,
+  ToolCallUpdatePayload,
   TurnEndedPayload,
   PermissionNeeded,
   ErrorPayload,
@@ -56,8 +57,8 @@ export interface SSEPayloads {
   readonly message_created: Message;
   readonly message_updated: Message;
   readonly message_chunk: MessageChunkPayload;
-  readonly tool_call: { readonly message_id: string; readonly tool_call: ToolCall };
-  readonly tool_call_update: { readonly message_id: string; readonly tool_call: ToolCall };
+  readonly tool_call: ToolCallPayload;
+  readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly error: ErrorPayload;
@@ -75,7 +76,10 @@ export interface SSEPayloads {
   readonly mode_changed: { readonly mode_id: string };
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
-  readonly subagent_activity: { readonly sub_session_id: string; readonly event: SubagentActivityEvent | null };
+  readonly subagent_activity: {
+    readonly sub_session_id: string;
+    readonly event: SubagentActivityEvent | null;
+  };
   /** Reserved for future crew-card auto-refresh; currently unused. */
   readonly session_list_updated: { readonly sessions: unknown[] };
   readonly steering_loaded: { readonly documents: string[] };

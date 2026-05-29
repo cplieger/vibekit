@@ -240,7 +240,7 @@ func EvaluateSafeCommand(command string, rules RuleMatcher) ShellDecision {
 
 // evaluateSafeCommandWithRule is the inner safe-command evaluator that
 // uses a pre-computed rule result to avoid rescanning.
-func evaluateSafeCommandWithRule(command string, ruleMode string, ruleMatched bool) ShellDecision {
+func evaluateSafeCommandWithRule(command, ruleMode string, ruleMatched bool) ShellDecision {
 	for _, c := range safeCommandChecks {
 		if !c.check(command) {
 			continue

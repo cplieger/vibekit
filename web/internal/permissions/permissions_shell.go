@@ -42,7 +42,7 @@ func EvaluateShellCommand(ctx context.Context, configDir, command string, rules 
 	if rules != nil {
 		matcher = rules
 	}
-	decision := eval.EvaluateShellCommand(eval.ShellPolicy(policy), command, matcher)
+	decision := eval.EvaluateShellCommand(policy, command, matcher)
 	reason := shellEvalReason(policy, decision, ruleMode, ruleMatched)
 	slog.Debug("permissions: shell policy decision",
 		"command", command, "policy", policy, "decision", decision, "reason", reason)

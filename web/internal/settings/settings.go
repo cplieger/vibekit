@@ -40,11 +40,11 @@ const Filename = filename
 type cache struct {
 	mtime     time.Time
 	sfGroup   singleflight.Group
+	parsed    map[string]json.RawMessage
 	configDir string
 	data      []byte
-	parsed    map[string]json.RawMessage // cached parsed map, invalidated on gen change
-	parsedGen uint64                     // gen at which parsed was computed
-	gen       uint64                     // monotonic counter, incremented on every successful load
+	parsedGen uint64
+	gen       uint64
 	size      int64
 	mu        sync.Mutex
 }

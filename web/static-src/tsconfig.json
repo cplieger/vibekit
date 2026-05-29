@@ -29,8 +29,11 @@
     "*.ts",
     "*.d.ts",
     "handlers/*.ts",
+    "handlers/__test-helpers__/*.ts",
     "wire/*.ts",
     "actions/*.ts",
+    "actions/__test-helpers__/*.ts",
+    "__test-helpers__/*.ts",
     "lib/**/*.ts",
     "vendor-types/*.d.ts"
   ],

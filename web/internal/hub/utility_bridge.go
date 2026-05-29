@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -29,19 +30,16 @@ import (
 // The bridge is recycled after maxUtilityPrompts to prevent context
 // accumulation from bleeding between unrelated tasks.
 type utilityBridge struct {
+	lastActiveAt  time.Time
 	bridge        api.ACPBridge
+	shutdownCtx   context.Context
 	bridgeFactory api.ACPBridgeFactory
 	hubModels     func() []api.SessionModel
-	shutdownCtx   context.Context
-	lastActiveAt  time.Time
-	mu            sync.Mutex
+	responseCh    chan utilityChunkPayload
+	forwardDone   chan struct{}
 	promptCount   int
+	mu            sync.Mutex
 	started       bool
-	// responseCh receives forwarded agent_chunk notifications from
-	// forwardUtility. Closed when the bridge stops or is recycled.
-	responseCh chan utilityChunkPayload
-	// forwardDone is closed when forwardUtility exits.
-	forwardDone chan struct{}
 }
 
 const maxUtilityPrompts = 20
@@ -80,7 +78,7 @@ func (ub *utilityBridge) reset() {
 
 // newUtilityBridge constructs a utilityBridge with the initialization
 // invariants explicit: started=false, promptCount=0, lastActiveAt=zero.
-func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, shutdownCtx context.Context) *utilityBridge {
+func newUtilityBridge(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel) *utilityBridge {
 	return &utilityBridge{
 		bridgeFactory: factory,
 		hubModels:     hubModels,
@@ -129,9 +127,7 @@ func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (stri
 // ACPBridge interface (which doesn't satisfy command.Bridge).
 func (ub *utilityBridge) sessionParams(extra map[string]any) map[string]any {
 	m := map[string]any{api.KeySessionID: ub.bridge.SessionID()}
-	for k, v := range extra {
-		m[k] = v
-	}
+	maps.Copy(m, extra)
 	return m
 }
 
@@ -290,5 +286,3 @@ func (h *Hub) stopUtilityBridge() {
 }
 
 // --- Model selection (inlined from internal/models) ---
-
-

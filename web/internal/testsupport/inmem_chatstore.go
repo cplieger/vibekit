@@ -68,7 +68,8 @@ func (s *InMemoryChatStore) BuildHistory(_ context.Context, id api.ChatID) strin
 		return ""
 	}
 	var b strings.Builder
-	for _, m := range c.Messages {
+	for i := range c.Messages {
+		m := &c.Messages[i]
 		b.WriteString(string(m.Role))
 		b.WriteString(": ")
 		b.WriteString(m.Content)

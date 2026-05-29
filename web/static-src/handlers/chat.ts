@@ -7,15 +7,30 @@ import { onSSE } from "../bus.js";
 import { upsertHeader, removeChat } from "../store.js";
 import { closeTab, hasTab } from "../tabs.js";
 
+// Defensive `=== undefined` guards: the wire decoder marks payloads
+// non-nullable but the test suite (and a malformed frame at runtime)
+// can hand us undefined. See handlers/messages.ts for the full
+// rationale.
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+
 onSSE("chat_created", (_chatID, header) => {
+  if (header === undefined) {
+    return;
+  }
   upsertHeader(header);
 });
 
 onSSE("chat_updated", (_chatID, header) => {
+  if (header === undefined) {
+    return;
+  }
   upsertHeader(header);
 });
 
 onSSE("chat_deleted", (_chatID, p) => {
+  if (p === undefined || typeof p.id !== "string" || p.id === "") {
+    return;
+  }
   // Close any open tab for this chat so a remote delete/archive from
   // another device doesn't leave an orphan tab that activates an
   // undefined session. On the originating device the tab was already

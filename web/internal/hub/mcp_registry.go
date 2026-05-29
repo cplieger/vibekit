@@ -44,15 +44,6 @@ const (
 	mcpStateFailed    mcpServerState = "failed"
 )
 
-// mcpServerStateValid reports whether s is one of the known MCP server states.
-func mcpServerStateValid(s mcpServerState) bool {
-	switch s {
-	case mcpStateIdle, mcpStateConnected, mcpStateOAuth, mcpStateFailed:
-		return true
-	}
-	return false
-}
-
 // mcpServerRuntime is the registry's per-server record.
 type mcpServerRuntime struct {
 	Name     string
@@ -252,12 +243,7 @@ func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	snap := r.Snapshot()
 	out := make([]statusServer, len(snap))
 	for i, s := range snap {
-		out[i] = statusServer{
-			Name:     s.Name,
-			State:    api.MCPServerState(s.State),
-			OAuthURL: s.OAuthURL,
-			Error:    s.Error,
-		}
+		out[i] = statusServer(s)
 	}
 	api.WriteJSON(w, mcpStatusResponse{Servers: out})
 }

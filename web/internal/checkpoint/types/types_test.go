@@ -6,22 +6,22 @@ func TestParseTag(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		wantOK  bool
 		wantTag Tag
+		wantOK  bool
 	}{
-		{"single digit", "1", true, "1"},
-		{"multi digit", "10", true, "10"},
-		{"with tool index", "1.0", true, "1.0"},
-		{"large numbers", "10.5", true, "10.5"},
-		{"empty", "", false, ""},
-		{"letters", "abc", false, ""},
-		{"triple dot", "1.2.3", false, ""},
-		{"negative", "-1", false, ""},
-		{"trailing dot", "1.", false, ""},
-		{"leading dot", ".1", false, ""},
-		{"spaces", " 1", false, ""},
-		{"zero", "0", true, "0"},
-		{"zero.zero", "0.0", true, "0.0"},
+		{name: "single digit", input: "1", wantTag: "1", wantOK: true},
+		{name: "multi digit", input: "10", wantTag: "10", wantOK: true},
+		{name: "with tool index", input: "1.0", wantTag: "1.0", wantOK: true},
+		{name: "large numbers", input: "10.5", wantTag: "10.5", wantOK: true},
+		{name: "empty", input: "", wantTag: "", wantOK: false},
+		{name: "letters", input: "abc", wantTag: "", wantOK: false},
+		{name: "triple dot", input: "1.2.3", wantTag: "", wantOK: false},
+		{name: "negative", input: "-1", wantTag: "", wantOK: false},
+		{name: "trailing dot", input: "1.", wantTag: "", wantOK: false},
+		{name: "leading dot", input: ".1", wantTag: "", wantOK: false},
+		{name: "spaces", input: " 1", wantTag: "", wantOK: false},
+		{name: "zero", input: "0", wantTag: "0", wantOK: true},
+		{name: "zero.zero", input: "0.0", wantTag: "0.0", wantOK: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

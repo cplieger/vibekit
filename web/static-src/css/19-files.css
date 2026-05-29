@@ -161,7 +161,7 @@
   margin-block-start: auto;
 }
 
-/* Attach and follow-along are now pills inside .prompt-pills */
+/* Attach is now a pill inside .prompt-pills */
 
 .fb-row.fb-drop-target {
   background: color-mix(in srgb, var(--c-accent) 15%, transparent);

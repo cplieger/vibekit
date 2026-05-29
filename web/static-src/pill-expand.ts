@@ -6,7 +6,13 @@
 // ---------------------------------------------------------------------------
 
 const activePills = new Set<HTMLElement>();
-const pillContentMap = new WeakMap<HTMLElement, { contentEl: HTMLElement; opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal } }>();
+const pillContentMap = new WeakMap<
+  HTMLElement,
+  {
+    contentEl: HTMLElement;
+    opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal };
+  }
+>();
 
 // Single delegated document listeners for all pills.
 document.addEventListener("click", (e: MouseEvent) => {
@@ -44,7 +50,7 @@ export function makeExpandable(
   opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal },
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
-  pillContentMap.set(pill, { contentEl, opts });
+  pillContentMap.set(pill, opts !== undefined ? { contentEl, opts } : { contentEl });
 
   pill.addEventListener(
     "click",

@@ -20,9 +20,9 @@ const writeThrottleInterval = 500 * time.Millisecond
 // partial file. It is only obtainable via OpenPartial, making it
 // impossible to call Write on an idle or disabled writer at compile time.
 type WritingPartial struct {
+	lastWrite time.Time
 	file      *os.File
 	disabled  bool
-	lastWrite time.Time
 }
 
 // Write rewrites the partial file with the given snapshot data.
@@ -111,7 +111,12 @@ type PartialSnapshot struct {
 	Content   string         `json:"content"`
 	Reasoning string         `json:"reasoning,omitempty"`
 	ToolCalls []api.ToolCall `json:"tool_calls,omitempty"`
-	Ts        int64          `json:"ts"`
+	// Blocks mirrors Buffer.Blocks so a crash mid-turn preserves the
+	// chronological order. Without this, recovery would reconstruct
+	// the message from Content+ToolCalls only and fall back to the
+	// legacy "all text, then all tools" rendering.
+	Blocks []api.Block `json:"blocks,omitempty"`
+	Ts     int64       `json:"ts"`
 }
 
 // PartialPath returns the path for a chat's partial recovery file.

@@ -7,18 +7,14 @@
 // User-initiated mutations bump version synchronously for instant feedback.
 // ---------------------------------------------------------------------------
 
-import type {
-  Session,
-  ChatHeader,
-  Message,
-  Usage,
-  ToolCall,
-  PendingChange,
-} from "./types.js";
+import type { Session, ChatHeader, Message, Usage, ToolCall, PendingChange } from "./types.js";
 import { signal, batch } from "./lib/reactive/index.js";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
+  blockTextSigs,
+  blockThinkingSigs,
+  blockKey,
   toolCallSigs,
   crewSigs,
 } from "./store-signals.js";
@@ -97,6 +93,15 @@ export function setActive(id: string): void {
   }
   _activeId = id;
   emitSessions();
+  // Effects that read getActive() / depend on the active session
+  // (messages renderer, follow pill, auto-approve, supervised pill,
+  // chat banners) subscribe to activeVersion. Without bumping it
+  // here the messages effect doesn't re-run on chat switch and
+  // #messages keeps the previous chat's DOM children — visible as
+  // stale messages bleeding through under the new chat's model
+  // picker until something else (e.g. an arriving message) bumps
+  // messagesVersion.
+  emitActive();
 }
 
 export function isThinking(id: string): boolean {
@@ -500,6 +505,7 @@ export function appendChunk(
   messageID: string,
   delta: string,
   isReasoning: boolean,
+  blockIndex: number,
 ): void {
   const s = get(chatID);
   if (s === undefined) {
@@ -510,7 +516,7 @@ export function appendChunk(
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
   let isNew = false;
   if (msg === undefined) {
-    msg = { id: messageID, role: "assistant", ts: Date.now(), content: "" };
+    msg = { id: messageID, role: "assistant", ts: Date.now(), content: "", blocks: [] };
     const newIdx = s.messages.length;
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
@@ -522,29 +528,71 @@ export function appendChunk(
   } else {
     msg.content = (msg.content ?? "") + delta;
   }
+  // Mirror the delta into the chronological blocks array using the
+  // server-provided block_index. The server guarantees consecutive
+  // chunks for the same kind share an index; a tool_call between
+  // text segments bumps the next text chunk to a new index. So we
+  // either extend an existing block at this index or create one.
+  msg.blocks ??= [];
+  const blockKind = isReasoning ? "thinking" : "text";
+  if (msg.blocks[blockIndex] === undefined) {
+    // pad any gaps (shouldn't happen, but defends against out-of-order
+    // events). Empty placeholder blocks of the right kind.
+    while (msg.blocks.length < blockIndex) {
+      msg.blocks.push({ type: blockKind });
+    }
+    msg.blocks.push({ type: blockKind, ...(isReasoning ? { thinking: delta } : { text: delta }) });
+  } else {
+    const existing = msg.blocks[blockIndex];
+    if (isReasoning) {
+      existing.thinking = (existing.thinking ?? "") + delta;
+    } else {
+      existing.text = (existing.text ?? "") + delta;
+    }
+  }
 
   if (isNew) {
     scheduleMessages();
     return;
   }
+  // Fire the per-block signal (fine-grained — only the block at
+  // blockIndex re-renders) before the legacy per-message signal
+  // (back-compat for any code path that still subscribes by message
+  // id only). When the renderer mounted the block via the
+  // chronological path, the per-block signal exists and its effect
+  // appends the delta directly to that block's bubble.
+  const blockK = blockKey(messageID, blockIndex);
+  const blockMap = isReasoning ? blockThinkingSigs : blockTextSigs;
+  const blockSig = blockMap.get(blockK);
+  if (blockSig !== undefined) {
+    const fullText = isReasoning
+      ? (msg.blocks[blockIndex]?.thinking ?? "")
+      : (msg.blocks[blockIndex]?.text ?? "");
+    blockSig.value = fullText;
+  }
   if (isReasoning) {
     const sig = streamingReasoningSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
-    } else {
+    } else if (blockSig === undefined) {
       scheduleMessages();
     }
   } else {
     const sig = streamingTextSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
-    } else {
+    } else if (blockSig === undefined) {
       scheduleMessages();
     }
   }
 }
 
-export function upsertToolCall(chatID: string, messageID: string, call: ToolCall): void {
+export function upsertToolCall(
+  chatID: string,
+  messageID: string,
+  call: ToolCall,
+  blockIndex: number,
+): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
@@ -553,7 +601,14 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
   if (msg === undefined) {
-    msg = { id: messageID, role: "assistant", ts: Date.now(), content: "", tool_calls: [call] };
+    msg = {
+      id: messageID,
+      role: "assistant",
+      ts: Date.now(),
+      content: "",
+      tool_calls: [call],
+      blocks: [{ type: "tool_use", tool_call_id: call.id }],
+    };
     const newIdx = s.messages.length;
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
@@ -562,9 +617,19 @@ export function upsertToolCall(chatID: string, messageID: string, call: ToolCall
     return;
   }
   msg.tool_calls ??= [];
+  msg.blocks ??= [];
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
+    // First time we see this tool call — pin it to the chronological
+    // block index the server reported. This anchors the tool card
+    // between the surrounding text blocks.
+    while (msg.blocks.length < blockIndex) {
+      msg.blocks.push({ type: "text" });
+    }
+    if (msg.blocks[blockIndex] === undefined) {
+      msg.blocks.push({ type: "tool_use", tool_call_id: call.id });
+    }
     scheduleMessages();
     return;
   }

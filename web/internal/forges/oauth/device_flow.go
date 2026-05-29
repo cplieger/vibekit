@@ -4,6 +4,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,11 @@ import (
 
 // MIMETypeJSON is the Accept header for JSON responses.
 const MIMETypeJSON = "application/json"
+
+// pollStatusError is the PollResult.Status value for non-recoverable
+// errors during the device-flow poll loop. Extracted so the literal
+// "error" doesn't recur enough to trip goconst.
+const pollStatusError = "error"
 
 // DeviceFlowResponse describes a started OAuth device flow.
 type DeviceFlowResponse struct {
@@ -91,7 +97,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 // On success, PollResult.Token contains the access token.
 func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, error) {
 	if deviceCode == "" {
-		return PollResult{}, fmt.Errorf("oauth: missing device_code")
+		return PollResult{}, errors.New("oauth: missing device_code")
 	}
 	form := url.Values{
 		"client_id":   {githubOAuthClientID},
@@ -128,12 +134,12 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 		case "expired_token":
 			return PollResult{Status: "expired", Error: "device code expired"}, nil
 		case "access_denied":
-			return PollResult{Status: "error", Error: "access denied"}, nil
+			return PollResult{Status: pollStatusError, Error: "access denied"}, nil
 		}
-		return PollResult{Status: "error", Error: raw.ErrorDescription}, nil
+		return PollResult{Status: pollStatusError, Error: raw.ErrorDescription}, nil
 	}
 	if raw.AccessToken == "" {
-		return PollResult{Status: "error", Error: "empty access_token"}, nil
+		return PollResult{Status: pollStatusError, Error: "empty access_token"}, nil
 	}
 	return PollResult{Status: "complete", Token: raw.AccessToken}, nil
 }

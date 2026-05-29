@@ -13,8 +13,6 @@
 
 const RESET_MS = 1200;
 
-const SPINNER_HTML = '<span class="spinner-sm btn-async-spinner" aria-hidden="true"></span>';
-
 const CHECK_HTML =
   '<svg class="btn-async-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
   'stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" ' +

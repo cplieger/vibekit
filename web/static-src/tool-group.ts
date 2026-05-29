@@ -142,8 +142,7 @@ function updateHeader(group: HTMLElement): void {
   }
   const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
   const collapsed =
-    group.classList.contains(CLS_COLLAPSED) ||
-    group.classList.contains(CLS_AUTO_COLLAPSED);
+    group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
   const summary = summarize(calls);
   header.textContent = collapsed ? `${summary} (collapsed)` : summary;
 }

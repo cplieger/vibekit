@@ -7,7 +7,9 @@
 //   4. scope + cancel interaction (cancel while queued behind scope chain)
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 import { defineAction, _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";

@@ -26,15 +26,6 @@ func newTestSessionManager(t *testing.T) (*sessions.Manager, string) {
 	return sessions.New(dir), dir
 }
 
-// stubIsKiroCLI replaces the package-level sessions.IsKiroCLI probe
-// for the duration of t.
-func stubIsKiroCLI(t *testing.T, returns bool) {
-	t.Helper()
-	orig := sessions.IsKiroCLI
-	sessions.IsKiroCLI = func(int) bool { return returns }
-	t.Cleanup(func() { sessions.IsKiroCLI = orig })
-}
-
 func TestSessionManager_Dir(t *testing.T) {
 	want := "/tmp/test-sessions"
 	mgr := sessions.New(want)

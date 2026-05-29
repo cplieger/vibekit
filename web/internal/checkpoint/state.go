@@ -26,10 +26,10 @@ type state struct {
 	tagFiles       map[string][]string
 	fileHistory    map[string][]fileObservation
 	blobRefs       map[string]struct{}
+	conflicts      *Ring[ConflictPayload]
 	pendingRestore string
 	latestTag      string
 	orderedTags    []string
-	conflicts      *Ring[ConflictPayload]
 	turn           int
 	toolsInTurn    int
 }
@@ -132,20 +132,20 @@ type Ring[T any] struct {
 }
 
 // NewRing creates a Ring with the given capacity.
-func NewRing[T any](cap int) *Ring[T] {
-	return &Ring[T]{buf: make([]T, cap)}
+func NewRing[T any](capacity int) *Ring[T] {
+	return &Ring[T]{buf: make([]T, capacity)}
 }
 
 // Append adds a value to the ring. O(1).
 func (r *Ring[T]) Append(v T) {
-	cap := len(r.buf)
-	idx := (r.head + r.size) % cap
-	if r.size < cap {
+	n := len(r.buf)
+	idx := (r.head + r.size) % n
+	if r.size < n {
 		r.buf[idx] = v
 		r.size++
 	} else {
 		r.buf[r.head] = v
-		r.head = (r.head + 1) % cap
+		r.head = (r.head + 1) % n
 	}
 }
 
@@ -154,10 +154,10 @@ func (r *Ring[T]) Slice() []T {
 	if r.size == 0 {
 		return nil
 	}
-	cap := len(r.buf)
+	n := len(r.buf)
 	out := make([]T, r.size)
 	for i := range r.size {
-		out[i] = r.buf[(r.head+i)%cap]
+		out[i] = r.buf[(r.head+i)%n]
 	}
 	return out
 }

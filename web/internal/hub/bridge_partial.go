@@ -16,11 +16,6 @@ import (
 	"vibekit/internal/buffer"
 )
 
-// partialPath returns the path for a chat's partial recovery file.
-func (h *Hub) partialPath(chatID api.ChatID) string {
-	return h.bufLifecycle.PartialPathFor(chatID)
-}
-
 // openPartialFile opens (or creates) the partial recovery file for a chat.
 func (h *Hub) openPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
 	h.bufLifecycle.OpenPartialFile(ctx, chatID, buf)
@@ -39,7 +34,8 @@ func (h *Hub) RecoverPartials() {
 	defer cancel()
 
 	recovered := h.bufLifecycle.RecoverPartials()
-	for _, r := range recovered {
+	for i := range recovered {
+		r := &recovered[i]
 		msg := api.Message{
 			ID:        r.Snapshot.MessageID,
 			Role:      api.RoleAssistant,
@@ -47,6 +43,7 @@ func (h *Hub) RecoverPartials() {
 			Content:   r.Snapshot.Content,
 			Reasoning: r.Snapshot.Reasoning,
 			ToolCalls: r.Snapshot.ToolCalls,
+			Blocks:    r.Snapshot.Blocks,
 		}
 		if err := h.chatStore.AppendMessage(ctx, r.ChatID, &msg); err != nil {
 			slog.Warn("partial recovery: append failed", "chat_id", r.ChatID, "error", err)

@@ -39,13 +39,11 @@ func TestCaptureBroadcaster_ConcurrentSafety(t *testing.T) {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				c.Broadcast(ctx, api.ServerEvent{Type: "concurrent"})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := len(c.Snapshot()); got != 1000 {

@@ -20,19 +20,16 @@
 //     paint cost
 // ---------------------------------------------------------------------------
 
-import type { Message } from "./types.js";
+import type { Message, Block } from "./types.js";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "./markdown.js";
-import {
-  getActive,
-  getActiveId,
-  messagesVersion,
-  activeVersion,
-} from "./store.js";
+import { getActive, messagesVersion, activeVersion } from "./store.js";
 import {
   ensureStreamingSig,
   clearStreamingSig,
   ensureReasoningSig,
   clearReasoningSig,
+  ensureBlockTextSig,
+  ensureBlockThinkingSig,
 } from "./store-signals.js";
 import { effect } from "./lib/reactive/index.js";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
@@ -40,34 +37,24 @@ import { $ } from "./dom.js";
 import {
   getScrollEl,
   scrollToBottom,
-  suppressScroll,
   setUserScrolledUp,
   resetScrollState,
   setLoadMore,
 } from "./scroll.js";
-import {
-  resetSubAgents,
-} from "./subagent.js";
+import { resetSubAgents } from "./subagent.js";
 import {
   breakToolGroup,
   summarize,
   CLS_COLLAPSED,
   CLS_AUTO_COLLAPSED,
+  CLS_USER_TOGGLED,
 } from "./tool-group.js";
 import { linkifyPaths } from "./linkify.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { initMessageActions, clearActionBindings } from "./messages-actions.js";
-import {
-  clearCrews,
-} from "./crew-card.js";
+import { clearCrews } from "./crew-card.js";
 import { send } from "./transport.js";
-import {
-  toolSpec,
-  toolEls,
-  disposeToolEffect,
-  disposeAllToolEffects,
-  initToolCallbacks,
-} from "./messages-tools.js";
+import { toolSpec, toolEls, disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildEvent,
@@ -424,11 +411,11 @@ function buildUser(m: Message): HTMLElement {
         return;
       }
       void send({
-          type: "rewind_chat",
-          chat_id: session.id,
-          request_id: `rewind-${Date.now()}`,
-          payload: { turn_index: turnIdx },
-        });
+        type: "rewind_chat",
+        chat_id: session.id,
+        request_id: `rewind-${Date.now()}`,
+        payload: { turn_index: turnIdx },
+      });
     });
     line.append(label, btn, rewindBtn);
     wrap.appendChild(line);
@@ -442,9 +429,15 @@ function buildUser(m: Message): HTMLElement {
   row.appendChild(bubble);
   wrap.appendChild(row);
 
-  // User messages always pop the user back to the bottom.
-  setUserScrolledUp(false);
-  suppressScroll(400);
+  // User messages always pop the user back to the bottom. Previously
+  // we did `setUserScrolledUp(false); suppressScroll(400)` here, but
+  // suppressScroll(400) actively *blocks* the auto-scroll for the
+  // message that just arrived — so when the user submits while
+  // scrolled up, the new bubble appended off-screen and the page
+  // didn't scroll until the model started streaming back ~hundreds of
+  // milliseconds later. scrollToBottom() does an explicit RAF-paced
+  // scroll that lands on the new user bubble immediately.
+  scrollToBottom();
   return wrap;
 }
 
@@ -454,16 +447,43 @@ function buildAssistant(m: Message): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "msg-wrap msg-wrap-assistant";
 
+  const blocks = m.blocks ?? [];
+  // Block-aware path: render text, tool_use, and thinking blocks in
+  // chronological order (Anthropic's content-blocks model). Server-side
+  // accumulation guarantees `blocks` reflects the order the agent
+  // emitted them. Legacy messages without `blocks` (older transcripts
+  // persisted before the field existed) fall through to the historical
+  // "all text + reasoning above + tool group below" layout.
+  if (blocks.length > 0) {
+    const live = isLikelyLiveStreaming(m);
+    buildAssistantBlocks(wrap, m, blocks, live);
+    if (m.plan !== undefined && m.plan.length > 0) {
+      wrap.appendChild(planElement(m.plan));
+    }
+    return wrap;
+  }
+
   const content = m.content ?? "";
   const reasoning = m.reasoning ?? "";
   const live = isLikelyLiveStreaming(m);
 
   // Reasoning block above the content bubble. Mounted whenever there's
-  // existing reasoning OR this is the live message (which might receive
-  // reasoning chunks). The block stays in DOM after finalize so the
-  // user can re-expand to read the model's thinking trace.
-  if (reasoning !== "" || live) {
-    mountReasoningBlock(wrap, reasoning, live, m.id);
+  // existing reasoning. For a *live* message we don't pre-mount the
+  // block — that produced a "Thinking…" affordance even on turns where
+  // the model never emits reasoning, and (after onFinalize fired) left
+  // an empty "Thinking completed" dropdown the user could expand to see
+  // nothing. Instead we subscribe to the reasoning signal here and the
+  // updateAssistant() late-mount path below renders the block on the
+  // first non-empty delta.
+  if (reasoning !== "") {
+    const block = buildReasoningBlock(reasoning, live, m.id);
+    wrap.appendChild(block);
+  } else if (live) {
+    // Subscribe to the signal so updateAssistant sees the reasoning
+    // arrive (the signal is per-message and stored in the store; the
+    // effect inside buildReasoningBlock is what consumes it once the
+    // block actually mounts).
+    void ensureReasoningSig(m.id, "");
   }
 
   // Content bubble. Mounted whenever there's existing content OR this
@@ -493,9 +513,13 @@ function buildAssistant(m: Message): HTMLElement {
 
 /** Mount a reasoning block ("Thinking…" / "Thinking completed") into
  *  the wrap. Subscribes to the per-message reasoning signal so chunks
- *  fan in here without re-running the global reconcile. */
-function mountReasoningBlock(
-  wrap: HTMLElement,
+ *  fan in here without re-running the global reconcile.
+ *
+ *  Lazy-mount semantics: this builds the details element but only the
+ *  caller decides whether to attach it to the DOM. For a live message
+ *  with empty initial reasoning we instead wait for the first signal
+ *  delta and attach then — see the lazy-mount path in buildAssistant. */
+function buildReasoningBlock(
   reasoning: string,
   live: boolean,
   messageID: string,
@@ -504,6 +528,10 @@ function mountReasoningBlock(
   details.className = "reasoning-block msg-reasoning";
   if (live) {
     details.open = true;
+    // .streaming gates the "active thinking" CSS affordances (pulsing
+    // dot + accent border) so they don't re-fire when the user
+    // re-expands a finalized trace.
+    details.classList.add("streaming");
   }
 
   const summary = document.createElement("summary");
@@ -515,8 +543,6 @@ function mountReasoningBlock(
   body.className = "reasoning-body";
   body.textContent = reasoning;
   details.appendChild(body);
-
-  wrap.appendChild(details);
 
   if (live) {
     const sig = ensureReasoningSig(messageID, reasoning);
@@ -531,10 +557,12 @@ function mountReasoningBlock(
       body.appendChild(document.createTextNode(full.slice(lastLen)));
       lastLen = full.length;
     });
-    // Wrap cleanup so it also flips the summary on disposal.
+    // Wrap cleanup so it also flips the summary on disposal and clears
+    // the live-streaming class.
     const onFinalize = (): void => {
       cleanup();
       summary.textContent = "Thinking completed";
+      details.classList.remove("streaming");
       details.open = false;
     };
     pushStreamingEffect(messageID, onFinalize);
@@ -645,15 +673,211 @@ function refreshGroupHeader(group: HTMLElement): void {
   }
   const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
   const collapsed =
-    group.classList.contains(CLS_COLLAPSED) ||
-    group.classList.contains(CLS_AUTO_COLLAPSED);
+    group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
   const summary = summarize(calls);
   headerText.textContent = collapsed ? `${summary} (collapsed)` : summary;
+}
+
+// ---------------------------------------------------------------------------
+// Block-aware (chronological) assistant rendering
+// ---------------------------------------------------------------------------
+
+/** Render an assistant message's blocks in chronological order — text,
+ *  tool_use, and thinking interleaved as the agent emitted them. Mirrors
+ *  Anthropic's content_block model and claude-code's per-block dispatch.
+ *  Each block element is tagged with `data-block-idx` so updateAssistant
+ *  can detect new blocks arriving during a live turn. */
+function buildAssistantBlocks(wrap: HTMLElement, m: Message, blocks: Block[], live: boolean): void {
+  const lastIdx = blocks.length - 1;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block === undefined) {
+      continue;
+    }
+    // Only the trailing block of a live message is itself "live" —
+    // earlier blocks are sealed (a new block was started after them
+    // because the run kind changed: text → tool, tool → text, etc.).
+    const isLiveBlock = live && i === lastIdx;
+    const el = mountBlockElement(block, i, m, isLiveBlock);
+    if (el !== null) {
+      el.setAttribute("data-block-idx", String(i));
+      wrap.appendChild(el);
+    }
+  }
+}
+
+/** Build a single block's DOM. Returns null if the block references
+ *  state that hasn't arrived yet (e.g. a tool_use block whose ToolCall
+ *  isn't in m.tool_calls — we've seen this on out-of-order SSE arrivals). */
+function mountBlockElement(
+  block: Block,
+  blockIndex: number,
+  m: Message,
+  live: boolean,
+): HTMLElement | null {
+  switch (block.type) {
+    case "text":
+      return mountTextBlockBubble(block, blockIndex, m.id, live);
+    case "thinking": {
+      const text = block.thinking ?? "";
+      // Skip empty non-live thinking blocks — same rationale as the
+      // legacy lazy-mount: an empty "Thinking completed" dropdown the
+      // user can expand to see nothing is worse than no dropdown.
+      if (text === "" && !live) {
+        return null;
+      }
+      const detail = buildReasoningBlock(text, live, m.id);
+      if (live) {
+        // Wire a per-block thinking signal so further deltas for THIS
+        // block index land here rather than firing the legacy
+        // per-message reasoning signal which is only tied to the
+        // legacy single-bubble layout.
+        const sig = ensureBlockThinkingSig(m.id, blockIndex, text);
+        const body = detail.querySelector(".reasoning-body");
+        const summary = detail.querySelector(".reasoning-summary");
+        let lastLen = text.length;
+        const cleanup = effect(() => {
+          const full = sig.value;
+          if (full.length <= lastLen) {
+            return;
+          }
+          if (body !== null) {
+            body.appendChild(document.createTextNode(full.slice(lastLen)));
+          }
+          lastLen = full.length;
+        });
+        const onFinalize = (): void => {
+          cleanup();
+          if (summary !== null) {
+            summary.textContent = "Thinking completed";
+          }
+          detail.classList.remove("streaming");
+          detail.open = false;
+        };
+        pushStreamingEffect(m.id, onFinalize);
+      }
+      return detail;
+    }
+    case "tool_use": {
+      const tc = m.tool_calls?.find((c) => c.id === block.tool_call_id);
+      if (tc === undefined) {
+        return null;
+      }
+      const el = toolSpec.mount(tc);
+      // Reconcile-key marker so any future global reconcile pass over
+      // tool_calls leaves these inline mounts alone (the data attribute
+      // mirrors what reconcile.ts uses internally).
+      if (el instanceof HTMLElement) {
+        el.setAttribute(RECONCILE_KEY, tc.id);
+        return el;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Mount a single text block's bubble. For replay, renders the full
+ *  markdown one-shot. For the live trailing block, primes a stream
+ *  with the current text and subscribes to the per-block text signal
+ *  so subsequent chunks for blockIndex land here without re-rendering
+ *  earlier text blocks. */
+function mountTextBlockBubble(
+  block: Block,
+  blockIndex: number,
+  messageID: string,
+  live: boolean,
+): HTMLElement {
+  const row = makeRow("assistant");
+  const bubble = document.createElement("div");
+  bubble.className = "message assistant";
+  if (live) {
+    bubble.classList.add("streaming");
+  }
+  const text = block.text ?? "";
+  if (text !== "") {
+    if (!live) {
+      renderMarkdownInto(bubble, text);
+    } else {
+      ensureStream(bubble).writeDelta(text);
+    }
+  }
+  row.appendChild(bubble);
+
+  if (live) {
+    const sig = ensureBlockTextSig(messageID, blockIndex, text);
+    let lastLen = text.length;
+    const cleanup = effect(() => {
+      const full = sig.value;
+      if (full.length <= lastLen) {
+        return;
+      }
+      ensureStream(bubble).writeDelta(full.slice(lastLen));
+      lastLen = full.length;
+    });
+    pushStreamingEffect(messageID, cleanup);
+  }
+  return row;
 }
 
 function updateAssistant(wrap: HTMLElement, m: Message): void {
   const state = messageStates.get(m.id);
   if (state === undefined) {
+    return;
+  }
+
+  // Block-aware path: if the message uses chronological blocks, mount
+  // any newly-arrived blocks at the end (in order) and de-stream the
+  // previously-trailing live block so only the newest one carries the
+  // .streaming affordance. Per-block signals feed deltas into already-
+  // mounted blocks without going through this function.
+  const blocks = m.blocks ?? [];
+  if (blocks.length > 0) {
+    const rendered = wrap.querySelectorAll(":scope > [data-block-idx]").length;
+    if (blocks.length > rendered) {
+      // Strip the .streaming class from whatever was the previous
+      // trailing block — a new block being added means that one is
+      // sealed.
+      const prevLast = wrap.querySelector<HTMLElement>(
+        `:scope > [data-block-idx="${String(rendered - 1)}"] .message.assistant.streaming`,
+      );
+      if (prevLast !== null) {
+        prevLast.classList.remove("streaming");
+      }
+      const lastIdx = blocks.length - 1;
+      // Find the plan element if any so we keep blocks before it.
+      const plan = wrap.querySelector<HTMLElement>(":scope > .plan-card");
+      for (let i = rendered; i < blocks.length; i++) {
+        const block = blocks[i];
+        if (block === undefined) {
+          continue;
+        }
+        const isLiveBlock = state.streaming && i === lastIdx;
+        const el = mountBlockElement(block, i, m, isLiveBlock);
+        if (el !== null) {
+          el.setAttribute("data-block-idx", String(i));
+          if (plan !== null) {
+            wrap.insertBefore(el, plan);
+          } else {
+            wrap.appendChild(el);
+          }
+        }
+      }
+    }
+    // Plan: mount/update lazily — late plans aren't part of blocks.
+    if (m.plan !== undefined && m.plan.length > 0) {
+      let planEl = wrap.querySelector<HTMLDivElement>(":scope > .plan-card");
+      if (planEl === null) {
+        planEl = planElement(m.plan);
+        wrap.appendChild(planEl);
+      } else {
+        updatePlanElement(planEl, m.plan);
+      }
+    }
+    // For tool-call status updates inside an already-mounted tool_use
+    // block, the per-tool toolCallSig effect (set up by toolSpec.mount)
+    // handles the reactive update — nothing to do here.
     return;
   }
 
@@ -663,7 +887,8 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   const reasoning = m.reasoning ?? "";
   let reasoningEl = wrap.querySelector<HTMLDetailsElement>(":scope > .msg-reasoning");
   if (reasoning !== "" && reasoningEl === null) {
-    reasoningEl = mountReasoningBlock(wrap, reasoning, state.streaming, m.id);
+    reasoningEl = buildReasoningBlock(reasoning, state.streaming, m.id);
+    wrap.appendChild(reasoningEl);
     // Place at the top of the wrap if the row already exists.
     const firstChild = wrap.firstElementChild;
     if (firstChild !== reasoningEl) {
@@ -783,7 +1008,6 @@ function isLikelyLiveStreaming(m: Message): boolean {
   const idx = lastAssistantIndex(session.messages);
   return idx >= 0 && session.messages[idx]?.id === m.id;
 }
-
 
 // --- Helpers ---
 

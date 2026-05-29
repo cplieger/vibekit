@@ -100,7 +100,9 @@ export function enqueueWithCap(queue: QueuedToast[], entry: QueuedToast): void {
     const dropped = queue.shift();
     if (dropped !== undefined) {
       // Resolve with a no-op dismiss so the caller's Promise settles.
-      dropped.resolve(() => {});
+      dropped.resolve(() => {
+        /* no-op */
+      });
     }
   }
   queue.push(entry);

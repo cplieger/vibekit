@@ -78,5 +78,6 @@ func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	v, _, _ := h.repoFlight.Do("discover", func() (any, error) {
 		return discoverRepos(ctx, h.workDir), nil
 	})
-	return v.([]repoEntry)
+	r, _ := v.([]repoEntry)
+	return r
 }

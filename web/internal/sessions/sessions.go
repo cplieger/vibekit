@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,9 +178,15 @@ func (m *Manager) CleanupStale(ctx context.Context) {
 			}
 			locks, sessions, _ := m.cleanupOneEntry(ctx, name)
 			if locks > 0 {
+				if locks > math.MaxInt32 {
+					locks = math.MaxInt32
+				}
 				removedLocks.Add(int32(locks))
 			}
 			if sessions > 0 {
+				if sessions > math.MaxInt32 {
+					sessions = math.MaxInt32
+				}
 				removedSessions.Add(int32(sessions))
 			}
 		}(entry.name)

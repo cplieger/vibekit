@@ -85,15 +85,14 @@ type loadOutcome struct {
 // restore / diff operations on behalf of that chat. Safe for
 // concurrent use — every entry point serializes on m.mu.
 type Manager struct {
+	loadSF singleflight.Group
 	*managerDeps
-
 	log        *eventLog
 	state      *state
+	loadResult atomic.Pointer[loadOutcome]
 	chatID     string
 	workDir    string
 	mu         sync.Mutex
-	loadSF     singleflight.Group
-	loadResult atomic.Pointer[loadOutcome]
 }
 
 // newManager builds a Manager instance. Callers go through Store.get;
@@ -103,7 +102,7 @@ type Manager struct {
 // takes the same read lock that runGCOnce blocks against — even
 // future refactors that hand *Manager out to callers that bypass
 // Store.Snapshot inherit the coordination.
-func newManager(id string, workDir string, log *eventLog, deps *managerDeps) *Manager {
+func newManager(id, workDir string, log *eventLog, deps *managerDeps) *Manager {
 	return &Manager{
 		managerDeps: deps,
 		chatID:      id,
@@ -133,7 +132,7 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 	// Slow path: release m.mu, perform replay via singleflight.
 	m.mu.Unlock()
 
-	result, err, _ := m.loadSF.Do("load", func() (interface{}, error) {
+	result, err, _ := m.loadSF.Do("load", func() (any, error) {
 		// Check again — another goroutine may have completed.
 		if res := m.loadResult.Load(); res != nil {
 			return res, nil
@@ -161,7 +160,7 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	outcome := result.(*loadOutcome)
+	outcome, _ := result.(*loadOutcome)
 	if outcome.err != nil {
 		return outcome.err
 	}

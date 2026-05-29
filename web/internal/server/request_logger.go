@@ -45,12 +45,12 @@ func requestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
 		dur := time.Since(start)
-		slog.LogAttrs(ctx, slog.LevelInfo, "http",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Int("status", rw.status),
-			slog.Int64("duration_ms", dur.Milliseconds()),
-			slog.String("request_id", id),
+		slog.InfoContext(ctx, "http",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration_ms", dur.Milliseconds(),
+			"request_id", id,
 		)
 		metrics.HTTPRequests.Inc(r.Method, r.URL.Path, strconv.Itoa(rw.status))
 		metrics.HTTPDuration.Observe(dur.Seconds())

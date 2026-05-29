@@ -6,6 +6,69 @@ import (
 	"vibekit/internal/api"
 )
 
+func TestBlockAccumulators(t *testing.T) {
+	t.Run("text deltas extend the trailing text block", func(t *testing.T) {
+		buf := &Buffer{}
+		i0 := buf.AppendTextDelta("hello ")
+		i1 := buf.AppendTextDelta("world")
+		if i0 != 0 || i1 != 0 {
+			t.Errorf("expected both deltas to land on block 0, got %d / %d", i0, i1)
+		}
+		if got, want := len(buf.Blocks), 1; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[0].Type, api.BlockText; got != want {
+			t.Errorf("Blocks[0].Type = %q, want %q", got, want)
+		}
+		if got, want := buf.Blocks[0].Text, "hello world"; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("tool_use breaks a text run into a new block", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendTextDelta("first")
+		buf.AppendToolUseBlock("tc-1")
+		idx := buf.AppendTextDelta("second")
+		if idx != 2 {
+			t.Errorf("text-after-tool block index = %d, want 2", idx)
+		}
+		if got, want := len(buf.Blocks), 3; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		want := []api.BlockType{api.BlockText, api.BlockToolUse, api.BlockText}
+		for i, w := range want {
+			if buf.Blocks[i].Type != w {
+				t.Errorf("Blocks[%d].Type = %q, want %q", i, buf.Blocks[i].Type, w)
+			}
+		}
+		if got, want := buf.Blocks[1].ToolCallID, "tc-1"; got != want {
+			t.Errorf("Blocks[1].ToolCallID = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("thinking and text don't coalesce", func(t *testing.T) {
+		buf := &Buffer{}
+		i0 := buf.AppendThinkingDelta("reasoning…")
+		i1 := buf.AppendTextDelta("answer.")
+		if i0 != 0 || i1 != 1 {
+			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
+		}
+		if buf.Blocks[0].Type != api.BlockThinking || buf.Blocks[1].Type != api.BlockText {
+			t.Errorf("kinds = %q / %q, want thinking / text", buf.Blocks[0].Type, buf.Blocks[1].Type)
+		}
+	})
+
+	t.Run("back-to-back tool calls each get their own block", func(t *testing.T) {
+		buf := &Buffer{}
+		i0 := buf.AppendToolUseBlock("a")
+		i1 := buf.AppendToolUseBlock("b")
+		if i0 != 0 || i1 != 1 {
+			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
+		}
+	})
+}
+
 func TestTrackFileChanges(t *testing.T) {
 	tests := []struct {
 		name      string

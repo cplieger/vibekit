@@ -169,7 +169,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 
 func TestCSPPolicy_StructuralInvariants(t *testing.T) {
 	directives := make(map[string]string)
-	for _, part := range strings.Split(cspPolicy, "; ") {
+	for part := range strings.SplitSeq(cspPolicy, "; ") {
 		fields := strings.SplitN(part, " ", 2)
 		name := fields[0]
 		if _, dup := directives[name]; dup {

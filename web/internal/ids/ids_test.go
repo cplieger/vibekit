@@ -118,6 +118,7 @@ func TestNewMessageID_RapidInvariants(t *testing.T) {
 			if i == 8 || i == 13 || i == 18 || i == 23 {
 				continue
 			}
+			//nolint:staticcheck // QF1001: explicit two-range check reads more naturally than the De Morgan form
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
 				t.Fatalf("non-hex char %c at position %d", c, i)
 			}

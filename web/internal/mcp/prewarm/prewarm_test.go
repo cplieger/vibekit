@@ -13,8 +13,8 @@ import (
 func TestExtractNpxPackage(t *testing.T) {
 	cases := []struct {
 		name string
-		srv  ServerInfo
 		want string
+		srv  ServerInfo
 	}{
 		{
 			name: "NotNpx",

@@ -52,6 +52,8 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 
 // GetOrCreateBridge returns an existing bridge for chatID, or creates one.
 // Concurrent callers for the same chatID coalesce via singleflight.
+//
+//nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the hub package.
 func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agentOverride, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
@@ -124,7 +126,8 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 	if err != nil {
 		return nil, err
 	}
-	return v.(*sharedBridge), nil
+	b, _ := v.(*sharedBridge)
+	return b, nil
 }
 
 // tryLoadSession attempts session/load against the stored ACP session id.
@@ -194,6 +197,8 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 }
 
 // GetBridge returns the bridge for chatID, or nil.
+//
+//nolint:revive // unexported-return: see GetOrCreateBridge above.
 func (bc *BridgeCoordinator) GetBridge(chatID api.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
@@ -315,6 +320,12 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			Content:   buf.Content.String(),
 			Reasoning: buf.Reasoning.String(),
 			ToolCalls: buf.ToolCalls,
+			// Blocks captures the chronological text/tool/thinking
+			// emission order; client renderers prefer it over
+			// Content+ToolCalls so a turn renders the way the agent
+			// actually produced it (text, tool, more text, another
+			// tool, …) rather than collapsing all text to the top.
+			Blocks: buf.Blocks,
 		}
 		if err := bc.chatStore.AppendMessage(ctx, chatID, &msg); err != nil {
 			slog.Error("persist assistant turn", "chat_id", chatID, "error", err)

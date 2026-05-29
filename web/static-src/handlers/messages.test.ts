@@ -74,13 +74,18 @@ describe("message_chunk", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("appends chunk delta to store", () => {
-    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hello" });
-    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "hello", false);
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hello", block_index: 0 });
+    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "hello", false, 0);
   });
 
   it("forwards is_reasoning flag for reasoning chunks", () => {
-    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "thinking", is_reasoning: true });
-    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "thinking", true);
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m1",
+      delta: "thinking",
+      is_reasoning: true,
+      block_index: 0,
+    });
+    expect(mockAppendChunk).toHaveBeenCalledWith("chat-1", "m1", "thinking", true, 0);
   });
 
   it("skips undefined payload", () => {
@@ -97,12 +102,18 @@ describe("tool_call_update", () => {
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
       tool_call: { id: "tc1", kind: "write_file", status: "completed" },
+      block_index: 0,
     });
-    expect(mockUpsertToolCall).toHaveBeenCalledWith("chat-1", "m1", {
-      id: "tc1",
-      kind: "write_file",
-      status: "completed",
-    });
+    expect(mockUpsertToolCall).toHaveBeenCalledWith(
+      "chat-1",
+      "m1",
+      {
+        id: "tc1",
+        kind: "write_file",
+        status: "completed",
+      },
+      0,
+    );
     expect(mockMarkGitDirty).toHaveBeenCalled();
   });
 
@@ -129,14 +140,46 @@ describe("subagent_activity", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it.each<{ desc: string; payload: unknown; expected: [string, string] | null }>([
-    { desc: "sets activity label from event.label", payload: { sub_session_id: "sub-1", event: { label: "Reading file.go" } }, expected: ["sub-1", "Reading file.go"] },
-    { desc: "falls back to event.title", payload: { sub_session_id: "sub-1", event: { title: "Running tests" } }, expected: ["sub-1", "Running tests"] },
-    { desc: "falls back to event.tool_name", payload: { sub_session_id: "sub-1", event: { tool_name: "bash" } }, expected: ["sub-1", "bash"] },
-    { desc: "skips when sub_session_id is empty", payload: { sub_session_id: "", event: { label: "test" } }, expected: null },
-    { desc: "skips when sub_session_id is not a string", payload: { sub_session_id: 123, event: { label: "test" } }, expected: null },
-    { desc: "skips when event is null", payload: { sub_session_id: "sub-1", event: null }, expected: null },
-    { desc: "skips when event is a non-object primitive", payload: { sub_session_id: "sub-1", event: "not-an-object" }, expected: null },
-    { desc: "skips when all label fields are empty", payload: { sub_session_id: "sub-1", event: { unrelated: "value" } }, expected: null },
+    {
+      desc: "sets activity label from event.label",
+      payload: { sub_session_id: "sub-1", event: { label: "Reading file.go" } },
+      expected: ["sub-1", "Reading file.go"],
+    },
+    {
+      desc: "falls back to event.title",
+      payload: { sub_session_id: "sub-1", event: { title: "Running tests" } },
+      expected: ["sub-1", "Running tests"],
+    },
+    {
+      desc: "falls back to event.tool_name",
+      payload: { sub_session_id: "sub-1", event: { tool_name: "bash" } },
+      expected: ["sub-1", "bash"],
+    },
+    {
+      desc: "skips when sub_session_id is empty",
+      payload: { sub_session_id: "", event: { label: "test" } },
+      expected: null,
+    },
+    {
+      desc: "skips when sub_session_id is not a string",
+      payload: { sub_session_id: 123, event: { label: "test" } },
+      expected: null,
+    },
+    {
+      desc: "skips when event is null",
+      payload: { sub_session_id: "sub-1", event: null },
+      expected: null,
+    },
+    {
+      desc: "skips when event is a non-object primitive",
+      payload: { sub_session_id: "sub-1", event: "not-an-object" },
+      expected: null,
+    },
+    {
+      desc: "skips when all label fields are empty",
+      payload: { sub_session_id: "sub-1", event: { unrelated: "value" } },
+      expected: null,
+    },
     { desc: "skips undefined payload", payload: undefined, expected: null },
   ])("$desc", ({ payload, expected }) => {
     fireSSE("subagent_activity", "chat-1", payload);

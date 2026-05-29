@@ -14,8 +14,8 @@ import (
 // resolution, open/close/remove, and crash-recovery scanning. The
 // hub delegates to this type for all partial-file coordination.
 type Lifecycle struct {
-	ConfigDir string
 	Store     *Store
+	ConfigDir string
 }
 
 // PartialPathFor returns the path for a chat's partial recovery file.
@@ -92,6 +92,6 @@ func (l *Lifecycle) RecoverPartials() []RecoveredPartial {
 // RecoveredPartial holds a recovered partial snapshot and its metadata.
 type RecoveredPartial struct {
 	ChatID   api.ChatID
-	Snapshot PartialSnapshot
 	Path     string
+	Snapshot PartialSnapshot
 }

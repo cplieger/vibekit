@@ -74,9 +74,7 @@ class PermissionsUIController {
       });
     }
 
-    const supCheckbox = maybeEl<HTMLInputElement>(
-      "supervised-default-checkbox",
-    );
+    const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default === true;
       supCheckbox.addEventListener("change", () => {

@@ -27,7 +27,7 @@ import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
 import { registerCleanup, hasErrorString } from "./actions/index.js";
-import { computeBackoff, BACKOFF_CAP_MS } from "./lib/backoff.js";
+import { computeBackoff } from "./lib/backoff.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -186,27 +186,6 @@ type ConnState =
   | { phase: "connected"; source: EventSource }
   | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout>; backoffMs: number };
 
-/** Valid state transitions for the SSE connection state machine. */
-type Transition =
-  | { from: "idle"; to: "connecting" }
-  | { from: "connecting"; to: "connected" }
-  | { from: "connecting"; to: "idle" }
-  | { from: "connected"; to: "idle" }
-  | { from: "idle"; to: "reconnecting" }
-  | { from: "reconnecting"; to: "connecting" }
-  | { from: "reconnecting"; to: "idle" };
-
-/** Allowed transitions encoded as a set for O(1) lookup. */
-const VALID_TRANSITIONS = new Set<`${ConnState["phase"]}->${ConnState["phase"]}`>([
-  "idle->connecting",
-  "connecting->connected",
-  "connecting->idle",
-  "connected->idle",
-  "idle->reconnecting",
-  "reconnecting->connecting",
-  "reconnecting->idle",
-]);
-
 class TransportController {
   private onMsg: MsgHandler = () => {
     /* noop */
@@ -229,30 +208,6 @@ class TransportController {
       ctrl.abort();
     }
     this.inflight.clear();
-  }
-
-  /** Validate and perform a state transition, cleaning up resources from
-   *  the previous state as a side effect. Invalid transitions log a warning
-   *  and return false without mutating state. */
-  private transition(to: ConnState): boolean {
-    const key = `${this.conn.phase}->${to.phase}` as `${ConnState["phase"]}->${ConnState["phase"]}`;
-    if (!VALID_TRANSITIONS.has(key)) {
-      console.warn(`transport: invalid transition ${key}`);
-      return false;
-    }
-    // Cleanup outgoing state.
-    if (this.conn.phase === "reconnecting") {
-      clearTimeout(this.conn.timer);
-    }
-    if (this.conn.phase === "connecting" || this.conn.phase === "connected") {
-      try {
-        this.conn.source.close();
-      } catch {
-        /* best-effort */
-      }
-    }
-    this.conn = to;
-    return true;
   }
 
   init(msg: MsgHandler, status: StatusHandler): void {
@@ -297,7 +252,9 @@ class TransportController {
    *  Handles cleanup of EventSource and reconnect timers regardless of
    *  current phase. Called before (re)connecting to ensure a clean slate. */
   private teardown(): void {
-    if (this.conn.phase === "idle") return;
+    if (this.conn.phase === "idle") {
+      return;
+    }
     if (this.conn.phase === "reconnecting") {
       clearTimeout(this.conn.timer);
     }

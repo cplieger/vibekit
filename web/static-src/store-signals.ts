@@ -43,6 +43,17 @@ export const streamingTextSigs = new SignalMap<string>();
 /** Per-message-id reasoning signal. */
 export const streamingReasoningSigs = new SignalMap<string>();
 
+/** Per-(message-id, block-index) streaming text signal. Used by the
+ *  block-aware renderer so each text block in a chronological assistant
+ *  message subscribes only to its own deltas — chunks for block N
+ *  don't trigger re-renders on block N-1. Key format: `${msgID}:${idx}`. */
+export const blockTextSigs = new SignalMap<string>();
+
+/** Per-(message-id, block-index) streaming thinking signal. Same
+ *  rationale as blockTextSigs — chronologically interleaved thinking
+ *  blocks each get their own subscription. */
+export const blockThinkingSigs = new SignalMap<string>();
+
 /** Per-tool-call signal. */
 export const toolCallSigs = new SignalMap<ToolCall>();
 
@@ -92,6 +103,41 @@ export function ensureCrewSig(messageID: string, initial: Crew): ReturnType<type
   return crewSigs.ensure(messageID, initial);
 }
 
+/** Key helper for per-(message, block-index) signal maps. */
+export function blockKey(messageID: string, blockIndex: number): string {
+  return `${messageID}:${String(blockIndex)}`;
+}
+
+export function ensureBlockTextSig(
+  messageID: string,
+  blockIndex: number,
+  initial: string,
+): ReturnType<typeof signal<string>> {
+  return blockTextSigs.ensure(blockKey(messageID, blockIndex), initial);
+}
+
+export function getBlockTextSig(
+  messageID: string,
+  blockIndex: number,
+): ReturnType<typeof signal<string>> | undefined {
+  return blockTextSigs.get(blockKey(messageID, blockIndex));
+}
+
+export function ensureBlockThinkingSig(
+  messageID: string,
+  blockIndex: number,
+  initial: string,
+): ReturnType<typeof signal<string>> {
+  return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), initial);
+}
+
+export function getBlockThinkingSig(
+  messageID: string,
+  blockIndex: number,
+): ReturnType<typeof signal<string>> | undefined {
+  return blockThinkingSigs.get(blockKey(messageID, blockIndex));
+}
+
 export function clearStreamingSig(messageID: string): void {
   streamingTextSigs.clear(messageID);
 }
@@ -113,6 +159,8 @@ export function clearCrewSig(messageID: string): void {
 export function clearAllSignals(): void {
   streamingTextSigs.clearAll();
   streamingReasoningSigs.clearAll();
+  blockTextSigs.clearAll();
+  blockThinkingSigs.clearAll();
   toolCallSigs.clearAll();
   crewSigs.clearAll();
 }

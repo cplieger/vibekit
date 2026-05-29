@@ -33,6 +33,7 @@ func FuzzNew(f *testing.F) {
 		switch enc {
 		case HexUpper:
 			for _, c := range result {
+				//nolint:staticcheck // QF1001: explicit two-range check reads more naturally than the De Morgan form
 				if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'V')) {
 					t.Errorf("New(%d, HexUpper) contains invalid char %q", byteLen, string(c))
 					break
@@ -44,6 +45,7 @@ func FuzzNew(f *testing.F) {
 				t.Errorf("New(%d, StdLower) not lowercase: %q", byteLen, result)
 			}
 			for _, c := range result {
+				//nolint:staticcheck // QF1001: explicit two-range check reads more naturally than the De Morgan form
 				if !((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7')) {
 					t.Errorf("New(%d, StdLower) contains invalid char %q", byteLen, string(c))
 					break

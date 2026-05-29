@@ -3,6 +3,13 @@
 // signal-based cancellation. Extracted from forge-auth.ts.
 // ---------------------------------------------------------------------------
 
+// signal.aborted defensive guards: the @typescript-eslint/no-unnecessary-condition
+// rule sees AbortSignal.aborted as boolean (always defined) and flags the
+// re-checks inside async loops as redundant, but the value flips between
+// awaited microtasks — the re-check IS necessary to bail before mutating
+// shared state. Suppressed file-wide.
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+
 import { apiPost } from "./api-client.js";
 import type { DeviceFlowResponse, PollResult } from "./wire/types.gen.js";
 import { startDeviceFlow } from "./actions/forge.js";
@@ -32,10 +39,7 @@ const POLL_MAX_ATTEMPTS = 60;
 const POLL_BACKOFF_CAP_SEC = 60;
 const POLL_MIN_INTERVAL_SEC = 5;
 
-export async function startGitHubDeviceFlow(
-  host: HTMLElement,
-  deps: OAuthFlowDeps,
-): Promise<void> {
+export async function startGitHubDeviceFlow(host: HTMLElement, deps: OAuthFlowDeps): Promise<void> {
   // Abort any prior polling lifecycle before starting a new one.
   pollController?.abort();
   pollController = new AbortController();
@@ -51,7 +55,13 @@ export async function startGitHubDeviceFlow(
     return;
   }
   renderDevicePrompt(host, start, deps);
-  void pollGitHubDevice(host, start.device_code, Math.max(start.interval, POLL_MIN_INTERVAL_SEC), signal, deps);
+  void pollGitHubDevice(
+    host,
+    start.device_code,
+    Math.max(start.interval, POLL_MIN_INTERVAL_SEC),
+    signal,
+    deps,
+  );
 }
 
 function renderDevicePrompt(
@@ -102,9 +112,13 @@ async function pollGitHubDevice(
       }
       return;
     }
-    const res = await apiPost<PollResult>("/api/forges/oauth/github/poll", {
-      device_code: deviceCode,
-    }, signal);
+    const res = await apiPost<PollResult>(
+      "/api/forges/oauth/github/poll",
+      {
+        device_code: deviceCode,
+      },
+      signal,
+    );
     if (signal.aborted) {
       return;
     }

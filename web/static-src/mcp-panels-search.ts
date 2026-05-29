@@ -19,7 +19,12 @@ import { reconcile } from "./reconcile.js";
 export type RegistryEntry = RegistrySearchResult["servers"][number];
 
 /** Callback to switch the modal to a different panel mode. */
-export type SwitchModeFn = (kind: string, slug: string, identifier: string, fields: InstallField[]) => void;
+export type SwitchModeFn = (
+  kind: string,
+  slug: string,
+  identifier: string,
+  fields: InstallField[],
+) => void;
 
 export interface InstallField {
   name: string;

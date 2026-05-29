@@ -19,8 +19,8 @@ func (NopBroadcaster) Broadcast(_ context.Context, _ api.ServerEvent) {}
 
 // CaptureBroadcaster is a thread-safe event capture implementing api.Broadcaster.
 type CaptureBroadcaster struct {
-	mu     sync.Mutex
 	events []api.ServerEvent
+	mu     sync.Mutex
 }
 
 // Broadcast captures the event.

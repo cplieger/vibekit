@@ -24,25 +24,23 @@ func TestCrossChatIndex_RapidConcurrentSafety(t *testing.T) {
 		var wg sync.WaitGroup
 		for c := range nChats {
 			chatID := fmt.Sprintf("chat-%d", c)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for op := range nOps {
 					path := paths[op%nPaths]
 					ts := int64(op + c*1000)
 					sha := fmt.Sprintf("sha-%d-%d", c, op)
 					ev := &event{
-						Kind:      kindSnapshot,
-						Path:      path,
-						AfterSHA:  sha,
-						TS:        ts,
+						Kind:     kindSnapshot,
+						Path:     path,
+						AfterSHA: sha,
+						TS:       ts,
 					}
 					idx.apply(chatID, ev)
 
 					// Concurrent read.
 					idx.check(chatID, path, sha)
 				}
-			}()
+			})
 		}
 		wg.Wait()
 

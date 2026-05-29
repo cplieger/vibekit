@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 import { defineAction } from "./define.js";
 import { bindLoadingState } from "./loading.js";

@@ -102,8 +102,9 @@
     }
 
     .pill {
-      height: 2rem;
-      padding: 0.25rem var(--sp-3);
+      height: 2.25rem;
+      padding: 0 var(--sp-3);
+      border-radius: 1.125rem;
       font-size: var(--fs-sm);
     }
 

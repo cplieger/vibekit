@@ -31,7 +31,6 @@ describe("parseRoute (table-driven)", () => {
     },
     { name: "/git", pathname: "/git", hash: "", expected: { kind: "git" } },
     { name: "/history", pathname: "/history", hash: "", expected: { kind: "history" } },
-    { name: "/follow", pathname: "/follow", hash: "", expected: { kind: "follow" } },
     {
       name: "/files → workspace root",
       pathname: "/files",
@@ -160,8 +159,6 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
     fc.constant<Route>({ kind: "git" }),
     // history
     fc.constant<Route>({ kind: "history" }),
-    // follow
-    fc.constant<Route>({ kind: "follow" }),
     // files with path "." (root)
     fc.constant<Route>({ kind: "files", path: "." }),
     // files with non-trivial path (segments without slashes or empty parts)

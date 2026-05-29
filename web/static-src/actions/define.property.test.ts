@@ -129,7 +129,7 @@ describe("cancellation property", () => {
           resetCleanup();
 
           let runStarted = false;
-          let resolveRun!: (v: string) => void;
+          let _resolveRun!: (v: string) => void;
 
           const action = defineAction<string, string>({
             name: "prop.cancel",
@@ -138,10 +138,14 @@ describe("cancellation property", () => {
             run: async (_args, signal) => {
               runStarted = true;
               return new Promise<string>((resolve, reject) => {
-                resolveRun = resolve;
-                signal.addEventListener("abort", () => {
-                  reject(new DOMException("aborted", "AbortError"));
-                }, { once: true });
+                _resolveRun = resolve;
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    reject(new DOMException("aborted", "AbortError"));
+                  },
+                  { once: true },
+                );
               });
             },
           });

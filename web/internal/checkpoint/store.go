@@ -8,7 +8,6 @@ package checkpoint
 import (
 	"context"
 	"log/slog"
-	"maps"
 	"sync"
 
 	"golang.org/x/sync/singleflight"
@@ -26,6 +25,7 @@ import (
 // be reaped for at least 5 minutes, which is far longer than the event
 // append takes. No per-sweep lock is needed.
 type Store struct {
+	createSF  singleflight.Group
 	blobs     *blobStore
 	index     *crossChatIndex
 	onConf    ConflictBroadcaster
@@ -34,7 +34,6 @@ type Store struct {
 	configDir string
 	workDir   string
 	mu        sync.Mutex
-	createSF  singleflight.Group
 }
 
 // Compile-time interface assertion.
@@ -79,7 +78,6 @@ func (s *Store) StartBackgroundTasks(ctx context.Context) {
 func (s *Store) Stop() {
 	s.gc.Stop()
 }
-
 
 // AdvanceTurn delegates to Manager.AdvanceTurn (pass-through — logic
 // lives in Manager). Errors are logged but not returned because the
@@ -182,7 +180,7 @@ func (s *Store) get(rawID string) *Manager {
 	s.mu.Unlock()
 
 	// Slow path: create via singleflight keyed by chatID.
-	v, _, _ := s.createSF.Do(rawID, func() (interface{}, error) {
+	v, _, _ := s.createSF.Do(rawID, func() (any, error) {
 		// Double-check under lock.
 		s.mu.Lock()
 		if m, ok := s.managers[rawID]; ok {
@@ -204,18 +202,8 @@ func (s *Store) get(rawID string) *Manager {
 		s.mu.Unlock()
 		return m, nil
 	})
-	return v.(*Manager)
-}
-
-// cachedChatIDs returns the set of chat IDs that have a cached
-// Manager. Used by the GC to collect referenced blobs from in-memory
-// state for cached chats (avoiding disk re-reads).
-func (s *Store) cachedChatIDs() map[string]*Manager {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make(map[string]*Manager, len(s.managers))
-	maps.Copy(out, s.managers)
-	return out
+	mgr, _ := v.(*Manager)
+	return mgr
 }
 
 // cachedBlobRefs returns the cached managers as gc.BlobRefer

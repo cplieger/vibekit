@@ -7,7 +7,6 @@
 import { escText } from "./strings.js";
 import { KNOWN_EXTENSIONS, extToLang } from "./file-extensions.js";
 import { SUPPORTED_LANGUAGES, FENCED_ALIASES, KEYWORDS, GENERIC_KW } from "./highlight-langs.js";
-import type { LangDef } from "./highlight-langs.js";
 
 // Character classification helpers using charCode for hot-path performance.
 function isDigitCode(c: number): boolean {

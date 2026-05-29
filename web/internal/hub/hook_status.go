@@ -28,12 +28,12 @@ func kiroSettingsPath() string {
 // mtime-based cache invalidation. Reduces per-call cost from
 // os.ReadFile+json.Unmarshal to a single os.Stat in the common case.
 type cachedBoolField struct {
+	mtime      time.Time
 	path       string
 	key        string
-	defaultVal bool
-	mu         sync.Mutex
-	mtime      time.Time
 	size       int64
+	mu         sync.Mutex
+	defaultVal bool
 	value      bool
 	valid      bool
 }

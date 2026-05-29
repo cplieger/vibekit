@@ -102,12 +102,10 @@ export class ShellWS {
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
     this.callbacks = cb;
-    if (this.unregisterCleanup === null) {
-      this.unregisterCleanup = registerCleanup(() => {
-        this.cancelReconnect();
-        this.disconnect();
-      });
-    }
+    this.unregisterCleanup ??= registerCleanup(() => {
+      this.cancelReconnect();
+      this.disconnect();
+    });
   }
 
   /** Mark the shell as active (open). Controls whether reconnect fires. */

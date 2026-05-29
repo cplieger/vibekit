@@ -74,7 +74,15 @@ const EVENT_BOUNDARY_META: Readonly<
 > = Object.fromEntries(
   Object.entries(EVENT_RENDER_MAP)
     .filter(([, v]) => v.kind === "boundary")
-    .map(([k, v]) => [k, v as { boundary: string; icon: string; defaultLabel: string; labelFn?: (c: string) => string }]),
+    .map(([k, v]) => [
+      k,
+      v as {
+        boundary: string;
+        icon: string;
+        defaultLabel: string;
+        labelFn?: (c: string) => string;
+      },
+    ]),
 );
 
 describe("EVENT_BOUNDARY_META", () => {

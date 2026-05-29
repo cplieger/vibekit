@@ -11,11 +11,7 @@ import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import {
-  cloneAllForAccount,
-  deleteAllForAccount,
-  type RepoDeps,
-} from "./forge-auth-repos.js";
+import { cloneAllForAccount, deleteAllForAccount, type RepoDeps } from "./forge-auth-repos.js";
 
 export interface ReposRenderDeps {
   lastLocalNames: Set<string>;
@@ -123,11 +119,7 @@ export function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
   });
 }
 
-function setAccountSummaryLabel(
-  summary: HTMLElement,
-  repos: Repo[],
-  deps: ReposRenderDeps,
-): void {
+function setAccountSummaryLabel(summary: HTMLElement, repos: Repo[], deps: ReposRenderDeps): void {
   const total = repos.length;
   const cloned = repos.filter((r) => deps.lastLocalNames.has(r.name)).length;
   const label = summary.querySelector<HTMLElement>(".forge-account-repos-label");
@@ -146,7 +138,8 @@ function refreshAccountSummaryButtons(
   deps: ReposRenderDeps,
 ): void {
   const cloneable = repos.filter(
-    (r) => !deps.lastLocalNames.has(r.name) && typeof r.clone_url === "string" && r.clone_url !== "",
+    (r) =>
+      !deps.lastLocalNames.has(r.name) && typeof r.clone_url === "string" && r.clone_url !== "",
   );
   const clonedRepos = repos.filter((r) => deps.lastLocalNames.has(r.name));
 
@@ -182,9 +175,11 @@ function makeCloneAllButton(cloneable: Repo[], deps: ReposRenderDeps): HTMLButto
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn, deps.repoDeps)).then(() => {
-      deps.bumpState();
-    });
+    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn, deps.repoDeps)).then(
+      () => {
+        deps.bumpState();
+      },
+    );
   });
   return btn;
 }
@@ -204,9 +199,11 @@ function makeDeleteAllButton(clonedRepos: Repo[], deps: ReposRenderDeps): HTMLBu
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn, deps.repoDeps)).then(() => {
-      deps.bumpState();
-    });
+    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn, deps.repoDeps)).then(
+      () => {
+        deps.bumpState();
+      },
+    );
   });
   return btn;
 }

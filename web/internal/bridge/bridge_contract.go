@@ -24,7 +24,7 @@ func ACPBridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 		}
 	})
 
-	t.Run("Stop_idempotent", func(t *testing.T) {
+	t.Run("Stop_idempotent", func(_ *testing.T) {
 		b := newBridge()
 		// Stop must not panic when called twice.
 		b.Stop()

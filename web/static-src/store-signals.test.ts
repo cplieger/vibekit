@@ -60,9 +60,19 @@ describe("SignalMap", () => {
       fc.property(
         fc.array(
           fc.oneof(
-            fc.record({ op: fc.constant("ensure" as const), id: fc.string({ minLength: 1, maxLength: 5 }), val: fc.string() }),
-            fc.record({ op: fc.constant("get" as const), id: fc.string({ minLength: 1, maxLength: 5 }) }),
-            fc.record({ op: fc.constant("clear" as const), id: fc.string({ minLength: 1, maxLength: 5 }) }),
+            fc.record({
+              op: fc.constant("ensure" as const),
+              id: fc.string({ minLength: 1, maxLength: 5 }),
+              val: fc.string(),
+            }),
+            fc.record({
+              op: fc.constant("get" as const),
+              id: fc.string({ minLength: 1, maxLength: 5 }),
+            }),
+            fc.record({
+              op: fc.constant("clear" as const),
+              id: fc.string({ minLength: 1, maxLength: 5 }),
+            }),
             fc.record({ op: fc.constant("clearAll" as const) }),
           ),
           { minLength: 1, maxLength: 50 },

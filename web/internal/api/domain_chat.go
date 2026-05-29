@@ -83,6 +83,47 @@ const (
 	ACPUpdateSteering     ACPUpdateKind = "steering_inclusion"
 )
 
+// BlockType discriminates content blocks in an assistant message's
+// chronological content array. Mirrors Anthropic's `content_block.type`
+// from the Messages API streaming spec — the same model claude-code
+// uses to render text, tool calls, and thinking traces inline as the
+// agent emits them rather than splitting them into separate sections.
+type BlockType string
+
+const (
+	// BlockText is a markdown text segment from the agent.
+	BlockText BlockType = "text"
+	// BlockToolUse is a tool invocation. Only the ToolCallID is carried
+	// in the block; the full ToolCall lives in Message.ToolCalls so
+	// status updates (pending → in_progress → completed) don't need
+	// to touch the block array.
+	BlockToolUse BlockType = "tool_use"
+	// BlockThinking is an extended-thinking trace segment.
+	BlockThinking BlockType = "thinking"
+)
+
+// Block is one entry in an assistant message's chronological content
+// array. Position in Message.Blocks IS the order in which the agent
+// emitted the block — text → tool → text → tool, etc. — so the client
+// renders them inline as they happened rather than concatenating all
+// text into one bubble at the top with tools dumped below.
+//
+// Replay-compatible: messages persisted before this field existed have
+// Blocks=nil. Renderers fall back to the legacy Content + ToolCalls
+// layout when Blocks is empty.
+type Block struct {
+	// Type is the discriminator: text | tool_use | thinking.
+	Type BlockType `json:"type"`
+	// Text carries the markdown text for Type=BlockText. Accumulated
+	// across MessageChunkPayload events targeting this block index.
+	Text string `json:"text,omitempty"`
+	// Thinking carries the reasoning text for Type=BlockThinking.
+	Thinking string `json:"thinking,omitempty"`
+	// ToolCallID references a tool by ID in Message.ToolCalls for
+	// Type=BlockToolUse. Empty for other types.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
 // ToolCall is a tool invocation inside an assistant message. One assistant
 // message may have multiple tool calls; each can be updated in place as
 // status changes (pending → in_progress → completed/failed).
@@ -102,8 +143,8 @@ type ToolCall struct {
 
 // ToolLocation is a file path (and optional line) the agent is working
 // with. Sent by kiro-cli in tool_call and tool_call_update notifications.
-// Enables "follow-along" features where the editor scrolls to the file
-// the agent is accessing or modifying.
+// Used by the editor to scroll to the file the agent is accessing or
+// modifying.
 type ToolLocation struct {
 	Path string `json:"path"`
 	Line int    `json:"line,omitempty"`
@@ -203,7 +244,15 @@ type Message struct {
 	EventKind EventKind   `json:"event_kind,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 	Plan      []PlanEntry `json:"plan,omitempty"`
-	Ts        int64       `json:"ts"`
+	// Blocks is the chronologically-ordered content array — text /
+	// tool_use / thinking blocks in the order the agent emitted them.
+	// Mirrors Anthropic's Messages API content array. Newly-streamed
+	// assistant messages populate Blocks alongside Content / ToolCalls
+	// (the latter two are kept for back-compat with replay of older
+	// messages that don't have Blocks). The client prefers Blocks when
+	// non-empty and falls back to Content + ToolCalls otherwise.
+	Blocks []Block `json:"blocks,omitempty"`
+	Ts     int64   `json:"ts"`
 }
 
 // Usage is a chat's last-known context and billing snapshot.
@@ -248,55 +297,28 @@ type SessionModel struct {
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
 type Chat struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Agent        string `json:"agent,omitempty"`
-	Model        string `json:"model,omitempty"`
-	ACPSessionID string `json:"acp_session_id,omitempty"`
-	// CurrentModeID tracks the mode the agent currently reports via
-	// ACP's current_mode_update. Empty when the agent declares no
-	// modes.
-	CurrentModeID       string `json:"current_mode_id,omitempty"`
-	ParentChatID        ChatID `json:"parent_chat_id,omitempty"`
-	CompactionWatermark string `json:"compaction_watermark,omitempty"`
-	// Summary is a one-line description of the chat generated when
-	// the chat is archived. Populated asynchronously via the utility
-	// bridge; remains empty for very short or utility-bridge-less
-	// chats. Rendered under the title in the History tab.
-	Summary string `json:"summary,omitempty"`
-	// OldestCheckpointTag is populated at header-build time from the
-	// checkpoint store (not persisted on disk — it's always derived).
-	// Empty when the chat has no shadow repo yet.
-	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
-	AvailableModels     []SessionModel `json:"available_models,omitempty"`
-	CurrentPlan         []PlanEntry    `json:"current_plan,omitempty"`
-	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
-	Messages            []Message      `json:"messages"`
-	Usage               Usage          `json:"usage"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
-	// SupervisedMode gates file-mutating agent operations: when true,
-	// every fs/write_text_file and fs/delete_file arriving at the
-	// bridge is staged in the hub's pending.Store and must be
-	// user-accepted before it lands on disk. When false (the default),
-	// writes apply immediately — the pre-Supervised behaviour.
-	// Orthogonal to the kiro-cli --trust-* flag (which governs whether
-	// the agent needs per-call approval before emitting the write at
-	// all); Supervised gates the write AFTER kiro-cli has already
-	// decided to emit it.
-	SupervisedMode  bool `json:"supervised_mode,omitempty"`
-	AutoApproveCrew bool `json:"auto_approve_crew,omitempty"`
-	// CrewMessageIDs maps group key → message ID for crew event messages.
-	// Persisted alongside the chat so the crew cache is warm after restart
-	// without requiring a history walk.
-	CrewMessageIDs map[string]string `json:"crew_message_ids,omitempty"`
-	// RewindFromTurn records which turn index this chat was rewound
-	// from. Zero when not a rewind chat. Used by the sidebar to show
-	// "rewind from turn N" label.
-	RewindFromTurn int `json:"rewind_from_turn,omitempty"`
-	// MessageCount is the persisted message count (may differ from
-	// len(Messages) during pagination).
-	MessageCount int `json:"message_count"`
+	CrewMessageIDs      map[string]string `json:"crew_message_ids,omitempty"`
+	Name                string            `json:"name"`
+	Agent               string            `json:"agent,omitempty"`
+	Model               string            `json:"model,omitempty"`
+	ACPSessionID        string            `json:"acp_session_id,omitempty"`
+	CurrentModeID       string            `json:"current_mode_id,omitempty"`
+	ParentChatID        ChatID            `json:"parent_chat_id,omitempty"`
+	CompactionWatermark string            `json:"compaction_watermark,omitempty"`
+	Summary             string            `json:"summary,omitempty"`
+	OldestCheckpointTag string            `json:"oldest_checkpoint_tag,omitempty"`
+	ID                  string            `json:"id"`
+	AvailableModels     []SessionModel    `json:"available_models,omitempty"`
+	AvailableModes      []SessionMode     `json:"available_modes,omitempty"`
+	Messages            []Message         `json:"messages"`
+	CurrentPlan         []PlanEntry       `json:"current_plan,omitempty"`
+	Usage               Usage             `json:"usage"`
+	CreatedAt           int64             `json:"created_at"`
+	UpdatedAt           int64             `json:"updated_at"`
+	RewindFromTurn      int               `json:"rewind_from_turn,omitempty"`
+	MessageCount        int               `json:"message_count"`
+	SupervisedMode      bool              `json:"supervised_mode,omitempty"`
+	AutoApproveCrew     bool              `json:"auto_approve_crew,omitempty"`
 }
 
 // Header returns the chat's metadata without messages. Used for list

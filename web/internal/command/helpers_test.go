@@ -9,17 +9,17 @@ func TestTruncateRunes(t *testing.T) {
 	cases := []struct {
 		name string
 		s    string
-		n    int
 		want string
+		n    int
 	}{
-		{"empty string", "", 5, ""},
-		{"ascii under limit", "hello", 10, "hello"},
-		{"ascii at limit", "hello", 5, "hello"},
-		{"ascii over limit", "hello world", 5, "hello"},
-		{"emoji", "🎉🎊🎈🎁", 2, "🎉🎊"},
-		{"n=0", "hello", 0, ""},
-		{"n=1", "hello", 1, "h"},
-		{"multibyte CJK", "你好世界", 2, "你好"},
+		{name: "empty string", s: "", want: "", n: 5},
+		{name: "ascii under limit", s: "hello", want: "hello", n: 10},
+		{name: "ascii at limit", s: "hello", want: "hello", n: 5},
+		{name: "ascii over limit", s: "hello world", want: "hello", n: 5},
+		{name: "emoji", s: "🎉🎊🎈🎁", want: "🎉🎊", n: 2},
+		{name: "n=0", s: "hello", want: "", n: 0},
+		{name: "n=1", s: "hello", want: "h", n: 1},
+		{name: "multibyte CJK", s: "你好世界", want: "你好", n: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

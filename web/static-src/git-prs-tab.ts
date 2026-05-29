@@ -15,7 +15,6 @@ import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { relativeTime } from "./utils-format.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
-import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
@@ -337,8 +336,6 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 }
 
 // --- Empty-state markup helpers ---
-
-
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -768,5 +765,3 @@ function computeMergeBlockReason(pr: PR): string {
   }
   return "";
 }
-
-

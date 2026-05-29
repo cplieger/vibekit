@@ -35,7 +35,7 @@ type fileHeap []*fileHeapEntry
 func (h fileHeap) Len() int            { return len(h) }
 func (h fileHeap) Less(i, j int) bool   { return h[i].lastTurn < h[j].lastTurn }
 func (h fileHeap) Swap(i, j int)        { h[i], h[j] = h[j], h[i]; h[i].index = i; h[j].index = j }
-func (h *fileHeap) Push(x any)          { e := x.(*fileHeapEntry); e.index = len(*h); *h = append(*h, e) }
+func (h *fileHeap) Push(x any)          { e, _ := x.(*fileHeapEntry); e.index = len(*h); *h = append(*h, e) }
 func (h *fileHeap) Pop() any            { old := *h; n := len(old); e := old[n-1]; old[n-1] = nil; e.index = -1; *h = old[:n-1]; return e }
 
 // chatLineState holds per-chat line tracking data with a heap for eviction.
@@ -70,7 +70,7 @@ func (lt *LineTracker) Record(chatID api.ChatID, filePath string, startLine, end
 	}
 	if _, exists := state.ranges[filePath]; !exists && len(state.ranges) >= maxFilesPerChat {
 		// Evict oldest file via heap pop — O(log n).
-		e := heap.Pop(&state.h).(*fileHeapEntry)
+		e, _ := heap.Pop(&state.h).(*fileHeapEntry)
 		delete(state.ranges, e.path)
 		delete(state.entries, e.path)
 	}

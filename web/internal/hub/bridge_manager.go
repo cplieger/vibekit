@@ -16,11 +16,11 @@ import (
 // reducing Hub's direct field count and clarifying the ownership
 // boundary: bridgeManager owns the map; Hub owns dispatch.
 type bridgeManager struct {
+	spawnSF  singleflight.Group
 	bridges  map[api.ChatID]*sharedBridge
 	factory  api.ACPBridgeFactory
-	mu       sync.Mutex
-	spawnSF  singleflight.Group
 	inflight *sync.WaitGroup
+	mu       sync.Mutex
 }
 
 func newBridgeManager(factory api.ACPBridgeFactory, inflight *sync.WaitGroup) *bridgeManager {
@@ -130,13 +130,10 @@ func (bm *bridgeManager) closeAndStop(ids []api.ChatID) []culledBridge {
 	// bridgeMgr operations. Tracked via inflight WaitGroup so
 	// Hub.Shutdown waits for all cull-triggered stops.
 	for _, c := range culled {
-		c := c
 		if bm.inflight != nil {
-			bm.inflight.Add(1)
-			go func() {
-				defer bm.inflight.Done()
+			bm.inflight.Go(func() {
 				c.sb.bridge.Stop()
-			}()
+			})
 		} else {
 			go c.sb.bridge.Stop()
 		}

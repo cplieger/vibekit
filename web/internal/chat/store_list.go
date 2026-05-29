@@ -20,7 +20,8 @@ import (
 // construction.
 func sfDo[T any](sf *singleflight.Group, key string, fn func() T) T {
 	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
-	return v.(T)
+	t, _ := v.(T)
+	return t
 }
 
 // List returns every chat's header (no messages) sorted by UpdatedAt desc.

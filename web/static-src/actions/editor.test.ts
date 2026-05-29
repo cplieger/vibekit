@@ -3,12 +3,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+}));
 vi.mock("../transport.js", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const orig = await importOriginal<typeof import("../transport.js")>();
@@ -17,6 +22,7 @@ vi.mock("../transport.js", async (importOriginal) => {
 
 vi.mock("../editor-types.js", () => ({
   routeForPath: (path: string) => ({ writeURL: `/api/file?path=${encodeURIComponent(path)}` }),
+}));
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";

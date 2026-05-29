@@ -138,9 +138,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		configured := forgesManager.List(ctx)
+		configured := forgesManager.List(fctx)
 		providers := make([]steering.ForgeProvider, 0, len(configured))
 		for i := range configured {
 			f := &configured[i]

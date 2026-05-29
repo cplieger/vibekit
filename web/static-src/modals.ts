@@ -92,9 +92,7 @@ export class RollingOutput {
     this.full += (this.full !== "" ? "\n" : "") + text;
     const lines = this.full.split("\n").filter((l) => l.trim() !== "");
     const textNode = document.createTextNode(lines.slice(-4).join("\n"));
-    const hintNode = new DOMParser()
-      .parseFromString(EXPAND_HINT, "text/html")
-      .body.firstChild!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const hintNode = new DOMParser().parseFromString(EXPAND_HINT, "text/html").body.firstChild!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     this.bar.replaceChildren(textNode, document.importNode(hintNode, true));
     this.bar.classList.remove("hidden");
   }

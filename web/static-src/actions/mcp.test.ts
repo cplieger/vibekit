@@ -3,11 +3,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
   CancellableSlot: class {
     start() {
       return new AbortController().signal;
@@ -15,13 +19,14 @@ vi.mock("../api-client.js", () => ({
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     abort() {}
   },
-  apiGet: vi.fn().mockResolvedValue(null),
   apiGetTyped: vi.fn().mockResolvedValue(null),
+}));
 
 vi.mock("../mcp-state.js", () => ({
   updateConfiguredEntry: vi.fn(),
   removeConfiguredEntry: vi.fn(),
   insertConfiguredEntry: vi.fn(),
+}));
 
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";

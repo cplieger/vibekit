@@ -4,7 +4,16 @@
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
-import { asObject, decodeArray, optBool, optStr, reqBool, reqNum, reqStr, type Decoder } from "./validators.js";
+import {
+  asObject,
+  decodeArray,
+  optBool,
+  optStr,
+  reqBool,
+  reqNum,
+  reqStr,
+  type Decoder,
+} from "./validators.js";
 
 const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   const s = asObject(v, "$.mcp_status.server");
@@ -47,18 +56,36 @@ const decodeServer: Decoder<Server> = (v) => {
     updated_at: reqNum(o, "updated_at", p),
   };
   const command = optStr(o, "command", p);
-  if (command !== undefined) out.command = command;
+  if (command !== undefined) {
+    out.command = command;
+  }
   const url = optStr(o, "url", p);
-  if (url !== undefined) out.url = url;
+  if (url !== undefined) {
+    out.url = url;
+  }
   const oauthClientId = optStr(o, "oauth_client_id", p);
-  if (oauthClientId !== undefined) out.oauth_client_id = oauthClientId;
+  if (oauthClientId !== undefined) {
+    out.oauth_client_id = oauthClientId;
+  }
   const prewarm = optBool(o, "prewarm", p);
-  if (prewarm !== undefined) out.prewarm = prewarm;
-  if (Array.isArray(o["args"])) out.args = (o["args"] as unknown[]).map((x) => String(x));
-  if (Array.isArray(o["env"])) out.env = decodeArray(o["env"], decodeKeyPair, `${p}.env`);
-  if (Array.isArray(o["headers"])) out.headers = decodeArray(o["headers"], decodeKeyPair, `${p}.headers`);
-  if (Array.isArray(o["disabled_tools"])) out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
-  if (Array.isArray(o["known_tools"])) out.known_tools = (o["known_tools"] as unknown[]).map((x) => String(x));
+  if (prewarm !== undefined) {
+    out.prewarm = prewarm;
+  }
+  if (Array.isArray(o["args"])) {
+    out.args = (o["args"] as unknown[]).map((x) => String(x));
+  }
+  if (Array.isArray(o["env"])) {
+    out.env = decodeArray(o["env"], decodeKeyPair, `${p}.env`);
+  }
+  if (Array.isArray(o["headers"])) {
+    out.headers = decodeArray(o["headers"], decodeKeyPair, `${p}.headers`);
+  }
+  if (Array.isArray(o["disabled_tools"])) {
+    out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
+  }
+  if (Array.isArray(o["known_tools"])) {
+    out.known_tools = (o["known_tools"] as unknown[]).map((x) => String(x));
+  }
   return out;
 };
 

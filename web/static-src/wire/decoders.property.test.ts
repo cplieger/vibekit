@@ -16,17 +16,36 @@ import type { Decoder } from "../validators.js";
 // --- Arbitraries for enum-like const arrays (matching decoders.gen.ts) ---
 
 const clearReasonArb = fc.constantFrom(
-  "turn_ended", "cancelled", "mode_disabled", "chat_deleted", "shutdown", "user_cleared",
+  "turn_ended",
+  "cancelled",
+  "mode_disabled",
+  "chat_deleted",
+  "shutdown",
+  "user_cleared",
 );
 const crewStatusArb = fc.constantFrom("working", "terminated", "error", "pending");
 const errorCodeArb = fc.constantFrom(
-  "recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found",
-  "model_not_found", "agent_config_error", "rate_limit", "stream_timeout",
-  "spawn_failed", "switch_failed", "compaction_failed",
+  "recovery_failed",
+  "bridge_start_failed",
+  "prompt_failed",
+  "agent_not_found",
+  "model_not_found",
+  "agent_config_error",
+  "rate_limit",
+  "stream_timeout",
+  "spawn_failed",
+  "switch_failed",
+  "compaction_failed",
 );
 const eventKindArb = fc.constantFrom(
-  "interrupted", "cancelled", "model_switched", "compacted", "crew",
-  "agent_switched", "compaction_failed", "inbox",
+  "interrupted",
+  "cancelled",
+  "model_switched",
+  "compacted",
+  "crew",
+  "agent_switched",
+  "compaction_failed",
+  "inbox",
 );
 const forgeKindArb = fc.constantFrom("github", "gitlab", "codeberg", "gitea");
 const pendingActionArb = fc.constantFrom("accept", "reject");
@@ -35,8 +54,22 @@ const planStatusArb = fc.constantFrom("pending", "in_progress", "completed");
 const roleArb = fc.constantFrom("user", "assistant", "event");
 const stopReasonArb = fc.constantFrom("end_turn", "cancelled", "interrupted");
 const toolKindArb = fc.constantFrom(
-  "execute", "shell", "read", "search", "fetch", "edit", "think", "hook",
-  "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other",
+  "execute",
+  "shell",
+  "read",
+  "search",
+  "fetch",
+  "edit",
+  "think",
+  "hook",
+  "write",
+  "delete",
+  "move",
+  "command",
+  "browser",
+  "switch_mode",
+  "mcp",
+  "other",
 );
 const toolStatusArb = fc.constantFrom("pending", "in_progress", "completed", "failed");
 
@@ -58,11 +91,16 @@ const usageArb = fc.record({
   turn_count: posInt,
   last_turn_ms: posInt,
   has_real_data: fc.boolean(),
-  metering_items: optField(fc.array(fc.record({
-    unit_singular: fc.string(),
-    unit_plural: fc.string(),
-    value: posFloat,
-  }), { maxLength: 3 })),
+  metering_items: optField(
+    fc.array(
+      fc.record({
+        unit_singular: fc.string(),
+        unit_plural: fc.string(),
+        value: posFloat,
+      }),
+      { maxLength: 3 },
+    ),
+  ),
 });
 
 const sessionModelArb = fc.record({
@@ -255,6 +293,7 @@ const messageChunkPayloadArb = fc.record({
   message_id: fc.string({ minLength: 1 }),
   delta: fc.string({ minLength: 1 }),
   is_reasoning: optField(fc.boolean()),
+  block_index: fc.nat(),
 });
 
 const meteringItemArb = fc.record({
@@ -350,6 +389,7 @@ const repoArb = fc.record({
 const toolCallPayloadArb = fc.record({
   message_id: fc.string({ minLength: 1 }),
   tool_call: toolCallArb,
+  block_index: fc.nat(),
 });
 
 const toolCallUpdatePayloadArb = fc.record({
@@ -382,36 +422,108 @@ const whoamiResponseArb = fc.record({
 
 // --- Decoder registry: maps decoder name to its valid-shape arbitrary ---
 
-const decoderRegistry: Array<{ name: string; decoder: Decoder<unknown>; arb: fc.Arbitrary<unknown> }> = [
-  { name: "decodeAvailableCommand", decoder: decoders.decodeAvailableCommand, arb: availableCommandArb },
-  { name: "decodeChatDeletedPayload", decoder: decoders.decodeChatDeletedPayload, arb: chatDeletedPayloadArb },
+const decoderRegistry: {
+  name: string;
+  decoder: Decoder<unknown>;
+  arb: fc.Arbitrary<unknown>;
+}[] = [
+  {
+    name: "decodeAvailableCommand",
+    decoder: decoders.decodeAvailableCommand,
+    arb: availableCommandArb,
+  },
+  {
+    name: "decodeChatDeletedPayload",
+    decoder: decoders.decodeChatDeletedPayload,
+    arb: chatDeletedPayloadArb,
+  },
   { name: "decodeChatHeader", decoder: decoders.decodeChatHeader, arb: chatHeaderArb },
   { name: "decodeCheck", decoder: decoders.decodeCheck, arb: checkArb },
-  { name: "decodeCommandsUpdatedPayload", decoder: decoders.decodeCommandsUpdatedPayload, arb: commandsUpdatedPayloadArb },
-  { name: "decodeConfiguredForge", decoder: decoders.decodeConfiguredForge, arb: configuredForgeArb },
-  { name: "decodeConnectedPayload", decoder: decoders.decodeConnectedPayload, arb: connectedPayloadArb },
+  {
+    name: "decodeCommandsUpdatedPayload",
+    decoder: decoders.decodeCommandsUpdatedPayload,
+    arb: commandsUpdatedPayloadArb,
+  },
+  {
+    name: "decodeConfiguredForge",
+    decoder: decoders.decodeConfiguredForge,
+    arb: configuredForgeArb,
+  },
+  {
+    name: "decodeConnectedPayload",
+    decoder: decoders.decodeConnectedPayload,
+    arb: connectedPayloadArb,
+  },
   { name: "decodeCrew", decoder: decoders.decodeCrew, arb: crewArb },
-  { name: "decodeCrewPendingStage", decoder: decoders.decodeCrewPendingStage, arb: crewPendingStageArb },
+  {
+    name: "decodeCrewPendingStage",
+    decoder: decoders.decodeCrewPendingStage,
+    arb: crewPendingStageArb,
+  },
   { name: "decodeCrewSubagent", decoder: decoders.decodeCrewSubagent, arb: crewSubagentArb },
-  { name: "decodeDeviceFlowResponse", decoder: decoders.decodeDeviceFlowResponse, arb: deviceFlowResponseArb },
+  {
+    name: "decodeDeviceFlowResponse",
+    decoder: decoders.decodeDeviceFlowResponse,
+    arb: deviceFlowResponseArb,
+  },
   { name: "decodeErrorPayload", decoder: decoders.decodeErrorPayload, arb: errorPayloadArb },
   { name: "decodeFileChange", decoder: decoders.decodeFileChange, arb: fileChangeArb },
   { name: "decodeIssue", decoder: decoders.decodeIssue, arb: issueArb },
   { name: "decodeLabel", decoder: decoders.decodeLabel, arb: labelArb },
-  { name: "decodeMCPConnectedPayload", decoder: decoders.decodeMCPConnectedPayload, arb: mcpConnectedPayloadArb },
-  { name: "decodeMCPDisconnectedPayload", decoder: decoders.decodeMCPDisconnectedPayload, arb: mcpDisconnectedPayloadArb },
-  { name: "decodeMCPFailedPayload", decoder: decoders.decodeMCPFailedPayload, arb: mcpFailedPayloadArb },
-  { name: "decodeMCPOAuthPayload", decoder: decoders.decodeMCPOAuthPayload, arb: mcpOAuthPayloadArb },
+  {
+    name: "decodeMCPConnectedPayload",
+    decoder: decoders.decodeMCPConnectedPayload,
+    arb: mcpConnectedPayloadArb,
+  },
+  {
+    name: "decodeMCPDisconnectedPayload",
+    decoder: decoders.decodeMCPDisconnectedPayload,
+    arb: mcpDisconnectedPayloadArb,
+  },
+  {
+    name: "decodeMCPFailedPayload",
+    decoder: decoders.decodeMCPFailedPayload,
+    arb: mcpFailedPayloadArb,
+  },
+  {
+    name: "decodeMCPOAuthPayload",
+    decoder: decoders.decodeMCPOAuthPayload,
+    arb: mcpOAuthPayloadArb,
+  },
   { name: "decodeMessage", decoder: decoders.decodeMessage, arb: messageArb },
-  { name: "decodeMessageChunkPayload", decoder: decoders.decodeMessageChunkPayload, arb: messageChunkPayloadArb },
+  {
+    name: "decodeMessageChunkPayload",
+    decoder: decoders.decodeMessageChunkPayload,
+    arb: messageChunkPayloadArb,
+  },
   { name: "decodeMeteringItem", decoder: decoders.decodeMeteringItem, arb: meteringItemArb },
   { name: "decodePR", decoder: decoders.decodePR, arb: prArb },
   { name: "decodePendingChange", decoder: decoders.decodePendingChange, arb: pendingChangeArb },
-  { name: "decodePendingChangeAddedPayload", decoder: decoders.decodePendingChangeAddedPayload, arb: pendingChangeAddedPayloadArb },
-  { name: "decodePendingChangeResolvedPayload", decoder: decoders.decodePendingChangeResolvedPayload, arb: pendingChangeResolvedPayloadArb },
-  { name: "decodePendingChangesClearedPayload", decoder: decoders.decodePendingChangesClearedPayload, arb: pendingChangesClearedPayloadArb },
-  { name: "decodePermissionNeededPayload", decoder: decoders.decodePermissionNeededPayload, arb: permissionNeededPayloadArb },
-  { name: "decodePermissionOption", decoder: decoders.decodePermissionOption, arb: permissionOptionArb },
+  {
+    name: "decodePendingChangeAddedPayload",
+    decoder: decoders.decodePendingChangeAddedPayload,
+    arb: pendingChangeAddedPayloadArb,
+  },
+  {
+    name: "decodePendingChangeResolvedPayload",
+    decoder: decoders.decodePendingChangeResolvedPayload,
+    arb: pendingChangeResolvedPayloadArb,
+  },
+  {
+    name: "decodePendingChangesClearedPayload",
+    decoder: decoders.decodePendingChangesClearedPayload,
+    arb: pendingChangesClearedPayloadArb,
+  },
+  {
+    name: "decodePermissionNeededPayload",
+    decoder: decoders.decodePermissionNeededPayload,
+    arb: permissionNeededPayloadArb,
+  },
+  {
+    name: "decodePermissionOption",
+    decoder: decoders.decodePermissionOption,
+    arb: permissionOptionArb,
+  },
   { name: "decodePlanEntry", decoder: decoders.decodePlanEntry, arb: planEntryArb },
   { name: "decodePollResult", decoder: decoders.decodePollResult, arb: pollResultArb },
   { name: "decodeRelease", decoder: decoders.decodeRelease, arb: releaseArb },
@@ -419,11 +531,23 @@ const decoderRegistry: Array<{ name: string; decoder: Decoder<unknown>; arb: fc.
   { name: "decodeSessionMode", decoder: decoders.decodeSessionMode, arb: sessionModeArb },
   { name: "decodeSessionModel", decoder: decoders.decodeSessionModel, arb: sessionModelArb },
   { name: "decodeToolCall", decoder: decoders.decodeToolCall, arb: toolCallArb },
-  { name: "decodeToolCallPayload", decoder: decoders.decodeToolCallPayload, arb: toolCallPayloadArb },
-  { name: "decodeToolCallUpdatePayload", decoder: decoders.decodeToolCallUpdatePayload, arb: toolCallUpdatePayloadArb },
+  {
+    name: "decodeToolCallPayload",
+    decoder: decoders.decodeToolCallPayload,
+    arb: toolCallPayloadArb,
+  },
+  {
+    name: "decodeToolCallUpdatePayload",
+    decoder: decoders.decodeToolCallUpdatePayload,
+    arb: toolCallUpdatePayloadArb,
+  },
   { name: "decodeToolDiff", decoder: decoders.decodeToolDiff, arb: toolDiffArb },
   { name: "decodeToolLocation", decoder: decoders.decodeToolLocation, arb: toolLocationArb },
-  { name: "decodeTurnEndedPayload", decoder: decoders.decodeTurnEndedPayload, arb: turnEndedPayloadArb },
+  {
+    name: "decodeTurnEndedPayload",
+    decoder: decoders.decodeTurnEndedPayload,
+    arb: turnEndedPayloadArb,
+  },
   { name: "decodeUsage", decoder: decoders.decodeUsage, arb: usageArb },
   { name: "decodeUser", decoder: decoders.decodeUser, arb: userArb },
   { name: "decodeWhoamiResponse", decoder: decoders.decodeWhoamiResponse, arb: whoamiResponseArb },

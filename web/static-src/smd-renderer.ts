@@ -63,6 +63,12 @@ export interface DomRendererData {
   nodes: (Element | null)[];
   index: number;
   onBlockComplete: ((block: HTMLElement) => void) | undefined;
+  /** Wrap each text emission in a `<span data-vk-chunk-enter>` so the
+   *  per-chunk fade-in CSS animation fires as text streams in. Off
+   *  for replay paths so historical chats don't animate. Skipped
+   *  inside `<code>` / `<pre>` because spans there break syntax
+   *  highlighters that expect raw text children. */
+  animateText: boolean;
 }
 
 function makeEl(tag: string): HTMLElement {
@@ -201,8 +207,18 @@ function add_text_dom(data: DomRendererData, text: string): void {
     return;
   }
 
-  // Plain text node — no per-chunk wrapper. Per-block animation handled
-  // via onBlockComplete.
+  // For streaming render, wrap the text in an inline span so per-chunk
+  // fade-in CSS can animate each delta as it arrives. Skipped inside
+  // <code>/<pre> (their syntax highlighter expects unwrapped text
+  // children). Replay path leaves animateText=false so historical
+  // content paints flat.
+  if (data.animateText && tag !== "CODE" && tag !== "PRE") {
+    const span = makeEl("span");
+    span.setAttribute("data-vk-chunk-enter", "");
+    span.appendChild(document.createTextNode(text));
+    parent.appendChild(span);
+    return;
+  }
   parent.appendChild(document.createTextNode(text));
 }
 
@@ -228,10 +244,13 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
 
 /** Factory for a DOM renderer rooted at `el`. Caller can register
  *  `onBlockComplete` to receive a callback when each top-level block
- *  finishes (paragraph, pre/code, heading, list, blockquote, table). */
+ *  finishes (paragraph, pre/code, heading, list, blockquote, table).
+ *  `animateText` (default false) opts into per-chunk fade-in: each
+ *  text emission is wrapped in `<span data-vk-chunk-enter>` so the
+ *  CSS animation in 13-messages.css runs as each delta lands. */
 export function domRenderer(
   el: HTMLElement,
-  options: { onBlockComplete?: (block: HTMLElement) => void } = {},
+  options: { onBlockComplete?: (block: HTMLElement) => void; animateText?: boolean } = {},
 ): Renderer<DomRendererData> {
   return {
     add_token: add_token_dom,
@@ -242,6 +261,7 @@ export function domRenderer(
       nodes: [el],
       index: 0,
       onBlockComplete: options.onBlockComplete,
+      animateText: options.animateText ?? false,
     },
   };
 }

@@ -7,10 +7,7 @@
 import { apiGet } from "./api-client.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { bindLoadingState } from "./actions/index.js";
-import {
-  commit as commitAction,
-  generateCommitMessage,
-} from "./actions/git-changes.js";
+import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;

@@ -38,8 +38,8 @@ import (
 // blobStore owns a content-addressed storage root. Shared by every
 // chat's Manager so dedup works across chats; created once in Store.
 type blobStore struct {
-	root string // <configDir>/snapshots/blobs
 	sf   singleflight.Group
+	root string
 }
 
 // newBlobStore builds a blob store rooted under configDir. The
@@ -80,18 +80,19 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 		return "", err
 	}
 	hash := hashOf(data)
-	result, err, _ := b.sf.Do(hash, func() (interface{}, error) {
+	result, err, _ := b.sf.Do(hash, func() (any, error) {
 		return b.putOnce(ctx, hash, data)
 	})
 	if err != nil {
 		return "", err
 	}
-	return result.(string), nil
+	s, _ := result.(string)
+	return s, nil
 }
 
 // putOnce performs the actual blob write, called at most once per hash
 // via singleflight.
-func (b *blobStore) putOnce(ctx context.Context, hash string, data []byte) (interface{}, error) {
+func (b *blobStore) putOnce(ctx context.Context, hash string, data []byte) (any, error) {
 	p := b.pathFor(hash)
 	if p == "" {
 		return "", errors.New("empty blob hash")

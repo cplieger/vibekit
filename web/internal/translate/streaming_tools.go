@@ -49,6 +49,11 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		buf.ToolCallIndex = make(map[string]int)
 	}
 	buf.ToolCallIndex[tc.ToolCallID] = len(buf.ToolCalls) - 1
+	// Anchor the tool in the chronological block array. Always a new
+	// block — back-to-back tool calls each get their own tool_use
+	// block (the next text chunk after this will also start a new
+	// block since the trailing block is now tool_use, not text).
+	blockIndex := buf.AppendToolUseBlock(call.ID)
 	buf.RecordToolStart(tc.ToolCallID)
 	buf.WritePartial(ctx)
 	if len(diffs) > 0 {
@@ -57,7 +62,8 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		turn := len(buf.ToolCalls)
 		t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCall, chatID, api.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call}))
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCall, chatID,
+		api.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
 		api.WorkingLabelPayload{Label: api.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }

@@ -35,7 +35,6 @@ const DefaultOutputCap = 64 * 1024
 // field guards against silent corruption if the invariant is ever
 // violated by a future refactor.
 type Buffer struct {
-	mu             sync.Mutex
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
 	ChangedFiles   map[string]*api.FileChange
@@ -44,7 +43,50 @@ type Buffer struct {
 	Content        strings.Builder
 	Reasoning      strings.Builder
 	ToolCalls      []api.ToolCall
+	Blocks         []api.Block
+	mu             sync.Mutex
 	Started        bool
+}
+
+// AppendTextDelta extends the last text block with a delta, or starts
+// a new text block if the trailing block isn't text. Returns the index
+// of the (possibly new) text block — broadcast on
+// MessageChunkPayload.BlockIndex so the client knows which block the
+// delta belongs to.
+func (buf *Buffer) AppendTextDelta(delta string) int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockText {
+		buf.Blocks[n-1].Text += delta
+		return n - 1
+	}
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockText, Text: delta})
+	return len(buf.Blocks) - 1
+}
+
+// AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta.
+// Reasoning chunks share a block until a non-thinking block (tool_use
+// or text) breaks the run.
+func (buf *Buffer) AppendThinkingDelta(delta string) int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockThinking {
+		buf.Blocks[n-1].Thinking += delta
+		return n - 1
+	}
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockThinking, Thinking: delta})
+	return len(buf.Blocks) - 1
+}
+
+// AppendToolUseBlock records a new tool_use block referencing the
+// given tool call id. Always allocates a new block (one per tool call,
+// even if back-to-back tool calls would coalesce into a single
+// "thinking" run for text). Returns the new block's index.
+func (buf *Buffer) AppendToolUseBlock(toolCallID string) int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockToolUse, ToolCallID: toolCallID})
+	return len(buf.Blocks) - 1
 }
 
 // TrackFileChanges accumulates per-file change stats from tool call diffs.
@@ -124,6 +166,7 @@ func (buf *Buffer) WritePartial(ctx context.Context) {
 		Content:   buf.Content.String(),
 		Reasoning: buf.Reasoning.String(),
 		ToolCalls: buf.ToolCalls,
+		Blocks:    buf.Blocks,
 		Ts:        time.Now().UnixMilli(),
 	})
 }

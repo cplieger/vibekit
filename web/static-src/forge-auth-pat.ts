@@ -9,9 +9,7 @@ import { HOST_LOCKED_KINDS, DEFAULT_HOST } from "./forge-types.js";
 import { connectPAT } from "./actions/forge.js";
 import { bindLoadingState } from "./actions/index.js";
 
-type PATHelp =
-  | { kind: "link"; url: string; label: string }
-  | { kind: "text"; text: string };
+type PATHelp = { kind: "link"; url: string; label: string } | { kind: "text"; text: string };
 
 const PAT_HELP: Record<ForgeKind, PATHelp> = {
   github: {

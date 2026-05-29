@@ -80,7 +80,9 @@ describe("EVENT_RENDER_MAP exhaustiveness", () => {
     const boundaries = Object.entries(EVENT_RENDER_MAP)
       .filter(([, s]) => s.kind === "boundary")
       .map(([kind, s]) => {
-        if (s.kind !== "boundary") throw new Error("unreachable");
+        if (s.kind !== "boundary") {
+          throw new Error("unreachable");
+        }
         return { kind, icon: s.icon, defaultLabel: s.defaultLabel };
       });
 

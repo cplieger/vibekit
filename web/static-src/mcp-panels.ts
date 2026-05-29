@@ -9,10 +9,7 @@ import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
-import {
-  subscribeToActions,
-  bindLoadingState,
-} from "./actions/index.js";
+import { subscribeToActions, bindLoadingState } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
 

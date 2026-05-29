@@ -186,7 +186,12 @@ class ModelSwitchController {
       payload: { level },
     });
     // Persist so effort restores on next bridge spawn for this model.
-    void patchSettings({ model_effort: { last_model: session.model, effort: level } });
+    void patchSettings({
+      model_effort: {
+        last_model: session.model,
+        effort: level as "low" | "medium" | "high" | "xhigh" | "max",
+      },
+    });
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {

@@ -137,7 +137,9 @@ describe("dispatch (SSE routing)", () => {
 
   it("handler that unsubscribes a later handler does not skip it", () => {
     const h2 = vi.fn();
-    const unsub2: () => void;
+    let unsub2: () => void = () => {
+      /* placeholder until assigned below */
+    };
     const h1 = vi.fn(() => {
       unsub2();
     });
@@ -155,7 +157,9 @@ describe("dispatch (SSE routing)", () => {
 
   it("handler that unsubscribes itself does not affect others", () => {
     const h2 = vi.fn();
-    const unsub1: () => void;
+    let unsub1: () => void = () => {
+      /* placeholder until assigned below */
+    };
     const h1 = vi.fn(() => {
       unsub1();
     });
@@ -264,7 +268,9 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("handler that unsubscribes a later handler does not skip it", () => {
     const h2 = vi.fn();
-    const unsub2: () => void;
+    let unsub2: () => void = () => {
+      /* placeholder until assigned below */
+    };
     const h1 = vi.fn(() => {
       unsub2();
     });
@@ -282,7 +288,9 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("handler that unsubscribes itself does not affect others", () => {
     const h2 = vi.fn();
-    const unsub1: () => void;
+    let unsub1: () => void = () => {
+      /* placeholder until assigned below */
+    };
     const h1 = vi.fn(() => {
       unsub1();
     });

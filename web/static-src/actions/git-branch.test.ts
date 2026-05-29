@@ -3,7 +3,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../store.js", () => ({
   get: () => ({ id: "c1", model: "m1" }),
@@ -16,11 +18,15 @@ vi.mock("../store.js", () => ({
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
   setFrozen: vi.fn(),
+}));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+}));
 import { checkoutBranch } from "./git-branch.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry } from "./registry.js";

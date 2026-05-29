@@ -3,10 +3,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
+  apiGetTyped: vi.fn(() => Promise.resolve(null)),
   apiPost: vi.fn(() => Promise.resolve(null)),
   CancellableSlot: class {
-    start() { return new AbortController().signal; }
-    abort() {}
+    start() {
+      return new AbortController().signal;
+    }
+    abort() {
+      /* mock no-op */
+    }
   },
   withTimeout: vi.fn(
     (signal: AbortSignal | undefined, _ms: number) => signal ?? AbortSignal.timeout(30000),
@@ -26,10 +31,10 @@ vi.mock("./confirm.js", () => ({
 }));
 
 import { renderForgesPanel } from "./forge-auth.js";
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGetTyped, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 
-const mockedApiGet = vi.mocked(apiGet);
+const mockedApiGet = vi.mocked(apiGetTyped);
 const mockedApiPost = vi.mocked(apiPost);
 const mockedConfirm = vi.mocked(confirmDialog);
 

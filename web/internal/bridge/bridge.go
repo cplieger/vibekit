@@ -60,12 +60,12 @@ type Bridge struct {
 	done         chan struct{}
 	models       atomic.Pointer[[]api.SessionModel]
 	cmd          *exec.Cmd
-	currentMode  string
+	lockMgr      *sessions.Manager
 	modelID      api.ModelID
 	sessionID    api.SessionID
 	workDir      string
 	cliPath      string
-	lockMgr      *sessions.Manager
+	currentMode  string
 	nextID       atomic.Int64
 	stopOnce     sync.Once
 	mu           sync.Mutex
@@ -90,6 +90,8 @@ func New(cliPath, workDir string, opts ...BridgeOption) *Bridge {
 }
 
 // BridgeOption configures a Bridge at construction time.
+//
+//nolint:revive // BridgeOption: name kept for clarity at call sites; bridge.Option would conflict with other package-level Option names callers commonly use.
 type BridgeOption func(*Bridge)
 
 // WithSessionManager sets the sessions.Manager used for stale-lock

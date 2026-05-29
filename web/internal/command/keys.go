@@ -1,5 +1,7 @@
 package command
 
+import "maps"
+
 import "vibekit/internal/api"
 
 // JSON protocol key constants used across command response maps and
@@ -43,8 +45,6 @@ var responseOK = map[string]bool{"ok": true}
 func responseWith(extra map[string]any) map[string]any {
 	m := make(map[string]any, len(extra)+1)
 	m["ok"] = true
-	for k, v := range extra {
-		m[k] = v
-	}
+	maps.Copy(m, extra)
 	return m
 }

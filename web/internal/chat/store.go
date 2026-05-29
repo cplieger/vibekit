@@ -60,11 +60,11 @@ type Store struct {
 	onPurge          func(chatID api.ChatID)
 	oldestCheckpoint func(ctx context.Context, chatID api.ChatID) string
 	tombstone        map[api.ChatID]time.Time
+	archive          *archive.Service
 	locks            sync.Map
 	dir              string
-	tombMu           sync.Mutex
-	archive          *archive.Service
 	archiveOnce      sync.Once
+	tombMu           sync.Mutex
 }
 
 // tombstoneTTL is how long a deleted chat id blocks re-creation via

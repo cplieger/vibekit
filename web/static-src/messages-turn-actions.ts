@@ -4,6 +4,10 @@
 // Extracted from messages.ts — the "Turn actions" section (lines 1363-1468).
 // ---------------------------------------------------------------------------
 
+// Defensive null/undefined checks on DOM lookups that the type system
+// claims are guaranteed non-null but can race with reconcile passes.
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { getActive, getActiveId } from "./store.js";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
@@ -37,9 +41,13 @@ export function attachTurnActions(el: HTMLDivElement): void {
   const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
   const session = getActive();
   const msg = session?.messages.find((m) => m.id === msgID);
-  const raw = msg?.content ?? el.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-  if (raw.trim() === "") return;
-  if (el.nextElementSibling?.classList.contains("turn-actions")) return;
+  const raw = msg?.content ?? el.textContent ?? "";
+  if (raw.trim() === "") {
+    return;
+  }
+  if (el.nextElementSibling?.classList.contains("turn-actions")) {
+    return;
+  }
 
   const chatID = getActiveId();
   const row = document.createElement("div");
@@ -64,7 +72,9 @@ export function attachTurnActions(el: HTMLDivElement): void {
     btn.appendChild(_svgTemplate(svgMarkup)());
     btn.setAttribute("aria-label", ariaLabel);
     btn.setAttribute("data-tooltip", ariaLabel);
-    btn.addEventListener("click", () => { onClick(btn); });
+    btn.addEventListener("click", () => {
+      onClick(btn);
+    });
     return btn;
   };
 
@@ -74,10 +84,14 @@ export function attachTurnActions(el: HTMLDivElement): void {
       onSuccess: () => {
         btn.classList.add("copied");
         const prev = copyTimers.get(btn);
-        if (prev !== undefined) clearTimeout(prev);
+        if (prev !== undefined) {
+          clearTimeout(prev);
+        }
         copyTimers.set(
           btn,
-          setTimeout(() => { btn.classList.remove("copied"); }, 1500),
+          setTimeout(() => {
+            btn.classList.remove("copied");
+          }, 1500),
         );
       },
     });
@@ -85,7 +99,7 @@ export function attachTurnActions(el: HTMLDivElement): void {
 
   rightSlot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, el.textContent ?? ""); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+      copyAndAnimate(btn, el.textContent ?? "");
     }),
   );
   rightSlot.appendChild(
@@ -112,7 +126,7 @@ export function attachTurnActions(el: HTMLDivElement): void {
     );
   }
 
-  if (wrap !== null && wrap !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  if (wrap !== null && wrap !== undefined) {
     wrap.appendChild(row);
   } else {
     el.insertAdjacentElement("afterend", row);

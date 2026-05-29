@@ -196,7 +196,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 // api.UtilityPrompter. The bridge is lazily constructed on first call.
 func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
 	h.bridge.utilityOnce.Do(func() {
-		h.bridge.utility = newUtilityBridge(h.bridge.factory, h.Models, h.lifecycle.shutdownCtx)
+		h.bridge.utility = newUtilityBridge(h.lifecycle.shutdownCtx, h.bridge.factory, h.Models)
 	})
 	return h.bridge.utility.UtilityPrompt(ctx, prompt)
 }
@@ -518,10 +518,7 @@ func (h *Hub) cullIdleBridgesOnce() {
 	count := h.bridge.mgr.count()
 	timeout := bridgeIdleTimeout
 	if count > 5 {
-		adaptive := bridgeIdleTimeout / time.Duration(count)
-		if adaptive < 5*time.Minute {
-			adaptive = 5 * time.Minute
-		}
+		adaptive := max(bridgeIdleTimeout/time.Duration(count), 5*time.Minute)
 		timeout = adaptive
 	}
 	toClose := h.bridge.mgr.selectIdle(timeout)

@@ -24,24 +24,20 @@
 // hosts works (e.g. github.com + ghe.example.com).
 // ---------------------------------------------------------------------------
 
+// signal.aborted / generation-counter defensive guards: same rationale
+// as forge-auth-oauth.ts — the value can flip between awaited microtasks
+// even though the type system sees it as always-defined boolean.
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+
 import { apiGetTyped, apiPost, CancellableSlot } from "./api-client.js";
 import type { Decoder } from "./validators.js";
 import { asObject, decodeArray } from "./validators.js";
 import { decodeConfiguredForge, decodeRepo } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import {
-  ICON_EXTERNAL,
-  ICON_PLUS_16,
-} from "./icons.js";
-import type {
-  ConfiguredForge,
-  ForgeKind,
-  Repo,
-} from "./wire/types.gen.js";
-import { HOST_LOCKED_KINDS, DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
-import {
-  signOut,
-} from "./actions/forge.js";
+import { ICON_EXTERNAL, ICON_PLUS_16 } from "./icons.js";
+import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
+import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
+import { signOut } from "./actions/forge.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { signal, effect } from "./lib/reactive/index.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
@@ -80,12 +76,16 @@ const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
   const o = asObject(v, "$.forges_list");
   const out: ForgesListResponse = {
     forges: decodeArray(o["forges"], decodeConfiguredForge, "$.forges_list.forges"),
-    kinds: decodeArray(o["kinds"], (el) => {
-      if (typeof el !== "string" || !(FORGE_KINDS as readonly string[]).includes(el)) {
-        throw new TypeError(`expected ForgeKind, got ${JSON.stringify(el)}`);
-      }
-      return el as ForgeKind;
-    }, "$.forges_list.kinds"),
+    kinds: decodeArray(
+      o["kinds"],
+      (el) => {
+        if (typeof el !== "string" || !(FORGE_KINDS as readonly string[]).includes(el)) {
+          throw new TypeError(`expected ForgeKind, got ${JSON.stringify(el)}`);
+        }
+        return el as ForgeKind;
+      },
+      "$.forges_list.kinds",
+    ),
   };
   if (o["oauth"] !== undefined) {
     const oauthObj = asObject(o["oauth"], "$.forges_list.oauth");
@@ -108,12 +108,16 @@ const decodeRepoListResponse: Decoder<RepoListResponse> = (v) => {
 const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
   const o = asObject(v, "$.local_repos");
   return {
-    repos: decodeArray(o["repos"], (el) => {
-      if (typeof el !== "string") {
-        throw new TypeError(`expected string, got ${typeof el}`);
-      }
-      return el;
-    }, "$.local_repos.repos"),
+    repos: decodeArray(
+      o["repos"],
+      (el) => {
+        if (typeof el !== "string") {
+          throw new TypeError(`expected string, got ${typeof el}`);
+        }
+        return el;
+      },
+      "$.local_repos.repos",
+    ),
   };
 };
 
@@ -345,11 +349,9 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
     return;
   }
   const data = await apiGetTyped("/api/forges", decodeForgesListResponse, signal);
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (signal.aborted) {
     return;
   }
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (data === null || data === undefined) {
     return;
   }
@@ -357,7 +359,6 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
     refreshLocalNames(signal),
     refreshReposByForge(data.forges, signal),
   ]);
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (signal.aborted) {
     return;
   }
@@ -650,13 +651,19 @@ function updateAccountReposDetails(details: HTMLElement, a: ConfiguredForge, rep
 
 const repoDeps: RepoDeps = {
   isCloned: (name) => lastLocalNames.has(name),
-  addCloned: (name) => { lastLocalNames.add(name); },
-  removeCloned: (name) => { lastLocalNames.delete(name); },
+  addCloned: (name) => {
+    lastLocalNames.add(name);
+  },
+  removeCloned: (name) => {
+    lastLocalNames.delete(name);
+  },
   bumpState,
 };
 
 const reposRenderDeps: ReposRenderDeps = {
-  get lastLocalNames() { return lastLocalNames; },
+  get lastLocalNames() {
+    return lastLocalNames;
+  },
   expandOnNextPaint,
   bumpState,
   repoDeps,
@@ -667,16 +674,26 @@ const oauthDeps: OAuthFlowDeps = {
   setStatus,
   escapeHTML,
   escapeAttr,
-  expandOnNextPaint: (id) => { expandOnNextPaint.add(id); },
-  renderForgesPanel: () => { void renderForgesPanel(); },
+  expandOnNextPaint: (id) => {
+    expandOnNextPaint.add(id);
+  },
+  renderForgesPanel: () => {
+    void renderForgesPanel();
+  },
 };
 
 const patDeps: PATFormDeps = {
   hostPlaceholder,
   closeSlot,
-  addPatFormUnbind: (fn) => { patFormUnbinds.push(fn); },
-  expandOnNextPaint: (id) => { expandOnNextPaint.add(id); },
-  renderForgesPanel: () => { void renderForgesPanel(); },
+  addPatFormUnbind: (fn) => {
+    patFormUnbinds.push(fn);
+  },
+  expandOnNextPaint: (id) => {
+    expandOnNextPaint.add(id);
+  },
+  renderForgesPanel: () => {
+    void renderForgesPanel();
+  },
 };
 
 // --- Add-account flow dispatch ---
@@ -762,7 +779,6 @@ function slotOf(section: HTMLElement): HTMLElement {
   }
   return slot;
 }
-
 
 // --- Sign out ---
 

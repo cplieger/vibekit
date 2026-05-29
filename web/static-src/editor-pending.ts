@@ -2,6 +2,10 @@
 // Editor: Supervised pending-change resolution from editor toolbar.
 // ---------------------------------------------------------------------------
 
+// Defensive null check on state.original which the type marks non-null
+// but is initialized lazily.
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+
 import { $ } from "./dom.js";
 import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";

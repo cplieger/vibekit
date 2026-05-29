@@ -153,7 +153,9 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
 };
 
 /** Type-narrowing guard for the "failed" RuntimeStatus variant. */
-function isFailedWithError(st: RuntimeStatus): st is RuntimeStatus & { state: "failed"; error: string } {
+function isFailedWithError(
+  st: RuntimeStatus,
+): st is RuntimeStatus & { state: "failed"; error: string } {
   const FAILED: RuntimeState = "failed";
   return st.state === FAILED && st.error !== "";
 }
@@ -363,7 +365,7 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
-    updatePrewarmStatus(p.package, p.state);
+    updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
   });
 
   mcpState.refetchServers();

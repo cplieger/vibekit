@@ -17,7 +17,7 @@ func acquireInstanceLock(configDir string) error {
 	// O_CREATE|O_RDWR (no O_TRUNC, no O_APPEND): we never write payload
 	// to the lock file, only use its fd as the flock target. If file
 	// existed from a prior run, we keep its (empty) contents.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: configDir is process-controlled, file name is constant
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("open lock file: %w", err)
 	}

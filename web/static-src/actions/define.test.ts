@@ -10,7 +10,9 @@ import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
 // Mock toast.ts so we can assert on the toast calls without rendering
 // real DOM toasts. Must be at the top before defineAction imports.
-vi.mock("../toast.js", () => import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 import { defineAction } from "./define.js";
 import { ActionError, retryNetwork } from "./error.js";

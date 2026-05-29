@@ -3,21 +3,13 @@
 // Extracted from forge-auth.ts.
 // ---------------------------------------------------------------------------
 
-import {
-  ICON_DOWNLOAD,
-  ICON_EXTERNAL,
-  ICON_GLOBE,
-  ICON_TRASH,
-} from "./icons.js";
+import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { error as toastError } from "./toast.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import type { Repo } from "./wire/types.gen.js";
-import {
-  cloneRepo as cloneRepoAction,
-  deleteLocal as deleteLocalAction,
-} from "./actions/forge.js";
+import { cloneRepo as cloneRepoAction, deleteLocal as deleteLocalAction } from "./actions/forge.js";
 
 export interface RepoDeps {
   /** Check if a repo name is locally cloned. */

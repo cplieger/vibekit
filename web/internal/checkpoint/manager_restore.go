@@ -253,13 +253,14 @@ func (m *Manager) restoreLocked(ctx context.Context, tag string, recovering bool
 // collectRestoreInfoLocked snapshots the state needed for a restore
 // under m.mu. Returns msgCount, touched files, and any error.
 // Caller must hold m.mu.
-func (m *Manager) collectRestoreInfoLocked(tag string) (int, []string, error) {
-	msgCount, ok := m.state.tags[tag]
+func (m *Manager) collectRestoreInfoLocked(tag string) (msgCount int, restoredPaths []string, err error) {
+	count, ok := m.state.tags[tag]
 	if !ok {
 		return 0, nil, fmt.Errorf("%w: %q", ErrTagNotFound, tag)
 	}
-	touched := m.state.filesTouchedAtOrAfter(tag)
-	return msgCount, touched, nil
+	msgCount = count
+	restoredPaths = m.state.filesTouchedAtOrAfter(tag)
+	return msgCount, restoredPaths, nil
 }
 
 // restorePlan holds the pre-computed info for one file in a restore.

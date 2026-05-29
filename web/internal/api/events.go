@@ -89,14 +89,14 @@ const (
 // WorkingLabelForKind maps a tool kind to a human-readable label.
 // Matches ASAI's VV() function from the frontend reducer.
 func WorkingLabelForKind(kind ToolKind, title string) string {
+	const labelRunning = "Running"
 	//exhaustive:enforce
 	switch kind {
 	case ToolKindExecute, ToolKindShell:
-		label := "Running"
 		if title != "" {
-			return label + " " + title
+			return labelRunning + " " + title
 		}
-		return label
+		return labelRunning
 	case ToolKindRead:
 		return "Reading"
 	case ToolKindSearch:
@@ -112,13 +112,13 @@ func WorkingLabelForKind(kind ToolKind, title string) string {
 	case ToolKindMove:
 		return "Moving"
 	case ToolKindCommand:
-		return "Running"
+		return labelRunning
 	case ToolKindBrowser:
 		return "Browsing"
 	case ToolKindSwitchMode:
 		return "Switching"
 	case ToolKindMCP:
-		return "Running"
+		return labelRunning
 	case ToolKindHook:
 		return "Running hook"
 	case ToolKindOther:

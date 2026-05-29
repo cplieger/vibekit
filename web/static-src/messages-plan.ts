@@ -46,7 +46,9 @@ export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
   el.dataset["plan"] = JSON.stringify(entries);
   const latestMd = (): string => {
     const stored = el.dataset["plan"];
-    if (stored === undefined) return planToMarkdown([...entries]);
+    if (stored === undefined) {
+      return planToMarkdown([...entries]);
+    }
     try {
       return planToMarkdown(JSON.parse(stored) as PlanEntry[]);
     } catch {
@@ -107,8 +109,12 @@ export function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
 // ---------------------------------------------------------------------------
 
 async function editPlanAction(chatID: string, content: string): Promise<void> {
-  if (chatID === "") return;
+  if (chatID === "") {
+    return;
+  }
   const ok = await writePlanDraft(chatID, content);
-  if (!ok) return;
+  if (!ok) {
+    return;
+  }
   openPlanDraftPath(chatID);
 }

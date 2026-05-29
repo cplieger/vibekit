@@ -40,7 +40,6 @@ import { _registerAction } from "./cleanup.js";
 import {
   safeInvoke,
   safeStringify,
-  symbolId,
   _symbolMap,
   _resetSymbols,
   resolveToast,
@@ -52,7 +51,6 @@ import type {
   ActionDefinition,
   ActionErrorLike,
   DispatchOptions,
-  ToastSpec,
 } from "./types.js";
 
 let instanceCounter = 0;
@@ -121,8 +119,6 @@ interface DedupeSlot {
   cancelled?: boolean;
 }
 const activeDedupes = new Map<string, DedupeSlot>();
-
-
 
 /**
  * Create an action from a declarative definition. The returned action

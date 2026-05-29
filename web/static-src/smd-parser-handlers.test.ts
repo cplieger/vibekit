@@ -10,10 +10,18 @@ import type { Parser } from "./smd-parser.js";
 function nullRenderer() {
   return {
     data: null,
-    add_token: () => {},
-    end_token: () => {},
-    add_text: () => {},
-    set_attr: () => {},
+    add_token: () => {
+      /* mock no-op */
+    },
+    end_token: () => {
+      /* mock no-op */
+    },
+    add_text: () => {
+      /* mock no-op */
+    },
+    set_attr: () => {
+      /* mock no-op */
+    },
   };
 }
 
@@ -26,55 +34,47 @@ function feedCharByChar(p: Parser, input: string): void {
 
 /** Generate a string from a set of characters. */
 function stringFromChars(...chars: string[]): fc.Arbitrary<string> {
-  return fc.array(fc.constantFrom(...chars), { minLength: 0, maxLength: 60 })
+  return fc
+    .array(fc.constantFrom(...chars), { minLength: 0, maxLength: 60 })
     .map((arr) => arr.join(""));
 }
 
 describe("smd-parser-handlers edge cases", () => {
   it("handleCodeFence: arbitrary backtick sequences never throw", () => {
     fc.assert(
-      fc.property(
-        stringFromChars("`", "a", "\n", " ", "~"),
-        (input) => {
-          const p = parser(nullRenderer() as any);
-          feedCharByChar(p, input);
-          parser_end(p);
-          expect(p.tokens[0]).toBe(DOCUMENT);
-          expect(p.len).toBeGreaterThanOrEqual(0);
-        },
-      ),
+      fc.property(stringFromChars("`", "a", "\n", " ", "~"), (input) => {
+        const p = parser(nullRenderer() as any);
+        feedCharByChar(p, input);
+        parser_end(p);
+        expect(p.tokens[0]).toBe(DOCUMENT);
+        expect(p.len).toBeGreaterThanOrEqual(0);
+      }),
       { numRuns: 200 },
     );
   });
 
   it("handleTable: arbitrary pipe/escape patterns never throw", () => {
     fc.assert(
-      fc.property(
-        stringFromChars("|", "\\", "-", " ", "\n", "a", ":"),
-        (input) => {
-          const p = parser(nullRenderer() as any);
-          feedCharByChar(p, input);
-          parser_end(p);
-          expect(p.tokens[0]).toBe(DOCUMENT);
-          expect(p.len).toBeGreaterThanOrEqual(0);
-        },
-      ),
+      fc.property(stringFromChars("|", "\\", "-", " ", "\n", "a", ":"), (input) => {
+        const p = parser(nullRenderer() as any);
+        feedCharByChar(p, input);
+        parser_end(p);
+        expect(p.tokens[0]).toBe(DOCUMENT);
+        expect(p.len).toBeGreaterThanOrEqual(0);
+      }),
       { numRuns: 200 },
     );
   });
 
   it("handleRootContext: heading/rule ambiguity never throws", () => {
     fc.assert(
-      fc.property(
-        stringFromChars("#", "-", ">", " ", "\n", "a", "="),
-        (input) => {
-          const p = parser(nullRenderer() as any);
-          feedCharByChar(p, input);
-          parser_end(p);
-          expect(p.tokens[0]).toBe(DOCUMENT);
-          expect(p.len).toBeGreaterThanOrEqual(0);
-        },
-      ),
+      fc.property(stringFromChars("#", "-", ">", " ", "\n", "a", "="), (input) => {
+        const p = parser(nullRenderer() as any);
+        feedCharByChar(p, input);
+        parser_end(p);
+        expect(p.tokens[0]).toBe(DOCUMENT);
+        expect(p.len).toBeGreaterThanOrEqual(0);
+      }),
       { numRuns: 200 },
     );
   });
@@ -82,10 +82,7 @@ describe("smd-parser-handlers edge cases", () => {
   it("code fence content is never interpreted as markdown", () => {
     fc.assert(
       fc.property(
-        fc.tuple(
-          fc.constantFrom("```", "~~~"),
-          fc.string({ minLength: 0, maxLength: 50 }),
-        ),
+        fc.tuple(fc.constantFrom("```", "~~~"), fc.string({ minLength: 0, maxLength: 50 })),
         ([fence, content]) => {
           const input = `${fence}\n${content}\n${fence}\n`;
           const p = parser(nullRenderer() as any);

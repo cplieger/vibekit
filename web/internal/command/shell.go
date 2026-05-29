@@ -101,7 +101,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	shellCtx, cancel := context.WithTimeout(ctx, ShellTimeout)
 	defer cancel()
 
-	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd) //nolint:gosec // G702: user-initiated shell command
+	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
 	shellProc.Dir = deps.WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped

@@ -25,7 +25,7 @@ import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
 import { respondPermission } from "../actions/chat.js";
-import { ErrorRoute, ERROR_ROUTES } from "./error-routing.js";
+import { type ErrorRoute, ERROR_ROUTES } from "./error-routing.js";
 export type { ErrorRoute };
 export { ERROR_ROUTES };
 export { wireCheckpointRestore } from "./checkpoint-restore.js";
