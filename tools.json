@@ -240,7 +240,7 @@
     "clangd": {
       "enabled": false,
       "auto_update": true,
-      "version": "22.1.0",
+      "version": "22.1.6",
       "update": {
         "method": "github",
         "repo": "clangd/clangd"
