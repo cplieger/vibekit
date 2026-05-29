@@ -103,7 +103,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # kiro-cli itself is downloaded on first boot by entrypoint.sh (licensing
 # prevents us from baking it into the image).
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     wget \
