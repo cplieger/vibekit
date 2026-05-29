@@ -197,7 +197,7 @@
     "pyrefly": {
       "enabled": false,
       "auto_update": true,
-      "version": "0.21.1",
+      "version": "1.0.0",
       "update": {
         "method": "github",
         "repo": "facebook/pyrefly"
@@ -240,13 +240,13 @@
     "clangd": {
       "enabled": false,
       "auto_update": true,
-      "version": "19.1.2",
+      "version": "22.1.0",
       "update": {
         "method": "github",
         "repo": "clangd/clangd"
       },
       "method": "binary",
-      "description": "C/C++ LSP. Standalone ~160 MB binary (largest LSP). Looks for compile_commands.json in your workspace for project understanding.",
+      "description": "C/C++ LSP. Standalone ~160 MB binary (largest LSP). Looks for compile_commands.json in your workspace for project understanding. Note: clangd/clangd releases ship x86_64 only — disabled by default; arm64 hosts should not enable this entry.",
       "install": "tmp=$(mktemp -d) && curl -fsSL -o $tmp/clangd.zip https://github.com/clangd/clangd/releases/download/${VERSION}/clangd-linux-${VERSION}.zip && unzip -q $tmp/clangd.zip -d $tmp && cp $tmp/clangd_${VERSION}/bin/clangd ${BIN}/clangd && chmod 755 ${BIN}/clangd && rm -rf $tmp"
     },
     "jdtls": {
