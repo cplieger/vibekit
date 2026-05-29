@@ -749,6 +749,9 @@ async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<voi
   btn.textContent = `Install ${cli.name}`;
   const out = document.createElement("div");
   out.className = "rolling-output hidden";
+  out.setAttribute("role", "log");
+  out.setAttribute("aria-live", "polite");
+  out.setAttribute("aria-label", `${cli.name} install progress`);
 
   btn.addEventListener("click", () => {
     void (async () => {

@@ -34,7 +34,7 @@ const cspPolicy = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"img-src 'self' data:; " +
 	"style-src 'self' 'unsafe-inline'; " +
-	"script-src 'self' 'sha256-O0W3Kf90P9+f/kt43ERmqKIyPDxvpDUW/3ti4cERVcI='; " +
+	"script-src 'self' 'sha256-CRaVblhbhU9xq4tOtCccTE1/Sa/Zx+JZMSfcv9gO4cQ='; " +
 	"font-src 'self'; " +
 	"object-src 'none'; " +
 	"frame-ancestors 'none'; " +

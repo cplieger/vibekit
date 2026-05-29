@@ -87,17 +87,23 @@ case "$UNAME_M" in
         ARCH_X64_OR_ARM64="arm64"
         ARCH_AMD64_OR_ARM64="arm64"
         ARCH_X86_64_OR_AARCH64="aarch64"
+        ARCH_X64_OR_AARCH64="aarch64"
+        ARCH_X86_64_OR_ARM64="arm64"
         ;;
     x86_64|amd64)
         ARCH_X64_OR_ARM64="x64"
         ARCH_AMD64_OR_ARM64="amd64"
         ARCH_X86_64_OR_AARCH64="x86_64"
+        ARCH_X64_OR_AARCH64="x64"
+        ARCH_X86_64_OR_ARM64="x86_64"
         ;;
     *)
         printf "WARNING: unrecognized uname -m: %s; defaulting arch placeholders to x64/amd64/x86_64\n" "$UNAME_M"
         ARCH_X64_OR_ARM64="x64"
         ARCH_AMD64_OR_ARM64="amd64"
         ARCH_X86_64_OR_AARCH64="x86_64"
+        ARCH_X64_OR_AARCH64="x64"
+        ARCH_X86_64_OR_ARM64="x86_64"
         ;;
 esac
 
@@ -132,6 +138,8 @@ expand() {
     cmd="${cmd//\$\{ARCH_X64_OR_ARM64\}/$ARCH_X64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_AMD64_OR_ARM64\}/$ARCH_AMD64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_X86_64_OR_AARCH64\}/$ARCH_X86_64_OR_AARCH64}"
+    cmd="${cmd//\$\{ARCH_X64_OR_AARCH64\}/$ARCH_X64_OR_AARCH64}"
+    cmd="${cmd//\$\{ARCH_X86_64_OR_ARM64\}/$ARCH_X86_64_OR_ARM64}"
     printf '%s' "$cmd"
 }
 

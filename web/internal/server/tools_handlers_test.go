@@ -275,3 +275,48 @@ func TestHandleToolStatusShape(t *testing.T) {
 		}
 	}
 }
+
+// Regression guard for B4 (broken-but-enabled): when setup-tools.sh
+// fails (here simulated by pointing it at a missing script path so the
+// bash subprocess errors), the target entry's enabled flag must be
+// rolled back to false so the UI shows the Enable button again, not a
+// false "healthy" state.
+func TestHandleToolEnableRollsBackOnFailure(t *testing.T) {
+	// Point the subprocess at a script that doesn't exist so bash
+	// exits non-zero and runErr is set.
+	t.Setenv("PATH", t.TempDir()) // ensures `bash` may not even be found, doesn't matter
+
+	s, path := newToolsTestServer(t, map[string]any{
+		"binary": map[string]any{
+			"gh": map[string]any{
+				"enabled":     false,
+				"auto_update": true,
+				"version":     "v2.93.0",
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/tools/binary/gh/enable", nil)
+	req.SetPathValue("section", "binary")
+	req.SetPathValue("name", "gh")
+	rec := httptest.NewRecorder()
+	s.handleToolEnable(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	// The setup script invocation should have errored (bash exec
+	// failed under empty PATH).
+	if resp.Error == "" {
+		t.Fatalf("expected error in response, got none. body=%s", rec.Body.String())
+	}
+	// Manifest must show enabled=false again (rollback).
+	m := readBackManifest(t, path)
+	gh := m["binary"].(map[string]any)["gh"].(map[string]any)
+	if gh["enabled"] != false {
+		t.Fatalf("enabled not rolled back on failure: %v", gh["enabled"])
+	}
+}

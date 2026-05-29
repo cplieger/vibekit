@@ -377,6 +377,22 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 	}
 	if runErr != nil {
 		resp["error"] = runErr.Error()
+		// Roll back the target entry's enabled flag so the UI shows the
+		// Enable button again (otherwise the row renders as enabled+
+		// healthy despite no working binary). Deps stay enabled — they
+		// may have installed cleanly; the user can retry just this
+		// entry. Best-effort: a write failure here is logged into the
+		// response output; the original error is the user-visible one.
+		manifestMu.Lock()
+		if m, mp, mErr := s.readManifest(); mErr == nil {
+			if e, ok := entryAt(m, section, name); ok {
+				e["enabled"] = false
+				if wErr := writeManifest(mp, m); wErr != nil {
+					resp["output"] = out + "\n[rollback failed: " + wErr.Error() + "]"
+				}
+			}
+		}
+		manifestMu.Unlock()
 	}
 	api.WriteJSON(w, resp)
 }

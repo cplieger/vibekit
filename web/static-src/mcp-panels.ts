@@ -262,6 +262,9 @@ async function gateNpmPanelOnNode(): Promise<void> {
   btn.textContent = "Install Node.js runtime";
   const out = document.createElement("div");
   out.className = "rolling-output hidden";
+  out.setAttribute("role", "log");
+  out.setAttribute("aria-live", "polite");
+  out.setAttribute("aria-label", "Node install progress");
 
   btn.addEventListener("click", () => {
     void (async () => {
