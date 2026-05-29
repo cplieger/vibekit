@@ -307,8 +307,15 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 		m.Unlock()
 		return err
 	}
-	archiveDir := s.archivePath()
-	draftPath := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
+	// Derive the plan-draft path from the already-validated chatPath
+	// (chatPath was returned by archivePathFor which calls
+	// api.ValidChatID + filepath.Join under store.Dir()). Replacing
+	// the .json suffix with .plan.md keeps the new path within the
+	// same directory and prevents CodeQL's path-injection analyzer
+	// from tracking raw chatID into a separate filepath.Join call
+	// (it doesn't track the up-front ValidChatID guard across the
+	// archivePathFor return).
+	draftPath := strings.TrimSuffix(chatPath, chatFileSuffix) + planDraftSuffix
 	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("chat delete_archived: remove plan-draft",
 			"chat_id", chatID, "error", err)
