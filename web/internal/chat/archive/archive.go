@@ -212,8 +212,26 @@ func (s *Service) RestoreArchived(ctx context.Context, chatID api.ChatID) error 
 	archiveDir := s.archivePath()
 	srcPath := filepath.Join(archiveDir, string(chatID)+chatFileSuffix)
 	dstPath := filepath.Join(s.store.Dir(), string(chatID)+chatFileSuffix)
+	// Defence-in-depth: ValidChatID above blocks traversal patterns,
+	// but CodeQL's go/path-injection analyzer doesn't follow that
+	// guard across the function boundaries used here. Verify both
+	// paths stay within the expected parent directories before any
+	// FS mutation. The containment check is what CodeQL recognises
+	// as a sanitiser.
+	cleanSrc := filepath.Clean(srcPath)
+	cleanDst := filepath.Clean(dstPath)
+	cleanArchiveDir := filepath.Clean(archiveDir) + string(filepath.Separator)
+	cleanStoreDir := filepath.Clean(s.store.Dir()) + string(filepath.Separator)
+	if !strings.HasPrefix(cleanSrc, cleanArchiveDir) {
+		m.Unlock()
+		return fmt.Errorf("src path %q escapes archive dir %q", srcPath, archiveDir)
+	}
+	if !strings.HasPrefix(cleanDst, cleanStoreDir) {
+		m.Unlock()
+		return fmt.Errorf("dst path %q escapes store dir %q", dstPath, s.store.Dir())
+	}
 	// Collision guard: refuse to overwrite an active chat file.
-	if _, err := os.Stat(dstPath); err == nil {
+	if _, err := os.Stat(cleanDst); err == nil {
 		m.Unlock()
 		slog.Warn("chat restore: refused, id is in use", "chat_id", chatID)
 		return &IDInUseError{ID: string(chatID)}
@@ -221,13 +239,15 @@ func (s *Service) RestoreArchived(ctx context.Context, chatID api.ChatID) error 
 		m.Unlock()
 		return err
 	}
-	if err := os.Rename(srcPath, dstPath); err != nil { //#nosec G703 -- paths built from validated chat ID
+	if err := os.Rename(cleanSrc, cleanDst); err != nil {
 		m.Unlock()
 		return err
 	}
-	// Also restore the plan draft if it exists.
-	draftSrc := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	draftDst := filepath.Join(s.store.Dir(), string(chatID)+planDraftSuffix)
+	// Also restore the plan draft if it exists. Derive paths via
+	// suffix swap on the already-validated cleanSrc/cleanDst so the
+	// new paths inherit the containment proof.
+	draftSrc := strings.TrimSuffix(cleanSrc, chatFileSuffix) + planDraftSuffix
+	draftDst := strings.TrimSuffix(cleanDst, chatFileSuffix) + planDraftSuffix
 	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
 		slog.Warn("chat restore: plan-draft move failed",
 			"chat_id", chatID, "error", err)
