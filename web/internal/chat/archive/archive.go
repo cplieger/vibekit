@@ -287,6 +287,13 @@ func (s *Service) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, 
 // DeleteArchived permanently removes a single archived chat file and its
 // plan draft. Fires onPurge so checkpoint data is cleaned up.
 func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
+	// Validate up-front so CodeQL's path-injection analysis sees the
+	// guard at the entry point. archivePathFor below also validates,
+	// but the second filepath.Join (for the plan-draft path) is not
+	// proven-safe by the analyzer without an explicit check here.
+	if !api.ValidChatID(string(chatID)) {
+		return fmt.Errorf("invalid chat id: %q", chatID)
+	}
 	chatPath, err := s.archivePathFor(chatID)
 	if err != nil {
 		return err
