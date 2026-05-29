@@ -140,20 +140,3 @@ export const getToolsStatus = apiAction<void, Record<string, boolean>>({
   request: () => ({ method: "GET", path: "/api/tools/status" }),
   error: false,
 });
-
-// Fire a slash command into a chat's live kiro-cli bridge. Used after
-// enabling an LSP to run `/code init -f` so the already-running session
-// re-scans PATH and picks up the newly-installed language server
-// without waiting for a new chat. Best-effort: a missing bridge (no
-// active chat) is a normal no-op, so errors are swallowed.
-export const execSlash = apiAction<{ chatID: string; command: string }>({
-  name: "tools.exec_slash",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ chatID, command }) => ({
-    method: "POST",
-    path: "/api/slash/execute",
-    body: { chat_id: chatID, command },
-  }),
-  error: false,
-});

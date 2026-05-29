@@ -18,10 +18,8 @@ import {
   enableTool,
   deleteTool,
   patchTool,
-  execSlash,
 } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { getActiveId } from "./store.js";
 import { $, el } from "./dom.js";
 import { reconcile } from "./lib/reactive/reconcile.js";
 
@@ -458,23 +456,16 @@ class ToolsManager {
         out.append(`Error: ${d.error}`);
       } else if (sec === "lsp") {
         // kiro-cli scans PATH for language servers at code-intelligence
-        // init time. A server enabled mid-session isn't picked up by the
-        // running bridge until it re-initializes. Fire `/code init -f`
-        // into the active chat as a best-effort nudge; the certain
-        // path is the next new chat (a fresh bridge always re-scans
-        // PATH at startup). The flat command shape we send via
-        // /api/slash/execute is what slash.go uses for other panel
-        // commands; if kiro-cli silently rejects it for `/code init`
-        // panel commands, the new-chat path still works.
-        const chatID = getActiveId();
-        if (chatID !== "") {
-          await execSlash.dispatch({ chatID, command: "/code init -f" });
-          out.append(
-            "Installed. Sent /code init -f to the active chat; a new chat will pick it up regardless.",
-          );
-        } else {
-          out.append("Installed. Active in your next chat.");
-        }
+        // init time. A server enabled mid-session isn't picked up by
+        // the running bridge — kiro-cli auto-inits a fresh bridge per
+        // new chat, so the LSP becomes active there. Tell the user
+        // plainly; we used to fire `/code init -f` into the active
+        // chat as a best-effort nudge but couldn't verify it actually
+        // re-scanned PATH for the new binary, so the honest behavior
+        // is "active in your next chat."
+        out.append(
+          "Installed. Active in any new chat (existing chats keep their current LSP set).",
+        );
       }
     }
     this.loadToolsList();

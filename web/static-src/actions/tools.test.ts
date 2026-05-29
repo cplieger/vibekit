@@ -25,7 +25,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { installTools, saveTools, runDiagnostics, loadTools, seedMcp } from "./tools.js";
-import { enableTool, deleteTool, patchTool, getToolsStatus, execSlash } from "./tools.js";
+import { enableTool, deleteTool, patchTool, getToolsStatus } from "./tools.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
@@ -242,18 +242,5 @@ describe("tools.status", () => {
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools/status");
     expect(opts.method).toBe("GET");
-  });
-});
-
-describe("tools.exec_slash", () => {
-  it("POSTs chat_id + command to /api/slash/execute", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    await execSlash.dispatch({ chatID: "chat-1", command: "/code init -f" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/slash/execute");
-    expect(opts.method).toBe("POST");
-    const body = JSON.parse(opts.body as string);
-    expect(body.chat_id).toBe("chat-1");
-    expect(body.command).toBe("/code init -f");
   });
 });
