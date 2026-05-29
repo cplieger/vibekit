@@ -154,7 +154,7 @@
     "typescript-language-server": {
       "enabled": false,
       "auto_update": true,
-      "version": "4.3.4",
+      "version": "4.4.1",
       "update": {
         "method": "npm",
         "package": "typescript-language-server"
