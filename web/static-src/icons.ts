@@ -27,6 +27,14 @@ export const ICON_TRASH_14 = svg(
 export const ICON_PLUS = svg(12, '<path d="M12 5v14M5 12h14"/>');
 export const ICON_PLUS_16 = svg(16, '<path d="M12 5v14M5 12h14"/>');
 export const ICON_MINUS = svg(12, '<path d="M5 12h14"/>');
+// Pin icons for the per-tool auto_update toggle. Filled = pinned
+// (auto_update off), outline = tracking upstream (auto_update on).
+export const ICON_PIN = svg(
+  12,
+  '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>',
+);
+export const ICON_PIN_FILLED =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
 export const ICON_COPY = svg(
   14,
   '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',

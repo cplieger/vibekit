@@ -94,37 +94,45 @@ FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Baked-in dependencies. These are load-bearing for the app to function
-# and are intentionally not user-configurable via tools.json:
-#   - node + npm: required for `npx`-based MCP servers (first-class vibekit
-#     feature); version tracks Debian trixie (Node.js 20.x).
-#   - everything else: stable utility surface that kiro-cli and the web
-#     server shell out to (git, jq, curl, etc.).
-# kiro-cli itself is downloaded on first boot by entrypoint.sh (licensing
-# prevents us from baking it into the image).
+# Baked-in dependencies — the minimal stable runtime surface that
+# vibekit and kiro-cli rely on. Everything else (Node, Python, Go,
+# Java, Ruby, Rust, all LSPs, all forge CLIs) is installed on demand
+# via setup-tools.sh into the persistent /config/tools/ volume. See
+# tools.json for the curated list users can enable from the UI.
+#
+# What's here and why:
+#   - ca-certificates: HTTPS trust for every download
+#   - curl: every install script + entrypoint kiro-cli download
+#   - git: vibekit's gitexec, checkpoint system, file history,
+#          forge integrations
+#   - openssh-client: git over ssh, gh ssh
+#   - unzip: kiro-cli installer (it's a zip)
+#   - xz-utils: Node tarball extract (.tar.xz) and other archives
+#   - jq: setup-tools.sh + entrypoint.sh manifest parsing
+#
+# Notably NOT here (was here, now opt-in via tools.json):
+#   nodejs, npm, python3, python3-pip, python3-venv, wget, gcc,
+#   libc6-dev, make, openssl, rsync. Removing these drops ~190 MB
+#   off the compressed image (212 MB -> ~22 MB).
+# kiro-cli itself is downloaded on first boot by entrypoint.sh
+# (licensing prevents us from baking it into the image).
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    wget \
     git \
+    jq \
+    openssh-client \
     unzip \
     xz-utils \
-    jq \
-    nodejs \
-    npm \
-    python3 \
-    python3-pip \
-    python3-venv \
-    gcc \
-    libc6-dev \
-    make \
-    openssh-client \
-    openssl \
-    rsync \
     && rm -rf /var/lib/apt/lists/*
 
-# Go, Node, and all dev tools installed at runtime via setup-tools.sh.
+# Every dev tool — Go, Node, Python, Java, Ruby, Rust, LSPs, forge
+# CLIs — is installed at runtime via setup-tools.sh into the
+# persistent /config/tools/ tree. PATH is pre-shaped to expose all
+# the runtime install locations so a freshly-enabled tool is on
+# PATH the moment setup-tools.sh finishes its install loop.
+#
 # /config is the single persistent volume for all container state:
 #   /config/tools/   — runtimes, Go/Node/Python binaries, caches
 #   /config/home/    — auth, ssh, gitconfig, build cache
@@ -133,7 +141,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 #                      and kiro-cli agree on the location regardless of HOME.
 #   /config/*.json   — config.json (vibekit prefs), tools.json, mcp.json, etc.
 #   /config/chats/   — chat history
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/tools/node/bin:/config/tools/python/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/tools/node/bin:/config/tools/python/bin:/config/tools/runtimes/uv/bin:/config/tools/runtimes/ruby/bin:/config/tools/runtimes/rust/bin:/config/tools/runtimes/java/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOROOT="/config/tools/runtimes/go"
 ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/go/bin"

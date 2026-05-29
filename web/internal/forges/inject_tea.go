@@ -142,7 +142,7 @@ func loadTeaConfig(path string) (*teaConfig, error) {
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
 		switch key {
-		case "url":
+		case fieldURL:
 			current.URL = val
 		case "token":
 			current.Token = val

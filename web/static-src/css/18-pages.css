@@ -516,6 +516,48 @@ h3.section-title {
   }
 }
 
+/* Disabled (not-yet-enabled) tool rows: dimmed name + meta so the
+ * enabled set reads as the "active" inventory and the rest as a
+ * catalog the user can opt into. */
+.list-row-disabled .list-row-name,
+.list-row-disabled .list-row-meta {
+  color: var(--c-text-tertiary);
+  opacity: 0.7;
+}
+
+/* Enable button on a disabled row — small primary-tinted pill. */
+.list-row-enable {
+  flex-shrink: 0;
+}
+
+/* Pin (auto_update) toggle. Active = pinned (auto_update off): we
+ * tint it so a glance shows which tools are version-frozen. */
+.list-row-pin.list-row-pin-active {
+  color: var(--c-accent, var(--c-text-primary));
+}
+
+/* Inline "enable a runtime / install a CLI" banner used inside the
+ * MCP npm panel and the Sources add-account pane. A compact callout
+ * with a one-click install button + rolling output area. */
+.inline-install-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+
+  & > .section-hint {
+    margin: 0;
+  }
+
+  & > button {
+    align-self: flex-start;
+  }
+}
+
 /* Tool form modal */
 .tool-form {
   display: flex;

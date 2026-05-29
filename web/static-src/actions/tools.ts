@@ -68,3 +68,75 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
   }),
   error: "Couldn't create MCP entry",
 });
+
+// Enable a pre-populated entry: flips enabled=true on the named tool
+// and every transitive dep, then runs setup-tools.sh. The response
+// includes the chain that was enabled and the script's combined
+// output for the rolling-output UI.
+export const enableTool = apiAction<
+  { section: string; name: string },
+  { output?: string; error?: string; enabled_chain?: string[]; section?: string; name?: string }
+>({
+  name: "tools.enable",
+  scope: "tools",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ section, name }) => ({
+    method: "POST",
+    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}/enable`,
+  }),
+  error: "Couldn't enable tool",
+});
+
+// Delete a tool: cancels any in-flight install for the entry, runs
+// clear_tool for cleanup, sets enabled=false. Body { force: true }
+// cascades to dependents; without force the call returns 409 with
+// the dependents list so the UI can confirm.
+export const deleteTool = apiAction<
+  { section: string; name: string; force?: boolean },
+  { output?: string; error?: string; disabled?: string[]; dependents?: string[]; code?: string }
+>({
+  name: "tools.delete",
+  scope: "tools",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ section, name, force }) => ({
+    method: "DELETE",
+    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
+    body: force === undefined ? undefined : { force },
+  }),
+  error: false, // 409 cascade is a normal flow, handle in caller
+});
+
+// Toggle the per-tool auto_update flag.
+export const patchTool = apiAction<
+  { section: string; name: string; auto_update: boolean },
+  { section?: string; name?: string; auto_update?: boolean; error?: string }
+>({
+  name: "tools.patch",
+  scope: "tools",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ section, name, auto_update }) => ({
+    method: "PATCH",
+    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
+    body: { auto_update },
+  }),
+  error: "Couldn't update tool",
+});
+
+// Probe which baked-binary names exist on PATH. Used by the MCP add
+// modal and Sources sub-tab to decide whether to show an inline
+// "Setting up <feature>..." spinner before the user can proceed.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
+export const getToolsStatus = apiAction<void, Record<string, boolean>>({
+  name: "tools.status",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  dedupe: true,
+  request: () => ({ method: "GET", path: "/api/tools/status" }),
+  error: false,
+});

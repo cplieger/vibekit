@@ -4,11 +4,12 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { closeModal } from "./modals.js";
+import { closeModal, RollingOutput } from "./modals.js";
 import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
+import { enableTool, getToolsStatus } from "./actions/tools.js";
 import { subscribeToActions, bindLoadingState } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
@@ -189,6 +190,10 @@ function initNpmPanel(existing: Server | null): void {
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
+  // npx-based MCP servers need the Node runtime, which is opt-in. Probe
+  // and, if missing, show an inline install affordance gating the form.
+  void gateNpmPanelOnNode();
+
   if (existing !== null) {
     name.value = existing.name;
     pkg.value = extractNpxPackage(existing);
@@ -222,6 +227,70 @@ function initNpmPanel(existing: Server | null): void {
       el<HTMLButtonElement>("mcp-npm-save"),
     );
   };
+}
+
+// Probe Node availability and, when missing, render an inline banner
+// inside the npm panel that installs the Node runtime on click. The
+// package fields stay usable (the user can fill them in while Node
+// installs), but the banner makes the dependency explicit and the
+// install one-click. After a successful enable the banner removes
+// itself. Mirrors the Sources sub-tab's auto-install-on-intent flow.
+async function gateNpmPanelOnNode(): Promise<void> {
+  const panel = document.querySelector<HTMLDivElement>('[data-mcp-mode="npm"]');
+  if (panel === null) {
+    return;
+  }
+  const existingBanner = panel.querySelector(".mcp-node-banner");
+  if (existingBanner !== null) {
+    existingBanner.remove();
+  }
+
+  const status = await getToolsStatus.dispatch();
+  if (status !== null && status["npx"] === true) {
+    return; // Node already present, nothing to do.
+  }
+
+  const banner = document.createElement("div");
+  banner.className = "mcp-node-banner inline-install-banner";
+  const msg = document.createElement("p");
+  msg.className = "section-hint";
+  msg.textContent =
+    "npx-based MCP servers need the Node.js runtime (~100 MB). It isn't installed yet.";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-small btn-primary";
+  btn.textContent = "Install Node.js runtime";
+  const out = document.createElement("div");
+  out.className = "rolling-output hidden";
+  out.setAttribute("role", "log");
+  out.setAttribute("aria-live", "polite");
+  out.setAttribute("aria-label", "Node install progress");
+
+  btn.addEventListener("click", () => {
+    void (async () => {
+      btn.disabled = true;
+      const roll = new RollingOutput(out, "git-output-modal");
+      out.classList.remove("hidden");
+      roll.append("Installing Node.js runtime…");
+      const d = await enableTool.dispatch({ section: "runtimes", name: "node" });
+      if (d === null || d.error !== undefined) {
+        roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
+        btn.disabled = false;
+        return;
+      }
+      roll.append(d.output ?? "");
+      // Re-probe; if npx is now present, drop the banner.
+      const after = await getToolsStatus.dispatch();
+      if (after !== null && after["npx"] === true) {
+        banner.remove();
+      } else {
+        btn.disabled = false;
+      }
+    })();
+  });
+
+  banner.append(msg, btn, out);
+  panel.prepend(banner);
 }
 
 function fillNpmForm(

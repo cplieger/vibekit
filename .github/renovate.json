@@ -62,12 +62,39 @@
     },
     {
       "customType": "regex",
-      "description": "vibekit tools.json versions",
+      "description": "vibekit tools.json — github-releases entries (version followed by update.method github + repo)",
       "managerFilePatterns": ["/tools\\.json$/"],
       "matchStrings": [
-        "\"version\":\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"[\\s\\S]*?\"repo\":\\s*\"(?<depName>[^\"]+)\""
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"update\":\\s*\\{\\s*\"method\":\\s*\"github\",\\s*\"repo\":\\s*\"(?<depName>[^\"]+)\""
       ],
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "vibekit tools.json — npm entries (version followed by update.method npm + package)",
+      "managerFilePatterns": ["/tools\\.json$/"],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"update\":\\s*\\{\\s*\"method\":\\s*\"npm\",\\s*\"package\":\\s*\"(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "vibekit tools.json — gomod entries (version followed by update.method gomod + module)",
+      "managerFilePatterns": ["/tools\\.json$/"],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"update\":\\s*\\{\\s*\"method\":\\s*\"gomod\",\\s*\"module\":\\s*\"(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
+      "description": "vibekit tools.json — rubygems entries (version followed by update.method rubygems + package)",
+      "managerFilePatterns": ["/tools\\.json$/"],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"update\":\\s*\\{\\s*\"method\":\\s*\"rubygems\",\\s*\"package\":\\s*\"(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "rubygems"
     },
     {
       "customType": "regex",

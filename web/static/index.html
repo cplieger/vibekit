@@ -396,8 +396,8 @@
           <div class="settings-panel hidden" data-settings-panel="tools">
 
             <div class="page-section">
-              <h3 class="section-title">Installed tools</h3>
-              <p class="section-hint">Command-line tools and runtimes preinstalled on this container. Versions are pinned so agent output stays reproducible.</p>
+              <h3 class="section-title">Tools &amp; runtimes</h3>
+              <p class="section-hint">Language runtimes, LSP servers, and CLIs you can enable on demand. Disabled tools install on first use (or click Enable); the pin icon freezes a tool at its current version. Everything installs into the persistent volume, not the image.</p>
               <div class="section-actions-row">
                 <div class="action-bar action-bar-inline">
                   <button type="button" id="tool-update-btn" class="action-pill" data-tooltip="Update tools" aria-label="Update tools">
@@ -415,7 +415,7 @@
                   <span class="section-option-label">Auto-update on container start</span>
                 </label>
               </div>
-              <div id="tool-update-output" class="rolling-output hidden"></div>
+              <div id="tool-update-output" class="rolling-output hidden" role="log" aria-live="polite" aria-label="Tool install output"></div>
               <div id="tools-list" class="list-container"><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div></div>
             </div>
 

@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func helloMux() http.Handler {
@@ -18,8 +20,14 @@ func helloMux() http.Handler {
 	})
 }
 
+// testCSP is a fixed CSP string for the security middleware tests that
+// don't care about importmap hashing — they assert structural
+// properties (origin checks, headers set, etc.) of the middleware.
+// Production uses buildCSPPolicy(staticFS) instead.
+func testCSP() string { return fallbackCSPPolicy() }
+
 func TestSecurityMiddleware_SetsCSP(t *testing.T) {
-	h := securityMiddleware(helloMux())
+	h := securityMiddleware(testCSP(), helloMux())
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -55,7 +63,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 		{"DELETE cross-origin blocked", http.MethodDelete, "http://attacker.example", http.StatusForbidden},
 	}
 
-	h := securityMiddleware(helloMux())
+	h := securityMiddleware(testCSP(), helloMux())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var body *strings.Reader
@@ -81,7 +89,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 }
 
 func BenchmarkSecurityMiddleware(b *testing.B) {
-	h := securityMiddleware(helloMux())
+	h := securityMiddleware(testCSP(), helloMux())
 
 	b.Run("GET_headers_only", func(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
@@ -107,33 +115,63 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 	})
 }
 
-// TestCSPImportMapHash guards against CSP drift: if the inline
-// <script type="importmap"> in static/index.html is edited without
-// updating cspPolicy, the browser silently blocks xterm.js module
-// resolution (the shell tab goes dark with no user-visible error).
-// Recompute the hash from the embedded HTML and assert the CSP
-// contains it verbatim.
-func TestCSPImportMapHash(t *testing.T) {
-	html, err := os.ReadFile("../../static/index.html")
+// TestImportMapHashToken: extracts the inline importmap from the real
+// embedded HTML and confirms the produced sha256 token matches a manual
+// recomputation. This guards the parsing + hashing logic, not any
+// hardcoded literal.
+func TestImportMapHashToken(t *testing.T) {
+	html, err := os.ReadFile(filepath.Join("..", "..", "static", "index.html"))
 	if err != nil {
 		t.Fatalf("read static/index.html: %v", err)
 	}
-	// Match the importmap block exactly as the browser sees it:
-	// everything between the opening <script type="importmap"> tag
-	// and the matching </script>. DOTALL for multi-line content.
+	got, err := importMapHashToken(html)
+	if err != nil {
+		t.Fatalf("importMapHashToken: %v", err)
+	}
+	// Manual recomputation as a sanity check: the function does what
+	// the docstring says, against the real file.
 	re := regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
 	m := re.FindSubmatch(html)
 	if m == nil {
-		t.Fatal("no <script type=\"importmap\"> block in static/index.html")
+		t.Fatal("no importmap block in test fixture")
 	}
 	sum := sha256.Sum256(m[1])
 	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if !strings.Contains(cspPolicy, want) {
-		t.Errorf("cspPolicy missing current importmap hash.\n"+
-			"expected script-src token: %s\n"+
-			"cspPolicy: %s\n"+
-			"fix: update the sha256-... value in security.go's script-src directive",
-			want, cspPolicy)
+	if got != want {
+		t.Errorf("importMapHashToken = %q, want %q", got, want)
+	}
+}
+
+// TestImportMapHashToken_Missing: index.html without an importmap block
+// returns an error rather than a misleading empty hash.
+func TestImportMapHashToken_Missing(t *testing.T) {
+	if _, err := importMapHashToken([]byte("<html><body>no importmap here</body></html>")); err == nil {
+		t.Error("expected error for HTML with no importmap, got nil")
+	}
+}
+
+// TestBuildCSPPolicy: against a synthetic FS, the produced CSP contains
+// the expected sha256 token derived from the importmap content. Covers
+// the whole startup path used by ListenAndServe.
+func TestBuildCSPPolicy(t *testing.T) {
+	importMap := `{"imports":{"x":"/y.mjs"}}`
+	html := []byte(`<html><script type="importmap">` + importMap + `</script></html>`)
+	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
+
+	policy, err := buildCSPPolicy(staticFS)
+	if err != nil {
+		t.Fatalf("buildCSPPolicy: %v", err)
+	}
+	sum := sha256.Sum256([]byte(importMap))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	if !strings.Contains(policy, want) {
+		t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
+	}
+}
+
+func TestBuildCSPPolicy_NilFS(t *testing.T) {
+	if _, err := buildCSPPolicy(nil); err == nil {
+		t.Error("expected error for nil FS")
 	}
 }
 
@@ -146,7 +184,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 	f.Add("PUT", "null", "example.com")
 	f.Add("PATCH", "http://example.com", "example.com:443")
 
-	h := securityMiddleware(helloMux())
+	h := securityMiddleware(testCSP(), helloMux())
 
 	f.Fuzz(func(t *testing.T, method, origin, host string) {
 		if method == "" {
@@ -168,8 +206,9 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 }
 
 func TestCSPPolicy_StructuralInvariants(t *testing.T) {
+	policy := testCSP()
 	directives := make(map[string]string)
-	for part := range strings.SplitSeq(cspPolicy, "; ") {
+	for part := range strings.SplitSeq(policy, "; ") {
 		fields := strings.SplitN(part, " ", 2)
 		name := fields[0]
 		if _, dup := directives[name]; dup {
@@ -195,13 +234,5 @@ func TestCSPPolicy_StructuralInvariants(t *testing.T) {
 
 	if ds := directives["default-src"]; ds != "'self'" {
 		t.Errorf("default-src = %q, want 'self'", ds)
-	}
-
-	// script-src must contain exactly one sha256 token.
-	scriptSrc := directives["script-src"]
-	sha256Re := regexp.MustCompile(`'sha256-[A-Za-z0-9+/=]+'`)
-	matches := sha256Re.FindAllString(scriptSrc, -1)
-	if len(matches) != 1 {
-		t.Errorf("script-src has %d sha256 tokens, want exactly 1: %q", len(matches), scriptSrc)
 	}
 }

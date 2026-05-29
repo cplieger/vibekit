@@ -130,11 +130,12 @@ func TestRun_DisabledShortCircuits(t *testing.T) {
 	}
 }
 
-// F4 (test-review u12c1): npm-missing graceful degradation sets
-// p.Disabled on the first LookPath miss. Covers the actual
-// LookPath-miss branch; TestRun_DisabledShortCircuits only covers
-// the already-disabled short-circuit.
-func TestRun_DisablesWhenNpmMissing(t *testing.T) {
+// npm-missing graceful degradation: a Run with no npm on PATH must
+// queue nothing, but must NOT permanently latch Disabled — npm
+// (runtimes.node) is opt-in and can be installed mid-process via the
+// tools UI, after which a later Run should come alive. This covers the
+// LookPath-miss branch.
+func TestRun_SkipsWhenNpmMissingButDoesNotLatch(t *testing.T) {
 	// Empty PATH so exec.LookPath("npm") always fails on any host.
 	// t.Setenv restores the prior value at test end.
 	t.Setenv("PATH", "")
@@ -158,23 +159,25 @@ func TestRun_DisablesWhenNpmMissing(t *testing.T) {
 	gotDisabled := p.Disabled.Load()
 	gotRunning := len(p.Running())
 	p.Unlock()
-	if !gotDisabled {
-		t.Error("Run with no npm did not set disabled=true")
+	// Must NOT latch — npm can appear later in the same process.
+	if gotDisabled {
+		t.Error("Run with no npm latched Disabled; it must re-probe on the next Run")
 	}
 	if gotRunning != 0 {
 		t.Errorf("Run with no npm queued %d installs, want 0", gotRunning)
 	}
 
-	// Second Run is the short-circuit path. It must not spawn
-	// anything and must not panic. Additionally: p.Disabled is
-	// sticky (per godoc, container restart required to re-enable).
+	// A second Run (still no npm) must again skip cleanly and STILL not
+	// latch — proving re-probe semantics rather than one-shot disable.
 	p.Run(context.Background())
 	p.Lock()
-	if !p.Disabled.Load() {
-		t.Error("disabled flag cleared between passes; must remain sticky")
-	}
-	if len(p.Running()) != 0 {
-		t.Errorf("second Run queued installs: %v", p.Running())
-	}
+	stillNotLatched := !p.Disabled.Load()
+	running2 := len(p.Running())
 	p.Unlock()
+	if !stillNotLatched {
+		t.Error("second npm-missing Run latched Disabled; must keep re-probing")
+	}
+	if running2 != 0 {
+		t.Errorf("second Run queued installs: %d", running2)
+	}
 }

@@ -13,5 +13,10 @@ web/static/*.js
 web/static/wire/
 web/static/handlers/
 web/static/vendor/
+# tsgo emits compiled .js mirroring the static-src module tree into
+# these subdirectories; all build output, never committed.
+web/static/actions/
+web/static/lib/
+web/static/__test-helpers__/
 
 web/static/style.css
