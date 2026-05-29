@@ -123,7 +123,7 @@ var (
 	// the op kind is not KindEdit. Merged text only makes sense
 	// for edit-kind ops; accepting a delete or create with a
 	// merged body would result in the wrong file contents.
-	ErrMergeNotApplicable = errors.New("pending: merged_text only valid for edit ops")
+	ErrMergeNotApplicable = errors.New("pending: merged_text not applicable to delete ops")
 )
 
 // Resolution is the outcome of a pending op after the resume channel
@@ -176,6 +176,9 @@ type Store struct {
 	pathIndex map[api.ChatID]map[string]struct{} // chatID → set of staged paths
 	mu        sync.Mutex
 }
+
+// Compile-time assertion: *Store satisfies the consumer-side interface.
+var _ api.PendingStore = (*Store)(nil)
 
 // New returns a ready-to-use Store.
 func New() *Store {

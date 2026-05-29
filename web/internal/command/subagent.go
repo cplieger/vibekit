@@ -10,15 +10,6 @@ import (
 	"vibekit/internal/api"
 )
 
-// ACP method constants for subagent operations.
-const (
-	methodSpawn       = "session/spawn"
-	methodMessageSend = "message/send"
-	methodTerminate   = "session/terminate"
-	methodAttach      = "session/attach"
-	methodList        = "session/list"
-)
-
 // CmdSpawnSubagent spawns a new subagent session.
 func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
@@ -28,7 +19,7 @@ func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 	var p api.SpawnSubagentCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -43,7 +34,7 @@ func CmdSpawnSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
-	resp, err := sb.Call(ctx, methodSpawn, SessionParams(sb, map[string]any{
+	resp, err := sb.Call(ctx, api.MethodSpawn, SessionParams(sb, map[string]any{
 		"task":  p.Task,
 		keyName: p.Name,
 	}))
@@ -80,7 +71,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 	var p api.MessageSubagentCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -95,7 +86,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	_, err := sb.Call(ctx, methodMessageSend, map[string]any{
+	_, err := sb.Call(ctx, api.MethodMessageSend, map[string]any{
 		keySessionID: p.SubSessionID,
 		"content":    p.Text,
 	})
@@ -104,7 +95,7 @@ func CmdMessageSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdSetAutoApproveCrew toggles the auto-approve crew flag.
@@ -118,7 +109,7 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 	}
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -136,21 +127,21 @@ func CmdSetAutoApproveCrew(d *Dispatcher, ctx context.Context, w http.ResponseWr
 	}
 	if !changed {
 		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
-			d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 			return
 		}
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdTerminateSubagent terminates a subagent session.
 func CmdTerminateSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	callSubagentMethod(d, ctx, w, cmd, methodTerminate)
+	callSubagentMethod(d, ctx, w, cmd, api.MethodTerminate)
 }
 
 // CmdAttachSubagent attaches to a subagent session.
 func CmdAttachSubagent(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	callSubagentMethod(d, ctx, w, cmd, methodAttach)
+	callSubagentMethod(d, ctx, w, cmd, api.MethodAttach)
 }
 
 // callSubagentMethod is the shared handler for terminate/attach.
@@ -164,7 +155,7 @@ func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 	}
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
 	}
@@ -186,7 +177,7 @@ func callSubagentMethod(d *Dispatcher, ctx context.Context, w http.ResponseWrite
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // CmdListSessions lists active subagent sessions.
@@ -202,7 +193,7 @@ func CmdListSessions(d *Dispatcher, ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
-	resp, err := sb.Call(ctx, methodList, map[string]any{
+	resp, err := sb.Call(ctx, api.MethodList, map[string]any{
 		"cwd": deps.WorkDir(),
 	})
 	if err != nil {

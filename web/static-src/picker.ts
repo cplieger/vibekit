@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ModelInfo } from "./types.js";
-import { escText, humanName } from "./strings.js";
+import { humanName } from "./strings.js";
 import { $ } from "./dom.js";
 import { getActive } from "./store.js";
 import { wireArrowNav } from "./arrow-nav.js";
@@ -61,8 +61,12 @@ class ModelPickerController {
     picker.setAttribute("aria-label", info.label);
 
     const svg = label.querySelector("svg");
-    const svgHtml = svg !== null ? svg.outerHTML + " " : "";
-    label.innerHTML = svgHtml + escText(info.label);
+    const labelText = document.createTextNode(info.label);
+    if (svg !== null) {
+      label.replaceChildren(svg, document.createTextNode(" "), labelText);
+    } else {
+      label.replaceChildren(labelText);
+    }
 
     let desc = picker.querySelector(".picker-desc");
     if (desc === null) {
@@ -110,9 +114,13 @@ class ModelPickerController {
     const btn = document.createElement("button");
     btn.setAttribute("data-model", m.model_id);
     btn.setAttribute("role", "option");
-    btn.innerHTML =
-      `<span class="picker-name">${escText(humanName(m.model_name || m.model_id))}</span>` +
-      `<span class="picker-meta">${String(m.rate_multiplier)}x credits</span>`;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "picker-name";
+    nameSpan.textContent = humanName(m.model_name || m.model_id);
+    const metaSpan = document.createElement("span");
+    metaSpan.className = "picker-meta";
+    metaSpan.textContent = `${String(m.rate_multiplier)}x credits`;
+    btn.append(nameSpan, metaSpan);
     btn.addEventListener("click", () => {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const grid = $.modelPicker.querySelector<HTMLElement>(".picker-grid")!;

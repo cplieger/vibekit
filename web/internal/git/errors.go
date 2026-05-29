@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	jsonKeyOutput = "output"
-	refHEAD       = "HEAD"
+	jsonKeyOutput  = api.JSONKeyOutput
+	refHEAD        = "HEAD"
+	msgNotAGitRepo = "not a git repo"
 )
 
 // --- git error taxonomy ---
@@ -32,7 +33,7 @@ const (
 // writeGitError writes a structured error response with a stable
 // machine-readable kind and an optional human-readable detail field.
 func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
-	resp := map[string]string{api.JSONKeyError: string(kind)}
+	resp := api.ErrorJSON(string(kind))
 	if detail != "" {
 		resp["detail"] = detail
 	}
@@ -69,8 +70,7 @@ func gitShowCmd(ctx context.Context, dir, ref, path string) (string, error) {
 	if err == nil {
 		return out, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 128 {
 		// "not a git repository" is a repo-level failure, not a
 		// path-not-found. Let it fall through as a generic error.
 		if strings.Contains(out, "not a git repository") {

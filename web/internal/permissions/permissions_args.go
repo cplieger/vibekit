@@ -9,12 +9,22 @@ import (
 	cfgsettings "vibekit/internal/settings"
 )
 
+// PermissionMode represents the permission evaluation strategy.
+type PermissionMode = mode
+
 type mode string
 
 const (
 	modePrompt    mode = "prompt"
 	modeTrustList mode = "trust-list"
 	modeTrustAll  mode = "trust-all"
+)
+
+// Exported constants for cross-package consumers.
+const (
+	ModePrompt    mode = modePrompt
+	ModeTrustList mode = modeTrustList
+	ModeTrustAll  mode = modeTrustAll
 )
 
 // Valid reports whether m is a recognised permission mode value.
@@ -61,6 +71,33 @@ func readSettingsRaw(ctx context.Context, configDir string) (map[string]json.Raw
 	return raw, nil
 }
 
+// permissionSettings holds all permission-relevant keys extracted from
+// a single readSettingsRaw call.
+type permissionSettings struct {
+	raw         map[string]json.RawMessage
+	shellPolicy json.RawMessage
+	hasShell    bool
+}
+
+// readPermissionSettings extracts all permission-relevant keys from
+// config.json in a single unmarshal pass. Both Args and
+// EvaluateShellCommand call this to avoid redundant JSON parsing.
+func readPermissionSettings(ctx context.Context, configDir string) (*permissionSettings, error) {
+	raw, err := readSettingsRaw(ctx, configDir)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return &permissionSettings{}, nil
+	}
+	ps := &permissionSettings{raw: raw}
+	if v, ok := raw[cfgsettings.KeyShellPolicy]; ok {
+		ps.shellPolicy = v
+		ps.hasShell = true
+	}
+	return ps, nil
+}
+
 // Args returns the kiro-cli CLI flags corresponding to the current
 // permission settings. Never returns nil; an empty slice means "no flag,
 // prompt for everything".
@@ -100,7 +137,7 @@ func read(ctx context.Context, configDir string) settings {
 		return settings{Mode: modeTrustAll}
 	}
 	var s settings
-	if m, ok := raw["permission_mode"]; ok {
+	if m, ok := raw[cfgsettings.KeyPermissionMode]; ok {
 		if err := json.Unmarshal(m, &s.Mode); err != nil {
 			slog.Warn("permissions: parse mode", "error", err)
 			return settings{Mode: modeTrustAll}
@@ -110,7 +147,7 @@ func read(ctx context.Context, configDir string) settings {
 			s.Mode = modeTrustAll
 		}
 	}
-	if t, ok := raw["trust_tools"]; ok {
+	if t, ok := raw[cfgsettings.KeyTrustTools]; ok {
 		if err := json.Unmarshal(t, &s.TrustTools); err != nil {
 			slog.Warn("permissions: parse trust_tools", "error", err)
 		}
@@ -173,7 +210,7 @@ func isToolNameChar(r rune) bool {
 // Supervised-mode flag applied to newly-auto-created chats.
 func SupervisedDefault(ctx context.Context, configDir string) bool {
 	var b bool
-	if !cfgsettings.FieldInto(ctx, configDir, "supervised_default", "supervised_default", &b) {
+	if !cfgsettings.FieldInto(ctx, configDir, cfgsettings.KeySupervisedDefault, cfgsettings.KeySupervisedDefault, &b) {
 		return false
 	}
 	return b

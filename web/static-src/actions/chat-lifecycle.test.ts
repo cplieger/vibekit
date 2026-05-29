@@ -3,20 +3,19 @@
 // resolvePendingChange, respondPermission, restoreCheckpoint.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-}));
 
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+}));
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive } from "../store.js";
 import { _resetForTest as resetDefine } from "./define.js";

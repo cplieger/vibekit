@@ -56,14 +56,14 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		}
 	})
 
-	t.Run("MCPRecordConnected_does_not_panic", func(t *testing.T) {
+	t.Run("MCPRecorder_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.MCPRecordConnected(context.Background(), "test-server")
-	})
-
-	t.Run("MCPSignalReady_does_not_panic", func(t *testing.T) {
-		d := newDeps(t)
-		d.MCPSignalReady()
+		r := d.MCPRecorder()
+		if r == nil {
+			t.Fatal("MCPRecorder() returned nil")
+		}
+		r.RecordConnected(context.Background(), "test-server")
+		r.SignalReady()
 	})
 
 	t.Run("PendingPermsAdd_Remove_does_not_panic", func(t *testing.T) {
@@ -75,12 +75,6 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
 		d.NotifyPush(context.Background(), "test body", api.PushKindPermission)
-	})
-
-	t.Run("ConfigDir_returns_without_panic", func(t *testing.T) {
-		d := newDeps(t)
-		// May be empty when no configDir option is set; contract is no panic.
-		_ = d.ConfigDir()
 	})
 
 	t.Run("PermissionRules_returns_without_panic", func(t *testing.T) {
@@ -100,13 +94,6 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		d := newDeps(t)
 		if d.LineTracker() == nil {
 			t.Error("LineTracker() returned nil")
-		}
-	})
-
-	t.Run("NewMessageID_non_empty", func(t *testing.T) {
-		d := newDeps(t)
-		if id := d.NewMessageID(); id == "" {
-			t.Error("NewMessageID() returned empty string")
 		}
 	})
 }

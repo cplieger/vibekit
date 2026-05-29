@@ -3,6 +3,8 @@ package permissions
 import (
 	"slices"
 	"testing"
+
+	"vibekit/internal/permissions/eval"
 )
 
 func TestShellFields(t *testing.T) {
@@ -28,7 +30,7 @@ func TestShellFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shellFields(tt.input)
+			got := eval.ShellFields(tt.input)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("shellFields(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -43,17 +45,17 @@ func TestHasWriteOption_QuotedArgNotMatched(t *testing.T) {
 	// shellFields is preventing false positives from split-mid-argument:
 	// `grep "hello -o world"` should NOT match -o because it's inside a
 	// single argument, not a standalone flag.
-	if hasWriteOption(`grep "hello -o world" file.txt`) {
+	if eval.HasWriteOption(`grep "hello -o world" file.txt`) {
 		t.Error("hasWriteOption matched -o embedded inside a quoted argument")
 	}
-	if hasWriteOption(`grep 'contains -o flag' file.txt`) {
+	if eval.HasWriteOption(`grep 'contains -o flag' file.txt`) {
 		t.Error("hasWriteOption matched -o embedded inside a single-quoted argument")
 	}
 	// Actual -o flag (quoted or not) should still match.
-	if !hasWriteOption(`curl -o output.txt`) {
+	if !eval.HasWriteOption(`curl -o output.txt`) {
 		t.Error("hasWriteOption failed to match real -o flag")
 	}
-	if !hasWriteOption(`curl "-o" output.txt`) {
+	if !eval.HasWriteOption(`curl "-o" output.txt`) {
 		t.Error("hasWriteOption failed to match quoted -o flag (still a flag to the program)")
 	}
 }

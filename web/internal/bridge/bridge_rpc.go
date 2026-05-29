@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"vibekit/internal/api"
@@ -21,7 +20,7 @@ const jsonRPCVersion = "2.0"
 // errBridgeExited, so "kiro-cli died on its own" and "Stop() races a
 // fresh Call" return the same sentinel without string comparison.
 var bridgeExitedResp = &api.RPCResponse{
-	Error: &api.RPCError{Code: -32000, Message: "ACP bridge exited"},
+	Error: &api.RPCError{Code: api.RPCCodeBridgeExited, Message: "ACP bridge exited"},
 }
 
 func (b *Bridge) sendNotif(msg *api.RPCResponse) {
@@ -139,25 +138,25 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCR
 	data = append(data, '\n')
 	if writeErr := b.writeFrame(data); writeErr != nil {
 		b.deregisterPending(id)
-		return nil, &TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, &api.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case resp := <-ch:
 		if resp == bridgeExitedResp {
-			return nil, &TransportError{Err: errBridgeExited, Retryable: true}
+			return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can
-			// use errors.Is(err, api.ErrNotIdle) without string matching.
-			if resp.Error.Code == api.RPCCodeNotIdle || strings.Contains(resp.Error.Message, "not idle") {
-				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, ErrNotIdle)
+			// use errors.Is(err, api.api.ErrNotIdle) without string matching.
+			if resp.Error.Code == api.RPCCodeNotIdle {
+				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, api.ErrNotIdle)
 			}
 			return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
 		return resp, nil
 	case <-b.done:
 		b.deregisterPending(id)
-		return nil, &TransportError{Err: errBridgeExited, Retryable: true}
+		return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
 		return nil, ctx.Err()
@@ -189,7 +188,7 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 	}
 	resp := api.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
-		code := -32603
+		code := api.RPCCodeInternal
 		msg := err.Error()
 		if re, ok := errors.AsType[*api.RPCError](err); ok {
 			code = re.Code

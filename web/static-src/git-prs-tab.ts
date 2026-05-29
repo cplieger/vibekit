@@ -15,10 +15,9 @@ import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { relativeTime } from "./utils-format.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
-import type { ForgeKind } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_REFRESH } from "./icons.js";
+import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
@@ -26,33 +25,11 @@ import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
+import { escAttr as escapeHTML } from "./strings.js";
 
 // --- Types ---
 
-interface PR {
-  number: number;
-  title: string;
-  state: string;
-  draft?: boolean;
-  mergeable?: boolean;
-  source_branch: string;
-  target_branch: string;
-  url?: string;
-  author?: string;
-  created_at?: number;
-  updated_at?: number;
-}
-
-interface RepoGroup {
-  forge_id: string;
-  forge_kind: ForgeKind;
-  forge_host: string;
-  owner: string;
-  name: string;
-  full_name: string;
-  prs: PR[];
-  error?: string;
-}
+import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
@@ -117,7 +94,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   const myGen = ++refreshGen;
   refreshController?.abort();
   refreshController = new AbortController();
-  const { signal } = refreshController;
+  const signal = AbortSignal.any([refreshController.signal, AbortSignal.timeout(20_000)]);
   // Honour external signal (e.g. from action framework).
   // Capture local ref to avoid stale closure over module-level refreshController.
   const myController = refreshController;
@@ -359,20 +336,6 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 }
 
 // --- Empty-state markup helpers ---
-
-const ICON_PR_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="6" cy="6" r="3"/>' +
-  '<circle cx="6" cy="18" r="3"/>' +
-  '<line x1="6" y1="9" x2="6" y2="15"/>' +
-  '<circle cx="18" cy="18" r="3"/>' +
-  '<path d="M18 9a9 9 0 00-9-9"/>' +
-  "</svg>";
-
-const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -801,15 +764,4 @@ function computeMergeBlockReason(pr: PR): string {
     return "this PR isn't mergeable — likely conflicts, failing required checks, or branch protection. Open it on the forge for details.";
   }
   return "";
-}
-
-function escapeHTML(s: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }

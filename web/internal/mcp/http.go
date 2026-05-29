@@ -131,7 +131,7 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
 		}
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: "persist failed"})
+			api.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
 		api.BadRequest(w, err.Error())

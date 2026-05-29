@@ -31,13 +31,13 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	var p api.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.TurnIndex < 0 {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
 	parent, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 
@@ -116,12 +116,12 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 	if chat.ParentChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest,
-			errors.New("not a rewind chat (no parent)"))
+			errNotRewindChat)
 		return
 	}
 
@@ -146,7 +146,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	})
 
 	slog.Info("rewind promoted", "rewind", cmd.ChatID, "deleted_parent", parentID)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true})
+	d.Respond(w, cmd.RequestID, responseWith(nil))
 }
 
 // CmdDiscardRewindChat discards a rewind chat and returns to the parent.
@@ -159,12 +159,12 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errChatNotFound)
+		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
 	if chat.ParentChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest,
-			errors.New("not a rewind chat (no parent)"))
+			errNotRewindChat)
 		return
 	}
 
@@ -192,15 +192,14 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		return
 	}
 	var p api.SetEffortCommand
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !validEffortLevel(p.Level) {
-		d.RespondErr(w, http.StatusBadRequest, errInvalidPayload)
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
+		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
 	bridge := deps.GetBridge(cmd.ChatID)
 	if bridge == nil {
-		d.RespondErr(w, http.StatusConflict,
-			errors.New("no active bridge for this chat"))
+		d.RespondErr(w, http.StatusConflict, errNoBridge)
 		return
 	}
 
@@ -208,7 +207,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	result, err := bridge.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
 		keyCommand: map[string]any{
 			keyCommand: "effort",
-			"args":     []string{p.Level},
+			"args":     []string{string(p.Level)},
 		},
 	})
 	if err != nil {
@@ -219,13 +218,5 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	_ = result // success; kiro-cli applies the effort level to the session
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, "level": p.Level})
-}
-
-var validEffortLevels = map[string]bool{
-	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
-}
-
-func validEffortLevel(level string) bool {
-	return validEffortLevels[level]
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"level": p.Level}))
 }

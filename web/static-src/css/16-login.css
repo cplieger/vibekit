@@ -169,7 +169,6 @@
 [id="settings-view"],
 [id="git-view"],
 [id="editor-view"],
-[id="follow-view"],
 [id="files-view"],
 [id="history-view"] {
   display: flex;
@@ -198,11 +197,6 @@
 
 [id="editor-view"] {
   view-transition-name: editor-view;
-}
-
-[id="follow-view"] {
-  view-transition-name: follow-view;
-  overflow-y: auto;
 }
 
 [id="files-view"] {

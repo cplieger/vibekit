@@ -20,6 +20,16 @@ export function el<T extends HTMLElement>(id: string): T {
   return e as T;
 }
 
+/** Like el() but returns null when the element doesn't exist.
+ *  Use for elements that are conditionally present in the DOM.
+ *  T parameter only appears in the return type intentionally — the
+ *  call site declares which element subclass it expects, mirroring the
+ *  built-in `document.getElementById<T>` ergonomics. */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the call-site contract for the returned element subclass
+export function maybeEl<T extends HTMLElement>(id: string): T | null {
+  return document.getElementById(id) as T | null;
+}
+
 // Lazy singleton: elements are queried on first access via getter.
 // This allows the module to be imported before DOMContentLoaded
 // as long as no property is accessed until the DOM is ready.
@@ -83,9 +93,6 @@ class Elements {
   }
   get sendBtn(): HTMLButtonElement {
     return el("send-btn");
-  }
-  get followAlongBtn(): HTMLButtonElement {
-    return el("follow-along-btn");
   }
   get autoApproveCrewBtn(): HTMLButtonElement {
     return el("auto-approve-crew-btn");

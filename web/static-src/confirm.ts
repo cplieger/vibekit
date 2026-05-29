@@ -23,12 +23,25 @@ function ensureDialog(): HTMLDialogElement {
   // The <dialog> element gets implicit role="dialog". For destructive
   // variants we upgrade to role="alertdialog" at show-time so AT
   // announces the message with the urgency it deserves.
-  dialogEl.innerHTML = `
-    <p class="vk-confirm-msg" id="vk-confirm-msg"></p>
-    <div class="vk-confirm-actions">
-      <button type="button" class="vk-confirm-cancel btn-small">Cancel</button>
-      <button type="button" class="vk-confirm-ok btn-small confirm-danger">Confirm</button>
-    </div>`;
+  const msgP = document.createElement("p");
+  msgP.className = "vk-confirm-msg";
+  msgP.id = "vk-confirm-msg";
+
+  const actionsDiv = document.createElement("div");
+  actionsDiv.className = "vk-confirm-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "vk-confirm-cancel btn-small";
+  cancelButton.textContent = "Cancel";
+
+  const okButton = document.createElement("button");
+  okButton.type = "button";
+  okButton.className = "vk-confirm-ok btn-small confirm-danger";
+  okButton.textContent = "Confirm";
+
+  actionsDiv.append(cancelButton, okButton);
+  dialogEl.append(msgP, actionsDiv);
   // aria-labelledby links the dialog accname to the message paragraph
   // so SR users hear the message when the dialog opens.
   dialogEl.setAttribute("aria-labelledby", "vk-confirm-msg");

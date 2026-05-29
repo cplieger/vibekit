@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"vibekit/internal/api"
+	"vibekit/internal/sessions"
 	"vibekit/internal/version"
 )
 
@@ -38,17 +39,6 @@ const stderrLineCap = 64 * 1024
 // so callers can errors.Is against it without allocating per-call.
 var errBridgeExited = errors.New("ACP bridge exited")
 
-// ErrNotIdle is the sentinel for "session not idle" errors from
-// kiro-cli. Re-exported from api for backward compatibility within
-// this package and external callers that reference bridge.ErrNotIdle.
-var ErrNotIdle = api.ErrNotIdle
-
-// TransportError wraps bridge-level transport failures (pipe closed,
-// write timeout, process exited) with explicit retryability semantics.
-// Re-exported from api so callers can use either bridge.TransportError
-// or api.TransportError interchangeably.
-type TransportError = api.TransportError
-
 // ACP RPC method names — re-exported from api for package-local use.
 // The canonical definitions live in api/methods.go so the full protocol
 // vocabulary is discoverable in one place.
@@ -70,11 +60,12 @@ type Bridge struct {
 	done         chan struct{}
 	models       atomic.Pointer[[]api.SessionModel]
 	cmd          *exec.Cmd
-	currentMode  string
+	lockMgr      *sessions.Manager
 	modelID      api.ModelID
 	sessionID    api.SessionID
 	workDir      string
 	cliPath      string
+	currentMode  string
 	nextID       atomic.Int64
 	stopOnce     sync.Once
 	mu           sync.Mutex
@@ -83,14 +74,30 @@ type Bridge struct {
 }
 
 // New returns a fresh bridge. Call Start before any other method.
-func New(cliPath, workDir string) *Bridge {
-	return &Bridge{
+// lockMgr may be nil if session lock management is not needed.
+func New(cliPath, workDir string, opts ...BridgeOption) *Bridge {
+	b := &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
 		pending: make(map[int64]chan *api.RPCResponse),
 		notifCh: make(chan *api.RPCResponse, 256),
 		done:    make(chan struct{}),
 	}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
+}
+
+// BridgeOption configures a Bridge at construction time.
+//
+//nolint:revive // BridgeOption: name kept for clarity at call sites; bridge.Option would conflict with other package-level Option names callers commonly use.
+type BridgeOption func(*Bridge)
+
+// WithSessionManager sets the sessions.Manager used for stale-lock
+// removal during session load.
+func WithSessionManager(mgr *sessions.Manager) BridgeOption {
+	return func(b *Bridge) { b.lockMgr = mgr }
 }
 
 // SessionID returns the bridge's ACP session id. Safe to call from
@@ -149,8 +156,8 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	sessionID := b.sessionID
 	b.mu.Unlock()
 	_, err := b.Call(ctx, methodSetModel, map[string]any{
-		"sessionId": sessionID,
-		"modelId":   modelID,
+		api.KeySessionID: sessionID,
+		"modelId":        modelID,
 	})
 	if err != nil {
 		return err

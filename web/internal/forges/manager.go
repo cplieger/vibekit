@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // ConfiguredForge is one connected forge backend. Constructed from
@@ -28,10 +30,12 @@ type ConfiguredForge struct {
 
 // Manager owns the list of configured forges.
 type Manager struct {
-	cacheAt time.Time
-	forges  map[string]*ConfiguredForge
-	ttl     time.Duration
-	mu      sync.RWMutex
+	cacheAt   time.Time
+	refreshSF singleflight.Group
+	probeSF   singleflight.Group
+	forges    map[string]*ConfiguredForge
+	ttl       time.Duration
+	mu        sync.RWMutex
 }
 
 // NewManager constructs a Manager.
@@ -57,7 +61,14 @@ func (m *Manager) List(ctx context.Context) []ConfiguredForge {
 	stale := time.Since(m.cacheAt) > m.ttl
 	m.mu.RUnlock()
 	if stale {
-		_ = m.Refresh(ctx)
+		ch := m.refreshSF.DoChan("refresh", func() (any, error) {
+			return nil, m.Refresh(ctx)
+		})
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil
+		}
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -87,7 +98,9 @@ func (m *Manager) Get(id string) *ConfiguredForge {
 }
 
 // Refresh re-reads all CLI config files and rebuilds the forge list.
-func (m *Manager) Refresh(_ context.Context) error {
+//
+//nolint:gocyclo // intentional: complexity 20 reflects the per-CLI parse/extract pipeline (gh/glab/tea each have distinct config schemas with their own auth/host fallback rules); breaking it apart would scatter the scheme-specific logic across helpers without reducing total branches.
+func (m *Manager) Refresh(ctx context.Context) error {
 	root, err := configHome()
 	if err != nil {
 		return err
@@ -111,6 +124,10 @@ func (m *Manager) Refresh(_ context.Context) error {
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// glab: ~/.config/glab-cli/config.yml
 	if cfg, err := loadGLabConfig(filepath.Join(root, "glab-cli", "config.yml")); err == nil {
 		for host, entry := range cfg.Hosts {
@@ -126,6 +143,10 @@ func (m *Manager) Refresh(_ context.Context) error {
 				Connected: true,
 			}
 		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// tea: ~/.config/tea/config.yml — both Gitea and Codeberg.
@@ -190,7 +211,9 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	user, err := provider.Whoami(ctx)
+	v, err, _ := m.probeSF.Do(id, func() (any, error) {
+		return provider.Whoami(ctx)
+	})
 	now := time.Now().UnixMilli()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -204,6 +227,7 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 		f.LastProbed = now
 		return err
 	}
+	user, _ := v.(*User)
 	f.Connected = true
 	f.LastError = ""
 	f.LastProbed = now

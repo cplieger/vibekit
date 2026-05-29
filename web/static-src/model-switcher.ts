@@ -22,7 +22,21 @@ import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { send } from "./transport.js";
+import { patchSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
+
+/** Canonical effort levels with display labels. Single source of truth
+ *  for the UI renderer and persistence layer. */
+export const EFFORT_LEVELS = [
+  { id: "low", label: "low" },
+  { id: "medium", label: "medium" },
+  { id: "high", label: "high" },
+  { id: "xhigh", label: "x-high" },
+  { id: "max", label: "max" },
+] as const;
+
+export type EffortLevel = (typeof EFFORT_LEVELS)[number]["id"];
 
 type QueueState =
   | { status: "idle" }
@@ -129,12 +143,12 @@ class ModelSwitchController {
       label.className = "effort-label";
       label.textContent = "Effort";
       this.effortRow.appendChild(label);
-      for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      for (const { id: level, label } of EFFORT_LEVELS) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "effort-btn";
         btn.dataset["level"] = level;
-        btn.textContent = level === "xhigh" ? "x-high" : level;
+        btn.textContent = label;
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           this.setEffort(level);
@@ -165,18 +179,18 @@ class ModelSwitchController {
       }
     }
     // Dispatch to server (applies to active session).
-    void import("./transport.js").then(({ send }) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- defensive check
-      void send({
-        type: "set_effort",
-        chat_id: session.id,
-        request_id: `effort-${Date.now()}`,
-        payload: { level },
-      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+    void send({
+      type: "set_effort",
+      chat_id: session.id,
+      request_id: `effort-${Date.now()}`,
+      payload: { level },
     });
     // Persist so effort restores on next bridge spawn for this model.
-    void import("./persist.js").then(({ patchSettings }) => {
-      void patchSettings({ model_effort: { last_model: session.model, effort: level } });
+    void patchSettings({
+      model_effort: {
+        last_model: session.model,
+        effort: level as "low" | "medium" | "high" | "xhigh" | "max",
+      },
     });
   }
 

@@ -1,6 +1,9 @@
 package checkpoint
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // lcsCellCap bounds the product N*M before the LCS algorithm falls
 // back to treating everything as changed. Prevents pathological
@@ -18,7 +21,7 @@ const lcsCellCap = 16 << 20
 // length, not the actual subsequence. Time complexity remains
 // O(N*M) but memory drops from ~128 MiB worst-case to ~128 KiB
 // for a 16K-line file.
-func countLineDelta(from, to []byte) (added, removed int) {
+func countLineDelta(ctx context.Context, from, to []byte) (added, removed int) {
 	fromLines := bytesToLines(from)
 	toLines := bytesToLines(to)
 	n := len(fromLines)
@@ -42,12 +45,19 @@ func countLineDelta(from, to []byte) (added, removed int) {
 	// Memory: 2*(m+1) ints instead of (n+1)*(m+1).
 	prev := make([]int, m+1)
 	curr := make([]int, m+1)
+	var iter int
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
 			if fromLines[i] == toLines[j] {
 				curr[j] = prev[j+1] + 1
 			} else {
 				curr[j] = max(prev[j], curr[j+1])
+			}
+			iter++
+			if iter&0xFFFF == 0 {
+				if ctx.Err() != nil {
+					return m, n
+				}
 			}
 		}
 		prev, curr = curr, prev

@@ -41,25 +41,39 @@ type ShellWSState =
   | { kind: "reconnecting"; attempt: number }
   | { kind: "closed"; intentional: boolean };
 
+/** Connect timeout for the WebSocket handshake (ms). */
+export const CONNECT_TIMEOUT_MS = 10_000;
+
 /** Open a new WebSocket. Returns a promise that resolves on "open" and
- *  rejects on "error" or premature "close". */
-function openSocket(): Promise<WebSocket> {
+ *  rejects on "error" or premature "close". Times out after CONNECT_TIMEOUT_MS. */
+function openSocket(timeoutMs = CONNECT_TIMEOUT_MS): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const sock = new WebSocket(`${proto}//${location.host}/api/shell/ws`);
     sock.binaryType = "arraybuffer";
 
+    const timer = setTimeout(() => {
+      sock.removeEventListener("open", onOpen);
+      sock.removeEventListener("error", onError);
+      sock.removeEventListener("close", onCloseBeforeOpen);
+      sock.close();
+      reject(new Error("websocket connect timeout"));
+    }, timeoutMs);
+
     const onOpen = (): void => {
+      clearTimeout(timer);
       sock.removeEventListener("error", onError);
       sock.removeEventListener("close", onCloseBeforeOpen);
       resolve(sock);
     };
     const onError = (): void => {
+      clearTimeout(timer);
       sock.removeEventListener("open", onOpen);
       sock.removeEventListener("close", onCloseBeforeOpen);
       reject(new Error("websocket error"));
     };
     const onCloseBeforeOpen = (): void => {
+      clearTimeout(timer);
       sock.removeEventListener("open", onOpen);
       sock.removeEventListener("error", onError);
       reject(new Error("websocket closed before open"));
@@ -83,10 +97,15 @@ export class ShellWS {
   private openWaiters: { resolve: () => void; reject: (e: Error) => void }[] = [];
   private reconnectAttempt = 0;
   private connectGen = 0;
+  private unregisterCleanup: (() => void) | null = null;
 
   /** Set the callback interface. Must be called before connect(). */
   setCallbacks(cb: ShellWSCallbacks): void {
     this.callbacks = cb;
+    this.unregisterCleanup ??= registerCleanup(() => {
+      this.cancelReconnect();
+      this.disconnect();
+    });
   }
 
   /** Mark the shell as active (open). Controls whether reconnect fires. */
@@ -131,11 +150,6 @@ export class ShellWS {
     this.cancelReconnect();
     this.callbacks?.onOpen();
     this.notifySocketOpen();
-
-    registerCleanup(() => {
-      this.cancelReconnect();
-      this.disconnect();
-    });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (e.data instanceof ArrayBuffer) {

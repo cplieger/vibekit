@@ -12,15 +12,14 @@ import {
   get,
   getSessions,
   setActive,
-  loadList,
-  loadMessages,
   upsertHeader,
   contextSizeFor,
   defaultUsage,
   activeVersion,
   removeChat,
 } from "./store.js";
-import { effect } from "./signals.js";
+import { loadList, loadMessages } from "./store-load.js";
+import { effect } from "./lib/reactive/index.js";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";
 import { sendPromptTo } from "./chat-commands.js";

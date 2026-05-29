@@ -29,8 +29,8 @@ func newSSEController(ringSize int) *sseController {
 // emit marshals and fans out an event to all subscribed SSE clients.
 func (sc *sseController) emit(evt api.ServerEvent, data []byte) {
 	se := sseEvent{data: data, chatID: evt.ChatID, eventID: sc.seq.Add(1)}
-	sc.replay.Append(se)
 	sc.mu.Lock()
+	sc.replay.Append(se)
 	for client := range sc.clients {
 		if client.chatID != "" && evt.ChatID != "" && client.chatID != evt.ChatID {
 			continue

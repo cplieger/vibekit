@@ -23,7 +23,7 @@
 
 import { onSSE } from "./bus.js";
 import { escText } from "./strings.js";
-import { ICON_WARN_12 } from "./icons.js";
+import { ICON_WARN_12, iconEl } from "./icons.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
 import { openConflictDiff as openConflictDiffAction, loadConflicts } from "./actions/conflicts.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -198,7 +198,9 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
     chip = document.createElement("button");
     (chip as HTMLButtonElement).type = "button";
     chip.className = "conflict-chip";
-    chip.innerHTML = `${ICON_WARN_12}<span class="conflict-chip-label"></span>`;
+    const chipLabel = document.createElement("span");
+    chipLabel.className = "conflict-chip-label";
+    chip.replaceChildren(iconEl(ICON_WARN_12), chipLabel);
     chip.addEventListener("click", () => {
       void openConflictDiff(chatID, path);
     });

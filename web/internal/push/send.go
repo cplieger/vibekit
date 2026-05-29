@@ -23,6 +23,14 @@ import (
 	"vibekit/internal/api"
 )
 
+// pushPayload is the typed wire shape for Web Push notification payloads.
+// Using a struct instead of map[string]string gives compile-time key safety
+// and enables json's cached struct encoder.
+type pushPayload struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
 // Send delivers a push notification to all subscribers.
 // notifyType is KindAgentFinished or KindPermission; the service
 // checks per-type preferences and debounces rapid notifications on a
@@ -43,7 +51,7 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType api.P
 	if subs == nil {
 		return
 	}
-	payload, err := json.Marshal(map[string]string{"title": title, "body": body})
+	payload, err := json.Marshal(pushPayload{Title: title, Body: body})
 	if err != nil {
 		slog.Error("push: marshal payload", "error", err)
 		return
@@ -139,6 +147,14 @@ func (s *Service) pruneStale(stale []string) {
 // push performs RFC 8291 encryption and delivers the payload to a
 // single subscriber endpoint via HTTP POST with VAPID authentication.
 func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []byte) (int, error) {
+	// Defense-in-depth: bound payload size before any allocation. The
+	// IETF web-push spec caps record size at 4096 bytes; pushBodyCap=3000
+	// is the project's pre-pad ceiling. This early check makes the
+	// `make([]byte, 2+len(payload))` allocation below provably bounded
+	// and silences CodeQL's go/allocation-size-overflow rule.
+	if len(payload) > pushBodyCap {
+		return 0, fmt.Errorf("payload too large: %d bytes (max %d)", len(payload), pushBodyCap)
+	}
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
 		return 0, fmt.Errorf("decode p256dh: %w", err)
@@ -195,10 +211,19 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 		return 0, err
 	}
 
-	mergedCtx, mergeCleanup := mergeCtx(ctx, s.ctx)
-	defer mergeCleanup()
+	// Fast path: when the service context is still active (common case),
+	// use the caller's ctx directly — avoids 3 allocations (context +
+	// cancel + AfterFunc) per subscriber per push.
+	reqCtx := ctx
+	var mergeCleanup func()
+	if s.ctx.Err() != nil {
+		reqCtx, mergeCleanup = mergeCtx(ctx, s.ctx)
+	}
+	if mergeCleanup != nil {
+		defer mergeCleanup()
+	}
 
-	req, err := http.NewRequestWithContext(mergedCtx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}

@@ -18,34 +18,25 @@ vi.mock("../store.js", () => ({
   setTrustedThisTurn: mockSetTrustedThisTurn,
 }));
 
-// Capture SSE handlers and bus emissions
-type SSEHandler = (chatID: string, payload: unknown) => void;
-const sseHandlers = new Map<string, SSEHandler>();
+// Capture SSE handlers and bus emissions via shared helper
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 const busEmissions: { event: string; payload: unknown }[] = [];
 
-vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => {
-    sseHandlers.set(event, handler);
+vi.mock("../bus.js", () =>
+  createBusMock({
+    emitBus: vi.fn((event: string, payload: unknown) => {
+      busEmissions.push({ event, payload });
+    }),
+    BUS_PENDING_ADDED: "pending:added",
+    BUS_PENDING_RESOLVED: "pending:resolved",
+    BUS_PENDING_CLEARED: "pending:cleared",
+    BUS_PENDING_TRUST_ENABLED: "pending:trust_enabled",
+    BUS_PENDING_TRUST_CLEARED: "pending:trust_cleared",
   }),
-  emitBus: vi.fn((event: string, payload: unknown) => {
-    busEmissions.push({ event, payload });
-  }),
-  BUS_PENDING_ADDED: "pending:added",
-  BUS_PENDING_RESOLVED: "pending:resolved",
-  BUS_PENDING_CLEARED: "pending:cleared",
-  BUS_PENDING_TRUST_ENABLED: "pending:trust_enabled",
-  BUS_PENDING_TRUST_CLEARED: "pending:trust_cleared",
-}));
+);
 
 // Import after mocks
 await import("./pending.js");
-
-function fireSSE(event: string, chatID: string, payload: unknown): void {
-  const handler = sseHandlers.get(event);
-  if (handler) {
-    handler(chatID, payload);
-  }
-}
 
 describe("pending_change_added", () => {
   beforeEach(() => {

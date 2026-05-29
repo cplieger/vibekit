@@ -35,9 +35,13 @@ type Gauge struct {
 func (g *Gauge) Inc()        { g.val.Add(1) }
 func (g *Gauge) Dec()        { g.val.Add(-1) }
 
+// labelKey is a fixed-size struct key for LabeledCounter, eliminating
+// per-Inc string allocation from strings.Join on the hot path.
+type labelKey [4]string
+
 // LabeledCounter tracks counts per label combination.
 type LabeledCounter struct {
-	vals   map[string]*atomic.Int64
+	vals   map[labelKey]*atomic.Int64
 	name   string
 	help   string
 	labels []string
@@ -45,7 +49,8 @@ type LabeledCounter struct {
 }
 
 func (lc *LabeledCounter) Inc(labelVals ...string) {
-	key := strings.Join(labelVals, "\x00")
+	var key labelKey
+	copy(key[:], labelVals)
 	lc.mu.RLock()
 	v, ok := lc.vals[key]
 	lc.mu.RUnlock()
@@ -102,7 +107,7 @@ var (
 		name:   "vibekit_http_requests_total",
 		help:   "Total HTTP requests",
 		labels: []string{"method", "path", "status"},
-		vals:   make(map[string]*atomic.Int64),
+		vals:   make(map[labelKey]*atomic.Int64),
 	}
 	SSEClients = &Gauge{
 		name: "vibekit_sse_clients",
@@ -149,7 +154,7 @@ func writeGauge(b *strings.Builder, g *Gauge) {
 
 func writeLabeledCounter(b *strings.Builder, lc *LabeledCounter) {
 	lc.mu.RLock()
-	keys := make([]string, 0, len(lc.vals))
+	keys := make([]labelKey, 0, len(lc.vals))
 	for k := range lc.vals {
 		keys = append(keys, k)
 	}
@@ -157,20 +162,26 @@ func writeLabeledCounter(b *strings.Builder, lc *LabeledCounter) {
 	if len(keys) == 0 {
 		return
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(a, c int) bool {
+		for i := range keys[a] {
+			if keys[a][i] != keys[c][i] {
+				return keys[a][i] < keys[c][i]
+			}
+		}
+		return false
+	})
 	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s counter\n", lc.name, lc.help, lc.name)
 	for _, key := range keys {
 		lc.mu.RLock()
 		v := lc.vals[key]
 		lc.mu.RUnlock()
-		parts := strings.Split(key, "\x00")
 		// Sort labels alphabetically for Prometheus compliance.
 		type lp struct {
 			k, v string
 		}
 		pairs := make([]lp, len(lc.labels))
 		for i, l := range lc.labels {
-			pairs[i] = lp{l, parts[i]}
+			pairs[i] = lp{l, key[i]}
 		}
 		sort.Slice(pairs, func(a, c int) bool { return pairs[a].k < pairs[c].k })
 		var labelStr strings.Builder

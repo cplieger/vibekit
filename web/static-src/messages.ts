@@ -20,77 +20,57 @@
 //     paint cost
 // ---------------------------------------------------------------------------
 
-import type { ToolStatus, ToolDiff, PlanEntry, Message, ToolCall, EventKind } from "./types.js";
+import type { Message, Block } from "./types.js";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "./markdown.js";
-import { escText } from "./strings.js";
-import { ansiToHtml } from "./ansi.js";
+import { getActive, messagesVersion, activeVersion } from "./store.js";
 import {
-  getActive,
-  getActiveId,
-  messagesVersion,
-  activeVersion,
   ensureStreamingSig,
   clearStreamingSig,
   ensureReasoningSig,
   clearReasoningSig,
-  ensureToolCallSig,
-  clearToolCallSig,
-  ensureCrewSig,
-  clearCrewSig,
-} from "./store.js";
-import { effect } from "./signals.js";
+  ensureBlockTextSig,
+  ensureBlockThinkingSig,
+} from "./store-signals.js";
+import { effect } from "./lib/reactive/index.js";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
-import { ICON_CHEVRON_UP, ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { $ } from "./dom.js";
 import {
   getScrollEl,
   scrollToBottom,
-  suppressScroll,
   setUserScrolledUp,
   resetScrollState,
   setLoadMore,
 } from "./scroll.js";
-import {
-  isSubAgent,
-  isSubAgentActive,
-  appendToSubAgent,
-  createSubAgentCard,
-  updateSubAgentCard,
-  resetSubAgents,
-} from "./subagent.js";
+import { resetSubAgents } from "./subagent.js";
 import {
   breakToolGroup,
-  maybeCollapseGroup,
-  formatDuration,
-  untrackInProgress,
   summarize,
+  CLS_COLLAPSED,
+  CLS_AUTO_COLLAPSED,
+  CLS_USER_TOGGLED,
 } from "./tool-group.js";
 import { linkifyPaths } from "./linkify.js";
-import { isToolDone } from "./tool-schema.js";
-import { buildToolCard, insertDiffPreview } from "./tool-card.js";
-import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
-import { openPlanDraftPath } from "./editor-openers.js";
-import { copyClipboard, explainError as explainErrorAction } from "./actions/messages.js";
-import { bindLoadingState } from "./actions/index.js";
-import { addEditActions, initMessageActions, clearActionBindings } from "./messages-actions.js";
+import { explainError as explainErrorAction } from "./actions/messages.js";
+import { initMessageActions, clearActionBindings } from "./messages-actions.js";
+import { clearCrews } from "./crew-card.js";
+import { send } from "./transport.js";
+import { toolSpec, toolEls, disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
+import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
-  updateCrew as updateCrewInternal,
-  buildCrewCardForReplay,
-  clearCrews,
-  addToolToCrewRow,
-  getCrewToolEl,
-  onCrewToolCompleted,
-  setSubagentActivity,
-} from "./crew-card.js";
-import { formatToolActivity } from "./format-tool-activity.js";
+  buildEvent,
+  updateEvent,
+  buildSystemFallback,
+  disposeCrewEffect,
+  disposeAllCrewEffects,
+} from "./messages-events.js";
+import { attachTurnActions, initTurnActionCallbacks } from "./messages-turn-actions.js";
 
 // ---------------------------------------------------------------------------
 // Public re-exports
 // ---------------------------------------------------------------------------
 
 export { getScrollEl, scrollToBottom, setLoadMore };
-export { showPermissionDialog } from "./permission.js";
-export { setShellRunCallback } from "./code-blocks.js";
+export type { BoundaryKind } from "./messages-events.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -106,13 +86,6 @@ interface MessageState {
   streaming: boolean;
 }
 const messageStates = new Map<string, MessageState>();
-
-/** Tool-call DOM elements, keyed on tool_call.id. Used by:
- *  - the assistant-update path to find existing tool cards by id
- *  - permission.ts to attach approval UI to the calling tool card
- *  - the diff-pane / conflict modules to overlay status badges
- *  Module-private; permission.ts looks up via querySelector. */
-const toolEls = new Map<string, HTMLDivElement>();
 
 /** Markdown stream per assistant bubble. The stream owns its own
  *  parser, write buffer, and 200ms flush schedule; messages.ts just
@@ -159,38 +132,6 @@ function disposeStreamingEffect(id: string): void {
   clearReasoningSig(id);
 }
 
-/** Per-tool-call effect cleanups. Disposed on unmount or chat-switch.
- *  Each tool card subscribes to its own ToolCall signal at mount time;
- *  status / output / diff updates flow through the signal directly,
- *  bypassing the global reconcile loop entirely. */
-const toolEffects = new Map<string, () => void>();
-function disposeToolEffect(id: string): void {
-  const fn = toolEffects.get(id);
-  if (fn !== undefined) {
-    fn();
-    toolEffects.delete(id);
-  }
-  clearToolCallSig(id);
-}
-
-/** Per-crew-message effect cleanups. The crew card subscribes to its
- *  own Crew signal at mount; list_update snapshots flow through the
- *  signal without re-running the global reconcile. Disposed on unmount
- *  or chat-switch. */
-const crewEffects = new Map<string, () => void>();
-function disposeCrewEffect(id: string): void {
-  const fn = crewEffects.get(id);
-  if (fn !== undefined) {
-    fn();
-    crewEffects.delete(id);
-  }
-  clearCrewSig(id);
-}
-
-/** Tracks active "copied" animation timers per button so rapid clicks
- *  don't stack timeouts. */
-const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
-
 /** Per-paint table of message-id → checkpoint tag, populated by paint()
  *  before reconcile so buildUser can look up the tag without scanning
  *  the entire messages array. */
@@ -230,6 +171,15 @@ const cloneUserAvatar = svgTemplate(USER_AVATAR);
 // ---------------------------------------------------------------------------
 
 let mounted = false;
+
+// Initialize callbacks for extracted modules.
+initToolCallbacks({
+  pushBind,
+  svgTemplate,
+  refreshGroupHeader,
+  explainError,
+});
+initTurnActionCallbacks({ svgTemplate });
 
 /** Mount the chat view. Idempotent. Called once at app boot from app.ts.
  *  Subscribes to store.version and reconciles the message list on every
@@ -273,7 +223,15 @@ function paint(): void {
   staggerIndex.clear();
   const isChatSwitch = lastActiveId !== session.id;
   if (!isChatSwitch && lastNewestId !== undefined) {
-    const idx = session.messages.findIndex((m) => m.id === lastNewestId);
+    // Reverse scan: lastNewestId is always near the tail (set at end of
+    // previous paint), so scanning backward is O(1) amortized.
+    let idx = -1;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i]?.id === lastNewestId) {
+        idx = i;
+        break;
+      }
+    }
     if (idx >= 0) {
       for (let i = idx + 1; i < session.messages.length; i++) {
         const id = session.messages[i]?.id;
@@ -326,17 +284,12 @@ function teardownAll(): void {
   for (const id of [...streamingEffects.keys()]) {
     disposeStreamingEffect(id);
   }
-  for (const id of [...toolEffects.keys()]) {
-    disposeToolEffect(id);
-  }
-  for (const id of [...crewEffects.keys()]) {
-    disposeCrewEffect(id);
-  }
+  disposeAllToolEffects();
+  disposeAllCrewEffects();
   for (const st of messageStates.values()) {
     finalizeStreamingPipeline(st.el.querySelector(".message.assistant.streaming"));
   }
   messageStates.clear();
-  toolEls.clear();
   clearActionBindings();
   clearCrews();
   resetSubAgents();
@@ -457,14 +410,11 @@ function buildUser(m: Message): HTMLElement {
       ) {
         return;
       }
-      void import("./transport.js").then(({ send }) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        void send({
-          type: "rewind_chat",
-          chat_id: session.id,
-          request_id: `rewind-${Date.now()}`,
-          payload: { turn_index: turnIdx },
-        } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+      void send({
+        type: "rewind_chat",
+        chat_id: session.id,
+        request_id: `rewind-${Date.now()}`,
+        payload: { turn_index: turnIdx },
       });
     });
     line.append(label, btn, rewindBtn);
@@ -479,9 +429,15 @@ function buildUser(m: Message): HTMLElement {
   row.appendChild(bubble);
   wrap.appendChild(row);
 
-  // User messages always pop the user back to the bottom.
-  setUserScrolledUp(false);
-  suppressScroll(400);
+  // User messages always pop the user back to the bottom. Previously
+  // we did `setUserScrolledUp(false); suppressScroll(400)` here, but
+  // suppressScroll(400) actively *blocks* the auto-scroll for the
+  // message that just arrived — so when the user submits while
+  // scrolled up, the new bubble appended off-screen and the page
+  // didn't scroll until the model started streaming back ~hundreds of
+  // milliseconds later. scrollToBottom() does an explicit RAF-paced
+  // scroll that lands on the new user bubble immediately.
+  scrollToBottom();
   return wrap;
 }
 
@@ -491,16 +447,43 @@ function buildAssistant(m: Message): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "msg-wrap msg-wrap-assistant";
 
+  const blocks = m.blocks ?? [];
+  // Block-aware path: render text, tool_use, and thinking blocks in
+  // chronological order (Anthropic's content-blocks model). Server-side
+  // accumulation guarantees `blocks` reflects the order the agent
+  // emitted them. Legacy messages without `blocks` (older transcripts
+  // persisted before the field existed) fall through to the historical
+  // "all text + reasoning above + tool group below" layout.
+  if (blocks.length > 0) {
+    const live = isLikelyLiveStreaming(m);
+    buildAssistantBlocks(wrap, m, blocks, live);
+    if (m.plan !== undefined && m.plan.length > 0) {
+      wrap.appendChild(planElement(m.plan));
+    }
+    return wrap;
+  }
+
   const content = m.content ?? "";
   const reasoning = m.reasoning ?? "";
   const live = isLikelyLiveStreaming(m);
 
   // Reasoning block above the content bubble. Mounted whenever there's
-  // existing reasoning OR this is the live message (which might receive
-  // reasoning chunks). The block stays in DOM after finalize so the
-  // user can re-expand to read the model's thinking trace.
-  if (reasoning !== "" || live) {
-    mountReasoningBlock(wrap, reasoning, live, m.id);
+  // existing reasoning. For a *live* message we don't pre-mount the
+  // block — that produced a "Thinking…" affordance even on turns where
+  // the model never emits reasoning, and (after onFinalize fired) left
+  // an empty "Thinking completed" dropdown the user could expand to see
+  // nothing. Instead we subscribe to the reasoning signal here and the
+  // updateAssistant() late-mount path below renders the block on the
+  // first non-empty delta.
+  if (reasoning !== "") {
+    const block = buildReasoningBlock(reasoning, live, m.id);
+    wrap.appendChild(block);
+  } else if (live) {
+    // Subscribe to the signal so updateAssistant sees the reasoning
+    // arrive (the signal is per-message and stored in the store; the
+    // effect inside buildReasoningBlock is what consumes it once the
+    // block actually mounts).
+    void ensureReasoningSig(m.id, "");
   }
 
   // Content bubble. Mounted whenever there's existing content OR this
@@ -530,9 +513,13 @@ function buildAssistant(m: Message): HTMLElement {
 
 /** Mount a reasoning block ("Thinking…" / "Thinking completed") into
  *  the wrap. Subscribes to the per-message reasoning signal so chunks
- *  fan in here without re-running the global reconcile. */
-function mountReasoningBlock(
-  wrap: HTMLElement,
+ *  fan in here without re-running the global reconcile.
+ *
+ *  Lazy-mount semantics: this builds the details element but only the
+ *  caller decides whether to attach it to the DOM. For a live message
+ *  with empty initial reasoning we instead wait for the first signal
+ *  delta and attach then — see the lazy-mount path in buildAssistant. */
+function buildReasoningBlock(
   reasoning: string,
   live: boolean,
   messageID: string,
@@ -541,6 +528,10 @@ function mountReasoningBlock(
   details.className = "reasoning-block msg-reasoning";
   if (live) {
     details.open = true;
+    // .streaming gates the "active thinking" CSS affordances (pulsing
+    // dot + accent border) so they don't re-fire when the user
+    // re-expands a finalized trace.
+    details.classList.add("streaming");
   }
 
   const summary = document.createElement("summary");
@@ -552,8 +543,6 @@ function mountReasoningBlock(
   body.className = "reasoning-body";
   body.textContent = reasoning;
   details.appendChild(body);
-
-  wrap.appendChild(details);
 
   if (live) {
     const sig = ensureReasoningSig(messageID, reasoning);
@@ -568,10 +557,12 @@ function mountReasoningBlock(
       body.appendChild(document.createTextNode(full.slice(lastLen)));
       lastLen = full.length;
     });
-    // Wrap cleanup so it also flips the summary on disposal.
+    // Wrap cleanup so it also flips the summary on disposal and clears
+    // the live-streaming class.
     const onFinalize = (): void => {
       cleanup();
       summary.textContent = "Thinking completed";
+      details.classList.remove("streaming");
       details.open = false;
     };
     pushStreamingEffect(messageID, onFinalize);
@@ -648,13 +639,13 @@ function mountToolGroup(parent: HTMLElement): HTMLDivElement {
   header.setAttribute("aria-expanded", "true");
   header.innerHTML = '<span class="tool-group-count"></span>';
   const onToggle = (): void => {
-    group.classList.add("tool-group-user-toggled");
-    const wasAuto = group.classList.contains("tool-group-auto-collapsed");
+    group.classList.add(CLS_USER_TOGGLED);
+    const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
     if (wasAuto) {
-      group.classList.remove("tool-group-auto-collapsed");
+      group.classList.remove(CLS_AUTO_COLLAPSED);
     }
-    group.classList.toggle("tool-group-collapsed");
-    const collapsed = group.classList.contains("tool-group-collapsed");
+    group.classList.toggle(CLS_COLLAPSED);
+    const collapsed = group.classList.contains(CLS_COLLAPSED);
     header.setAttribute("aria-expanded", collapsed ? "false" : "true");
     refreshGroupHeader(group);
     if (!collapsed || wasAuto) {
@@ -682,15 +673,211 @@ function refreshGroupHeader(group: HTMLElement): void {
   }
   const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
   const collapsed =
-    group.classList.contains("tool-group-collapsed") ||
-    group.classList.contains("tool-group-auto-collapsed");
+    group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
   const summary = summarize(calls);
   headerText.textContent = collapsed ? `${summary} (collapsed)` : summary;
+}
+
+// ---------------------------------------------------------------------------
+// Block-aware (chronological) assistant rendering
+// ---------------------------------------------------------------------------
+
+/** Render an assistant message's blocks in chronological order — text,
+ *  tool_use, and thinking interleaved as the agent emitted them. Mirrors
+ *  Anthropic's content_block model and claude-code's per-block dispatch.
+ *  Each block element is tagged with `data-block-idx` so updateAssistant
+ *  can detect new blocks arriving during a live turn. */
+function buildAssistantBlocks(wrap: HTMLElement, m: Message, blocks: Block[], live: boolean): void {
+  const lastIdx = blocks.length - 1;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block === undefined) {
+      continue;
+    }
+    // Only the trailing block of a live message is itself "live" —
+    // earlier blocks are sealed (a new block was started after them
+    // because the run kind changed: text → tool, tool → text, etc.).
+    const isLiveBlock = live && i === lastIdx;
+    const el = mountBlockElement(block, i, m, isLiveBlock);
+    if (el !== null) {
+      el.setAttribute("data-block-idx", String(i));
+      wrap.appendChild(el);
+    }
+  }
+}
+
+/** Build a single block's DOM. Returns null if the block references
+ *  state that hasn't arrived yet (e.g. a tool_use block whose ToolCall
+ *  isn't in m.tool_calls — we've seen this on out-of-order SSE arrivals). */
+function mountBlockElement(
+  block: Block,
+  blockIndex: number,
+  m: Message,
+  live: boolean,
+): HTMLElement | null {
+  switch (block.type) {
+    case "text":
+      return mountTextBlockBubble(block, blockIndex, m.id, live);
+    case "thinking": {
+      const text = block.thinking ?? "";
+      // Skip empty non-live thinking blocks — same rationale as the
+      // legacy lazy-mount: an empty "Thinking completed" dropdown the
+      // user can expand to see nothing is worse than no dropdown.
+      if (text === "" && !live) {
+        return null;
+      }
+      const detail = buildReasoningBlock(text, live, m.id);
+      if (live) {
+        // Wire a per-block thinking signal so further deltas for THIS
+        // block index land here rather than firing the legacy
+        // per-message reasoning signal which is only tied to the
+        // legacy single-bubble layout.
+        const sig = ensureBlockThinkingSig(m.id, blockIndex, text);
+        const body = detail.querySelector(".reasoning-body");
+        const summary = detail.querySelector(".reasoning-summary");
+        let lastLen = text.length;
+        const cleanup = effect(() => {
+          const full = sig.value;
+          if (full.length <= lastLen) {
+            return;
+          }
+          if (body !== null) {
+            body.appendChild(document.createTextNode(full.slice(lastLen)));
+          }
+          lastLen = full.length;
+        });
+        const onFinalize = (): void => {
+          cleanup();
+          if (summary !== null) {
+            summary.textContent = "Thinking completed";
+          }
+          detail.classList.remove("streaming");
+          detail.open = false;
+        };
+        pushStreamingEffect(m.id, onFinalize);
+      }
+      return detail;
+    }
+    case "tool_use": {
+      const tc = m.tool_calls?.find((c) => c.id === block.tool_call_id);
+      if (tc === undefined) {
+        return null;
+      }
+      const el = toolSpec.mount(tc);
+      // Reconcile-key marker so any future global reconcile pass over
+      // tool_calls leaves these inline mounts alone (the data attribute
+      // mirrors what reconcile.ts uses internally).
+      if (el instanceof HTMLElement) {
+        el.setAttribute(RECONCILE_KEY, tc.id);
+        return el;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Mount a single text block's bubble. For replay, renders the full
+ *  markdown one-shot. For the live trailing block, primes a stream
+ *  with the current text and subscribes to the per-block text signal
+ *  so subsequent chunks for blockIndex land here without re-rendering
+ *  earlier text blocks. */
+function mountTextBlockBubble(
+  block: Block,
+  blockIndex: number,
+  messageID: string,
+  live: boolean,
+): HTMLElement {
+  const row = makeRow("assistant");
+  const bubble = document.createElement("div");
+  bubble.className = "message assistant";
+  if (live) {
+    bubble.classList.add("streaming");
+  }
+  const text = block.text ?? "";
+  if (text !== "") {
+    if (!live) {
+      renderMarkdownInto(bubble, text);
+    } else {
+      ensureStream(bubble).writeDelta(text);
+    }
+  }
+  row.appendChild(bubble);
+
+  if (live) {
+    const sig = ensureBlockTextSig(messageID, blockIndex, text);
+    let lastLen = text.length;
+    const cleanup = effect(() => {
+      const full = sig.value;
+      if (full.length <= lastLen) {
+        return;
+      }
+      ensureStream(bubble).writeDelta(full.slice(lastLen));
+      lastLen = full.length;
+    });
+    pushStreamingEffect(messageID, cleanup);
+  }
+  return row;
 }
 
 function updateAssistant(wrap: HTMLElement, m: Message): void {
   const state = messageStates.get(m.id);
   if (state === undefined) {
+    return;
+  }
+
+  // Block-aware path: if the message uses chronological blocks, mount
+  // any newly-arrived blocks at the end (in order) and de-stream the
+  // previously-trailing live block so only the newest one carries the
+  // .streaming affordance. Per-block signals feed deltas into already-
+  // mounted blocks without going through this function.
+  const blocks = m.blocks ?? [];
+  if (blocks.length > 0) {
+    const rendered = wrap.querySelectorAll(":scope > [data-block-idx]").length;
+    if (blocks.length > rendered) {
+      // Strip the .streaming class from whatever was the previous
+      // trailing block — a new block being added means that one is
+      // sealed.
+      const prevLast = wrap.querySelector<HTMLElement>(
+        `:scope > [data-block-idx="${String(rendered - 1)}"] .message.assistant.streaming`,
+      );
+      if (prevLast !== null) {
+        prevLast.classList.remove("streaming");
+      }
+      const lastIdx = blocks.length - 1;
+      // Find the plan element if any so we keep blocks before it.
+      const plan = wrap.querySelector<HTMLElement>(":scope > .plan-card");
+      for (let i = rendered; i < blocks.length; i++) {
+        const block = blocks[i];
+        if (block === undefined) {
+          continue;
+        }
+        const isLiveBlock = state.streaming && i === lastIdx;
+        const el = mountBlockElement(block, i, m, isLiveBlock);
+        if (el !== null) {
+          el.setAttribute("data-block-idx", String(i));
+          if (plan !== null) {
+            wrap.insertBefore(el, plan);
+          } else {
+            wrap.appendChild(el);
+          }
+        }
+      }
+    }
+    // Plan: mount/update lazily — late plans aren't part of blocks.
+    if (m.plan !== undefined && m.plan.length > 0) {
+      let planEl = wrap.querySelector<HTMLDivElement>(":scope > .plan-card");
+      if (planEl === null) {
+        planEl = planElement(m.plan);
+        wrap.appendChild(planEl);
+      } else {
+        updatePlanElement(planEl, m.plan);
+      }
+    }
+    // For tool-call status updates inside an already-mounted tool_use
+    // block, the per-tool toolCallSig effect (set up by toolSpec.mount)
+    // handles the reactive update — nothing to do here.
     return;
   }
 
@@ -700,7 +887,8 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   const reasoning = m.reasoning ?? "";
   let reasoningEl = wrap.querySelector<HTMLDetailsElement>(":scope > .msg-reasoning");
   if (reasoning !== "" && reasoningEl === null) {
-    reasoningEl = mountReasoningBlock(wrap, reasoning, state.streaming, m.id);
+    reasoningEl = buildReasoningBlock(reasoning, state.streaming, m.id);
+    wrap.appendChild(reasoningEl);
     // Place at the top of the wrap if the row already exists.
     const firstChild = wrap.firstElementChild;
     if (firstChild !== reasoningEl) {
@@ -819,648 +1007,6 @@ function isLikelyLiveStreaming(m: Message): boolean {
   }
   const idx = lastAssistantIndex(session.messages);
   return idx >= 0 && session.messages[idx]?.id === m.id;
-}
-
-// --- Tool calls ---
-
-const toolSpec: ReconcileSpec<ToolCall> = {
-  key: (tc) => tc.id,
-  mount: (tc) => {
-    // Sub-agent calls render as their own sub-cards.
-    if (isSubAgent(tc.title)) {
-      const card = createSubAgentCard(
-        tc.id,
-        tc.status,
-        tc.input as Record<string, unknown> | undefined,
-        tc.output,
-      );
-      toolEls.set(tc.id, card);
-      // Subscribe per-tool signal so subagent card status flips bypass
-      // the global reconcile.
-      const sig = ensureToolCallSig(tc.id, tc);
-      let lastApplied = tc;
-      const cleanup = effect(() => {
-        const next = sig.value;
-        if (next === lastApplied) {
-          return;
-        }
-        updateSubAgentCard(next.id, next.status, next.output);
-        lastApplied = next;
-      });
-      toolEffects.set(tc.id, cleanup);
-      return card;
-    }
-
-    // Inline-fold path: tool calls that fire while a Claude-Code-style
-    // invokeSubAgent is active fold into the sub-agent's preview
-    // instead of rendering as standalone cards. We still need a keyed
-    // DOM element so reconcile can manage identity, so we return a
-    // hidden placeholder; the user-visible content lives inside the
-    // sub-agent card.
-    if (isSubAgentActive()) {
-      const preview = formatNestedToolPreview(tc);
-      appendToSubAgent(preview);
-      const placeholder = document.createElement("div");
-      placeholder.className = "subagent-folded-tool";
-      placeholder.dataset["toolId"] = tc.id;
-      // Hidden via CSS (display:none) — see 13-messages.css.
-      // Track in toolEls so permission.ts findToolCard still resolves
-      // by id (callers handle the placeholder gracefully because they
-      // check for specific selectors before applying changes).
-      toolEls.set(tc.id, placeholder);
-      // Subscribe so subsequent status updates fold-update the preview.
-      const sig = ensureToolCallSig(tc.id, tc);
-      let last = tc;
-      const cleanup = effect(() => {
-        const next = sig.value;
-        if (next === last) {
-          return;
-        }
-        if (next.status !== last.status || (next.output ?? "") !== (last.output ?? "")) {
-          appendToSubAgent(formatNestedToolUpdate(next, last));
-        }
-        last = next;
-      });
-      toolEffects.set(tc.id, cleanup);
-      return placeholder;
-    }
-
-    const opts: Parameters<typeof buildToolCard>[0] = {
-      id: tc.id,
-      title: tc.title,
-      kind: tc.kind,
-      status: tc.status,
-      live: true,
-    };
-    const rawInput = tc.input as Record<string, unknown> | undefined;
-    if (rawInput !== undefined) {
-      opts.input = rawInput;
-    }
-    if (tc.output !== undefined) {
-      opts.output = tc.output;
-    }
-    if (tc.diffs !== undefined && tc.diffs.length > 0) {
-      opts.diffs = tc.diffs;
-    }
-    if (tc.locations !== undefined && tc.locations.length > 0) {
-      opts.locations = tc.locations;
-    }
-    const el = buildToolCard(opts);
-    toolEls.set(tc.id, el);
-
-    // Subagent tool calls also show in the crew card.
-    if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
-      addToolToCrewRow(tc.sub_session_id, tc);
-    }
-
-    // Subscribe per-tool signal — this is the primary update channel.
-    // Tool-call updates fan out here without triggering the global
-    // reconcile loop. The signal is created with the initial tc; the
-    // first effect run is a no-op because lastApplied === sig.value.
-    const sig = ensureToolCallSig(tc.id, tc);
-    let lastApplied = tc;
-    const cleanup = effect(() => {
-      const next = sig.value;
-      if (next === lastApplied) {
-        return;
-      }
-      applyToolCallUpdate(el, next);
-      mirrorToolUpdateToCrew(next);
-      lastApplied = next;
-    });
-    toolEffects.set(tc.id, cleanup);
-    return el;
-  },
-  /** Fallback path. The signal effect is the primary update channel;
-   *  this only fires when the global reconcile runs anyway (e.g. when
-   *  tools are added/removed from a message — order changes). The
-   *  apply* helpers are idempotent so calling them here too is safe. */
-  update: (el, tc) => {
-    if (el.classList.contains("subagent-call")) {
-      updateSubAgentCard(tc.id, tc.status, tc.output);
-      return;
-    }
-    applyToolCallUpdate(el as HTMLDivElement, tc);
-    mirrorToolUpdateToCrew(tc);
-  },
-  onRemove: (_, key) => {
-    disposeToolEffect(key);
-    toolEls.delete(key);
-  },
-};
-
-/** Apply a ToolCall snapshot's updatable fields to its DOM card.
- *  Idempotent: safe to call repeatedly with the same tc. */
-function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (tc.status !== undefined) {
-    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (tc.title !== undefined) {
-    applyTitleUpdate(el, tc.title);
-  }
-  if (tc.output !== undefined && tc.output !== "") {
-    applyOutputUpdate(el, tc.output);
-  }
-  if (tc.diffs !== undefined && tc.diffs.length > 0) {
-    applyDiffUpdate(el, tc.diffs);
-  }
-}
-
-/** Format a single-line preview for a tool nested inside an active
- *  invokeSubAgent session. The line goes into the sub-agent's
- *  transcript so the user sees what the sub-agent is doing without
- *  the visual noise of separate tool cards. */
-function formatNestedToolPreview(tc: ToolCall): string {
-  const tag = tc.kind !== undefined ? `[${tc.kind}]` : "[tool]"; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-  return `\n${tag} ${tc.title}\n`;
-}
-
-/** Format an inline status update for a folded nested tool. Only
- *  emits a line if the status transitioned to a final state (so
- *  in-progress ticks don't spam the transcript). */
-function formatNestedToolUpdate(next: ToolCall, prev: ToolCall): string {
-  if (next.status === prev.status) {
-    return "";
-  }
-  if (next.status !== "completed" && next.status !== "failed") {
-    return "";
-  }
-  const verb = next.status === "completed" ? "✓" : "✗";
-  const out = (next.output ?? "").trim();
-  const tail = out !== "" ? `: ${out.slice(0, 80)}${out.length > 80 ? "…" : ""}` : "";
-  return `  ${verb} ${next.title}${tail}\n`;
-}
-
-/** Mirror tool updates to the crew row clone if this tool is associated
- *  with a subagent. Updates the activity line + completion state. */
-function mirrorToolUpdateToCrew(tc: ToolCall): void {
-  const crewEl = getCrewToolEl(tc.id);
-  if (crewEl === undefined) {
-    return;
-  }
-  applyToolCallUpdate(crewEl, tc);
-  if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
-    if (tc.status === "completed" || tc.status === "failed") {
-      onCrewToolCompleted(tc.sub_session_id);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-    } else if (tc.title !== undefined) {
-      setSubagentActivity(tc.sub_session_id, formatToolActivity(tc.title));
-    }
-  }
-}
-
-function applyStatusUpdate(
-  el: HTMLDivElement,
-  status: ToolStatus,
-  serverDurationMs: number | undefined,
-  toolId: string,
-): void {
-  const s = el.querySelector(".tool-status");
-  if (s !== null) {
-    s.textContent = status;
-    s.className = `tool-status ${status}`;
-  }
-  const done = isToolDone(status);
-  if (done) {
-    el.querySelector(".tool-spinner")?.remove();
-    untrackInProgress(el);
-    const ms =
-      serverDurationMs ??
-      (() => {
-        const start = el.dataset["startMs"];
-        if (start === undefined) {
-          return 0;
-        }
-        delete el.dataset["startMs"];
-        return Date.now() - parseInt(start, 10);
-      })();
-    const dur = el.querySelector(".tool-duration");
-    if (dur !== null && ms >= 1000) {
-      dur.textContent = formatDuration(ms);
-    }
-    maybeCollapseGroup(el);
-    // Update the group's summary header so "Read 3 files" stops saying
-    // "Reading…" once the last call completes.
-    const group = el.closest(".tool-group");
-    if (group !== null) {
-      refreshGroupHeader(group as HTMLElement);
-    }
-    if (status === "completed" && el.dataset["kind"] === "edit") {
-      addEditActions(el);
-    }
-  }
-  if (status === "failed") {
-    el.querySelector(".tool-details")?.classList.remove("collapsed");
-    const b = el.querySelector(".tool-toggle");
-    if (b !== null) {
-      b.textContent = "";
-      b.appendChild(svgTemplate(ICON_CHEVRON_UP)());
-    }
-    if (el.querySelector(".tool-explain-btn") === null) {
-      const output = el.querySelector(".tool-output")?.textContent ?? "";
-      if (output.trim() !== "") {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "tool-explain-btn";
-        btn.textContent = "Explain this error";
-        pushBind(
-          toolId,
-          bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }),
-        );
-        btn.addEventListener("click", () => {
-          void explainError(output, el.dataset["title"] ?? "").then((explanation) => {
-            if (explanation !== "") {
-              btn.textContent = explanation;
-              btn.className = "tool-explain-result";
-            }
-          });
-        });
-        el.appendChild(btn);
-      }
-    }
-  }
-}
-
-function applyTitleUpdate(el: HTMLDivElement, title: string): void {
-  const t = el.querySelector(".tool-title");
-  if (t !== null) {
-    const display = title.startsWith("Running: ") ? title.slice(9) : title;
-    t.textContent = display;
-    t.parentElement!.title = title; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  }
-}
-
-function applyOutputUpdate(el: HTMLDivElement, output: string): void {
-  const box = el.querySelector(".tool-output-box");
-  if (box !== null) {
-    const pre = box.querySelector("pre");
-    if (pre !== null) {
-      pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
-    } else {
-      const newPre = document.createElement("pre");
-      newPre.innerHTML = ansiToHtml(output);
-      box.appendChild(newPre);
-    }
-    box.scrollTop = box.scrollHeight;
-    return;
-  }
-  const out = el.querySelector(".tool-output");
-  if (out === null) {
-    return;
-  }
-  const existingPre = out.querySelector("pre");
-  if (existingPre !== null) {
-    existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
-  } else {
-    const pre = document.createElement("pre");
-    pre.innerHTML = ansiToHtml(output);
-    out.appendChild(pre);
-  }
-}
-
-function applyDiffUpdate(el: HTMLDivElement, diffs: ToolDiff[]): void {
-  if (el.querySelector(".tool-diff-preview") !== null) {
-    return;
-  }
-  const d = diffs[0];
-  if (d === undefined) {
-    return;
-  }
-  insertDiffPreview(el, d.path, { oldText: d.old_text ?? "", newText: d.new_text });
-}
-
-// --- Plans ---
-
-/** Build the plan card shell and reconcile entries into it. The shell
- *  contains a header (un-keyed), an entries container (where reconcile
- *  manages keyed children), and an actions footer (un-keyed). Updates
- *  re-reconcile the entries; the action buttons keep their click
- *  handlers across updates because the footer never re-renders. */
-function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = "plan-message";
-
-  const header = document.createElement("div");
-  header.className = "plan-header";
-  header.textContent = "Plan";
-  el.appendChild(header);
-
-  const list = document.createElement("div");
-  list.className = "plan-entries";
-  el.appendChild(list);
-  reconcilePlanEntries(list, entries);
-
-  const actions = document.createElement("div");
-  actions.className = "plan-actions";
-  const editBtn = document.createElement("button");
-  editBtn.className = "plan-edit-btn btn-small";
-  editBtn.title = "Open this plan in the editor for tweaks before handing it to the default agent";
-  editBtn.textContent = "Edit";
-  const runBtn = document.createElement("button");
-  runBtn.className = "plan-run-btn btn-small";
-  runBtn.title = "Switch to the default agent and implement this plan";
-  runBtn.textContent = "Run this plan";
-  actions.append(editBtn, runBtn);
-  el.appendChild(actions);
-
-  // Closure captures the live list of entries — the latest set is always
-  // re-rendered into markdown when the user clicks edit/run. The plan
-  // element holds the canonical entries via dataset["plan"] so updates
-  // can refresh the closure without rebinding.
-  el.dataset["plan"] = JSON.stringify(entries);
-  const latestMd = (): string => {
-    const stored = el.dataset["plan"];
-    if (stored === undefined) {
-      return planToMarkdown([...entries]);
-    }
-    try {
-      return planToMarkdown(JSON.parse(stored) as PlanEntry[]);
-    } catch {
-      return planToMarkdown([...entries]);
-    }
-  };
-  editBtn.addEventListener("click", () => {
-    void editPlanAction(getActiveId(), latestMd());
-  });
-  runBtn.addEventListener("click", () => {
-    void runPlan(getActiveId(), latestMd());
-  });
-
-  return el;
-}
-
-/** Update an existing plan element's entries in place. Action buttons
- *  retain identity across updates. */
-function updatePlanElement(el: HTMLDivElement, entries: readonly PlanEntry[]): void {
-  el.dataset["plan"] = JSON.stringify(entries);
-  const list = el.querySelector<HTMLDivElement>(":scope > .plan-entries");
-  if (list !== null) {
-    reconcilePlanEntries(list, entries);
-  }
-}
-
-const planEntrySpec: ReconcileSpec<PlanEntry> = {
-  key: (e) => e.content,
-  mount: (e) => buildPlanRow(e),
-  update: (el, e) => {
-    updatePlanRow(el as HTMLDivElement, e);
-  },
-};
-
-function reconcilePlanEntries(list: HTMLDivElement, entries: readonly PlanEntry[]): void {
-  reconcile(list, entries, planEntrySpec);
-}
-
-function buildPlanRow(e: PlanEntry): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "plan-entry";
-  updatePlanRow(row, e);
-  return row;
-}
-
-function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
-  const icon = e.status === "completed" ? "✅" : e.status === "in_progress" ? "🔄" : "⬜";
-  const pri = e.priority === "high" ? ' <span class="plan-hi">[high]</span>' : "";
-  row.innerHTML = `${icon} ${escText(e.content)}${pri}`;
-  row.dataset["status"] = e.status;
-}
-
-async function editPlanAction(chatID: string, content: string): Promise<void> {
-  if (chatID === "") {
-    return;
-  }
-  const ok = await writePlanDraft(chatID, content);
-  if (!ok) {
-    return;
-  }
-  openPlanDraftPath(chatID);
-}
-
-// --- Events (boundary, system, inbox, crew) ---
-
-export type BoundaryKind = "switched" | "compacted" | "failed" | "agent";
-
-export const EVENT_BOUNDARY_META: Readonly<
-  Partial<
-    Record<
-      EventKind,
-      {
-        readonly boundary: BoundaryKind;
-        readonly icon: string;
-        readonly defaultLabel: string;
-        readonly labelFn?: (content: string) => string;
-      }
-    >
-  >
-> = {
-  model_switched: {
-    boundary: "switched",
-    icon: "\u21bb",
-    defaultLabel: "Context reset",
-    labelFn: (c) => (c ? `Switched to ${c}` : "Context reset"),
-  },
-  compacted: { boundary: "compacted", icon: "\u273b", defaultLabel: "Conversation compacted" },
-  compaction_failed: {
-    boundary: "failed",
-    icon: "\u26a0",
-    defaultLabel: "Compaction failed",
-    labelFn: (c) => (c ? `Compaction failed: ${c}` : "Compaction failed"),
-  },
-  agent_switched: {
-    boundary: "agent",
-    icon: "\u2192",
-    defaultLabel: "Agent switched",
-    labelFn: (c) => c || "Agent switched",
-  },
-};
-
-function buildEvent(m: Message): HTMLElement | null {
-  if (m.event_kind !== undefined) {
-    const meta = EVENT_BOUNDARY_META[m.event_kind];
-    if (meta !== undefined) {
-      const content = m.content ?? "";
-      const label = meta.labelFn ? meta.labelFn(content) : meta.defaultLabel;
-      return buildBoundaryDivider(meta.boundary, label);
-    }
-  }
-  switch (m.event_kind) {
-    case "inbox": {
-      const el = document.createElement("div");
-      el.className = "message system inbox-message";
-      el.textContent = m.content ?? "Subagent message";
-      return el;
-    }
-    case "crew":
-      if (m.crew !== undefined) {
-        // Crews are their own subsystem — the crew-card module owns the
-        // element. We adopt it so reconcile manages it like any other.
-        const el = buildCrewCardForReplay(m.id, m.crew);
-        // Subscribe per-crew signal: subsequent list_update snapshots
-        // fan out via the signal without re-running the global reconcile.
-        const sig = ensureCrewSig(m.id, m.crew);
-        let lastApplied = m.crew;
-        const cleanup = effect(() => {
-          const next = sig.value;
-          if (next === lastApplied) {
-            return;
-          }
-          updateCrewInternal(m.id, next, () => {
-            /* no-op: el already mounted */
-          });
-          lastApplied = next;
-        });
-        crewEffects.set(m.id, cleanup);
-        return el;
-      }
-      return null;
-    default:
-      break;
-  }
-  return null;
-}
-
-function updateEvent(_el: HTMLElement, _m: Message): void {
-  // All event types are immutable from the global reconcile's POV.
-  // Crew snapshots flow through the per-crew signal directly (see
-  // buildEvent's crew branch); other event kinds (boundary, inbox,
-  // system) never change after first mount.
-}
-
-function buildSystemFallback(m: Message): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "message system";
-  el.textContent = m.content ?? m.event_kind ?? "";
-  return el;
-}
-
-function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = `boundary boundary-${kind}`;
-  let icon = "";
-  for (const meta of Object.values(EVENT_BOUNDARY_META)) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-    if (meta?.boundary === kind) {
-      icon = meta.icon;
-      break;
-    }
-  }
-  const iconSpan = document.createElement("span");
-  iconSpan.className = "boundary-icon";
-  iconSpan.textContent = icon;
-  el.appendChild(iconSpan);
-  const labelSpan = document.createElement("span");
-  labelSpan.className = "boundary-label";
-  labelSpan.textContent = label;
-  el.appendChild(labelSpan);
-  return el;
-}
-
-// --- Turn actions (copy / export, attached after streaming finalizes) ---
-
-function attachTurnActions(el: HTMLDivElement): void {
-  // Look up the source message via the wrap's reconcile key so we can
-  // copy the canonical markdown (not the rendered HTML's textContent).
-  const wrap = el.closest<HTMLElement>(".msg-wrap");
-  const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
-  const session = getActive();
-  const msg = session?.messages.find((m) => m.id === msgID);
-  const raw = msg?.content ?? el.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-  if (raw.trim() === "") {
-    return;
-  }
-  // Avoid duplicate.
-  if (el.nextElementSibling?.classList.contains("turn-actions")) {
-    return;
-  }
-
-  const chatID = getActiveId();
-  const row = document.createElement("div");
-  row.className = "turn-actions";
-
-  const leftSlot = document.createElement("span");
-  leftSlot.className = "turn-actions-summary";
-  row.appendChild(leftSlot);
-
-  const rightSlot = document.createElement("span");
-  rightSlot.className = "turn-actions-buttons";
-  row.appendChild(rightSlot);
-
-  const makeBtn = (
-    svgMarkup: string,
-    ariaLabel: string,
-    onClick: (btn: HTMLButtonElement) => void,
-  ): HTMLButtonElement => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "turn-action-btn";
-    btn.appendChild(svgTemplate(svgMarkup)());
-    btn.setAttribute("aria-label", ariaLabel);
-    btn.setAttribute("data-tooltip", ariaLabel);
-    btn.addEventListener("click", () => {
-      onClick(btn);
-    });
-    return btn;
-  };
-
-  const copyAndAnimate = (btn: HTMLButtonElement, text: string): void => {
-    void copyClipboard.dispatch(text, {
-      silent: true,
-      onSuccess: () => {
-        btn.classList.add("copied");
-        const prev = copyTimers.get(btn);
-        if (prev !== undefined) {
-          clearTimeout(prev);
-        }
-        copyTimers.set(
-          btn,
-          setTimeout(() => {
-            btn.classList.remove("copied");
-          }, 1500),
-        );
-      },
-    });
-  };
-
-  rightSlot.appendChild(
-    makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, el.textContent ?? ""); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-    }),
-  );
-  rightSlot.appendChild(
-    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
-      copyAndAnimate(btn, raw);
-    }),
-  );
-  if (chatID !== "") {
-    rightSlot.appendChild(
-      makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
-        copyAndAnimate(btn, chatID);
-      }),
-    );
-    rightSlot.appendChild(
-      makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
-        const a = document.createElement("a");
-        a.href = `/api/chats/${encodeURIComponent(chatID)}/export`;
-        a.download = `${chatID}.json`;
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }),
-    );
-  }
-
-  // Place turn actions at the end of the message wrap so they sit
-  // below the bubble + tool group + plan (the natural reading order).
-  // Reuses the wrap captured at the top for the markdown lookup.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (wrap !== null && wrap !== undefined) {
-    wrap.appendChild(row);
-  } else {
-    el.insertAdjacentElement("afterend", row);
-  }
 }
 
 // --- Helpers ---

@@ -63,7 +63,7 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 		if strings.TrimSpace(msg) == "" {
 			msg = err.Error()
 		}
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(msg)})
+		api.WriteJSON(w, api.ErrorJSON(gitexec.ScrubAuth(msg)))
 		return
 	}
 	api.WriteJSON(w, map[string]string{jsonKeyOutput: gitexec.ScrubAuth(out)})

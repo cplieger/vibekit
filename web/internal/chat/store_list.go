@@ -10,7 +10,19 @@ import (
 	"strings"
 
 	"vibekit/internal/api"
+
+	"golang.org/x/sync/singleflight"
 )
+
+// sfDo is a typed wrapper around singleflight.Group.Do that eliminates
+// the need for a type assertion on the result. The closure always
+// returns the concrete type T, so the assertion is guaranteed by
+// construction.
+func sfDo[T any](sf *singleflight.Group, key string, fn func() T) T {
+	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
+	t, _ := v.(T)
+	return t
+}
 
 // List returns every chat's header (no messages) sorted by UpdatedAt desc.
 // Files that fail to parse or read are logged and skipped — one bad file
@@ -19,22 +31,9 @@ import (
 // `null` (which the wire decoder rejects as a type error).
 func (s *Store) List(ctx context.Context) []api.ChatHeader {
 	// Coalesce concurrent sidebar refreshes into a single directory scan.
-	// listOnce always returns (any, nil), so err is informational only;
-	// if a future closure change introduces a non-nil error path, surface
-	// it at Warn instead of silently dropping the result.
-	v, err, _ := s.listSF.Do("list", func() (any, error) {
-		return s.listOnce(ctx), nil
+	headers := sfDo(&s.listSF, "list", func() []api.ChatHeader {
+		return s.listOnce(ctx)
 	})
-	if err != nil {
-		slog.Warn("chat list: singleflight returned error", "error", err)
-		return []api.ChatHeader{}
-	}
-	headers, ok := v.([]api.ChatHeader)
-	if !ok {
-		slog.Error("chat list: singleflight returned unexpected type",
-			"type", fmt.Sprintf("%T", v))
-		return []api.ChatHeader{}
-	}
 	if headers == nil {
 		return []api.ChatHeader{}
 	}
@@ -78,6 +77,20 @@ func (s *Store) listOnce(ctx context.Context) []api.ChatHeader {
 		"entries", len(entries),
 		"returned", len(headers))
 	return headers
+}
+
+// ChildrenOf returns the IDs of chats whose ParentChatID equals parentID.
+// Scans headers without loading messages — fast for the common case of
+// zero children.
+func (s *Store) ChildrenOf(ctx context.Context, parentID api.ChatID) []api.ChatID {
+	headers := s.List(ctx)
+	var children []api.ChatID
+	for i := range headers {
+		if headers[i].ParentChatID == parentID {
+			children = append(children, api.ChatID(headers[i].ID))
+		}
+	}
+	return children
 }
 
 // BuildHistory returns the chat as a plain-text transcript for compression

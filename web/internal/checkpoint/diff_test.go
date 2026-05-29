@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func BenchmarkCountLineDelta_RepresentativePayloads(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				countLineDelta(from, to)
+				countLineDelta(context.Background(), from, to)
 			}
 		})
 	}

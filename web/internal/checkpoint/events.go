@@ -58,13 +58,13 @@ const (
 	kindConflict eventKind = "conflict_detected"
 )
 
-// valid reports whether k is a known event kind. Used at the Append
-// boundary to reject invalid kinds at write time rather than
-// discovering them at replay time (where the damage is permanent).
+// valid reports whether k is a known event kind. Uses an exhaustive
+// switch so the go-exhaustive linter catches missing cases when a new
+// kind is added to the const block above.
 func (k eventKind) valid() bool {
+	//exhaustive:enforce
 	switch k {
-	case kindTurnStart, kindSnapshot, kindRestore,
-		kindRestoreStarted, kindRestoreCommitted, kindConflict:
+	case kindTurnStart, kindSnapshot, kindRestore, kindRestoreStarted, kindRestoreCommitted, kindConflict:
 		return true
 	}
 	return false
@@ -148,7 +148,7 @@ func (l *eventLog) Append(ctx context.Context, ev *event) error {
 	defer l.mu.Unlock()
 	parent := filepath.Dir(l.path)
 	if mkErr := os.MkdirAll(parent, 0o700); mkErr != nil {
-		return fmt.Errorf("mkdir event log: %w", mkErr)
+		return fmt.Errorf("mkdir event log: %w", errors.Join(ErrTransient, mkErr))
 	}
 	// O_CREATE here may create events.jsonl on first Append for a
 	// chat. We sync the parent dir post-write to persist the new
@@ -159,7 +159,7 @@ func (l *eventLog) Append(ctx context.Context, ev *event) error {
 	}
 	f, openErr := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if openErr != nil {
-		return fmt.Errorf("open event log: %w", openErr)
+		return fmt.Errorf("open event log: %w", errors.Join(ErrTransient, openErr))
 	}
 	// close errors post-Sync are genuinely ignorable; _ = f.Close
 	// makes the intent explicit (vs defer f.Close() silently
@@ -269,7 +269,7 @@ var warnedLargeLogs sync.Map
 // model, so truncation would lose rollback history. The warn below
 // fires at most once per process per chat so long-lived heavy
 // chats don't drown Loki in duplicate breadcrumbs.
-func (l *eventLog) Read() ([]event, error) {
+func (l *eventLog) Read(ctx context.Context) ([]event, error) {
 	f, err := os.Open(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -302,6 +302,13 @@ func (l *eventLog) Read() ([]event, error) {
 			continue
 		}
 		out = append(out, ev)
+		// Amortized ctx check every 1000 events so shutdown/disconnect
+		// short-circuits long replays without per-line atomic overhead.
+		if len(out)%1000 == 0 {
+			if err := ctx.Err(); err != nil {
+				return out, err
+			}
+		}
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {

@@ -3,21 +3,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 }));
 
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { addRule, removeRule, type CommandRule } from "./permissions.js";
 
 const mockFetch = vi.fn();
@@ -30,9 +26,7 @@ function makeRules(): CommandRule[] {
 }
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

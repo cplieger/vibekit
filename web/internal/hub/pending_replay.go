@@ -36,12 +36,7 @@ func (h *Hub) flushPendingForChat(ctx context.Context, chatID api.ChatID, reason
 // have at least one pending op. Delegates to the pending store's
 // ChatIDs method which is O(1) bounded by pending ops.
 func (h *Hub) listChatIDsWithPending() []api.ChatID {
-	raw := h.perm.pending.ChatIDs()
-	ids := make([]api.ChatID, len(raw))
-	for i, s := range raw {
-		ids[i] = api.ChatID(s)
-	}
-	return ids
+	return h.perm.pending.ChatIDs()
 }
 
 // handlePendingChange serves GET /api/pending-changes/{tool_call_id}.

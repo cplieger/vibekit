@@ -4,7 +4,7 @@
 // # Storage model
 //
 // A single file at <configDir>/mcp.json, mode 0600, written atomically
-// (temp + rename) via api.SaveBytes. The file holds an ordered array of
+// (temp + rename) via fileutil.SaveBytes. The file holds an ordered array of
 // Server records. Order is the display order; no separate index.
 //
 // # Scope
@@ -108,6 +108,59 @@ type Server struct {
 	Enabled       bool      `json:"enabled"`
 }
 
+// NewServer constructs a Server with validated transport-specific fields.
+// Fields inappropriate for the given transport are rejected at creation
+// time rather than deferred to Validate(). Returns an error if the
+// transport is unknown or if transport-incompatible fields are populated.
+func NewServer(transport Transport, name string, opts ...ServerOption) (*Server, error) {
+	if !transport.Valid() {
+		return nil, fmt.Errorf("unknown transport: %q", transport)
+	}
+	s := &Server{
+		Transport: transport,
+		Name:      name,
+		Enabled:   true,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if err := Validate(s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// ServerOption configures a Server during construction via NewServer.
+type ServerOption func(*Server)
+
+// WithCommand sets the command for stdio transport servers.
+func WithCommand(cmd string, args ...string) ServerOption {
+	return func(s *Server) {
+		s.Command = cmd
+		s.Args = args
+	}
+}
+
+// WithURL sets the URL for HTTP transport servers.
+func WithURL(url string) ServerOption {
+	return func(s *Server) { s.URL = url }
+}
+
+// WithOAuthClientID sets the OAuth client ID for HTTP transport servers.
+func WithOAuthClientID(id string) ServerOption {
+	return func(s *Server) { s.OAuthClientID = id }
+}
+
+// WithEnv sets environment variables for stdio transport servers.
+func WithEnv(env []KeyPair) ServerOption {
+	return func(s *Server) { s.Env = env }
+}
+
+// WithHeaders sets HTTP headers for HTTP transport servers.
+func WithHeaders(headers []KeyPair) ServerOption {
+	return func(s *Server) { s.Headers = headers }
+}
+
 // KeyPair is an ordered env-var or header entry. Ordered (vs map) so
 // the UI can edit entries without dropping duplicates; the on-wire ACP
 // format is a JSON object so we flatten on export.
@@ -119,6 +172,7 @@ type KeyPair struct {
 // Store holds the persisted list in memory plus the coordination
 // needed to serialise writes and notify watchers on changes.
 type Store struct {
+	ctx      context.Context
 	path     string
 	onChange func(context.Context)
 	servers  []*Server
@@ -129,9 +183,12 @@ type Store struct {
 // onChange is invoked on a fresh goroutine (without the store mutex
 // held) whenever the persisted set is mutated; nil is valid if no one
 // cares. The callback is free to call back into the store — it won't
-// deadlock on the caller's write lock.
-func New(configDir string, onChange func(context.Context)) (*Store, error) {
+// deadlock on the caller's write lock. The ctx is stored for use in
+// fire-and-forget persist paths (e.g. SetKnownTools) so writes are
+// cancellable on shutdown.
+func New(ctx context.Context, configDir string, onChange func(context.Context)) (*Store, error) {
 	s := &Store{
+		ctx:      ctx,
 		path:     filepath.Join(configDir, "mcp.json"),
 		onChange: onChange,
 		servers:  []*Server{},

@@ -2,34 +2,20 @@ package translate
 
 import "vibekit/internal/api"
 
-// keyOutcome is the ACP permission-outcome envelope key. Used by both
-// PermissionOutcomeSelected and PermissionOutcomeCancelled to build the
-// response shape; centralising keeps the wire contract in one place.
-const keyOutcome = "outcome"
+// Re-export permission wire types from api for backward compatibility
+// within this package. External consumers should use api directly.
 
-// FindAllowOnce returns the option_id of the first "allow_once" option,
-// or "" if none exists.
+// FindAllowOnce delegates to api.FindAllowOnce.
 func FindAllowOnce(options []api.PermissionOption) string {
-	for _, opt := range options {
-		if opt.Kind == api.PermissionKindAllowOnce || opt.OptionID == api.PermissionKindAllowOnce {
-			return opt.OptionID
-		}
-	}
-	return ""
+	return api.FindAllowOnce(options)
 }
 
-// PermissionOutcomeSelected builds the ACP permission-outcome response
-// for a selected option. Single source of truth for the wire shape.
-func PermissionOutcomeSelected(optionID string) map[string]any {
-	return map[string]any{
-		keyOutcome: map[string]any{keyOutcome: "selected", "optionId": optionID},
-	}
+// PermissionOutcomeSelected delegates to api.PermissionOutcomeSelected.
+func PermissionOutcomeSelected(optionID string) *api.PermissionOutcome {
+	return api.PermissionOutcomeSelected(optionID)
 }
 
-// PermissionOutcomeCancelled builds the ACP permission-outcome response
-// for a cancelled/denied permission. Single source of truth for the wire shape.
-func PermissionOutcomeCancelled() map[string]any {
-	return map[string]any{
-		keyOutcome: map[string]any{keyOutcome: api.StopReasonCancelled},
-	}
+// PermissionOutcomeCancelled delegates to api.PermissionOutcomeCancelled.
+func PermissionOutcomeCancelled() *api.PermissionOutcome {
+	return api.PermissionOutcomeCancelled()
 }

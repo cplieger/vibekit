@@ -18,29 +18,45 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/models"
-	"vibekit/internal/translate"
 )
 
 // utilityBridge wraps a dedicated kiro-cli bridge for ambient tasks.
 // The bridge is recycled after maxUtilityPrompts to prevent context
 // accumulation from bleeding between unrelated tasks.
 type utilityBridge struct {
+	lastActiveAt  time.Time
 	bridge        api.ACPBridge
+	shutdownCtx   context.Context
 	bridgeFactory api.ACPBridgeFactory
 	hubModels     func() []api.SessionModel
-	lastActiveAt  time.Time
-	mu            sync.Mutex
+	responseCh    chan utilityChunkPayload
+	forwardDone   chan struct{}
 	promptCount   int
+	mu            sync.Mutex
 	started       bool
 }
 
 const maxUtilityPrompts = 20
+
+// utilityUpdateBase extracts the sessionUpdate kind discriminator.
+// Local to utility_bridge to avoid coupling to translate's wire types.
+type utilityUpdateBase struct {
+	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+}
+
+// utilityChunkPayload is the minimal shape the utility bridge needs
+// from an agent_message_chunk notification: just the text content.
+type utilityChunkPayload struct {
+	Content struct {
+		Text string `json:"text"`
+	} `json:"content"`
+}
 
 // reset stops the bridge and clears the per-bridge prompt state so the
 // next UtilityPrompt call starts a fresh bridge. Called from both
@@ -49,16 +65,24 @@ const maxUtilityPrompts = 20
 // mutual exclusion must hold ub.mu themselves — reset does not lock.
 func (ub *utilityBridge) reset() {
 	ub.bridge.Stop()
+	// Wait for forwardUtility to exit (it returns when NotifCh closes
+	// after Stop). This ensures no goroutine leak on recycle.
+	if ub.forwardDone != nil {
+		<-ub.forwardDone
+	}
 	ub.started = false
 	ub.promptCount = 0
+	ub.responseCh = nil
+	ub.forwardDone = nil
 }
 
 // newUtilityBridge constructs a utilityBridge with the initialization
 // invariants explicit: started=false, promptCount=0, lastActiveAt=zero.
-func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.SessionModel) *utilityBridge {
+func newUtilityBridge(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel) *utilityBridge {
 	return &utilityBridge{
 		bridgeFactory: factory,
 		hubModels:     hubModels,
+		shutdownCtx:   shutdownCtx,
 	}
 }
 
@@ -66,12 +90,7 @@ func newUtilityBridge(factory api.ACPBridgeFactory, hubModels func() []api.Sessi
 // text response. Lazily starts the bridge on first call. Thread-safe;
 // concurrent callers serialize. The bridge is recycled after
 // maxUtilityPrompts to prevent context accumulation.
-func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
-	h.bridge.utilityOnce.Do(func() {
-		h.bridge.utility = newUtilityBridge(h.bridge.factory, h.Models)
-	})
-	ub := h.bridge.utility
-
+func (ub *utilityBridge) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
 	ub.mu.Lock()
 	defer ub.mu.Unlock()
 
@@ -83,54 +102,84 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) 
 	}
 
 	if !ub.started {
-		if err := h.startUtilityBridge(ctx, ub); err != nil {
+		if err := ub.start(ctx); err != nil {
 			return "", fmt.Errorf("utility bridge start: %w", err)
 		}
 	}
 	ub.lastActiveAt = time.Now()
 	ub.promptCount++
 
-	resp, err := ub.bridge.Call(ctx, methodPrompt, map[string]any{
-		"sessionId": ub.bridge.SessionID(),
-		"prompt":    []map[string]any{{"type": contentTypeText, contentTypeText: utilitySystemPrompt + prompt}},
-	})
+	resp, err := ub.bridge.Call(ctx, api.MethodPrompt, ub.sessionParams(map[string]any{
+		"prompt": []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
+	}))
 	if err != nil {
 		// Bridge may be dead; reset so next call restarts.
 		ub.reset()
 		return "", fmt.Errorf("utility prompt: %w", err)
 	}
 
-	// Drain the notification channel to consume the response chunks.
-	// The utility bridge has no forward goroutine; we read directly.
+	// Drain the forwarded response channel to consume the response chunks.
 	return ub.drainResponse(ctx, resp)
 }
 
-func (h *Hub) startUtilityBridge(ctx context.Context, ub *utilityBridge) error {
+// sessionParams builds the ACP parameter map with the session ID
+// injected. Mirrors command.SessionParams but works with the raw
+// ACPBridge interface (which doesn't satisfy command.Bridge).
+func (ub *utilityBridge) sessionParams(extra map[string]any) map[string]any {
+	m := map[string]any{api.KeySessionID: ub.bridge.SessionID()}
+	maps.Copy(m, extra)
+	return m
+}
+
+func (ub *utilityBridge) start(ctx context.Context) error {
 	bridge := ub.bridgeFactory()
-	model := models.CheapestModel(ctx, ub.hubModels())
+	model := cheapestModel(ctx, ub.hubModels())
 
 	// Start with the hub's shutdown context as the subprocess lifecycle
 	// context. The per-request ctx is only used for CheapestModel above;
 	// the bridge subprocess must outlive individual requests.
-	if err := bridge.Start(h.lifecycle.shutdownCtx, &api.StartOpts{Model: model}); err != nil {
+	if err := bridge.Start(ub.shutdownCtx, &api.StartOpts{Model: model}); err != nil {
 		return err
 	}
 	ub.bridge = bridge
 	ub.started = true
 	ub.lastActiveAt = time.Now()
+
+	// Start the forward goroutine to continuously drain NotifCh.
+	// This prevents the channel from filling up between prompts.
+	ub.responseCh = make(chan utilityChunkPayload, 64)
+	ub.forwardDone = make(chan struct{})
+	go forwardUtility(bridge.NotifCh(), ub.responseCh, ub.forwardDone)
+
 	slog.Info("utility bridge started", "model", model)
 	return nil
 }
 
+// Stop stops the utility bridge if it is running. Thread-safe.
+func (ub *utilityBridge) Stop() {
+	ub.mu.Lock()
+	started := ub.started
+	forwardDone := ub.forwardDone
+	ub.started = false
+	ub.mu.Unlock()
+	if started {
+		ub.bridge.Stop()
+		if forwardDone != nil {
+			<-forwardDone
+		}
+		slog.Info("utility bridge stopped")
+	}
+}
+
 // drainResponse reads the prompt response and collects assistant
-// text from the notification channel. Returns the concatenated text.
+// text from the forwarded response channel. Returns the concatenated text.
 //
 // kiro-cli does NOT emit a `session/update` sessionUpdate=="end_turn"
 // notification: per ACP, the turn-end signal is the JSON-RPC RESPONSE
 // to session/prompt (which ub.bridge.Call already awaited before this
 // function runs). By the time we get here, the turn is already over;
 // all we need to do is drain whatever chunks are still buffered in
-// notifCh from before the response landed.
+// responseCh from before the response landed.
 //
 // Strategy: keep reading chunks until a short idle period elapses or
 // ctx / the 60 s hard ceiling fire. The idle debounce handles the race
@@ -156,35 +205,20 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 	for {
 		select {
 		case <-ctx.Done():
-			// Caller cancelled; drop the bridge so the abandoned
-			// turn doesn't pollute subsequent calls.
-			ub.reset()
+			// Caller cancelled. Only reset the bridge if the
+			// cancellation came from the request context (user
+			// navigated away), not from shutdownCtx (graceful
+			// shutdown). During shutdown, stopUtilityBridge handles
+			// cleanup; an extra reset here would race with Stop().
+			if ub.shutdownCtx.Err() == nil {
+				ub.reset()
+			}
 			return text.String(), ctx.Err()
-		case msg, ok := <-ub.bridge.NotifCh():
+		case chunk, ok := <-ub.responseCh:
 			if !ok {
 				return text.String(), nil
 			}
-			// Peer-initiated requests (fs/*, permission, extensions)
-			// are carried as notifications with an ID on NotifCh.
-			// The utility bridge has no tools and no permission
-			// dialog, so an ID-bearing notification here is unexpected
-			// — log and ignore rather than silently truncating the
-			// accumulated text (the old behaviour) or acking with
-			// success (the old early-return).
-			if msg.ID != nil {
-				slog.Warn("utility bridge: unexpected peer request, ignoring",
-					"method", msg.Method, "id", *msg.ID)
-				continue
-			}
-			if msg.Method == methodUpdate && msg.Params != nil {
-				var base translate.ACPSessionUpdateBase
-				if json.Unmarshal(msg.Params, &base) == nil && base.Kind == api.ACPUpdateAgentChunk {
-					var chunk translate.ACPChunkWire
-					if json.Unmarshal(msg.Params, &chunk) == nil {
-						text.WriteString(chunk.Content.Text)
-					}
-				}
-			}
+			text.WriteString(chunk.Content.Text)
 			// Reset the idle timer on every chunk we accepted.
 			if !idle.Stop() {
 				select {
@@ -206,6 +240,35 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 	}
 }
 
+// forwardUtility is a dedicated goroutine that continuously drains
+// the bridge's NotifCh, forwarding agent_chunk text to responseCh.
+// All other notifications (usage stats, peer requests, stale chunks
+// from prior turns) are discarded. This prevents NotifCh from filling
+// up between UtilityPrompt calls, which would block readLoop and
+// deadlock all pending Call waiters on the bridge.
+func forwardUtility(notifCh <-chan *api.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+	defer close(done)
+	defer close(responseCh)
+	for msg := range notifCh {
+		if msg.ID != nil {
+			slog.Warn("utility bridge: unexpected peer request, ignoring",
+				"method", msg.Method, "id", *msg.ID)
+			continue
+		}
+		if msg.Method != api.MethodSessionUpdate || msg.Params == nil {
+			continue
+		}
+		var base utilityUpdateBase
+		if json.Unmarshal(msg.Params, &base) != nil || base.Kind != api.ACPUpdateAgentChunk {
+			continue
+		}
+		var chunk utilityChunkPayload
+		if json.Unmarshal(msg.Params, &chunk) == nil {
+			responseCh <- chunk
+		}
+	}
+}
+
 // stopUtilityBridge stops the utility bridge if it exists.
 //
 // Only safe to call from Shutdown, where inflight.Wait() has already
@@ -219,12 +282,7 @@ func (h *Hub) stopUtilityBridge() {
 	if ub == nil {
 		return
 	}
-	ub.mu.Lock()
-	started := ub.started
-	ub.started = false
-	ub.mu.Unlock()
-	if started {
-		ub.bridge.Stop()
-		slog.Info("utility bridge stopped")
-	}
+	ub.Stop()
 }
+
+// --- Model selection (inlined from internal/models) ---

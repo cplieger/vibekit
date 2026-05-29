@@ -137,7 +137,7 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 			actionInstall: "curl -fsSL https://github.com/gitlab-org/cli/releases/download/${VERSION}/glab_${VERSION#v}_Linux_x86_64.tar.gz | " +
 				"tar -xz -C ${TOOLS} --strip-components=1 bin/glab",
 		}, nil
-	case "tea":
+	case cliTea:
 		return map[string]any{
 			fieldVersion: versionLatest,
 			fieldUpdate: map[string]any{

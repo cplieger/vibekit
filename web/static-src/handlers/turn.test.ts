@@ -10,8 +10,11 @@
 import { vi, describe, it, expect } from "vitest";
 
 // Mock modules that have side effects requiring DOM elements at import time.
-vi.mock("../scroll.js", () => ({ scroll: vi.fn(), trimOldMessages: vi.fn() }));
-vi.mock("../messages.js", () => ({ showPermissionDialog: vi.fn() }));
+vi.mock(
+  "../scroll.js",
+  async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
+);
+vi.mock("../permission.js", () => ({ showPermissionDialog: vi.fn() }));
 vi.mock("../chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
 vi.mock("../send-state.js", () => ({

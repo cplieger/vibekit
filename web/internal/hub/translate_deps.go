@@ -9,6 +9,7 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
+	"vibekit/internal/command"
 	"vibekit/internal/permissions"
 	"vibekit/internal/translate"
 )
@@ -32,7 +33,7 @@ func (h *Hub) BridgeNotify(ctx context.Context, chatID api.ChatID, method string
 	if sb == nil {
 		return nil
 	}
-	return sb.bridge.Notify(ctx, method, sessionParams(sb, params))
+	return sb.bridge.Notify(ctx, method, command.SessionParams(sb, params))
 }
 
 // BridgeRespond sends a response to the bridge for the given chat.
@@ -44,30 +45,29 @@ func (h *Hub) BridgeRespond(ctx context.Context, chatID api.ChatID, requestID in
 	return sb.bridge.Respond(ctx, requestID, result, err)
 }
 
-// MCPRecordConnected records a successful MCP server connection.
-func (h *Hub) MCPRecordConnected(ctx context.Context, serverName string) {
-	h.mcpRegistry.recordConnected(ctx, serverName)
+// MCPRecorder returns the Hub's MCP state recorder.
+func (h *Hub) MCPRecorder() translate.MCPRecorder {
+	return &hubMCPRecorder{h: h}
 }
 
-// MCPRecordOAuth records an MCP OAuth request.
-func (h *Hub) MCPRecordOAuth(ctx context.Context, serverName, oauthURL string) {
-	h.mcpRegistry.recordOAuth(ctx, serverName, oauthURL)
-}
+// hubMCPRecorder adapts Hub's MCP internals to the MCPRecorder interface.
+type hubMCPRecorder struct{ h *Hub }
 
-// MCPRecordInitFailure records an MCP server init failure.
-func (h *Hub) MCPRecordInitFailure(ctx context.Context, serverName, errMsg string) {
-	h.mcpRegistry.recordInitFailure(ctx, serverName, errMsg)
+func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string) {
+	r.h.mcpRegistry.recordConnected(ctx, serverName)
 }
-
-// MCPSignalReady signals that MCP servers are ready.
-func (h *Hub) MCPSignalReady() {
-	h.mcpRegistry.signalReady()
+func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
+	r.h.mcpRegistry.recordOAuth(ctx, serverName, oauthURL)
 }
-
-// MCPSetKnownTools persists the tool list for a server.
-func (h *Hub) MCPSetKnownTools(name string, tools []string) {
-	if h.mcpConfig != nil {
-		h.mcpConfig.SetKnownTools(name, tools)
+func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errMsg string) {
+	r.h.mcpRegistry.recordInitFailure(ctx, serverName, errMsg)
+}
+func (r *hubMCPRecorder) SignalReady() {
+	r.h.mcpRegistry.signalReady()
+}
+func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools []string) {
+	if r.h.mcpConfig != nil {
+		r.h.mcpConfig.SetKnownTools(ctx, name, tools)
 	}
 }
 
@@ -83,7 +83,7 @@ func (h *Hub) PendingPermsRemove(requestID int64) {
 
 // NotifyPush sends a push notification.
 func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
-	h.notifyPush(ctx, body, kind)
+	h.coord.NotifyPush(ctx, body, kind)
 }
 
 // PermissionRules returns the shell command rules.
@@ -92,26 +92,21 @@ func (h *Hub) PermissionRules() *permissions.CommandRules {
 }
 
 // BufferStore returns the buffer store for streaming handlers.
-func (h *Hub) BufferStore() *buffer.Store {
+func (h *Hub) BufferStore() translate.BufferAccess {
 	return h.bridge.assistantBufs
 }
 
 // LineTracker returns the line tracker for file-change recording.
-func (h *Hub) LineTracker() *buffer.LineTracker {
+func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
 }
 
 // OpenPartialFile opens the partial recovery file for a chat.
-func (h *Hub) OpenPartialFile(chatID api.ChatID, buf *buffer.Buffer) {
-	h.openPartialFile(chatID, buf)
+func (h *Hub) OpenPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
+	h.openPartialFile(ctx, chatID, buf)
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.
 func (h *Hub) IsHookStatusEnabled() bool {
 	return h.isHookStatusEnabled()
-}
-
-// NewMessageID returns a new unique message ID.
-func (h *Hub) NewMessageID() string {
-	return newMessageID()
 }

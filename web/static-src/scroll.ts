@@ -21,9 +21,21 @@
 import { loadMoreSkeleton } from "./skeleton.js";
 import { $ } from "./dom.js";
 
-const MAX_DOM_MESSAGES = 50;
+// Tuning constants for the scroll controller.
+// DOM_MESSAGE_CAP: max DOM nodes kept in the messages container (older
+// messages are trimmed to keep rendering fast — this is a DOM cap, not
+// a data cap; full history remains in the store).
+const DOM_MESSAGE_CAP = 50;
+// LOAD_MORE_THRESHOLD_PX: distance from the top at which we trigger
+// loading older messages into the DOM.
 const LOAD_MORE_THRESHOLD_PX = 100;
+// BOTTOM_TOLERANCE_PX: distance from the bottom within which we
+// consider the user "at the bottom" for auto-scroll purposes.
+// Same numeric value as LOAD_MORE_THRESHOLD_PX by coincidence — they
+// are semantically independent.
 const BOTTOM_TOLERANCE_PX = 100;
+// USER_SCROLL_DEBOUNCE_MS: debounce interval for user scroll events
+// before re-evaluating the "scrolled up" state.
 const USER_SCROLL_DEBOUNCE_MS = 150;
 
 // ---------------------------------------------------------------------------
@@ -83,9 +95,22 @@ class ScrollController {
       this.autoScrollIfAnchored();
     });
     resizeObserver.observe(this.scrollEl);
+    const observed = new Set<Element>();
     const reobserveChildren = (): void => {
-      for (const child of this.messagesEl.children) {
-        resizeObserver.observe(child);
+      const current = new Set<Element>(this.messagesEl.children);
+      // Unobserve removed children.
+      for (const el of observed) {
+        if (!current.has(el)) {
+          resizeObserver.unobserve(el);
+          observed.delete(el);
+        }
+      }
+      // Observe new children.
+      for (const el of current) {
+        if (!observed.has(el)) {
+          resizeObserver.observe(el);
+          observed.add(el);
+        }
       }
     };
     reobserveChildren();
@@ -125,7 +150,7 @@ class ScrollController {
 
   trimOldMessages(): void {
     const children = [...this.messagesEl.children].filter((el) => el.id !== "load-more-indicator");
-    const excess = children.length - MAX_DOM_MESSAGES;
+    const excess = children.length - DOM_MESSAGE_CAP;
     if (excess <= 0) {
       return;
     }

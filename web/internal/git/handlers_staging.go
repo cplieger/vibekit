@@ -10,6 +10,7 @@ import (
 	"vibekit/internal/gitexec"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
@@ -18,7 +19,7 @@ import (
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(ctx, dir) {
 		api.WriteJSON(w, gitStatusResp{IsRepo: false})
 		return
 	}
@@ -32,7 +33,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 // skips the network fetch (useful for the multi-repo dashboard where
 // fetching N repos in parallel would be costly + noisy).
 func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
-	if !api.IsGitRepo(dir) {
+	if !fileutil.IsGitRepo(ctx, dir) {
 		return gitStatusResp{IsRepo: false}
 	}
 	st := gitStatusResp{IsRepo: true}
@@ -118,7 +119,7 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{"add", "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(out)})
+		api.WriteJSON(w, api.ErrorJSON(gitexec.ScrubAuth(out)))
 		return
 	}
 	api.Ok(w)
@@ -145,7 +146,7 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{"reset", refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(out)})
+		api.WriteJSON(w, api.ErrorJSON(gitexec.ScrubAuth(out)))
 		return
 	}
 	api.Ok(w)
@@ -192,7 +193,7 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		api.WriteJSON(w, map[string]string{api.JSONKeyError: gitexec.ScrubAuth(strings.Join(errs, "\n"))})
+		api.WriteJSON(w, api.ErrorJSON(gitexec.ScrubAuth(strings.Join(errs, "\n"))))
 		return
 	}
 	api.Ok(w)

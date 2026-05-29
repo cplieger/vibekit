@@ -2,12 +2,9 @@
 // Tests for notify.ts action configuration and error paths.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
@@ -107,13 +104,25 @@ describe("registerPush", () => {
     toggle.checked = true;
     document.body.appendChild(toggle);
 
+    // The action's rollback dispatches a custom event; the UI layer
+    // listens and unchecks the toggle. Wire that listener here so the
+    // test exercises the public contract instead of poking internals.
+    const onFailed = (): void => {
+      toggle.checked = false;
+    };
+    document.addEventListener("notify:registration-failed", onFailed);
+
     Object.defineProperty(navigator, "serviceWorker", {
       value: undefined,
       configurable: true,
     });
 
-    await registerPush.dispatch(undefined);
-    expect(toggle.checked).toBe(false);
-    document.body.removeChild(toggle);
+    try {
+      await registerPush.dispatch(undefined);
+      expect(toggle.checked).toBe(false);
+    } finally {
+      document.removeEventListener("notify:registration-failed", onFailed);
+      document.body.removeChild(toggle);
+    }
   });
 });

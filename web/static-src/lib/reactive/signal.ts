@@ -96,6 +96,18 @@ export function signal<T>(initial: T): Signal<T> {
 
 export type Cleanup = undefined | (() => void);
 
+export type EffectErrorHandler = (error: unknown) => void;
+let effectErrorHandler: EffectErrorHandler = (e) => {
+  console.error("effect error:", e);
+};
+
+/** Set a global error handler for effect errors. Returns the previous handler. */
+export function setEffectErrorHandler(handler: EffectErrorHandler): EffectErrorHandler {
+  const prev = effectErrorHandler;
+  effectErrorHandler = handler;
+  return prev;
+}
+
 export function effect(fn: () => Cleanup): () => void {
   let cleanup: Cleanup;
   let disposed = false;
@@ -118,7 +130,7 @@ export function effect(fn: () => Cleanup): () => void {
       try {
         cleanup = fn();
       } catch (e) {
-        console.error("effect error:", e);
+        effectErrorHandler(e);
       } finally {
         tracking = prev;
       }

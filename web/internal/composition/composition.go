@@ -18,24 +18,29 @@ import (
 	"vibekit/internal/auth"
 	"vibekit/internal/bridge"
 	"vibekit/internal/chat"
+	"vibekit/internal/chat/archive"
 	"vibekit/internal/filehandler"
+	"vibekit/internal/fileutil"
 	forgesPkg "vibekit/internal/forges"
 	"vibekit/internal/git"
 	"vibekit/internal/hub"
 	"vibekit/internal/logctl"
 	mcpPkg "vibekit/internal/mcp"
+	"vibekit/internal/mcp/prewarm"
 	"vibekit/internal/permissions"
 	pushPkg "vibekit/internal/push"
 	"vibekit/internal/server"
+	"vibekit/internal/sessions"
 	"vibekit/internal/steering"
+	"vibekit/internal/workspace"
 )
 
 // App holds all wired-up services for the vibekit server.
 type App struct {
 	Hub            *hub.Hub
 	Server         *server.Server
-	purgeScheduler *chat.PurgeScheduler
-	mcpPrewarm     *mcpPkg.PrewarmRunner
+	purgeScheduler *archive.PurgeScheduler
+	mcpPrewarm     *prewarm.Runner
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -43,7 +48,7 @@ type App struct {
 // passed by pointer to avoid copying the 112-byte Config struct at
 // every invocation (it's only ever built once from the environment,
 // then mutated is forbidden — callers must treat it as read-only).
-func Build(cfg *Config, staticFS fs.FS) (*App, error) {
+func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Instance guard: prevent two vibekit processes from running against
 	// the same configDir (which would corrupt chat files). Uses flock so
 	// the lock auto-releases on crash/SIGKILL without cleanup.
@@ -55,13 +60,13 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
 
-	logctl.Install(cfg.ConfigDir)
+	logctl.Install(ctx, cfg.ConfigDir)
 
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
-	steer.Generate()
+	steer.Generate(ctx)
 
-	bridge.SetSessionsDir(api.KiroSessionsCLIDir())
-	bridge.CleanupStaleSessions(context.Background())
+	lockMgr := sessions.New(workspace.KiroSessionsCLIDir())
+	lockMgr.CleanupStale(ctx)
 
 	// Wipe legacy shadow-git checkpoint directories.
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
@@ -78,27 +83,27 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	bridgeFactory := func() api.ACPBridge {
-		return bridge.New(cfg.CLIPath, cfg.WorkDir)
+		return bridge.New(cfg.CLIPath, cfg.WorkDir, bridge.WithSessionManager(lockMgr))
 	}
 
-	mcpStore, err := mcpPkg.New(cfg.ConfigDir, nil)
+	mcpStore, err := mcpPkg.New(ctx, cfg.ConfigDir, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	pushSvc := pushPkg.New(context.Background(), cfg.ConfigDir, cfg.VapidSub)
+	pushSvc := pushPkg.New(ctx, cfg.ConfigDir, cfg.VapidSub)
 
 	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore, func() []string {
-		return permissions.Args(context.Background(), cfg.ConfigDir)
+		return permissions.Args(ctx, cfg.ConfigDir)
 	}, hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc))
 	chat.WithBroadcaster(h)(chatStore)
 	h.RecoverPartials()
 	h.StartCheckpointBackgroundTasks()
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
-	mcpPrewarm := mcpPkg.NewPrewarmRunner(context.Background(), mcpStore)
-	mcpPrewarm.OnStatus = func(pkg string, state mcpPkg.PrewarmState) {
-		h.Broadcast(context.Background(), api.NewEvent(api.EventMCPPrewarm, "", api.MCPPrewarmPayload{
+	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
+	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
+		h.Broadcast(ctx, api.NewEvent(api.EventMCPPrewarm, "", api.MCPPrewarmPayload{
 			Package: pkg,
 			State:   string(state),
 		}))
@@ -108,24 +113,23 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		mcpPrewarm.Run(ctx)
 		h.PushMCPConfig()
 	})
-	mcpPrewarm.Run(context.Background())
+	mcpPrewarm.Run(ctx)
 
 	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
-	h.SetMCPOnChange(func() { steer.Generate() })
-	h.SetPreBridgeSpawn(func() { steer.Generate() })
+	h.SetMCPOnChange(func() { steer.Generate(h.ShutdownCtx()) })
+	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 
 	forgesManager := forgesPkg.NewManager()
-	if refreshErr := forgesManager.Refresh(context.Background()); refreshErr != nil {
+	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
 		// Non-fatal: refreshing CLI configs may fail if no CLIs are
 		// installed yet. The manager starts with an empty list.
 		_ = refreshErr
 	}
 
-	gitHandler := git.NewHandler(cfg.WorkDir,
-		git.WithUtilityPrompt(h),
-	)
+	gitHandler := git.NewHandler(cfg.WorkDir)
+	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	fileHandler, err := filehandler.New("/")
 	if err != nil {
 		return nil, err
@@ -134,8 +138,9 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
-		ctx := context.Background()
-		configured := forgesManager.List(ctx)
+		fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		configured := forgesManager.List(fctx)
 		providers := make([]steering.ForgeProvider, 0, len(configured))
 		for i := range configured {
 			f := &configured[i]
@@ -147,13 +152,15 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 			}
 			// Best-effort: enumerate repos for this provider via the CLI.
 			if ops, opsErr := forgesPkg.New(f.Kind, f.Host); opsErr == nil {
-				if repos, listErr := ops.ListRepos(ctx); listErr == nil {
+				repoCtx, repoCancel := context.WithTimeout(ctx, 5*time.Second)
+				if repos, listErr := ops.ListRepos(repoCtx); listErr == nil {
 					full := make([]string, 0, len(repos))
 					for j := range repos {
 						full = append(full, repos[j].FullName)
 					}
 					p.Repos = full
 				}
+				repoCancel()
 			}
 			providers = append(providers, p)
 		}
@@ -166,19 +173,19 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	retention := func() time.Duration {
-		days := readCleanupPeriodDays(cfg.CLIPath)
+		days := readCleanupPeriodDays(ctx, cfg.CLIPath)
 		if days <= 0 {
 			return 0
 		}
 		return time.Duration(days) * 24 * time.Hour
 	}
-	purgeScheduler := chat.NewPurgeScheduler(context.Background(), chatStore, retention)
+	purgeScheduler := chat.NewPurgeScheduler(ctx, chatStore, retention)
 	chat.WithOnArchive(func(id api.ChatID) {
 		h.OnChatArchived(id)
 		purgeScheduler.Trigger()
 	})(chatStore)
 	chat.WithOnPurge(func(chatID api.ChatID) {
-		h.CleanupCheckpoints(context.Background(), chatID)
+		h.CleanupCheckpoints(ctx, chatID)
 	})(chatStore)
 	chat.WithOldestCheckpointFn(h.CheckpointOldestTag)(chatStore)
 	purgeScheduler.Start()
@@ -188,6 +195,7 @@ func Build(cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithHub(h),
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
+		server.WithGitAI(gitAIHandler),
 		server.WithFiles(fileHandler),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
@@ -237,8 +245,8 @@ func (a *App) Shutdown() {
 // readCleanupPeriodDays shells out to `kiro-cli settings
 // cleanup.periodDays` and returns the integer value. Any failure
 // returns 0 so the scheduler falls back to "disabled".
-func readCleanupPeriodDays(cliPath string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func readCleanupPeriodDays(ctx context.Context, cliPath string) int {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, cliPath, "settings", "cleanup.periodDays").Output()
 	if err != nil {
@@ -270,9 +278,9 @@ func sweepStaleTemps(configDir, workDir string) {
 	for _, dir := range []string{
 		configDir,
 		filepath.Join(configDir, "chats"),
-		filepath.Join(configDir, "chats", "archive"),
+		filepath.Join(configDir, "chats", archive.Subdir),
 		workDir,
 	} {
-		api.CleanupStaleTemps(dir, tempMaxAge)
+		fileutil.CleanupStaleTemps(dir, tempMaxAge)
 	}
 }

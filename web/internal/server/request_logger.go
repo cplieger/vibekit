@@ -45,7 +45,7 @@ func requestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
 		dur := time.Since(start)
-		slog.Info("http",
+		slog.InfoContext(ctx, "http",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,

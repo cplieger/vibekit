@@ -23,7 +23,7 @@ func TestEventLogAppendRead(t *testing.T) {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestEventLogStampsCurrentVersion(t *testing.T) {
 			t.Fatalf("Append[%d]: %v", i, err)
 		}
 	}
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestEventLogReadsLegacyEventsWithoutV(t *testing.T) {
 	if err := os.WriteFile(l.path, legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestEventLogReadMissingFile(t *testing.T) {
 	// slice without error. The HTTP handlers rely on this to avoid
 	// 500s on "chat has never been touched".
 	l := newEventLog(t.TempDir(), "never-used")
-	evs, err := l.Read()
+	evs, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestEventLogTolerantOfPartialLines(t *testing.T) {
 	if err := l.Append(context.Background(), &event{Kind: kindSnapshot, Tag: "2", Path: "b.go"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestEventLogReadRejectsDirectoryAtPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := newEventLog(dir, "c")
-	_, err := l.Read()
+	_, err := l.Read(context.Background())
 	if err == nil {
 		t.Fatal("Read on a directory returned nil error, want non-nil")
 	}
@@ -193,7 +193,7 @@ func TestEventLogAppendReadAllEventKinds(t *testing.T) {
 			t.Fatalf("Append[%d]: %v", i, err)
 		}
 	}
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 			TS:        int64(i),
 		})
 	}
-	conflicts := s.conflicts.slice()
+	conflicts := s.conflicts.Slice()
 	if len(conflicts) != maxInMemoryConflicts {
 		t.Fatalf("len(conflicts) at cap = %d, want %d",
 			len(conflicts), maxInMemoryConflicts)
@@ -433,7 +433,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 
 	// First overflow: drops oldest (TS=0), appends TS=500.
 	s.apply(&event{Kind: kindConflict, Path: "p", Tag: "t", TS: int64(maxInMemoryConflicts)})
-	conflicts = s.conflicts.slice()
+	conflicts = s.conflicts.Slice()
 	if len(conflicts) != maxInMemoryConflicts {
 		t.Errorf("len(conflicts) after 1 overflow = %d, want %d",
 			len(conflicts), maxInMemoryConflicts)
@@ -449,7 +449,7 @@ func TestStateApplyConflictsCapAndTruncationFlag(t *testing.T) {
 
 	// Second overflow: ring still sheds oldest and admits newcomer.
 	s.apply(&event{Kind: kindConflict, Path: "p", Tag: "t", TS: int64(maxInMemoryConflicts + 1)})
-	conflicts = s.conflicts.slice()
+	conflicts = s.conflicts.Slice()
 	if conflicts[0].TS != 2 {
 		t.Errorf("oldest TS after 2 overflows = %d, want 2", conflicts[0].TS)
 	}
@@ -650,7 +650,7 @@ func TestEventLogReadSkipsOversizedLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := l.Read()
+	got, err := l.Read(context.Background())
 	if err != nil {
 		t.Fatalf("Read after oversized line = %v, want nil (fix folds ErrTooLong into partial success)", err)
 	}
@@ -737,7 +737,7 @@ func FuzzEventLogRead(f *testing.F) {
 			t.Fatal(err)
 		}
 		// Read must not panic. Errors are acceptable.
-		_, _ = l.Read()
+		_, _ = l.Read(context.Background())
 	})
 }
 

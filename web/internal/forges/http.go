@@ -28,14 +28,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"vibekit/internal/api"
+)
+
+// ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
+type ForgeErrCode string
+
+const (
+	ForgeErrCLINotInstalled ForgeErrCode = "cli_not_installed"
+	ForgeErrNotLoggedIn     ForgeErrCode = "not_logged_in"
 )
 
 // HTTPHandler exposes the forges package over HTTP.
@@ -113,7 +119,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	// First path segment is either "refresh" / "oauth" (handled
 	// above by direct registration) or a forge ID. ID is "kind:host"
 	// — the colon could be percent-encoded but we keep it literal.
-	id, sub, _ := splitFirst(tail, "/")
+	id, sub, _ := splitFirst(tail)
 	if h.manager.Get(id) == nil {
 		api.NotFound(w, "unknown forge id")
 		return
@@ -130,7 +136,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	op, rest, _ := splitFirst(sub, "/")
+	op, rest, _ := splitFirst(sub)
 	switch op {
 	case "probe":
 		h.handleProbe(w, r, id)
@@ -171,7 +177,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	if err != nil {
 		api.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
-			statusError:     err.Error(),
+			statusError: err.Error(),
 			"forge":     f,
 		})
 		return
@@ -190,7 +196,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		api.MethodNotAllowed(w)
 		return
 	}
-	op, _, _ := splitFirst(sub, "/")
+	op, _, _ := splitFirst(sub)
 	if op != "pat" {
 		api.NotFound(w, "unknown login method")
 		return
@@ -215,7 +221,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		Token:    body.Token,
 		Username: body.Username,
 	}); err != nil {
-		api.WriteJSONStatus(w, http.StatusBadRequest, map[string]string{api.JSONKeyError: err.Error()})
+		api.WriteJSONStatus(w, http.StatusBadRequest, api.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()
@@ -224,281 +230,19 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 	api.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
-func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
-		return
-	}
-	resp, err := StartGitHubDeviceFlow(r.Context())
-	if err != nil {
-		api.ServerError(w, "device flow failed", err)
-		return
-	}
-	api.WriteJSON(w, resp)
-}
-
-func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
-		return
-	}
-	var body struct {
-		DeviceCode string `json:"device_code"`
-	}
-	api.LimitBody(w, r, api.MaxJSONBody)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "invalid json")
-		return
-	}
-	res, err := PollGitHubDeviceFlow(r.Context(), body.DeviceCode)
-	if err != nil {
-		api.ServerError(w, "poll failed", err)
-		return
-	}
-	if res.Status == stateComplete {
-		h.manager.Invalidate()
-		_ = h.manager.Refresh(r.Context())
-		h.notifyChanged(r.Context())
-	}
-	api.WriteJSON(w, res)
-}
-
-// handleRepos dispatches /api/forges/{id}/repos/* paths.
-func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
-	provider, err := h.manager.Provider(id)
-	if err != nil {
-		api.NotFound(w, err.Error())
-		return
-	}
-	// rest is "" → list repos. Otherwise it's "owner/name[/sub...]".
-	if rest == "" {
-		if r.Method != http.MethodGet {
-			api.MethodNotAllowed(w)
-			return
-		}
-		repos, err := provider.ListRepos(r.Context())
-		if err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.WriteJSON(w, map[string]any{"repos": repos})
-		return
-	}
-	owner, after, ok := splitFirst(rest, "/")
-	if !ok || owner == "" {
-		api.BadRequest(w, "missing repo owner")
-		return
-	}
-	name, after2, _ := splitFirst(after, "/")
-	if name == "" {
-		api.BadRequest(w, "missing repo name")
-		return
-	}
-	repo := owner + "/" + name
-	if after2 == "" {
-		api.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
-		return
-	}
-	op, tail, _ := splitFirst(after2, "/")
-	switch op {
-	case "prs":
-		h.handlePRs(w, r, provider, repo, tail)
-	case "issues":
-		h.handleIssues(w, r, provider, repo, tail)
-	case "checks":
-		h.handleChecks(w, r, provider, repo)
-	case "releases":
-		h.handleReleases(w, r, provider, repo)
-	case "labels":
-		h.handleLabels(w, r, provider, repo)
-	default:
-		api.NotFound(w, "unknown repo sub-resource")
-	}
-}
-
-func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
-	if tail == "" {
-		switch r.Method {
-		case http.MethodGet:
-			state := r.URL.Query().Get("state")
-			prs, err := p.ListPRs(r.Context(), repo, state)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, map[string]any{"prs": prs})
-		case http.MethodPost:
-			var params CreatePRParams
-			api.LimitBody(w, r, api.MaxJSONBody)
-			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-				api.BadRequest(w, "invalid json")
-				return
-			}
-			pr, err := p.CreatePR(r.Context(), repo, &params)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, pr)
-		default:
-			api.MethodNotAllowed(w)
-		}
-		return
-	}
-	numStr, op, _ := splitFirst(tail, "/")
-	number, err := strconv.Atoi(numStr)
-	if err != nil {
-		api.BadRequest(w, "invalid PR number")
-		return
-	}
-	switch op {
-	case "merge":
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
-			return
-		}
-		method := r.URL.Query().Get(fieldMethod)
-		if err := p.MergePR(r.Context(), repo, number, method); err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.Ok(w)
-	case stateClose:
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
-			return
-		}
-		if err := p.ClosePR(r.Context(), repo, number); err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.Ok(w)
-	default:
-		api.NotFound(w, "unknown PR action")
-	}
-}
-
-func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
-	if tail == "" {
-		switch r.Method {
-		case http.MethodGet:
-			state := r.URL.Query().Get("state")
-			issues, err := p.ListIssues(r.Context(), repo, state)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, map[string]any{"issues": issues})
-		case http.MethodPost:
-			var params CreateIssueParams
-			api.LimitBody(w, r, api.MaxJSONBody)
-			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-				api.BadRequest(w, "invalid json")
-				return
-			}
-			issue, err := p.CreateIssue(r.Context(), repo, params)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, issue)
-		default:
-			api.MethodNotAllowed(w)
-		}
-		return
-	}
-	numStr, op, _ := splitFirst(tail, "/")
-	number, err := strconv.Atoi(numStr)
-	if err != nil {
-		api.BadRequest(w, "invalid issue number")
-		return
-	}
-	if op == stateClose {
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
-			return
-		}
-		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.Ok(w)
-		return
-	}
-	api.NotFound(w, "unknown issue action")
-}
-
-func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
-	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
-		return
-	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		api.BadRequest(w, "ref query parameter required")
-		return
-	}
-	checks, err := p.CommitStatus(r.Context(), repo, ref)
-	if err != nil {
-		h.writeOpsError(w, err)
-		return
-	}
-	api.WriteJSON(w, map[string]any{"checks": checks})
-}
-
-func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
-	switch r.Method {
-	case http.MethodGet:
-		releases, err := p.ListReleases(r.Context(), repo)
-		if err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.WriteJSON(w, map[string]any{"releases": releases})
-	case http.MethodPost:
-		var params CreateReleaseParams
-		api.LimitBody(w, r, api.MaxJSONBody)
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			api.BadRequest(w, "invalid json")
-			return
-		}
-		release, err := p.CreateRelease(r.Context(), repo, params)
-		if err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.WriteJSON(w, release)
-	default:
-		api.MethodNotAllowed(w)
-	}
-}
-
-func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
-	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
-		return
-	}
-	labels, err := p.ListLabels(r.Context(), repo)
-	if err != nil {
-		h.writeOpsError(w, err)
-		return
-	}
-	api.WriteJSON(w, map[string]any{"labels": labels})
-}
-
 // writeOpsError maps ForgeOps errors to HTTP status codes.
 func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			map[string]string{api.JSONKeyError: err.Error(), "code": "cli_not_installed"})
+			api.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
 	case errors.Is(err, ErrNotLoggedIn):
 		api.WriteJSONStatus(w, http.StatusUnauthorized,
-			map[string]string{api.JSONKeyError: err.Error(), "code": "not_logged_in"})
+			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			map[string]string{api.JSONKeyError: err.Error()})
+			api.ErrorJSON(err.Error()))
 	}
 }
 
@@ -514,10 +258,6 @@ func splitID(id string) (kind Kind, ref string) {
 
 // splitFirst splits s at the first '/' separator, returning
 // (head, tail, found). If '/' is not present, returns (s, "", false).
-func splitFirst(s, _ string) (head, tail string, found bool) {
+func splitFirst(s string) (head, tail string, found bool) {
 	return strings.Cut(s, "/")
 }
-
-// Compile-time blank assignment to silence unused-import warnings if
-// fmt isn't used in some build tags.
-var _ = fmt.Sprintf

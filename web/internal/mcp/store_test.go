@@ -9,12 +9,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"vibekit/internal/api"
+	"vibekit/internal/testsupport"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -171,7 +174,7 @@ func TestPersist_FileIs0600(t *testing.T) {
 func TestOnChangeFires(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(dir, func(context.Context) { calls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -193,7 +196,7 @@ func TestLoad_ReadsExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -219,7 +222,7 @@ func TestLoad_CorruptFileStartsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
@@ -383,7 +386,7 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(dir, func(context.Context) { firstCalls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { firstCalls.Add(1) })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -411,7 +414,7 @@ func TestSetOnChange_ReplacesCallback(t *testing.T) {
 func TestSetOnChange_NilIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(dir, func(context.Context) { calls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -624,7 +627,7 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
@@ -660,7 +663,7 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := New(dir, nil); err != nil {
+	if _, err := New(context.Background(), dir, nil); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -680,7 +683,7 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"servers":null}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -809,7 +812,7 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	s, err := New(dir, nil)
+	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New must tolerate rename failure, got: %v", err)
 	}
@@ -821,7 +824,6 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 		t.Errorf("corrupt file disappeared despite rename failure: %v", err)
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // OAuth client ID (kiro-cli 2.3+): pre-registered client_id for HTTP MCP
@@ -955,4 +957,14 @@ func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for control char in OAuthClientID")
 	}
+}
+
+// TestStore_MCPConfigContract runs the shared MCPConfig contract test
+// against the real mcp.Store to catch drift between the fake and the
+// production implementation.
+func TestStore_MCPConfigContract(t *testing.T) {
+	testsupport.MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
+		t.Helper()
+		return newTestStore(t)
+	})
 }

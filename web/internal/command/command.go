@@ -12,10 +12,8 @@ import (
 	"maps"
 	"net/http"
 	"sync"
-	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/pending"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope.
@@ -25,123 +23,65 @@ const maxCommandBody = 5 * 1024 * 1024
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
 
 // Dependencies defines what the Dispatcher needs from its host (Hub).
+// Composed from the role-based sub-interfaces declared in interfaces.go.
 type Dependencies interface {
-	// CheckDedup returns a cached response for the given request ID, if any.
-	CheckDedup(reqID string) ([]byte, bool)
-	// RecordDedup caches a response for idempotent replay.
-	RecordDedup(reqID string, result []byte)
-	// Draining reports whether the server is shutting down.
+	BridgeAccess
+	ChatAccess
+	CheckpointAccess
+	SupervisedAccess
+	InfraDeps
 	Draining() bool
-
-	// ChatStore returns the chat persistence layer.
-	ChatStore() api.ChatStore
-	// Broadcast sends an SSE event to all connected clients.
-	Broadcast(ctx context.Context, evt api.ServerEvent)
-
-	// GetBridge returns the active bridge for a chat, or nil.
-	GetBridge(chatID api.ChatID) Bridge
-	// GetOrCreateBridge ensures a bridge exists for the chat.
-	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, model string) (Bridge, error)
-	// CloseBridge tears down the bridge for a chat.
-	CloseBridge(chatID api.ChatID)
-
-	// PendingStore returns the pending-changes store.
-	PendingStore() *pending.Store
-	// SupervisedSetTrust sets the per-turn trust flag for a chat.
-	SupervisedSetTrust(chatID api.ChatID)
-	// SupervisedClearTrust clears the per-turn trust flag.
-	SupervisedClearTrust(chatID api.ChatID, reason api.ClearReason)
-	// ChatInSupervisedMode reports whether the chat has supervised mode on.
-	ChatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool
-	// FlushPendingForChat rejects all outstanding pending ops for a chat.
-	FlushPendingForChat(ctx context.Context, chatID api.ChatID, reason api.ClearReason)
-	// ClearPendingPermsForChat drops unresolved permission_needed entries.
-	ClearPendingPermsForChat(chatID api.ChatID)
-	// RemovePendingPerm removes a single pending permission by request ID.
-	RemovePendingPerm(requestID int64)
-
-	// Checkpoints returns the checkpoint service, or nil if unavailable.
-	Checkpoints() api.CheckpointService
-	// AdvanceCheckpointTurn bumps the checkpoint turn counter.
-	AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID)
-
-	// WorkDir returns the workspace directory.
-	WorkDir() string
-	// ConfigDir returns the configuration directory.
-	ConfigDir() string
-	// ShutdownCtx returns the context cancelled on shutdown.
-	ShutdownCtx() context.Context
-	// InflightAdd increments the inflight counter.
-	InflightAdd(delta int)
-	// InflightDone decrements the inflight counter.
-	InflightDone()
-	// InflightGo runs fn under the inflight WaitGroup.
-	InflightGo(fn func())
-
-	// CleanupChatState tears down all in-memory state for a chat.
-	CleanupChatState(ctx context.Context, chatID api.ChatID)
-
-	// UtilityPrompt sends a prompt to the utility bridge.
-	UtilityPrompt(ctx context.Context, prompt string) (string, error)
-
-	// MCPWaitForReady blocks until MCP servers are ready or timeout.
-	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
-
-	// ResolveInsideWorkDir validates a path is inside the workspace.
-	ResolveInsideWorkDir(rel string) (string, error)
-
-	// PrimeIfNeeded primes the bridge with history if needed.
-	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
-
-	// LinesClear clears line tracking for a chat.
-	LinesClear(chatID api.ChatID)
-
-	// IsEmptyTurn checks if a prompt response is an empty turn.
-	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
-
-	// EmitTurnEndedWithStats broadcasts turn_ended with usage stats.
-	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
+	CheckDedup(reqID string) ([]byte, bool)
+	RecordDedup(reqID string, result []byte)
 }
 
-// Bridge abstracts the per-chat ACP bridge for command handlers.
-type Bridge interface {
-	// Call sends an RPC call to kiro-cli.
-	Call(ctx context.Context, method string, params any) (*api.RPCResponse, error)
-	// Notify sends a one-way notification to kiro-cli.
-	Notify(ctx context.Context, method string, params any) error
-	// Respond sends a permission response to kiro-cli.
-	Respond(ctx context.Context, requestID int64, result any, err error) error
-	// SessionID returns the current ACP session ID.
-	SessionID() string
-	// TryAcquireForPrompt attempts to lock the bridge for prompting.
-	TryAcquireForPrompt() bool
-	// ReleaseAfterPrompt releases the prompt lock.
-	ReleaseAfterPrompt()
-	// SetLastActive updates the last-active timestamp.
-	SetLastActive()
-	// SetPrompting sets the bridge state to prompting (for recovery).
-	SetPrompting()
-	// IsPrimed reports whether the bridge has been primed.
-	IsPrimed() bool
-	// SetPrimed marks the bridge as primed.
-	SetPrimed()
-}
+// Bridge is the per-chat ACP bridge contract for command handlers.
+// The canonical definition lives in api.CommandBridge; this alias
+// preserves backward compatibility within the command package.
+type Bridge = api.CommandBridge
 
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
 	deps     Dependencies
+	prompter api.UtilityPrompter
 	handlers map[api.CommandType]Handler
 	mu       sync.RWMutex
 }
 
+// Option configures optional Dispatcher capabilities.
+type Option func(*Dispatcher)
+
+// WithPrompter injects the utility prompter used by AsyncRenameChat.
+// If not provided, auto-rename is silently skipped.
+func WithPrompter(p api.UtilityPrompter) Option {
+	return func(d *Dispatcher) { d.prompter = p }
+}
+
+// WithBridge is a documentation-only option indicating the Dispatcher
+// uses BridgeAccess from its Dependencies. Reserved for future use
+// where bridge access may be injected independently.
+func WithBridge(_ BridgeAccess) Option { return func(*Dispatcher) {} }
+
+// WithChat is a documentation-only option indicating the Dispatcher
+// uses ChatAccess from its Dependencies. Reserved for future use
+// where chat access may be injected independently.
+func WithChat(_ ChatAccess) Option { return func(*Dispatcher) {} }
+
 // New constructs a Dispatcher with the given dependencies.
-func New(deps Dependencies) *Dispatcher {
-	return &Dispatcher{
+func New(deps Dependencies, opts ...Option) *Dispatcher {
+	d := &Dispatcher{
 		deps:     deps,
 		handlers: make(map[api.CommandType]Handler),
 	}
+	for _, o := range opts {
+		o(d)
+	}
+	return d
 }
+
+// Prompter returns the utility prompter, or nil if not configured.
+func (d *Dispatcher) Prompter() api.UtilityPrompter { return d.prompter }
 
 // Deps returns the dependencies for use by handler functions.
 func (d *Dispatcher) Deps() Dependencies { return d.deps }
@@ -165,16 +105,31 @@ func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
 	api.WriteRawJSON(w, data)
 }
 
+// RespondOK writes the standard {"ok":true} success response and
+// caches it for idempotent replay. Shorthand for the most common
+// command success case.
+func (d *Dispatcher) RespondOK(w http.ResponseWriter, reqID string) {
+	d.Respond(w, reqID, responseOK)
+}
+
+// errorResponse is the typed wire shape for JSON error responses.
+// Using a struct instead of map[string]string makes the shape explicit,
+// enables json.Marshal's cached struct encoder, and provides a single
+// place to add future fields (e.g. code, retryable).
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
 // RespondErr writes a JSON error response with the given status code.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	api.WriteJSONStatus(w, code, map[string]string{keyError: err.Error()})
+	api.WriteJSONStatus(w, code, errorResponse{Error: err.Error()})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
 // 400 response if not. Returns true when the chat ID is present.
 func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand) bool {
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, errMissingChatID)
+		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return false
 	}
 	return true
@@ -187,7 +142,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.deps.Draining() {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{keyError: "shutting down"})
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
 
@@ -198,7 +153,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{keyError: "request body too large"})
+				errorResponse{Error: "request body too large"})
 			return
 		}
 		api.BadRequest(w, "invalid json")
@@ -219,7 +174,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Centralised chat_id validation.
 	if cmd.ChatID != "" && !validChatID(cmd.ChatID) {
-		api.BadRequest(w, "invalid chat_id")
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 

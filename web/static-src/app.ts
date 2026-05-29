@@ -19,9 +19,9 @@ import {
   get,
   getSessions,
   isThinking,
-  loadList,
 } from "./store.js";
-import { effect } from "./signals.js";
+import { loadList } from "./store-load.js";
+import { effect } from "./lib/reactive/index.js";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
@@ -69,7 +69,6 @@ import {
   installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { initFollowAlong } from "./follow.js";
 import { initAutoApprove } from "./auto-approve.js";
 import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
@@ -79,9 +78,15 @@ import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import { applyShareTarget } from "./share-target.js";
 
-import "./handlers/index.js";
+import "./handlers/chat.js";
+import "./handlers/messages.js";
+import "./handlers/pending.js";
+import "./handlers/turn.js";
+import "./handlers/system.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
+import { copyClipboard } from "./actions/messages.js";
+import { setCopyCallback } from "./code-blocks.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
@@ -152,6 +157,7 @@ function init(): void {
   setupInput();
   initUI();
   initShellPanel();
+  setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
   initEditor();
   initFileBrowser();
   initFilePicker();
@@ -449,7 +455,6 @@ function setupInput(): void {
   // The model switcher owns its button click, popover, queue, and
   // outside-click dismissal. See model-switcher.ts.
   initModelSwitcher();
-  initFollowAlong();
   initAutoApprove();
   initSupervisedPill();
 
@@ -516,15 +521,6 @@ function applyRoute(route: Route): void {
       void import("./history.js")
         .then(({ showHistoryView }) => {
           showHistoryView();
-        })
-        .catch(() => {
-          /* noop */
-        });
-      break;
-    case "follow":
-      void import("./follow.js")
-        .then(({ showFollowView }) => {
-          showFollowView();
         })
         .catch(() => {
           /* noop */

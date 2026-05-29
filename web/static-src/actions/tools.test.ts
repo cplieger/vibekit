@@ -12,6 +12,16 @@ vi.mock("../toast.js", () => ({
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiGetTyped: vi.fn().mockResolvedValue(null),
+  CancellableSlot: class {
+    start() {
+      return new AbortController().signal;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    abort() {}
+  },
 }));
 
 import { installTools, saveTools, runDiagnostics, loadTools, seedMcp } from "./tools.js";

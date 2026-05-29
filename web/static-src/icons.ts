@@ -79,6 +79,32 @@ export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg(16, '<path d="M12 5v14M5 12l7 7 7-7"/>');
 export const ICON_REFRESH =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+
+export const ICON_FILTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
+  "</svg>";
+
+export const ICON_REPO_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
+  '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
+  "</svg>";
+
+export const ICON_CLEAN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
+  '<polyline points="22 4 12 14.01 9 11.01"/>' +
+  "</svg>";
+
+export const ICON_PR_EMPTY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="6" cy="6" r="3"/>' +
+  '<circle cx="6" cy="18" r="3"/>' +
+  '<line x1="6" y1="9" x2="6" y2="15"/>' +
+  '<circle cx="18" cy="18" r="3"/>' +
+  '<path d="M18 9a9 9 0 00-9-9"/>' +
+  "</svg>";
 // Globe with meridian + equator stripes — used by the repo-picker for
 // "remote, not cloned" entries.
 export const ICON_GLOBE =
@@ -213,10 +239,6 @@ export const ICON_TAB_GIT = svg(
   '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
 export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
-export const ICON_TAB_FOLLOW = svg(
-  14,
-  '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
-);
 export const ICON_TAB_FILES = svg(
   14,
   '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',

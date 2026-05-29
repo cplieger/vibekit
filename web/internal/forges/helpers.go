@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+// Exported status/state constants defining the forge protocol vocabulary.
+const (
+	StatusSuccess  = "success"
+	StatusFailure  = "failure"
+	StatusError    = "error"
+	StatePending   = "pending"
+	StateSkipped   = "skipped"
+	StateCompleted = "completed"
+)
+
+// Internal implementation constants.
 const (
 	stateMerged    = "merged"
 	stateCompleted = "completed"
@@ -122,3 +133,5 @@ func normalizeIssueState(s string) string {
 	}
 	return strings.ToLower(s)
 }
+
+

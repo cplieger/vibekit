@@ -77,16 +77,20 @@ func errInvalidChatID(id api.ChatID) error {
 	return fmt.Errorf("invalid chat id: %q", id)
 }
 
+// errMsgChatNotFound is the canonical HTTP response message for
+// missing or tombstoned chats. Single source of truth so all
+// not-found responses use the same string.
+const errMsgChatNotFound = "chat not found"
+
 // writeChatErr maps a StoreError to the appropriate HTTP response.
 func writeChatErr(w http.ResponseWriter, err error) {
-	var ce *StoreError
-	if errors.As(err, &ce) {
+	if ce, ok := errors.AsType[*StoreError](err); ok {
 		switch ce.Kind {
 		case ErrKindNotFound, ErrKindTombstoned:
-			api.NotFound(w, "chat not found")
+			api.NotFound(w, errMsgChatNotFound)
 		case ErrKindTooLarge:
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{api.JSONKeyError: ce.Error()})
+				api.ErrorJSON(ce.Error()))
 		case ErrKindIDInUse:
 			api.Conflict(w, ce.Error())
 		default:

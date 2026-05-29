@@ -17,8 +17,10 @@ vi.mock("./modals.js", () => ({
   },
 }));
 vi.mock("./mcp-state.js", () => ({
-  refetchServers: async () => {
-    /* noop */
+  mcpState: {
+    refetchServers: async () => {
+      /* noop */
+    },
   },
   configured: [],
   SECRET_MASK: "***",
@@ -40,7 +42,8 @@ vi.mock("./actions/mcp.js", () => ({
   saveServer: { dispatch: async () => ({}) },
 }));
 
-import { simplifyName, extractNpxPackage, rawEditShape, rawSubmitShape } from "./mcp-panels.js";
+import { simplifyName } from "./mcp-panels-search.js";
+import { extractNpxPackage, rawEditShape, rawSubmitShape } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
 
 // ---------------------------------------------------------------------------

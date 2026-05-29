@@ -10,6 +10,9 @@ import {
   insertConfiguredEntry,
 } from "../mcp-state.js";
 
+/** Base path for MCP API endpoints — single source of truth. */
+export const MCP_API = "/api/mcp";
+
 /** Result shape from the registry search endpoint. */
 export interface RegistrySearchResult {
   servers: {
@@ -58,7 +61,7 @@ export const toggleServer = apiAction<ToggleArgs, void, Server>({
   scope: (args) => "mcp:" + args.id,
   request: ({ id, enabled }) => ({
     method: "PATCH",
-    path: `/api/mcp/${encodeURIComponent(id)}`,
+    path: `${MCP_API}/${encodeURIComponent(id)}`,
     body: { enabled },
   }),
   optimistic: ({ id, enabled }) => {
@@ -88,7 +91,7 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   scope: (args) => "mcp:" + args.id,
   request: ({ id }) => ({
     method: "DELETE",
-    path: `/api/mcp/${encodeURIComponent(id)}`,
+    path: `${MCP_API}/${encodeURIComponent(id)}`,
   }),
   optimistic: ({ id }) => {
     return removeConfiguredEntry(id);
@@ -111,7 +114,7 @@ export const openEdit = apiAction<string, Server>({
   dedupe: (id) => id,
   request: (id) => ({
     method: "GET",
-    path: `/api/mcp/${encodeURIComponent(id)}`,
+    path: `${MCP_API}/${encodeURIComponent(id)}`,
   }),
   error: "Couldn't load integration details",
 });
@@ -132,7 +135,7 @@ export const saveServer = apiAction<SaveArgs, Server>({
   scope: (args) => "mcp:" + args.id,
   request: ({ id, body }) => ({
     method: id === "" ? "POST" : "PUT",
-    path: id === "" ? "/api/mcp" : `/api/mcp/${encodeURIComponent(id)}`,
+    path: id === "" ? MCP_API : `${MCP_API}/${encodeURIComponent(id)}`,
     body,
   }),
   error: false,
@@ -151,7 +154,7 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   dedupe: (args) => args.q,
   request: ({ q }) => ({
     method: "GET",
-    path: `/api/mcp/registry/search?q=${encodeURIComponent(q)}&limit=20`,
+    path: `${MCP_API}/registry/search?q=${encodeURIComponent(q)}&limit=20`,
   }),
   error: false,
 });

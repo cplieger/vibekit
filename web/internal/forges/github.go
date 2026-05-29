@@ -112,12 +112,12 @@ func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 }
 
 // ListPRs lists pull requests for repo.
-func (p *githubProvider) ListPRs(ctx context.Context, repo, state string) ([]PR, error) {
+func (p *githubProvider) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
 	if state == "" {
-		state = stateOpen
+		state = StateOpen
 	}
 	fields := "number,title,body,state,author,headRefName,baseRefName,url,createdAt,updatedAt,mergeable,isDraft"
-	args := p.withHost("pr", "list", "--repo", repo, "--state", state, "--json", fields, "--limit", "100")
+	args := p.withHost("pr", "list", "--repo", repo, "--state", string(state), "--json", fields, "--limit", "100")
 	var raw []struct {
 		Title       string                 `json:"title"`
 		Body        string                 `json:"body"`
@@ -224,13 +224,13 @@ func (p *githubProvider) viewPR(ctx context.Context, repo string, number int) (*
 	}, nil
 }
 
-// MergePR merges a PR. method: "merge" | mergeSquash | mergeRebase.
-func (p *githubProvider) MergePR(ctx context.Context, repo string, number int, method string) error {
+// MergePR merges a PR. method: MergeCommit | MergeSquash | MergeRebase.
+func (p *githubProvider) MergePR(ctx context.Context, repo string, number int, method MergeMethod) error {
 	args := p.withHost("pr", "merge", strconv.Itoa(number), "--repo", repo)
 	switch method {
-	case mergeSquash:
+	case MergeSquash:
 		args = append(args, "--squash")
-	case mergeRebase:
+	case MergeRebase:
 		args = append(args, "--rebase")
 	default:
 		args = append(args, "--merge")
@@ -247,12 +247,12 @@ func (p *githubProvider) ClosePR(ctx context.Context, repo string, number int) e
 }
 
 // ListIssues lists issues for repo.
-func (p *githubProvider) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
+func (p *githubProvider) ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error) {
 	if state == "" {
-		state = stateOpen
+		state = StateOpen
 	}
 	fields := "number,title,body,state,author,url,labels,createdAt,updatedAt"
-	args := p.withHost("issue", "list", "--repo", repo, "--state", state, "--json", fields, "--limit", "100")
+	args := p.withHost("issue", "list", "--repo", repo, "--state", string(state), "--json", fields, "--limit", "100")
 	var raw []struct {
 		Title     string                  `json:"title"`
 		Body      string                  `json:"body"`

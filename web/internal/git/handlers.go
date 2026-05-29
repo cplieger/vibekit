@@ -2,9 +2,11 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"vibekit/internal/api"
@@ -19,26 +21,15 @@ var _ api.GitHandler = (*Handler)(nil)
 // Option configures a Handler at construction time.
 type Option func(*Handler)
 
-// WithUtilityPrompt wires the AI utility bridge at construction,
-// eliminating the half-initialized window. When nil or not provided,
-// AI-backed endpoints return a clear error response.
-func WithUtilityPrompt(p api.UtilityPrompter) Option {
-	return func(h *Handler) {
-		h.prompter = p
-	}
-}
-
-// Handler implements git HTTP endpoints.
+// Handler implements git HTTP endpoints (non-AI operations).
 type Handler struct {
-	prompter    api.UtilityPrompter
 	fetchFlight singleflight.Group
+	repoFlight  singleflight.Group
 	workDir     string
 	timeouts    gitexec.Timeouts
 }
 
-// NewHandler returns a Handler scoped to workDir. AI-backed endpoints
-// (commit-message, pr-description) require WithUtilityPrompt; without
-// it they return a clear error response.
+// NewHandler returns a Handler scoped to workDir.
 func NewHandler(workDir string, opts ...Option) *Handler {
 	h := &Handler{workDir: workDir, timeouts: gitexec.DefaultTimeouts()}
 	for _, o := range opts {
@@ -67,12 +58,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/stash-pop", h.handleStashPop)
 	mux.HandleFunc("/api/git/remove", h.handleRemove)
 	mux.HandleFunc("/api/git/reclone", h.handleReclone)
-	mux.HandleFunc("/api/git/commit-message", h.handleCommitMessage)
-	mux.HandleFunc("/api/git/pr-description", h.handlePRDescription)
 	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
 }
 
 // --- helpers ---
+
+// resolveRepoDir resolves a client-supplied repo name against a workDir,
+// rejecting attempts to escape the workspace root via `..` or
+// absolute paths. Falls back to workDir for empty / "." / invalid
+// inputs so the workspace root is the default "repo".
+func resolveRepoDir(workDir, repo string) string {
+	if repo == "" || repo == "." || strings.Contains(repo, "..") || filepath.IsAbs(repo) {
+		return workDir
+	}
+	return filepath.Join(workDir, filepath.Clean(repo))
+}
 
 // repoDir resolves a client-supplied repo name against h.workDir,
 // rejecting attempts to escape the workspace root via `..` or
@@ -90,10 +90,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // names containing ".." (e.g. "foo..bar"). Accepted tradeoff; such
 // names are vanishingly rare.
 func (h *Handler) repoDir(repo string) string {
-	if repo == "" || repo == "." || strings.Contains(repo, "..") || filepath.IsAbs(repo) {
-		return h.workDir
-	}
-	return filepath.Join(h.workDir, filepath.Clean(repo))
+	return resolveRepoDir(h.workDir, repo)
 }
 
 func repoFromQuery(r *http.Request) string { return r.URL.Query().Get("repo") }
@@ -121,4 +118,72 @@ func parseGitStatus(ctx context.Context, dir string) []gitFile {
 		return nil
 	}
 	return parseGitStatusOutput(raw)
+}
+
+// handlePRFetch fetches a pull request's head ref into a local branch
+// named "pr-<number>". Works for GitHub + Gitea family (both expose
+// pull/{n}/head refs); GitLab's equivalent is merge-requests/{n}/head.
+// We derive the ref shape from the remote URL.
+//
+// Payload: {"repo": "name", "number": 42, "head": "feature-branch"}.
+// "head" is a best-effort label for the local branch — when set, we
+// use it as the local branch name; otherwise we fall back to
+// pr-<number>.
+func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
+	if !requirePOST(w, r) {
+		return
+	}
+	var body struct {
+		Repo   string `json:"repo"`
+		Head   string `json:"head"`
+		Number int    `json:"number"`
+	}
+	if !decodePostBody(w, r, &body, "bad request") {
+		return
+	}
+	if body.Number <= 0 || body.Number > 10_000_000 {
+		slog.Warn("git pr-fetch: invalid PR number rejected", "repo", body.Repo, "number", body.Number)
+		api.BadRequest(w, "invalid PR number")
+		return
+	}
+	// body.Head is optional; when set it's used as a local branch name,
+	// so apply the same validation as handleCheckout via the shared
+	// isValidGitRef helper to block flag smuggling and ref-injection.
+	if body.Head != "" && !isValidGitRef(body.Head) {
+		slog.Warn("git pr-fetch: invalid head rejected", "repo", body.Repo, "number", body.Number, "head", body.Head)
+		api.BadRequest(w, "invalid head name")
+		return
+	}
+	dir := h.repoDir(body.Repo)
+	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
+	if err != nil {
+		slog.Warn("git pr-fetch: origin lookup failed", "repo", body.Repo, "pr", body.Number, "error", err)
+		writeCmdResult(w, remote, err)
+		return
+	}
+	refShape := prRefShape(remote)
+	local := "pr-" + strconv.Itoa(body.Number)
+	if body.Head != "" {
+		local = body.Head
+	}
+	args := []string{"fetch", "origin", fmt.Sprintf(refShape, body.Number) + ":" + local}
+	slog.Info("git pr-fetch", "repo", body.Repo, "number", body.Number, "local", local)
+	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
+	writeCmdResult(w, out, err)
+}
+
+// prRefShape picks the right ref-spec template based on the origin
+// URL host. GitHub + Gitea/Gogs/Forgejo expose "refs/pull/<n>/head";
+// GitLab uses "refs/merge-requests/<n>/head". We match on the host
+// segment only (not the full URL) so a GitHub-hosted repo whose path
+// contains the substring "gitlab" (e.g. github.com/gitlab/tooling)
+// still picks the GitHub shape. For unknown or unparseable remotes
+// we default to the GitHub shape — it's the most common and a failed
+// fetch surfaces a clear error to the user.
+func prRefShape(remote string) string {
+	host := gitexec.ParseRemoteHost(remote)
+	if strings.Contains(host, "gitlab") {
+		return "refs/merge-requests/%d/head"
+	}
+	return "refs/pull/%d/head"
 }

@@ -153,7 +153,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestPermission_RequiresBridge(t *testing.T) {
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +776,7 @@ func TestShellCappedBuffer(t *testing.T) {
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +876,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(tc.text, tc.attachments, h.ResolveInsideWorkDir)
+			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}
@@ -976,7 +976,7 @@ func TestCommand_RejectsInvalidRequestID(t *testing.T) {
 		"has space",
 		"has\x00nul",
 		"has/slash",
-		strings.Repeat("a", maxRequestIDBytes+1),
+		strings.Repeat("a", 129),
 	}
 	for _, id := range bad {
 		body, _ := json.Marshal(api.ClientCommand{

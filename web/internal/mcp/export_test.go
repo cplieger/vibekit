@@ -174,7 +174,7 @@ func TestExportACPServers_EnabledOnly(t *testing.T) {
 	// export-focused file so the enabled/disabled filter is part of
 	// the Wire-shape contract tests, not just store lifecycle.
 	tmp := t.TempDir()
-	s, err := New(tmp, nil)
+	s, err := New(context.Background(), tmp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestExportACPServers_EnabledOnly(t *testing.T) {
 
 func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	tmp := t.TempDir()
-	s, err := New(tmp, nil)
+	s, err := New(context.Background(), tmp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

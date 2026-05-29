@@ -7,54 +7,25 @@ import (
 
 	"vibekit/internal/api"
 	"vibekit/internal/buffer"
-	"vibekit/internal/permissions"
 )
 
-// recordingDeps captures broadcast events. Delegates everything else
-// to an inner stubDeps but does NOT embed it (embedding would promote
-// stubDeps.Broadcast and shadow our override via interface dispatch).
-type recordingDeps struct {
-	inner  *stubDeps
-	events []api.ServerEvent
+// newEventCaptureDeps returns a baseDeps that captures broadcast events into
+// the returned slice pointer. Tests read *events after exercising the
+// translator.
+func newEventCaptureDeps() (*baseDeps, *[]api.ServerEvent) {
+	events := &[]api.ServerEvent{}
+	deps := newBaseDeps()
+	deps.onBroadcast = func(_ context.Context, evt api.ServerEvent) {
+		*events = append(*events, evt)
+	}
+	return deps, events
 }
-
-func newRecordingDeps() *recordingDeps {
-	return &recordingDeps{inner: newStubDeps()}
-}
-
-func (d *recordingDeps) Broadcast(_ context.Context, evt api.ServerEvent) {
-	d.events = append(d.events, evt)
-}
-func (d *recordingDeps) ChatStore() api.ChatStore             { return d.inner.store }
-func (d *recordingDeps) ParentACPSession(_ api.ChatID) string { return "" }
-func (d *recordingDeps) WorkDir() string                      { return "/tmp" }
-func (d *recordingDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
-	return nil
-}
-func (d *recordingDeps) BridgeRespond(context.Context, api.ChatID, int64, any, error) error {
-	return nil
-}
-func (d *recordingDeps) MCPRecordConnected(context.Context, string)           {}
-func (d *recordingDeps) MCPRecordOAuth(context.Context, string, string)       {}
-func (d *recordingDeps) MCPRecordInitFailure(context.Context, string, string) {}
-func (d *recordingDeps) MCPSignalReady()                                      {}
-func (d *recordingDeps) MCPSetKnownTools(_ string, _ []string)                {}
-func (d *recordingDeps) PendingPermsAdd(int64, api.ServerEvent)               {}
-func (d *recordingDeps) PendingPermsRemove(int64)                             {}
-func (d *recordingDeps) NotifyPush(context.Context, string, api.PushKind)     {}
-func (d *recordingDeps) ConfigDir() string                                    { return "/tmp" }
-func (d *recordingDeps) PermissionRules() *permissions.CommandRules           { return nil }
-func (d *recordingDeps) BufferStore() *buffer.Store                           { return d.inner.bufStore }
-func (d *recordingDeps) LineTracker() *buffer.LineTracker                     { return d.inner.lineTracker }
-func (d *recordingDeps) OpenPartialFile(api.ChatID, *buffer.Buffer)           {}
-func (d *recordingDeps) IsHookStatusEnabled() bool                            { return false }
-func (d *recordingDeps) NewMessageID() string                                 { return "m-test-1" }
 
 // --- Event sequence tests ---
 
 func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
-	deps := newRecordingDeps()
-	tr := New(deps)
+	deps, events := newEventCaptureDeps()
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
@@ -62,42 +33,42 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 		"content": map[string]any{"type": "text", "text": "Hello"},
 	}), false)
 
-	if len(deps.events) < 2 {
+	if len(*events) < 2 {
 		t.Fatalf("expected at least 2 events (message_created + message_chunk), got %d: %v",
-			len(deps.events), eventTypes(deps.events))
+			len(*events), eventTypes(*events))
 	}
-	if deps.events[0].Type != api.EventMessageCreated {
-		t.Errorf("event[0].Type = %q, want message_created", deps.events[0].Type)
+	if (*events)[0].Type != api.EventMessageCreated {
+		t.Errorf("event[0].Type = %q, want message_created", (*events)[0].Type)
 	}
-	if deps.events[1].Type != api.EventMessageChunk {
-		t.Errorf("event[1].Type = %q, want message_chunk", deps.events[1].Type)
+	if (*events)[1].Type != api.EventMessageChunk {
+		t.Errorf("event[1].Type = %q, want message_chunk", (*events)[1].Type)
 	}
 
 	// Second chunk: should only emit chunk (no duplicate message_created)
-	deps.events = nil
+	*events = nil
 	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": " world"},
 	}), false)
 
-	if len(deps.events) != 1 {
+	if len(*events) != 1 {
 		t.Fatalf("expected 1 event (message_chunk only), got %d: %v",
-			len(deps.events), eventTypes(deps.events))
+			len(*events), eventTypes(*events))
 	}
-	if deps.events[0].Type != api.EventMessageChunk {
-		t.Errorf("event[0].Type = %q, want message_chunk", deps.events[0].Type)
+	if (*events)[0].Type != api.EventMessageChunk {
+		t.Errorf("event[0].Type = %q, want message_chunk", (*events)[0].Type)
 	}
 }
 
 func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
-	deps := newRecordingDeps()
-	tr := New(deps)
+	deps, events := newEventCaptureDeps()
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
 	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Let me check..."},
 	}), false)
-	deps.events = nil
+	*events = nil
 
 	// Tool call
 	tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
@@ -108,20 +79,20 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	}), "")
 
 	found := false
-	for _, evt := range deps.events {
+	for _, evt := range *events {
 		if evt.Type == api.EventToolCall {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("no tool_call event emitted; got events: %v", eventTypes(deps.events))
+		t.Errorf("no tool_call event emitted; got events: %v", eventTypes(*events))
 	}
 }
 
 func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
-	deps := newRecordingDeps()
-	tr := New(deps)
+	deps, events := newEventCaptureDeps()
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start turn + add tool call
@@ -134,7 +105,7 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 		"kind":         "read",
 		"status":       "in_progress",
 	}), "")
-	deps.events = nil
+	*events = nil
 
 	// Update tool call status
 	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
@@ -143,21 +114,21 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	}), "")
 
 	found := false
-	for _, evt := range deps.events {
+	for _, evt := range *events {
 		if evt.Type == api.EventToolCallUpdate {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("no tool_call_update event emitted; got events: %v", eventTypes(deps.events))
+		t.Errorf("no tool_call_update event emitted; got events: %v", eventTypes(*events))
 	}
 }
 
 func TestSequence_MCPInitialized_RecordsConnection(t *testing.T) {
-	deps := newRecordingDeps()
+	deps, _ := newEventCaptureDeps()
 	var recorded string
-	wrapper := &mcpCaptureDeps{recordingDeps: deps, connected: &recorded}
+	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &recorded}
 	tr := &Translator{deps: wrapper, crewCache: newCrewCache()}
 
 	tr.HandleMCPInitialized(context.Background(), "", &api.RPCResponse{
@@ -170,18 +141,29 @@ func TestSequence_MCPInitialized_RecordsConnection(t *testing.T) {
 }
 
 type mcpCaptureDeps struct {
-	*recordingDeps
-
+	*baseDeps
 	connected *string
 }
 
-func (d *mcpCaptureDeps) MCPRecordConnected(_ context.Context, name string) {
-	*d.connected = name
+func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
+	return &captureMCPRecorder{connected: d.connected}
 }
 
+type captureMCPRecorder struct {
+	connected *string
+}
+
+func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string) {
+	*r.connected = name
+}
+func (*captureMCPRecorder) RecordOAuth(context.Context, string, string)       {}
+func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
+func (*captureMCPRecorder) SignalReady()                                      {}
+func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)                    {}
+
 func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
-	deps := newRecordingDeps()
-	tr := New(deps)
+	deps, events := newEventCaptureDeps()
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	tr.HandleCommandsAvailable(context.Background(), chatID, &api.RPCResponse{
@@ -196,14 +178,58 @@ func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 	})
 
 	found := false
-	for _, evt := range deps.events {
+	for _, evt := range *events {
 		if evt.Type == api.EventCommandsUpdated {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("no commands_updated event emitted; got events: %v", eventTypes(deps.events))
+		t.Errorf("no commands_updated event emitted; got events: %v", eventTypes(*events))
+	}
+}
+
+func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
+	chatID := api.ChatID("c-reason")
+
+	// Send a reasoning chunk (isReasoning=true)
+	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+		"content": map[string]any{"type": "text", "text": "thinking..."},
+	}), true)
+
+	// Verify buffer has reasoning content but no regular content
+	buf := deps.bufStore.GetOrInit(chatID)
+	if buf.Reasoning.String() != "thinking..." {
+		t.Errorf("Reasoning = %q, want %q", buf.Reasoning.String(), "thinking...")
+	}
+	if buf.Content.Len() != 0 {
+		t.Errorf("Content should be empty, got %q", buf.Content.String())
+	}
+
+	// Verify the chunk event has IsReasoning=true
+	var found bool
+	for _, evt := range *events {
+		if evt.Type == "message_chunk" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no message_chunk event emitted")
+	}
+
+	// Send a regular text chunk (isReasoning=false)
+	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+		"content": map[string]any{"type": "text", "text": "answer"},
+	}), false)
+
+	if buf.Content.String() != "answer" {
+		t.Errorf("Content = %q, want %q", buf.Content.String(), "answer")
+	}
+	if buf.Reasoning.String() != "thinking..." {
+		t.Errorf("Reasoning changed unexpectedly: %q", buf.Reasoning.String())
 	}
 }
 

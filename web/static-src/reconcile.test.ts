@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import { signal, effect } from "./signals.js";
+import { signal, effect } from "./lib/reactive/index.js";
 
 // ---------------------------------------------------------------------------
 // reconcile: keyed-list reconciliation tests.

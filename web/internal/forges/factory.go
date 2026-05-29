@@ -8,22 +8,15 @@ import "fmt"
 // the kind's default host (or returns an error for self-hosted Gitea
 // where no default exists).
 func New(kind Kind, host string) (ForgeOps, error) {
-	if !kind.Valid() {
+	m, ok := kindMeta[kind]
+	if !ok {
 		return nil, fmt.Errorf("forges: unknown kind %q", kind)
 	}
 	if host == "" {
-		host = kind.DefaultHost()
+		host = m.DefaultHost
 	}
 	if host == "" {
 		return nil, fmt.Errorf("forges: kind %q requires a host", kind)
 	}
-	switch kind {
-	case KindGitHub:
-		return newGitHub(host), nil
-	case KindGitLab:
-		return newGitLab(host), nil
-	case KindGitea, KindCodeberg:
-		return newGitea(kind, host), nil
-	}
-	return nil, fmt.Errorf("forges: unhandled kind %q", kind)
+	return m.NewProvider(kind, host), nil
 }

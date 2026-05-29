@@ -36,9 +36,9 @@ import (
 func (h *Hub) handleFSRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
 	var handler func(context.Context, api.ChatID, *api.RPCResponse)
 	switch msg.Method {
-	case methodFSRead:
+	case api.MethodFSRead:
 		handler = h.respondFSRead
-	case methodFSWrite:
+	case api.MethodFSWrite:
 		handler = h.respondFSWrite
 	default:
 		return false
@@ -101,7 +101,7 @@ func (h *Hub) respondFSRead(ctx context.Context, chatID api.ChatID, msg *api.RPC
 				"chat_id", chatID, "path", p.Path, "abs", abs, "error", relErr)
 		} else {
 			isDir := statErr == nil && info.IsDir()
-			if h.perm.ignore.Matches(rel, isDir) {
+			if h.perm.ignore.Matches(ctx, rel, isDir) {
 				h.respondFSError(ctx, chatID, msg, errIgnored)
 				return
 			}

@@ -27,6 +27,7 @@ import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
 import { registerCleanup, hasErrorString } from "./actions/index.js";
+import { computeBackoff } from "./lib/backoff.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -50,7 +51,11 @@ type CommandType =
   | "undo_edit"
   | "message_subagent"
   | "set_auto_approve_crew"
-  | "rename_chat";
+  | "rename_chat"
+  | "set_effort"
+  | "promote_rewind_chat"
+  | "discard_rewind_chat"
+  | "rewind_chat";
 
 export interface Command {
   type: CommandType;
@@ -106,7 +111,11 @@ export type TypedCommand =
   | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
   | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
-  | { type: "rename_chat"; chat_id: string; payload: { name: string } };
+  | { type: "rename_chat"; chat_id: string; payload: { name: string } }
+  | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
+  | { type: "promote_rewind_chat"; chat_id: string; request_id: string }
+  | { type: "discard_rewind_chat"; chat_id: string; request_id: string }
+  | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { turn_index: number } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",
@@ -162,9 +171,10 @@ interface GapInfo {
   head: number;
 }
 
-export const BACKOFF_CAP_MS = 30_000;
-
 const HIDDEN_ABORT_MS = 30_000;
+
+/** Default timeout for bridge command channel (long-running agent turns). */
+export const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // TransportController: owns all SSE connection state as instance fields.
@@ -238,7 +248,13 @@ class TransportController {
 
   // --- SSE ---
 
-  private connectSSE(): void {
+  /** Tear down the current connection state, transitioning to idle.
+   *  Handles cleanup of EventSource and reconnect timers regardless of
+   *  current phase. Called before (re)connecting to ensure a clean slate. */
+  private teardown(): void {
+    if (this.conn.phase === "idle") {
+      return;
+    }
     if (this.conn.phase === "reconnecting") {
       clearTimeout(this.conn.timer);
     }
@@ -249,7 +265,11 @@ class TransportController {
         /* best-effort */
       }
     }
+    this.conn = { phase: "idle" };
+  }
 
+  private connectSSE(): void {
+    this.teardown();
     this.onStatus("connecting");
     const source = new EventSource("/api/events");
     this.conn = { phase: "connecting", source };
@@ -336,7 +356,7 @@ class TransportController {
 
   async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
     const requestID = newRequestID();
-    const timeoutMs = opts?.timeoutMs ?? 15 * 60 * 1000;
+    const timeoutMs = opts?.timeoutMs ?? COMMAND_TIMEOUT_MS;
     const ctrl = new AbortController();
     this.inflight.add(ctrl);
 
@@ -407,15 +427,10 @@ class TransportController {
 }
 
 // ---------------------------------------------------------------------------
-// Backoff computation (pure, exported for testing).
+// Backoff computation — re-exported from lib/backoff.ts for backward compat.
 // ---------------------------------------------------------------------------
 
-/** Compute the next backoff delay given the previous backoffMs.
- *  Doubles from 500ms up to a 30s cap; delay is randomized within [0, next). */
-export function computeBackoff(prevBackoffMs: number): { delay: number; backoffMs: number } {
-  const next = Math.min(prevBackoffMs === 0 ? 500 : prevBackoffMs * 2, BACKOFF_CAP_MS);
-  return { delay: Math.floor(Math.random() * next), backoffMs: next };
-}
+export { computeBackoff, BACKOFF_CAP_MS } from "./lib/backoff.js";
 
 // ---------------------------------------------------------------------------
 // Singleton instance + function exports that form the module's public API.

@@ -281,7 +281,7 @@ func TestTranslateACPEvent_MetadataSubagentSessionIDIgnored(t *testing.T) {
 		return true
 	})
 	// Spin up a bridge so parentACPSession returns a real id.
-	sb, err := h.getOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}

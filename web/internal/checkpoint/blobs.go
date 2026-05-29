@@ -31,12 +31,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // blobStore owns a content-addressed storage root. Shared by every
 // chat's Manager so dedup works across chats; created once in Store.
 type blobStore struct {
-	root string // <configDir>/snapshots/blobs
+	sf   singleflight.Group
+	root string
 }
 
 // newBlobStore builds a blob store rooted under configDir. The
@@ -77,6 +80,19 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 		return "", err
 	}
 	hash := hashOf(data)
+	result, err, _ := b.sf.Do(hash, func() (any, error) {
+		return b.putOnce(ctx, hash, data)
+	})
+	if err != nil {
+		return "", err
+	}
+	s, _ := result.(string)
+	return s, nil
+}
+
+// putOnce performs the actual blob write, called at most once per hash
+// via singleflight.
+func (b *blobStore) putOnce(ctx context.Context, hash string, data []byte) (any, error) {
 	p := b.pathFor(hash)
 	if p == "" {
 		return "", errors.New("empty blob hash")
@@ -84,26 +100,16 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 	if _, statErr := os.Stat(p); statErr == nil {
 		return hash, nil
 	} else if !os.IsNotExist(statErr) {
-		// Transient I/O error during the existence check. Fall
-		// through to the write path (content-addressed, so
-		// rewriting the same bytes is safe) but surface the
-		// original error so operators have a breadcrumb when
-		// the filesystem is misbehaving.
 		slog.Warn("checkpoint: blob stat failed, proceeding with write",
 			"hash", hash, "error", statErr)
 	}
 	parent := filepath.Dir(p)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return "", fmt.Errorf("mkdir blob parent: %w", err)
+		return "", fmt.Errorf("mkdir blob parent: %w", errors.Join(ErrTransient, err))
 	}
-	// Atomic write: create under a .tmp-<suffix> sibling, then
-	// rename into place. The suffix lets two goroutines storing
-	// the same blob concurrently succeed (distinct temp files, both
-	// rename to the same final path — whichever wins doesn't matter
-	// since the content is identical).
 	tmp, err := os.CreateTemp(parent, "blob-*")
 	if err != nil {
-		return "", fmt.Errorf("create temp blob: %w", err)
+		return "", fmt.Errorf("create temp blob: %w", errors.Join(ErrTransient, err))
 	}
 	cleanupTmp := true
 	defer func() {
@@ -119,9 +125,6 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 		tmp.Close()
 		return "", err
 	}
-	// fsync the data before rename so a crash between Rename
-	// and the next page-cache flush doesn't leave a correctly-
-	// named truncated blob.
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return "", fmt.Errorf("fsync blob: %w", err)
@@ -133,10 +136,6 @@ func (b *blobStore) Put(ctx context.Context, data []byte) (string, error) {
 		return "", fmt.Errorf("rename blob: %w", err)
 	}
 	cleanupTmp = false
-	// fsync the parent dir so the rename survives power loss.
-	// Cheap (one syscall per blob) and closes the window where
-	// events.jsonl would reference a blob whose filesystem entry
-	// didn't make it to disk.
 	syncDir(parent)
 	return hash, nil
 }

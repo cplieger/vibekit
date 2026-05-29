@@ -3,12 +3,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../transport.js", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports

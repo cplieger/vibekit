@@ -4,7 +4,6 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -15,13 +14,13 @@ import (
 // model_not_found: decode a requested/fallback pair, persist the
 // fallback into the chat, and broadcast a typed error.
 func (t *Translator) HandleFallback(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, code api.ErrorCode, mutate func(c *api.Chat, requested, fallback string)) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		Requested      string `json:"requestedAgent"`
 		Fallback       string `json:"fallbackAgent"`
 		RequestedModel string `json:"requestedModel"`
 		FallbackModel  string `json:"fallbackModel"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil {
+	}](msg, string(code))
+	if !ok {
 		return
 	}
 	requested := p.Requested
@@ -65,11 +64,11 @@ func (t *Translator) HandleModelNotFound(ctx context.Context, chatID api.ChatID,
 
 // HandleAgentConfigError handles the agent_config_error notification.
 func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		Path  string `json:"path"`
 		Error string `json:"error"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil {
+	}](msg, "agent_config_error")
+	if !ok {
 		return
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
@@ -80,10 +79,10 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.Chat
 
 // HandleRateLimit handles the rate_limit notification.
 func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		Message string `json:"message"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil {
+	}](msg, "rate_limit")
+	if !ok {
 		return
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
@@ -94,11 +93,11 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg
 
 // HandleSessionRetry handles the session_retry notification.
 func (t *Translator) HandleSessionRetry(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
+	p, ok := unmarshalParams[struct {
 		Reason  string `json:"reason"`
 		Attempt int    `json:"attempt"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil {
+	}](msg, "session_retry")
+	if !ok {
 		return
 	}
 	message := "Retrying"

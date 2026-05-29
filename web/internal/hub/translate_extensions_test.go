@@ -276,12 +276,12 @@ func TestTranslateCrew_IdenticalSnapshotDeduplicates(t *testing.T) {
 	msg := &api.RPCResponse{Method: "_kiro.dev/subagent/list_update", Params: snap}
 
 	h.translateACPEvent("c1", msg)
-	firstCount := len(cs.chats["c1"].Messages)
+	firstCount := len(cs.Chats["c1"].Messages)
 
 	// Same snapshot again: must not append or emit anything.
 	before := h.sse.replayBuf.Len()
 	h.translateACPEvent("c1", msg)
-	if len(cs.chats["c1"].Messages) != firstCount {
+	if len(cs.Chats["c1"].Messages) != firstCount {
 		t.Error("duplicate snapshot caused a second message append")
 	}
 	if h.sse.replayBuf.Len() != before {

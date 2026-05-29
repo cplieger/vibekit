@@ -2,12 +2,11 @@
 // Tests for crew.ts action configuration: scope, retry, idempotencyKey.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../transport.js", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -17,16 +16,12 @@ vi.mock("../transport.js", async (importOriginal) => {
 
 import { send as transportSend } from "../transport.js";
 import { sendMessage } from "./crew.js";
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { recentLog } from "./registry.js";
 
 const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.useFakeTimers();
 });
 

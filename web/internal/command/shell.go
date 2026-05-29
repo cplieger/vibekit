@@ -10,10 +10,16 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/ids"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
 const ShellOutputCap = 1 * 1024 * 1024
+
+// ShellTimeout is the default timeout for user-initiated `!cmd` shell
+// interceptions. Exposed as a package-level constant so tests and
+// future settings overrides can reference the default.
+const ShellTimeout = 30 * time.Second
 
 // ShellCappedBuffer writes to an underlying bytes.Buffer, rejecting
 // bytes past the cap.
@@ -78,20 +84,24 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		return
 	}
 	if !persisted {
-		d.RespondErr(w, http.StatusConflict, errChatNotFound)
+		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
 		return
 	}
 	if triggerRename {
-		deps.InflightGo(func() { AsyncRenameChat(deps, cmd.ChatID, p.Text) })
+		if prompter := d.Prompter(); prompter != nil {
+			deps.InflightGo(func() { AsyncRenameChat(deps, prompter, cmd.ChatID, p.Text) })
+		}
 	}
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
 	start := time.Now()
 
-	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
+	// Derive timeout from the request context so both client disconnect
+	// and server shutdown cancel the shell process.
+	shellCtx, cancel := context.WithTimeout(ctx, ShellTimeout)
 	defer cancel()
 
-	shellProc := exec.CommandContext(ctx, "sh", "-c", shellCmd) //nolint:gosec // G702: user-initiated shell command
+	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
 	shellProc.Dir = deps.WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped
@@ -114,7 +124,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		"truncated", capped.Truncated)
 
 	content := "```\n" + strings.TrimRight(output, "\n") + "\n```"
-	msgID := NewMessageID()
+	msgID := ids.NewMessageID()
 	assistantMsg := api.Message{
 		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
@@ -127,5 +137,5 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &assistantMsg))
 		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
 	}
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }

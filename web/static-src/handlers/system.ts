@@ -17,13 +17,12 @@ import {
   getActiveId,
   get,
   setThinking,
-  loadList,
-  loadMessages,
   setCurrentMode,
   clearMsgIndex,
   invalidateSession,
   sessionsVersion,
 } from "../store.js";
+import { loadList, loadMessages } from "../store-load.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";

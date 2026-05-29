@@ -163,6 +163,19 @@ export function renderStack(): void {
     // ongoing transitions / focus) persists across re-renders.
     mount: (e: BannerEntry) => e.el,
   });
+  pruneStaleDissmissals();
+}
+
+const PRUNE_THRESHOLD = 200;
+
+/** Prune dismissed_banners entries that exceed the threshold. Keeps
+ *  only the most recent entries (tail of the array). */
+function pruneStaleDissmissals(): void {
+  const state = load();
+  if (state.dismissed_banners.length <= PRUNE_THRESHOLD) {
+    return;
+  }
+  save({ dismissed_banners: state.dismissed_banners.slice(-PRUNE_THRESHOLD) });
 }
 
 /** Auto-clear transient banners (rate_limit) on successful turn end. */

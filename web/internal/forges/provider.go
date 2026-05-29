@@ -29,53 +29,83 @@ const (
 	KindCodeberg Kind = "codeberg" // synonym for KindGitea, host=codeberg.org
 )
 
+// kindMetaEntry holds the per-kind metadata used by the lookup methods.
+type kindMetaEntry struct {
+	NewProvider func(Kind, string) ForgeOps
+	Inject      func(ctx context.Context, host, token, username string) error
+	Remove      func(host string) error
+	SetupGit    func(ctx context.Context, host string) error
+	CLI         string
+	DefaultHost string
+	Title       string
+}
+
+// kindMeta is the single source of truth for forge kind properties.
+// Adding a new forge requires only a new map entry.
+var kindMeta map[Kind]kindMetaEntry
+
+func init() {
+	kindMeta = map[Kind]kindMetaEntry{
+		KindGitHub: {
+			CLI: "gh", DefaultHost: "github.com", Title: "GitHub",
+			NewProvider: func(_ Kind, host string) ForgeOps { return newGitHub(host) },
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeGHHosts(host, token, username)
+			},
+			Remove:   removeGHHost,
+			SetupGit: setupGitGH,
+		},
+		KindGitLab: {
+			CLI: "glab", DefaultHost: "gitlab.com", Title: "GitLab",
+			NewProvider: func(_ Kind, host string) ForgeOps { return newGitLab(host) },
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeGLabConfig(host, token, username)
+			},
+			Remove:   removeGLabHost,
+			SetupGit: setupGitGLab,
+		},
+		KindCodeberg: {
+			CLI: cliTea, DefaultHost: "codeberg.org", Title: "Codeberg",
+			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeTeaConfig(host, token, username)
+			},
+			Remove:   removeTeaHost,
+			SetupGit: setupGitTea,
+		},
+		KindGitea: {
+			CLI: "tea", DefaultHost: "", Title: "Gitea",
+			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
+			Inject: func(_ context.Context, host, token, username string) error {
+				return writeTeaConfig(host, token, username)
+			},
+			Remove:   removeTeaHost,
+			SetupGit: setupGitTea,
+		},
+	}
+}
+
 // Valid reports whether k is a known forge kind.
 func (k Kind) Valid() bool {
-	switch k {
-	case KindGitHub, KindGitLab, KindGitea, KindCodeberg:
-		return true
-	}
-	return false
+	_, ok := kindMeta[k]
+	return ok
 }
 
 // CLI returns the CLI tool name backing this kind.
 func (k Kind) CLI() string {
-	switch k {
-	case KindGitHub:
-		return "gh"
-	case KindGitLab:
-		return "glab"
-	case KindGitea, KindCodeberg:
-		return "tea"
-	}
-	return ""
+	return kindMeta[k].CLI
 }
 
 // DefaultHost returns the canonical hostname for the kind, or "" if
 // no default exists (self-hosted Gitea/Forgejo).
 func (k Kind) DefaultHost() string {
-	switch k {
-	case KindGitHub:
-		return "github.com"
-	case KindGitLab:
-		return "gitlab.com"
-	case KindCodeberg:
-		return "codeberg.org"
-	}
-	return ""
+	return kindMeta[k].DefaultHost
 }
 
 // Title returns the human-readable display name for the kind.
 func (k Kind) Title() string {
-	switch k {
-	case KindGitHub:
-		return "GitHub"
-	case KindGitLab:
-		return "GitLab"
-	case KindCodeberg:
-		return "Codeberg"
-	case KindGitea:
-		return "Gitea"
+	if m, ok := kindMeta[k]; ok {
+		return m.Title
 	}
 	return string(k)
 }
@@ -191,6 +221,25 @@ type Label struct {
 	Description string `json:"description,omitempty"`
 }
 
+// ListState is a typed enum for PR/issue listing state filters.
+type ListState string
+
+const (
+	StateOpen   ListState = "open"
+	StateClosed ListState = "closed"
+	StateMerged ListState = "merged"
+	StateAll    ListState = "all"
+)
+
+// MergeMethod is a typed enum for PR merge strategies.
+type MergeMethod string
+
+const (
+	MergeCommit MergeMethod = "merge"
+	MergeSquash MergeMethod = "squash"
+	MergeRebase MergeMethod = "rebase"
+)
+
 // ForgeOps is the unified abstraction over a specific forge backend.
 // Each implementation shells out to the corresponding CLI tool.
 //
@@ -212,21 +261,20 @@ type ForgeOps interface {
 	// account (owned + member).
 	ListRepos(ctx context.Context) ([]Repo, error)
 
-	// ListPRs lists pull/merge requests for repo. state is one of
-	// stateOpen, stateClosed, stateMerged, "all".
-	ListPRs(ctx context.Context, repo, state string) ([]PR, error)
+	// ListPRs lists pull/merge requests for repo.
+	ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error)
 
 	// CreatePR opens a new pull/merge request.
 	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
 
-	// MergePR merges an open PR. method is "merge" | mergeSquash | mergeRebase.
-	MergePR(ctx context.Context, repo string, number int, method string) error
+	// MergePR merges an open PR.
+	MergePR(ctx context.Context, repo string, number int, method MergeMethod) error
 
 	// ClosePR closes (without merging) an open PR.
 	ClosePR(ctx context.Context, repo string, number int) error
 
-	// ListIssues lists issues for repo. state is stateOpen, stateClosed, "all".
-	ListIssues(ctx context.Context, repo, state string) ([]Issue, error)
+	// ListIssues lists issues for repo.
+	ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error)
 
 	// CreateIssue files a new issue.
 	CreateIssue(ctx context.Context, repo string, p CreateIssueParams) (*Issue, error)
@@ -254,6 +302,9 @@ const CmdTimeout = 30 * time.Second
 
 // ListTimeout is for paginated listings that may take longer.
 const ListTimeout = 60 * time.Second
+
+// cliTea is the gitea/forgejo CLI binary name.
+const cliTea = "tea"
 
 // ErrNotInstalled signals the backing CLI is not on PATH.
 var ErrNotInstalled = errors.New("forges: CLI not installed")

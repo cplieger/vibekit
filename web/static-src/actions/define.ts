@@ -35,28 +35,25 @@
 import { error as toastError, success as toastSuccess } from "../toast.js";
 import { toActionError } from "./error.js";
 import { record } from "./registry.js";
+import { sleep, waitForOnline, attachAttempts, readAttempts } from "./retry.js";
 import { _registerAction } from "./cleanup.js";
+import {
+  safeInvoke,
+  safeStringify,
+  _symbolMap,
+  _resetSymbols,
+  resolveToast,
+  defaultErrorPrefix,
+} from "./define-helpers.js";
 import type {
   Action,
   ActionContext,
   ActionDefinition,
   ActionErrorLike,
   DispatchOptions,
-  ToastSpec,
 } from "./types.js";
 
 let instanceCounter = 0;
-
-/** Invoke a callback safely — errors are caught and logged without
- *  disrupting the dispatch lifecycle. Eliminates repetitive try/catch
- *  blocks throughout runOnce (8+ occurrences → 1 helper). */
-function safeInvoke(actionName: string, hookName: string, fn: () => void): void {
-  try {
-    fn();
-  } catch (e) {
-    console.error(`[actions] ${hookName} callback for ${actionName} threw`, e);
-  }
-}
 
 /** Shared empty options object to avoid allocating {} on every dispatch call.
  *  All DispatchOptions fields are optional, so the empty frozen object is
@@ -97,85 +94,6 @@ function generateIdempotencyKey(): string {
   return `${ts}-${rnd}`;
 }
 
-/** Monotonic counter for symbol identity in dedupe keys. Symbols with
- *  the same description are distinct values but String(sym) is identical,
- *  so we assign each unique symbol a stable numeric ID. */
-let _symbolCounter = 0;
-const _symbolMap = new Map<symbol, number>();
-function symbolId(sym: symbol): number {
-  let id = _symbolMap.get(sym);
-  if (id === undefined) {
-    id = ++_symbolCounter;
-    _symbolMap.set(sym, id);
-  }
-  return id;
-}
-
-/** Defensive JSON.stringify — falls back to String(args) on cycles
- *  or non-serializable values (DOM elements, functions). Used by
- *  the default dedupe key computation. Primitive shortcut avoids
- *  JSON.stringify overhead for the common single-value case.
- *  Uses a custom replacer to distinguish undefined from null in
- *  arrays/objects (JSON.stringify converts both to "null"). */
-function safeStringify(args: unknown): string {
-  if (args === undefined) {
-    return "undefined";
-  }
-  if (args === null || typeof args === "number" || typeof args === "boolean") {
-    return String(args);
-  }
-  if (typeof args === "string") {
-    return JSON.stringify(args);
-  }
-  if (typeof args === "bigint") {
-    return `${String(args)}n`;
-  }
-  if (typeof args === "symbol") {
-    return `@@sym${String(symbolId(args))}`;
-  }
-  try {
-    return JSON.stringify(args, (_key, value: unknown) =>
-      value === undefined ? "__undef__" : value,
-    );
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- fallback for non-serializable args
-    return String(args);
-  }
-}
-
-/** Resolve a ToastSpec to its message string. Returns null when
- *  the spec is `false` (suppressed) or undefined and no fallback. */
-function resolveToast<TArgs, TPayload>(
-  spec: ToastSpec<TArgs, TPayload> | undefined,
-  args: TArgs,
-  payload: TPayload,
-  fallback?: string,
-): string | null {
-  if (spec === false) {
-    return null;
-  }
-  if (spec === undefined) {
-    return fallback ?? null;
-  }
-  if (typeof spec === "string") {
-    return spec;
-  }
-  return spec(args, payload);
-}
-
-/** Build a default error toast prefix from the action name. Converts
- *  "chat.delete" -> "Delete failed", "mcp.add_server" -> "Add server
- *  failed", "files.create_file" -> "Create file failed". Callers
- *  usually override via the `error` field. */
-function defaultErrorPrefix(name: string): string {
-  const parts = name.split(".");
-  const tail = parts[parts.length - 1] ?? name;
-  // Convert underscores/hyphens to spaces for readability, then
-  // capitalise the first character only.
-  const readable = tail.replace(/[_-]/g, " ");
-  return readable.charAt(0).toUpperCase() + readable.slice(1) + " failed";
-}
-
 /** Per-scope FIFO chain. Each scope key maps to the tail of its
  *  serial-promise chain. New dispatches in that scope await the tail
  *  before starting their own work. Module-scope so all actions sharing
@@ -201,93 +119,6 @@ interface DedupeSlot {
   cancelled?: boolean;
 }
 const activeDedupes = new Map<string, DedupeSlot>();
-
-/** Sleep helper for retry backoff. Cancellable via signal: rejects
- *  with an AbortError if the signal aborts during the wait, so the
- *  retry chain unwinds cleanly when action.cancel() fires mid-backoff. */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) {
-    return Promise.reject(new DOMException("aborted", "AbortError"));
-  }
-  if (ms <= 0) {
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = (): void => {
-      clearTimeout(t);
-      reject(new DOMException("aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-/** Wait for the browser to come back online, or for the signal to abort.
- *  Resolves immediately when navigator.onLine is already true. Used by
- *  runWithRetry when the action's networkMode is "online" (default) so
- *  retries pause during connectivity loss instead of burning through the
- *  retry budget against a dead network. */
-function waitForOnline(signal: AbortSignal): Promise<void> {
-  if (typeof navigator === "undefined" || navigator.onLine) {
-    return Promise.resolve();
-  }
-  if (signal.aborted) {
-    return Promise.reject(new DOMException("aborted", "AbortError"));
-  }
-  return new Promise<void>((resolve, reject) => {
-    const onOnline = (): void => {
-      cleanup();
-      resolve();
-    };
-    const onAbort = (): void => {
-      cleanup();
-      reject(new DOMException("aborted", "AbortError"));
-    };
-    function cleanup(): void {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("online", onOnline);
-      }
-      signal.removeEventListener("abort", onAbort);
-    }
-    if (typeof window !== "undefined") {
-      window.addEventListener("online", onOnline, { once: true });
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-/** Attach attempt count to a thrown error so the catch block in runOnce
- *  can record it in the registry. Uses a non-enumerable property to avoid
- *  polluting serialization. Safe against frozen/sealed objects — silently
- *  skips if the property can't be defined (the attempt count is best-effort
- *  metadata, not critical to the error flow). */
-function attachAttempts(e: unknown, attempts: number): void {
-  if (typeof e === "object" && e !== null) {
-    try {
-      Object.defineProperty(e, "_attempts", { value: attempts, configurable: true });
-    } catch {
-      /* frozen/sealed object — skip */
-    }
-  }
-}
-
-/** Read the attempt count attached by runWithRetry, or undefined. */
-function readAttempts(e: unknown): number | undefined {
-  try {
-    if (typeof e === "object" && e !== null && "_attempts" in e) {
-      // After `in` narrowing, TS knows `e` has `_attempts` but types it as
-      // `object & Record<"_attempts", unknown>`. Direct property access is safe.
-      const val = (e as { readonly _attempts: unknown })._attempts;
-      return typeof val === "number" ? val : undefined;
-    }
-  } catch {
-    /* Proxy or getter threw — skip */
-  }
-  return undefined;
-}
 
 /**
  * Create an action from a declarative definition. The returned action
@@ -1071,8 +902,7 @@ export function defineAction<TArgs, TResult, TOp = unknown>(
  *  a fresh state without serializing behind a previous test's chain. */
 export function _resetForTest(): void {
   instanceCounter = 0;
-  _symbolCounter = 0;
-  _symbolMap.clear();
+  _resetSymbols();
   scopeChains.clear();
   activeDedupes.clear();
 }

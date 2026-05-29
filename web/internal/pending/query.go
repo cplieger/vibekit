@@ -41,12 +41,12 @@ func (s *Store) CountForChat(chatID api.ChatID) int {
 // ChatIDs returns the set of chat IDs that currently have at least one
 // pending op. O(1) bounded by pending ops (not total chats). Used by
 // the hub's replay path to avoid scanning the entire chat directory.
-func (s *Store) ChatIDs() []string {
+func (s *Store) ChatIDs() []api.ChatID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ids := make([]string, 0, len(s.byChat))
+	ids := make([]api.ChatID, 0, len(s.byChat))
 	for id := range s.byChat {
-		ids = append(ids, string(id))
+		ids = append(ids, id)
 	}
 	return ids
 }

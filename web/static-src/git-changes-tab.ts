@@ -12,23 +12,15 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH } from "./icons.js";
+import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_CLEAN, ICON_FILTER } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
-import {
-  stage,
-  discard,
-  pull,
-  push,
-  stash,
-  stashPop,
-  unstage,
-  commit as commitAction,
-  generateCommitMessage,
-} from "./actions/git-changes.js";
+import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { escAttr as escapeHTML } from "./strings.js";
+import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
 
 // --- Helpers for withAsyncFeedback ---
 
@@ -50,24 +42,8 @@ class CancelledError extends Error {
 
 // --- Wire types ---
 
-interface FileEntry {
-  path: string;
-  status: string;
-  staged: boolean;
-  display: string;
-}
-
-interface RepoStatus {
-  repo: string;
-  is_repo: boolean;
-  branch: string;
-  remote: string;
-  ahead: number;
-  behind: number;
-  files: FileEntry[];
-  has_dirty: boolean;
-  stashes: number;
-}
+import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
+import { statusLetter, describeStatus } from "./git-types.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -80,11 +56,16 @@ let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
-let diffAbort: AbortController | null = null;
+/** Long-lived abort controller for diff/log fetches — only aborted on
+ *  tab teardown, NOT on every repaint. Individual diff fetches create
+ *  their own per-fetch controllers with a timeout. */
+const diffAbortCtrl = new AbortController();
 registerCleanup(() => {
   refreshAbort?.abort();
 });
-registerCleanup(() => diffAbort?.abort());
+registerCleanup(() => {
+  diffAbortCtrl.abort();
+});
 
 /** Repos that recently received a successful push. Used to surface a
  *  contextual "Open PR" hint in their section header for a few
@@ -111,6 +92,11 @@ let bindingCleanups: (() => void)[] = [];
 // Deferred paint: set when paint bails due to focused textarea.
 let paintDeferred = false;
 
+/** Build the deps object for commit rendering functions. */
+function commitDeps(): CommitDeps {
+  return { commitMessages, bindingCleanups, diffAbort: diffAbortCtrl, refreshChanges, assertOk };
+}
+
 // --- Public API ---
 
 /** Initialise the Changes tab. Wires the filter input, the global
@@ -127,15 +113,22 @@ export function initChangesTab(): void {
   });
 
   // Fire deferred paint when commit textarea loses focus.
-  document.addEventListener("focusout", (e) => {
-    if (
-      paintDeferred &&
-      e.target instanceof HTMLTextAreaElement &&
-      e.target.classList.contains("git-commit-input")
-    ) {
-      paint();
-    }
-  });
+  // Scoped to the mount container so the listener is tied to the tab's
+  // DOM lifetime. focusout bubbles, so it reaches the container.
+  const changesMount = document.getElementById("git-changes-mount");
+  changesMount?.addEventListener(
+    "focusout",
+    (e) => {
+      if (
+        paintDeferred &&
+        e.target instanceof HTMLTextAreaElement &&
+        e.target.classList.contains("git-commit-input")
+      ) {
+        paint();
+      }
+    },
+    { passive: true },
+  );
 
   const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
   if (refreshBtn !== null) {
@@ -175,7 +168,8 @@ export async function refreshChanges(): Promise<void> {
   const ctrl = new AbortController();
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
-  const data = await apiGet<StatusAllResponse>("/api/git/status-all", ctrl.signal);
+  const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
+  const data = await apiGet<StatusAllResponse>("/api/git/status-all", signal);
   if (gen < refreshGeneration) {
     return;
   } // stale — a newer call supersedes
@@ -216,10 +210,6 @@ function paintInner(): void {
   }
   bindingCleanups = [];
 
-  // Abort any in-flight diff fetches from the previous paint.
-  diffAbort?.abort();
-  diffAbort = new AbortController();
-
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
   // Build per-repo path index for finer pruning of expandedDiffPaths.
@@ -259,6 +249,18 @@ function paintInner(): void {
     const repoPaths = activePathsByRepo.get(repo);
     if (!repoPaths?.has(path)) {
       expandedDiffPaths.delete(k);
+    }
+  }
+  // Cap expandedDiffPaths to prevent unbounded growth over long sessions.
+  if (expandedDiffPaths.size > 200) {
+    const excess = expandedDiffPaths.size - 200;
+    const iter = expandedDiffPaths.values();
+    for (let i = 0; i < excess; i++) {
+      const next = iter.next();
+      if (next.done === true) {
+        break;
+      }
+      expandedDiffPaths.delete(next.value);
     }
   }
 
@@ -342,23 +344,6 @@ function paintInner(): void {
 }
 
 // --- Empty-state markup helpers ---
-
-const ICON_REPO_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
-  '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
-  "</svg>";
-
-const ICON_CLEAN =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>' +
-  '<polyline points="22 4 12 14.01 9 11.01"/>' +
-  "</svg>";
-
-const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
-  "</svg>";
 
 function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
   return `
@@ -483,11 +468,11 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   // Commit area (only if there are staged files)
   const stagedCount = r.files.filter((f) => f.staged).length;
   if (stagedCount > 0) {
-    body.appendChild(renderCommitArea(r));
+    body.appendChild(renderCommitArea(r, commitDeps()));
   }
 
   // Recent commits sub-section (collapsed by default; expand → fetch).
-  body.appendChild(renderRecentCommits(r));
+  body.appendChild(renderRecentCommits(r, commitDeps()));
 
   section.appendChild(body);
   return section;
@@ -755,12 +740,13 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   const loadDiff = (): void => {
     loadedDiff = true;
     diffDrawer.textContent = "Loading diff…";
-    const signal = diffAbort?.signal;
+    const perFetch = new AbortController();
+    const signal = AbortSignal.any([perFetch.signal, AbortSignal.timeout(10_000)]);
     void apiGet<{ diff?: string }>(
       `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
       signal,
     ).then((data) => {
-      if (signal?.aborted) {
+      if (perFetch.signal.aborted) {
         return;
       }
       if (data === null) {
@@ -839,153 +825,16 @@ function renderDiffWithColors(diff: string): DocumentFragment {
   return frag;
 }
 
-function renderRecentCommits(r: RepoStatus): HTMLElement {
-  // Collapsible sub-section: header is a button; body holds either
-  // a "Loading..." indicator, the rendered commits list, or an
-  // error message. Lazy-load: only fetch when the user expands.
-  const wrap = document.createElement("details");
-  wrap.className = "git-recent-commits";
-
-  const summary = document.createElement("summary");
-  summary.className = "git-recent-commits-summary";
-  summary.textContent = "Recent commits";
-  wrap.appendChild(summary);
-
-  const body = document.createElement("div");
-  body.className = "git-recent-commits-body";
-  body.textContent = "Loading…";
-  wrap.appendChild(body);
-
-  let loaded = false;
-  wrap.addEventListener("toggle", () => {
-    if (!wrap.open || loaded) {
-      return;
-    }
-    loaded = true;
-    void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
-      `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
-      diffAbort?.signal,
-    ).then((data) => {
-      if (diffAbort?.signal.aborted) {
-        return;
-      }
-      if (data === null) {
-        body.textContent = "Failed to load.";
-        return;
-      }
-      const entries = data.entries ?? [];
-      if (entries.length === 0) {
-        body.textContent = "No commits.";
-        return;
-      }
-      body.replaceChildren();
-      const list = document.createElement("ul");
-      list.className = "git-recent-commits-list";
-      for (const line of entries.slice(0, 20)) {
-        const li = document.createElement("li");
-        li.className = "git-recent-commits-row";
-        // line shape: "<sha> <subject>"
-        const sp = line.indexOf(" ");
-        if (sp > 0) {
-          const sha = document.createElement("code");
-          sha.className = "git-recent-commits-sha";
-          sha.textContent = line.slice(0, sp);
-          li.appendChild(sha);
-          const sub = document.createElement("span");
-          sub.className = "git-recent-commits-subject";
-          sub.textContent = line.slice(sp + 1);
-          li.appendChild(sub);
-        } else {
-          li.textContent = line;
-        }
-        list.appendChild(li);
-      }
-      body.appendChild(list);
-    });
-  });
-
-  return wrap;
-}
-
-function renderCommitArea(r: RepoStatus): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "git-commit-area";
-
-  const ta = document.createElement("textarea");
-  ta.className = "git-commit-input";
-  ta.placeholder = "Commit message…";
-  ta.rows = 2;
-  ta.dataset["repo"] = r.repo;
-  // Bug 1: Restore previously typed commit message.
-  const saved = commitMessages.get(r.repo);
-  if (saved) {
-    ta.value = saved;
-  }
-  wrap.appendChild(ta);
-
-  const row = document.createElement("div");
-  row.className = "git-commit-row";
-
-  const ai = document.createElement("button");
-  ai.type = "button";
-  ai.className = "btn-small";
-  ai.textContent = "✨ AI message";
-  ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
-  ai.addEventListener("click", () => {
-    void withAsyncFeedback(ai, async () => {
-      const msg = await generateCommitMessage.dispatch({ repo: r.repo });
-      assertOk(msg);
-      commitMessages.set(r.repo, msg.message ?? "");
-      if (ta.isConnected) {
-        ta.value = msg.message ?? "";
-      }
-    });
-  });
-  row.appendChild(ai);
-  bindingCleanups.push(bindLoadingState("git.generate_message", ai));
-
-  const commit = document.createElement("button");
-  commit.type = "button";
-  commit.className = "btn-small btn-primary";
-  commit.textContent = "Commit";
-  commit.addEventListener("click", () => {
-    void withAsyncFeedback(commit, async () => {
-      const message = ta.value.trim();
-      if (message === "") {
-        throw new Error("Commit message required");
-      }
-      assertOk(await commitAction.dispatch({ repo: r.repo, message }));
-      ta.value = "";
-      commitMessages.delete(r.repo);
-      await refreshChanges();
-    });
-  });
-  row.appendChild(commit);
-  bindingCleanups.push(bindLoadingState("git.commit", commit));
-
-  wrap.appendChild(row);
-  return wrap;
-}
-
 // --- Helpers ---
+
+const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
 
 /** Heuristic: branches named "main", "master", "develop", "trunk"
  *  aren't feature branches and shouldn't trigger the post-push
  *  "Open PR" hint. Anything else is treated as a feature branch
  *  candidate. */
 function isFeatureBranch(branch: string): boolean {
-  if (branch === "") {
-    return false;
-  }
-  switch (branch.toLowerCase()) {
-    case "main":
-    case "master":
-    case "develop":
-    case "trunk":
-      return false;
-    default:
-      return true;
-  }
+  return branch !== "" && !DEFAULT_BRANCHES.has(branch.toLowerCase());
 }
 
 /** Banner shown briefly after a successful push: invites the user to
@@ -1014,41 +863,4 @@ function renderOpenPRHint(r: RepoStatus): HTMLElement {
   });
   hint.appendChild(btn);
   return hint;
-}
-
-function statusLetter(s: string): string {
-  if (s.length >= 1) {
-    return s.charAt(0);
-  }
-  return "?";
-}
-
-function describeStatus(s: string): string {
-  switch (s.charAt(0)) {
-    case "M":
-      return "Modified";
-    case "A":
-      return "Added";
-    case "D":
-      return "Deleted";
-    case "R":
-      return "Renamed";
-    case "?":
-      return "Untracked";
-    case "U":
-      return "Unmerged";
-    default:
-      return s;
-  }
-}
-
-function escapeHTML(s: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
 }

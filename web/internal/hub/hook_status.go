@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"vibekit/internal/workspace"
 )
 
 // kiroSettingsPath returns the path to kiro-cli's settings file.
-// Resolves through api.KiroHome() so vibekit and kiro-cli agree on
+// Resolves through workspace.KiroHome() so vibekit and kiro-cli agree on
 // the location regardless of whether KIRO_HOME is set.
 func kiroSettingsPath() string {
-	if api.KiroHome() == ".kiro" {
+	if workspace.KiroHome() == ".kiro" {
 		// Defensive fallback inside KiroHome — when both KIRO_HOME
 		// and HOME are unset, returning a relative path here means
 		// we'd read from CWD/settings/settings.json which is wrong.
@@ -21,7 +21,65 @@ func kiroSettingsPath() string {
 		// defaults".
 		return ""
 	}
-	return api.KiroSettingsPath("settings.json")
+	return workspace.KiroSettingsPath("settings.json")
+}
+
+// cachedBoolField reads a boolean value from a JSON file with
+// mtime-based cache invalidation. Reduces per-call cost from
+// os.ReadFile+json.Unmarshal to a single os.Stat in the common case.
+type cachedBoolField struct {
+	mtime      time.Time
+	path       string
+	key        string
+	size       int64
+	mu         sync.Mutex
+	defaultVal bool
+	value      bool
+	valid      bool
+}
+
+func newCachedBoolField(path, key string, defaultVal bool) *cachedBoolField {
+	return &cachedBoolField{path: path, key: key, defaultVal: defaultVal, value: defaultVal}
+}
+
+func (c *cachedBoolField) get() bool {
+	if c.path == "" {
+		return c.defaultVal
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	info, err := os.Stat(c.path)
+	if err != nil {
+		return c.defaultVal
+	}
+	if c.valid && info.ModTime().Equal(c.mtime) && info.Size() == c.size {
+		return c.value
+	}
+	// Cache miss — re-read and parse.
+	data, err := os.ReadFile(c.path) // #nosec G304 -- fixed path
+	if err != nil {
+		return c.defaultVal
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(data, &raw) != nil {
+		return c.defaultVal
+	}
+	v, ok := raw[c.key]
+	if !ok {
+		c.value = c.defaultVal
+	} else {
+		var parsed bool
+		if json.Unmarshal(v, &parsed) != nil {
+			c.value = c.defaultVal
+		} else {
+			c.value = parsed
+		}
+	}
+	c.mtime = info.ModTime()
+	c.size = info.Size()
+	c.valid = true
+	return c.value
 }
 
 // hookStatusCache caches the hooks.showStatus setting from
@@ -30,56 +88,15 @@ func kiroSettingsPath() string {
 // single os.Stat in the common case (file changes at most once per
 // user session).
 type hookStatusCache struct {
-	mtime   time.Time
-	path    string
-	size    int64
-	mu      sync.Mutex
-	enabled bool
-	valid   bool
+	field *cachedBoolField
 }
 
 func newHookStatusCache(path string) *hookStatusCache {
-	return &hookStatusCache{path: path, enabled: true}
+	return &hookStatusCache{field: newCachedBoolField(path, "hooks.showStatus", true)}
 }
 
 func (c *hookStatusCache) get() bool {
-	if c.path == "" {
-		return true
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	info, err := os.Stat(c.path)
-	if err != nil {
-		return true
-	}
-	if c.valid && info.ModTime().Equal(c.mtime) && info.Size() == c.size {
-		return c.enabled
-	}
-	// Cache miss — re-read and parse.
-	data, err := os.ReadFile(c.path) // #nosec G304 -- fixed path
-	if err != nil {
-		return true
-	}
-	var raw map[string]json.RawMessage
-	if json.Unmarshal(data, &raw) != nil {
-		return true
-	}
-	v, ok := raw["hooks.showStatus"]
-	if !ok {
-		c.enabled = true
-	} else {
-		var enabled bool
-		if json.Unmarshal(v, &enabled) != nil {
-			c.enabled = true
-		} else {
-			c.enabled = enabled
-		}
-	}
-	c.mtime = info.ModTime()
-	c.size = info.Size()
-	c.valid = true
-	return c.enabled
+	return c.field.get()
 }
 
 // isHookStatusEnabled reads the kiro-cli hooks.showStatus setting.

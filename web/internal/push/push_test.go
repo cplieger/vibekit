@@ -56,6 +56,7 @@ func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 func TestSubscribeUnsubscribe(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	sub := api.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub.Keys.P256dh = "dGVzdA"
@@ -77,6 +78,7 @@ func TestSubscriptionPersistence(t *testing.T) {
 	s1 := New(context.Background(), dir, "mailto:test@example.com")
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/a"})
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://updates.push.services.mozilla.com/b"})
+	s1.flushSaves()
 	s1.Close()
 
 	s2 := New(context.Background(), dir, "mailto:test@example.com")
@@ -357,6 +359,7 @@ func TestTruncate(t *testing.T) {
 func TestSend_PreferenceFiltering(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	// Subscribe so Send actually reaches the preflight stage;
 	// without subs the early-exit wouldn't prove the gate ran.
 	s.Subscribe(api.PushSubscription{
@@ -430,6 +433,7 @@ func TestSend_Debounce(t *testing.T) {
 func TestSend_DebouncePerType(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	// Mark agent_finished as just-sent.
 	s.mu.Lock()
@@ -455,6 +459,7 @@ func TestSend_DebouncePerType(t *testing.T) {
 func TestSend_UnknownKindRejected(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
 	s.Send(context.Background(), "title", "body", "what-is-this")
 	s.mu.Lock()
@@ -478,6 +483,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 
 	sub1 := api.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub1.Keys.Auth = "old"
@@ -564,17 +570,24 @@ func TestDecodeVAPIDPrivateKey_WrongLength(t *testing.T) {
 	}
 }
 
-// TestVAPIDHeader_InvalidKeyPropagatesError pins the vapidHeader →
-// decodeVAPIDPrivateKey error forwarding so a future refactor can't
-// accidentally swallow the error.
+// TestVAPIDHeader_InvalidKeyPropagatesError verifies that a service
+// constructed with an invalid VAPID key is marked unhealthy at startup.
+// With the cached key approach, invalid keys are caught at construction
+// time rather than at per-push time.
 func TestVAPIDHeader_InvalidKeyPropagatesError(t *testing.T) {
 	dir := t.TempDir()
+	// Write an invalid key file so loadKeys finds it but can't decode it.
+	badKeys := `{"privateKey":"broken","publicKey":"also-broken"}`
+	if err := os.WriteFile(filepath.Join(dir, "vapid-keys.json"), []byte(badKeys), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s := New(context.Background(), dir, "mailto:test@example.com")
-
-	s.keys.PrivateKey = "broken"
-
-	if _, err := s.vapidHeader("https://fcm.googleapis.com/fcm/send/abc"); err == nil {
-		t.Fatal("vapidHeader with broken key = nil error, want error")
+	if s.vapidPriv != nil {
+		t.Fatal("vapidPriv should be nil for invalid key")
+	}
+	// The service should be unhealthy.
+	if s.healthy {
+		t.Fatal("service should be unhealthy with invalid VAPID key")
 	}
 }
 
@@ -695,8 +708,10 @@ func TestSend_StatusCodePruning(t *testing.T) {
 func TestSaveSubs_Perm0o600(t *testing.T) {
 	dir := t.TempDir()
 	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close()
 	// Use an allowed endpoint so the file survives a future reload.
 	s.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/perm-check"})
+	s.flushSaves()
 
 	info, err := os.Stat(filepath.Join(dir, "push-subs.json"))
 	if err != nil {

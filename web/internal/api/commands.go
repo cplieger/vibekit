@@ -65,7 +65,7 @@ type PromptCommand struct {
 	MessageID   string       `json:"message_id"` // client-generated ULID
 	Agent       string       `json:"agent,omitempty"`
 	Model       string       `json:"model,omitempty"`
-	ActiveFile  string       `json:"active_file,omitempty"` // editor/follow-along active file path
+	ActiveFile  string       `json:"active_file,omitempty"` // editor active file path
 	OpenFiles   []string     `json:"open_files,omitempty"`  // all open editor tabs
 	Attachments []Attachment `json:"attachments,omitempty"` // files attached via pill row
 }
@@ -137,7 +137,28 @@ type RewindChatCommand struct {
 // SetEffortCommand is the payload for type="set_effort".
 // Applies a reasoning effort level to the active session.
 type SetEffortCommand struct {
-	Level string `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+	Level EffortLevel `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+}
+
+// EffortLevel is a typed enum for reasoning effort levels.
+type EffortLevel string
+
+// Valid effort level constants.
+const (
+	EffortLow    EffortLevel = "low"
+	EffortMedium EffortLevel = "medium"
+	EffortHigh   EffortLevel = "high"
+	EffortXHigh  EffortLevel = "xhigh"
+	EffortMax    EffortLevel = "max"
+)
+
+// Valid reports whether e is a recognised effort level.
+func (e EffortLevel) Valid() bool {
+	switch e {
+	case EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
+		return true
+	}
+	return false
 }
 
 // MergeTangentCommand has no payload beyond the envelope's chat_id.

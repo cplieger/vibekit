@@ -14,6 +14,7 @@
 
 import { getActiveId, isThinking, queuedPrompt } from "./store.js";
 import { setSendState } from "./prompt-input.js";
+import type { SendState } from "./prompt-input.js";
 import type { ConnectionStatus } from "./types.js";
 
 class SendStateController {
@@ -48,28 +49,28 @@ class SendStateController {
   }
 
   recompute(): void {
+    const state = this.computeState();
+    setSendState(state);
+  }
+
+  private computeState(): SendState {
     if (this.sseStatus === "disconnected") {
-      setSendState({ kind: "blocked", reason: "Disconnected from the server. Reconnecting…" });
-      return;
+      return { kind: "blocked", reason: "Disconnected from the server. Reconnecting…" };
     }
     if (this.lastError !== "") {
-      setSendState({ kind: "blocked", reason: this.lastError });
-      return;
+      return { kind: "blocked", reason: this.lastError };
     }
     const activeID = getActiveId();
     if (activeID === "") {
-      setSendState({ kind: "idle" });
-      return;
+      return { kind: "idle" };
     }
     if (queuedPrompt(activeID) !== undefined) {
-      setSendState({ kind: "queued" });
-      return;
+      return { kind: "queued" };
     }
     if (isThinking(activeID)) {
-      setSendState({ kind: "busy" });
-      return;
+      return { kind: "busy" };
     }
-    setSendState({ kind: "idle" });
+    return { kind: "idle" };
   }
 }
 

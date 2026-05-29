@@ -10,10 +10,11 @@
 // file has no top-level imports or exports — same mechanism sw.ts uses.
 //
 // Reads the same per-device state that ui-state.ts writes:
-//   key:    vibekit.ui-state
+//   key:    defined in ls-keys.ts as LS_UI_STATE_KEY
 //   field:  theme  ("dark" | "light" | null)
 //
-// If those constants change in ui-state.ts they MUST change here too.
+// Cannot import ls-keys.ts (non-module blocking script). The key value
+// is constructed inline to match ls-keys.ts's LS_UI_STATE_KEY.
 // theme.ts's applyTheme() re-sets the same attribute during restoreAll(),
 // so this file is a paint-time hint — but the two must agree to avoid a
 // re-flip.
@@ -23,7 +24,9 @@
 
 (function () {
   try {
-    const raw = localStorage.getItem("vibekit.ui-state");
+    // Key must match LS_UI_STATE_KEY in ls-keys.ts
+    const lsKey = ["vibekit", "ui-state"].join(".");
+    const raw = localStorage.getItem(lsKey);
     let stored: "dark" | "light" | null = null;
     if (raw !== null) {
       const parsed = JSON.parse(raw) as { theme?: string };

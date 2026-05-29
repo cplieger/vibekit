@@ -1,12 +1,14 @@
 package hub
 
 import (
-	"vibekit/internal/metrics"
 	"maps"
 	"sync"
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/metrics"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // bridgeManager owns the per-chat bridge map and provides thread-safe
@@ -14,15 +16,18 @@ import (
 // reducing Hub's direct field count and clarifying the ownership
 // boundary: bridgeManager owns the map; Hub owns dispatch.
 type bridgeManager struct {
-	bridges map[api.ChatID]*sharedBridge
-	factory api.ACPBridgeFactory
-	mu      sync.Mutex
+	spawnSF  singleflight.Group
+	bridges  map[api.ChatID]*sharedBridge
+	factory  api.ACPBridgeFactory
+	inflight *sync.WaitGroup
+	mu       sync.Mutex
 }
 
-func newBridgeManager(factory api.ACPBridgeFactory) *bridgeManager {
+func newBridgeManager(factory api.ACPBridgeFactory, inflight *sync.WaitGroup) *bridgeManager {
 	return &bridgeManager{
-		bridges: make(map[api.ChatID]*sharedBridge),
-		factory: factory,
+		bridges:  make(map[api.ChatID]*sharedBridge),
+		factory:  factory,
+		inflight: inflight,
 	}
 }
 
@@ -35,9 +40,9 @@ func (bm *bridgeManager) get(chatID api.ChatID) *sharedBridge {
 
 // getOrInsert returns an existing bridge for chatID if present.
 // If not, it creates a new sharedBridge via the factory, inserts it
-// into the map, and returns (newBridge, false). The new bridge is
-// returned with state=bridgeStarting and mu locked — the caller MUST
-// unlock sb.mu after completing initialization.
+// into the map, and returns (newBridge, false). With singleflight in
+// GetOrCreateBridge, concurrent callers coalesce so the new bridge
+// no longer needs to be returned locked.
 func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
@@ -45,7 +50,6 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 		return existing, true
 	}
 	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting}
-	sb.mu.Lock()
 	bm.bridges[chatID] = sb
 	bm.mu.Unlock()
 	metrics.BridgeSpawns.Inc()
@@ -123,10 +127,16 @@ func (bm *bridgeManager) closeAndStop(ids []api.ChatID) []culledBridge {
 	}
 	bm.mu.Unlock()
 	// Stop runs outside the lock so a slow Stop doesn't block other
-	// bridgeMgr operations. Fire-and-forget, matching the original
-	// inline cull behaviour.
+	// bridgeMgr operations. Tracked via inflight WaitGroup so
+	// Hub.Shutdown waits for all cull-triggered stops.
 	for _, c := range culled {
-		go c.sb.bridge.Stop()
+		if bm.inflight != nil {
+			bm.inflight.Go(func() {
+				c.sb.bridge.Stop()
+			})
+		} else {
+			go c.sb.bridge.Stop()
+		}
 	}
 	return culled
 }

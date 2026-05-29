@@ -4,7 +4,6 @@ package translate
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"vibekit/internal/api"
@@ -12,7 +11,7 @@ import (
 
 // HandleMetadata processes metadata notifications (usage stats).
 func (t *Translator) HandleMetadata(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var meta struct {
+	type metadataParams struct {
 		ContextUsagePercentage *float64 `json:"contextUsagePercentage"`
 		TurnDurationMs         *float64 `json:"turnDurationMs"`
 		SessionID              string   `json:"sessionId"`
@@ -22,7 +21,8 @@ func (t *Translator) HandleMetadata(ctx context.Context, chatID api.ChatID, msg 
 			Value        float64 `json:"value"`
 		} `json:"meteringUsage"`
 	}
-	if json.Unmarshal(msg.Params, &meta) != nil {
+	meta, ok := unmarshalParams[metadataParams](msg, "metadata")
+	if !ok {
 		return
 	}
 

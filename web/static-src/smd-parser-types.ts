@@ -13,57 +13,100 @@
 
 // --- Token enum (matches smd.js constants) ---
 
-export const DOCUMENT = 1 as Token;
-export const PARAGRAPH = 2 as Token;
-export const HEADING_1 = 3 as Token;
-export const HEADING_2 = 4 as Token;
-export const HEADING_3 = 5 as Token;
-export const HEADING_4 = 6 as Token;
-export const HEADING_5 = 7 as Token;
-export const HEADING_6 = 8 as Token;
-export const CODE_BLOCK = 9 as Token;
-export const CODE_FENCE = 10 as Token;
-export const CODE_INLINE = 11 as Token;
-export const ITALIC_AST = 12 as Token;
-export const ITALIC_UND = 13 as Token;
-export const STRONG_AST = 14 as Token;
-export const STRONG_UND = 15 as Token;
-export const STRIKE = 16 as Token;
-export const LINK = 17 as Token;
-export const RAW_URL = 18 as Token;
-export const IMAGE = 19 as Token;
-export const BLOCKQUOTE = 20 as Token;
-export const LINE_BREAK = 21 as Token;
-export const RULE = 22 as Token;
-export const LIST_UNORDERED = 23 as Token;
-export const LIST_ORDERED = 24 as Token;
-export const LIST_ITEM = 25 as Token;
-export const CHECKBOX = 26 as Token;
-export const TABLE = 27 as Token;
-export const TABLE_ROW = 28 as Token;
-export const TABLE_CELL = 29 as Token;
-export const EQUATION_BLOCK = 30 as Token;
-export const EQUATION_INLINE = 31 as Token;
-export const NEWLINE = 101 as Token;
-export const MAYBE_BR = 104 as Token;
-export const MAYBE_EQ_BLOCK = 105 as Token;
+/** All valid token values. Derive the Token type from this object. */
+export const TOKENS = {
+  DOCUMENT: 1,
+  PARAGRAPH: 2,
+  HEADING_1: 3,
+  HEADING_2: 4,
+  HEADING_3: 5,
+  HEADING_4: 6,
+  HEADING_5: 7,
+  HEADING_6: 8,
+  CODE_BLOCK: 9,
+  CODE_FENCE: 10,
+  CODE_INLINE: 11,
+  ITALIC_AST: 12,
+  ITALIC_UND: 13,
+  STRONG_AST: 14,
+  STRONG_UND: 15,
+  STRIKE: 16,
+  LINK: 17,
+  RAW_URL: 18,
+  IMAGE: 19,
+  BLOCKQUOTE: 20,
+  LINE_BREAK: 21,
+  RULE: 22,
+  LIST_UNORDERED: 23,
+  LIST_ORDERED: 24,
+  LIST_ITEM: 25,
+  CHECKBOX: 26,
+  TABLE: 27,
+  TABLE_ROW: 28,
+  TABLE_CELL: 29,
+  EQUATION_BLOCK: 30,
+  EQUATION_INLINE: 31,
+  NEWLINE: 101,
+  MAYBE_BR: 104,
+  MAYBE_EQ_BLOCK: 105,
+} as const satisfies Record<string, number>;
 
-/** Branded numeric type — prevents accidental assignment of arbitrary
- *  numbers to token fields. All valid tokens are the exported constants
- *  below, each cast to Token at declaration. */
-declare const __tokenBrand: unique symbol;
-export type Token = number & { readonly [__tokenBrand]: never };
+/** Token type derived from the TOKENS constant object. */
+export type Token = (typeof TOKENS)[keyof typeof TOKENS];
+
+// Re-export individual constants via destructuring.
+export const {
+  DOCUMENT,
+  PARAGRAPH,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
+  CODE_BLOCK,
+  CODE_FENCE,
+  CODE_INLINE,
+  ITALIC_AST,
+  ITALIC_UND,
+  STRONG_AST,
+  STRONG_UND,
+  STRIKE,
+  LINK,
+  RAW_URL,
+  IMAGE,
+  BLOCKQUOTE,
+  LINE_BREAK,
+  RULE,
+  LIST_UNORDERED,
+  LIST_ORDERED,
+  LIST_ITEM,
+  CHECKBOX,
+  TABLE,
+  TABLE_ROW,
+  TABLE_CELL,
+  EQUATION_BLOCK,
+  EQUATION_INLINE,
+  NEWLINE,
+  MAYBE_BR,
+  MAYBE_EQ_BLOCK,
+} = TOKENS;
 
 // --- Attr enum ---
 
-export const HREF = 1 as unknown as Attr;
-export const SRC = 2 as unknown as Attr;
-export const LANG = 4 as unknown as Attr;
-export const CHECKED = 8 as unknown as Attr;
-export const START = 16 as unknown as Attr;
+/** All valid attribute values. */
+export const ATTRS = {
+  HREF: 1,
+  SRC: 2,
+  LANG: 4,
+  CHECKED: 8,
+  START: 16,
+} as const satisfies Record<string, number>;
 
-declare const __attrBrand: unique symbol;
-export type Attr = number & { readonly [__attrBrand]: never };
+/** Attr type derived from the ATTRS constant object. */
+export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
+
+export const { HREF, SRC, LANG, CHECKED, START } = ATTRS;
 
 export const TOKEN_ARRAY_CAP = 24;
 
@@ -81,7 +124,7 @@ export interface Renderer<T> {
 
 export interface Parser {
   renderer: Renderer<unknown>;
-  textBuf: string[];
+  textBuf: string;
   pending: string;
   tokens: Uint32Array;
   len: number;
@@ -101,11 +144,11 @@ export interface Parser {
 // --- Pure utility functions ---
 
 export function add_text(p: Parser): void {
-  if (p.textBuf.length === 0) {
+  if (p.textBuf === "") {
     return;
   }
-  p.renderer.add_text(p.renderer.data, p.textBuf.join(""));
-  p.textBuf.length = 0;
+  p.renderer.add_text(p.renderer.data, p.textBuf);
+  p.textBuf = "";
 }
 
 export function end_token(p: Parser): void {

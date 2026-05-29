@@ -5,10 +5,11 @@
 package checkpoint
 
 import (
-	"errors"
 	"log/slog"
 	"slices"
 	"strconv"
+
+	chktypes "vibekit/internal/checkpoint/types"
 )
 
 // state is the reconstructed view of a chat's checkpoint history at
@@ -25,10 +26,10 @@ type state struct {
 	tagFiles       map[string][]string
 	fileHistory    map[string][]fileObservation
 	blobRefs       map[string]struct{}
+	conflicts      *Ring[ConflictPayload]
 	pendingRestore string
 	latestTag      string
 	orderedTags    []string
-	conflicts      conflictRing
 	turn           int
 	toolsInTurn    int
 }
@@ -58,6 +59,7 @@ func newState() *state {
 		tagFiles:    map[string][]string{},
 		fileHistory: map[string][]fileObservation{},
 		blobRefs:    map[string]struct{}{},
+		conflicts:   NewRing[ConflictPayload](maxInMemoryConflicts),
 	}
 }
 
@@ -67,6 +69,7 @@ func newState() *state {
 // helper so the invariants for one event kind aren't entangled with
 // another.
 func (s *state) apply(e *event) {
+	//exhaustive:enforce
 	switch e.Kind {
 	case kindTurnStart:
 		s.turn = e.Turn
@@ -119,44 +122,48 @@ func (s *state) applySnapshot(e *event) {
 	s.insertOrderedTag(e.Tag)
 }
 
-// conflictRing is a fixed-size ring buffer for ConflictPayload.
-// Append is O(1) unconditionally; oldest entries are silently
-// overwritten when the buffer is full.
-type conflictRing struct {
-	buf  [maxInMemoryConflicts]ConflictPayload
-	head int  // index of oldest entry
-	size int  // number of valid entries (0..maxInMemoryConflicts)
-	full bool // true once we've wrapped at least once
+// Ring is a generic fixed-size ring buffer. Append is O(1)
+// unconditionally; oldest entries are silently overwritten when
+// the buffer is full. Len() == cap means full.
+type Ring[T any] struct {
+	buf  []T
+	head int
+	size int
 }
 
-// append adds a payload to the ring. O(1). Takes a pointer to avoid
-// copying ConflictPayload (88 bytes) by value at every call site.
-func (r *conflictRing) append(p *ConflictPayload) {
-	idx := (r.head + r.size) % maxInMemoryConflicts
-	if r.size < maxInMemoryConflicts {
-		r.buf[idx] = *p
+// NewRing creates a Ring with the given capacity.
+func NewRing[T any](capacity int) *Ring[T] {
+	return &Ring[T]{buf: make([]T, capacity)}
+}
+
+// Append adds a value to the ring. O(1).
+func (r *Ring[T]) Append(v T) {
+	n := len(r.buf)
+	idx := (r.head + r.size) % n
+	if r.size < n {
+		r.buf[idx] = v
 		r.size++
 	} else {
-		// Overwrite oldest, advance head.
-		r.buf[r.head] = *p
-		r.head = (r.head + 1) % maxInMemoryConflicts
-		if !r.full {
-			r.full = true
-		}
+		r.buf[r.head] = v
+		r.head = (r.head + 1) % n
 	}
 }
 
-// slice returns a copy of all entries in chronological order.
-func (r *conflictRing) slice() []ConflictPayload {
+// Slice returns a copy of all entries in chronological order.
+func (r *Ring[T]) Slice() []T {
 	if r.size == 0 {
 		return nil
 	}
-	out := make([]ConflictPayload, r.size)
+	n := len(r.buf)
+	out := make([]T, r.size)
 	for i := range r.size {
-		out[i] = r.buf[(r.head+i)%maxInMemoryConflicts]
+		out[i] = r.buf[(r.head+i)%n]
 	}
 	return out
 }
+
+// Len returns the number of valid entries.
+func (r *Ring[T]) Len() int { return r.size }
 
 // applyConflict records a cross-chat conflict event in-state so
 // Manager.Conflicts can return the list without re-reading the log
@@ -171,12 +178,12 @@ func (s *state) applyConflict(e *event) {
 		Tag:         e.Tag,
 		TS:          e.TS,
 	}
-	if s.conflicts.size == maxInMemoryConflicts && !s.conflicts.full {
+	if s.conflicts.Len() == maxInMemoryConflicts {
 		slog.Warn("checkpoint: conflict ring full, overwriting oldest",
 			"cap", maxInMemoryConflicts,
 			"path", e.Path)
 	}
-	s.conflicts.append(&payload)
+	s.conflicts.Append(payload)
 }
 
 // insertOrderedTag keeps s.orderedTags sorted under (turn, tool)
@@ -222,4 +229,4 @@ func (s *state) allocateTag() string {
 
 // ErrTagNotFound signals that a requested tag isn't in the event log.
 // Separate from a generic error so the HTTP layer can map it to 404.
-var ErrTagNotFound = errors.New("tag not found")
+var ErrTagNotFound = chktypes.ErrTagNotFound

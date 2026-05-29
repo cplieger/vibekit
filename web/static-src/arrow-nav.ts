@@ -23,7 +23,7 @@ export function wireArrowNav(
     const current = document.activeElement as HTMLElement | null;
     const idx = current !== null ? items.indexOf(current) : -1;
 
-    let next = -1;
+    let next: number;
     switch (e.key) {
       case nextKey:
         next = idx < items.length - 1 ? idx + 1 : 0;

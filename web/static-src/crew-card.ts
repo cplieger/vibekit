@@ -21,9 +21,18 @@ import { isToolActive } from "./tool-schema.js";
 import { getActiveId } from "./store.js";
 import { sendMessage } from "./actions/crew.js";
 import { bindLoadingState } from "./actions/index.js";
-import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
+import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14, iconEl } from "./icons.js";
 import { formatToolActivity } from "./format-tool-activity.js";
 import { reconcile } from "./reconcile.js";
+
+/** Fail-fast querySelector — throws if the element is missing. */
+function q(parent: Element, sel: string): Element {
+  const e = parent.querySelector(sel);
+  if (e === null) {
+    throw new Error(`Missing: ${sel}`);
+  }
+  return e;
+}
 
 type CrewEntry = { kind: "sub"; sub: CrewSubagent } | { kind: "pending"; ps: CrewPendingStage };
 
@@ -187,8 +196,8 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
     return;
   }
   cardState.set(el, sig);
-  const body = el.querySelector(".crew-body")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const count = el.querySelector(".crew-count")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  const body = q(el, ".crew-body");
+  const count = q(el, ".crew-count");
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
   const done = crew.subagents.filter((s) => s.status === "terminated").length;
@@ -224,7 +233,7 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
       const r = buildRow(e.sub);
       const tc = toolContainers.get(e.sub.session_id);
       if (tc !== undefined) {
-        const expandBody = r.querySelector(".crew-row-expand")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+        const expandBody = q(r, ".crew-row-expand");
         expandBody.appendChild(tc);
       }
       return r;
@@ -318,7 +327,7 @@ function createStatusIcon(status: CrewStatus): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = def.className;
   span.setAttribute("aria-label", def.label);
-  span.innerHTML = def.svg;
+  span.replaceChildren(iconEl(def.svg));
   return span;
 }
 

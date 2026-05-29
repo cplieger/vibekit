@@ -1,45 +1,47 @@
 package mcp
 
-import "context"
+import (
+	"context"
 
-const jsonKeyName = "name"
+	"vibekit/internal/api"
+)
 
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
 // stays focused on persistence and life-cycle.
 
-// maskedCopy returns a deep copy of s with every env/header value
-// replaced by SecretMask. Safe to send to the browser.
-func maskedCopy(s *Server) *Server {
+// copyServer returns a deep copy of s. When maskSecrets is true, every
+// env/header value is replaced by SecretMask (safe to send to the
+// browser). When false, values are preserved (for kiro-cli / pre-warm).
+func copyServer(s *Server, maskSecrets bool) *Server {
 	if s == nil {
 		return nil
 	}
 	c := *s
 	c.Args = append([]string(nil), s.Args...)
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
-	c.Env = make([]KeyPair, len(s.Env))
-	for i, kv := range s.Env {
-		c.Env[i] = KeyPair{Name: kv.Name, Value: SecretMask}
-	}
-	c.Headers = make([]KeyPair, len(s.Headers))
-	for i, kv := range s.Headers {
-		c.Headers[i] = KeyPair{Name: kv.Name, Value: SecretMask}
+	if maskSecrets {
+		c.Env = make([]KeyPair, len(s.Env))
+		for i, kv := range s.Env {
+			c.Env[i] = KeyPair{Name: kv.Name, Value: SecretMask}
+		}
+		c.Headers = make([]KeyPair, len(s.Headers))
+		for i, kv := range s.Headers {
+			c.Headers[i] = KeyPair{Name: kv.Name, Value: SecretMask}
+		}
+	} else {
+		c.Env = copyPairs(s.Env)
+		c.Headers = copyPairs(s.Headers)
 	}
 	return &c
 }
 
+// maskedCopy returns a deep copy of s with every env/header value
+// replaced by SecretMask. Safe to send to the browser.
+func maskedCopy(s *Server) *Server { return copyServer(s, true) }
+
 // rawCopy returns a deep copy with secrets intact. Used to pass values
 // to kiro-cli and to the npx pre-warm scheduler.
-func rawCopy(s *Server) *Server {
-	if s == nil {
-		return nil
-	}
-	c := *s
-	c.Args = append([]string(nil), s.Args...)
-	c.DisabledTools = append([]string(nil), s.DisabledTools...)
-	c.Env = copyPairs(s.Env)
-	c.Headers = copyPairs(s.Headers)
-	return &c
-}
+func rawCopy(s *Server) *Server { return copyServer(s, false) }
 
 func copyPairs(in []KeyPair) []KeyPair {
 	if in == nil {
@@ -96,7 +98,7 @@ func (t Transport) buildACP(s *Server) acpServer {
 func stdioBuilder(s *Server) acpServer {
 	entry := acpServer{
 		"type":    string(TransportStdio),
-		jsonKeyName:    s.Name,
+		api.JSONKeyName:    s.Name,
 		"command": s.Command,
 		"args":    argsArray(s.Args),
 		"env":     pairsArray(s.Env),
@@ -110,7 +112,7 @@ func stdioBuilder(s *Server) acpServer {
 func remoteBuilder(s *Server) acpServer {
 	entry := acpServer{
 		"type":    string(s.Transport),
-		jsonKeyName: s.Name,
+		api.JSONKeyName: s.Name,
 		"url":     s.URL,
 		"headers": pairsArray(s.Headers),
 	}
@@ -163,12 +165,12 @@ func argsArray(in []string) []string {
 }
 
 // pairsArray returns the ACP-spec array-of-objects shape for env vars
-// and HTTP headers: [{jsonKeyName:..., "value":...}, ...]. Always emits at
+// and HTTP headers: [{api.JSONKeyName:..., "value":...}, ...]. Always emits at
 // least [] for the empty case so required-but-empty JSON is valid.
 func pairsArray(in []KeyPair) []map[string]string {
 	out := make([]map[string]string, 0, len(in))
 	for _, kv := range in {
-		out = append(out, map[string]string{jsonKeyName: kv.Name, "value": kv.Value})
+		out = append(out, map[string]string{api.JSONKeyName: kv.Name, "value": kv.Value})
 	}
 	return out
 }

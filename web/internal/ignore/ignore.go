@@ -46,11 +46,9 @@ package ignore
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -60,14 +58,12 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// maxIgnoreFileSize caps each listed ignore file. Real .gitignore
-// files are kilobytes; 1 MiB is defensive. A user pointing the
-// setting at /proc/kcore, a log file, or a symlinked binary should
-// not pin the process at peak memory on every stale-cache refresh.
-const maxIgnoreFileSize = 1 << 20
+// maxIgnoreFileSize caps each listed ignore file — delegates to
+// settings.MaxBytes (1 MiB) so the cap is maintained in one place.
+const maxIgnoreFileSize = cfgsettings.MaxBytes
 
-// settingsFilename is the canonical filename for the user's settings.
-const settingsFilename = "config.json"
+// settingsFilename delegates to settings.Filename — single source of truth.
+const settingsFilename = cfgsettings.Filename
 
 // Matcher evaluates read paths against a set of ignore files
 // listed in the server settings. Patterns are re-parsed on demand
@@ -118,8 +114,8 @@ func NewMatcher(configDir, workDir string) *Matcher {
 // agent reads. `rel` is the workspace-relative path (forward
 // slashes). `isDir` is a hint for directory-only patterns; false
 // is the safe default (matches files).
-func (m *Matcher) Matches(rel string, isDir bool) bool {
-	m.refresh()
+func (m *Matcher) Matches(ctx context.Context, rel string, isDir bool) bool {
+	m.refresh(ctx)
 
 	m.mu.Lock()
 	rules := m.rules
@@ -162,14 +158,12 @@ func (m *Matcher) Matches(rel string, isDir bool) bool {
 // refresh re-reads the file list from config.json and re-parses
 // ignore files whose mtimes have advanced. Uses singleflight to
 // deduplicate concurrent refresh I/O — the first caller in a burst
-// does the work; others share its result. Uses context.Background()
-// internally because the I/O is local filesystem (sub-millisecond);
-// this prevents a single caller's context cancellation from poisoning
-// the shared singleflight result.
-func (m *Matcher) refresh() {
+// does the work; others share its result. Accepts ctx so callers'
+// cancellation propagates to the singleflight-guarded I/O path.
+func (m *Matcher) refresh(ctx context.Context) {
 	//nolint:errcheck // doRefresh has no error return; singleflight result is discarded.
 	m.sfGroup.Do("refresh", func() (any, error) {
-		m.doRefresh()
+		m.doRefresh(ctx)
 		return nil, nil
 	})
 }
@@ -183,7 +177,7 @@ func (m *Matcher) refresh() {
 // already serializes concurrent refreshes. The mutex is taken only for
 // the final pointer swap of rules/files/mtimes, minimizing the window
 // where Matches() callers block.
-func (m *Matcher) doRefresh() {
+func (m *Matcher) doRefresh(ctx context.Context) {
 	// Fast path: stat config.json. If mtime hasn't advanced, reuse
 	// the cached file list and only check ignore-file mtimes.
 	settingsPath := filepath.Join(m.configDir, settingsFilename)
@@ -211,7 +205,7 @@ func (m *Matcher) doRefresh() {
 	var newSettingsMTime time.Time
 	var newSettingsSize int64
 	if settingsChanged {
-		files = m.readSettingFiles(context.Background())
+		files = m.readSettingFiles(ctx)
 		if settingsErr == nil {
 			newSettingsMTime = settingsInfo.ModTime()
 			newSettingsSize = settingsInfo.Size()
@@ -270,54 +264,13 @@ func (m *Matcher) doRefresh() {
 	m.mu.Unlock()
 }
 
-// filesOrMTimesChangedStatic reports whether the ignore-file list or any
-// tracked file's mtime has advanced since the last load. Operates on
-// passed-in state rather than reading from the struct, so it can run
-// without holding m.mu.
-func filesOrMTimesChangedStatic(cachedFiles []string, cachedMTimes map[string]time.Time, files []string) bool {
-	if !slices.Equal(cachedFiles, files) {
-		return true
-	}
-	for _, f := range files {
-		info, err := os.Stat(f)
-		if err != nil {
-			if _, had := cachedMTimes[f]; had {
-				return true
-			}
-			continue
-		}
-		prev, had := cachedMTimes[f]
-		if !had || !prev.Equal(info.ModTime()) {
-			return true
-		}
-	}
-	return false
-}
-
 // readSettingFiles pulls the agent_ignore_files list out of
 // config.json and resolves each entry against the workspace root.
+// Uses the settings package's parsedMap cache to avoid redundant
+// json.Unmarshal calls when multiple callers read config.json.
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
-	data, err := cfgsettings.ReadBytes(ctx, m.configDir)
-	if err != nil {
-		slog.Warn("permissions: read config.json for agent_ignore_files", "error", err)
-		return nil
-	}
-	if data == nil {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("permissions: parse config.json for agent_ignore_files", "error", err)
-		return nil
-	}
-	v, ok := raw["agent_ignore_files"]
-	if !ok {
-		return nil
-	}
 	var list []string
-	if err := json.Unmarshal(v, &list); err != nil {
-		slog.Warn("permissions: agent_ignore_files malformed, ignore matcher disabled",
-			"error", err)
+	if !cfgsettings.FieldInto(ctx, m.configDir, cfgsettings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
 		return nil
 	}
 	out := make([]string, 0, len(list))
@@ -334,91 +287,4 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	return out
 }
 
-// parseIgnoreLine turns one line of a .gitignore into a rule. Empty
-// / comment lines return ok=false.
-func parseIgnoreLine(line string) (rule, bool) {
-	line = strings.TrimRight(line, " \t\r\n")
-	if line == "" || strings.HasPrefix(line, "#") {
-		return rule{}, false
-	}
-	if strings.Count(line, "**") > 4 {
-		slog.Warn("permissions: ignore rule has too many '**', skipping",
-			"pattern", line)
-		return rule{}, false
-	}
-	r := rule{}
-	if strings.HasPrefix(line, "!") {
-		r.negate = true
-		line = line[1:]
-	}
-	if strings.HasPrefix(line, "/") {
-		r.anchored = true
-		line = line[1:]
-	}
-	if strings.HasSuffix(line, "/") {
-		r.dirOnly = true
-		line = strings.TrimSuffix(line, "/")
-	}
-	if !r.anchored && strings.Contains(line, "/") {
-		r.anchored = true
-	}
-	r.pattern = line
-	r.segments = strings.Split(line, "/")
-	return r, true
-}
 
-// matchSegments evaluates a single rule's pattern segments against pre-split path segments.
-func matchSegments(ruleSegs, pathSegs []string, anchored bool) bool {
-	if len(ruleSegs) == 0 {
-		return false
-	}
-	if anchored {
-		return matchAnchored(ruleSegs, pathSegs)
-	}
-	if matchAnchored(ruleSegs, pathSegs) {
-		return true
-	}
-	for i := range pathSegs {
-		if matchAnchored(ruleSegs, pathSegs[i+1:]) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchAnchored walks pattern segments and path segments in lock-step.
-func matchAnchored(pSegs, xSegs []string) bool {
-	if segMatch(pSegs, xSegs) {
-		return true
-	}
-	if len(xSegs) > len(pSegs) && segMatch(pSegs, xSegs[:len(pSegs)]) {
-		return true
-	}
-	return false
-}
-
-// segMatch is the recursive segment matcher.
-func segMatch(p, x []string) bool {
-	for i := range p {
-		if p[i] == "**" {
-			rest := p[i+1:]
-			if len(rest) == 0 {
-				return true
-			}
-			for j := 0; j <= len(x); j++ {
-				if segMatch(rest, x[j:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if i >= len(x) {
-			return false
-		}
-		ok, err := filepath.Match(p[i], x[i])
-		if err != nil || !ok {
-			return false
-		}
-	}
-	return len(p) == len(x)
-}

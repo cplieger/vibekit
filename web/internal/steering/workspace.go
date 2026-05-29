@@ -1,0 +1,347 @@
+package steering
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
+)
+
+func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
+	entries, err := os.ReadDir(workDir)
+	if err != nil || len(entries) == 0 {
+		b.WriteString("## Workspace\n\nEmpty.\n\n")
+		return
+	}
+	repos, dirs := classifyEntries(ctx, entries, workDir)
+	foundFiles := findNotableFiles(workDir)
+	isRoot := fileutil.IsGitRepo(ctx, workDir)
+	b.WriteString("## Workspace\n\n")
+	if isRoot {
+		b.WriteString("The workspace root (`/workspace`) is itself a git repository.\n\n")
+	}
+	if len(repos) > 0 {
+		b.WriteString("### Git repositories\n\n")
+		b.WriteString("Multiple repos coexist under `/workspace`. ")
+		b.WriteString("Use `cwd` parameter in shell commands to target a specific repo ")
+		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
+		b.WriteString("File paths like `myrepo/src/main.go` work with readFile/readCode.\n\n")
+		for _, r := range repos {
+			writeRepoEntry(b, workDir, r)
+		}
+		b.WriteString("\n")
+		b.WriteString("The Git panel in the UI presents these repositories as collapsible ")
+		b.WriteString("sections under the **Changes** tab (uncommitted work + commit + push), ")
+		b.WriteString("the **Pull requests** tab (open PRs per repo + create new), and the ")
+		b.WriteString("**Sources** tab (forge accounts + cloneable remote repos).\n\n")
+		// Add a top-level instruction so the agent has unambiguous
+		// guidance about how to consume the per-repo steering it just
+		// saw above. Without this, kiro-cli would only auto-load
+		// steering for the cwd it boots in (the workspace root); the
+		// per-repo `.kiro/steering/` dirs would otherwise sit unused.
+		writeRepoSteeringInstructions(b, repos, workDir)
+	}
+	if len(foundFiles) > 0 {
+		b.WriteString("### Notable files\n\n")
+		for _, f := range foundFiles {
+			fmt.Fprintf(b, "- `%s`\n", f)
+		}
+		b.WriteString("\n")
+	}
+	if len(dirs) > 0 && !isRoot {
+		b.WriteString("### Directories\n\n")
+		for _, d := range dirs {
+			fmt.Fprintf(b, "- `%s/`\n", d)
+		}
+		b.WriteString("\n")
+	}
+}
+
+func writeRepoEntry(b *strings.Builder, workDir, r string) {
+	repoDir := filepath.Join(workDir, r)
+	origin := readGitOrigin(repoDir)
+	branch := readGitBranch(repoDir)
+	desc := readFirstLine(filepath.Join(repoDir, "README.md"))
+	fmt.Fprintf(b, "- `%s/`", r)
+	if branch != "" {
+		fmt.Fprintf(b, " on `%s`", branch)
+	}
+	if origin != "" {
+		host := hostFromGitURL(origin)
+		cli := forgeCLI(kindFromHost(host))
+		if cli != "" {
+			fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
+		} else if host != "" {
+			fmt.Fprintf(b, " (%s)", host)
+		}
+	}
+	if desc != "" {
+		fmt.Fprintf(b, " — %s", desc)
+	}
+	b.WriteString("\n")
+	docs := findRepoDocs(repoDir)
+	if len(docs) > 0 {
+		writeRepoSteering(b, r, docs)
+	}
+	skills := findRepoSkills(repoDir)
+	if len(skills) > 0 {
+		writeRepoSkills(b, r, skills)
+	}
+	agents := findRepoAgents(repoDir)
+	if len(agents) > 0 {
+		fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", r)
+		for _, a := range agents {
+			fmt.Fprintf(b, " `%s`", a.Name)
+		}
+		b.WriteString("\n")
+	}
+	hooks := findRepoHooks(repoDir)
+	if len(hooks) > 0 {
+		fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", r)
+		for _, h := range hooks {
+			trigger := h.Trigger
+			if trigger == "" {
+				trigger = "unknown"
+			}
+			fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
+			if h.Command != "" {
+				fmt.Fprintf(b, " → `%s`", h.Command)
+			}
+			b.WriteString("\n")
+		}
+	}
+}
+
+// readGitOrigin returns the origin URL of a git repo by reading its
+// `.git/config` directly. We avoid shelling out to `git remote get-url`
+// because steering generation runs synchronously on every event and
+// must not block on a wedged subprocess. The format is well-defined
+// (`[remote "origin"]` block with a `url = ...` line); a tiny line
+// scanner handles 99% of real-world configs without parsing INI fully.
+func readGitOrigin(repoDir string) string {
+	data, err := readCappedFile(filepath.Join(repoDir, ".git", "config"), 64*1024)
+	if err != nil {
+		return ""
+	}
+	inOrigin := false
+	for line := range strings.SplitSeq(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inOrigin = trimmed == `[remote "origin"]`
+			continue
+		}
+		if !inOrigin {
+			continue
+		}
+		if k, v, ok := strings.Cut(trimmed, "="); ok {
+			if strings.TrimSpace(k) == "url" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return ""
+}
+
+// readGitBranch returns the current branch name of a git repo by
+// reading `.git/HEAD`. Same rationale as readGitOrigin: no subprocess.
+// Detached-HEAD repos return "" (HEAD points at a sha, not a ref).
+func readGitBranch(repoDir string) string {
+	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(data))
+	const refsPrefix = "ref: refs/heads/"
+	if branch, ok := strings.CutPrefix(s, refsPrefix); ok {
+		return branch
+	}
+	return ""
+}
+
+// hostFromGitURL extracts the host from a git remote URL. Handles
+// both https:// and scp-style git@host:path forms. Returns "" for
+// shapes we don't recognise (file://, ext::, etc).
+func hostFromGitURL(url string) string {
+	url = strings.TrimSpace(url)
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+		rest := strings.SplitN(url, "://", 2)[1]
+		// Strip credentials if present (https://user:pwd@host/...).
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			if slash := strings.Index(rest, "/"); slash < 0 || at < slash {
+				rest = rest[at+1:]
+			}
+		}
+		if i := strings.Index(rest, "/"); i > 0 {
+			return rest[:i]
+		}
+		return rest
+	}
+	if i := strings.Index(url, "@"); i > 0 {
+		// scp-style: git@host:owner/repo
+		rest := url[i+1:]
+		if j := strings.Index(rest, ":"); j > 0 {
+			return rest[:j]
+		}
+	}
+	return ""
+}
+
+// kindFromHost maps a git host to its forge kind. Uses suffix
+// matching for self-hosted variants: gitlab.example.com → gitlab,
+// gitea.example.com → gitea. Returns "" for unrecognised hosts.
+func kindFromHost(host string) string {
+	host = strings.ToLower(host)
+	if host == "" {
+		return ""
+	}
+	if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasPrefix(host, "github.") {
+		return "github"
+	}
+	if host == "gitlab.com" || strings.HasSuffix(host, ".gitlab.com") || strings.Contains(host, "gitlab") {
+		return "gitlab"
+	}
+	if host == "codeberg.org" {
+		return "codeberg"
+	}
+	if strings.Contains(host, "gitea") || strings.Contains(host, "forgejo") {
+		return "gitea"
+	}
+	return ""
+}
+
+func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string) (repos, dirs []string) {
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || !e.IsDir() {
+			continue
+		}
+		if fileutil.IsGitRepo(ctx, filepath.Join(workDir, name)) {
+			repos = append(repos, name)
+		} else {
+			dirs = append(dirs, name)
+		}
+	}
+	return repos, dirs
+}
+
+func findNotableFiles(workDir string) []string {
+	notable := []string{
+		"README.md", "readme.md", "package.json", "go.mod",
+		"Cargo.toml", "pyproject.toml", "requirements.txt",
+		"Makefile", "docker-compose.yml", "docker-compose.yaml",
+		"compose.yaml", "compose.yml", "Dockerfile",
+		".env", "tsconfig.json", "pom.xml", "build.gradle",
+	}
+	var found []string
+	for _, f := range notable {
+		if _, err := os.Stat(filepath.Join(workDir, f)); err == nil {
+			found = append(found, f)
+		}
+	}
+	return found
+}
+
+// readFirstLine returns the first non-blank non-heading line of the
+// README at path, capped and sanitised so that hostile repo content
+// can't inject agent instructions into the steering file.
+//
+// The sanitisation chain is required because the readFirstLine output
+// is written verbatim into ~/.kiro/steering/environment.md which
+// kiro-cli treats as authoritative agent context. An attacker with
+// write access to a workspace repo (including agent-cloned upstreams
+// with crafted READMEs) could otherwise inject markdown link syntax,
+// HTML tags, control characters, or newline escapes that influence
+// agent behaviour.
+//
+// Sanitisation steps (in order):
+//  1. Cap the read at firstLineReadCap so a multi-GiB README can't
+//     OOM the container.
+//  2. Drop CR/LF/tab in the candidate line before truncation so a
+//     newline-smuggled second "line" can't appear in the output.
+//  3. Strip hidden Unicode codepoints (TAG chars, zero-width joiners,
+//     bidi controls) via api.SanitizeUnicode.
+//  4. Drop lines containing markdown link syntax (inline, reference,
+//     or image), HTML tags, backticks, or bare URLs — each of which
+//     the agent renders or follows.
+func readFirstLine(path string) string {
+	data, err := readCappedFile(path, firstLineReadCap)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.SplitN(string(data), "\n", 10) {
+		line = strings.TrimSpace(line)
+		if line == "" || isMarkdownHeading(line) {
+			continue
+		}
+		// Replace CR/LF/tab with space before truncation; the
+		// 100-char cap then can't straddle an injected newline.
+		line = strings.Map(func(r rune) rune {
+			switch r {
+			case '\n', '\r', '\t':
+				return ' '
+			}
+			return r
+		}, line)
+		// Strip hidden Unicode (TAG chars, zero-width joiners,
+		// bidi controls). Same helper we apply to tool output.
+		line = api.SanitizeUnicode(line)
+		// Drop lines that contain markdown link syntax (inline
+		// `](`, reference `[`/`]`, image `![`), HTML tags,
+		// backticks, or bare URLs. Safer to show no description
+		// than an injected one. A README's first description
+		// line has no legitimate need for any of these.
+		if strings.ContainsAny(line, "[]<`") ||
+			strings.Contains(line, "http://") ||
+			strings.Contains(line, "https://") {
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 100 {
+			return truncateUTF8(line, 100) + "..."
+		}
+		return line
+	}
+	return ""
+}
+
+// isMarkdownHeading reports whether line is a true CommonMark ATX
+// heading: one to six `#` followed by whitespace or end-of-line.
+// `#hashtag` content (no space after `#`) is NOT a heading and must
+// fall through so legitimate README first lines are kept.
+func isMarkdownHeading(line string) bool {
+	if line == "" || line[0] != '#' {
+		return false
+	}
+	i := 0
+	for i < len(line) && line[i] == '#' {
+		i++
+	}
+	if i > 6 {
+		return false
+	}
+	return i == len(line) || line[i] == ' ' || line[i] == '\t'
+}
+
+// truncateUTF8 returns s truncated to at most n bytes without splitting
+// a multi-byte UTF-8 rune. The 100-byte cap in readFirstLine would
+// otherwise slice mid-rune, producing invalid UTF-8 in the steering
+// file.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// Walk back from the n-byte boundary to the nearest rune start.
+	// A UTF-8 continuation byte has the bit pattern 10xxxxxx; back
+	// up past them to land on a leading byte.
+	for n > 0 && s[n]&0xC0 == 0x80 {
+		n--
+	}
+	return s[:n]
+}

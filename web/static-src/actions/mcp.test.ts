@@ -3,16 +3,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-}));
+vi.mock("../toast.js", () =>
+  import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
+);
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
   CancellableSlot: class {
     start() {
       return new AbortController().signal;
@@ -20,7 +19,6 @@ vi.mock("../api-client.js", () => ({
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     abort() {}
   },
-  apiGet: vi.fn().mockResolvedValue(null),
   apiGetTyped: vi.fn().mockResolvedValue(null),
 }));
 

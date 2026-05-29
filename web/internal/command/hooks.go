@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"vibekit/internal/api"
+	"vibekit/internal/fileutil"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.
@@ -38,7 +39,7 @@ type hookCreatePayload struct {
 // validateHookPayload decodes + validates a CmdCreateHook payload.
 func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
-		return p, "", http.StatusBadRequest, errInvalidPayload
+		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
 	if len(p.Name) > MaxHookField || len(p.Description) > MaxHookField ||
 		len(p.EventType) > MaxHookField || len(p.ActionType) > MaxHookField ||
@@ -120,11 +121,11 @@ func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := api.SaveBytes(hookPath, data, 0o600); err != nil {
+	if err := fileutil.SaveBytes(hookPath, data, 0o600); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	relPath := filepath.Join(".kiro", "hooks", safeName+".json")
 	slog.Info("hook created from chat", keyName, p.Name, "path", relPath)
-	d.Respond(w, cmd.RequestID, map[string]any{"ok": true, "path": relPath})
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"path": relPath}))
 }

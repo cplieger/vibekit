@@ -15,7 +15,7 @@
 
 import { patchSettings } from "./persist.js";
 import type { PermissionMode, AppSettings } from "./persist.js";
-import { el } from "./dom.js";
+import { el, maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
@@ -74,9 +74,7 @@ class PermissionsUIController {
       });
     }
 
-    const supCheckbox = document.getElementById(
-      "supervised-default-checkbox",
-    ) as HTMLInputElement | null;
+    const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default === true;
       supCheckbox.addEventListener("change", () => {
@@ -108,7 +106,7 @@ class PermissionsUIController {
 
     for (const p of ["no_commands", "safe_commands", "all_commands"] as ShellPolicy[]) {
       const id = `shell-policy-${p}`;
-      const radio = document.getElementById(id) as HTMLInputElement | null;
+      const radio = maybeEl<HTMLInputElement>(id);
       if (radio === null) {
         continue;
       }
@@ -122,10 +120,10 @@ class PermissionsUIController {
       });
     }
 
-    const input = document.getElementById("command-rules-input") as HTMLInputElement | null;
-    const addBtn = document.getElementById("command-rules-add");
-    const modeSel = document.getElementById("command-rules-mode") as HTMLSelectElement | null;
-    const prioSel = document.getElementById("command-rules-priority") as HTMLSelectElement | null;
+    const input = maybeEl<HTMLInputElement>("command-rules-input");
+    const addBtn = maybeEl("command-rules-add");
+    const modeSel = maybeEl<HTMLSelectElement>("command-rules-mode");
+    const prioSel = maybeEl<HTMLSelectElement>("command-rules-priority");
     if (input !== null && addBtn !== null) {
       const submit = (): void => {
         const val = input.value.trim();
@@ -264,7 +262,7 @@ class PermissionsUIController {
   }
 
   private renderRuleChips(): void {
-    const container = document.getElementById("command-rules-chips");
+    const container = maybeEl("command-rules-chips");
     if (container === null) {
       return;
     }
@@ -342,8 +340,8 @@ class PermissionsUIController {
     this.ignoreFiles = [...(initial.agent_ignore_files ?? [])];
     this.renderIgnoreChips();
 
-    const input = document.getElementById("agent-ignore-input") as HTMLInputElement | null;
-    const addBtn = document.getElementById("agent-ignore-add");
+    const input = maybeEl<HTMLInputElement>("agent-ignore-input");
+    const addBtn = maybeEl("agent-ignore-add");
     if (input === null || addBtn === null) {
       return;
     }
@@ -371,7 +369,7 @@ class PermissionsUIController {
   }
 
   private renderIgnoreChips(): void {
-    const container = document.getElementById("agent-ignore-chips");
+    const container = maybeEl("agent-ignore-chips");
     if (container === null) {
       return;
     }

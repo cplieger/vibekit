@@ -13,11 +13,7 @@ import {
   type RuntimeState,
   configured,
   status,
-  refetchServers,
-  refetchStatus,
-  setRenderCallback,
-  setStatus,
-  deleteStatus,
+  mcpState,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
@@ -156,6 +152,14 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
   failed: { css: "failed", title: "Failed to initialise" },
 };
 
+/** Type-narrowing guard for the "failed" RuntimeStatus variant. */
+function isFailedWithError(
+  st: RuntimeStatus,
+): st is RuntimeStatus & { state: "failed"; error: string } {
+  const FAILED: RuntimeState = "failed";
+  return st.state === FAILED && st.error !== "";
+}
+
 function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
   const dot = document.createElement("span");
   dot.className = "mcp-dot";
@@ -171,7 +175,7 @@ function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElem
   } else {
     const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     dot.classList.add(meta.css);
-    if (st.state === "failed" && st.error !== "") {
+    if (isFailedWithError(st)) {
       dot.title = `Failed to initialise: ${st.error}`;
       dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
     } else {
@@ -187,7 +191,7 @@ function renderMeta(s: Server, st: RuntimeStatus | undefined): string {
     return "Disabled";
   }
   const origin = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
-  if (st?.state === "failed" && st.error !== "") {
+  if (st !== undefined && isFailedWithError(st)) {
     return `${origin} — ${st.error}`;
   }
   return origin;
@@ -209,7 +213,7 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
       {
         silent: true,
         onSuccess: () => {
-          refetchServers();
+          mcpState.refetchServers();
         },
       },
     );
@@ -280,7 +284,7 @@ function renderDeleteBtn(s: Server): HTMLButtonElement {
         { id: s.id },
         {
           onSuccess: () => {
-            refetchServers();
+            mcpState.refetchServers();
           },
         },
       );
@@ -312,7 +316,7 @@ async function openEditModal(id: string): Promise<void> {
 
 export function initMCP(): void {
   buildSectionScaffold();
-  setRenderCallback(renderSection);
+  mcpState.setRenderCallback(renderSection);
 
   const close = el<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => {
@@ -334,14 +338,14 @@ export function initMCP(): void {
   observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
 
   onSSE("mcp_config_changed", () => {
-    refetchServers();
+    mcpState.refetchServers();
   });
   onSSE("mcp_connected", (_chat, p) => {
-    setStatus(p.server, { name: p.server, state: "connected" });
+    mcpState.setStatus(p.server, { name: p.server, state: "connected" });
     renderSection();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    setStatus(p.server, {
+    mcpState.setStatus(p.server, {
       name: p.server,
       state: "needs_auth",
       oauth_url: p.url,
@@ -349,7 +353,7 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_failed", (_chat, p) => {
-    setStatus(p.server, {
+    mcpState.setStatus(p.server, {
       name: p.server,
       state: "failed",
       error: p.error,
@@ -357,21 +361,21 @@ export function initMCP(): void {
     renderSection();
   });
   onSSE("mcp_disconnected", (_chat, p) => {
-    deleteStatus(p.server);
+    mcpState.deleteStatus(p.server);
     renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
-    updatePrewarmStatus(p.package, p.state);
+    updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
   });
 
-  refetchServers();
-  refetchStatus();
+  mcpState.refetchServers();
+  mcpState.refetchStatus();
 }
 
 // --- Prewarm progress indicator ---
 
 /** Show/hide a prewarm status badge on the server row matching the package name. */
-function updatePrewarmStatus(pkg: string, state: string): void {
+function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
   // Find the server row whose configured command's npx package matches exactly.
   const rows = document.querySelectorAll<HTMLElement>(".mcp-row");
   for (const row of rows) {
@@ -403,7 +407,7 @@ function updatePrewarmStatus(pkg: string, state: string): void {
       }
     }
     badge.textContent = state === "installing" ? "Installing…" : "Install failed";
-    badge.classList.toggle("prewarm-failed", state === "failed");
+    badge.classList.toggle("prewarm-failed", state !== "installing");
     return;
   }
 }

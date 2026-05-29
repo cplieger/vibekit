@@ -6,6 +6,43 @@
 // ---------------------------------------------------------------------------
 
 const activePills = new Set<HTMLElement>();
+const pillContentMap = new WeakMap<
+  HTMLElement,
+  {
+    contentEl: HTMLElement;
+    opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal };
+  }
+>();
+
+// Single delegated document listeners for all pills.
+document.addEventListener("click", (e: MouseEvent) => {
+  for (const pill of activePills) {
+    if (!pill.classList.contains("pill-expanded")) {
+      continue;
+    }
+    if (pill.contains(e.target as Node)) {
+      continue;
+    }
+    const entry = pillContentMap.get(pill);
+    if (entry !== undefined) {
+      collapse(pill, entry.contentEl, entry.opts?.onCollapse);
+    }
+  }
+});
+
+document.addEventListener("keydown", (e: KeyboardEvent) => {
+  if (e.key !== "Escape") {
+    return;
+  }
+  for (const pill of [...activePills]) {
+    if (pill.classList.contains("pill-expanded")) {
+      const entry = pillContentMap.get(pill);
+      if (entry !== undefined) {
+        collapse(pill, entry.contentEl, entry.opts?.onCollapse);
+      }
+    }
+  }
+});
 
 export function makeExpandable(
   pill: HTMLElement,
@@ -13,6 +50,7 @@ export function makeExpandable(
   opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal },
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
+  pillContentMap.set(pill, opts !== undefined ? { contentEl, opts } : { contentEl });
 
   pill.addEventListener(
     "click",
@@ -21,6 +59,7 @@ export function makeExpandable(
       if (contentEl.contains(target) && target !== contentEl) {
         return;
       }
+      e.stopPropagation();
       togglePill(pill, contentEl, opts);
     },
     listenerOpts,
@@ -35,32 +74,6 @@ export function makeExpandable(
         togglePill(pill, contentEl, opts);
       } else if (e.key === "Escape" && pill.classList.contains("pill-expanded")) {
         e.preventDefault();
-        collapse(pill, contentEl, opts?.onCollapse);
-      }
-    },
-    listenerOpts,
-  );
-
-  // Close on outside click.
-  document.addEventListener(
-    "click",
-    (e: MouseEvent) => {
-      if (!pill.classList.contains("pill-expanded")) {
-        return;
-      }
-      if (pill.contains(e.target as Node)) {
-        return;
-      }
-      collapse(pill, contentEl, opts?.onCollapse);
-    },
-    listenerOpts,
-  );
-
-  // Close on Escape anywhere.
-  document.addEventListener(
-    "keydown",
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape" && pill.classList.contains("pill-expanded")) {
         collapse(pill, contentEl, opts?.onCollapse);
       }
     },

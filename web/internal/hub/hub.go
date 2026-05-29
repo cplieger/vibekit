@@ -19,6 +19,7 @@ import (
 	"vibekit/internal/buffer"
 	"vibekit/internal/checkpoint"
 	"vibekit/internal/command"
+	"vibekit/internal/dedup"
 	"vibekit/internal/ignore"
 	"vibekit/internal/pending"
 	"vibekit/internal/permissions"
@@ -37,13 +38,8 @@ const (
 	// buffers (agent terminals and the PTY shell scrollback). 64 KB
 	// covers a full terminal screen at 200 cols × 50 rows with
 	// generous ANSI escapes.
-	outputBufferLimit = 64 * 1024
+	outputBufferLimit = buffer.DefaultOutputCap
 )
-
-type idempotencyEntry struct {
-	ts     time.Time
-	result []byte
-}
 
 // lifecyclePlane groups Hub fields related to process lifecycle,
 // shutdown coordination, and workspace paths.
@@ -73,7 +69,7 @@ type bridgePlane struct {
 type ssePlane struct {
 	ctrl         *sseController
 	replayBuf    *replayRing
-	idempotency  *idempotencyCache
+	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
 }
 
@@ -87,10 +83,12 @@ type permPlane struct {
 
 // Hub is the central coordinator.
 type Hub struct {
-	lifecycle *lifecyclePlane
-	bridge    *bridgePlane
-	sse       *ssePlane
-	perm      *permPlane
+	lifecycle    *lifecyclePlane
+	bridge       *bridgePlane
+	sse          *ssePlane
+	perm         *permPlane
+	bufLifecycle *buffer.Lifecycle
+	coord        *BridgeCoordinator
 
 	push               api.PushService
 	chatStore          api.ChatStore
@@ -98,13 +96,13 @@ type Hub struct {
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
 	permArgsFn         func() []string
-	preBridgeSpawn     func() // optional; fired before each new bridge starts
+	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	checkpoints        CheckpointService
+	checkpoints        api.CheckpointService
 	lines              *buffer.LineTracker
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
@@ -147,13 +145,13 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		lifecycle: lc,
 		bridge: &bridgePlane{
 			factory:       factory,
-			mgr:           newBridgeManager(factory),
+			mgr:           newBridgeManager(factory, &lc.inflight),
 			assistantBufs: buffer.NewStore(),
 		},
 		sse: &ssePlane{
 			ctrl:         sseC,
 			replayBuf:    sseC.replay,
-			idempotency:  newIdempotencyCache(),
+			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
 		},
 		perm: &permPlane{
@@ -169,24 +167,38 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	for _, o := range opts {
 		o(h)
 	}
-	h.translator = translate.New(h)
-	h.dispatcher = command.New(h)
+	h.translator = translate.New(h, h.lifecycle.configDir)
+	h.dispatcher = command.New(h, command.WithPrompter(h))
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
+	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
+	h.bufLifecycle = &buffer.Lifecycle{
+		ConfigDir: lc.configDir,
+		Store:     h.bridge.assistantBufs,
+	}
 	if lc.configDir != "" {
 		h.perm.rules = permissions.NewCommandRules(lc.configDir)
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		h.checkpoints = &checkpointAdapter{store: checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
+		h.checkpoints = checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
 			h.broadcastConflict(api.ChatID(chatID), p)
-		})}
+		})
 	}
 	go h.cleanIdempotency()
 	go h.cullIdleBridges()
 	return h
+}
+
+// UtilityPrompt delegates to the utility bridge, satisfying
+// api.UtilityPrompter. The bridge is lazily constructed on first call.
+func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
+	h.bridge.utilityOnce.Do(func() {
+		h.bridge.utility = newUtilityBridge(h.lifecycle.shutdownCtx, h.bridge.factory, h.Models)
+	})
+	return h.bridge.utility.UtilityPrompt(ctx, prompt)
 }
 
 // Rules returns the shared CommandRules instance so callers outside
@@ -294,10 +306,11 @@ func (h *Hub) SetMCPOnChange(fn func()) { h.mcpRegistry.SetOnChange(fn) }
 // per-repo steering inventory is on disk by the time kiro-cli reads
 // it during session creation.
 //
-// The callback runs synchronously on the spawn path, so it must be
-// fast (the existing steering.Generate is bounded by the workspace
-// walk + skip-if-unchanged write — typically a few milliseconds).
-func (h *Hub) SetPreBridgeSpawn(fn func()) { h.preBridgeSpawn = fn }
+// The callback receives the per-request context so it can short-circuit
+// on client disconnection. It runs synchronously on the spawn path, so
+// it must be fast (the existing steering.Generate is bounded by the
+// workspace walk + skip-if-unchanged write — typically a few ms).
+func (h *Hub) SetPreBridgeSpawn(fn func(context.Context)) { h.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).
@@ -356,7 +369,7 @@ func (h *Hub) Shutdown() {
 	// then returns "change rejected by user" to a kiro-cli that's
 	// already dead, which is harmless.
 	for _, id := range h.listChatIDsWithPending() {
-		h.flushPendingForChat(context.Background(), id, api.ClearReasonShutdown)
+		h.flushPendingForChat(h.lifecycle.shutdownCtx, id, api.ClearReasonShutdown)
 	}
 
 	// 1c. Cancel the push service's request context so any pending
@@ -411,7 +424,7 @@ func (h *Hub) PushMCPConfig() {
 	servers := h.mcpConfig.ACPServers(ctx)
 	snapshot := h.bridge.mgr.all()
 	for _, sb := range snapshot {
-		if err := sb.bridge.Notify(ctx, methodSetConfigOption, sessionParams(sb, map[string]any{
+		if err := sb.bridge.Notify(ctx, api.MethodSetConfigOption, command.SessionParams(sb, map[string]any{
 			"option": "mcpServers",
 			"value":  servers,
 		})); err != nil {
@@ -450,17 +463,10 @@ func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 // broadcastConflict fans a cross-chat drift event out to SSE
 // subscribers. Wired into checkpoint.NewStore; every call is the
 // result of a Snapshot detecting drift, so we just wrap the
-// payload into a ServerEvent. The checkpoint package doesn't
-// import api/ to avoid a cycle; we do the shape translation here.
+// payload into a ServerEvent. Since api.ConflictDetectedPayload is
+// a type alias for checkpoint.ConflictPayload, no field copy needed.
 func (h *Hub) broadcastConflict(chatID api.ChatID, p *checkpoint.ConflictPayload) {
-	h.Broadcast(context.Background(), api.NewEvent(api.EventConflictDetected, chatID, api.ConflictDetectedPayload{
-		Path:        p.Path,
-		OtherChat:   p.OtherChat,
-		ExpectedSHA: p.ExpectedSHA,
-		ActualSHA:   p.ActualSHA,
-		Tag:         p.Tag,
-		TS:          p.TS,
-	}))
+	h.Broadcast(h.lifecycle.shutdownCtx, api.NewEvent(api.EventConflictDetected, chatID, *p))
 }
 
 // parentACPSession returns the ACP session id of the running bridge
@@ -509,7 +515,13 @@ func (h *Hub) cullIdleBridges() {
 // its own mutex. Exported via lowercase to keep the hot path testable
 // without driving a real ticker.
 func (h *Hub) cullIdleBridgesOnce() {
-	toClose := h.bridge.mgr.selectIdle(bridgeIdleTimeout)
+	count := h.bridge.mgr.count()
+	timeout := bridgeIdleTimeout
+	if count > 5 {
+		adaptive := max(bridgeIdleTimeout/time.Duration(count), 5*time.Minute)
+		timeout = adaptive
+	}
+	toClose := h.bridge.mgr.selectIdle(timeout)
 	for _, c := range h.bridge.mgr.closeAndStop(toClose) {
 		slog.Info("culled idle bridge", "chat_id", c.chatID,
 			"idle_since", c.sb.lastActiveAt.Format(time.RFC3339))

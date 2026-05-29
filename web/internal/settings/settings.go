@@ -40,8 +40,11 @@ const Filename = filename
 type cache struct {
 	mtime     time.Time
 	sfGroup   singleflight.Group
+	parsed    map[string]json.RawMessage
 	configDir string
 	data      []byte
+	parsedGen uint64
+	gen       uint64
 	size      int64
 	mu        sync.Mutex
 }
@@ -84,6 +87,7 @@ func (c *cache) load() ([]byte, error) {
 				c.data = nil
 				c.mtime = time.Time{}
 				c.size = 0
+				c.gen++
 				c.mu.Unlock()
 				return result{data: nil, err: nil}, nil
 			}
@@ -103,6 +107,7 @@ func (c *cache) load() ([]byte, error) {
 				c.data = nil
 				c.mtime = time.Time{}
 				c.size = 0
+				c.gen++
 				c.mu.Unlock()
 				return result{data: nil, err: nil}, nil
 			}
@@ -118,6 +123,7 @@ func (c *cache) load() ([]byte, error) {
 		c.data = data
 		c.mtime = info.ModTime()
 		c.size = info.Size()
+		c.gen++
 		c.mu.Unlock()
 
 		return result{data: data, err: nil}, nil
@@ -147,17 +153,12 @@ func ReadBytes(ctx context.Context, configDir string) ([]byte, error) {
 // tag for diagnostics.
 func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 	var zero T
-	data, err := ReadBytes(ctx, configDir)
+	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
 		slog.Warn("settings: read config.json for "+tag, "error", err)
 		return zero, false
 	}
-	if data == nil {
-		return zero, false
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("settings: parse config.json for "+tag, "error", err)
+	if raw == nil {
 		return zero, false
 	}
 	v, ok := raw[key]
@@ -177,17 +178,12 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 // on success. This is the pointer-based variant of Field for callers
 // that need to unmarshal into an existing variable.
 func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
-	data, err := ReadBytes(ctx, configDir)
+	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
 		slog.Warn("settings: read config.json for "+tag, "error", err)
 		return false
 	}
-	if data == nil {
-		return false
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("settings: parse config.json for "+tag, "error", err)
+	if raw == nil {
 		return false
 	}
 	v, ok := raw[key]
@@ -199,4 +195,37 @@ func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
 		return false
 	}
 	return true
+}
+
+// parsedMap returns the cached parsed map[string]json.RawMessage for
+// the given configDir. The map is invalidated when the underlying
+// bytes change (mtime-based via ReadBytes).
+func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
+	data, err := ReadBytes(ctx, configDir)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, nil
+	}
+	c := getCache(configDir)
+	c.mu.Lock()
+	if c.parsed != nil && c.parsedGen == c.gen {
+		m := c.parsed
+		c.mu.Unlock()
+		return m, nil
+	}
+	curGen := c.gen
+	c.mu.Unlock()
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.parsed = raw
+	c.parsedGen = curGen
+	c.mu.Unlock()
+	return raw, nil
 }

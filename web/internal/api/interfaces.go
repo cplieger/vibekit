@@ -2,15 +2,26 @@
 // components. All cross-component calls go through these interfaces,
 // enabling testability (mock any component) and swappability.
 //
-// This package imports only stdlib. Implementation packages import api,
-// never the reverse.
+// This package contains three concern groups:
+//
+//  1. Domain types and interfaces — the contract surface (interfaces.go,
+//     domain_chat.go, events.go, commands.go, domain_rpc.go, mcp.go,
+//     push_types.go, methods.go, strings.go).
+//  2. HTTP response/request helpers (httputil.go, decode.go,
+//     fileio_serve.go) — WriteJSON, BadRequest, RequireMethod, etc.
+//  3. File I/O utilities (fileio.go) — SaveBytes, SaveJSON,
+//     CleanupStaleTemps.
+//
+// Implementation packages import api, never the reverse. Domain types
+// Tag, FileChange, and ConflictPayload live in checkpoint/types (a
+// leaf package with zero internal dependencies).
 package api
 
 import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/checkpoint"
+	checkpoint "vibekit/internal/checkpoint/types"
 )
 
 // --- Persistence ---
@@ -36,6 +47,10 @@ type ChatStore interface {
 	// List returns every chat's header (no messages) sorted by UpdatedAt
 	// descending. Checks ctx.Err() between per-file reads.
 	List(ctx context.Context) []ChatHeader
+	// ChildrenOf returns the IDs of chats whose ParentChatID equals
+	// parentID. Used by delete to cascade to rewind children without
+	// loading the full chat list.
+	ChildrenOf(ctx context.Context, parentID ChatID) []ChatID
 	// BuildHistory returns a plain-text transcript used for compress
 	// priming. Returns "" if the chat is missing or empty.
 	BuildHistory(ctx context.Context, id ChatID) string
@@ -66,6 +81,32 @@ type ChatStore interface {
 }
 
 // --- Communication ---
+
+// CommandBridge abstracts the per-chat ACP bridge for command handlers.
+// Declared here (consumer-side) so both command and hub can reference
+// the same contract without circular imports.
+type CommandBridge interface {
+	// Call sends an RPC call to kiro-cli.
+	Call(ctx context.Context, method string, params any) (*RPCResponse, error)
+	// Notify sends a one-way notification to kiro-cli.
+	Notify(ctx context.Context, method string, params any) error
+	// Respond sends a permission response to kiro-cli.
+	Respond(ctx context.Context, requestID int64, result any, err error) error
+	// SessionID returns the current ACP session ID.
+	SessionID() SessionID
+	// TryAcquireForPrompt attempts to lock the bridge for prompting.
+	TryAcquireForPrompt() bool
+	// ReleaseAfterPrompt releases the prompt lock.
+	ReleaseAfterPrompt()
+	// SetLastActive updates the last-active timestamp.
+	SetLastActive()
+	// SetPrompting sets the bridge state to prompting (for recovery).
+	SetPrompting()
+	// IsPrimed reports whether the bridge has been primed.
+	IsPrimed() bool
+	// SetPrimed marks the bridge as primed.
+	SetPrimed()
+}
 
 // Broadcaster sends events to all connected SSE clients.
 type Broadcaster interface {
@@ -162,7 +203,7 @@ type ACPBridgeFactory func() ACPBridge
 
 // SteeringGenerator generates steering files for kiro-cli.
 type SteeringGenerator interface {
-	Generate()
+	Generate(ctx context.Context)
 	CustomPath() string
 }
 
@@ -219,6 +260,26 @@ type PushService interface {
 // typed contract.
 type UtilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string) (string, error)
+}
+
+// --- Pending Changes ---
+
+// PendingStore is the consumer-side interface for the pending-change
+// subsystem. The hub uses these methods for SSE replay, rejection on
+// bridge teardown, and full-content retrieval. The concrete
+// *pending.Store satisfies this interface implicitly.
+type PendingStore interface {
+	// ListForChat returns all pending changes for the given chat.
+	ListForChat(chatID ChatID) []PendingChange
+	// Get returns a single pending change by tool-call ID.
+	Get(toolCallID string) (PendingChange, bool)
+	// ChatIDs returns the IDs of all chats with pending changes.
+	ChatIDs() []ChatID
+	// RejectAllForChat rejects all pending changes for the given chat,
+	// returning the rejected snapshots.
+	RejectAllForChat(chatID ChatID) []PendingChange
+	// Resolve resolves a single pending change with the given action.
+	Resolve(ctx context.Context, toolCallID string, action PendingAction) (PendingChange, error)
 }
 
 // --- Checkpoints ---

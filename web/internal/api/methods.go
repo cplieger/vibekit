@@ -11,6 +11,7 @@ const (
 	MethodSessionNew  = "session/new"
 	MethodSessionLoad = "session/load"
 	MethodSetModel    = "session/set_model"
+	MethodCancel      = "session/cancel"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so
@@ -25,3 +26,53 @@ const (
 	MethodCommandsExecute = "_kiro.dev/commands/execute"
 	MethodCommandsOptions = "_kiro.dev/commands/options"
 )
+
+// Session-level ACP method names — prompt and subagent spawn.
+const (
+	MethodPrompt = "session/prompt"
+	MethodSpawn  = "session/spawn"
+)
+
+// Session-level ACP method names — streaming updates, permissions,
+// config, and subagent lifecycle.
+const (
+	MethodSessionUpdate      = "session/update"
+	MethodRequestPermission  = "session/request_permission"
+	MethodSetConfigOption    = "session/setConfigOption"
+	MethodTerminate          = "session/terminate"
+	MethodAttach             = "session/attach"
+	MethodList               = "session/list"
+	MethodMessageSend        = "message/send"
+)
+
+// ACP content-block type discriminator constants. The "text" value is
+// used across hub, command, and translate packages; declaring it here
+// provides a single source of truth so a protocol rename is one edit.
+const ContentTypeText = "text"
+
+// ModelAuto is the sentinel model value meaning "keep current / use
+// task-based selection". Used by bridge, hub, and model-switch logic.
+const ModelAuto = "auto"
+
+// ACP content-block JSON field name constants. These are the wire-format
+// keys inside a content block object (distinct from ContentTypeText which
+// is the field VALUE). Single source of truth for hub, command, and
+// translate packages.
+const (
+	ContentKeyType = "type"
+	ContentKeyText = "text"
+)
+
+// TextBlock returns a canonical ACP text content block:
+//
+//	{"type": "text", "text": content}
+//
+// Eliminates ad-hoc map construction across hub, command, and translate.
+func TextBlock(content string) map[string]any {
+	return map[string]any{ContentKeyType: ContentTypeText, ContentKeyText: content}
+}
+
+// KeySessionID is the ACP wire key for the session identifier in
+// parameter maps. Single source of truth; hub and command packages
+// reference this constant instead of bare "sessionId" literals.
+const KeySessionID = "sessionId"

@@ -38,8 +38,8 @@ var levelVar slog.LevelVar
 // after the handler is wired so operators get a breadcrumb instead
 // of a silent fallback. A legitimately-missing config.json (first
 // boot) is not an error and produces no warn.
-func Install(configDir string) {
-	on, ok := settings.Field[bool](context.Background(), configDir, "debug_logs", "debug_logs")
+func Install(ctx context.Context, configDir string) {
+	on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs, settings.KeyDebugLogs)
 	if on && ok {
 		levelVar.Set(slog.LevelDebug)
 	} else {

@@ -18,18 +18,32 @@ import {
   ICON_TAB_GIT,
   ICON_TAB_FILES,
   ICON_TAB_EDITOR,
-  ICON_TAB_FOLLOW,
   ICON_TAB_HISTORY,
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
-import { signal, effect } from "./signals.js";
+import { signal, effect } from "./lib/reactive/index.js";
 import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
+import { promoteRewindChat, discardRewindChat } from "./actions/rewind.js";
+import { showContextMenu } from "./context-menu.js";
+import { confirm as confirmDialog } from "./confirm.js";
 
 // --- Types ---
 
-type TabKind = "chat" | "plan" | "settings" | "git" | "files" | "editor" | "follow" | "history";
+/** Default view selector for each tab kind. Callers can omit `view` from
+ *  TabSpec when the standard mapping applies. */
+export const TAB_VIEWS = {
+  chat: "#chat-view",
+  plan: "#chat-view",
+  settings: "#settings-view",
+  git: "#git-view",
+  files: "#files-view",
+  editor: "#editor-view",
+  history: "#history-view",
+} as const;
+
+export type TabKind = keyof typeof TAB_VIEWS;
 
 /** Everything needed to render and route a tab. */
 export interface TabSpec {
@@ -60,22 +74,16 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   git: ICON_TAB_GIT,
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
-  follow: ICON_TAB_FOLLOW,
   history: ICON_TAB_HISTORY,
 };
 
-/** Default view selector for each tab kind. Callers can omit `view` from
- *  TabSpec when the standard mapping applies. */
-export const TAB_VIEWS: Record<TabKind, string> = {
-  chat: "#chat-view",
-  plan: "#chat-view",
-  settings: "#settings-view",
-  git: "#git-view",
-  files: "#files-view",
-  editor: "#editor-view",
-  follow: "#follow-view",
-  history: "#history-view",
-};
+/** Parse an SVG string into a DOM node via DOMParser.
+ *  Used instead of innerHTML to avoid XSS surface in the tab rendering path. */
+const svgParser = new DOMParser();
+function iconEl(svg: string): Node {
+  const doc = svgParser.parseFromString(svg, "image/svg+xml");
+  return document.importNode(doc.documentElement, true);
+}
 
 // --- Store ---
 
@@ -209,57 +217,15 @@ function showRewindChildPrompt(
   childIds: string[],
   opts?: { skipOnClose?: boolean },
 ): void {
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  const card = document.createElement("div");
-  card.className = "modal-card";
-  card.innerHTML = `
-    <p style="margin:0 0 var(--sp-3)">This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. What would you like to do?</p>
-    <div style="display:flex;gap:var(--sp-2);justify-content:flex-end">
-      <button class="btn-secondary" data-action="keep">Keep branches</button>
-      <button class="btn-danger" data-action="discard">Discard all</button>
-      <button class="btn-ghost" data-action="cancel">Cancel</button>
-    </div>
-  `;
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-
-  card.addEventListener("click", (e) => {
-    const action = (e.target as HTMLElement).dataset["action"];
-    if (!action) {
+  const msg = `This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. Discard all branches?`;
+  void confirmDialog(msg, "Discard all", "destructive").then((confirmed) => {
+    if (!confirmed) {
       return;
     }
-    overlay.remove();
-    if (action === "cancel") {
-      return;
-    }
-    if (action === "keep") {
-      // Promote all children (clear parent_chat_id via server command).
-      for (const cid of childIds) {
-        void import("./transport.js").then(({ send }) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          void send({
-            type: "promote_rewind_chat",
-            chat_id: cid,
-            request_id: `promote-${Date.now()}`,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any);
-        });
-      }
-    } else {
-      // Discard children: dispatch server-side delete for each, then close tabs.
-      for (const cid of childIds) {
-        void import("./transport.js").then(({ send }) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          void send({
-            type: "discard_rewind_chat",
-            chat_id: cid,
-            request_id: `discard-${Date.now()}`,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any);
-        });
-        closeTab(cid, { skipOnClose: true });
-      }
+    // Discard children: dispatch server-side delete for each, then close tabs.
+    for (const cid of childIds) {
+      void discardRewindChat.dispatch({ chatID: cid });
+      closeTab(cid, { skipOnClose: true });
     }
     // Now close the parent.
     closeTab(parentId, { ...opts, skipOnClose: false });
@@ -566,7 +532,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const icon = document.createElement("span");
   icon.className = "tab-icon";
-  icon.innerHTML = ICONS[tab.kind];
+  icon.replaceChildren(iconEl(ICONS[tab.kind]));
 
   const name = document.createElement("span");
   name.className = "tab-name";
@@ -574,7 +540,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const close = document.createElement("button");
   close.className = "tab-close";
-  close.innerHTML = ICON_CLOSE;
+  close.replaceChildren(iconEl(ICON_CLOSE));
   close.setAttribute("aria-label", `Close ${tab.name}`);
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();
@@ -594,42 +560,17 @@ function createTabEl(tab: TabSpec): HTMLElement {
       return;
     }
     e.preventDefault();
-    const menu = document.createElement("div");
-    menu.className = "tab-context-menu";
-    menu.style.position = "absolute";
-    menu.style.left = `${e.clientX}px`;
-    menu.style.top = `${e.clientY}px`;
-    const btn = document.createElement("button");
-    btn.textContent = "Promote (replace original)";
-    btn.className = "tab-context-item";
-    btn.addEventListener("click", () => {
-      menu.remove();
-      void import("./transport.js").then(({ send }) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        void send({
-          type: "promote_rewind_chat",
-          chat_id: s.id,
-          request_id: `promote-${Date.now()}`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any);
-      });
-    });
-    menu.appendChild(btn);
-    document.body.appendChild(menu);
-    const dismiss = (): void => {
-      menu.remove();
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escDismiss);
-    };
-    const escDismiss = (ev: KeyboardEvent): void => {
-      if (ev.key === "Escape") {
-        dismiss();
-      }
-    };
-    setTimeout(() => {
-      document.addEventListener("pointerdown", dismiss);
-      document.addEventListener("keydown", escDismiss);
-    }, 0);
+    showContextMenu(
+      [
+        {
+          label: "Promote (replace original)",
+          action: () => {
+            void promoteRewindChat.dispatch({ chatID: s.id });
+          },
+        },
+      ],
+      { x: e.clientX, y: e.clientY },
+    );
   });
 
   return el;

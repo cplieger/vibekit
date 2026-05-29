@@ -12,7 +12,7 @@
 import type { ToolStatus, ToolLocation, ToolDiff } from "./types.js";
 import { escText } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
-import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { fileIcon, toolIcon, iconEl, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { openFile, openFileDiff } from "./editor-openers.js";
 import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
@@ -88,7 +88,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
       appendToOutputBox(outputBox, opts.output);
     }
   } else {
-    el.innerHTML += buildDetails(opts);
+    el.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
       appendOutput(el, opts.output);
     }
@@ -154,7 +154,7 @@ function buildHeader(
 
   const iconSpan = document.createElement("span");
   iconSpan.className = "tool-icon";
-  iconSpan.innerHTML = toolIcon(info.kind, opts.title);
+  iconSpan.replaceChildren(iconEl(toolIcon(info.kind, opts.title)));
   header.appendChild(iconSpan);
 
   const titleSpan = document.createElement("span");
@@ -178,7 +178,7 @@ function buildHeader(
     btn.title = info.filePath;
     const fIcon = document.createElement("span");
     fIcon.className = "tool-file-icon";
-    fIcon.innerHTML = fileIcon(info.fileBasename, false);
+    fIcon.replaceChildren(iconEl(fileIcon(info.fileBasename, false)));
     btn.appendChild(fIcon);
     const fName = document.createElement("span");
     fName.className = "tool-file-name";
@@ -208,7 +208,7 @@ function buildHeader(
   toggle.className = "tool-toggle";
   toggle.setAttribute("aria-expanded", "false");
   toggle.setAttribute("aria-label", "Toggle tool details");
-  toggle.innerHTML = ICON_CHEVRON_DOWN;
+  toggle.replaceChildren(iconEl(ICON_CHEVRON_DOWN));
   header.appendChild(toggle);
 
   return header;
@@ -256,11 +256,11 @@ function wireToggle(el: HTMLElement): void {
     const b = el.querySelector(".tool-toggle")!;
     if (d.classList.contains("collapsed")) {
       d.classList.remove("collapsed");
-      b.innerHTML = ICON_CHEVRON_UP;
+      b.replaceChildren(iconEl(ICON_CHEVRON_UP));
       b.setAttribute("aria-expanded", "true");
     } else {
       d.classList.add("collapsed");
-      b.innerHTML = ICON_CHEVRON_DOWN;
+      b.replaceChildren(iconEl(ICON_CHEVRON_DOWN));
       b.setAttribute("aria-expanded", "false");
       setUserScrolledUp(true);
     }

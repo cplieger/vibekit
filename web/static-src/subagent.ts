@@ -22,6 +22,9 @@ import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { openModal } from "./modals.js";
 
+/** Number of trailing sentences shown in the sub-agent preview card. */
+const PREVIEW_SENTENCES = 4;
+
 const els = new Map<string, HTMLDivElement>();
 const transcripts = new Map<string, string>();
 let activeId = "";
@@ -59,7 +62,7 @@ export function appendToSubAgent(text: string): void {
   transcripts.set(activeId, acc);
   const preview = el.querySelector(".subagent-preview");
   if (preview !== null) {
-    preview.textContent = lastSentences(acc, 4);
+    preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
   }
   if (!$.subagentModal.classList.contains("hidden")) {
     const body = $.subagentModalBody;
@@ -122,7 +125,7 @@ export function createSubAgentCard(
   const preview = document.createElement("div");
   preview.className = "subagent-preview";
   if (storedOutput !== undefined && storedOutput !== "") {
-    preview.textContent = lastSentences(storedOutput, 4);
+    preview.textContent = lastSentences(storedOutput, PREVIEW_SENTENCES);
   }
   el.appendChild(preview);
 
@@ -169,7 +172,7 @@ export function updateSubAgentCard(
     transcripts.set(id, acc);
     const preview = el.querySelector(".subagent-preview");
     if (preview !== null) {
-      preview.textContent = lastSentences(acc, 4);
+      preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
     }
   }
   if (!$.subagentModal.classList.contains("hidden")) {

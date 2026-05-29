@@ -53,47 +53,28 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 	if relPath == "" {
 		return Tag(""), errors.New("snapshot: empty path")
 	}
-	// gcLock.RLock gates blob Put + event Append so the blob GC
-	// can't reap a just-written blob whose event hasn't landed
-	// yet. Moved inside Manager (instead of Store.Snapshot only)
-	// so every caller — including any future path that reaches
-	// Manager.Snapshot directly — inherits the coordination.
-	if m.gcLock != nil {
-		m.gcLock.RLock()
-		defer m.gcLock.RUnlock()
-	}
+	// Phase 1: validate and resolve path under lock.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if err := m.ensureLoaded(ctx); err != nil {
+		m.mu.Unlock()
 		return "", err
 	}
 	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
 		return "", err
 	}
-	// Read the pre-write content. A read error other than
-	// "file doesn't exist" is fatal; a missing file is recorded
-	// as an empty beforeSHA so Restore knows to delete on
-	// rollback. Pre-read size is capped at contentCap — ingesting
-	// a 200 MB pre-write state would let us snapshot a file we
-	// can never restore (Get refuses blobs over contentCap), and
-	// would OOM vibekit's container on the way in. Over-cap paths
-	// record an empty beforeSHA so the snapshot still lands;
-	// Restore is a no-op on that file (nothing to roll back to)
-	// and the afterSHA
-	// still pins the post-write content for forward diffing.
 	abs, err := m.absPath(relPath)
 	if err != nil {
+		m.mu.Unlock()
 		return "", err
 	}
+	m.mu.Unlock()
+
+	// Phase 2: blob I/O without the lock.
 	beforeSHA, err := m.readBeforeSHALocked(ctx, relPath, abs)
 	if err != nil {
 		return "", err
 	}
-	// Store the post-write content too so Diff has both endpoints
-	// and the cross-chat index has a real afterSHA (the SHA the
-	// file WILL have on disk once the caller's write lands). If
-	// newContent is nil (caller hasn't computed it yet or it's a
-	// delete), we skip the blob put and leave afterSHA empty.
 	var afterSHA string
 	if newContent != nil {
 		afterSHA, err = m.blobs.Put(ctx, newContent)
@@ -102,23 +83,14 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 		}
 	}
 
-	// Allocate the tag FIRST so the conflict event (if any) and
-	// the snapshot event that follows both carry the same tag.
-	// The two consumers — on-disk replay via Manager.Conflicts()
-	// and the live broadcast via onConf — would otherwise diverge:
-	// the persisted event got an empty Tag, while the broadcast
-	// carried the *previous* snapshot's latestTag. A conflict
-	// belongs to the snapshot that detected the drift, not the
-	// one before it, and not "no snapshot at all". allocateTag
-	// is idempotent — it reads state.turn/toolsInTurn without
-	// mutating; state.apply(kindSnapshot) is what advances them.
+	// Phase 3: re-acquire lock for tag allocation, conflict check, event append.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	tag := m.state.allocateTag()
 	turn, tool := parseTag(tag)
 
-	// Cross-chat conflict detection: before we emit our snapshot,
-	// check whether the disk content we just observed matches
-	// what any OTHER chat last left here. Drift means somebody
-	// else edited it between their write and our read.
+	// Cross-chat conflict detection.
 	if obs, conflict := m.index.check(m.chatID, relPath, beforeSHA); conflict {
 		confEv := event{
 			Kind:        kindConflict,
@@ -139,11 +111,6 @@ func (m *Manager) Snapshot(ctx context.Context, relPath string, newContent []byt
 				"expected_by", obs.chatID, "expected_sha", obs.expectedSHA,
 				"actual_sha", beforeSHA)
 		}
-		// Always broadcast the live conflict to the UI even if
-		// persistence failed. The conflict badge is best-effort
-		// client-state; losing the on-disk record is the cost
-		// of a transient fs error, but silently hiding the
-		// drift from the user is the real bug.
 		if m.onConf != nil {
 			m.onConf(m.chatID, &ConflictPayload{
 				Path:        relPath,
@@ -194,7 +161,7 @@ func (m *Manager) Conflicts(ctx context.Context) ([]ConflictPayload, error) {
 	if err := m.ensureLoaded(ctx); err != nil {
 		return nil, err
 	}
-	return m.state.conflicts.slice(), nil
+	return m.state.conflicts.Slice(), nil
 }
 
 // ReadBlob returns the content of a blob for this chat. Exposed so
@@ -245,9 +212,6 @@ func (m *Manager) ReferencedBlobs(ctx context.Context) []string {
 // SHA-256. Used at the ReadBlob entrypoint to reject malformed
 // input before it reaches the filesystem.
 func isHexHash(s string) bool {
-	if s == "" {
-		return true // empty = "no blob" marker
-	}
 	if len(s) != 64 {
 		return false
 	}

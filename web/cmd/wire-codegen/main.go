@@ -62,6 +62,7 @@ var WireTypes = []reflect.Type{
 	reflect.TypeFor[api.ToolDiff](),
 	reflect.TypeFor[api.ToolCall](),
 	reflect.TypeFor[api.PlanEntry](),
+	reflect.TypeFor[api.Block](),
 	reflect.TypeFor[api.CrewSubagent](),
 	reflect.TypeFor[api.CrewPendingStage](),
 	reflect.TypeFor[api.Crew](),

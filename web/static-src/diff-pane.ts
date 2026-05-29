@@ -5,7 +5,7 @@
 // conflict compare popup.
 // ---------------------------------------------------------------------------
 
-import type { DiffLine } from "./diff.js";
+import { lineDiff, type DiffLine } from "./diff.js";
 
 export interface DiffPaneOpts {
   /** Optional max rows. When set, rows beyond the limit are dropped and a
@@ -305,35 +305,29 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
       const source = opts.source;
       const { source: _, ...freshOpts } = opts;
       const freshDiffOpts: DiffPaneOpts = freshOpts;
-      import("./diff.js")
-        .then(({ lineDiff }) => {
-          const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
-          const rerendered = renderDiffPane(fresh, freshDiffOpts);
-          // Replace everything after the header (body + hunk toolbars +
-          // "+N more" footer). Hunk toolbars are siblings of the body,
-          // not children, so replacing only .diff-pane-body left stale
-          // toolbar buttons referencing old hunk indices.
-          const header = container.querySelector(".diff-pane-header");
-          const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
-          while (
-            insertionPoint !== null &&
-            container.lastChild !== null &&
-            container.lastChild !== header
-          ) {
-            container.removeChild(container.lastChild);
-          }
-          // Append all children from the re-rendered pane after its header.
-          const freshHeader = rerendered.querySelector(".diff-pane-header");
-          let node = freshHeader !== null ? freshHeader.nextSibling : rerendered.firstChild;
-          while (node !== null) {
-            const next = node.nextSibling;
-            container.appendChild(node);
-            node = next;
-          }
-        })
-        .catch((e: unknown) => {
-          console.error("[diff-pane] whitespace re-render failed", e);
-        });
+      const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
+      const rerendered = renderDiffPane(fresh, freshDiffOpts);
+      // Replace everything after the header (body + hunk toolbars +
+      // "+N more" footer). Hunk toolbars are siblings of the body,
+      // not children, so replacing only .diff-pane-body left stale
+      // toolbar buttons referencing old hunk indices.
+      const header = container.querySelector(".diff-pane-header");
+      const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
+      while (
+        insertionPoint !== null &&
+        container.lastChild !== null &&
+        container.lastChild !== header
+      ) {
+        container.removeChild(container.lastChild);
+      }
+      // Append all children from the re-rendered pane after its header.
+      const freshHeader = rerendered.querySelector(".diff-pane-header");
+      let node = freshHeader !== null ? freshHeader.nextSibling : rerendered.firstChild;
+      while (node !== null) {
+        const next = node.nextSibling;
+        container.appendChild(node);
+        node = next;
+      }
     }
   });
   return wrap;

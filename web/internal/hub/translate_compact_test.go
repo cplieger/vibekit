@@ -39,7 +39,7 @@ func BenchmarkHandleCompactionStatus(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				h.handleCompactionStatus(context.Background(), "bench", msg)
+				h.translator.HandleCompactionStatus(context.Background(), "bench", msg)
 			}
 		})
 	}

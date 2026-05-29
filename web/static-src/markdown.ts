@@ -43,12 +43,16 @@ const PARSE_SLICE_BYTES = 4096;
  *  schedule it as a fresh macro-task, allowing paint between
  *  callbacks). React's scheduler uses the same trick. */
 const yieldChannel = new MessageChannel();
-let yieldQueue: (() => void)[] = [];
+const yieldQueue: (() => void)[] = [];
+const MAX_DRAIN_PER_TICK = 4;
 yieldChannel.port1.onmessage = () => {
-  const fns = yieldQueue;
-  yieldQueue = [];
+  const count = Math.min(MAX_DRAIN_PER_TICK, yieldQueue.length);
+  const fns = yieldQueue.splice(0, count);
   for (const fn of fns) {
     fn();
+  }
+  if (yieldQueue.length > 0) {
+    yieldChannel.port2.postMessage(null);
   }
 };
 function nextTick(fn: () => void): void {
@@ -91,7 +95,9 @@ export interface MarkdownStream {
  *  own write buffer, 200ms flush schedule, and per-block decoration +
  *  animation hooks. Large writes split across tasks. */
 export function createMarkdownStream(el: HTMLElement): MarkdownStream {
-  const p: Parser = parser(domRenderer(el, { onBlockComplete: decorateAndAnimate }));
+  const p: Parser = parser(
+    domRenderer(el, { onBlockComplete: decorateAndAnimate, animateText: true }),
+  );
   let buffer = "";
   let pendingParse = ""; // text queued for chunked parsing
   let flushTimer: ReturnType<typeof setTimeout> | undefined;

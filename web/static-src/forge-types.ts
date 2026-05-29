@@ -28,20 +28,6 @@ export const DEFAULT_HOST: Record<ForgeKind, string> = {
   gitea: "",
 };
 
-/** Human-readable label for a forge kind (e.g. "GitHub", "Gitea / Forgejo"). */
-export function forgeKindLabel(kind: ForgeKind): string {
-  switch (kind) {
-    case "github":
-      return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "codeberg":
-      return "Codeberg";
-    case "gitea":
-      return "Gitea / Forgejo";
-  }
-}
-
 /** Centralized metadata for each forge kind. Single source of truth for
  *  display names and icon glyphs. */
 export const FORGE_META: Record<
@@ -73,3 +59,11 @@ export const FORGE_META: Record<
 //  If a unified local+remote registry is needed in the future, the
 //  shape can be reconstructed from /api/git/repos + /api/forges/.../repos
 //  responses or imported from wire/types.gen.ts.)
+
+/** URL template for the account-management page on each forge kind. */
+export const FORGE_URLS: Record<ForgeKind, (host: string) => string> = {
+  github: (host) => `https://${host}/settings/profile`,
+  gitlab: (host) => `https://${host}/-/profile`,
+  codeberg: (host) => `https://${host}/user/settings`,
+  gitea: (host) => (host === "" ? "" : `https://${host}/user/settings`),
+};

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,9 +30,12 @@ var documentExts = map[string]string{
 const MaxDocumentBytes = 10 * 1024 * 1024
 
 // BuildPromptBlocks constructs the ACP prompt content array.
-func BuildPromptBlocks(text string, attachments []api.Attachment, resolve func(string) (string, error)) []map[string]any {
-	blocks := []map[string]any{{keyType: contentTypeText, keyText: text}}
+func BuildPromptBlocks(ctx context.Context, text string, attachments []api.Attachment, resolve func(string) (string, error)) []map[string]any {
+	blocks := []map[string]any{api.TextBlock(text)}
 	for _, att := range attachments {
+		if ctx.Err() != nil {
+			return blocks
+		}
 		ext := strings.ToLower(filepath.Ext(att.Path))
 		mime, isDoc := documentExts[ext]
 		displayName := filepath.Base(att.Path)
@@ -40,38 +44,26 @@ func BuildPromptBlocks(text string, attachments []api.Attachment, resolve func(s
 			if err != nil {
 				slog.Warn("attachment: path escapes workspace",
 					"path", displayName, keyError, err)
-				blocks = append(blocks, map[string]any{
-					keyType: contentTypeText,
-					keyText: "Attached file (invalid path): " + displayName,
-				})
+				blocks = append(blocks, api.TextBlock("Attached file (invalid path): "+displayName))
 				continue
 			}
 			info, err := os.Stat(abs)
 			if err != nil {
 				slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
-				blocks = append(blocks, map[string]any{
-					keyType: contentTypeText,
-					keyText: "Attached file (unreadable): " + displayName,
-				})
+				blocks = append(blocks, api.TextBlock("Attached file (unreadable): "+displayName))
 				continue
 			}
 			if info.Size() > MaxDocumentBytes {
 				slog.Warn("attachment: too large",
 					"path", displayName, "size", info.Size())
-				blocks = append(blocks, map[string]any{
-					keyType: contentTypeText,
-					keyText: "Attached file (too large for inline): " + displayName,
-				})
+				blocks = append(blocks, api.TextBlock("Attached file (too large for inline): "+displayName))
 				continue
 			}
 			data, err := os.ReadFile(abs)
 			if err != nil {
 				slog.Warn("attachment: read failed",
 					"path", displayName, keyError, err)
-				blocks = append(blocks, map[string]any{
-					keyType: contentTypeText,
-					keyText: "Attached file (unreadable): " + displayName,
-				})
+				blocks = append(blocks, api.TextBlock("Attached file (unreadable): "+displayName))
 				continue
 			}
 			blocks = append(blocks, map[string]any{
@@ -84,16 +76,10 @@ func BuildPromptBlocks(text string, attachments []api.Attachment, resolve func(s
 			if _, err := resolve(att.Path); err != nil {
 				slog.Warn("attachment: path escapes workspace",
 					"path", displayName, keyError, err)
-				blocks = append(blocks, map[string]any{
-					keyType: contentTypeText,
-					keyText: "Attached file (invalid path): " + displayName,
-				})
+				blocks = append(blocks, api.TextBlock("Attached file (invalid path): "+displayName))
 				continue
 			}
-			blocks = append(blocks, map[string]any{
-				keyType: contentTypeText,
-				keyText: "Attached file: " + att.Path,
-			})
+			blocks = append(blocks, api.TextBlock("Attached file: "+att.Path))
 		}
 	}
 	return blocks

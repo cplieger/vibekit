@@ -15,14 +15,14 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID) {
 	h.flushPendingForChat(ctx, chatID, api.ClearReasonChatDeleted)
 	h.perm.supervised.ClearTrust(chatID, api.ClearReasonChatDeleted)
 	h.clearPendingPermsForChat(chatID)
-	h.closeBridge(chatID)
+	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()
 	buf := h.bridge.assistantBufs.Get(chatID)
 	h.translator.ClearCrewCache(chatID)
 	h.bridge.assistantBufs.Delete(chatID)
 	h.lifecycle.mu.Unlock()
-	h.closeAndRemovePartial(chatID, buf)
+	h.closeAndRemovePartial(ctx, chatID, buf)
 	if h.checkpoints != nil {
 		h.checkpoints.Cleanup(ctx, chatID)
 	}

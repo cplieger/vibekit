@@ -49,27 +49,27 @@ func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) ses
 // translateACPEvent on first use (lazy init avoids a constructor).
 func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
-		methodUpdate:             h.handleSessionUpdate,
-		methodRequestPermission:  h.handlePermissionRequest,
-		methodMetadataLegacy:     h.handleMetadata,
-		methodMetadata:           h.handleMetadata,
-		methodCommandsAvailable:  h.handleCommandsAvailable,
-		methodCompactionStatus:   h.handleCompactionStatus,
-		methodSubagentListUpdate: h.handleCrewUpdate,
-		methodAgentNotFound:      h.handleAgentNotFound,
-		methodAgentConfigError:   h.handleAgentConfigError,
-		methodModelNotFound:      h.handleModelNotFound,
-		methodErrorRateLimit:     h.handleRateLimit,
-		methodAgentSwitched:      h.handleAgentSwitched,
-		methodSessionActivity:    h.handleSessionActivity,
-		methodSessionListUpdate:  h.handleSessionListUpdate,
-		methodInboxNotification:  h.handleInboxNotification,
-		methodExtSessionUpdate:   h.handleExtSessionUpdate,
-		methodSessionRetry:       h.handleSessionRetry,
+		api.MethodSessionUpdate:         h.handleSessionUpdate,
+		api.MethodRequestPermission:  h.translator.HandlePermissionRequest,
+		methodMetadataLegacy:     h.translator.HandleMetadata,
+		methodMetadata:           h.translator.HandleMetadata,
+		methodCommandsAvailable:  h.translator.HandleCommandsAvailable,
+		methodCompactionStatus:   h.translator.HandleCompactionStatus,
+		methodSubagentListUpdate: h.translator.HandleCrewUpdate,
+		methodAgentNotFound:      h.translator.HandleAgentNotFound,
+		methodAgentConfigError:   h.translator.HandleAgentConfigError,
+		methodModelNotFound:      h.translator.HandleModelNotFound,
+		methodErrorRateLimit:     h.translator.HandleRateLimit,
+		methodAgentSwitched:      h.translator.HandleAgentSwitched,
+		methodSessionActivity:    h.translator.HandleSessionActivity,
+		methodSessionListUpdate:  h.translator.HandleSessionListUpdate,
+		methodInboxNotification:  h.translator.HandleInboxNotification,
+		methodExtSessionUpdate:   h.translator.HandleExtSessionUpdate,
+		methodSessionRetry:       h.translator.HandleSessionRetry,
 		// Global handlers (chatID is always "" for these).
-		methodMCPServerInitialized: h.handleMCPInitialized,
-		methodMCPServerInitFailure: h.handleMCPInitFailure,
-		methodMCPOAuthRequest:      h.handleMCPOAuth,
+		methodMCPServerInitialized: h.translator.HandleMCPInitialized,
+		methodMCPServerInitFailure: h.translator.HandleMCPInitFailure,
+		methodMCPOAuthRequest:      h.translator.HandleMCPOAuth,
 	}
 	// Explicit noops: methods we recognise but intentionally ignore.
 	h.noopMethods = map[string]struct{}{
@@ -79,16 +79,16 @@ func (h *Hub) initDispatch() {
 	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
 	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
 		api.ACPUpdateAgentChunk: ignoreSubSession(func(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-			h.handleAssistantChunk(ctx, chatID, raw, false)
+			h.translator.HandleAssistantChunk(ctx, chatID, raw, false)
 		}),
 		api.ACPUpdateThoughtChunk: ignoreSubSession(func(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-			h.handleAssistantChunk(ctx, chatID, raw, true)
+			h.translator.HandleAssistantChunk(ctx, chatID, raw, true)
 		}),
-		api.ACPUpdateToolCall:   h.handleToolCall,
-		api.ACPUpdateToolUpdate: h.handleToolCallUpdate,
-		api.ACPUpdatePlan:       ignoreSubSession(h.handlePlan),
-		api.ACPUpdateModeChange: ignoreSubSession(h.handleModeUpdate),
-		api.ACPUpdateSteering:   ignoreSubSession(h.handleSteeringInclusion),
+		api.ACPUpdateToolCall:   h.translator.HandleToolCall,
+		api.ACPUpdateToolUpdate: h.translator.HandleToolCallUpdate,
+		api.ACPUpdatePlan:       ignoreSubSession(h.translator.HandlePlan),
+		api.ACPUpdateModeChange: ignoreSubSession(h.translator.HandleModeUpdate),
+		api.ACPUpdateSteering:   ignoreSubSession(h.translator.HandleSteeringInclusion),
 	}
 }
 

@@ -23,14 +23,9 @@ vi.mock("../tabs.js", () => ({
   hasTab: mockHasTab,
 }));
 
-// Capture SSE handlers
-type SSEHandler = (chatID: string, payload: unknown) => void;
-const sseHandlers = new Map<string, SSEHandler>();
-vi.mock("../bus.js", () => ({
-  onSSE: vi.fn((event: string, handler: SSEHandler) => {
-    sseHandlers.set(event, handler);
-  }),
-}));
+// Capture SSE handlers via shared helper
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
+vi.mock("../bus.js", () => createBusMock());
 
 // Mock dynamic imports used by chat_deleted
 vi.mock("../conflicts.js", () => ({ clearConflicts: vi.fn() }));
@@ -38,13 +33,6 @@ vi.mock("../banner-stack.js", () => ({ clearBannersForChat: vi.fn() }));
 
 // Import after mocks
 await import("./chat.js");
-
-function fireSSE(event: string, chatID: string, payload: unknown): void {
-  const handler = sseHandlers.get(event);
-  if (handler) {
-    handler(chatID, payload);
-  }
-}
 
 describe("chat_created", () => {
   beforeEach(() => vi.clearAllMocks());

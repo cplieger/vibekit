@@ -20,10 +20,14 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"vibekit/internal/api"
+	"vibekit/internal/chat/archive"
 )
 
 // Compile-time interface assertion.
 var _ api.ChatStore = (*Store)(nil)
+
+// Compile-time assertion: Store satisfies archive.StoreAccess.
+var _ archive.StoreAccess = (*Store)(nil)
 
 // fileMode is the on-disk mode for chat files. The parent dir uses 0o700
 // because chat content may contain secrets the user pasted into prompts.
@@ -32,7 +36,6 @@ const (
 	dirMode         = 0o700
 	chatFileSuffix  = ".json"
 	planDraftSuffix = ".plan.md"
-	archiveSubdir   = "archive"
 )
 
 // maxChatFileBytes caps the size of a single chat file loaded by `load`.
@@ -52,14 +55,15 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 // become no-ops instead of undead resurrections.
 type Store struct {
 	broadcast        api.Broadcaster
-	listArchivedSF   singleflight.Group
 	listSF           singleflight.Group
 	onArchive        func(chatID api.ChatID)
 	onPurge          func(chatID api.ChatID)
 	oldestCheckpoint func(ctx context.Context, chatID api.ChatID) string
 	tombstone        map[api.ChatID]time.Time
+	archive          *archive.Service
 	locks            sync.Map
 	dir              string
+	archiveOnce      sync.Once
 	tombMu           sync.Mutex
 }
 

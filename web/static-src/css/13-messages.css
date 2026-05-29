@@ -22,6 +22,18 @@
   scroll-behavior: smooth;
 }
 
+/* While a message is streaming, reserve viewport space below the
+ * messages list so chunk-arrival doesn't cram text right against the
+ * prompt bar. Replaces the older `.message.streaming { min-block-size:
+ * 50dvh }` approach which made the empty live bubble appear as a
+ * giant empty box on spawn — content now grows line-by-line and the
+ * 50dvh of breathing room comes from container padding instead.
+ * scrollPaddingBlockEnd would be cleaner but only affects scrollIntoView,
+ * not the auto-scroll-to-bottom logic which sets scrollTop directly. */
+[id="messages"]:has(.message.assistant.streaming) {
+  padding-block-end: 50dvh;
+}
+
 [id="messages"] {
   padding: var(--sp-4);
   display: flex;
@@ -130,10 +142,32 @@
   align-items: flex-end;
   gap: var(--sp-2);
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
-  animation-delay: calc(var(--stagger-index, 0) * 30ms);
   content-visibility: auto;
   contain-intrinsic-size: auto 3rem;
+}
+
+/* Slide-in for genuinely new appended messages (set by paint() in
+ * messages.ts on appendNewIds + the staggered tail of chat-switch
+ * replay). Pre-existing rows on chat reload don't re-animate.
+ *
+ * The slide distance is intentionally larger than the prior 6px —
+ * the user reported the original animation as "no slide-in", which
+ * was technically wrong (it WAS sliding 6px) but functionally right
+ * (6px is sub-perceptual on a 14px line-height). 16px slide makes
+ * the entry visibly read as "from below". Animates the whole
+ * `.msg-wrap` (one element per message) rather than the row + child
+ * blocks separately so the bubble + reasoning + tool group enter
+ * together as a single unit. */
+.msg-wrap[data-chat-entry] {
+  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) both;
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
+}
+
+@keyframes vk-slide-up-pronounced {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
 }
 
 .msg-row-user {
@@ -191,19 +225,15 @@
     max-width: 40.75rem;
     width: 100%;
 
-    /* Streaming: height growth animated via interpolate-size (set on
-     * :root) so the bubble expands smoothly as content streams in.
-     * The standard 200ms ease-standard duration matches the rest of
-     * the chrome's micro-motion language. */
+    /* Streaming: height grows naturally as content arrives. We
+     * deliberately DON'T transition the height — interpolate-size +
+     * `transition: height var(--dur-standard)` was causing a visible
+     * flicker on each chunk because every text delta retriggered a
+     * 200ms height animation, and chunks land faster than that.
+     * Removing the transition lets the bubble track content size
+     * instantly; the per-chunk fade-in (data-vk-chunk-enter) supplies
+     * the perception of motion. */
     &.streaming {
-      transition: height var(--dur-standard) var(--ease-standard);
-
-      /* Last-message padding (Vercel ai-chatbot pattern): half-viewport
-       * room below the streaming bubble so chunk-arrival doesn't cram
-       * text right against the prompt bar. The .streaming class is
-       * removed on turn_ended, releasing the reservation. */
-      min-block-size: 50dvh;
-
       /* Subtle accent wash while streaming so the live bubble is
        * visually distinct from completed assistants. Released on
        * turn_ended via the .streaming class removal. */
@@ -227,14 +257,22 @@
       vertical-align: baseline;
     }
 
-    /* Per-block fade-in: smd-renderer's onBlockComplete hook tags
-     * each freshly-completed top-level block (paragraph, pre, heading,
-     * list, blockquote, table) with `data-vk-block-enter`. A single
-     * fade-in animation runs on mount; replay path doesn't set the
-     * marker so historical blocks stay still. Cheaper + more semantic
-     * than the older per-chunk span wrapper approach (which fired one
-     * animation per network packet, regardless of structure). */
-    & [data-vk-block-enter] {
+    /* Per-chunk fade-in: smd-renderer (animateText:true) wraps each
+     * text emission in `<span data-vk-chunk-enter>` so every delta
+     * fades in as it arrives. Replaces the older "per-block" approach
+     * that only animated when a paragraph completed — chunks were
+     * popping in instantly while fully-formed blocks faded, which
+     * read backward (the new content didn't move).
+     *
+     * Per-block fade is kept too, scoped to non-text container blocks
+     * (pre/code, blockquote, table) where wrapping individual text
+     * children would harm decorators like the syntax highlighter. */
+    & [data-vk-chunk-enter] {
+      animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
+    }
+    & pre[data-vk-block-enter],
+    & blockquote[data-vk-block-enter],
+    & table[data-vk-block-enter] {
       animation: vk-fade-in var(--dur-enter) var(--ease-enter) both;
     }
 
@@ -450,19 +488,19 @@
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
 
-  /* Smooth open/close height transitions thanks to interpolate-size
-   * on :root + the standard ease. */
-  transition: height var(--dur-standard) var(--ease-standard);
+  /* No height transition: same per-chunk flicker reasoning as the
+   * streaming bubble — let height track content instantly. The
+   * details<>summary native open/close animation is still visible. */
 }
 
 /* Live-streaming reasoning block (open + actively receiving chunks):
  * accent left-border + subtle breath on the summary so the user sees
- * the model is actively thinking. The break_block.streaming companion
- * for the content bubble is the caret animation; this is its
- * reasoning-side counterpart. The .msg-reasoning + [open] combination
- * fires only while mountReasoningBlock left details.open=true, which
- * mountReasoningBlock removes via the onFinalize callback. */
-.msg-reasoning[open] > .reasoning-summary::before {
+ * the model is actively thinking. Conditioned on `.streaming` (set by
+ * mountReasoningBlock and removed in onFinalize) — NOT on `[open]`,
+ * because `[open]` flips back to true whenever the user re-expands
+ * a finalized thinking trace and we don't want the "actively thinking"
+ * pulse to come back for a completed turn. */
+.msg-reasoning.streaming > .reasoning-summary::before {
   content: "";
   display: inline-block;
   width: 0.5rem;
@@ -497,8 +535,11 @@
   transition: border-left-color var(--dur-standard) var(--ease-standard);
 }
 
-/* While streaming, the body's left border picks up the accent. */
-.msg-reasoning[open] > .reasoning-body {
+/* While actively streaming the thinking trace, the body's left border
+ * picks up the accent. Same `.streaming`-instead-of-`[open]` rationale
+ * as the summary pulse above: `[open]` re-fires when the user expands
+ * a finalized trace, and we don't want the "live" affordance back. */
+.msg-reasoning.streaming > .reasoning-body {
   border-left-color: color-mix(in srgb, var(--c-accent) 60%, var(--c-border));
 }
 

@@ -40,7 +40,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				h.handleAssistantChunk(context.Background(), "bench", tc.raw, tc.isReasoning)
+				h.translator.HandleAssistantChunk(context.Background(), "bench", tc.raw, tc.isReasoning)
 			}
 		})
 	}
@@ -52,7 +52,7 @@ func TestHandlePlan_PersistsAndClearsOnAllDone(t *testing.T) {
 
 	// Plan with pending entries → persists as message and sets CurrentPlan.
 	raw := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
-	h.handlePlan(context.Background(), "c1", raw)
+	h.translator.HandlePlan(context.Background(), "c1", raw)
 
 	c, _ := cs.Get(context.Background(), "c1")
 	if len(c.Messages) != 1 {
@@ -67,7 +67,7 @@ func TestHandlePlan_PersistsAndClearsOnAllDone(t *testing.T) {
 
 	// All entries completed → clears CurrentPlan.
 	rawDone := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"completed"},{"content":"step 2","priority":"medium","status":"completed"}]}`)
-	h.handlePlan(context.Background(), "c1", rawDone)
+	h.translator.HandlePlan(context.Background(), "c1", rawDone)
 
 	c, _ = cs.Get(context.Background(), "c1")
 	if len(c.CurrentPlan) != 0 {
@@ -87,14 +87,14 @@ func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 
 	// Same mode → no broadcast.
 	raw := json.RawMessage(`{"modeId":"code"}`)
-	h.handleModeUpdate(context.Background(), "c1", raw)
+	h.translator.HandleModeUpdate(context.Background(), "c1", raw)
 	if h.sse.replayBuf.Len() != before {
 		t.Errorf("expected no broadcast for same mode, got %d new events", h.sse.replayBuf.Len()-before)
 	}
 
 	// Different mode → broadcast.
 	raw2 := json.RawMessage(`{"modeId":"chat"}`)
-	h.handleModeUpdate(context.Background(), "c1", raw2)
+	h.translator.HandleModeUpdate(context.Background(), "c1", raw2)
 	if h.sse.replayBuf.Len() == before {
 		t.Error("expected broadcast for mode change, got none")
 	}
@@ -110,7 +110,7 @@ func TestHandleSteeringInclusion_ExtractsNames(t *testing.T) {
 
 	before := h.sse.replayBuf.Len()
 	raw := json.RawMessage(`{"documents":[{"name":"tech.md","path":"/steering/tech.md"},{"name":"","path":"/steering/go.md"}]}`)
-	h.handleSteeringInclusion(context.Background(), "c1", raw)
+	h.translator.HandleSteeringInclusion(context.Background(), "c1", raw)
 
 	events := h.sse.replayBuf.Events()[before:]
 	if len(events) != 1 {

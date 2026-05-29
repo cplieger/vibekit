@@ -129,7 +129,7 @@ func (h *Hub) stageFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RPCR
 	} else {
 		h.Broadcast(ctx, api.NewEvent(api.EventPendingChangeAdded, chatID, api.PendingChangeAddedPayload{Change: snap}))
 		h.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelApproval}))
-		h.notifyPush(ctx, "Pending change: "+rel, api.PushKindPermission)
+		h.coord.NotifyPush(ctx, "Pending change: "+rel, api.PushKindPermission)
 	}
 
 	// Block until the user resolves or RejectAllForChat flushes.

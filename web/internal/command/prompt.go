@@ -13,17 +13,15 @@ import (
 	"time"
 
 	"vibekit/internal/api"
+	"vibekit/internal/ids"
 	"vibekit/internal/permissions"
 )
-
-// ACP method constant for prompt.
-const methodPrompt = "session/prompt"
 
 // validatePromptPayload parses and validates the prompt command payload.
 func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, error) {
 	var p api.PromptCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	if p.Text == "" {
 		return p, http.StatusBadRequest, errEmptyPrompt
@@ -35,10 +33,10 @@ func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, erro
 		return p, http.StatusBadRequest, errMissingMessageID
 	}
 	if !ValidMessageID(p.MessageID) {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	if !ValidIdent(p.Agent) || !ValidIdent(p.Model) {
-		return p, http.StatusBadRequest, errInvalidPayload
+		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	return p, 0, nil
 }
@@ -75,7 +73,7 @@ func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, 
 		}
 		return false
 	}, func() (*api.RPCResponse, error) {
-		return sb.Call(ctx, methodPrompt, params)
+		return sb.Call(ctx, api.MethodPrompt, params)
 	})
 }
 
@@ -96,7 +94,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
 	}
 	evt := api.Message{
-		ID: NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
+		ID: ids.NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
 		EventKind: api.EventInterrupted, Content: "Session refreshed, retrying...",
 	}
 	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
@@ -116,7 +114,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	sb2.SetPrompting()
 	defer sb2.ReleaseAfterPrompt()
 	deps.AdvanceCheckpointTurn(ctx, chatID)
-	params["sessionId"] = sb2.SessionID()
+	params[api.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
@@ -130,7 +128,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
@@ -152,7 +150,9 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 				name += ellipsis
 			}
 			c.Name = name
-			deps.InflightGo(func() { AsyncRenameChat(deps, chatID, p.Text) })
+			if prompter != nil {
+				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text) })
+			}
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
 		return true
@@ -164,7 +164,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, errMissingChatID)
+		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return
 	}
 	p, code, vErr := validatePromptPayload(cmd)
@@ -180,7 +180,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 
 	// 1. Ensure the chat exists, append the user message, auto-rename.
-	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
+	if err := appendUserMessage(deps, d.Prompter(), ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -224,7 +224,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams := BuildPromptParams(deps, sb, &p)
+	promptParams := BuildPromptParams(ctx, deps, sb, &p)
 	resp, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -244,13 +244,13 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
 	deps.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, creditsDelta, float64(elapsed.Milliseconds()))
-	d.Respond(w, cmd.RequestID, map[string]bool{"ok": true})
+	d.RespondOK(w, cmd.RequestID)
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.
-func BuildPromptParams(deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(p.Text, p.Attachments, deps.ResolveInsideWorkDir),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
 	kiroMeta := map[string]any{}
 	if p.ActiveFile != "" {
@@ -271,15 +271,13 @@ func IsRetryablePromptError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var te *api.TransportError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*api.TransportError](err); ok {
 		return te.Retryable
 	}
 	if errors.Is(err, api.ErrNotIdle) {
 		return true
 	}
-	var re *api.RPCError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*api.RPCError](err); ok {
 		switch re.Code {
 		case api.RPCCodeNotIdle:
 			return true
@@ -292,11 +290,11 @@ func IsRetryablePromptError(err error) bool {
 }
 
 // AsyncRenameChat generates a better chat title via the utility bridge.
-func AsyncRenameChat(deps Dependencies, chatID api.ChatID, firstPrompt string) {
+func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt string) {
 	prompt := "Give this chat a 2-3 word title (max 30 characters) based on the topic of the message below. Return ONLY the title.\n\n" + firstPrompt
 	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
 	defer cancel()
-	title, err := deps.UtilityPrompt(ctx, prompt)
+	title, err := prompter.UtilityPrompt(ctx, prompt)
 	if err != nil || strings.TrimSpace(title) == "" {
 		return
 	}

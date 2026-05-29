@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -47,34 +46,17 @@ func TestSelectIdleBridges_allZeroTimesSkipped(t *testing.T) {
 	}
 }
 
-// stubBridge is a minimal ACPBridge implementation for benchmarks.
-type stubBridge struct{}
 
-func (stubBridge) Start(context.Context, *api.StartOpts) error { return nil }
-func (stubBridge) Stop()                                       {}
-func (stubBridge) Call(context.Context, string, any) (*api.RPCResponse, error) {
-	return nil, nil
-}
-func (stubBridge) Notify(context.Context, string, any) error        { return nil }
-func (stubBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (stubBridge) SessionID() api.SessionID                         { return "" }
-func (stubBridge) ModelID() api.ModelID                             { return "" }
-func (stubBridge) CurrentMode() string                              { return "" }
-func (stubBridge) Modes() []api.SessionMode                         { return nil }
-func (stubBridge) Models() []api.SessionModel                       { return nil }
-func (stubBridge) SetModel(context.Context, string) error           { return nil }
-func (stubBridge) NotifCh() <-chan *api.RPCResponse                 { return nil }
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
-	factory := func() api.ACPBridge { return stubBridge{} }
-	bm := newBridgeManager(factory)
+	factory := func() api.ACPBridge { return newNoopBridge() }
+	bm := newBridgeManager(factory, nil)
 
 	// Pre-populate with some bridges so "exists" path is exercised.
 	for i := range 100 {
 		sb, existed := bm.getOrInsert(api.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
 			sb.state = bridgeIdle
-			sb.mu.Unlock()
 		}
 	}
 
@@ -90,7 +72,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	b.Run("create", func(b *testing.B) {
 		// Use a separate manager so creates don't accumulate unboundedly.
-		bm2 := newBridgeManager(factory)
+		bm2 := newBridgeManager(factory, nil)
 		var mu sync.Mutex
 		var counter int
 
@@ -104,7 +86,6 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 				sb, existed := bm2.getOrInsert(api.ChatID(id))
 				if !existed {
 					sb.state = bridgeIdle
-					sb.mu.Unlock()
 				}
 			}
 		})
@@ -138,13 +119,13 @@ func BenchmarkBridgeManagerSelectIdle(b *testing.B) {
 }
 
 func BenchmarkBridgeManagerDrain(b *testing.B) {
-	factory := func() api.ACPBridge { return stubBridge{} }
+	factory := func() api.ACPBridge { return newNoopBridge() }
 
 	for _, n := range []int{10, 50, 100} {
 		b.Run(fmt.Sprintf("bridges_%d", n), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				bm := newBridgeManager(factory)
+				bm := newBridgeManager(factory, nil)
 				for i := range n {
 					sb, existed := bm.getOrInsert(api.ChatID(fmt.Sprintf("chat-%d", i)))
 					if !existed {

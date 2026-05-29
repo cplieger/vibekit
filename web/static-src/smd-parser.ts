@@ -87,7 +87,7 @@ import {
   end_tokens_to_indent,
 } from "./smd-parser-types.js";
 
-const MAYBE_URL = 102 as Token;
+const MAYBE_URL = 102 as Token; // local-only token, not in TOKENS
 
 // --- Parser constructor ---
 
@@ -96,7 +96,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
   tokens[0] = DOCUMENT;
   return {
     renderer: renderer as Renderer<unknown>,
-    textBuf: [],
+    textBuf: "",
     pending: "",
     tokens,
     len: 0,
@@ -187,10 +187,12 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     handleCodeInline(p, char, pending);
     return actionAlwaysContinue;
   },
-  [MAYBE_TASK]: (p, char, pending) =>
+  [MAYBE_TASK]: (p: Parser, char: string, pending: string) =>
     handleMaybeTask(p, char, pending) ? actionContinue : actionBreak,
-  [STRONG_AST]: (p, char, _pending) => (handleStrong(p, char) ? actionContinue : actionBreak),
-  [STRONG_UND]: (p, char, _pending) => (handleStrong(p, char) ? actionContinue : actionBreak),
+  [STRONG_AST]: (p: Parser, char: string, _pending: string) =>
+    handleStrong(p, char) ? actionContinue : actionBreak,
+  [STRONG_UND]: (p: Parser, char: string, _pending: string) =>
+    handleStrong(p, char) ? actionContinue : actionBreak,
   [ITALIC_AST]: (p, char, pending) =>
     handleItalic(p, char, pending) ? actionContinue : actionBreak,
   [ITALIC_UND]: (p, char, pending) =>
@@ -226,7 +228,7 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     }
     return actionBreak;
   },
-  [MAYBE_URL]: (p, char, pending) => {
+  [MAYBE_URL]: (p: Parser, char: string, pending: string) => {
     handleMaybeURL(p, char, pending);
     return actionAlwaysContinue;
   },
@@ -294,14 +296,14 @@ export function parser_write(p: Parser, chunk: string): void {
       char === "h" &&
       (p.pending === " " || p.pending === "")
     ) {
-      p.textBuf.push(p.pending);
+      p.textBuf += p.pending;
       p.pending = char;
       p.token = MAYBE_URL;
       continue;
     }
 
     // No check hit — shift pending forward and keep going.
-    p.textBuf.push(p.pending);
+    p.textBuf += p.pending;
     p.pending = char;
   }
 

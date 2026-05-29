@@ -34,14 +34,14 @@ import (
 	"vibekit/internal/api"
 )
 
-// mcpServerState is the lifecycle status of one configured MCP server.
-type mcpServerState string
+// mcpServerState is an alias for the api-level MCPServerState enum.
+type mcpServerState = api.MCPServerState
 
 const (
-	mcpStateIdle      mcpServerState = "idle"       // configured but no bridge running
-	mcpStateConnected mcpServerState = "connected"  // kiro-cli reported server_initialized
-	mcpStateOAuth     mcpServerState = "needs_auth" // kiro-cli sent oauth_request
-	mcpStateFailed    mcpServerState = "failed"     // kiro-cli sent server_init_failure
+	mcpStateIdle      mcpServerState = "idle"
+	mcpStateConnected mcpServerState = "connected"
+	mcpStateOAuth     mcpServerState = "needs_auth"
+	mcpStateFailed    mcpServerState = "failed"
 )
 
 // mcpServerRuntime is the registry's per-server record.
@@ -198,7 +198,7 @@ func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string
 // clearAll wipes the runtime registry and broadcasts mcp_disconnected
 // for each server that had state. Called when the last bridge exits;
 // MCP subprocesses are scoped to kiro-cli, so nothing is live anymore.
-func (r *mcpRegistry) clearAll() {
+func (r *mcpRegistry) clearAll(ctx context.Context) {
 	r.mu.Lock()
 	prev := r.servers
 	r.servers = make(map[string]*mcpServerRuntime)
@@ -208,7 +208,10 @@ func (r *mcpRegistry) clearAll() {
 		return
 	}
 	for name := range prev {
-		r.hub.Broadcast(context.Background(), api.NewEvent(api.EventMCPDisconnected, "", api.MCPDisconnectedPayload{Server: name}))
+		if ctx.Err() != nil {
+			break
+		}
+		r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPDisconnected, "", api.MCPDisconnectedPayload{Server: name}))
 	}
 	r.signalChange()
 }
@@ -224,25 +227,25 @@ func (r *mcpRegistry) nameIsEnabled(ctx context.Context, name string) bool {
 }
 
 // statusServer is the JSON shape for /api/mcp/status entries.
+// mcpStatusResponse is the typed response for the MCP status endpoint.
+type mcpStatusResponse struct {
+	Servers []statusServer `json:"servers"`
+}
+
 type statusServer struct {
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	OAuthURL string `json:"oauth_url,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Name     string             `json:"name"`
+	State    api.MCPServerState `json:"state"`
+	OAuthURL string             `json:"oauth_url,omitempty"`
+	Error    string             `json:"error,omitempty"`
 }
 
 func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	snap := r.Snapshot()
 	out := make([]statusServer, len(snap))
 	for i, s := range snap {
-		out[i] = statusServer{
-			Name:     s.Name,
-			State:    string(s.State),
-			OAuthURL: s.OAuthURL,
-			Error:    s.Error,
-		}
+		out[i] = statusServer(s)
 	}
-	api.WriteJSON(w, map[string]any{"servers": out})
+	api.WriteJSON(w, mcpStatusResponse{Servers: out})
 }
 
 // startNotifier launches the single long-lived goroutine that drains

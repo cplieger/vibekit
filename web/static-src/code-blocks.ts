@@ -19,6 +19,15 @@ export function setShellRunCallback(cb: ShellRunCb): void {
   shellRunCb = cb;
 }
 
+type CopyCb = (text: string) => void;
+let copyCb: CopyCb | null = null;
+
+/** Wire the clipboard copy handler. Called once at startup alongside
+ *  setShellRunCallback to avoid a dynamic import cycle. */
+export function setCopyCallback(cb: CopyCb): void {
+  copyCb = cb;
+}
+
 export function decorateCodeBlocks(root: HTMLElement): void {
   for (const pre of root.querySelectorAll("pre")) {
     if (pre.parentElement?.classList.contains("code-wrap")) {
@@ -101,22 +110,14 @@ function makeCopyButton(text: string): HTMLButtonElement {
   btn.replaceChildren(iconEl(ICON_COPY));
   let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
-    void import("./actions/messages.js")
-      .then(({ copyClipboard }) =>
-        copyClipboard.dispatch(text, {
-          silent: true,
-          onSuccess: () => {
-            btn.textContent = "✓";
-            clearTimeout(timer);
-            timer = setTimeout(() => {
-              btn.replaceChildren(iconEl(ICON_COPY));
-            }, 1500);
-          },
-        }),
-      )
-      .catch(() => {
-        /* noop */
-      });
+    if (copyCb !== null) {
+      copyCb(text);
+      btn.textContent = "✓";
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        btn.replaceChildren(iconEl(ICON_COPY));
+      }, 1500);
+    }
   });
   return btn;
 }

@@ -128,7 +128,7 @@
   container-name: pill-row;
 }
 
-/* Optional text labels on Attach / Follow / Autopilot pills. Shown
+/* Optional text labels on Attach / Autopilot pills. Shown
  * when the pill row is wide enough to fit them; hidden via container
  * query at < 24rem so the pills stay compact on mobile. */
 .pill-label {
@@ -149,10 +149,13 @@
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.125rem var(--sp-2);
-  height: 1.5rem;
+  padding: 0 var(--sp-2);
+  /* Matches .send-half height so the prompt-pills row reads as one
+   * uniform line of controls; border-radius = height/2 keeps the
+   * pill perfectly rounded. */
+  height: 2rem;
   border: 1px solid var(--c-border);
-  border-radius: 0.75rem;
+  border-radius: 1rem;
   background: var(--c-bg-primary);
   color: var(--c-text-secondary);
   font-size: var(--fs-xs);
@@ -445,7 +448,7 @@
 
 /* Any expandable pill gets accent styling when its popup is open.
  * Keeps the context pill, model pill, and task-list pill visually
- * consistent with the follow-along and autopilot active states. */
+ * consistent with the auto-approve and supervised pill active states. */
 .pill-expandable.pill-expanded {
   color: var(--c-accent);
   border-color: var(--c-accent);
@@ -719,7 +722,7 @@
   background: color-mix(in srgb, var(--c-border) 50%, transparent);
 }
 
-/* Follow-along pill active state */
+/* Active state for any toggle pill (auto-approve, supervised, etc.). */
 .pill[aria-pressed="true"] {
   color: var(--c-accent);
   border-color: var(--c-accent);

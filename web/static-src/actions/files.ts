@@ -13,6 +13,11 @@ import { RETRY_STANDARD } from "./types.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
+
+const API_FILES_ACTION = "/api/files/action";
+const API_FILES_DOWNLOAD = "/api/files/download";
+/** 2× standard timeout for large workspace archive downloads. */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
 import { truncate } from "../strings.js";
 
 // --- Shared types for create actions ---
@@ -32,7 +37,7 @@ export const createFile = apiAction<CreateArgs>({
   idempotencyKey: (args) => `files.create:${args.dir}/${args.name}`,
   request: (args) => ({
     method: "POST",
-    path: "/api/files/action",
+    path: API_FILES_ACTION,
     body: { action: "touch", path: joinPath(args.dir, args.name) },
   }),
   error: "Couldn't create file",
@@ -48,7 +53,7 @@ export const createFolder = apiAction<CreateArgs>({
   idempotencyKey: (args) => `files.create_folder:${args.dir}/${args.name}`,
   request: (args) => ({
     method: "POST",
-    path: "/api/files/action",
+    path: API_FILES_ACTION,
     body: { action: "mkdir", path: joinPath(args.dir, args.name) },
   }),
   error: "Couldn't create folder",
@@ -62,7 +67,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   idempotencyKey: (args) => `files.rename:${args.dir}/${args.original}->${args.newName}`,
   request: ({ dir, original, newName }) => ({
     method: "POST",
-    path: "/api/files/action",
+    path: API_FILES_ACTION,
     body: { action: "rename", path: joinPath(dir, original), name: newName },
   }),
   retryable: retryNetwork,
@@ -104,7 +109,7 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
           body: JSON.stringify({ action: "delete", path: joinPath(args.dir, name) }),
           signal: timedSignal,
         };
-        return fetch("/api/files/action", init).then(
+        return fetch(API_FILES_ACTION, init).then(
           async (r) => {
             if (!r.ok) {
               let serverError = "";
@@ -192,11 +197,11 @@ export const downloadFiles = defineAction<{ paths: string[] }, void>({
   run: async (args, signal) => {
     let r: Response;
     try {
-      r = await fetch("/api/files/download", {
+      r = await fetch(API_FILES_DOWNLOAD, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paths: args.paths }),
-        signal: withTimeout(signal, 60_000),
+        signal: withTimeout(signal, DOWNLOAD_TIMEOUT_MS),
       });
     } catch (e) {
       throw classifyFetchError(e, signal);
