@@ -15,7 +15,6 @@
   <title>Vibekit for Kiro</title>
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css">
 </head>
 <body>
   <div id="app-loading">
@@ -769,7 +768,7 @@
         </div>
       </div>
 
-      <!-- Shell panel (global, PTY via WebSocket + xterm.js) -->
+      <!-- Shell panel (global, PTY via WebSocket + server-side VT renderer) -->
       <div id="shell-panel" class="shell-panel shell-closed">
         <div id="shell-resize" class="shell-resize"></div>
         <div class="shell-header">
@@ -1065,10 +1064,6 @@
   <script type="importmap">
     {
       "imports": {
-        "xterm": "/vendor/xterm/xterm.mjs",
-        "xterm/addon-fit": "/vendor/xterm/addon-fit.mjs",
-        "xterm/addon-webgl": "/vendor/xterm/addon-webgl.mjs",
-        "xterm/addon-web-links": "/vendor/xterm/addon-web-links.mjs",
         "ansi_up": "/vendor/ansi_up.js"
       }
     }

@@ -1,9 +1,6 @@
 package hub
 
 import (
-	"context"
-	"os"
-	"runtime"
 	"testing"
 )
 
@@ -34,46 +31,42 @@ func TestParseSignal_Table(t *testing.T) {
 	}
 }
 
-func TestScrollback_Empty(t *testing.T) {
-	sess := &shellSession{
-		scrollback: newByteRing(64),
-	}
-	got := sess.getScrollback()
+// Scrollback tests now exercise byteRing directly (the old shellSession
+// wrapper is gone; byteRing lives in byte_ring.go and is used by
+// agent_terminal.go).
+
+func TestByteRing_Empty(t *testing.T) {
+	r := newByteRing(64)
+	got := r.Bytes()
 	if len(got) != 0 {
-		t.Errorf("empty scrollback returned %d bytes", len(got))
+		t.Errorf("empty ring returned %d bytes", len(got))
 	}
 }
 
-func TestScrollback_PartialFill(t *testing.T) {
-	sess := &shellSession{
-		scrollback: newByteRing(64),
-	}
-	sess.appendScrollback([]byte("hello"))
-	got := sess.getScrollback()
+func TestByteRing_PartialFill(t *testing.T) {
+	r := newByteRing(64)
+	r.Write([]byte("hello"))
+	got := r.Bytes()
 	if string(got) != "hello" {
 		t.Errorf("got %q, want %q", got, "hello")
 	}
 }
 
-func TestScrollback_Wrap(t *testing.T) {
-	sess := &shellSession{
-		scrollback: newByteRing(8),
-	}
-	sess.appendScrollback([]byte("ABCDEFGH")) // fills exactly
-	sess.appendScrollback([]byte("IJ"))       // wraps: overwrites A,B
-	got := sess.getScrollback()
+func TestByteRing_Wrap(t *testing.T) {
+	r := newByteRing(8)
+	r.Write([]byte("ABCDEFGH")) // fills exactly
+	r.Write([]byte("IJ"))       // wraps: overwrites A,B
+	got := r.Bytes()
 	if string(got) != "CDEFGHIJ" {
 		t.Errorf("got %q, want %q", got, "CDEFGHIJ")
 	}
 }
 
-func TestScrollback_MultiWrap(t *testing.T) {
-	sess := &shellSession{
-		scrollback: newByteRing(4),
-	}
+func TestByteRing_MultiWrap(t *testing.T) {
+	r := newByteRing(4)
 	// Write more than 2x the buffer size.
-	sess.appendScrollback([]byte("ABCDEFGHIJ"))
-	got := sess.getScrollback()
+	r.Write([]byte("ABCDEFGHIJ"))
+	got := r.Bytes()
 	// Only the last 4 bytes survive.
 	if string(got) != "GHIJ" {
 		t.Errorf("got %q, want %q", got, "GHIJ")
@@ -86,68 +79,34 @@ func TestKillShell_NoShellIsOK(t *testing.T) {
 	h.shellMgr.kill()
 }
 
-func TestStartShell_Unix(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("PTY not supported on windows")
-	}
-	// If /dev/ptmx isn't openable in this environment (some hardened
-	// CI sandboxes, WSL without /dev/pts, etc.) the PTY layer will
-	// fail for environmental reasons we can't control. Detect that
-	// here so we only skip in genuinely PTY-less sandboxes; if PTY
-	// works, a nil session below is a real regression (e.g. the
-	// Setpgid+Setsid EPERM bug — see TestSetShellProcAttr_PTYStart).
-	f, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("PTY unavailable in this environment: %v", err)
-	}
-	_ = f.Close()
-
-	h, _, _ := newTestHub()
-	h.shellMgr = NewShellManager(context.Background(), "/tmp")
-	sess := h.shellMgr.start()
-	if sess == nil {
-		t.Fatal("h.shellMgr.start() returned nil despite /dev/ptmx being " +
-			"available; check the server log for a 'shell start' error " +
-			"(commonly the Setpgid+Setsid EPERM regression)")
-	}
-	defer h.shellMgr.kill()
-
-	h.shellMgr.mu.Lock()
-	alive := h.shellMgr.session != nil
-	h.shellMgr.mu.Unlock()
-	if !alive {
-		t.Error("shell not stored on hub")
-	}
-}
-
-func FuzzAppendScrollback(f *testing.F) {
+func FuzzByteRing(f *testing.F) {
 	f.Add([]byte("hello"))
 	f.Add([]byte("ABCDEFGHIJ"))
 	f.Add(make([]byte, 128))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		const bufSize = 64
-		sess := &shellSession{scrollback: newByteRing(bufSize)}
+		r := newByteRing(bufSize)
 
 		// Write in random-sized chunks.
 		chunkSize := 7
 		var totalWritten []byte
 		for i := 0; i < len(data); i += chunkSize {
 			end := min(i+chunkSize, len(data))
-			sess.appendScrollback(data[i:end])
+			r.Write(data[i:end])
 			totalWritten = append(totalWritten, data[i:end]...)
 		}
 
-		got := sess.getScrollback()
-		// Invariant: getScrollback returns the last min(total_written, bufSize) bytes.
+		got := r.Bytes()
+		// Invariant: Bytes() returns the last min(total_written, bufSize) bytes.
 		wantLen := min(len(totalWritten), bufSize)
 		if len(got) != wantLen {
-			t.Fatalf("getScrollback len=%d, want %d", len(got), wantLen)
+			t.Fatalf("Bytes() len=%d, want %d", len(got), wantLen)
 		}
 		// Content must be the tail of totalWritten.
 		tail := totalWritten[len(totalWritten)-wantLen:]
 		if string(got) != string(tail) {
-			t.Fatalf("getScrollback content mismatch:\n got: %q\nwant: %q", got, tail)
+			t.Fatalf("Bytes() content mismatch:\n got: %q\nwant: %q", got, tail)
 		}
 	})
 }
