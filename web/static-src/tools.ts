@@ -453,7 +453,7 @@ class ToolsManager {
     if (!ok) {
       return;
     }
-    let d = await deleteTool.dispatch({ section: sec, name });
+    const d = await deleteTool.dispatch({ section: sec, name });
     // 409 cascade: backend lists dependents that also need disabling.
     if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
       const list = d.dependents.join(", ");
@@ -465,7 +465,7 @@ class ToolsManager {
       if (!force) {
         return;
       }
-      d = await deleteTool.dispatch({ section: sec, name, force: true });
+      await deleteTool.dispatch({ section: sec, name, force: true });
     }
     this.loadToolsList();
   }

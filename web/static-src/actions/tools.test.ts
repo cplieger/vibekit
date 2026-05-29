@@ -169,9 +169,12 @@ describe("tools.seed_mcp", () => {
 describe("tools.enable", () => {
   it("POSTs to the section/name/enable path", async () => {
     mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ output: "ok", enabled_chain: ["runtimes.node", "lsp.pyright"] }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({ output: "ok", enabled_chain: ["runtimes.node", "lsp.pyright"] }),
+        {
+          status: 200,
+        },
+      ),
     );
     await enableTool.dispatch({ section: "lsp", name: "pyright" });
     const [url, opts] = mockFetch.mock.calls[0]!;
@@ -189,7 +192,9 @@ describe("tools.enable", () => {
 
 describe("tools.delete", () => {
   it("DELETEs without body when force is undefined", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ disabled: ["binary.gh"] }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ disabled: ["binary.gh"] }), { status: 200 }),
+    );
     await deleteTool.dispatch({ section: "binary", name: "gh" });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools/binary/gh");
@@ -207,7 +212,9 @@ describe("tools.delete", () => {
 
 describe("tools.patch", () => {
   it("PATCHes auto_update", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ auto_update: false }), { status: 200 }));
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ auto_update: false }), { status: 200 }),
+    );
     await patchTool.dispatch({ section: "binary", name: "gh", auto_update: false });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools/binary/gh");

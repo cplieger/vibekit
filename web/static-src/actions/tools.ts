@@ -146,7 +146,7 @@ export const getToolsStatus = apiAction<void, Record<string, boolean>>({
 // re-scans PATH and picks up the newly-installed language server
 // without waiting for a new chat. Best-effort: a missing bridge (no
 // active chat) is a normal no-op, so errors are swallowed.
-export const execSlash = apiAction<{ chatID: string; command: string }, unknown>({
+export const execSlash = apiAction<{ chatID: string; command: string }>({
   name: "tools.exec_slash",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

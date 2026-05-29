@@ -109,9 +109,9 @@ func validToolName(name string) bool {
 // readManifest returns the parsed tools.json and the path to it.
 // Missing file is treated as empty manifest (lets fresh installs
 // receive their first PATCH/POST without a prior write).
-func (s *Server) readManifest() (map[string]any, string, error) {
-	path := filepath.Join(s.configDir, "tools.json")
-	data, err := os.ReadFile(path) //nolint:gosec // configDir is the trusted runtime directory
+func (s *Server) readManifest() (manifest map[string]any, path string, err error) {
+	path = filepath.Join(s.configDir, "tools.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return map[string]any{}, path, nil
@@ -146,18 +146,17 @@ func writeManifest(path string, m map[string]any) error {
 }
 
 // entryAt returns a typed view of the entry at section.name within
-// the parsed manifest. The two booleans report whether the entry
-// exists and whether the section map is itself present.
-func entryAt(m map[string]any, section, name string) (entry map[string]any, sectionMap map[string]any, ok bool) {
+// the parsed manifest. ok reports whether the entry exists.
+func entryAt(m map[string]any, section, name string) (entry map[string]any, ok bool) {
 	sec, hasSec := m[section].(map[string]any)
 	if !hasSec {
-		return nil, nil, false
+		return nil, false
 	}
 	e, hasEntry := sec[name].(map[string]any)
 	if !hasEntry {
-		return nil, sec, false
+		return nil, false
 	}
-	return e, sec, true
+	return e, true
 }
 
 // requiresOf returns the section.name strings declared in the entry's
@@ -196,7 +195,7 @@ func resolveDeps(m map[string]any, section, name string) ([]string, error) {
 			return fmt.Errorf("requires cycle through %s", key)
 		}
 		visiting[key] = true
-		entry, _, ok := entryAt(m, sec, n)
+		entry, ok := entryAt(m, sec, n)
 		if !ok {
 			return fmt.Errorf("requires unknown entry %s", key)
 		}
@@ -266,7 +265,7 @@ func boolField(m map[string]any, key string, fallback bool) bool {
 // runSetupTools runs setup-tools.sh under the provided context and
 // returns combined output. Used by both /enable and /install handlers.
 func runSetupTools(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh") //nolint:gosec // hardcoded path
+	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh")
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -305,7 +304,7 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
-	if _, _, exists := entryAt(manifest, section, name); !exists {
+	if _, exists := entryAt(manifest, section, name); !exists {
 		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
 		return
 	}
@@ -317,7 +316,7 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, key := range chain {
 		parts := strings.SplitN(key, ".", 2)
-		entry, _, _ := entryAt(manifest, parts[0], parts[1])
+		entry, _ := entryAt(manifest, parts[0], parts[1])
 		entry["enabled"] = true
 	}
 	if err := writeManifest(path, manifest); err != nil {
@@ -343,10 +342,10 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 
 	out, runErr := runSetupTools(ctx)
 	resp := map[string]any{
-		"output":         out,
-		"enabled_chain":  chain,
-		"section":        section,
-		"name":           name,
+		"output":        out,
+		"enabled_chain": chain,
+		"section":       section,
+		"name":          name,
 	}
 	if runErr != nil {
 		resp["error"] = runErr.Error()
@@ -387,7 +386,7 @@ func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
-	entry, _, exists := entryAt(manifest, section, name)
+	entry, exists := entryAt(manifest, section, name)
 	if !exists {
 		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
 		return
@@ -420,7 +419,7 @@ func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, key := range toClear {
 		parts := strings.SplitN(key, ".", 2)
-		e, _, ok := entryAt(manifest, parts[0], parts[1])
+		e, ok := entryAt(manifest, parts[0], parts[1])
 		if !ok {
 			continue
 		}
@@ -490,7 +489,7 @@ func (s *Server) handleToolPatch(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
-	entry, _, exists := entryAt(manifest, section, name)
+	entry, exists := entryAt(manifest, section, name)
 	if !exists {
 		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
 		return

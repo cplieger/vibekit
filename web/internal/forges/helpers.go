@@ -40,7 +40,7 @@ const (
 	mergeRebase    = "rebase"
 	statusError    = "error"
 	statusSuccess  = "success"
-	stateOpened     = "opened"
+	stateOpened    = "opened"
 	flagShowError  = "--show-error"
 	flagSilent     = "--silent"
 	fieldUser      = "user"
@@ -49,6 +49,7 @@ const (
 	fieldMethod    = "method"
 	fieldRepo      = "repo"
 	fieldEnabled   = "enabled"
+	fieldURL       = "url"
 )
 
 // parseRFC3339Millis parses an RFC 3339 timestamp string into Unix
@@ -134,5 +135,3 @@ func normalizeIssueState(s string) string {
 	}
 	return strings.ToLower(s)
 }
-
-

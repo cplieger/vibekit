@@ -28,7 +28,7 @@ func newToolsTestServer(t *testing.T, manifest map[string]any) (*Server, string)
 
 func readBackManifest(t *testing.T, path string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // test path
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

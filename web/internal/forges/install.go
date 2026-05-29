@@ -74,7 +74,7 @@ func EnsureCLI(ctx context.Context, kind Kind) error {
 	}
 	cctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "bash", scriptPath) //nolint:gosec // hardcoded path
+	cmd := exec.CommandContext(cctx, "bash", scriptPath)
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -90,7 +90,7 @@ func EnsureCLI(ctx context.Context, kind Kind) error {
 // doesn't exist (older user-customized tools.json), inserts a default
 // entry with the same install command shipped in the new default.
 func enableToolEntry(path, cli string) error {
-	data, err := os.ReadFile(path) //nolint:gosec // configDir is the trusted runtime directory
+	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -157,8 +157,8 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 			fieldEnabled: true,
 			fieldVersion: "v0.11.0",
 			fieldUpdate: map[string]any{
-				fieldMethod: "url",
-				"url":       "https://dl.gitea.com/tea/version.json",
+				fieldMethod: fieldURL,
+				fieldURL:    "https://dl.gitea.com/tea/version.json",
 			},
 			actionInstall: "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64} && chmod +x ${BIN}/tea",
 		}, nil
