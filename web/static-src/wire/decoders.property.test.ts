@@ -584,6 +584,7 @@ describe("wire/decoders property tests", () => {
               if (!(e instanceof TypeError)) {
                 throw new Error(
                   `${name} threw non-TypeError: ${e instanceof Error ? e.message : String(e)}`,
+                  { cause: e },
                 );
               }
             }

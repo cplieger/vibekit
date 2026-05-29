@@ -117,7 +117,7 @@ function mount(
   msgEl.textContent = message;
   el.appendChild(msgEl);
 
-  let retryBtn: HTMLButtonElement | null = null;
+  let retryBtn: HTMLButtonElement | null;
   if (retry !== undefined) {
     retryBtn = document.createElement("button");
     retryBtn.type = "button";

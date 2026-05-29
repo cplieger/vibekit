@@ -135,7 +135,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       return;
     }
     case TABLE_ROW: {
-      let tableParent = parent;
+      let tableParent: Element;
       switch (parent.children.length) {
         case 0:
           tableParent = parent.appendChild(makeEl("thead"));
