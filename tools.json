@@ -30,11 +30,7 @@
       },
       "description": "Node.js runtime (LTS). Required for npx-based MCP servers and npm-installed LSPs (typescript-language-server, pyright). ~100 MB.",
       "install": "curl -fsSL https://nodejs.org/dist/${VERSION}/node-${VERSION}-linux-${ARCH_X64_OR_ARM64}.tar.xz | tar -xJ -C ${RUNTIMES} && rm -rf ${RUNTIMES}/node && mv ${RUNTIMES}/node-${VERSION}-linux-${ARCH_X64_OR_ARM64} ${RUNTIMES}/node",
-      "binaries": [
-        "node",
-        "npm",
-        "npx"
-      ],
+      "binaries": ["node", "npm", "npx"],
       "probe": "/config/tools/runtimes/node/bin/node"
     },
     "go": {
@@ -48,10 +44,7 @@
       },
       "description": "Go toolchain. Required for gopls LSP and Go-based MCP servers. ~190 MB.",
       "install": "curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH_X64_OR_ARM64}.tar.gz | tar -xz -C ${RUNTIMES} && rm -rf ${RUNTIMES}/go && mv ${RUNTIMES}/go ${RUNTIMES}/go.tmp 2>/dev/null; mv ${RUNTIMES}/go.tmp ${RUNTIMES}/go || true",
-      "binaries": [
-        "go",
-        "gofmt"
-      ],
+      "binaries": ["go", "gofmt"],
       "probe": "/config/tools/runtimes/go/bin/go"
     },
     "java": {
@@ -64,10 +57,7 @@
       },
       "description": "OpenJDK 21 JRE (Eclipse Temurin). Required for jdtls (Java LSP) and kotlin-language-server. ~190 MB; shared between the two LSPs.",
       "install": "mkdir -p ${RUNTIMES}/java && tag_url='${VERSION}' && safe_tag=$(printf '%s' \"${VERSION}\" | sed 's/+/%2B/g') && curl -fsSL \"https://github.com/adoptium/temurin21-binaries/releases/download/${safe_tag}/OpenJDK21U-jre_${ARCH_X86_64_OR_AARCH64}_linux_hotspot_$(printf '%s' \"${VERSION}\" | sed 's/jdk-//;s/+/_/').tar.gz\" | tar -xz -C ${RUNTIMES}/java --strip-components=1",
-      "binaries": [
-        "java",
-        "keytool"
-      ],
+      "binaries": ["java", "keytool"],
       "probe": "/config/tools/runtimes/java/bin/java"
     },
     "ruby": {
@@ -79,11 +69,7 @@
       },
       "description": "Ruby runtime via apt. Required for solargraph LSP and Ruby MCP servers. ~120 MB. Note: this installs system-wide via apt-get, not under /config/tools/runtimes.",
       "install": "apt-get update -qq && apt-get install -y -qq --no-install-recommends ruby ruby-bundler ruby-dev && rm -rf /var/lib/apt/lists/*",
-      "binaries": [
-        "ruby",
-        "gem",
-        "bundle"
-      ],
+      "binaries": ["ruby", "gem", "bundle"],
       "probe": "/usr/bin/ruby"
     },
     "rust": {
@@ -95,11 +81,7 @@
       },
       "description": "Rust toolchain (rustup + rustc + cargo). Required for full rust-analyzer functionality and Rust MCP servers. ~150 MB.",
       "install": "curl -fsSL https://sh.rustup.rs | RUSTUP_HOME=${RUNTIMES}/rust CARGO_HOME=${RUNTIMES}/rust sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path",
-      "binaries": [
-        "cargo",
-        "rustc",
-        "rustup"
-      ],
+      "binaries": ["cargo", "rustc", "rustup"],
       "probe": "/config/tools/runtimes/rust/bin/cargo"
     },
     "uv": {
@@ -112,10 +94,7 @@
       },
       "description": "Python tool runner (uv from Astral). Brings its own Python; provides uvx for kiro-cli's Python MCP servers (fetch, git, time, sentry, etc.). ~50 MB.",
       "install": "mkdir -p ${RUNTIMES}/uv/bin && curl -fsSL https://github.com/astral-sh/uv/releases/download/${VERSION}/uv-${ARCH_X86_64_OR_AARCH64}-unknown-linux-gnu.tar.gz | tar -xz -C ${RUNTIMES}/uv/bin --strip-components=1 && chmod 755 ${RUNTIMES}/uv/bin/uv ${RUNTIMES}/uv/bin/uvx",
-      "binaries": [
-        "uv",
-        "uvx"
-      ],
+      "binaries": ["uv", "uvx"],
       "probe": "/config/tools/runtimes/uv/bin/uv"
     }
   },
@@ -182,13 +161,9 @@
       },
       "method": "npm",
       "package": "typescript-language-server",
-      "npm_extras": [
-        "typescript@5.7.2"
-      ],
+      "npm_extras": ["typescript@5.7.2"],
       "description": "TypeScript / JavaScript LSP (Microsoft canonical, npm-installed). Requires Node runtime. Use this for full tsc compatibility; pick tsgo below for ~10x faster type-checking on most code.",
-      "requires": [
-        "runtimes.node"
-      ]
+      "requires": ["runtimes.node"]
     },
     "tsgo": {
       "enabled": false,
@@ -217,9 +192,7 @@
       "method": "npm",
       "package": "pyright",
       "description": "Python LSP (Microsoft official, npm-installed). Requires Node runtime. Use this for full pyright fidelity; pick pyrefly below for native speed.",
-      "requires": [
-        "runtimes.node"
-      ]
+      "requires": ["runtimes.node"]
     },
     "pyrefly": {
       "enabled": false,
@@ -248,13 +221,9 @@
       },
       "method": "go",
       "package": "golang.org/x/tools/gopls@${VERSION}",
-      "binaries": [
-        "gopls"
-      ],
+      "binaries": ["gopls"],
       "description": "Go LSP (gopls). Installed via 'go install'. Requires Go runtime.",
-      "requires": [
-        "runtimes.go"
-      ]
+      "requires": ["runtimes.go"]
     },
     "rust-analyzer": {
       "enabled": false,
@@ -289,9 +258,7 @@
       },
       "method": "binary",
       "description": "Java LSP (Eclipse JDT). ~52 MB plus shared OpenJDK 21 JRE (~190 MB). Tree-sitter mode without this provides basic symbol search and pattern matching for Java code.",
-      "requires": [
-        "runtimes.java"
-      ],
+      "requires": ["runtimes.java"],
       "install": "mkdir -p ${TOOLS}/lib/jdtls && curl -fsSL https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C ${TOOLS}/lib/jdtls && printf '#!/bin/sh\\nexec ${RUNTIMES}/java/bin/java -jar ${TOOLS}/lib/jdtls/plugins/org.eclipse.equinox.launcher_*.jar -configuration ${TOOLS}/lib/jdtls/config_linux -data ${HOME}/.cache/jdtls-workspace \"$@\"\\n' > ${BIN}/jdtls && chmod 755 ${BIN}/jdtls",
       "uninstall": "rm -rf ${TOOLS}/lib/jdtls ${BIN}/jdtls"
     },
@@ -305,9 +272,7 @@
       },
       "method": "binary",
       "description": "Kotlin LSP. ~94 MB plus shared OpenJDK 21 JRE. Reuses the same JVM as jdtls if both are enabled.",
-      "requires": [
-        "runtimes.java"
-      ],
+      "requires": ["runtimes.java"],
       "install": "tmp=$(mktemp -d) && curl -fsSL -o $tmp/kls.zip https://github.com/fwcd/kotlin-language-server/releases/download/${VERSION}/server.zip && unzip -q $tmp/kls.zip -d ${TOOLS}/lib/ && rm -rf $tmp && rm -rf ${TOOLS}/lib/kotlin-language-server && mv ${TOOLS}/lib/server ${TOOLS}/lib/kotlin-language-server && printf '#!/bin/sh\\nexport JAVA_HOME=${RUNTIMES}/java\\nexec ${TOOLS}/lib/kotlin-language-server/bin/kotlin-language-server \"$@\"\\n' > ${BIN}/kotlin-language-server && chmod 755 ${BIN}/kotlin-language-server",
       "uninstall": "rm -rf ${TOOLS}/lib/kotlin-language-server ${BIN}/kotlin-language-server"
     },
@@ -321,9 +286,7 @@
       },
       "method": "gem",
       "description": "Ruby LSP. Installed as a Ruby gem. Requires the Ruby runtime (~120 MB combined).",
-      "requires": [
-        "runtimes.ruby"
-      ]
+      "requires": ["runtimes.ruby"]
     }
   }
 }
