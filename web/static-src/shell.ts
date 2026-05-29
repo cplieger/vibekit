@@ -44,6 +44,19 @@ export function initShellPanel(): void {
   shellContainer.addEventListener("keydown", onKeyDown);
   shellContainer.addEventListener("paste", onPaste);
 
+  // Delegated click handler for terminal links. term-render.ts wraps
+  // detected URLs in <a class="term-link" target="_blank"> but in some
+  // contexts (contenteditable, focus-capturing containers) the browser
+  // suppresses default link navigation. This handler ensures clicks on
+  // .term-link always open in a new tab.
+  shellContainer.addEventListener("click", (e) => {
+    const link = (e.target as HTMLElement).closest<HTMLAnchorElement>(".term-link");
+    if (link) {
+      e.preventDefault();
+      window.open(link.href, "_blank", "noopener,noreferrer");
+    }
+  });
+
   // Resize observer → send resize control message to server.
   const ro = new ResizeObserver(() => {
     if (resizeTimer !== null) {
