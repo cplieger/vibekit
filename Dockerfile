@@ -31,16 +31,7 @@ RUN curl -fsSL \
     "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
     | tar -xz -C /tmp
 
-# xterm.js terminal emulator (ESM files, no Node needed). Versions tracked
-# by Renovate via the ARG comments below.
-# renovate: datasource=npm depName=@xterm/xterm
-ARG XTERM_VERSION=6.0.0
-# renovate: datasource=npm depName=@xterm/addon-fit
-ARG XTERM_FIT_VERSION=0.11.0
-# renovate: datasource=npm depName=@xterm/addon-webgl
-ARG XTERM_WEBGL_VERSION=0.19.0
-# renovate: datasource=npm depName=@xterm/addon-web-links
-ARG XTERM_WEBLINKS_VERSION=0.12.0
+# ansi_up: lightweight ANSI→HTML converter for agent-terminal <pre> panels.
 # renovate: datasource=npm depName=ansi_up
 ARG ANSI_UP_VERSION=6.0.6
 
@@ -50,19 +41,8 @@ COPY web/go.mod web/go.sum ./
 RUN go mod download
 COPY web/ ./
 
-# Fetch the xterm.js tarballs and extract only the files we actually serve
-# (the compiled .mjs addons + the core .mjs/.css) straight into the embed
-# path. One RUN = one layer, no intermediate staging dirs.
-RUN mkdir -p static/vendor/xterm && \
-    curl -fsSL "https://registry.npmjs.org/@xterm/xterm/-/xterm-${XTERM_VERSION}.tgz" \
-      | tar -xz -C static/vendor/xterm --strip-components=2 \
-          package/lib/xterm.mjs package/css/xterm.css && \
-    curl -fsSL "https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-${XTERM_FIT_VERSION}.tgz" \
-      | tar -xz -C static/vendor/xterm --strip-components=2 package/lib/addon-fit.mjs && \
-    curl -fsSL "https://registry.npmjs.org/@xterm/addon-webgl/-/addon-webgl-${XTERM_WEBGL_VERSION}.tgz" \
-      | tar -xz -C static/vendor/xterm --strip-components=2 package/lib/addon-webgl.mjs && \
-    curl -fsSL "https://registry.npmjs.org/@xterm/addon-web-links/-/addon-web-links-${XTERM_WEBLINKS_VERSION}.tgz" \
-      | tar -xz -C static/vendor/xterm --strip-components=2 package/lib/addon-web-links.mjs && \
+# Fetch ansi_up (the only vendor JS dependency now that xterm.js is gone).
+RUN mkdir -p static/vendor && \
     curl -fsSL "https://registry.npmjs.org/ansi_up/-/ansi_up-${ANSI_UP_VERSION}.tgz" \
       | tar -xz -C static/vendor --strip-components=1 package/ansi_up.js
 
