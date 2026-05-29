@@ -131,6 +131,30 @@ func TestDependentsOf(t *testing.T) {
 	}
 }
 
+// Regression guard for B3: an entry that OMITS the enabled field is
+// active (enabled defaults to true), so it must be counted as a
+// dependent — otherwise cascade-delete silently orphans it. Also
+// verifies non-section keys like _comment are skipped.
+func TestDependentsOf_AbsentEnabledCountsAsActive(t *testing.T) {
+	m := map[string]any{
+		"_comment": []any{"not a section"},
+		"runtimes": map[string]any{
+			"go": map[string]any{"enabled": true, "version": "1.23"},
+		},
+		"lsp": map[string]any{
+			"gopls": map[string]any{
+				// no "enabled" field -> active by default
+				"version":  "v0.17",
+				"requires": []any{"runtimes.go"},
+			},
+		},
+	}
+	deps := dependentsOf(m, "runtimes", "go")
+	if len(deps) != 1 || deps[0] != "lsp.gopls" {
+		t.Fatalf("dependentsOf = %v, want [lsp.gopls] (absent enabled = active)", deps)
+	}
+}
+
 func TestHandleToolPatchAutoUpdate(t *testing.T) {
 	s, path := newToolsTestServer(t, map[string]any{
 		"binary": map[string]any{

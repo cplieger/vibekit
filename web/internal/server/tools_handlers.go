@@ -40,7 +40,10 @@ import (
 )
 
 const (
-	toolsInstallTimeout = 5 * time.Minute
+	// Generous: a cold Rust toolchain (rustup + std), clangd (~160 MB),
+	// or a JRE on a slow connection can each take several minutes. Too
+	// short a timeout cancels mid-download and leaves a partial install.
+	toolsInstallTimeout = 15 * time.Minute
 	maxToolsInstallBody = 4 << 10
 )
 
@@ -51,6 +54,13 @@ var (
 	inflightMu       sync.Mutex
 	inflightInstalls = map[string]context.CancelFunc{}
 )
+
+// manifestMu serializes read-modify-write cycles on tools.json so two
+// concurrent mutations (e.g. an Enable and a forge-login auto-enable)
+// can't clobber each other (the file is read, mutated in memory, then
+// rewritten — a classic TOCTOU without this guard). Held across the
+// read+write pair, not during the install subprocess.
+var manifestMu sync.Mutex
 
 // statusBinaries is the set of binaries the UI may probe via
 // /api/tools/status. Each key matches a name kiro-cli or vibekit
@@ -222,12 +232,17 @@ func resolveDeps(m map[string]any, section, name string) ([]string, error) {
 	return order, nil
 }
 
-// dependentsOf returns every entry that lists section.name in its
-// .requires. Used by DELETE to surface a cascade warning to the UI.
+// dependentsOf returns every enabled entry that lists section.name in
+// its .requires. Used by DELETE to surface a cascade warning to the UI.
 func dependentsOf(m map[string]any, section, name string) []string {
 	target := section + "." + name
 	var out []string
 	for sec, secMapAny := range m {
+		// Only scan real tool sections — skips _comment and any other
+		// non-section top-level keys.
+		if !allowedSections[sec] {
+			continue
+		}
 		secMap, ok := secMapAny.(map[string]any)
 		if !ok {
 			continue
@@ -237,7 +252,11 @@ func dependentsOf(m map[string]any, section, name string) []string {
 			if !ok {
 				continue
 			}
-			if !boolField(e, "enabled", false) {
+			// enabled defaults to true when absent, matching
+			// setup-tools.sh's entry_enabled. A missing flag means the
+			// entry IS active, so it must be counted as a dependent —
+			// otherwise cascade-delete would silently orphan it.
+			if !boolField(e, "enabled", true) {
 				continue
 			}
 			for _, req := range requiresOf(e) {
@@ -299,18 +318,25 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read-modify-write of the manifest is serialized so a concurrent
+	// enable / forge-login can't clobber this flag flip. Released before
+	// the long-running install subprocess below.
+	manifestMu.Lock()
 	manifest, path, err := s.readManifest()
 	if err != nil {
+		manifestMu.Unlock()
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
 	if _, exists := entryAt(manifest, section, name); !exists {
+		manifestMu.Unlock()
 		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
 		return
 	}
 
 	chain, err := resolveDeps(manifest, section, name)
 	if err != nil {
+		manifestMu.Unlock()
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
@@ -320,9 +346,11 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 		entry["enabled"] = true
 	}
 	if err := writeManifest(path, manifest); err != nil {
+		manifestMu.Unlock()
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
+	manifestMu.Unlock()
 
 	// Track this install so a DELETE can cancel it mid-run.
 	key := section + "." + name
@@ -381,13 +409,16 @@ func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	inflightMu.Unlock()
 
+	manifestMu.Lock()
 	manifest, path, err := s.readManifest()
 	if err != nil {
+		manifestMu.Unlock()
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
 	entry, exists := entryAt(manifest, section, name)
 	if !exists {
+		manifestMu.Unlock()
 		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
 		return
 	}
@@ -403,6 +434,7 @@ func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
 
 	dependents := dependentsOf(manifest, section, name)
 	if len(dependents) > 0 && !body.Force {
+		manifestMu.Unlock()
 		api.WriteJSONStatus(w, http.StatusConflict, map[string]any{
 			"error":      "tool has enabled dependents",
 			"code":       "has_dependents",
@@ -427,9 +459,11 @@ func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = entry // entry is implicitly mutated via manifest above; keep var for read-clarity
 	if err := writeManifest(path, manifest); err != nil {
+		manifestMu.Unlock()
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
+	manifestMu.Unlock()
 
 	// Shell out to setup-tools.sh's cleanup helper for each disabled entry.
 	// We re-invoke setup-tools.sh in a "clear-only" mode by sourcing it
@@ -484,6 +518,8 @@ func (s *Server) handleToolPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 	manifest, path, err := s.readManifest()
 	if err != nil {
 		api.WriteJSON(w, api.ErrorJSON(err.Error()))

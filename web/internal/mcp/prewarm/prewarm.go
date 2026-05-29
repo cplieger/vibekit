@@ -108,8 +108,11 @@ func (p *Runner) Run(ctx context.Context) {
 		return
 	}
 	if _, err := exec.LookPath("npm"); err != nil {
-		p.Disabled.Store(true)
-		slog.Warn("mcp: prewarm disabled: npm not on PATH", "error", err)
+		// npm is opt-in (runtimes.node). It may be installed later in
+		// the same process lifetime via the tools UI, so DON'T latch
+		// Disabled here — just skip this run. The next Run re-probes
+		// and prewarm comes alive once node is enabled.
+		slog.Debug("mcp: prewarm skipped this run: npm not on PATH yet", "error", err)
 		return
 	}
 

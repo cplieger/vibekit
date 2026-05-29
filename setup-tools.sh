@@ -220,10 +220,14 @@ check_update() {
         manual|null) return 1 ;;
     esac
 
-    # Skip non-semver (commit hashes)
+    # Skip values that look like git commit hashes (a single run of
+    # 7-40 hex chars with no separators) — those aren't comparable.
+    # Everything else (v1.2.3, 1.2.3, jdk-21.0.5+11, 2025-01-06,
+    # 7.0.0-dev.20260527.2) is a legitimate upstream version tag and
+    # may auto-update.
     case "$current" in
-        v*|[0-9]*) ;;
-        *) return 1 ;;
+        *[!0-9a-f]*) ;;            # contains a non-hex char -> a real version
+        [0-9a-f]*[0-9a-f]) return 1 ;;  # pure hex -> commit hash, skip
     esac
 
     case "$method" in
@@ -273,6 +277,18 @@ check_update() {
         printf "    update: fetch failed\n"
         return 1
     fi
+
+    # Security: the version string is substituted into the install
+    # command which is later eval'd. A malicious or malformed upstream
+    # tag containing shell metacharacters would execute on next boot.
+    # Allow only the characters real version tags use; reject anything
+    # else and keep the pinned version.
+    case "$latest" in
+        *[!a-zA-Z0-9._+-]*)
+            printf "    update: rejected upstream version %q (illegal chars), keeping pinned\n" "$latest"
+            return 1
+            ;;
+    esac
 
     if [ "$current" = "$latest" ]; then
         return 1

@@ -368,6 +368,12 @@ class ToolsManager {
       enableBtn.textContent = "Enable";
       enableBtn.setAttribute("aria-label", `Enable ${name}`);
       enableBtn.addEventListener("click", () => {
+        // Immediate feedback: large runtimes/LSPs (Go, JRE, clangd) can
+        // take minutes, and the install output is buffered server-side,
+        // so without this the row looks inert. Disable + relabel so the
+        // user knows it's working; loadToolsList() re-renders on finish.
+        enableBtn.disabled = true;
+        enableBtn.textContent = "Installing…";
         void this.runEnable(sec, name);
       });
       actions.append(enableBtn);

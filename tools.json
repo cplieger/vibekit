@@ -43,7 +43,7 @@
         "strip_prefix": "go"
       },
       "description": "Go toolchain. Required for gopls LSP and Go-based MCP servers. ~190 MB.",
-      "install": "curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH_X64_OR_ARM64}.tar.gz | tar -xz -C ${RUNTIMES} && rm -rf ${RUNTIMES}/go && mv ${RUNTIMES}/go ${RUNTIMES}/go.tmp 2>/dev/null; mv ${RUNTIMES}/go.tmp ${RUNTIMES}/go || true",
+      "install": "rm -rf ${RUNTIMES}/go && curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${RUNTIMES}",
       "binaries": ["go", "gofmt"],
       "probe": "/config/tools/runtimes/go/bin/go"
     },
