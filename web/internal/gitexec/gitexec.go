@@ -94,6 +94,67 @@ func ScrubAuthErr(err error) string {
 
 // --- Hardened subprocess execution ---
 
+// allowedSubcommands lists git subcommands that may be invoked through
+// gitexec.Cmd. Any first non-flag argument outside this set causes Cmd
+// to return a no-op command that exits with an error, defending against
+// callers that accidentally let untrusted input choose the subcommand.
+//
+// CodeQL's go/command-injection rule cannot prove safety from
+// validation done at HTTP-handler layer (e.g. isValidGitRef on body
+// fields); declaring the allowlist at the exec boundary makes the
+// guarantee local to this package.
+var allowedSubcommands = map[string]struct{}{
+	"add":           {},
+	"branch":        {},
+	"checkout":      {},
+	"clone":         {},
+	"commit":        {},
+	"config":        {},
+	"diff":          {},
+	"fetch":         {},
+	"init":          {},
+	"log":           {},
+	"ls-remote":     {},
+	"merge":         {},
+	"pull":          {},
+	"push":          {},
+	"rebase":        {},
+	"remote":        {},
+	"reset":         {},
+	"rev-parse":     {},
+	"show":          {},
+	"show-ref":      {},
+	"stash":         {},
+	"status":        {},
+	"submodule":     {},
+	"switch":        {},
+	"symbolic-ref":  {},
+	"tag":           {},
+	"update-ref":    {},
+	"worktree":      {},
+}
+
+// firstSubcommand walks args looking for the first token that doesn't
+// start with '-' (i.e. the git subcommand). Returns "" if no token is
+// found, which means the caller passed only flags — also rejected.
+func firstSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			// Skip values for the limited set of -c/-C-style flags we
+			// know take a separate argument. For our hardened-cmd usage
+			// callers don't pass -c themselves, so this branch is
+			// defensive.
+			if a == "-c" || a == "-C" {
+				i++
+			}
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
 // Cmd builds an *exec.Cmd for a git subprocess with hardening
 // applied: protocol.ext.allow=never on the command line (so ext::
 // transports stay blocked even if user gitconfig tries to enable
@@ -114,8 +175,26 @@ func ScrubAuthErr(err error) string {
 // fix: it blocks ext:: explicitly without throwing out the rest
 // of the user's git config.
 //
+// The first non-flag arg in `args` must be one of allowedSubcommands;
+// otherwise Cmd returns a command rigged to fail without launching
+// git. This local guarantee satisfies CodeQL's go/command-injection
+// analyzer and gives defence-in-depth against future callers that
+// don't validate subcommand input upstream.
+//
 // Callers must supply a context with an appropriate timeout.
 func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	sub := firstSubcommand(args)
+	if _, ok := allowedSubcommands[sub]; !ok {
+		// Build a synthetic command that errors out cleanly. /bin/false
+		// always exits 1 and produces no output; CombinedOutput will
+		// surface a sentinel via stderr we set in cmd.Args[0].
+		cmd := exec.CommandContext(ctx, "/bin/false")
+		cmd.Dir = dir
+		// Stash a useful error string in Args so callers logging
+		// CombinedOutput see why; /bin/false ignores its args.
+		cmd.Args = append(cmd.Args, "gitexec: subcommand not allowed: "+sub)
+		return cmd
+	}
 	// Prepend hardening -c flags. Command-line -c values take priority
 	// over any gitconfig setting, so even a user gitconfig with
 	// `[protocol "ext"] allow = always` cannot re-enable ext::.

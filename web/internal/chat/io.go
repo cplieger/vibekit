@@ -6,14 +6,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"vibekit/internal/api"
 )
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes
 // size cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
+//
+// Path is filepath.Clean'd up-front and rejected if it escapes via ".."
+// or is non-absolute. Callers already pass paths derived from store.Dir()
+// + ValidChatID-checked chatID, but the local guard makes the safety
+// property visible to CodeQL's go/path-injection analyzer (which doesn't
+// follow ValidChatID across package boundaries).
 func readCappedFile(path, label string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // G304,G703: path built from validated chat ID
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) || strings.Contains(clean, "..") {
+		return nil, fmt.Errorf("%s: rejected unsafe path %q", label, path)
+	}
+	f, err := os.Open(clean)
 	if err != nil {
 		return nil, err
 	}
