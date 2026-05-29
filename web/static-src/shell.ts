@@ -12,22 +12,16 @@ import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
 import { ShellWS, encoder } from "./shell-ws.js";
 import { decodeWireBinary } from "./term-wire-binary.js";
-import {
-  handleScreen,
-  handleScroll,
-  init as initRender,
-  computeSize,
-} from "./term-render.js";
+import { handleScreen, handleScroll, init as initRender, computeSize } from "./term-render.js";
 import { init as initScroll, scrollToBottom } from "./term-scroll.js";
 import { mapKeyboardEvent, bracketTextForPaste } from "./term-keyboard.js";
 import { setModes } from "./term-modes.js";
-import type { ScreenMessage, ScrollMessage, ModesMessage } from "./term-types.js";
 
 const RESIZE_DEBOUNCE_MS = 100;
 
 const shellWS = new ShellWS();
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-let shellContainer: HTMLElement | null = null;
+let shellContainer: HTMLElement;
 let initialized = false;
 
 /**
@@ -40,9 +34,6 @@ export function initShellPanel(): void {
   initialized = true;
 
   shellContainer = $.shellTerminal;
-  if (!shellContainer) {
-    return;
-  }
 
   // Initialize the DOM renderer + scroll tracking.
   initRender({ output: shellContainer, termWrap: shellContainer });
@@ -97,9 +88,7 @@ export function initShellPanel(): void {
 export function restoreShell(): void {
   shellWS.setActive(true);
   void shellWS.connect();
-  if (shellContainer !== null) {
-    shellContainer.focus();
-  }
+  shellContainer.focus();
 }
 
 function handleBinaryFrame(data: ArrayBuffer): void {
@@ -110,14 +99,14 @@ function handleBinaryFrame(data: ArrayBuffer): void {
 
   switch (msg.type) {
     case "screen":
-      handleScreen(msg as ScreenMessage);
+      handleScreen(msg);
       scrollToBottom();
       break;
     case "scroll":
-      handleScroll(msg as ScrollMessage);
+      handleScroll(msg);
       break;
     case "modes": {
-      const m = msg as ModesMessage;
+      const m = msg;
       setModes(m.bracketedPaste, m.applicationCursor);
       break;
     }
@@ -150,9 +139,6 @@ function onPaste(e: ClipboardEvent): void {
 }
 
 function sendResize(): void {
-  if (shellContainer === null) {
-    return;
-  }
   const { cols, rows } = computeSize();
   if (cols < 1 || rows < 1) {
     return;
