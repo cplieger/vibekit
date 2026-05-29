@@ -298,24 +298,30 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	if err != nil {
 		return err
 	}
+	// Defence-in-depth: archivePathFor already validated chatID via
+	// api.ValidChatID, but CodeQL's go/path-injection analyzer doesn't
+	// track that guard across the function-return boundary. Resolve
+	// chatPath to its absolute, cleaned form and verify it's still
+	// under the archive directory before any FS mutation. The
+	// containment check is what CodeQL recognises as a sanitiser.
+	archiveDir := s.archivePath()
+	cleanChatPath := filepath.Clean(chatPath)
+	cleanArchiveDir := filepath.Clean(archiveDir) + string(filepath.Separator)
+	if !strings.HasPrefix(cleanChatPath, cleanArchiveDir) {
+		return fmt.Errorf("chat path %q escapes archive dir %q", chatPath, archiveDir)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	m := s.store.Lock(chatID)
 	m.Lock()
-	if err := os.Remove(chatPath); err != nil {
+	if err := os.Remove(cleanChatPath); err != nil {
 		m.Unlock()
 		return err
 	}
-	// Derive the plan-draft path from the already-validated chatPath
-	// (chatPath was returned by archivePathFor which calls
-	// api.ValidChatID + filepath.Join under store.Dir()). Replacing
-	// the .json suffix with .plan.md keeps the new path within the
-	// same directory and prevents CodeQL's path-injection analyzer
-	// from tracking raw chatID into a separate filepath.Join call
-	// (it doesn't track the up-front ValidChatID guard across the
-	// archivePathFor return).
-	draftPath := strings.TrimSuffix(chatPath, chatFileSuffix) + planDraftSuffix
+	// draftPath shares the directory of cleanChatPath; suffix swap
+	// keeps it inside the same already-verified directory.
+	draftPath := strings.TrimSuffix(cleanChatPath, chatFileSuffix) + planDraftSuffix
 	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("chat delete_archived: remove plan-draft",
 			"chat_id", chatID, "error", err)
