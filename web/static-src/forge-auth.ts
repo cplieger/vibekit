@@ -43,6 +43,8 @@ import { signal, effect } from "./lib/reactive/index.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
+import { enableTool, getToolsStatus } from "./actions/tools.js";
+import { RollingOutput } from "./modals.js";
 import {
   renderRepoRow,
   renderRepoState,
@@ -714,12 +716,78 @@ function onAddAccount(kind: ForgeKind, section: HTMLElement): void {
   showAddPane(section, kind);
 }
 
+/** Map a forge kind to the CLI binary it drives. */
+const CLI_BY_KIND: Record<ForgeKind, { section: string; name: string }> = {
+  github: { section: "binary", name: "gh" },
+  gitlab: { section: "binary", name: "glab" },
+  codeberg: { section: "binary", name: "tea" },
+  gitea: { section: "binary", name: "tea" },
+};
+
+/**
+ * Probe whether the forge CLI for `kind` is installed; if not, prepend
+ * an install banner to the add-pane. The banner installs the CLI on
+ * click with visible progress. The login forms below stay usable —
+ * backend EnsureCLI is the ultimate guarantee — but installing up
+ * front avoids a silent stall on submit.
+ */
+async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<void> {
+  const cli = CLI_BY_KIND[kind];
+  const status = await getToolsStatus.dispatch();
+  if (status !== null && status[cli.name] === true) {
+    return; // CLI already present.
+  }
+
+  const banner = document.createElement("div");
+  banner.className = "forge-cli-banner inline-install-banner";
+  const msg = document.createElement("p");
+  msg.className = "section-hint";
+  msg.textContent = `The ${cli.name} CLI powers ${kindTitle(kind)} integration and isn't installed yet. It installs automatically when you sign in, or install it now:`;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-small";
+  btn.textContent = `Install ${cli.name}`;
+  const out = document.createElement("div");
+  out.className = "rolling-output hidden";
+
+  btn.addEventListener("click", () => {
+    void (async () => {
+      btn.disabled = true;
+      const roll = new RollingOutput(out, "git-output-modal");
+      out.classList.remove("hidden");
+      roll.append(`Installing ${cli.name}…`);
+      const d = await enableTool.dispatch({ section: cli.section, name: cli.name });
+      if (d === null || d.error !== undefined) {
+        roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
+        btn.disabled = false;
+        return;
+      }
+      roll.append(d.output ?? "");
+      const after = await getToolsStatus.dispatch();
+      if (after !== null && after[cli.name] === true) {
+        banner.remove();
+      } else {
+        btn.disabled = false;
+      }
+    })();
+  });
+
+  banner.append(msg, btn, out);
+  pane.prepend(banner);
+}
+
 function showAddPane(section: HTMLElement, kind: ForgeKind): void {
   const slot = slotOf(section);
   slot.innerHTML = "";
 
   const pane = document.createElement("div");
   pane.className = "forge-add-pane";
+
+  // The forge CLI (gh/glab/tea) is opt-in and installed on demand.
+  // Backend EnsureCLI also installs it on login submit, but probing
+  // up front lets us show progress instead of a silent ~10s stall
+  // when the user clicks Sign in / Save token.
+  void gateAddPaneOnCLI(pane, kind);
 
   // Lead-in text. Phrasing depends on whether OAuth is offered.
   const intro = document.createElement("p");

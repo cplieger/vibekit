@@ -48,6 +48,7 @@ const (
 	fieldUpdate    = "update"
 	fieldMethod    = "method"
 	fieldRepo      = "repo"
+	fieldEnabled   = "enabled"
 )
 
 // parseRFC3339Millis parses an RFC 3339 timestamp string into Unix

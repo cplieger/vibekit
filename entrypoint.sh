@@ -161,7 +161,7 @@ if needs_kiro_cli_install; then
     # Same boot also runs setup-tools.sh foreground so the rest of the
     # /config/tools/ surface (gh, yq, anything user-added) is in sync
     # with the freshly installed kiro-cli before vibekit starts.
-    if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+    if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes + .lsp | length > 0' "$MANIFEST" >/dev/null 2>&1; then
         printf "Installing/updating additional tools (log: %s)\n" "$LOG"
         bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" || \
             printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"

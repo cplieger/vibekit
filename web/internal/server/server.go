@@ -113,6 +113,10 @@ func (s *Server) ListenAndServe() error {
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	mux.HandleFunc("/api/tools/install", s.handleToolsInstall)
+	mux.HandleFunc("GET /api/tools/status", s.handleToolStatus)
+	mux.HandleFunc("POST /api/tools/{section}/{name}/enable", s.handleToolEnable)
+	mux.HandleFunc("DELETE /api/tools/{section}/{name}", s.handleToolDelete)
+	mux.HandleFunc("PATCH /api/tools/{section}/{name}", s.handleToolPatch)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)

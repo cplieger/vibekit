@@ -1,14 +1,18 @@
 // Auto-install of forge CLI tools (gh / glab / tea) on first use.
 //
-// The container has a /config/tools.json manifest read by the
-// /opt/kweb/setup-tools.sh script. We add an entry for the needed
-// CLI, then run the setup script. After the script completes the
-// binary is on PATH.
+// The new tools.json default ships gh, glab and tea as pre-populated
+// "binary" entries with "enabled": false. Adding a forge account
+// flips enabled=true on the matching entry and triggers
+// /opt/vibekit/setup-tools.sh, which downloads + installs the CLI
+// using the install command stored in the manifest. The frontend
+// surfaces this as a spinner inside the OAuth/PAT modal so the user
+// sees the install progress; this Go helper is the backend hook
+// invoked from forges.LoginWithPAT / LoginWithOAuth before any CLI
+// command runs.
 //
-// All three CLIs distribute prebuilt binaries via GitHub Releases
-// (gh, glab) or dl.gitea.com (tea). The manifest entries follow
-// the standard `binary` shape with a github update method where
-// possible.
+// If the entry is missing from the user's tools.json (e.g. they had
+// an older default), we fall back to inserting the entry with a
+// minimal default so things still work — no separate migration step.
 
 package forges
 
@@ -30,17 +34,19 @@ import (
 var (
 	installMu      sync.RWMutex
 	toolsJSONPath  = "/config/tools.json"
-	setupToolsPath = "/opt/kweb/setup-tools.sh"
+	setupToolsPath = "/opt/vibekit/setup-tools.sh"
 	installTimeout = 5 * time.Minute
 )
 
 // EnsureCLI checks if the CLI for the given kind is on PATH. If not,
-// it adds the CLI to /config/tools.json and runs setup-tools.sh.
+// it flips enabled=true on the binary.<cli> entry in tools.json and
+// runs setup-tools.sh. After the script completes the binary should
+// be on PATH.
 //
 // Returns nil if the CLI is already installed (or installation
-// succeeded). The function is safe to call multiple times — the
-// manifest update is idempotent and setup-tools.sh skips already-
-// installed tools.
+// succeeded). The function is safe to call multiple times — flipping
+// enabled is idempotent and setup-tools.sh skips already-installed
+// tools.
 func EnsureCLI(ctx context.Context, kind Kind) error {
 	cli := kind.CLI()
 	if cli == "" {
@@ -54,37 +60,37 @@ func EnsureCLI(ctx context.Context, kind Kind) error {
 	scriptPath := setupToolsPath
 	installMu.RUnlock()
 
-	if err := addToolsManifestEntry(manifestPath, cli); err != nil {
+	if err := enableToolEntry(manifestPath, cli); err != nil {
 		return fmt.Errorf("update tools.json: %w", err)
 	}
 	if _, err := os.Stat(scriptPath); err != nil {
-		// No setup script present (test/dev environment). The
-		// manifest update is still useful — a container restart
-		// will install it. Surface as a non-fatal warning.
 		if errors.Is(err, fs.ErrNotExist) {
+			// No setup script present (test/dev environment). The
+			// manifest update is still useful — a container restart
+			// will install it. Surface as a non-fatal warning.
 			return nil
 		}
 		return fmt.Errorf("stat setup script: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "bash", scriptPath)
+	cmd := exec.CommandContext(cctx, "bash", scriptPath) //nolint:gosec // hardcoded path
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("run setup-tools.sh: %w (output: %s)", err, string(out))
 	}
-	// Verify the install worked.
 	if _, lookErr := exec.LookPath(cli); lookErr != nil {
 		return fmt.Errorf("forges: %s still not on PATH after install", cli)
 	}
 	return nil
 }
 
-// addToolsManifestEntry inserts a binary entry for cli into tools.json
-// under the binary section. No-op if cli is already present.
-func addToolsManifestEntry(path, cli string) error {
-	data, err := os.ReadFile(path)
+// enableToolEntry flips binary.<cli>.enabled to true. If the entry
+// doesn't exist (older user-customized tools.json), inserts a default
+// entry with the same install command shipped in the new default.
+func enableToolEntry(path, cli string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // configDir is the trusted runtime directory
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -102,49 +108,59 @@ func addToolsManifestEntry(path, cli string) error {
 		binary = make(map[string]any)
 		manifest["binary"] = binary
 	}
-	if _, ok := binary[cli]; ok {
-		return nil // already present
+	entry, ok := binary[cli].(map[string]any)
+	if !ok {
+		// Fallback for users with older tools.json that doesn't
+		// pre-populate forge CLIs. Insert a fresh entry matching
+		// the new default.
+		def, derr := defaultManifestEntry(cli)
+		if derr != nil {
+			return derr
+		}
+		binary[cli] = def
+		entry = def
 	}
-	entry, err := defaultManifestEntry(cli)
-	if err != nil {
-		return err
-	}
-	binary[cli] = entry
+	entry["enabled"] = true
 	return atomicWriteJSON(path, manifest)
 }
 
 // defaultManifestEntry returns the install entry for the given CLI.
-// Uses the standard manifest shape: {version, update, install}.
+// Mirrors the shape used in the bundled tools.json default; only
+// reached when the user's tools.json is missing the pre-populated
+// forge entries (older default or hand-edited).
 func defaultManifestEntry(cli string) (map[string]any, error) {
 	switch cli {
 	case "gh":
 		return map[string]any{
-			fieldVersion: versionLatest,
+			fieldEnabled: true,
+			fieldVersion: "v2.93.0",
 			fieldUpdate: map[string]any{
 				fieldMethod: string(KindGitHub),
 				fieldRepo:   "cli/cli",
 			},
-			actionInstall: "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION#v}_linux_amd64.tar.gz | " +
-				"tar -xz -C ${TOOLS} --strip-components=2 gh_${VERSION#v}_linux_amd64/bin/gh",
+			actionInstall: "curl -fsSL https://github.com/cli/cli/releases/download/${VERSION}/gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | " +
+				"tar -xz -C ${TOOLS} --strip-components=2 gh_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}/bin/gh",
 		}, nil
 	case "glab":
 		return map[string]any{
-			fieldVersion: versionLatest,
+			fieldEnabled: true,
+			fieldVersion: "v1.69.0",
 			fieldUpdate: map[string]any{
 				fieldMethod: string(KindGitHub),
 				fieldRepo:   "gitlab-org/cli",
 			},
-			actionInstall: "curl -fsSL https://github.com/gitlab-org/cli/releases/download/${VERSION}/glab_${VERSION#v}_Linux_x86_64.tar.gz | " +
+			actionInstall: "curl -fsSL https://gitlab.com/gitlab-org/cli/-/releases/${VERSION}/downloads/glab_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz | " +
 				"tar -xz -C ${TOOLS} --strip-components=1 bin/glab",
 		}, nil
 	case cliTea:
 		return map[string]any{
-			fieldVersion: versionLatest,
+			fieldEnabled: true,
+			fieldVersion: "v0.11.0",
 			fieldUpdate: map[string]any{
-				fieldMethod: string(KindGitHub),
-				fieldRepo:   "https://gitea.com/gitea/tea",
+				fieldMethod: "url",
+				"url":       "https://dl.gitea.com/tea/version.json",
 			},
-			actionInstall: "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION#v}/tea-${VERSION#v}-linux-amd64 && chmod +x ${BIN}/tea",
+			actionInstall: "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64} && chmod +x ${BIN}/tea",
 		}, nil
 	}
 	return nil, fmt.Errorf("forges: no install template for %q", cli)

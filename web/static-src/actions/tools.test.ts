@@ -25,6 +25,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { installTools, saveTools, runDiagnostics, loadTools, seedMcp } from "./tools.js";
+import { enableTool, deleteTool, patchTool, getToolsStatus, execSlash } from "./tools.js";
 import { _resetForTest as resetDefine } from "./define.js";
 import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
 import { _resetForTest as resetCleanup } from "./cleanup.js";
@@ -162,5 +163,90 @@ describe("tools.seed_mcp", () => {
     await Promise.all([p1, p2]);
     // Second call starts after first finishes (serialized via scope "tools")
     expect(log[1]! - log[0]!).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe("tools.enable", () => {
+  it("POSTs to the section/name/enable path", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ output: "ok", enabled_chain: ["runtimes.node", "lsp.pyright"] }), {
+        status: 200,
+      }),
+    );
+    await enableTool.dispatch({ section: "lsp", name: "pyright" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/lsp/pyright/enable");
+    expect(opts.method).toBe("POST");
+  });
+
+  it("URL-encodes scoped/odd names", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await enableTool.dispatch({ section: "lsp", name: "kotlin-language-server" });
+    const [url] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/lsp/kotlin-language-server/enable");
+  });
+});
+
+describe("tools.delete", () => {
+  it("DELETEs without body when force is undefined", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ disabled: ["binary.gh"] }), { status: 200 }));
+    await deleteTool.dispatch({ section: "binary", name: "gh" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/binary/gh");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.body).toBeUndefined();
+  });
+
+  it("sends force:true in body when cascading", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ disabled: [] }), { status: 200 }));
+    await deleteTool.dispatch({ section: "runtimes", name: "node", force: true });
+    const body = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
+    expect(body.force).toBe(true);
+  });
+});
+
+describe("tools.patch", () => {
+  it("PATCHes auto_update", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ auto_update: false }), { status: 200 }));
+    await patchTool.dispatch({ section: "binary", name: "gh", auto_update: false });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/binary/gh");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string).auto_update).toBe(false);
+  });
+});
+
+describe("tools.status", () => {
+  it("GETs /api/tools/status and dedupes", async () => {
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ npx: false, gh: true }), { status: 200 }));
+          }, 50),
+        ),
+    );
+    const p1 = getToolsStatus.dispatch(undefined);
+    const p2 = getToolsStatus.dispatch(undefined);
+    await vi.advanceTimersByTimeAsync(50);
+    const [r1] = await Promise.all([p1, p2]);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(r1).toEqual({ npx: false, gh: true });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/status");
+    expect(opts.method).toBe("GET");
+  });
+});
+
+describe("tools.exec_slash", () => {
+  it("POSTs chat_id + command to /api/slash/execute", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await execSlash.dispatch({ chatID: "chat-1", command: "/code init -f" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/slash/execute");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body as string);
+    expect(body.chat_id).toBe("chat-1");
+    expect(body.command).toBe("/code init -f");
   });
 });

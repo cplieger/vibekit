@@ -9,9 +9,19 @@
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
-import { ICON_EDIT, ICON_CLOSE, iconEl } from "./icons.js";
-import { installTools, saveTools, seedMcp, loadTools as loadToolsAction } from "./actions/tools.js";
+import { ICON_EDIT, ICON_TRASH, ICON_PIN, ICON_PIN_FILLED, iconEl } from "./icons.js";
+import {
+  installTools,
+  saveTools,
+  seedMcp,
+  loadTools as loadToolsAction,
+  enableTool,
+  deleteTool,
+  patchTool,
+  execSlash,
+} from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { getActiveId } from "./store.js";
 import { $, el } from "./dom.js";
 import { reconcile } from "./lib/reactive/reconcile.js";
 
@@ -111,6 +121,15 @@ const INSTALL_METHODS = {
       version: "Version label, e.g. 1.0.0",
       pkg: "",
       install: "Install command, e.g. pip install --user ha-mcp",
+    },
+  },
+  lsp: {
+    fields: { version: true, pkg: false, install: false, binaries: false },
+    hints: {
+      cat: "A language server. Pre-populated entries install via their bundled method (npm/binary/go/gem); edit only adjusts the pinned version.",
+      version: "LSP version, e.g. 1.1.391",
+      pkg: "",
+      install: "",
     },
   },
 } as const satisfies Readonly<Record<string, MethodSchema>>;
@@ -221,6 +240,7 @@ class ToolsManager {
       "npm",
       "pip",
       "cargo",
+      "lsp",
       "apt",
       "custom",
       "builtin",
@@ -291,24 +311,88 @@ class ToolsManager {
   ): HTMLDivElement {
     const row = document.createElement("div");
     row.className = "list-row";
+
+    // enabled defaults to true when the field is absent (user-authored
+    // entries). Pre-populated entries ship enabled:false.
+    const enabled = (entry?.["enabled"] as boolean | undefined) ?? true;
+    if (!isBuiltin && !enabled) {
+      row.classList.add("list-row-disabled");
+    }
+
     const nameEl = document.createElement("span");
     nameEl.className = "list-row-name";
     nameEl.textContent = name;
+
     const verEl = document.createElement("span");
     verEl.className = "list-row-meta";
     verEl.textContent = isBuiltin
       ? ((entry?.["description"] as string | undefined) ?? "")
-      : ((entry?.["version"] as string | undefined) ?? "");
+      : this.metaText(entry, enabled);
+
     row.append(nameEl, verEl);
     if (!isBuiltin) {
-      row.appendChild(this.toolActions(sec, name));
+      row.appendChild(this.toolActions(sec, name, entry, enabled));
     }
     return row;
   }
 
-  private toolActions(sec: string, name: string): HTMLDivElement {
+  /** Meta line: version + a short description hint when disabled. */
+  private metaText(entry: Record<string, unknown> | undefined, enabled: boolean): string {
+    const version = (entry?.["version"] as string | undefined) ?? "";
+    if (enabled) {
+      return version;
+    }
+    const desc = (entry?.["description"] as string | undefined) ?? "";
+    // For disabled entries the description is the useful bit; the
+    // version is implied. Truncated by CSS ellipsis.
+    return desc !== "" ? desc : version;
+  }
+
+  /**
+   * Action cluster for a tool row. Disabled entries show a single
+   * Enable button. Enabled entries show pin (auto_update toggle),
+   * edit, and delete. Builtin (base os) rows get no actions.
+   */
+  private toolActions(
+    sec: string,
+    name: string,
+    entry: Record<string, unknown> | undefined,
+    enabled: boolean,
+  ): HTMLDivElement {
     const actions = document.createElement("div");
     actions.className = "list-row-actions";
+
+    if (!enabled) {
+      const enableBtn = document.createElement("button");
+      enableBtn.className = "btn-small list-row-enable";
+      enableBtn.textContent = "Enable";
+      enableBtn.setAttribute("aria-label", `Enable ${name}`);
+      enableBtn.addEventListener("click", () => {
+        void this.runEnable(sec, name);
+      });
+      actions.append(enableBtn);
+      return actions;
+    }
+
+    // Pin toggle: filled = auto_update off (pinned), outline = on.
+    const autoUpdate = (entry?.["auto_update"] as boolean | undefined) ?? true;
+    const pinBtn = document.createElement("button");
+    pinBtn.className = "list-row-btn list-row-pin";
+    pinBtn.setAttribute("aria-label", autoUpdate ? `Pin ${name} version` : `Unpin ${name}`);
+    pinBtn.setAttribute(
+      "data-tooltip",
+      autoUpdate
+        ? "Auto-updating on container start. Click to pin this version."
+        : "Pinned — won't auto-update. Click to resume auto-updates.",
+    );
+    pinBtn.replaceChildren(autoUpdateIcon(autoUpdate));
+    if (!autoUpdate) {
+      pinBtn.classList.add("list-row-pin-active");
+    }
+    pinBtn.addEventListener("click", () => {
+      void this.togglePin(sec, name, !autoUpdate);
+    });
+
     const editBtn = document.createElement("button");
     editBtn.className = "list-row-btn";
     editBtn.setAttribute("data-tooltip", "Edit");
@@ -317,25 +401,79 @@ class ToolsManager {
     editBtn.addEventListener("click", () => {
       this.openToolModal(sec, name);
     });
+
     const delBtn = document.createElement("button");
     delBtn.className = "list-row-btn";
     delBtn.setAttribute("data-tooltip", "Delete");
     delBtn.setAttribute("aria-label", `Delete ${name}`);
-    delBtn.replaceChildren(iconEl(ICON_CLOSE));
+    delBtn.replaceChildren(iconEl(ICON_TRASH));
     delBtn.addEventListener("click", () => {
-      void (async () => {
-        const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
-        if (!ok) {
-          return;
-        }
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-dynamic-delete
-        delete this.toolsData[sec]![name];
-        this.saveToolsData();
-        this.renderToolsList();
-      })();
+      void this.runDelete(sec, name);
     });
-    actions.append(editBtn, delBtn);
+
+    actions.append(pinBtn, editBtn, delBtn);
     return actions;
+  }
+
+  /** Enable a pre-populated entry: install it + its deps with output. */
+  private async runEnable(sec: string, name: string): Promise<void> {
+    const out = new RollingOutput($.toolUpdateOutput, "git-output-modal");
+    out.append(`Enabling ${name}…`);
+    const d = await enableTool.dispatch({ section: sec, name });
+    if (d === null) {
+      out.append("Enable failed");
+    } else {
+      if (d.enabled_chain !== undefined && d.enabled_chain.length > 1) {
+        out.append(`Installing: ${d.enabled_chain.join(", ")}`);
+      }
+      out.append(d.output ?? "");
+      if (d.error !== undefined) {
+        out.append(`Error: ${d.error}`);
+      } else if (sec === "lsp") {
+        // kiro-cli scans PATH for language servers at code-intelligence
+        // init time. A server enabled mid-session isn't picked up by the
+        // running bridge until it re-initializes. Best-effort fire
+        // `/code init -f` into the active chat so the current session
+        // adopts the new LSP immediately; new chats auto-init regardless.
+        const chatID = getActiveId();
+        if (chatID !== "") {
+          await execSlash.dispatch({ chatID, command: "/code init -f" });
+          out.append("Reinitialized code intelligence in the active chat.");
+        } else {
+          out.append("Installed. Active in your next chat.");
+        }
+      }
+    }
+    this.loadToolsList();
+  }
+
+  /** Delete with cascade-aware confirm. */
+  private async runDelete(sec: string, name: string): Promise<void> {
+    const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
+    if (!ok) {
+      return;
+    }
+    let d = await deleteTool.dispatch({ section: sec, name });
+    // 409 cascade: backend lists dependents that also need disabling.
+    if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
+      const list = d.dependents.join(", ");
+      const force = await confirmDialog(
+        `${name} is required by: ${list}. Remove all of them?`,
+        "Remove all",
+        "destructive",
+      );
+      if (!force) {
+        return;
+      }
+      d = await deleteTool.dispatch({ section: sec, name, force: true });
+    }
+    this.loadToolsList();
+  }
+
+  /** Flip auto_update for an entry. */
+  private async togglePin(sec: string, name: string, autoUpdate: boolean): Promise<void> {
+    await patchTool.dispatch({ section: sec, name, auto_update: autoUpdate });
+    this.loadToolsList();
   }
 
   private updateToolFormVisibility(): void {
@@ -450,6 +588,14 @@ class ToolsManager {
 /** Seed an MCP config entry the user can fill in later. */
 async function seedUnconfiguredMCP(name: string, install: string): Promise<void> {
   await seedMcp.dispatch({ name, install });
+}
+
+/**
+ * Pin icon reflecting auto_update state. Filled pin = pinned
+ * (auto_update off); outline pin = tracking upstream (auto_update on).
+ */
+function autoUpdateIcon(autoUpdate: boolean): HTMLElement {
+  return iconEl(autoUpdate ? ICON_PIN : ICON_PIN_FILLED);
 }
 
 function toggleLabel(id: string, show: boolean): void {
