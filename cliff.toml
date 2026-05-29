@@ -1,3 +1,19 @@
+# Version-bump policy. vibekit is pre-1.0 (alpha): stay within 0.x.
+# - features_always_bump_minor=false -> in 0.x, feat is a PATCH bump
+#   (0.1.0 -> 0.1.1), reserving minor bumps for larger milestones.
+# - breaking_always_bump_major=false -> a breaking change bumps MINOR
+#   in 0.x (0.1.x -> 0.2.0), NOT to 1.0 — the 0->1 jump is a manual,
+#   deliberate "now stable" decision.
+# - initial_tag seeds the first version when no git tag exists yet.
+# - no_increment_regex: chore/ci/docs-only commits don't bump the
+#   version (the build still runs and re-points latest/vX to the new
+#   digest, but the version number stays put).
+[bump]
+features_always_bump_minor = false
+breaking_always_bump_major = false
+initial_tag = "0.1.0"
+no_increment_regex = "^chore|^ci|^docs|^style|^test"
+
 [changelog]
 header = ""
 body = """
