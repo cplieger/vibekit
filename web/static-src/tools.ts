@@ -480,7 +480,7 @@ class ToolsManager {
     const d = await deleteTool.dispatch({ section: sec, name });
     // 409 cascade: backend lists dependents that also need disabling.
     if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
-      const list = d.dependents.join(", ");
+      const list = d.dependents.map((dep) => dep.split(".").pop()).join(", ");
       const force = await confirmDialog(
         `${name} is required by: ${list}. Remove all of them?`,
         "Remove all",
