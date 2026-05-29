@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -137,9 +138,18 @@ func (s *Server) ListenAndServe() error {
 	s.push.RegisterRoutes(mux)
 	mux.HandleFunc("/metrics", metrics.Handler())
 
+	// Compute the CSP once from the embedded index.html so the inline
+	// importmap's sha256 hash is always in sync with what the browser
+	// actually sees — no hardcoded literal to hand-update on every
+	// importmap edit. Startup fails fast if the embed is malformed.
+	cspPolicy, err := buildCSPPolicy(s.staticFS)
+	if err != nil {
+		return fmt.Errorf("build CSP: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           securityMiddleware(requestLogger(mux)),
+		Handler:           securityMiddleware(cspPolicy, requestLogger(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
