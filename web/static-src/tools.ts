@@ -278,7 +278,19 @@ class ToolsManager {
     }
 
     reconcile(container, flat, {
-      key: (e: ToolEntry) => (e.kind === "label" ? `label:${e.sec}` : `row:${e.sec}:${e.name}`),
+      key: (e: ToolEntry) => {
+        if (e.kind === "label") {
+          return `label:${e.sec}`;
+        }
+        // Include the enabled flag in the key so any flip
+        // (Enable success, Delete, or rollback-on-failure) remounts
+        // the row from scratch — otherwise reconcile reuses the
+        // existing node and update() below only patches meta text,
+        // leaving stale action buttons (e.g. a permanently-disabled
+        // "Installing…" button after a rollback).
+        const enabled = (e.entry?.["enabled"] as boolean | undefined) ?? true;
+        return `row:${e.sec}:${e.name}:${enabled ? "on" : "off"}`;
+      },
       mount: (e: ToolEntry) => {
         if (e.kind === "label") {
           const label = document.createElement("div");
@@ -292,7 +304,8 @@ class ToolsManager {
         if (e.kind !== "row") {
           return;
         }
-        // Keep version/description text in sync in case the entry changed.
+        // Same-key updates only patch volatile fields. Enabled-state
+        // transitions go through mount() because the key changes.
         const meta = row.querySelector(".list-row-meta");
         if (meta !== null) {
           meta.textContent = e.isBuiltin
@@ -423,7 +436,15 @@ class ToolsManager {
 
   /** Enable a pre-populated entry: install it + its deps with output. */
   private async runEnable(sec: string, name: string): Promise<void> {
+    // The shared rolling-output element is module-scoped; if a prior
+    // install left output behind (or another button was clicked while
+    // this one was running), clear it so streams don't interleave.
+    // Frontend is also single-flight-ish: each row's button is
+    // disabled while its install is in-flight, but two distinct rows
+    // could race; backend's installing atomic.Bool serializes the
+    // actual subprocess, so visual interleaving is the only risk.
     const out = new RollingOutput($.toolUpdateOutput, "git-output-modal");
+    out.clear();
     out.append(`Enabling ${name}…`);
     const d = await enableTool.dispatch({ section: sec, name });
     if (d === null) {
@@ -438,13 +459,19 @@ class ToolsManager {
       } else if (sec === "lsp") {
         // kiro-cli scans PATH for language servers at code-intelligence
         // init time. A server enabled mid-session isn't picked up by the
-        // running bridge until it re-initializes. Best-effort fire
-        // `/code init -f` into the active chat so the current session
-        // adopts the new LSP immediately; new chats auto-init regardless.
+        // running bridge until it re-initializes. Fire `/code init -f`
+        // into the active chat as a best-effort nudge; the certain
+        // path is the next new chat (a fresh bridge always re-scans
+        // PATH at startup). The flat command shape we send via
+        // /api/slash/execute is what slash.go uses for other panel
+        // commands; if kiro-cli silently rejects it for `/code init`
+        // panel commands, the new-chat path still works.
         const chatID = getActiveId();
         if (chatID !== "") {
           await execSlash.dispatch({ chatID, command: "/code init -f" });
-          out.append("Reinitialized code intelligence in the active chat.");
+          out.append(
+            "Installed. Sent /code init -f to the active chat; a new chat will pick it up regardless.",
+          );
         } else {
           out.append("Installed. Active in your next chat.");
         }
