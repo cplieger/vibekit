@@ -76,6 +76,10 @@ if [ "$_vk_sourced" = "0" ]; then
     printf "[%s] Tool setup starting\n" "$(date -Iseconds)"
 fi
 
+# Count install failures so a partial run can exit non-zero (the entrypoint
+# surfaces a WARNING instead of failures passing silently).
+FAILURES=0
+
 # --- Architecture detection ---
 # Resolved once at script start; consumed via expand() placeholders.
 # These cover the three common naming conventions used by upstream
@@ -413,9 +417,10 @@ run_install() {
     install_cmd=$(jq -r "${jq_path}.${install_field}" "$MANIFEST")
     if [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ]; then
         printf "    error: no install command\n"
+        FAILURES=$((FAILURES + 1))
         return 1
     fi
-    eval "$(expand "$install_cmd" "$version")"
+    eval "$(expand "$install_cmd" "$version")" || { FAILURES=$((FAILURES + 1)); return 1; }
 }
 
 # --- Process each section: update then install ---
@@ -521,7 +526,7 @@ else
             pkg=$(jq -r "${jq_path}.package" "$MANIFEST")
             pkg="${pkg//\$\{VERSION\}/$version}"
             printf "    install: %s\n" "$version"
-            go install "$pkg"
+            go install "$pkg" || FAILURES=$((FAILURES + 1))
         else
             printf "    installed\n"
         fi
@@ -562,7 +567,7 @@ else
                 npm_args="$npm_args ${name}@${version}"
             done
             # shellcheck disable=SC2086
-            npm install --prefix "$TOOLS/node" -g $npm_args
+            npm install --prefix "$TOOLS/node" -g $npm_args || FAILURES=$((FAILURES + 1))
         else
             printf "    all installed\n"
         fi
@@ -603,10 +608,10 @@ else
             done
             if command -v uv >/dev/null 2>&1; then
                 # shellcheck disable=SC2086
-                uv pip install --prefix "$TOOLS/python" --system $pip_args
+                uv pip install --prefix "$TOOLS/python" --system $pip_args || FAILURES=$((FAILURES + 1))
             else
                 # shellcheck disable=SC2086
-                pip3 install --no-cache-dir --prefix "$TOOLS/python" $pip_args
+                pip3 install --no-cache-dir --prefix "$TOOLS/python" $pip_args || FAILURES=$((FAILURES + 1))
                 for f in "$TOOLS/python/local/bin"/*; do
                     [ -f "$f" ] && ln -sf "$f" "$TOOLS/python/bin/$(basename "$f")"
                 done
@@ -664,6 +669,7 @@ else
         if ! has_bin "$name"; then
             printf "    install: %s\n" "$version"
             cargo install "$name" --version "${version#v}" --root "$TOOLS" 2>&1 | tail -1
+            [ "${PIPESTATUS[0]}" -eq 0 ] || FAILURES=$((FAILURES + 1))
         else
             printf "    installed\n"
         fi
@@ -713,6 +719,7 @@ else
                 fi
                 pkg=$(jq -r "${jq_path}.package // \"$name\"" "$MANIFEST")
                 npm install --prefix "$TOOLS/node" -g "${pkg}@${version#v}" 2>&1 | tail -3
+                [ "${PIPESTATUS[0]}" -eq 0 ] || FAILURES=$((FAILURES + 1))
                 # If the entry declares extra packages (e.g. typescript-
                 # language-server requires the typescript compiler too),
                 # install them in the same call.
@@ -728,7 +735,7 @@ else
                 fi
                 pkg=$(jq -r "${jq_path}.package" "$MANIFEST")
                 pkg="${pkg//\$\{VERSION\}/$version}"
-                go install "$pkg"
+                go install "$pkg" || FAILURES=$((FAILURES + 1))
                 ;;
             gem)
                 if ! command -v gem >/dev/null 2>&1; then
@@ -736,6 +743,7 @@ else
                     continue
                 fi
                 gem install "$name" -v "${version#v}" --no-document 2>&1 | tail -3
+                [ "${PIPESTATUS[0]}" -eq 0 ] || FAILURES=$((FAILURES + 1))
                 ;;
             *)
                 printf "    error: unknown install method '%s'\n" "$install_method"
@@ -771,4 +779,8 @@ else
     fi
 fi
 
+if [ "$FAILURES" -gt 0 ]; then
+    printf "\n[%s] Tool setup complete with %d failure(s)\n" "$(date -Iseconds)" "$FAILURES"
+    exit 1
+fi
 printf "\n[%s] Tool setup complete\n" "$(date -Iseconds)"
