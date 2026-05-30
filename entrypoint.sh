@@ -29,8 +29,6 @@ if [ ! -f "$MANIFEST" ]; then
     cp /opt/vibekit/tools.json.default "$MANIFEST"
 fi
 
-# First boot: foreground (blocks until tools ready)
-# Subsequent: background (tools already present), respects auto_update setting
 # kiro-cli is the one tool vibekit cannot launch without; it's downloaded
 # below (not baked into the image for licensing reasons, not in tools.json
 # so users can't accidentally remove it). Pinned via KIRO_CLI_VERSION /
