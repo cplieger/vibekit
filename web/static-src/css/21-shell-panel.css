@@ -156,3 +156,30 @@
 .confirm-danger:hover {
   background: color-mix(in srgb, var(--c-red) 15%, transparent);
 }
+
+/* Terminal link detection: URLs in PTY output are wrapped in <a class="term-link">
+   by term-render.ts's linkifySpans. Style them subtly so they're discoverable
+   without disrupting the terminal aesthetic. */
+.term-link {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--c-text-tertiary);
+  cursor: pointer;
+}
+
+.term-link:hover {
+  text-decoration: underline solid;
+  text-decoration-color: currentcolor;
+}
+
+/* Blinking text (SGR attribute 5). Uses CSS animation so it doesn't
+   require JS timers. */
+.term-blink {
+  animation: term-blink-anim 1s step-end infinite;
+}
+
+@keyframes term-blink-anim {
+  50% {
+    opacity: 0;
+  }
+}
