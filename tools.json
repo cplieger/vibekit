@@ -23,7 +23,7 @@
     "node": {
       "enabled": false,
       "auto_update": true,
-      "version": "v20.20.2",
+      "version": "v26.2.0",
       "update": {
         "method": "github",
         "repo": "nodejs/node"

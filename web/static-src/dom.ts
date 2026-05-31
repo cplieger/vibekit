@@ -204,6 +204,12 @@ class Elements {
   get shellResize(): HTMLDivElement {
     return el("shell-resize");
   }
+  get termInput(): HTMLTextAreaElement {
+    return el("term-input");
+  }
+  get keyToolbar(): HTMLDivElement {
+    return el("key-toolbar");
+  }
 
   // Git
   get gitBtn(): HTMLButtonElement {

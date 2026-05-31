@@ -540,30 +540,14 @@ function flushScreenInner(
     liveCount = 0;
     firstScreen = false;
   }
-  // Trim trailing empty rows from the DOM live zone. The screen buffer
-  // is always pty-height tall, but kiro CLI's TUI typically draws
-  // content + a bottom status row and leaves the rows in between (and
-  // any rows below content when content reflowed shorter after a
-  // resize) as default empty cells. Those rows render as a visible
-  // "black gap" between content and the bottom-of-viewport status —
-  // most reliably reproduced by switching device (iPhone → iPad), where
-  // kiro's SIGWINCH-driven repaint may not touch every row of the new
-  // larger screen until the user sends fresh input.
-  //
-  // Visible row count = max(cursor row + 1, last non-empty row + 1).
-  // Always include the cursor row so we never trim it. New content
-  // arriving for a previously-trimmed row index just grows the live
-  // zone again on the next frame.
-  let lastNonEmpty = -1;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    if (row !== undefined && row.length > 0 && row.some((r) => r.t !== "" && r.t.trim() !== "")) {
-      lastNonEmpty = i;
-      break;
-    }
-  }
-  const visibleEnd = Math.max(cursor[0] + 1, lastNonEmpty + 1, 1);
-  ensureLiveZone(visibleEnd);
+  // Live zone is always the full pty-height screen. We deliberately do
+  // NOT trim trailing empty rows: kiro CLI's slow SIGWINCH repaint can
+  // briefly leave stale empty cells after a device-switch/resize (a
+  // "black gap"), but that's a kiro-side repaint issue. Trimming here
+  // made the live-zone height — and thus scrollHeight — vary per frame,
+  // which shifted the viewport a line when navigating bottom-anchored
+  // prompts with the arrow keys.
+  ensureLiveZone(rows.length);
 
   const newCursorRow = cursor[0];
   const newCursorCol = cursor[1];
