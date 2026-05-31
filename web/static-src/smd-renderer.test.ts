@@ -70,7 +70,7 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
 
   it.each(cases)("$label", ({ token, expectedTag }) => {
     const container = document.createElement("div");
-    const renderer = domRenderer(container, false);
+    const renderer = domRenderer(container, { animateText: false });
     renderer.add_token(renderer.data, token);
     const child = container.firstElementChild;
     expect(child).not.toBeNull();

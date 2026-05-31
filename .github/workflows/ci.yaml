@@ -77,6 +77,14 @@ jobs:
           curl -fsSL --retry 3 \
             "https://raw.githubusercontent.com/golangci/golangci-lint/${VERSION}/install.sh" \
             | sh -s -- -b /usr/local/bin "${VERSION}"
+          # tsgo (native TypeScript) for the typecheck step. Keep in sync with
+          # the Dockerfile's TSGO_VERSION; renovate bumps both.
+          # renovate: datasource=npm depName=@typescript/native-preview
+          TSGO_VERSION=7.0.0-dev.20260527.2
+          curl -fsSL --retry 3 \
+            "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
+            | tar -xz -C /usr/local/bin --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts'
+          chmod 755 /usr/local/bin/tsgo
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -149,6 +157,14 @@ jobs:
           (
             npx eslint .
           ) || { echo "Lint TS (eslint)" >> /tmp/_ci_failures; exit 1; }
+
+      - name: Typecheck TS (tsgo)
+        continue-on-error: true
+        working-directory: web/static-src
+        run: |
+          (
+            npm run typecheck && npm run typecheck:tests
+          ) || { echo "Typecheck TS (tsgo)" >> /tmp/_ci_failures; exit 1; }
 
       - name: Format check (prettier)
         continue-on-error: true
@@ -224,7 +240,7 @@ jobs:
           ) || { echo "Validate Dockerfile" >> /tmp/_ci_failures; exit 1; }
 
       - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

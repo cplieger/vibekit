@@ -6,7 +6,6 @@ on:
     paths:
       - "Dockerfile"
       - "web/**"
-      - "!web/go.sum"
       - "entrypoint.sh"
       - "setup-tools.sh"
       - "tools.json"

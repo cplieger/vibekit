@@ -13,7 +13,7 @@ import { setShellRunCallback } from "./code-blocks.js";
 import { ShellWS, encoder } from "./shell-ws.js";
 import { decodeWireBinary } from "./term-wire-binary.js";
 import { handleScreen, handleScroll, init as initRender, computeSize } from "./term-render.js";
-import { init as initScroll, scrollToBottom } from "./term-scroll.js";
+import { init as initScroll } from "./term-scroll.js";
 import { mapKeyboardEvent, bracketTextForPaste } from "./term-keyboard.js";
 import { setModes } from "./term-modes.js";
 
@@ -113,7 +113,6 @@ function handleBinaryFrame(data: ArrayBuffer): void {
   switch (msg.type) {
     case "screen":
       handleScreen(msg);
-      scrollToBottom();
       break;
     case "scroll":
       handleScroll(msg);

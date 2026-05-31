@@ -98,7 +98,13 @@
 .shell-terminal {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Scrollable history: the DOM renderer (term-render.ts) keeps frozen
+     scrollback rows above the live zone. overflow:hidden was a leftover
+     from the old xterm.js viewport. overflow-anchor:none lets the JS own
+     the scroll position (pin-to-bottom when following; manual anchor when
+     the user scrolls up). */
+  overflow: hidden auto;
+  overflow-anchor: none;
   padding: var(--sp-1) 0;
 }
 
