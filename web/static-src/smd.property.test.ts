@@ -22,7 +22,7 @@ import {
   HEADING_6,
 } from "./smd-parser.js";
 import { TOKEN_ARRAY_CAP } from "./smd-parser-types.js";
-import type { Parser, Token } from "./smd-parser.js";
+import type { Parser } from "./smd-parser.js";
 
 /** No-op renderer — we only inspect parser state. */
 function nullRenderer() {
@@ -439,7 +439,9 @@ describe("smd parser property: heading level extraction", () => {
           return addTokenCalls.some((c) => c.type === expected);
         }
         // 7+ hashes: should NOT produce any heading token
-        return !addTokenCalls.some((c) => HEADING_TOKENS.includes(c.type as Token));
+        return !addTokenCalls.some((c) =>
+          HEADING_TOKENS.includes(c.type as (typeof HEADING_TOKENS)[number]),
+        );
       }),
       { numRuns: 200 },
     );

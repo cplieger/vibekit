@@ -57,7 +57,7 @@ describe("scope serialization property", () => {
 
         // Sequential invariant: no start[i+1] before end[i]
         for (let i = 0; i < timeline.length - 1; i++) {
-          if (timeline[i].event === "start" && timeline[i + 1]?.event === "start") {
+          if (timeline[i]!.event === "start" && timeline[i + 1]?.event === "start") {
             // Two consecutive starts means overlap — violation
             expect(true).toBe(false);
           }
@@ -65,7 +65,7 @@ describe("scope serialization property", () => {
 
         // Verify strict ordering: start/end pairs alternate
         for (let i = 0; i < timeline.length; i += 2) {
-          expect(timeline[i].event).toBe("start");
+          expect(timeline[i]!.event).toBe("start");
           expect(timeline[i + 1]?.event).toBe("end");
         }
       }),
@@ -129,16 +129,13 @@ describe("cancellation property", () => {
           resetCleanup();
 
           let runStarted = false;
-          let _resolveRun!: (v: string) => void;
-
           const action = defineAction<string, string>({
             name: "prop.cancel",
-            scope: phase === "scope-queued" ? "cancel-scope" : undefined,
+            ...(phase === "scope-queued" ? { scope: "cancel-scope" } : {}),
             error: false,
             run: async (_args, signal) => {
               runStarted = true;
-              return new Promise<string>((resolve, reject) => {
-                _resolveRun = resolve;
+              return new Promise<string>((_resolve, reject) => {
                 signal.addEventListener(
                   "abort",
                   () => {

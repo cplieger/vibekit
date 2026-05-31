@@ -463,18 +463,21 @@ function flushAll(): void {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- liveStart < length guarantees element exists
     const refNode = liveStart < allRows.length ? allRows[liveStart]! : null;
 
-    // Trim history BEFORE inserting new scroll lines to avoid viewport
-    // jumps. If we trim after insertion, the scroll anchor compensation
-    // will be based on a scrollHeight that includes rows that are then
-    // removed, causing the viewport to jump down.
-    trimHistory();
+    // Scroll anchoring for a scrolled-up reader: pin the row at the
+    // viewport top to its on-screen position across the trim + insert
+    // below, so history added below the viewport (the reconnect /
+    // multi-device replay) doesn't move what they're reading. The
+    // formula self-corrects whether the anchor is frozen history (which
+    // doesn't move) or a live row pushed down by the insert. If the
+    // anchor row is trimmed away entirely, their place is gone — fall
+    // back to the bottom. When following (not scrolled up), the
+    // stickToBottomIfFollowing() at the end of flushAll handles it.
+    const anchor = scroll.isUserScrolledUp() ? rowAtViewportTop() : null;
+    const anchorOffset = anchor ? anchor.offsetTop - termWrap.scrollTop : 0;
 
-    // Scroll anchoring: if the user is scrolled up, inserting rows
-    // above the viewport shifts content down. Compensate by adding
-    // the inserted height to scrollTop so the viewport stays put.
-    const anchorScroll = scroll.isUserScrolledUp();
-    const prevScrollTop = anchorScroll ? termWrap.scrollTop : 0;
-    const prevScrollHeight = anchorScroll ? termWrap.scrollHeight : 0;
+    // Trim history BEFORE inserting to avoid double-counting heights;
+    // the anchor restore below absorbs any shift the trim causes.
+    trimHistory();
 
     for (const line of batch) {
       const div = document.createElement("div");
@@ -484,34 +487,42 @@ function flushAll(): void {
       allRows.splice(allRows.length - liveCount, 0, div);
     }
 
-    if (anchorScroll) {
-      const heightDelta = termWrap.scrollHeight - prevScrollHeight;
-      if (heightDelta > 0) {
-        termWrap.scrollTop = prevScrollTop + heightDelta;
+    if (anchor) {
+      if (anchor.isConnected) {
+        termWrap.scrollTop = anchor.offsetTop - anchorOffset;
+      } else {
+        scroll.scrollToBottom();
       }
     }
   }
 
-  if (pendingRows === null || pendingCursor === null) {
-    return;
-  }
-  const rows = pendingRows;
-  const cursor = pendingCursor;
-  const changed = pendingChanged;
-  const hidden = pendingCursorHidden;
-  const style = pendingCursorStyle;
-  const blink = pendingCursorBlink;
-  const bell = pendingBell;
-  pendingRows = null;
-  pendingCursor = null;
-  pendingChanged = new Set();
-  pendingBell = false;
+  if (pendingRows !== null && pendingCursor !== null) {
+    const rows = pendingRows;
+    const cursor = pendingCursor;
+    const changed = pendingChanged;
+    const hidden = pendingCursorHidden;
+    const style = pendingCursorStyle;
+    const blink = pendingCursorBlink;
+    const bell = pendingBell;
+    pendingRows = null;
+    pendingCursor = null;
+    pendingChanged = new Set();
+    pendingBell = false;
 
-  try {
-    flushScreenInner(rows, cursor, changed, hidden, style, bell, blink);
-  } catch (err) {
-    console.error("vibecli: render error", err);
+    try {
+      flushScreenInner(rows, cursor, changed, hidden, style, bell, blink);
+    } catch (err) {
+      console.error("vibekit: render error", err);
+    }
   }
+
+  // Single auto-follow invariant. After any DOM change this frame
+  // (scrollback insertion and/or a screen repaint), re-pin to the
+  // bottom if the user is following. A scrollback-only flush — the
+  // history replay on reload/reconnect, which is large when another
+  // device was active in the background — previously left the viewport
+  // parked in replayed history because only screen frames re-pinned.
+  stickToBottomIfFollowing();
 }
 
 function flushScreenInner(
@@ -602,10 +613,29 @@ function flushScreenInner(
       output.classList.remove("term-bell");
     }, 150);
   }
+}
 
+/** Pin the viewport to the bottom iff the user is "following" — not
+ *  scrolled up and not mid-gesture. The single source of truth for
+ *  auto-follow; called once per frame at the end of flushAll so it
+ *  covers both screen repaints and scrollback-only flushes. */
+function stickToBottomIfFollowing(): void {
   if (!scroll.isUserScrolledUp() && !scroll.isInUserScroll()) {
     scroll.scrollToBottom();
   }
+}
+
+/** The row currently at the top of the viewport, used as a scroll
+ *  anchor so rows inserted (scrollback) or trimmed elsewhere don't move
+ *  what a scrolled-up user is reading. Null when there are no rows. */
+function rowAtViewportTop(): HTMLDivElement | null {
+  const top = termWrap.scrollTop;
+  for (const el of allRows) {
+    if (el.offsetTop + el.offsetHeight > top) {
+      return el;
+    }
+  }
+  return null;
 }
 
 // --- Scroll message handling (lines that fell off the server's screen) ---

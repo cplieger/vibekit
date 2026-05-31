@@ -99,36 +99,36 @@ describe("EVENT_BOUNDARY_META", () => {
     const entries = Object.entries(EVENT_BOUNDARY_META);
     expect.assertions(entries.length * 3);
     for (const [, meta] of entries) {
-      expect(meta.boundary).toBeTruthy();
-      expect(meta.icon).toBeDefined();
-      expect(meta.defaultLabel).toBeTruthy();
+      expect(meta!.boundary).toBeTruthy();
+      expect(meta!.icon).toBeDefined();
+      expect(meta!.defaultLabel).toBeTruthy();
     }
   });
 
   it("model_switched labelFn produces expected output", () => {
     expect.assertions(2);
-    const meta = EVENT_BOUNDARY_META.model_switched!;
+    const meta = EVENT_BOUNDARY_META["model_switched"]!;
     expect(meta.labelFn!("gpt-4")).toBe("Switched to gpt-4");
     expect(meta.labelFn!("")).toBe("Context reset");
   });
 
   it("compaction_failed labelFn produces expected output", () => {
     expect.assertions(2);
-    const meta = EVENT_BOUNDARY_META.compaction_failed!;
+    const meta = EVENT_BOUNDARY_META["compaction_failed"]!;
     expect(meta.labelFn!("timeout")).toBe("Compaction failed: timeout");
     expect(meta.labelFn!("")).toBe("Compaction failed");
   });
 
   it("agent_switched labelFn produces expected output", () => {
     expect.assertions(2);
-    const meta = EVENT_BOUNDARY_META.agent_switched!;
+    const meta = EVENT_BOUNDARY_META["agent_switched"]!;
     expect(meta.labelFn!("planner")).toBe("planner");
     expect(meta.labelFn!("")).toBe("Agent switched");
   });
 
   it("compacted has no labelFn (uses defaultLabel)", () => {
     expect.assertions(2);
-    const meta = EVENT_BOUNDARY_META.compacted!;
+    const meta = EVENT_BOUNDARY_META["compacted"]!;
     expect(meta.labelFn).toBeUndefined();
     expect(meta.defaultLabel).toBe("Conversation compacted");
   });
