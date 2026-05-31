@@ -795,6 +795,19 @@
         </div>
         <div id="shell-terminal" class="shell-terminal"></div>
         <div id="agent-terminals" class="agent-terminals hidden"></div>
+        <textarea id="term-input" class="term-input" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Terminal input" tabindex="-1"></textarea>
+        <div id="key-toolbar" class="key-toolbar collapsed no-transition" aria-label="Navigation keys" role="toolbar">
+          <button type="button" id="kb-toggle" class="kb-toggle"      aria-label="Toggle key toolbar"><svg class="icon-hamburger" viewBox="0 0 24 24"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg><svg class="icon-close" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
+          <button type="button" id="kb-tab"    class="kb-key kb-r1c1" aria-label="Tab">TAB</button>
+          <button type="button" id="kb-esc"    class="kb-key kb-r1c2" aria-label="Escape">ESC</button>
+          <button type="button" id="kb-up"     class="kb-key kb-r1c3" aria-label="Up"><svg viewBox="0 0 24 24"><polyline points="6 15 12 9 18 15"/></svg></button>
+          <button type="button" id="kb-enter"  class="kb-key kb-r1c4" aria-label="Enter"><svg viewBox="0 0 24 24"><polyline points="9 10 4 15 9 20"/><polyline points="20 4 20 15 4 15"/></svg></button>
+          <button type="button" id="kb-scroll-bottom" class="kb-scroll-bottom" aria-label="Scroll to bottom"><svg viewBox="0 0 24 24"><path fill="none" d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg></button>
+          <button type="button" id="kb-ctrlc"  class="kb-key kb-r2c1" aria-label="Send Ctrl+C">^C</button>
+          <button type="button" id="kb-left"   class="kb-key kb-r2c2" aria-label="Left"><svg viewBox="0 0 24 24"><polyline points="15 6 9 12 15 18"/></svg></button>
+          <button type="button" id="kb-down"   class="kb-key kb-r2c3" aria-label="Down"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" id="kb-right"  class="kb-key kb-r2c4" aria-label="Right"><svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg></button>
+        </div>
       </div>
     </main>
   </div>

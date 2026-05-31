@@ -13,7 +13,7 @@ import { setShellRunCallback } from "./code-blocks.js";
 import { ShellWS, encoder } from "./shell-ws.js";
 import { decodeWireBinary } from "./term-wire-binary.js";
 import { handleScreen, handleScroll, init as initRender, computeSize } from "./term-render.js";
-import { init as initScroll } from "./term-scroll.js";
+import { init as initScroll, scrollToBottom } from "./term-scroll.js";
 import { mapKeyboardEvent, bracketTextForPaste } from "./term-keyboard.js";
 import { setModes } from "./term-modes.js";
 
@@ -65,6 +65,82 @@ export function initShellPanel(): void {
     resizeTimer = setTimeout(sendResize, RESIZE_DEBOUNCE_MS);
   });
   ro.observe(shellContainer);
+
+  // --- Mobile soft-keyboard textarea ---
+  const termInput = $.termInput;
+  termInput.addEventListener("keydown", onKeyDown);
+  termInput.addEventListener("paste", onPaste);
+  termInput.addEventListener("beforeinput", (e: InputEvent) => {
+    if (e.inputType === "insertText" && e.data) {
+      e.preventDefault();
+      sendSeq(e.data.replace(/\u00A0/g, " "));
+    }
+  });
+
+  // Tap-to-focus: open soft keyboard on touch tap.
+  let pointerDownX = 0;
+  let pointerDownY = 0;
+  const TAP_MOVEMENT_PX = 10;
+  shellContainer.addEventListener(
+    "pointerdown",
+    (e: PointerEvent) => {
+      pointerDownX = e.clientX;
+      pointerDownY = e.clientY;
+    },
+    { passive: true },
+  );
+  shellContainer.addEventListener(
+    "pointerup",
+    (e: PointerEvent) => {
+      if (e.pointerType !== "touch") {
+        return;
+      }
+      const dx = Math.abs(e.clientX - pointerDownX);
+      const dy = Math.abs(e.clientY - pointerDownY);
+      if (dx > TAP_MOVEMENT_PX || dy > TAP_MOVEMENT_PX) {
+        return;
+      }
+      termInput.focus({ preventScroll: true });
+    },
+    { passive: true },
+  );
+
+  // --- Mobile key toolbar ---
+  const keyToolbar = $.keyToolbar;
+  document.getElementById("kb-toggle")?.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    keyToolbar.classList.toggle("collapsed");
+  });
+
+  const keyMap: Record<string, string> = {
+    "kb-tab": "\t",
+    "kb-esc": "\x1b",
+    "kb-up": "\x1b[A",
+    "kb-down": "\x1b[B",
+    "kb-left": "\x1b[D",
+    "kb-right": "\x1b[C",
+    "kb-enter": "\r",
+    "kb-ctrlc": "\x03",
+  };
+
+  for (const [id, seq] of Object.entries(keyMap)) {
+    document.getElementById(id)?.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      sendSeq(seq);
+    });
+  }
+
+  document.getElementById("kb-scroll-bottom")?.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    scrollToBottom();
+  });
+
+  // Remove no-transition class after two rAF calls (port vibecli's pattern).
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      keyToolbar.classList.remove("no-transition");
+    }),
+  );
 
   // Wire the "run in shell" callback for code blocks.
   setShellRunCallback((cmd: string) => {
@@ -129,8 +205,13 @@ function handleBinaryFrame(data: ArrayBuffer): void {
   }
 }
 
+function sendSeq(seq: string): void {
+  shellWS.sendRaw(encoder.encode(seq));
+}
+
 function onKeyDown(e: KeyboardEvent): void {
-  if (e.target !== shellContainer) {
+  const target = e.target as HTMLElement;
+  if (target !== shellContainer && target !== $.termInput) {
     return;
   }
   const result = mapKeyboardEvent(e);
