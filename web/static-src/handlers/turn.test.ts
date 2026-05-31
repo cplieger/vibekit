@@ -63,7 +63,7 @@ describe("ERROR_ROUTES", () => {
   ];
 
   it.each(expectedRoutes)("routes %s correctly", (code, expected) => {
-    const route = ERROR_ROUTES[code];
+    const route = ERROR_ROUTES[code as keyof typeof ERROR_ROUTES];
     expect(route).toBeDefined();
     expect(route!.surface).toBe(expected.surface);
     expect(route!.level).toBe(expected.level);
@@ -75,8 +75,8 @@ describe("ERROR_ROUTES", () => {
   });
 
   it("unknown codes fall through (not in table)", () => {
-    expect(ERROR_ROUTES["unknown_code"]).toBeUndefined();
-    expect(ERROR_ROUTES[""]).toBeUndefined();
+    expect(ERROR_ROUTES["unknown_code" as keyof typeof ERROR_ROUTES]).toBeUndefined();
+    expect(ERROR_ROUTES["" as keyof typeof ERROR_ROUTES]).toBeUndefined();
   });
 
   it("all entries have valid surface values", () => {

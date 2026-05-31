@@ -7,7 +7,7 @@ import { CHECKBOX } from "./smd-parser-types.js";
 describe("a11y: missing labels", () => {
   it("smd-renderer CHECKBOX has aria-label", () => {
     const container = document.createElement("div");
-    const renderer = domRenderer(container, false);
+    const renderer = domRenderer(container, { animateText: false });
     renderer.add_token(renderer.data, CHECKBOX);
     const cb = container.querySelector("input[type=checkbox]")!;
     expect(cb).not.toBeNull();
@@ -283,7 +283,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       live: false,
     });
 
-    const toggle = el.querySelector(".tool-toggle")!;
+    const toggle = el.querySelector<HTMLElement>(".tool-toggle")!;
     expect(toggle).not.toBeNull();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.getAttribute("aria-label")).toBe("Toggle tool details");
@@ -319,7 +319,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     });
     document.body.appendChild(el);
 
-    const toggle = el.querySelector(".tool-toggle")!;
+    const toggle = el.querySelector<HTMLElement>(".tool-toggle")!;
     toggle.click();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
@@ -336,7 +336,7 @@ describe("a11y: confirm dialog focus management", () => {
     const p = confirm("Delete everything?", "Delete", "destructive");
     const dialog = document.querySelector(".vk-confirm-dialog")!;
     expect(dialog).not.toBeNull();
-    const cancelBtn = dialog.querySelector(".vk-confirm-cancel")!;
+    const cancelBtn = dialog.querySelector<HTMLElement>(".vk-confirm-cancel")!;
     expect(document.activeElement).toBe(cancelBtn);
     // Close the dialog to resolve the promise
     cancelBtn.click();
@@ -347,7 +347,7 @@ describe("a11y: confirm dialog focus management", () => {
     const { confirm } = await import("./confirm.js");
     const p = confirm("Continue?", "OK", "normal");
     const dialog = document.querySelector(".vk-confirm-dialog")!;
-    const cancelBtn = dialog.querySelector(".vk-confirm-cancel")!;
+    const cancelBtn = dialog.querySelector<HTMLElement>(".vk-confirm-cancel")!;
     // trapFocus focuses first focusable which is cancel (it comes first in DOM)
     expect(document.activeElement).toBe(cancelBtn);
     cancelBtn.click();

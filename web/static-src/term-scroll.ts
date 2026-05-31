@@ -1,12 +1,18 @@
 // Scroll state tracker.
 //
 // Tracks whether the user has manually scrolled up (away from the
-// auto-follow position) and exposes scroll helpers. Unlike vibekit's
-// equivalent, we DON'T auto-scroll on DOM mutations — terminal output
-// often draws at the top (e.g. CSI [H + redraw) and snapping to bottom
-// would hide it. Instead, render.ts calls scrollIntoView on the cursor
-// row after each frame, which keeps the cursor visible regardless of
-// whether new content is at the top, bottom, or middle.
+// bottom) and exposes the scroll helpers the render layer uses.
+//
+// Auto-follow model (single-container, see term-render.ts): the shell
+// terminal is one flat list of rows — the live screen zone pinned at the
+// bottom, frozen history above it. "Following" means the viewport is
+// stuck to the bottom (the live zone). term-render.ts enforces this once
+// per frame via stickToBottomIfFollowing(): after any DOM mutation, if
+// the user hasn't scrolled up, pin to the bottom. When the user IS
+// scrolled up, term-render.ts instead compensates scrollTop so their
+// position holds as history is inserted above. Browser scroll-anchoring
+// is disabled (overflow-anchor:none in CSS) so these two explicit paths
+// fully own the scroll position.
 
 const BOTTOM_TOLERANCE_PX = 100;
 const USER_SCROLL_DEBOUNCE_MS = 150;

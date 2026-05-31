@@ -584,21 +584,21 @@ describe("streaming signals", () => {
     resetStore("chat-1");
     // First chunk creates the message + bumps global; signals are
     // created lazily by callers (mountContentBubble / mountReasoningBlock).
-    appendChunk("chat-1", "m1", "hello", false);
+    appendChunk("chat-1", "m1", "hello", false, 0);
     const session = get("chat-1")!;
     expect(session.messages[0]?.content).toBe("hello");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
     // Subscribe a content signal so subsequent content chunks route here.
     const contentSig = ensureStreamingSig("m1", "hello");
-    appendChunk("chat-1", "m1", " world", false);
+    appendChunk("chat-1", "m1", " world", false, 0);
     expect(contentSig.value).toBe("hello world");
     expect(session.messages[0]?.content).toBe("hello world");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
     // Subscribe a reasoning signal; reasoning chunks route there.
     const reasoningSig = ensureReasoningSig("m1", "");
-    appendChunk("chat-1", "m1", "let me think", true);
+    appendChunk("chat-1", "m1", "let me think", true, 1);
     expect(reasoningSig.value).toBe("let me think");
     expect(session.messages[0]?.reasoning).toBe("let me think");
     expect(session.messages[0]?.content).toBe("hello world");
@@ -644,7 +644,7 @@ describe("per-tool signal", () => {
 
     // First tool — this creates the tool array. No signal yet, so it
     // bumps global to trigger reconcile mount.
-    upsertToolCall("chat-1", "m1", baseTC("t1", "pending"));
+    upsertToolCall("chat-1", "m1", baseTC("t1", "pending"), 0);
 
     // Now mount-time signal subscription happens.
     const sig = ensureToolCallSig("t1", baseTC("t1", "pending"));
@@ -655,7 +655,7 @@ describe("per-tool signal", () => {
     const observed: ToolCall[] = [];
     // Update via upsertToolCall — should fire the signal directly,
     // not via global reconcile.
-    upsertToolCall("chat-1", "m1", baseTC("t1", "completed"));
+    upsertToolCall("chat-1", "m1", baseTC("t1", "completed"), 0);
     expect(sig.value.status).toBe("completed");
 
     // Idle reads to satisfy the linter.
@@ -681,11 +681,12 @@ describe("per-crew signal", () => {
     group: "g-1",
     subagents: [
       {
-        sub_session_id: "s1",
+        session_id: "s1",
+        session_name: "sub",
         agent_name: "agent",
         initial_query: label,
         status: "working",
-        agent_subtask_id: "t1",
+        group: "g-1",
       },
     ],
   });
