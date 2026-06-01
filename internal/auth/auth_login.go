@@ -61,8 +61,10 @@ func validateRegion(v string) error {
 // buildLoginArgs returns the argv tail (after the binary path) for a
 // `kiro-cli login` invocation with optional provider/region overrides.
 // Empty strings are omitted so kiro-cli picks its defaults.
+const flagDeviceFlow = "--use-device-flow"
+
 func buildLoginArgs(provider, region string) []string {
-	args := []string{"login", "--use-device-flow"}
+	args := []string{"login", flagDeviceFlow}
 	if provider != "" {
 		args = append(args, "--identity-provider", provider)
 	}

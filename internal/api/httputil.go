@@ -37,6 +37,9 @@ const MIMETypeJSON = "application/json"
 // MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
 const MaxJSONBody = 1024 * 1024
 
+// MsgInternalError is the standard client-facing message for 500 responses.
+const MsgInternalError = "internal error"
+
 // LimitBody wraps r.Body with MaxBytesReader to prevent oversized requests.
 func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
@@ -119,7 +122,7 @@ func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
 		slog.Error("api: internal error", "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: "internal error"})
+	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: MsgInternalError})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message

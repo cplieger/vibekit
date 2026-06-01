@@ -24,6 +24,8 @@ import (
 // subprocess fails or its output isn't parseable; the HTTP layer
 // always returns 200 with this shape so the banner caller sees a
 // consistent JSON envelope regardless of the failure mode.
+const msgWhoamiUnavailable = "whoami unavailable"
+
 type WhoamiResponse struct {
 	Email       string `json:"email,omitempty"`
 	Auth        string `json:"auth,omitempty"`
@@ -65,7 +67,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Distinguish timeout vs missing-binary vs generic failure
 		// so Grafana can alert on each independently. All three
-		// still return the generic "whoami unavailable" sentinel
+		// still return the generic msgWhoamiUnavailable sentinel
 		// to the client (fail-soft banner). Every stderr log
 		// attribute is run through api.SanitizeOutput so ANSI /
 		// hidden Unicode from a compromised kiro-cli can't inject
@@ -94,14 +96,14 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, stderrAttr(&stderr)...)
 			slog.Warn("whoami: kiro-cli invocation failed", attrs...)
 		}
-		api.WriteJSON(w, &WhoamiResponse{Error: "whoami unavailable"})
+		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
 	info, err := whoamiInfo(out)
 	if err != nil {
 		slog.Warn("whoami: cli output not parseable as json",
 			"error", err, "stdout_bytes", len(out))
-		api.WriteJSON(w, &WhoamiResponse{Error: "whoami unavailable"})
+		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
 	api.WriteJSON(w, info)
