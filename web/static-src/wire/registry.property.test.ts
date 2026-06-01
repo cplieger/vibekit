@@ -79,6 +79,7 @@ describe("wire registry completeness", () => {
         fc.dictionary(fc.string(), fc.jsonValue()),
         (eventName, payload) => {
           const decoder = lookupSSEDecoder(eventName);
+          expect(decoder).toBeDefined();
           if (!decoder) {
             return;
           }
