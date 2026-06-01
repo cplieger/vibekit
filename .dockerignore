@@ -1,0 +1,7 @@
+.git
+.github
+.refactor
+node_modules
+static-src/node_modules
+*.md
+LICENSE

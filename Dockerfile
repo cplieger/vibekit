@@ -36,10 +36,10 @@ RUN curl -fsSL \
 ARG ANSI_UP_VERSION=6.0.6
 
 # Build Go server
-WORKDIR /build/web
-COPY web/go.mod web/go.sum ./
+WORKDIR /build
+COPY go.mod go.sum ./
 RUN go mod download
-COPY web/ ./
+COPY . ./
 
 # Fetch ansi_up (the only vendor JS dependency now that xterm.js is gone).
 RUN mkdir -p static/vendor && \
