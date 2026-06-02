@@ -14,8 +14,8 @@ LOG="/tmp/setup-tools.log"
 # x86_64-linux headless zip; on aarch64 the hash is logged but not
 # enforced (Renovate tracks one arch).
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.5.0"
-KIRO_CLI_SHA256="21e87c13ba1ac624fd6fa5410603a2eaf1051190b6c745f033e7535ff3afb53d"
+KIRO_CLI_VERSION="2.5.1"
+KIRO_CLI_SHA256="5616dff1bd6d055b3cdbe6fb6287ecb5fd8b2bd3403831b995c7d3426d968c71"
 
 mkdir -p "$TOOLS/bin" "$TOOLS/go/bin" "$TOOLS/runtimes" \
     "$TOOLS/node/bin" "$TOOLS/python/bin" "$TOOLS/lib" \
