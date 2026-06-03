@@ -28,7 +28,7 @@ import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/terminal"
+	"github.com/cplieger/vterm/terminal"
 )
 
 // ShellManager wraps the terminal.Handler to provide the same interface
@@ -44,10 +44,7 @@ type ShellManager struct {
 // ctx is accepted for interface compatibility but not used (the terminal
 // package manages its own lifecycle via Shutdown).
 func NewShellManager(_ context.Context, workDir string) *ShellManager {
-	h := terminal.NewHandler(terminal.Options{
-		Command: []string{"bash", "--login"},
-		WorkDir: workDir,
-	})
+	h := terminal.NewHandler([]string{"bash", "--login"}, terminal.WithWorkDir(workDir))
 	return &ShellManager{handler: h}
 }
 
