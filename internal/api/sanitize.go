@@ -24,7 +24,15 @@ var ansiRe = regexp.MustCompile(
 )
 
 // StripANSI removes ANSI escape sequences from a string.
-func StripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+func StripANSI(s string) string {
+	for {
+		out := ansiRe.ReplaceAllString(s, "")
+		if out == s {
+			return out
+		}
+		s = out
+	}
+}
 
 // SanitizeUnicode strips hidden Unicode characters that could be used
 // for prompt injection via tool output. Covers TAG characters
