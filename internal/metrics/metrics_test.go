@@ -4,14 +4,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
+
+	m "github.com/cplieger/metrics"
 )
 
 // --- test-arch-metrics-benchmark-p1 ---
 
 func BenchmarkHistogramObserve(b *testing.B) {
-	h := &Histogram{name: "bench_hist", help: "bench"}
+	h := m.NewHistogram("bench_hist", "bench")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -20,7 +21,7 @@ func BenchmarkHistogramObserve(b *testing.B) {
 }
 
 func BenchmarkHistogramObserve_Parallel(b *testing.B) {
-	h := &Histogram{name: "bench_hist_par", help: "bench"}
+	h := m.NewHistogram("bench_hist_par", "bench")
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -31,12 +32,7 @@ func BenchmarkHistogramObserve_Parallel(b *testing.B) {
 }
 
 func BenchmarkLabeledCounterInc(b *testing.B) {
-	lc := &LabeledCounter{
-		name:   "bench_lc",
-		help:   "bench",
-		labels: []string{"method", "path", "status"},
-		vals:   make(map[labelKey]*atomic.Int64),
-	}
+	lc := m.NewLabeledCounter("bench_lc", "bench", []string{"method", "path", "status"})
 	// Pre-populate a key so we benchmark the existing-key fast path.
 	lc.Inc("GET", "/api", "200")
 	b.ReportAllocs()
@@ -47,12 +43,7 @@ func BenchmarkLabeledCounterInc(b *testing.B) {
 }
 
 func BenchmarkLabeledCounterInc_NewKey(b *testing.B) {
-	lc := &LabeledCounter{
-		name:   "bench_lc_new",
-		help:   "bench",
-		labels: []string{"method", "path", "status"},
-		vals:   make(map[labelKey]*atomic.Int64),
-	}
+	lc := m.NewLabeledCounter("bench_lc_new", "bench", []string{"method", "path", "status"})
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
@@ -61,12 +52,7 @@ func BenchmarkLabeledCounterInc_NewKey(b *testing.B) {
 }
 
 func BenchmarkLabeledCounterInc_Parallel(b *testing.B) {
-	lc := &LabeledCounter{
-		name:   "bench_lc_par",
-		help:   "bench",
-		labels: []string{"method", "path", "status"},
-		vals:   make(map[labelKey]*atomic.Int64),
-	}
+	lc := m.NewLabeledCounter("bench_lc_par", "bench", []string{"method", "path", "status"})
 	lc.Inc("GET", "/api", "200")
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -80,7 +66,6 @@ func BenchmarkLabeledCounterInc_Parallel(b *testing.B) {
 // --- test-arch-metrics-handler-unit-p4 ---
 
 func TestMetricsHandler(t *testing.T) {
-	// Reset counters for deterministic output.
 	h := Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
