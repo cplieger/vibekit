@@ -63,6 +63,10 @@ var urlQueryTokenPattern = regexp.MustCompile(`([?&](?:token|access_token|privat
 // headers. Case-insensitive on the header name only.
 var authHeaderPattern = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|token|basic)\s+)\S+`)
 
+// bareAtPattern removes a residual @ directly after :// (e.g. "x://@host/")
+// that urlCredPattern leaves when there is no actual userinfo before the @.
+var bareAtPattern = regexp.MustCompile(`(://)@+`)
+
 // ScrubAuth strips credentials from a git subprocess output string.
 // Idempotent: chained userinfo segments (`http://a@b@c@host`) are
 // consumed until the match set stabilises. The regex strictly shrinks
@@ -79,6 +83,8 @@ func ScrubAuth(s string) string {
 		}
 		s = out
 	}
+	// Remove bare @ between :// and the next / (empty or residual userinfo).
+	s = bareAtPattern.ReplaceAllString(s, "${1}")
 	s = urlQueryTokenPattern.ReplaceAllString(s, "${1}[REDACTED]")
 	s = authHeaderPattern.ReplaceAllString(s, "${1}[REDACTED]")
 	return s
@@ -104,34 +110,34 @@ func ScrubAuthErr(err error) string {
 // fields); declaring the allowlist at the exec boundary makes the
 // guarantee local to this package.
 var allowedSubcommands = map[string]struct{}{
-	"add":           {},
-	"branch":        {},
-	"checkout":      {},
-	"clone":         {},
-	"commit":        {},
-	"config":        {},
-	"diff":          {},
-	"fetch":         {},
-	"init":          {},
-	"log":           {},
-	"ls-remote":     {},
-	"merge":         {},
-	"pull":          {},
-	"push":          {},
-	"rebase":        {},
-	"remote":        {},
-	"reset":         {},
-	"rev-parse":     {},
-	"show":          {},
-	"show-ref":      {},
-	"stash":         {},
-	"status":        {},
-	"submodule":     {},
-	"switch":        {},
-	"symbolic-ref":  {},
-	"tag":           {},
-	"update-ref":    {},
-	"worktree":      {},
+	"add":          {},
+	"branch":       {},
+	"checkout":     {},
+	"clone":        {},
+	"commit":       {},
+	"config":       {},
+	"diff":         {},
+	"fetch":        {},
+	"init":         {},
+	"log":          {},
+	"ls-remote":    {},
+	"merge":        {},
+	"pull":         {},
+	"push":         {},
+	"rebase":       {},
+	"remote":       {},
+	"reset":        {},
+	"rev-parse":    {},
+	"show":         {},
+	"show-ref":     {},
+	"stash":        {},
+	"status":       {},
+	"submodule":    {},
+	"switch":       {},
+	"symbolic-ref": {},
+	"tag":          {},
+	"update-ref":   {},
+	"worktree":     {},
 }
 
 // firstSubcommand walks args looking for the first token that doesn't
@@ -239,13 +245,23 @@ func ParseRemoteHost(raw string) string {
 		return ""
 	}
 	if h, _, ok := ParseSCPStyle(raw); ok {
-		return h
+		return sanitizeHost(h)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	return u.Hostname()
+	return sanitizeHost(u.Hostname())
+}
+
+// sanitizeHost returns "" if host contains control characters or is empty.
+func sanitizeHost(h string) string {
+	for _, c := range h {
+		if c < 0x20 || c == 0x7f || c == '@' {
+			return ""
+		}
+	}
+	return h
 }
 
 // ParseSCPStyle recognises git's scp-like remote syntax (user@host:path)

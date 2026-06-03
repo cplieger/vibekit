@@ -120,25 +120,28 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ap
 
 // safeExportName builds a filesystem-safe export filename.
 func safeExportName(raw, fallback string) string {
-	if raw == "" {
-		return fallback + chatFileSuffix
-	}
-	var b strings.Builder
-	b.Grow(len(raw))
-	for _, r := range raw {
-		switch {
-		case r < 0x20 || r == 0x7f:
-			b.WriteByte('_')
-		case r == '"', r == '\\', r == '/', r == ':', r == '*',
-			r == '?', r == '<', r == '>', r == '|':
-			b.WriteByte('_')
-		default:
-			b.WriteRune(r)
+	sanitize := func(s string) string {
+		var b strings.Builder
+		b.Grow(len(s))
+		for _, r := range s {
+			switch {
+			case r < 0x20 || r == 0x7f:
+				b.WriteByte('_')
+			case r == '"', r == '\\', r == '/', r == ':', r == '*',
+				r == '?', r == '<', r == '>', r == '|':
+				b.WriteByte('_')
+			default:
+				b.WriteRune(r)
+			}
 		}
+		return strings.TrimSpace(b.String())
 	}
-	name := strings.TrimSpace(b.String())
+	name := sanitize(raw)
 	if name == "" {
-		name = fallback
+		name = sanitize(fallback)
+	}
+	if name == "" {
+		name = "chat"
 	}
 	if len(name) > 80 {
 		name = name[:80]

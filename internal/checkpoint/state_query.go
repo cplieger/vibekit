@@ -220,6 +220,9 @@ func parseTag(t string) (turn, tool int) {
 // value is a bug, not user input — we tolerate it to keep Restore
 // from crashing but callers shouldn't rely on the silent zero.
 func atoiSafe(s string) int {
+	if strings.HasPrefix(s, "+") {
+		s = s[1:]
+	}
 	n := 0
 	for _, r := range s {
 		if r < '0' || r > '9' {

@@ -118,14 +118,17 @@ func extractCommitMessage(raw string) string {
 	}
 	msg = strings.TrimSpace(msg)
 
-	// Strip surrounding quotes.
-	if len(msg) >= 2 {
-		if (msg[0] == '"' && msg[len(msg)-1] == '"') ||
-			(msg[0] == '\'' && msg[len(msg)-1] == '\'') {
+	// Strip surrounding quotes (iteratively, trimming between layers so an
+	// interior space like `""" "` cannot halt stripping; keeps it idempotent).
+	for {
+		msg = strings.TrimSpace(msg)
+		if len(msg) >= 2 && ((msg[0] == '"' && msg[len(msg)-1] == '"') ||
+			(msg[0] == '\'' && msg[len(msg)-1] == '\'')) {
 			msg = msg[1 : len(msg)-1]
+		} else {
+			break
 		}
 	}
-	msg = strings.TrimSpace(msg)
 
 	// Split into subject and body.
 	lines := strings.SplitN(msg, "\n", 2)

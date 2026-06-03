@@ -81,6 +81,9 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
+			if strings.ContainsRune(e.Name(), 0) {
+				continue
+			}
 			data, err := fs.ReadFile(root, "steering/"+e.Name())
 			if err != nil {
 				slog.Warn("kiro config: read steering file",
@@ -106,6 +109,9 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 			if !e.IsDir() {
 				continue
 			}
+			if strings.ContainsRune(e.Name(), 0) {
+				continue
+			}
 			items = append(items, kiroConfigItem{
 				Name: e.Name(),
 				Path: prefix + "/skills/" + e.Name() + "/SKILL.md",
@@ -122,6 +128,9 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 	if entries, err := fs.ReadDir(root, "agents"); err == nil {
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			if strings.ContainsRune(e.Name(), 0) {
 				continue
 			}
 			items = append(items, kiroConfigItem{

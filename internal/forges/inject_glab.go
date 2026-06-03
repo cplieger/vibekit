@@ -110,6 +110,10 @@ func loadGLabConfig(path string) (*glabConfig, error) {
 		switch {
 		case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "        "):
 			name := strings.TrimSuffix(strings.TrimSpace(line), ":")
+			if name == "" {
+				currentHost = ""
+				continue
+			}
 			currentHost = name
 			cfg.Hosts[currentHost] = glabHostEntry{}
 		case strings.HasPrefix(line, "        ") && currentHost != "":

@@ -16,12 +16,17 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/singleflight"
 
 	"vibekit/internal/api"
 	"vibekit/internal/chat/archive"
 )
+
+// errInvalidUTF8 is returned when a chat mutation produces content that
+// cannot round-trip through JSON (the storage format).
+var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
 // Compile-time interface assertion.
 var _ api.ChatStore = (*Store)(nil)
@@ -229,6 +234,14 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 		return fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
+	if !utf8.ValidString(c.Name) {
+		return errInvalidUTF8
+	}
+	for i := range c.Messages {
+		if !utf8.ValidString(c.Messages[i].Content) {
+			return errInvalidUTF8
+		}
+	}
 	if err := s.save(c); err != nil {
 		return err
 	}

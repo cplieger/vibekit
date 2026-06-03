@@ -134,24 +134,22 @@ func buildSummaryPrompt(c *api.Chat) string {
 // the cleanup asyncRenameChat applies to generated titles.
 func postprocessSummary(raw string) string {
 	s := strings.TrimSpace(raw)
-	// Drop wrapping quotes models sometimes add.
-	// Only strip one layer, and only when the inner content does not
-	// itself start and end with the same quote char — this ensures
-	// idempotency: applying the function twice yields the same result.
-	if len(s) > 2 {
-		first, last := s[0], s[len(s)-1]
-		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-			inner := s[1 : len(s)-1]
-			if len(inner) < 2 || inner[0] != first || inner[len(inner)-1] != first {
-				s = inner
-			}
-		}
-	}
-	// Drop trailing period duplications and any newline tail.
+	// Truncate at first newline before quote stripping to ensure
+	// idempotency: the visible content is settled before we strip.
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s = s[:i]
 	}
 	s = strings.TrimSpace(s)
+	// Drop wrapping quotes models sometimes add. Loop, trimming between layers
+	// so interior spaces cannot halt stripping; keeps it idempotent.
+	for {
+		s = strings.TrimSpace(s)
+		if len(s) >= 2 && ((s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'')) {
+			s = s[1 : len(s)-1]
+		} else {
+			break
+		}
+	}
 	if utf8.RuneCountInString(s) > summaryMaxChars {
 		s = truncateRunes(s, summaryMaxChars-1) + "…"
 	}
