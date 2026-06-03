@@ -2,8 +2,14 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD, transportAction } from "./index.js";
-
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  retryNetwork,
+  RETRY_STANDARD,
+  transportAction,
+} from "./index.js";
 
 import { routeForPath } from "../editor-types.js";
 

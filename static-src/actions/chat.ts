@@ -5,8 +5,14 @@
 // clear pending trust.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD, transportAction } from "./index.js";
-
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  retryNetwork,
+  RETRY_STANDARD,
+  transportAction,
+} from "./index.js";
 
 import type { PendingChange, Session } from "../types.js";
 import {

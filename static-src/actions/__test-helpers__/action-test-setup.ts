@@ -39,8 +39,12 @@ export function resetActionFramework(): void {
   resetTransport();
   // Wire the library's notifier to toast.js (mocked by tests).
   configure({
-    success: (msg) => { toastSuccess(msg); },
-    error: (msg, retry) => { toastError(msg, retry); },
+    success: (msg) => {
+      toastSuccess(msg);
+    },
+    error: (msg, retry) => {
+      toastError(msg, retry);
+    },
   });
   // Wire the library's transport to transport.js send (mocked by tests).
   configureTransport(async (cmd, { signal }) => {

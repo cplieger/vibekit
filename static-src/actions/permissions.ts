@@ -3,7 +3,6 @@
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 
-
 export interface CommandRule {
   pattern: string;
   mode: "allow" | "deny";

@@ -48,8 +48,12 @@ const mockApiGet = vi.mocked(apiGet);
 beforeEach(() => {
   vi.useFakeTimers();
   configure({
-    success: (msg) => { toast.success(msg); },
-    error: (msg, retry) => { toast.error(msg, retry); },
+    success: (msg) => {
+      toast.success(msg);
+    },
+    error: (msg, retry) => {
+      toast.error(msg, retry);
+    },
   });
   mockApiGet.mockReset();
   $.kiroConfigList.replaceChildren();

@@ -9,8 +9,12 @@ import { send as transportSend } from "../transport.js";
 
 export function initActions(): void {
   configure({
-    success: (msg) => { toastSuccess(msg); },
-    error: (msg, retry) => { toastError(msg, retry); },
+    success: (msg) => {
+      toastSuccess(msg);
+    },
+    error: (msg, retry) => {
+      toastError(msg, retry);
+    },
   });
 
   configureTransport(async (cmd, { signal }) => {

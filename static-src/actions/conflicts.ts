@@ -1,7 +1,15 @@
 // Actions for conflict-resolution user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { defineAction, apiAction, ActionError, classifyFetchError, retryNetwork, RETRY_STANDARD, withTimeout } from "./index.js";
+import {
+  defineAction,
+  apiAction,
+  ActionError,
+  classifyFetchError,
+  retryNetwork,
+  RETRY_STANDARD,
+  withTimeout,
+} from "./index.js";
 
 import type { Conflict } from "../conflicts.js";
 
