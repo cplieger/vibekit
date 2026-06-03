@@ -65,8 +65,21 @@ func isHiddenUnicode(r rune) bool {
 	return false
 }
 
-// SanitizeOutput applies both ANSI stripping and Unicode sanitization.
+// SanitizeOutput applies both ANSI stripping and Unicode sanitization,
+// iterating to a fixed point. A single pass is not enough: removing a
+// hidden Unicode char (e.g. a zero-width space inside "\x1b(\u200b0")
+// can complete an escape sequence that the next StripANSI pass then
+// strips. Iterating guarantees the result is fully sanitized — no
+// residual escapes an attacker hid behind zero-width chars — and makes
+// the function idempotent. Each pass only removes runes, so length
+// strictly decreases until stable; it terminates in O(len(s)) passes.
 // Use on all tool output before persisting or echoing to clients.
 func SanitizeOutput(s string) string {
-	return SanitizeUnicode(StripANSI(s))
+	for {
+		out := SanitizeUnicode(StripANSI(s))
+		if out == s {
+			return out
+		}
+		s = out
+	}
 }
