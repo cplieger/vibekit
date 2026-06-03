@@ -71,84 +71,93 @@ func scanKiroDir(ctx context.Context, fsPath, prefix string) []kiroConfigItem {
 // fstest.MapFS without touching the real filesystem.
 func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	var items []kiroConfigItem
-
-	// Steering docs
-	if entries, err := fs.ReadDir(root, "steering"); err == nil {
-		for _, e := range entries {
-			if ctx.Err() != nil {
-				return items
-			}
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-				continue
-			}
-			if strings.ContainsRune(e.Name(), 0) {
-				continue
-			}
-			data, err := fs.ReadFile(root, "steering/"+e.Name())
-			if err != nil {
-				slog.Warn("kiro config: read steering file",
-					"name", e.Name(), "error", err)
-				continue
-			}
-			name := strings.TrimSuffix(e.Name(), ".md")
-			if name == "" {
-				continue
-			}
-			items = append(items, kiroConfigItem{
-				Name:      name,
-				Path:      prefix + "/steering/" + e.Name(),
-				Type:      "steering",
-				Inclusion: parseSteeringInclusion(data),
-			})
-		}
-	}
-
+	items = append(items, scanSteering(ctx, root, prefix)...)
 	if ctx.Err() != nil {
 		return items
 	}
-
-	// Skills
-	if entries, err := fs.ReadDir(root, "skills"); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			if strings.ContainsRune(e.Name(), 0) {
-				continue
-			}
-			items = append(items, kiroConfigItem{
-				Name: e.Name(),
-				Path: prefix + "/skills/" + e.Name() + "/SKILL.md",
-				Type: "skill",
-			})
-		}
-	}
-
+	items = append(items, scanSkills(ctx, root, prefix)...)
 	if ctx.Err() != nil {
 		return items
 	}
+	items = append(items, scanAgents(ctx, root, prefix)...)
+	return items
+}
 
-	// Agents
-	if entries, err := fs.ReadDir(root, "agents"); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-				continue
-			}
-			if strings.ContainsRune(e.Name(), 0) {
-				continue
-			}
-			name := strings.TrimSuffix(e.Name(), ".md")
-			if name == "" {
-				continue
-			}
-			items = append(items, kiroConfigItem{
-				Name: name,
-				Path: prefix + "/agents/" + e.Name(),
-				Type: "agent",
-			})
-		}
+// scanSteering returns kiroConfigItems for markdown files under steering/.
+func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigItem {
+	var items []kiroConfigItem
+	entries, err := fs.ReadDir(root, "steering")
+	if err != nil {
+		return items
 	}
+	for _, e := range entries {
+		if ctx.Err() != nil {
+			return items
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.ContainsRune(e.Name(), 0) {
+			continue
+		}
+		data, err := fs.ReadFile(root, "steering/"+e.Name())
+		if err != nil {
+			slog.Warn("kiro config: read steering file",
+				"name", e.Name(), "error", err)
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		if name == "" {
+			continue
+		}
+		items = append(items, kiroConfigItem{
+			Name:      name,
+			Path:      prefix + "/steering/" + e.Name(),
+			Type:      "steering",
+			Inclusion: parseSteeringInclusion(data),
+		})
+	}
+	return items
+}
 
+// scanSkills returns kiroConfigItems for subdirectories under skills/.
+func scanSkills(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
+	var items []kiroConfigItem
+	entries, err := fs.ReadDir(root, "skills")
+	if err != nil {
+		return items
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.ContainsRune(e.Name(), 0) {
+			continue
+		}
+		items = append(items, kiroConfigItem{
+			Name: e.Name(),
+			Path: prefix + "/skills/" + e.Name() + "/SKILL.md",
+			Type: "skill",
+		})
+	}
+	return items
+}
+
+// scanAgents returns kiroConfigItems for markdown files under agents/.
+func scanAgents(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
+	var items []kiroConfigItem
+	entries, err := fs.ReadDir(root, "agents")
+	if err != nil {
+		return items
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.ContainsRune(e.Name(), 0) {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		if name == "" {
+			continue
+		}
+		items = append(items, kiroConfigItem{
+			Name: name,
+			Path: prefix + "/agents/" + e.Name(),
+			Type: "agent",
+		})
+	}
 	return items
 }
 
