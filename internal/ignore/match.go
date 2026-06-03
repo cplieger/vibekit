@@ -37,6 +37,9 @@ func parseIgnoreLine(line string) (rule, bool) {
 		r.negate = true
 		line = line[1:]
 	}
+	if line == "" {
+		return rule{}, false
+	}
 	if strings.HasPrefix(line, "/") {
 		r.anchored = true
 		line = line[1:]
@@ -44,6 +47,9 @@ func parseIgnoreLine(line string) (rule, bool) {
 	if strings.HasSuffix(line, "/") {
 		r.dirOnly = true
 		line = strings.TrimSuffix(line, "/")
+	}
+	if line == "" {
+		return rule{}, false
 	}
 	if !r.anchored && strings.Contains(line, "/") {
 		r.anchored = true

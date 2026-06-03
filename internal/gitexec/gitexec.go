@@ -49,7 +49,7 @@ func DefaultTimeouts() Timeouts {
 // embedded in error strings. Applies to any RFC 3986 scheme (not
 // just http(s)), so ssh and git:// URLs with credential-helper
 // rewrites are also scrubbed.
-var urlCredPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@`)
+var urlCredPattern = regexp.MustCompile(`(://)[^/]*@`)
 
 // urlQueryTokenPattern matches secret-bearing query parameters
 // (?token=, ?access_token=, ?private_token=, ?api_key=, ?apikey=)
@@ -104,34 +104,34 @@ func ScrubAuthErr(err error) string {
 // fields); declaring the allowlist at the exec boundary makes the
 // guarantee local to this package.
 var allowedSubcommands = map[string]struct{}{
-	"add":           {},
-	"branch":        {},
-	"checkout":      {},
-	"clone":         {},
-	"commit":        {},
-	"config":        {},
-	"diff":          {},
-	"fetch":         {},
-	"init":          {},
-	"log":           {},
-	"ls-remote":     {},
-	"merge":         {},
-	"pull":          {},
-	"push":          {},
-	"rebase":        {},
-	"remote":        {},
-	"reset":         {},
-	"rev-parse":     {},
-	"show":          {},
-	"show-ref":      {},
-	"stash":         {},
-	"status":        {},
-	"submodule":     {},
-	"switch":        {},
-	"symbolic-ref":  {},
-	"tag":           {},
-	"update-ref":    {},
-	"worktree":      {},
+	"add":          {},
+	"branch":       {},
+	"checkout":     {},
+	"clone":        {},
+	"commit":       {},
+	"config":       {},
+	"diff":         {},
+	"fetch":        {},
+	"init":         {},
+	"log":          {},
+	"ls-remote":    {},
+	"merge":        {},
+	"pull":         {},
+	"push":         {},
+	"rebase":       {},
+	"remote":       {},
+	"reset":        {},
+	"rev-parse":    {},
+	"show":         {},
+	"show-ref":     {},
+	"stash":        {},
+	"status":       {},
+	"submodule":    {},
+	"switch":       {},
+	"symbolic-ref": {},
+	"tag":          {},
+	"update-ref":   {},
+	"worktree":     {},
 }
 
 // firstSubcommand walks args looking for the first token that doesn't
@@ -239,13 +239,23 @@ func ParseRemoteHost(raw string) string {
 		return ""
 	}
 	if h, _, ok := ParseSCPStyle(raw); ok {
-		return h
+		return sanitizeHost(h)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	return u.Hostname()
+	return sanitizeHost(u.Hostname())
+}
+
+// sanitizeHost returns "" if host contains control characters or is empty.
+func sanitizeHost(h string) string {
+	for _, c := range h {
+		if c < 0x20 || c == 0x7f || c == '@' || c == ':' || c == '/' {
+			return ""
+		}
+	}
+	return h
 }
 
 // ParseSCPStyle recognises git's scp-like remote syntax (user@host:path)

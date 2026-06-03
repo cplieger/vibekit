@@ -111,21 +111,29 @@ func extractCommitMessage(raw string) string {
 	// ```go / ```markdown / ```diff).
 	msg = api.StripCodeFence(msg)
 
-	// Strip "COMMIT MESSAGE:" prefix (case-insensitive).
+	// Strip "COMMIT MESSAGE:" prefix (case-insensitive); iterate so a stacked
+	// "COMMIT MESSAGE:COMMIT MESSAGE:..." also gets fully stripped (idempotent).
 	const commitPrefix = "COMMIT MESSAGE:"
-	if len(msg) >= len(commitPrefix) && strings.EqualFold(msg[:len(commitPrefix)], commitPrefix) {
-		msg = msg[len(commitPrefix):]
-	}
-	msg = strings.TrimSpace(msg)
-
-	// Strip surrounding quotes.
-	if len(msg) >= 2 {
-		if (msg[0] == '"' && msg[len(msg)-1] == '"') ||
-			(msg[0] == '\'' && msg[len(msg)-1] == '\'') {
-			msg = msg[1 : len(msg)-1]
+	for {
+		msg = strings.TrimSpace(msg)
+		if len(msg) >= len(commitPrefix) && strings.EqualFold(msg[:len(commitPrefix)], commitPrefix) {
+			msg = msg[len(commitPrefix):]
+		} else {
+			break
 		}
 	}
-	msg = strings.TrimSpace(msg)
+
+	// Strip surrounding quotes (iteratively, trimming between layers so an
+	// interior space like `""" "` cannot halt stripping; keeps it idempotent).
+	for {
+		msg = strings.TrimSpace(msg)
+		if len(msg) >= 2 && ((msg[0] == '"' && msg[len(msg)-1] == '"') ||
+			(msg[0] == '\'' && msg[len(msg)-1] == '\'')) {
+			msg = msg[1 : len(msg)-1]
+		} else {
+			break
+		}
+	}
 
 	// Split into subject and body.
 	lines := strings.SplitN(msg, "\n", 2)

@@ -28,7 +28,10 @@ func FuzzCheckpointHTTPRouting(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, path string) {
 		// Skip paths that would cause httptest.NewRequest to panic
-		// (control characters, invalid URL encoding).
+		// (control characters, invalid URL encoding, or empty).
+		if path == "" {
+			t.Skip("empty path")
+		}
 		if _, err := url.Parse(path); err != nil {
 			t.Skip("invalid URL")
 		}
@@ -38,7 +41,10 @@ func FuzzCheckpointHTTPRouting(f *testing.F) {
 			}
 		}
 
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req, nrErr := http.NewRequest(http.MethodGet, path, nil)
+		if nrErr != nil {
+			t.Skip("invalid request URI")
+		}
 		w := httptest.NewRecorder()
 
 		h.handleCheckpoint(w, req)

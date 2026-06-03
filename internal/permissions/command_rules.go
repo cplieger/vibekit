@@ -58,6 +58,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"vibekit/internal/fileutil"
 )
@@ -167,6 +168,9 @@ func (r *CommandRules) Add(pattern string, mode RuleMode, priority ...int) error
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return nil
+	}
+	if !utf8.ValidString(pattern) {
+		return errors.New("pattern contains invalid UTF-8")
 	}
 	for i, e := range r.entries {
 		if e.Pattern != pattern {

@@ -1,10 +1,17 @@
 package command
 
-// TruncateRunes truncates s to at most n runes.
+import "unicode/utf8"
+
+// TruncateRunes truncates s to at most n runes, returning a valid
+// byte-prefix of s (preserving original bytes, not re-encoding).
 func TruncateRunes(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
+	if n <= 0 {
+		return ""
 	}
-	return string(runes[:n])
+	pos := 0
+	for i := 0; i < n && pos < len(s); i++ {
+		_, size := utf8.DecodeRuneInString(s[pos:])
+		pos += size
+	}
+	return s[:pos]
 }

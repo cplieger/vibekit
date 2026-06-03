@@ -81,14 +81,20 @@ func loadGHHosts(path string) (map[string]ghHostEntry, error) {
 		return nil, err
 	}
 	var current string
+	var hasCurrent bool
 	for line := range strings.SplitSeq(string(data), "\n") {
 		// Top-level keys (host names) start at column 0 with a colon.
 		if !strings.HasPrefix(line, " ") && strings.HasSuffix(strings.TrimSpace(line), ":") {
 			current = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ":"))
+			if current == "" {
+				hasCurrent = false
+				continue
+			}
+			hasCurrent = true
 			hosts[current] = ghHostEntry{}
 			continue
 		}
-		if current == "" {
+		if !hasCurrent {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)

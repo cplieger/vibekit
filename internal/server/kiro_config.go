@@ -81,14 +81,21 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
+			if strings.ContainsRune(e.Name(), 0) {
+				continue
+			}
 			data, err := fs.ReadFile(root, "steering/"+e.Name())
 			if err != nil {
 				slog.Warn("kiro config: read steering file",
 					"name", e.Name(), "error", err)
 				continue
 			}
+			name := strings.TrimSuffix(e.Name(), ".md")
+			if name == "" {
+				continue
+			}
 			items = append(items, kiroConfigItem{
-				Name:      strings.TrimSuffix(e.Name(), ".md"),
+				Name:      name,
 				Path:      prefix + "/steering/" + e.Name(),
 				Type:      "steering",
 				Inclusion: parseSteeringInclusion(data),
@@ -104,6 +111,9 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 	if entries, err := fs.ReadDir(root, "skills"); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
+				continue
+			}
+			if strings.ContainsRune(e.Name(), 0) {
 				continue
 			}
 			items = append(items, kiroConfigItem{
@@ -124,8 +134,15 @@ func scanKiroDirFS(ctx context.Context, root fs.FS, prefix string) []kiroConfigI
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
+			if strings.ContainsRune(e.Name(), 0) {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".md")
+			if name == "" {
+				continue
+			}
 			items = append(items, kiroConfigItem{
-				Name: strings.TrimSuffix(e.Name(), ".md"),
+				Name: name,
 				Path: prefix + "/agents/" + e.Name(),
 				Type: "agent",
 			})

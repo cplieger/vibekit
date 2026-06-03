@@ -39,6 +39,9 @@ func MatchPattern(pattern, command string) bool {
 // MatchWildcard implements the wildcard-matching algorithm for
 // patterns containing one or more '*'.
 func MatchWildcard(pattern, command string) bool {
+	if !strings.Contains(pattern, "*") {
+		return pattern == command
+	}
 	parts := strings.Split(pattern, "*")
 	pos := 0
 	for i, part := range parts {

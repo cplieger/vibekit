@@ -190,7 +190,25 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 		if method == "" {
 			return
 		}
-		req := httptest.NewRequest(method, "http://"+host+"/x", http.NoBody)
+		// Skip methods that would cause httptest.NewRequest to panic
+		// (contains spaces, control characters, or other invalid bytes).
+		for _, b := range []byte(method) {
+			if b <= 0x20 || b == 0x7f {
+				t.Skip("invalid HTTP method character")
+			}
+		}
+		if host == "" {
+			t.Skip("empty host")
+		}
+		for _, b := range []byte(host) {
+			if b < 0x20 || b == 0x7f {
+				t.Skip("control char in host")
+			}
+		}
+		req, err := http.NewRequest(method, "http://"+host+"/x", http.NoBody)
+		if err != nil {
+			t.Skip("invalid request:", err)
+		}
 		if origin != "" {
 			req.Header.Set("Origin", origin)
 		}
