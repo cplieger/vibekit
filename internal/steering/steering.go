@@ -18,7 +18,7 @@ import (
 	"sync"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 	"vibekit/internal/workspace"
 )
 
@@ -163,12 +163,12 @@ func (g *Generator) Generate(ctx context.Context) {
 	// vibekit writes: this file lists the workspace layout and
 	// MCP server names which, while not secrets, are information
 	// that should stay scoped to the single user that runs
-	// kiro-cli. fileutil.SaveBytes is the atomic temp+rename helper so
+	// kiro-cli. atomicfile.SaveBytes is the atomic temp+rename helper so
 	// a crash mid-write can't leave a truncated file. It also
 	// derives the parent-dir mode from the file mode (0o700 when
 	// the file has no group/world bits), so we don't MkdirAll
 	// explicitly — that would widen the dir to 0o755.
-	if wErr := fileutil.SaveBytes(steeringFile, content, 0o600); wErr != nil {
+	if wErr := atomicfile.SaveBytes(steeringFile, content, 0o600); wErr != nil {
 		slog.Error("steering: write", "path", steeringFile, "error", wErr)
 		return
 	}

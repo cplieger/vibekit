@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 // --- Unexported Store methods ---
@@ -128,5 +128,5 @@ func (s *Store) save(chat *api.Chat) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.SaveBytes(path, data, fileMode)
+	return atomicfile.SaveBytes(path, data, fileMode)
 }

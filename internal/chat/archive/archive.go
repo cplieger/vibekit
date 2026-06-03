@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 // Subdir is the subdirectory name under the chats directory where
@@ -301,7 +301,7 @@ func (s *Service) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, 
 	if err != nil {
 		return err
 	}
-	return fileutil.SaveBytes(path, data, fileMode)
+	return atomicfile.SaveBytes(path, data, fileMode)
 }
 
 // DeleteArchived permanently removes a single archived chat file and its

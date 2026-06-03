@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/atomicfile"
 	"vibekit/internal/api"
 )
 
@@ -112,7 +113,7 @@ func serveJSONPut(w http.ResponseWriter, r *http.Request, path, name string, mu 
 		api.BadRequest(w, "expected json object")
 		return
 	}
-	if err := SaveJSON(path, mu, body, "serveJSONFile:"+name, perm); err != nil {
+	if err := atomicfile.SaveJSON(path, mu, body, "serveJSONFile:"+name, perm); err != nil {
 		slog.Error("serveJSONFile: save failed",
 			"route", name, "path", path, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
