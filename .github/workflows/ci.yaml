@@ -20,11 +20,11 @@ permissions:
 
 jobs:
   go:
-    uses: cplieger/ci/.github/workflows/go-ci.yaml@ee8299a163afa4aafff1471d5b83d1c4c228c8d6 # v1
+    uses: cplieger/ci/.github/workflows/go-ci.yaml@7b8370ba0d53e8c2a60b0380a9b0d7fb8ec693df # v1
     with:
       go-version-file: go.mod
   web:
-    uses: cplieger/ci/.github/workflows/ts-ci.yaml@ee8299a163afa4aafff1471d5b83d1c4c228c8d6 # v1
+    uses: cplieger/ci/.github/workflows/ts-ci.yaml@7b8370ba0d53e8c2a60b0380a9b0d7fb8ec693df # v1
     with:
       working-directory: static-src
       web-lint: true
