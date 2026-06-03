@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func FuzzHistogramObserve(f *testing.F) {
 
 		// Verify the handler doesn't panic after observation.
 		rec := httptest.NewRecorder()
-		reg.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+		reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 		body := rec.Body.String()
 		if !strings.Contains(body, "fuzz_test_count") {
 			t.Error("output missing fuzz_test_count")
