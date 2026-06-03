@@ -16,7 +16,7 @@ vi.mock("../transport.js", async (importOriginal) => {
 
 import { send as transportSend } from "../transport.js";
 import { sendMessage } from "./crew.js";
-import { recentLog } from "./registry.js";
+import { getActionLog as recentLog } from "./index.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -50,8 +50,7 @@ describe("crew.sendMessage", () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     await sendMessage.dispatch({ chatID: "c1", subSessionID: "s1", text: "hi" });
     const cmd = mockSend.mock.calls[0]![0] as Record<string, unknown>;
-    const payload = cmd["payload"] as Record<string, unknown>;
-    expect(payload["idempotency_key"]).toEqual(expect.any(String));
+    expect(cmd["idempotency_key"]).toEqual(expect.any(String));
   });
 
   it("retries on network error up to 2 times", async () => {

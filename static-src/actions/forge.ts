@@ -4,8 +4,8 @@
 // action.dispatch() calls with button progress and aggregate toast.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
 // --- Types local to this slice ---

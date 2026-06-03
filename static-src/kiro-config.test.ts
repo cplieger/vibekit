@@ -32,22 +32,25 @@ vi.mock("./api-client.js", () => ({
 }));
 
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
+vi.mock("./transport.js", () => ({ send: vi.fn() }));
 vi.mock("./dom.js", () => {
   const div = document.createElement("div");
   return { $: { kiroConfigList: div } };
 });
 
 import { apiGet } from "./api-client.js";
-import { _resetForTest as resetDefine } from "./actions/define.js";
-import { _resetForTest as resetRegistry } from "./actions/registry.js";
+import { configure } from "@cplieger/actions";
 import { $ } from "./dom.js";
+import * as toast from "./toast.js";
 
 const mockApiGet = vi.mocked(apiGet);
 
 beforeEach(() => {
   vi.useFakeTimers();
-  resetDefine();
-  resetRegistry();
+  configure({
+    success: (msg) => { toast.success(msg); },
+    error: (msg, retry) => { toast.error(msg, retry); },
+  });
   mockApiGet.mockReset();
   $.kiroConfigList.replaceChildren();
 });

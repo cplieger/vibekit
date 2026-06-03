@@ -2,6 +2,7 @@
 // Tests for actions/conflicts.ts: openConflictDiff, loadConflicts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
 vi.mock("../toast.js", () => ({
   info: vi.fn(),
@@ -10,26 +11,16 @@ vi.mock("../toast.js", () => ({
   showToast: vi.fn(),
 }));
 
-vi.mock("../api-client.js", () => ({
-  API_TIMEOUT_MS: 30_000,
-  withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-}));
-
 vi.mock("../editor-openers.js", () => ({
   openFileDiff: vi.fn(),
 }));
 
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

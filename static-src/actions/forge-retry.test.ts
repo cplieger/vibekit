@@ -11,15 +11,12 @@ vi.mock("../toast.js", () =>
 );
 
 import * as toast from "../toast.js";
-import { _resetForTest as resetDefine, IDEMPOTENCY_HEADER } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+const IDEMPOTENCY_HEADER = "idempotency-key";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { signOut, startDeviceFlow, cloneRepo, connectPAT } from "./forge.js";
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.clearAllMocks();
   vi.useFakeTimers();
 });

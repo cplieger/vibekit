@@ -9,8 +9,8 @@
 // dispatch with showSaved()/showError() based on the dispatch result.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 
 // --- Steering save ---
 

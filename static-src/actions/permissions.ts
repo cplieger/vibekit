@@ -1,8 +1,8 @@
 // Actions for command permission rules: add, remove, reorder.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 
 export interface CommandRule {
   pattern: string;

@@ -18,9 +18,8 @@ vi.mock("../api-client.js", () => ({
 }));
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive } from "../store.js";
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { getActionLog as recentLog } from "./index.js";
 import type { Session } from "../types.js";
 
 const mockSend = vi.mocked(transportSend);
@@ -57,9 +56,7 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
 }
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.clearAllMocks();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);

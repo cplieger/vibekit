@@ -2,6 +2,7 @@
 // Tests for actions/settings.ts: saveSteering, logout, setKiroSetting, patchAppSettings.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
 vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
@@ -14,17 +15,12 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

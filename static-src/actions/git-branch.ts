@@ -1,8 +1,8 @@
 // Actions for git branch operations: checkout, create.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 import { truncate } from "../strings.js";
 
 interface CheckoutArgs {

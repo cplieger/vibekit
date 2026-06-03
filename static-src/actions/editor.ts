@@ -2,9 +2,9 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
-import { transportAction } from "./transport.js";
+import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD, transportAction } from "./index.js";
+
+
 import { routeForPath } from "../editor-types.js";
 
 /** Save the active editor file (PUT). Inline error surface in the editor pane;

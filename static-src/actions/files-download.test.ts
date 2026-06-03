@@ -8,15 +8,12 @@ vi.mock("../toast.js", () => ({
   showToast: vi.fn(),
 }));
 
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { getActionLog as recentLog } from "./index.js";
 import { downloadFiles } from "./files.js";
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.clearAllMocks();
 });
 

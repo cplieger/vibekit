@@ -17,7 +17,7 @@ vi.mock("../upload.js", () => ({
   uploadFiles: vi.fn(),
 }));
 
-import { recentLog } from "./registry.js";
+import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 import { uploadFiles } from "../upload.js";
 
@@ -91,7 +91,7 @@ describe("files.rename", () => {
     const { renameFile } = await import("./files.js");
     await renameFile.dispatch({ dir: "/", original: "a", newName: "b" });
     const headers = mockFetch.mock.calls[0]![1].headers as Record<string, string>;
-    expect(headers["Idempotency-Key"]).toEqual(expect.any(String));
+    expect(headers["idempotency-key"]).toEqual(expect.any(String));
   });
 
   it("toasts error with truncated filename on failure", async () => {

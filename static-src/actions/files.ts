@@ -8,11 +8,13 @@ import {
   classifyFetchError,
   hasErrorString,
   retryNetwork,
+  RETRY_STANDARD,
+  withTimeout,
+  API_TIMEOUT_MS,
 } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
-import { withTimeout, API_TIMEOUT_MS } from "../api-client.js";
 
 const API_FILES_ACTION = "/api/files/action";
 const API_FILES_DOWNLOAD = "/api/files/download";
