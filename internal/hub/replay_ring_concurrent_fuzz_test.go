@@ -15,22 +15,18 @@ func FuzzReplayRing_AppendReplay_Concurrent(f *testing.F) {
 		var wg sync.WaitGroup
 
 		// Writer goroutine.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for _, id := range []uint64{id1, id2, id3} {
 				r.Append(sseEvent{eventID: id, chatID: api.ChatID(chatFilter)})
 			}
-		}()
+		})
 
 		// Reader goroutine.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r.Replay(0, "")
 			r.Bounds()
 			_ = r.Len()
-		}()
+		})
 
 		wg.Wait()
 
