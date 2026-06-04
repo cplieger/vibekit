@@ -11,10 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Go for building the web server
 # renovate: datasource=golang-version depName=golang
-ARG TARGETOS=linux
-ARG BUILDARCH
 ARG GO_VERSION=1.26.3
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -91,7 +90,7 @@ RUN set -eu; \
         cat "static-src/css/${line}" >> static/style.css; \
     done < static-src/css/MANIFEST
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \
     -o /app/vibekit .
 
