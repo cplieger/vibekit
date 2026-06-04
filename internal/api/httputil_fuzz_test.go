@@ -20,10 +20,7 @@ func FuzzLimitedWriter(f *testing.F) {
 		if wrote < 0 || wrote > len(p) {
 			t.Errorf("Write returned %d for len(p)=%d", wrote, len(p))
 		}
-		limit := n
-		if limit < 0 {
-			limit = 0
-		}
+		limit := max(n, 0)
 		if int64(buf.Len()) > limit {
 			t.Errorf("underlying got %d bytes, cap was %d", buf.Len(), n)
 		}
