@@ -14,17 +14,14 @@ vi.mock("../api-client.js", () => ({
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 }));
 
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });
@@ -110,7 +107,7 @@ describe("forge.clone_repo", () => {
     const { cloneRepo } = await import("./forge.js");
     await cloneRepo.dispatch({ url: "https://x.com/r.git" });
     const headers = mockFetch.mock.calls[0]![1].headers as Record<string, string>;
-    expect(headers["Idempotency-Key"]).toEqual(expect.any(String));
+    expect(headers["idempotency-key"]).toEqual(expect.any(String));
   });
 
   it("suppresses error toast on failure", async () => {
@@ -150,7 +147,7 @@ describe("forge.connect_pat", () => {
     const { connectPAT } = await import("./forge.js");
     await connectPAT.dispatch({ kind: "gitlab", host: "gitlab.com", token: "tok" });
     const headers = mockFetch.mock.calls[0]![1].headers as Record<string, string>;
-    expect(headers["Idempotency-Key"]).toEqual(expect.any(String));
+    expect(headers["idempotency-key"]).toEqual(expect.any(String));
   });
 
   it("suppresses error toast on failure", async () => {

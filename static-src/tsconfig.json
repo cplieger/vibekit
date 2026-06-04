@@ -42,6 +42,7 @@
     "fc-strict-setup.ts",
     "**/*.test.ts",
     "**/*.fuzz.test.ts",
-    "**/*.property.test.ts"
+    "**/*.property.test.ts",
+    "**/__test-helpers__/**"
   ]
 }

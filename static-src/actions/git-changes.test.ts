@@ -14,17 +14,14 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry, recentLog } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
 });

@@ -1,8 +1,8 @@
 // MCP actions: user-initiated mutations for the MCP integrations UI.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 import {
   type Server,
   updateConfiguredEntry,

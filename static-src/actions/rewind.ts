@@ -1,7 +1,7 @@
 // Actions for rewind chat operations (promote / discard).
 // ---------------------------------------------------------------------------
 
-import { transportAction } from "./transport.js";
+import { transportAction } from "./index.js";
 
 interface RewindArgs {
   chatID: string;

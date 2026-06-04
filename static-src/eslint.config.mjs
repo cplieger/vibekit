@@ -29,7 +29,7 @@ export default [
       // Test fixtures that aren't real code
       "**/test-stubs/**",
       "**/__mocks__/**",
-      "__test-helpers__/**",
+      "**/__test-helpers__/**",
     ],
   },
   // 2. Strictest official preset combination (typed linting required).
@@ -147,7 +147,7 @@ export default [
       "**/*.property.test.ts",
       "**/test-helpers/**",
       "**/__mocks__/**",
-      "__test-helpers__/**",
+      "**/__test-helpers__/**",
     ],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",

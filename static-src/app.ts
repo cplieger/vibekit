@@ -88,6 +88,7 @@ import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";
+import { initActions } from "./actions/boot.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
@@ -108,6 +109,8 @@ function dismissLoadingScreen(): void {
 // ============================================================
 
 function init(): void {
+  initActions();
+
   setOnEmpty(() => {
     createSession();
   });

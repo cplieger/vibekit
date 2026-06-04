@@ -1,9 +1,16 @@
 // Actions for conflict-resolution user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { defineAction, apiAction, ActionError, classifyFetchError, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
-import { withTimeout } from "../api-client.js";
+import {
+  defineAction,
+  apiAction,
+  ActionError,
+  classifyFetchError,
+  retryNetwork,
+  RETRY_STANDARD,
+  withTimeout,
+} from "./index.js";
+
 import type { Conflict } from "../conflicts.js";
 
 /** Timeout for individual blob fetches — shorter than API_TIMEOUT_MS (30s)

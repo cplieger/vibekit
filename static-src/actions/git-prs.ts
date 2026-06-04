@@ -3,8 +3,8 @@
 // and are intentionally excluded.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError, retryNetwork } from "./index.js";
-import { RETRY_STANDARD } from "./types.js";
+import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
+
 import { removePRFromGroups, reinsertPRInGroups } from "../git-prs-state.js";
 import type { PRRemoveResult } from "../git-prs-state.js";
 

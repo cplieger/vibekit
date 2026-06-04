@@ -33,17 +33,13 @@ vi.mock("../api-client.js", () => ({
 
 import { send as transportSend } from "../transport.js";
 import { setThinking, enqueuePrompt } from "../store.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { sendPrompt } from "./chat.js";
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockSend.mockReset();
 });
 

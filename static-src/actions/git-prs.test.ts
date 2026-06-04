@@ -14,10 +14,8 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 import { bindPRState } from "../git-prs-state.js";
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { mergePR, closePR } from "./git-prs.js";
 
 const mockFetch = vi.fn();
@@ -43,9 +41,7 @@ function makeGroups() {
 const paint = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   mockFetch.mockReset();
   paint.mockReset();
   vi.stubGlobal("fetch", mockFetch);

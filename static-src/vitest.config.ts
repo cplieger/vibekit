@@ -5,15 +5,25 @@
 // needed — happy-dom is a pure JS DOM implementation running in Node.
 // Run: vitest --run (single pass) or vitest (watch mode)
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
+
+const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
 
 export default defineConfig({
   resolve: {
-    alias: {
+    alias: [
       // ansi_up is loaded via importmap in the browser; for vitest we
       // point at a stub that exports a no-op AnsiUp (tests don't need
       // real ANSI rendering, just DOM structure).
-      ansi_up: "./test-stubs/ansi_up.ts",
-    },
+      { find: "ansi_up", replacement: "./test-stubs/ansi_up.ts" },
+      // Allow deep imports into @cplieger/actions internals for test reset
+      // utilities (_resetForTest). The package "exports" field restricts
+      // access to "." only; this alias bypasses that for tests.
+      {
+        find: /^@cplieger\/actions\/dist\/src\/(.+)$/,
+        replacement: `${actionsInternals}/$1`,
+      },
+    ],
   },
   test: {
     // Default: node. Override per test file with:

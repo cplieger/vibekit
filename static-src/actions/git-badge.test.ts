@@ -13,17 +13,13 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
+import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { refreshGitBadge } from "./git-badge.js";
-import { _resetForTest as resetDefine } from "./define.js";
-import { _resetForTest as resetRegistry } from "./registry.js";
-import { _resetForTest as resetCleanup } from "./cleanup.js";
 
 const mockFetch = vi.fn();
 
 beforeEach(() => {
-  resetDefine();
-  resetRegistry();
-  resetCleanup();
+  resetActionFramework();
   vi.stubGlobal("fetch", mockFetch);
 });
 
