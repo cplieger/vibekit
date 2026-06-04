@@ -29,5 +29,4 @@ jobs:
       registries: ghcr
       skip-build-guard: true
       sbom-from: path
-      notify-repo: cplieger/homelab
     secrets: inherit
