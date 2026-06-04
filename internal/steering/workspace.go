@@ -170,13 +170,20 @@ func hostFromGitURL(url string) string {
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
 		rest := strings.SplitN(url, "://", 2)[1]
 		// Strip credentials if present (https://user:pwd@host/...).
-		if at := strings.LastIndex(rest, "@"); at >= 0 {
-			if slash := strings.Index(rest, "/"); slash < 0 || at < slash {
-				rest = rest[at+1:]
-			}
+		// Use first @ only if it appears before the first /.
+		slash := strings.Index(rest, "/")
+		if at := strings.Index(rest, "@"); at >= 0 && (slash < 0 || at < slash) {
+			rest = rest[at+1:]
 		}
 		if i := strings.Index(rest, "/"); i > 0 {
-			return rest[:i]
+			host := rest[:i]
+			if strings.ContainsAny(host, "@/") {
+				return ""
+			}
+			return host
+		}
+		if strings.ContainsAny(rest, "@/") {
+			return ""
 		}
 		return rest
 	}
@@ -184,7 +191,11 @@ func hostFromGitURL(url string) string {
 		// scp-style: git@host:owner/repo
 		rest := url[i+1:]
 		if j := strings.Index(rest, ":"); j > 0 {
-			return rest[:j]
+			host := rest[:j]
+			if strings.ContainsAny(host, "@/") {
+				return ""
+			}
+			return host
 		}
 	}
 	return ""
