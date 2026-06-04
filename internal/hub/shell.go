@@ -3,11 +3,11 @@
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows
 // over a WebSocket at /api/shell/ws using a compact binary wire protocol
-// (see internal/terminal/wire_binary.go). The server maintains a VT500
-// screen buffer (internal/vt) and sends only changed rows to the client
-// on each flush tick — dramatically reducing bandwidth vs. raw-byte
-// streaming, and enabling a lightweight DOM-based renderer on the client
-// (no xterm.js dependency).
+// (see github.com/cplieger/vterm/terminal). The server maintains a VT500
+// screen buffer (github.com/cplieger/vterm/vt) and sends only changed rows
+// to the client on each flush tick — dramatically reducing bandwidth vs.
+// raw-byte streaming, and enabling a lightweight DOM-based renderer on the
+// client (no xterm.js dependency).
 //
 // On reconnect the server replays the full screen snapshot + scrollback
 // history so the client can reconstruct terminal state without needing
@@ -28,7 +28,7 @@ import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/terminal"
+	"github.com/cplieger/vterm/terminal"
 )
 
 // ShellManager wraps the terminal.Handler to provide the same interface
@@ -44,10 +44,7 @@ type ShellManager struct {
 // ctx is accepted for interface compatibility but not used (the terminal
 // package manages its own lifecycle via Shutdown).
 func NewShellManager(_ context.Context, workDir string) *ShellManager {
-	h := terminal.NewHandler(terminal.Options{
-		Command: []string{"bash", "--login"},
-		WorkDir: workDir,
-	})
+	h := terminal.NewHandler([]string{"bash", "--login"}, terminal.WithWorkDir(workDir))
 	return &ShellManager{handler: h}
 }
 
