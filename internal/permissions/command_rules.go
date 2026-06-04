@@ -60,7 +60,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 // RuleMode is "allow" (auto-approve under safe_commands) or "deny"
@@ -336,7 +336,7 @@ func (r *CommandRules) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return fileutil.SaveBytes(r.path(), data, 0o600)
+	return atomicfile.SaveBytes(r.path(), data, 0o600)
 }
 
 

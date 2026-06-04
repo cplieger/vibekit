@@ -20,7 +20,7 @@ import (
 	"vibekit/internal/chat"
 	"vibekit/internal/chat/archive"
 	"vibekit/internal/filehandler"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 	forgesPkg "vibekit/internal/forges"
 	"vibekit/internal/git"
 	"vibekit/internal/hub"
@@ -281,6 +281,6 @@ func sweepStaleTemps(configDir, workDir string) {
 		filepath.Join(configDir, "chats", archive.Subdir),
 		workDir,
 	} {
-		fileutil.CleanupStaleTemps(dir, tempMaxAge)
+		atomicfile.CleanupStaleTemps(dir, tempMaxAge)
 	}
 }

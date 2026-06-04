@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }
@@ -48,7 +48,7 @@ func (s *Service) loadKeys() {
 		s.healthy = false
 		return
 	}
-	if saveErr := fileutil.SaveBytes(s.keysPath(), data, 0o600); saveErr != nil {
+	if saveErr := atomicfile.SaveBytes(s.keysPath(), data, 0o600); saveErr != nil {
 		slog.Warn("push: persist VAPID keys failed", "error", saveErr)
 	}
 	ecdsaKey, decErr := s.decodeVAPIDPrivateKey()
@@ -158,7 +158,7 @@ func (s *Service) writeSubsSnapshot(subs []api.PushSubscription) {
 		slog.Error("push: marshal subscriptions", "error", err)
 		return
 	}
-	if saveErr := fileutil.SaveBytes(s.subsPath(), data, 0o600); saveErr != nil {
+	if saveErr := atomicfile.SaveBytes(s.subsPath(), data, 0o600); saveErr != nil {
 		slog.Warn("push: persist subscriptions failed", "error", saveErr)
 	}
 }

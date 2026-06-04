@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.
@@ -121,7 +121,7 @@ func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := fileutil.SaveBytes(hookPath, data, 0o600); err != nil {
+	if err := atomicfile.SaveBytes(hookPath, data, 0o600); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}

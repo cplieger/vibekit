@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/atomicfile"
 )
 
 // UnmarshalJSON validates the transport field at the JSON parse boundary,
@@ -43,7 +43,7 @@ func (s *Store) persist(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("%w mcp.json: %w", ErrPersistMarshal, err)
 	}
-	if err := fileutil.SaveBytes(s.path, data, 0o600); err != nil {
+	if err := atomicfile.SaveBytes(s.path, data, 0o600); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
 	}
 	return nil
