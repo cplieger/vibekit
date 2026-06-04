@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server and TypeScript ---
-FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8 AS builder
+FROM debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Go for building the web server
 # renovate: datasource=golang-version depName=golang
-ARG TARGETARCH
 ARG TARGETOS=linux
 ARG BUILDARCH
 ARG GO_VERSION=1.26.3
