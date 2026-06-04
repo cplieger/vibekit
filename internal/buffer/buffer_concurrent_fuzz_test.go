@@ -36,10 +36,7 @@ func FuzzBufferConcurrentBlockAppend(f *testing.F) {
 				wg.Done()
 				continue
 			}
-			end := start + chunkSize
-			if end > len(ops) {
-				end = len(ops)
-			}
+			end := min(start+chunkSize, len(ops))
 			chunk := ops[start:end]
 			go func() {
 				defer wg.Done()

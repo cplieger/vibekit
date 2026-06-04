@@ -36,10 +36,7 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 				wg.Done()
 				continue
 			}
-			end := start + chunkSize
-			if end > len(data) {
-				end = len(data)
-			}
+			end := min(start+chunkSize, len(data))
 			chunk := data[start:end]
 			go func() {
 				defer wg.Done()

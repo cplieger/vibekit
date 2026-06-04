@@ -25,10 +25,7 @@ func FuzzRingAppendSliceInvariant(f *testing.F) {
 			r.Append(i)
 		}
 
-		expectedLen := numAppends
-		if expectedLen > capacity {
-			expectedLen = capacity
-		}
+		expectedLen := min(numAppends, capacity)
 
 		if r.Len() != expectedLen {
 			t.Fatalf("Len() = %d, want %d (cap=%d, appends=%d)",

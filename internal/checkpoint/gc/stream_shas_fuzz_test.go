@@ -46,7 +46,7 @@ func FuzzStreamEventSHAsRobustness(f *testing.F) {
 
 		// Cross-check: build expected set from line-by-line parse.
 		expected := make(map[string]struct{})
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			if line == "" {
 				continue
 			}
