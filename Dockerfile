@@ -53,7 +53,7 @@ RUN mkdir -p static/vendor && \
 # tsgo's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=1.0.0
+ARG CPLIEGER_ACTIONS_VERSION=1.0.2
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
