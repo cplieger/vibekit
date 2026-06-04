@@ -16,15 +16,15 @@ import { send as transportSend } from "../../transport.js";
 // that work at runtime (Vitest resolves them). TS rejects them due to the
 // package "exports" field — suppress the module-not-found errors.
 // @ts-expect-error — deep import for test reset (not public API)
-import { _resetForTest as resetDefine } from "@cplieger/actions/dist/src/define.js";
+import { _resetForTest as resetDefine } from "@cplieger/actions/src/define.ts";
 // @ts-expect-error — deep import for test reset (not public API)
-import { _resetForTest as resetRegistry } from "@cplieger/actions/dist/src/registry.js";
+import { _resetForTest as resetRegistry } from "@cplieger/actions/src/registry.ts";
 // @ts-expect-error — deep import for test reset (not public API)
-import { _resetForTest as resetCleanup } from "@cplieger/actions/dist/src/cleanup.js";
+import { _resetForTest as resetCleanup } from "@cplieger/actions/src/cleanup.ts";
 // @ts-expect-error — deep import for test reset (not public API)
-import { _resetApiConfigForTest as resetApiConfig } from "@cplieger/actions/dist/src/api.js";
+import { _resetApiConfigForTest as resetApiConfig } from "@cplieger/actions/src/api.ts";
 // @ts-expect-error — deep import for test reset (not public API)
-import { _resetTransportForTest as resetTransport } from "@cplieger/actions/dist/src/transport.js";
+import { _resetTransportForTest as resetTransport } from "@cplieger/actions/src/transport.ts";
 
 export { resetDefine, resetRegistry, resetCleanup };
 
