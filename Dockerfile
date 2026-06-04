@@ -62,24 +62,25 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 # BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
 # running binary can report what tag it was built from. Defaults to "dev"
 # for local test builds; CI sets it to the date-sha tag.
-ARG BUILD_VERSION=dev
-RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json \
-    && /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json
-
-# Compile @cplieger/actions's TS source into static/vendor/cplieger-actions/
+#
+# Step 1: tsgo --project compiles app TS (build + service-worker configs).
+# Step 2: compile @cplieger/actions's TS source into static/vendor/cplieger-actions/
 # so the browser can fetch the lib's compiled JS via the importmap entry.
 # The lib uses internal relative imports (./registry.js, ./api.js, etc.)
 # which are preserved as relative paths in the emit and resolve naturally
 # within /vendor/cplieger-actions/ at runtime.
-RUN /tmp/package/lib/tsgo \
-    --module ESNext \
-    --target ESNext \
-    --moduleResolution bundler \
-    --outDir static/vendor/cplieger-actions \
-    --rootDir static-src/node_modules/@cplieger/actions/src \
-    --skipLibCheck \
-    --strict \
-    static-src/node_modules/@cplieger/actions/src/*.ts
+ARG BUILD_VERSION=dev
+RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
+    /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-actions \
+        --rootDir static-src/node_modules/@cplieger/actions/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/actions/src/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file
