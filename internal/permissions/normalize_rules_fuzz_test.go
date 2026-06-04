@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -27,8 +28,8 @@ func FuzzNormalizeRules(f *testing.F) {
 			if e.Pattern == "" {
 				t.Error("normalizeRules output has empty pattern")
 			}
-			if e.Pattern != e.Pattern {
-				t.Error("impossible") // avoid unused
+			if e.Pattern != strings.TrimSpace(e.Pattern) {
+				t.Error("normalizeRules output has untrimmed pattern")
 			}
 
 			// All output entries have mode ∈ {"allow", "deny"}.
