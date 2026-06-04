@@ -18,6 +18,6 @@ func FuzzFileActionParsing(f *testing.F) {
 		if err := json.Unmarshal(data, &body); err != nil {
 			return
 		}
-		_, _ = fileActions[body.Action]
+		_ = fileActions[body.Action]
 	})
 }

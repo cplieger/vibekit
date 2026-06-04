@@ -13,10 +13,7 @@ func FuzzLooksBinary(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		got := looksBinary(data)
-		sniffLen := len(data)
-		if sniffLen > binarySniffN {
-			sniffLen = binarySniffN
-		}
+		sniffLen := min(len(data), binarySniffN)
 		want := bytes.IndexByte(data[:sniffLen], 0) >= 0
 		if got != want {
 			t.Errorf("looksBinary(%d bytes) = %v, want %v", len(data), got, want)
