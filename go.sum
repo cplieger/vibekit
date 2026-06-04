@@ -1,7 +1,13 @@
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
+github.com/cplieger/atomicfile v1.0.1 h1:egWe0ngT8ITYALuRSApSPRs5PeRzRfcCc4FbFl3ABXk=
+github.com/cplieger/atomicfile v1.0.1/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
+github.com/cplieger/metrics v1.0.1 h1:R6uV8UDnsMB+XMuQsKnzVyVb47a1mSGqgZMmgwTSbJ4=
+github.com/cplieger/metrics v1.0.1/go.mod h1:Q+d/UoGECpuuyJ2runs5dU+H8p5ZVI+EwcjQtVZReaM=
 github.com/cplieger/vterm v1.0.0 h1:lduitClXSBm+wbbtqsbhcUHiDpfSz80y5LKjUIhusgs=
 github.com/cplieger/vterm v1.0.0/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
+github.com/cplieger/vterm v1.0.5 h1:Y1xg901zRaZHntGpJTt8owkahkc3kOUQ+bfN8eFHyRM=
+github.com/cplieger/vterm v1.0.5/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 golang.org/x/sync v0.20.0 h1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=
