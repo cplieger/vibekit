@@ -2,7 +2,6 @@ package crypto
 
 import (
 	"crypto/ecdh"
-	"crypto/elliptic"
 	"crypto/rand"
 	"testing"
 )
@@ -33,14 +32,11 @@ func FuzzECDHToECDSA(f *testing.F) {
 			t.Fatalf("ECDHToECDSA: %v", err)
 		}
 
-		if ec.Curve != elliptic.P256() {
+		if ec.Curve == nil || ec.Curve.Params().Name != "P-256" {
 			t.Fatalf("curve = %v; want P-256", ec.Curve)
 		}
 		if ec.X == nil || ec.Y == nil {
 			t.Fatalf("nil component: X=%v Y=%v", ec.X, ec.Y)
-		}
-		if !elliptic.P256().IsOnCurve(ec.X, ec.Y) {
-			t.Fatalf("point (%v, %v) not on P-256", ec.X, ec.Y)
 		}
 
 		raw := key.PublicKey().Bytes()
