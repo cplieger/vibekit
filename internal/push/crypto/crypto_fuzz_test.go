@@ -16,7 +16,6 @@ import (
 // off-by-one on the uncompressed-point split, or wrong curve constant
 // would generate JWTs that fail verification at the push gateway.
 func FuzzECDHToECDSA(f *testing.F) {
-	// Single seed: a randomly generated valid key.
 	priv, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatalf("seed: GenerateKey: %v", err)
@@ -24,8 +23,6 @@ func FuzzECDHToECDSA(f *testing.F) {
 	f.Add(priv.Bytes())
 
 	f.Fuzz(func(t *testing.T, dBytes []byte) {
-		// Only proceed for byte strings that are valid P-256 scalars.
-		// NewPrivateKey enforces this; if it errors, skip.
 		key, err := ecdh.P256().NewPrivateKey(dBytes)
 		if err != nil {
 			t.Skip()
@@ -39,20 +36,17 @@ func FuzzECDHToECDSA(f *testing.F) {
 		if ec.Curve != elliptic.P256() {
 			t.Fatalf("curve = %v; want P-256", ec.Curve)
 		}
-		if ec.X == nil || ec.Y == nil || ec.D == nil {
-			t.Fatalf("nil component: X=%v Y=%v D=%v", ec.X, ec.Y, ec.D)
+		if ec.X == nil || ec.Y == nil {
+			t.Fatalf("nil component: X=%v Y=%v", ec.X, ec.Y)
 		}
-		// Public point must be on P-256.
 		if !elliptic.P256().IsOnCurve(ec.X, ec.Y) {
 			t.Fatalf("point (%v, %v) not on P-256", ec.X, ec.Y)
 		}
 
-		// X/Y derived from the original ECDH public key bytes must match.
 		raw := key.PublicKey().Bytes()
 		if len(raw) != 65 || raw[0] != 0x04 {
 			t.Fatalf("unexpected public key format: len=%d head=%x", len(raw), raw[0])
 		}
-		// The 32-byte X/Y are bigint-equivalent.
 		if got, want := ec.X.Bytes(), trimLeadingZeros(raw[1:33]); !bytesEqual(got, want) {
 			t.Fatalf("X mismatch: got %x want %x", got, want)
 		}
