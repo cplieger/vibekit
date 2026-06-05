@@ -32,7 +32,7 @@ func FuzzPathName(f *testing.F) {
 		validTypeName := len(typeName) > 0 && typeName[0] >= 'A' && typeName[0] <= 'Z'
 		if validTypeName {
 			for _, r := range typeName {
-				if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+				if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 					validTypeName = false
 					break
 				}

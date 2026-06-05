@@ -29,7 +29,7 @@ func FuzzBlobStorePathFor(f *testing.F) {
 				allHex := true
 				for i := range 64 {
 					c := hash[i]
-					if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+					if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 						allHex = false
 						break
 					}
