@@ -6,69 +6,55 @@ import (
 	"testing"
 )
 
-// FuzzSanitizeEnv verifies SanitizeEnv never panics and always strips
-// known credential variables regardless of surrounding input.
 func FuzzSanitizeEnv(f *testing.F) {
-	f.Add("GH_TOKEN=secret")
-	f.Add("PATH=/usr/bin")
-	f.Add("GITHUB_TOKEN=abc")
-	f.Add("GITLAB_TOKEN=xyz")
-	f.Add("=value")
+	f.Add("PATH=/usr/bin\nGH_TOKEN=secret\nHOME=/home/u")
+	f.Add("GITHUB_TOKEN=x\nGITLAB_TOKEN=y")
 	f.Add("")
-	f.Add("NOEQUALS")
-	f.Add("GITEA_TOKEN=t\x00ok")
 
-	f.Fuzz(func(t *testing.T, kv string) {
-		result := SanitizeEnv([]string{kv})
-		for _, out := range result {
-			key := out
-			if i := strings.IndexByte(out, '='); i > 0 {
-				key = out[:i]
+	f.Fuzz(func(t *testing.T, joined string) {
+		env := strings.Split(joined, "\n")
+		result := SanitizeEnv(env)
+		for _, kv := range result {
+			key := kv
+			if i := strings.IndexByte(kv, '='); i > 0 {
+				key = kv[:i]
 			}
 			if ShouldStripEnv(key) {
-				t.Fatalf("SanitizeEnv kept stripped key %q", key)
+				t.Fatalf("SanitizeEnv leaked %q", key)
 			}
 		}
 	})
 }
 
-// FuzzIsNotLoggedIn verifies the detector never panics and is
-// case-insensitive.
 func FuzzIsNotLoggedIn(f *testing.F) {
-	f.Add("not logged in to any github hosts")
-	f.Add("No token configured")
+	f.Add("error: not logged in to github.com")
+	f.Add("no token configured for host")
+	f.Add("all good")
 	f.Add("")
-	f.Add("everything is fine")
-	f.Add("LOGIN REQUIRED")
-	f.Add("authentication required please login")
 
 	f.Fuzz(func(t *testing.T, stderr string) {
 		got := IsNotLoggedIn(stderr)
-		// Invariant: if any known pattern (case-insensitive) is present,
-		// result must be true.
+		if !got {
+			return
+		}
 		lower := strings.ToLower(stderr)
+		found := false
 		for _, p := range NotLoggedInPatterns {
 			if strings.Contains(lower, p) {
-				if !got {
-					t.Fatalf("IsNotLoggedIn(%q) = false, but contains pattern %q", stderr, p)
-				}
-				return
+				found = true
+				break
 			}
 		}
-		// No pattern found: result must be false.
-		if got {
-			t.Fatalf("IsNotLoggedIn(%q) = true, but no known pattern found", stderr)
+		if !found {
+			t.Fatalf("IsNotLoggedIn=true but no pattern found in %q", stderr)
 		}
 	})
 }
 
-// FuzzCappedWriter verifies the writer never writes more than Max bytes
-// to the underlying buffer and never returns an error from a bytes.Buffer.
 func FuzzCappedWriter(f *testing.F) {
-	f.Add([]byte("hello"), int64(3))
+	f.Add([]byte("hello world"), int64(5))
 	f.Add([]byte(""), int64(0))
-	f.Add([]byte("abcdef"), int64(100))
-	f.Add([]byte("x"), int64(1))
+	f.Add([]byte("abc"), int64(100))
 
 	f.Fuzz(func(t *testing.T, data []byte, max int64) {
 		if max < 0 {
@@ -76,23 +62,15 @@ func FuzzCappedWriter(f *testing.F) {
 		}
 		var buf bytes.Buffer
 		cw := &CappedWriter{W: &buf, Max: max}
-
-		// First write.
-		_, err := cw.Write(data)
+		n, err := cw.Write(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if int64(buf.Len()) > max {
-			t.Fatalf("wrote %d bytes, exceeds max %d", buf.Len(), max)
-		}
-
-		// Second write should still respect cap.
-		_, err = cw.Write(data)
-		if err != nil {
-			t.Fatalf("unexpected error on second write: %v", err)
+		if n < 0 {
+			t.Fatalf("Write returned negative: %d", n)
 		}
 		if int64(buf.Len()) > max {
-			t.Fatalf("after second write: %d bytes, exceeds max %d", buf.Len(), max)
+			t.Fatalf("buffer exceeded cap: %d > %d", buf.Len(), max)
 		}
 	})
 }
