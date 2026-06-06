@@ -102,7 +102,7 @@
     "yq": {
       "enabled": false,
       "auto_update": true,
-      "version": "v4.53.2",
+      "version": "v4.53.3",
       "update": {
         "method": "github",
         "repo": "mikefarah/yq"
