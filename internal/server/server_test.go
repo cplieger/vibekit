@@ -3,13 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/cplieger/vibekit/internal/api"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestSyncPushPreferences(t *testing.T) {

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/permissions/eval"
-
 	"pgregory.net/rapid"
 )
 

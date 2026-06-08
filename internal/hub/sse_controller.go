@@ -1,12 +1,12 @@
 package hub
 
 import (
-	"github.com/cplieger/vibekit/internal/metrics"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/metrics"
 )
 
 // sseController owns the SSE client set and replay ring buffer. It has

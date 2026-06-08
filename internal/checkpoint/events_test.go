@@ -830,8 +830,10 @@ func FuzzReplay(f *testing.F) {
 	// Seed with a minimal valid sequence.
 	f.Add(uint8(0), uint8(1), uint8(0), uint8(2))
 	f.Fuzz(func(t *testing.T, b1, b2, b3, b4 uint8) {
-		kinds := []eventKind{kindTurnStart, kindSnapshot, kindRestore,
-			kindRestoreStarted, kindRestoreCommitted, kindConflict}
+		kinds := []eventKind{
+			kindTurnStart, kindSnapshot, kindRestore,
+			kindRestoreStarted, kindRestoreCommitted, kindConflict,
+		}
 		pick := func(b uint8) eventKind { return kinds[int(b)%len(kinds)] }
 
 		events := []event{

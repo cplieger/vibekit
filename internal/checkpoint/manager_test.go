@@ -797,8 +797,10 @@ func TestSnapshot_ConflictPayloadTagMatchesSnapshotTag(t *testing.T) {
 	}
 
 	var broadcast *ConflictPayload
-	mB := newManager("B", work, newEventLog(cfg, "B"), &managerDeps{blobs: blobs, index: idx,
-		onConf: func(_ string, p *ConflictPayload) { broadcast = p }})
+	mB := newManager("B", work, newEventLog(cfg, "B"), &managerDeps{
+		blobs: blobs, index: idx,
+		onConf: func(_ string, p *ConflictPayload) { broadcast = p },
+	})
 	if err := mB.AdvanceTurn(ctx, 0); err != nil {
 		t.Fatal(err)
 	}

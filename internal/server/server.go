@@ -19,7 +19,6 @@ import (
 	"github.com/cplieger/vibekit/internal/fileutil"
 	"github.com/cplieger/vibekit/internal/metrics"
 	"github.com/cplieger/vibekit/internal/permissions"
-
 	"golang.org/x/sync/singleflight"
 )
 
@@ -76,9 +75,11 @@ func WithRules(r *permissions.CommandRules) Option { return func(s *Server) { s.
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
+
 func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
+
 func WithCLIPath(p string) Option {
 	return func(s *Server) {
 		s.cliPath = p
