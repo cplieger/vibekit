@@ -166,6 +166,14 @@
     background: var(--c-bg-hover);
   }
 
+  /* Sticky Ctrl, armed: accent fill so the toggle state reads clearly
+     (stays filled while pressed). */
+  .kb-key.armed,
+  .kb-key.armed:active {
+    background: var(--c-accent);
+    color: #fff;
+  }
+
   .key-toolbar button svg {
     width: var(--icon);
     height: var(--icon);
