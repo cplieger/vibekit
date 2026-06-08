@@ -73,7 +73,7 @@ export function initShellPanel(): void {
   termInput.addEventListener("beforeinput", (e: InputEvent) => {
     if (e.inputType === "insertText" && e.data) {
       e.preventDefault();
-      sendSeq(e.data.replace(/\u00A0/g, " "));
+      sendSeq(applyStickyCtrl(e.data.replace(/\u00A0/g, " ")));
     }
   });
 
@@ -120,15 +120,23 @@ export function initShellPanel(): void {
     "kb-left": "\x1b[D",
     "kb-right": "\x1b[C",
     "kb-enter": "\r",
-    "kb-ctrlc": "\x03",
   };
 
   for (const [id, seq] of Object.entries(keyMap)) {
     document.getElementById(id)?.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      setCtrlArmed(false);
       sendSeq(seq);
     });
   }
+
+  // Sticky Ctrl: tap to arm/disarm. preventDefault keeps focus on the
+  // terminal so the iOS virtual keyboard stays up for the next tap.
+  ctrlBtn = document.getElementById("kb-ctrl");
+  ctrlBtn?.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    setCtrlArmed(!ctrlArmed);
+  });
 
   document.getElementById("kb-scroll-bottom")?.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -203,6 +211,61 @@ function handleBinaryFrame(data: ArrayBuffer): void {
       // in vibekit (vibecli does it via predict.ts); just acknowledge.
       break;
   }
+}
+
+// --- Sticky Ctrl modifier ---
+// The iOS virtual keyboard has no Ctrl key, so control sequences
+// (Ctrl+C, Ctrl+L = clear screen, Ctrl+X, ...) are otherwise unreachable
+// on touch. The toolbar's Ctrl button arms a one-shot modifier: tap it,
+// then tap a letter on the virtual keyboard and that keystroke is sent
+// as its C0 control byte. Auto-disarms after one printable character.
+let ctrlArmed = false;
+let ctrlBtn: HTMLElement | null = null;
+
+function setCtrlArmed(on: boolean): void {
+  ctrlArmed = on;
+  ctrlBtn?.classList.toggle("armed", on);
+  ctrlBtn?.setAttribute("aria-pressed", on ? "true" : "false");
+}
+
+// Map one printable character to its Ctrl+<char> C0 control byte.
+function ctrlByteFor(ch: string): string | null {
+  const code = ch.toLowerCase().charCodeAt(0);
+  if (code >= 97 && code <= 122) {
+    return String.fromCharCode(code - 96); // a–z → 0x01–0x1a
+  }
+  switch (ch) {
+    case " ":
+    case "@":
+      return "\x00";
+    case "[":
+      return "\x1b";
+    case "\\":
+      return "\x1c";
+    case "]":
+      return "\x1d";
+    case "^":
+      return "\x1e";
+    case "_":
+      return "\x1f";
+    case "?":
+      return "\x7f";
+    default:
+      return null;
+  }
+}
+
+// One-shot armed Ctrl: a single printable char becomes its control byte;
+// longer input (paste) just disarms and passes through unchanged.
+function applyStickyCtrl(data: string): string {
+  if (!ctrlArmed) {
+    return data;
+  }
+  setCtrlArmed(false);
+  if (data.length === 1) {
+    return ctrlByteFor(data) ?? data;
+  }
+  return data;
 }
 
 function sendSeq(seq: string): void {
