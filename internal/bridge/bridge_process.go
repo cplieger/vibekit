@@ -33,7 +33,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 			b.lockMgr.RemoveStaleLock(ctx, opts.SessionID)
 		}
 	}
-	if err := b.startProcess(opts.Agent, opts.Model, opts.ExtraArgs); err != nil {
+	if err := b.startProcess(opts.Agent, opts.Model, opts.Effort, opts.ExtraArgs); err != nil {
 		return err
 	}
 	if err := b.initialize(ctx); err != nil {
@@ -92,13 +92,10 @@ func (b *Bridge) Stop() {
 	})
 }
 
-func (b *Bridge) startProcess(agent, model string, extraArgs []string) error {
-	if !validIdent(agent) {
-		return fmt.Errorf("invalid agent identifier: %q", agent)
-	}
-	if !validIdent(model) {
-		return fmt.Errorf("invalid model identifier: %q", model)
-	}
+// buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept
+// pure (no process side effects) so the arg shaping — including the
+// kiro-cli >=2.6 `--effort` flag and its validation — is unit-testable.
+func buildACPArgs(agent, model, effort string, extraArgs []string) []string {
 	args := []string{"acp"}
 	args = append(args, extraArgs...)
 	if agent != "" {
@@ -107,6 +104,22 @@ func (b *Bridge) startProcess(agent, model string, extraArgs []string) error {
 	if model != "" && model != api.ModelAuto {
 		args = append(args, "--model", model)
 	}
+	// kiro-cli >=2.6 accepts an initial effort at launch. Validate
+	// defensively — the value flows into exec args.
+	if effort != "" && api.EffortLevel(effort).Valid() {
+		args = append(args, "--effort", effort)
+	}
+	return args
+}
+
+func (b *Bridge) startProcess(agent, model, effort string, extraArgs []string) error {
+	if !validIdent(agent) {
+		return fmt.Errorf("invalid agent identifier: %q", agent)
+	}
+	if !validIdent(model) {
+		return fmt.Errorf("invalid model identifier: %q", model)
+	}
+	args := buildACPArgs(agent, model, effort, extraArgs)
 	// Lifecycle is owned by Stop(), not by a context. The
 	// lifecycleCtx is a belt-and-braces kill signal: if the hub
 	// shuts down and Stop() races or panics, the OS-level context

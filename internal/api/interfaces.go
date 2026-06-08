@@ -140,6 +140,10 @@ type StartOpts struct {
 	Agent string
 	// Model is the model id to use for the session.
 	Model string
+	// Effort is the initial reasoning effort level passed to kiro-cli
+	// >=2.6 via `acp --effort` (low|medium|high|xhigh|max). Empty leaves
+	// the model/service default; invalid values are dropped at launch.
+	Effort string
 	// ExtraArgs are permission-mode flags derived from user settings.
 	ExtraArgs []string
 	// MCPServers is the ACP mcpServers array (enabled user-configured

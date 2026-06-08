@@ -109,15 +109,13 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 			}
 		}
 
-		if err := sb.bridge.Start(ctx, &api.StartOpts{Agent: agent, Model: model, ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
+		if err := sb.bridge.Start(ctx, &api.StartOpts{Agent: agent, Model: model, Effort: bc.effortForModel(ctx, model), ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
 			return nil, setupErr(err)
 		}
 		bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 		sb.primed = false
 		sb.state = bridgeIdle
-
-		bc.RestoreEffort(ctx, chatID, model, sb.bridge)
 
 		go bc.Forward(chatID, sb.bridge)
 
@@ -254,31 +252,27 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 }
 
 // modelEffortSetting is the typed representation of the model_effort
-// config key. Used by RestoreEffort to avoid ad-hoc JSON parsing.
+// config key (vibekit-managed). Read at session start to seed the
+// acp --effort launch flag.
 type modelEffortSetting struct {
 	LastModel string `json:"last_model"`
 	Effort    string `json:"effort"`
 }
 
-// RestoreEffort reads the persisted model_effort from config.json and
-// dispatches /effort to the bridge if the stored model matches.
-func (bc *BridgeCoordinator) RestoreEffort(ctx context.Context, chatID api.ChatID, model string, b api.ACPBridge) {
+// effortForModel returns the persisted effort level for model, or "" if
+// none is stored or the stored model differs. The result seeds the
+// kiro-cli >=2.6 `acp --effort` launch flag (StartOpts.Effort), so a new
+// session starts at the user's chosen effort without a post-start
+// /effort dispatch. Mid-session changes still go through CmdSetEffort.
+func (bc *BridgeCoordinator) effortForModel(ctx context.Context, model string) string {
 	var me modelEffortSetting
-	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyModelEffort, "restore_effort", &me) {
-		return
+	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyModelEffort, "effort_for_model", &me) {
+		return ""
 	}
-	if me.LastModel != model || me.Effort == "" {
-		return
+	if me.LastModel != model {
+		return ""
 	}
-	bc.lifecycle.inflight.Go(func() {
-		_, _ = b.Call(ctx, "_kiro.dev/commands/execute", map[string]any{
-			"command": map[string]any{
-				"command": "effort",
-				"args":    []string{me.Effort},
-			},
-		})
-		slog.Debug("effort restored", "chat", chatID, "model", model, "level", me.Effort)
-	})
+	return me.Effort
 }
 
 // NotifyPush sends a push notification if the push service is configured.
