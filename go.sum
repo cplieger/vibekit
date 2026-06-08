@@ -4,6 +4,8 @@ github.com/cplieger/atomicfile v1.0.1 h1:egWe0ngT8ITYALuRSApSPRs5PeRzRfcCc4FbFl3
 github.com/cplieger/atomicfile v1.0.1/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
 github.com/cplieger/atomicfile v1.0.3 h1:yeQlIMsGdYQkTEH5KHd4qnhtiT9kwMKRaXTf4R6wufY=
 github.com/cplieger/atomicfile v1.0.3/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
+github.com/cplieger/atomicfile v1.1.0 h1:lXTD6YVLAz72j8kTkHJElUo1PeYOhZxUAhzkvQa00H8=
+github.com/cplieger/atomicfile v1.1.0/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
 github.com/cplieger/metrics v1.0.1 h1:R6uV8UDnsMB+XMuQsKnzVyVb47a1mSGqgZMmgwTSbJ4=
 github.com/cplieger/metrics v1.0.1/go.mod h1:Q+d/UoGECpuuyJ2runs5dU+H8p5ZVI+EwcjQtVZReaM=
 github.com/cplieger/metrics v1.0.2 h1:BwC1dLIUFnURKg5Yrb+EaTzlmcoXHcSDQflMIm1Ra+w=
