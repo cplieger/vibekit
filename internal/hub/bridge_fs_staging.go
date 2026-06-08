@@ -103,9 +103,9 @@ func (h *Hub) stageFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RPCR
 	}
 
 	// Close the trust-race window. If cmdTrustPendingChanges ran
-	// between the chatHasPerTurnTrust check at the top of
-	// respondFSWrite and this Add call, its accept-all loop
-	// already finished walking a list that didn't contain our
+	// between the supervised.HasTrust check at the top of the write
+	// handler (bridge_fs_write.go) and this Add call, its accept-all
+	// loop already finished walking a list that didn't contain our
 	// op — we'd block on <-wait forever. Re-read the flag now
 	// and self-resolve with accept semantics so the handler
 	// falls through to the write path with the same result the
