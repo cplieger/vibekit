@@ -404,11 +404,9 @@ func elemDecoderExpr(t reflect.Type) string {
 	}
 	if t.Kind() == reflect.Interface {
 		return tsIdentityCast
-
 	}
 	if isRawMessage(t) {
 		return tsIdentityCast
-
 	}
 	if t.Kind() == reflect.Map {
 		return "(v) => asObject(v)"
@@ -417,7 +415,6 @@ func elemDecoderExpr(t reflect.Type) string {
 		return decoderName(t.Name())
 	}
 	return tsIdentityCast
-
 }
 
 // generateTypes writes types.gen.ts.

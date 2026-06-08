@@ -2,7 +2,6 @@ package git
 
 import (
 	"errors"
-	"github.com/cplieger/vibekit/internal/gitexec"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
-
+	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/errgroup"
 )
 

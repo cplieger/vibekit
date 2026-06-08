@@ -59,7 +59,8 @@ func KiroHome() string {
 func SetKiroHomeForTest(t interface {
 	Helper()
 	Cleanup(func())
-}, path string) {
+}, path string,
+) {
 	t.Helper()
 	old := kiroHome
 	// Replace the entire sync.Once with a fresh one to invalidate the cache.

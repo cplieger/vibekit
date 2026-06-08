@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/gitexec"
-
 	"pgregory.net/rapid"
 )
 
@@ -614,21 +613,31 @@ func TestScrubAuth(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"no creds passes through", "plain error", "plain error"},
-		{"https userinfo stripped",
+		{
+			"https userinfo stripped",
 			"fatal: https://user:token@github.com/org/repo.git",
-			"fatal: https://github.com/org/repo.git"},
-		{"token-only userinfo stripped",
+			"fatal: https://github.com/org/repo.git",
+		},
+		{
+			"token-only userinfo stripped",
 			"https://ghp_ABC123@github.com/org/repo.git",
-			"https://github.com/org/repo.git"},
-		{"chained @ segments stripped fully",
+			"https://github.com/org/repo.git",
+		},
+		{
+			"chained @ segments stripped fully",
 			"http://a@b:c@host/path",
-			"http://host/path"},
-		{"query token redacted",
+			"http://host/path",
+		},
+		{
+			"query token redacted",
 			"https://gitea.example/repo?access_token=secret",
-			"https://gitea.example/repo?access_token=[REDACTED]"},
-		{"authorization header redacted",
+			"https://gitea.example/repo?access_token=[REDACTED]",
+		},
+		{
+			"authorization header redacted",
 			"Authorization: Bearer ghp_TOKEN123",
-			"Authorization: Bearer [REDACTED]"},
+			"Authorization: Bearer [REDACTED]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -685,8 +694,10 @@ func TestSanitizeRepoPaths_Rejects(t *testing.T) {
 	}{
 		{name: "parent traversal", in: []string{".."}, wantEr: "escapes"},
 		{name: "prefix traversal", in: []string{"../etc/passwd"}, wantEr: "escapes"},
-		{name: "mid-path traversal normalises to ..",
-			in: []string{"a/../../x"}, wantEr: "escapes"},
+		{
+			name: "mid-path traversal normalises to ..",
+			in:   []string{"a/../../x"}, wantEr: "escapes",
+		},
 		{name: "absolute path", in: []string{"/etc/passwd"}, wantEr: "absolute"},
 		{name: "null byte", in: []string{"a\x00b"}, wantEr: "null byte"},
 	}

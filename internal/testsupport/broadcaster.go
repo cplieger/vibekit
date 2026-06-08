@@ -8,8 +8,10 @@ import (
 )
 
 // Compile-time assertions.
-var _ api.Broadcaster = (*NopBroadcaster)(nil)
-var _ api.Broadcaster = (*CaptureBroadcaster)(nil)
+var (
+	_ api.Broadcaster = (*NopBroadcaster)(nil)
+	_ api.Broadcaster = (*CaptureBroadcaster)(nil)
+)
 
 // NopBroadcaster is a zero-alloc no-op satisfying api.Broadcaster.
 type NopBroadcaster struct{}

@@ -12,7 +12,7 @@ func FuzzNew(f *testing.F) {
 	f.Add(16, 0)
 	f.Add(32, 1)
 
-	f.Fuzz(func(t *testing.T, byteLen int, encInt int) {
+	f.Fuzz(func(t *testing.T, byteLen, encInt int) {
 		if byteLen < 1 || byteLen > 64 {
 			return
 		}

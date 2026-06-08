@@ -122,6 +122,7 @@ func (s *InMemoryChatStore) RestoreArchived(_ context.Context, _ api.ChatID) err
 func (s *InMemoryChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
 	return nil
 }
+
 func (s *InMemoryChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
 	return nil, nil
 }

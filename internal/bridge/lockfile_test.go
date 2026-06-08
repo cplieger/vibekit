@@ -10,7 +10,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/sessions"
-
 	"pgregory.net/rapid"
 )
 

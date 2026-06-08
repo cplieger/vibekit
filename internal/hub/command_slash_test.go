@@ -2,13 +2,14 @@ package hub
 
 import (
 	"context"
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/command"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // slashMux creates a ServeMux with slash routes registered for testing.

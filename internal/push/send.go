@@ -11,16 +11,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/cplieger/vibekit/internal/metrics"
 	"io"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/metrics"
+	"golang.org/x/sync/errgroup"
 )
 
 // pushPayload is the typed wire shape for Web Push notification payloads.
