@@ -21,3 +21,6 @@ static/lib/
 static/__test-helpers__/
 
 static/style.css
+
+# Kiro skill artifacts (code-review, refactor, steering-maintenance)
+**/.steering-maintenance/
