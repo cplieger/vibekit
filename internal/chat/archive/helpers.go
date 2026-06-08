@@ -11,9 +11,8 @@ import (
 	"os"
 	"sync"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/cplieger/vibekit/internal/api"
+	"golang.org/x/sync/singleflight"
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a

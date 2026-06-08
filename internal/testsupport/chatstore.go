@@ -150,6 +150,7 @@ func (s *RecordingChatStore) RestoreArchived(_ context.Context, _ api.ChatID) er
 func (s *RecordingChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
 	return nil
 }
+
 func (s *RecordingChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
 	return nil, nil
 }

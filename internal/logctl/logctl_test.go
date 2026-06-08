@@ -25,7 +25,7 @@ func restoreDefaultLogger(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 }
 
-func writeSettings(t *testing.T, dir string, content string) {
+func writeSettings(t *testing.T, dir, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatalf("writeSettings: %v", err)

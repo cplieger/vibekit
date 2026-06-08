@@ -21,7 +21,7 @@ func init() {
 	delete(blacklist, "tmp")
 }
 
-func testDir(t *testing.T) (h *Handler, dir string, prefix string) {
+func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	t.Helper()
 	dir = t.TempDir() // e.g. /tmp/TestXxx123
 	var err error

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cplieger/vibekit/internal/api"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the

@@ -63,16 +63,35 @@ type RuleMatcher interface {
 // in "safe_commands" mode.
 var safeCommandRules = []SafeCommandRule{
 	// Single-word read-only commands (BaseExact).
-	{"ls", BaseExact}, {"cat", BaseExact}, {"head", BaseExact},
-	{"tail", BaseExact}, {"wc", BaseExact}, {"grep", BaseExact},
-	{"rg", BaseExact}, {"echo", BaseExact}, {"pwd", BaseExact},
-	{"which", BaseExact}, {"printenv", BaseExact}, {"date", BaseExact},
-	{"whoami", BaseExact}, {"hostname", BaseExact}, {"uname", BaseExact},
-	{"file", BaseExact}, {"stat", BaseExact}, {"du", BaseExact}, {"df", BaseExact},
+	{"ls", BaseExact},
+	{"cat", BaseExact},
+	{"head", BaseExact},
+	{"tail", BaseExact},
+	{"wc", BaseExact},
+	{"grep", BaseExact},
+	{"rg", BaseExact},
+	{"echo", BaseExact},
+	{"pwd", BaseExact},
+	{"which", BaseExact},
+	{"printenv", BaseExact},
+	{"date", BaseExact},
+	{"whoami", BaseExact},
+	{"hostname", BaseExact},
+	{"uname", BaseExact},
+	{"file", BaseExact},
+	{"stat", BaseExact},
+	{"du", BaseExact},
+	{"df", BaseExact},
 	// Multi-word safe command prefixes (Prefix).
-	{"git status", Prefix}, {"git log", Prefix}, {"git diff", Prefix},
-	{"git show", Prefix}, {"go version", Prefix}, {"node --version", Prefix},
-	{"python --version", Prefix}, {"npm list", Prefix}, {"cargo --version", Prefix},
+	{"git status", Prefix},
+	{"git log", Prefix},
+	{"git diff", Prefix},
+	{"git show", Prefix},
+	{"go version", Prefix},
+	{"node --version", Prefix},
+	{"python --version", Prefix},
+	{"npm list", Prefix},
+	{"cargo --version", Prefix},
 }
 
 // safeCommandIndex is the lookup map for BaseExact rules, built at init.
@@ -109,11 +128,16 @@ func (wo writeOption) Matches(tok string) bool {
 // writeOptions is the unified table of argv tokens that turn a
 // read-only command into a file-write primitive.
 var writeOptions = []writeOption{
-	{"--output", TokenExact}, {"--output=", TokenPrefix},
-	{"--out-file", TokenExact}, {"--out-file=", TokenPrefix},
-	{"--write", TokenExact}, {"--write=", TokenPrefix},
-	{"--write-file", TokenExact}, {"--write-file=", TokenPrefix},
-	{"-o", ShortPrefix}, {"-O", ShortPrefix},
+	{"--output", TokenExact},
+	{"--output=", TokenPrefix},
+	{"--out-file", TokenExact},
+	{"--out-file=", TokenPrefix},
+	{"--write", TokenExact},
+	{"--write=", TokenPrefix},
+	{"--write-file", TokenExact},
+	{"--write-file=", TokenPrefix},
+	{"-o", ShortPrefix},
+	{"-O", ShortPrefix},
 }
 
 // HasWriteOption reports whether command contains any argv token

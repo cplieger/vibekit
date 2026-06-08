@@ -10,10 +10,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/cplieger/vibekit/internal/api"
 	checkpointgc "github.com/cplieger/vibekit/internal/checkpoint/gc"
+	"golang.org/x/sync/singleflight"
 )
 
 // Store is the hub's entry point. One Store per vibekit process;
