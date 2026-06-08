@@ -27,7 +27,7 @@ import (
 // Other directives, briefly:
 //
 //	style-src 'unsafe-inline'  inline styles for editor highlighting,
-//	                           context-bar fills, xterm.js rendering
+//	                           context-bar fills, terminal rendering
 //	img-src 'self' data:        Seti UI file-type icons (data URIs)
 //	connect-src 'self'          HTTP + WebSocket to the same origin
 //	                           (the shell PTY is at /api/shell/ws)
@@ -62,7 +62,7 @@ func importMapHashToken(html []byte) (string, error) {
 // importmap, and assembles the full CSP string. Called once at Server
 // construction. If anything goes wrong (file missing, regex miss), we
 // return an error so startup fails loudly rather than serve a CSP that
-// would block the browser's import-map and silently break xterm.js.
+// would block the browser's import-map and silently break ES module loading.
 func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if staticFS == nil {
 		return "", errors.New("buildCSPPolicy: nil staticFS")

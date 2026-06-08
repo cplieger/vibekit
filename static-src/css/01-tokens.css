@@ -20,7 +20,7 @@
     --c-user-bubble: oklch(34.5% 0.045 283.8deg);
     --c-agent-bubble: color-mix(in srgb, var(--c-accent) 15%, transparent);
 
-    /* Terminal (xterm.js) 16-color ANSI palette + surfaces. Read via
+    /* Terminal 16-color ANSI palette + surfaces. Read via
      getComputedStyle in shell.ts so the terminal theme follows the app
      theme automatically. */
     --c-term-bg: oklch(20% 0.02 283deg);

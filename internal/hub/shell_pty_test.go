@@ -23,7 +23,7 @@ import (
 //	fork/exec /usr/bin/bash: operation not permitted
 //
 // and the /api/shell/ws WebSocket closes with code 1011 "shell
-// unavailable" — which is exactly the "xterm console never loads"
+// unavailable" — which is exactly the "terminal console never loads"
 // symptom in the browser.
 //
 // We test the production code path directly (setShellProcAttr +

@@ -118,8 +118,6 @@ export default defineConfig({
       exclude: [
         "*.test.ts",
         "*.d.ts",
-        // xterm-vendor: type declarations only, no runtime code
-        "xterm-vendor.d.ts",
         // sw.ts: service worker — runs in ServiceWorkerGlobalScope,
         // not Window. Neither happy-dom nor jsdom implements
         // PushEvent/NotificationEvent/ServiceWorkerRegistration.
@@ -129,12 +127,12 @@ export default defineConfig({
         // events (no simulated network I/O). The XHR lifecycle is
         // untestable; the pure path-construction logic is minimal.
         "upload.ts",
-        // shell.ts: dynamically imports xterm.js from /vendor/*.mjs
-        // at runtime. Those files don't exist in the test environment,
-        // and xterm.js requires a real canvas/WebGL context.
+        // shell.ts: vterm DOM terminal — uses canvas 2d text
+        // measurement and a live WebSocket. happy-dom provides
+        // neither a real canvas context nor simulated socket I/O.
         "shell.ts",
-        // agent-terminal.ts: fully testable with happy-dom (no xterm,
-        // no canvas — uses plain <pre> + DOM APIs). NOT excluded.
+        // agent-terminal.ts: fully testable with happy-dom (no canvas
+        // — uses plain <pre> + DOM APIs). NOT excluded.
       ],
 
       // Generate coverage even when tests fail.
