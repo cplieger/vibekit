@@ -19,14 +19,20 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 # tsgo for TypeScript compilation (native binary, no Node needed). Tracks
 # the `latest` dist-tag on @typescript/native-preview — Microsoft's curated
-# stabler channel — rather than the daily `latest` channel. The linux-x64
-# platform tarball below is published in lockstep with the metapackage at
+# stabler channel — rather than the daily `latest` channel. The per-arch
+# platform tarballs below are published in lockstep with the metapackage at
 # the same version string, so the URL resolves identically. See
 # .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
 ARG TSGO_VERSION=7.0.0-dev.20260527.2
-RUN curl -fsSL \
-    "https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-${TSGO_VERSION}.tgz" \
+# Arch-aware fetch: native per-arch runners build arm64 on real arm64
+# hardware, so the tsgo binary must match the build arch. dpkg reports
+# arm64/amd64; tsgo's npm platform package uses arm64/x64. A hardcoded x64
+# here fails the arm64 build with "tsgo: cannot execute binary file: Exec
+# format error".
+RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
+    curl -fsSL \
+    "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
     | tar -xz -C /tmp
 
 # ansi_up: lightweight ANSI→HTML converter for agent-terminal <pre> panels.
