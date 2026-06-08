@@ -1,6 +1,6 @@
 package pending
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // ListForChat returns snapshots of every pending op for the chat in
 // insertion order. Used by SSE reconnect replay. Safe to call from any

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzBufferConcurrentBlockAppend exercises the mutex-protected block

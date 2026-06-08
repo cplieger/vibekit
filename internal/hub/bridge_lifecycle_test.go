@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Tests for bridge_lifecycle.go: spawn, lookup, reuse, and teardown of

@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const (

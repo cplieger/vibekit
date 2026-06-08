@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 type modelsBridge struct {

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 type sessionMode struct {

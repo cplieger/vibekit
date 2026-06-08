@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {

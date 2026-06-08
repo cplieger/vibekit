@@ -1,6 +1,6 @@
 package hub
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // validRequestID reports whether the given request_id is safe to use
 // as an idempotency cache key. Delegates to api.ValidRequestID — the

@@ -7,11 +7,11 @@ package hub
 import (
 	"context"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/command"
-	"vibekit/internal/permissions"
-	"vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 var _ translate.Deps = (*Hub)(nil)
@@ -56,15 +56,19 @@ type hubMCPRecorder struct{ h *Hub }
 func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string) {
 	r.h.mcpRegistry.recordConnected(ctx, serverName)
 }
+
 func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
 	r.h.mcpRegistry.recordOAuth(ctx, serverName, oauthURL)
 }
+
 func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errMsg string) {
 	r.h.mcpRegistry.recordInitFailure(ctx, serverName, errMsg)
 }
+
 func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
 }
+
 func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools []string) {
 	if r.h.mcpConfig != nil {
 		r.h.mcpConfig.SetKnownTools(ctx, name, tools)

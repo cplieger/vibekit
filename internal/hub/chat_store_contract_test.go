@@ -3,8 +3,8 @@ package hub
 import (
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/chat"
 )
 
 // TestRealChatStore_Contract runs the reusable ChatStoreContractTest suite

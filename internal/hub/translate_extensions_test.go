@@ -13,8 +13,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 // --- MCP ---

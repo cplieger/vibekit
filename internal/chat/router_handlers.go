@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // RegisterRoutes wires GET /api/chats (list), GET /api/chats/{id}

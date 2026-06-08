@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // mcpServerState is an alias for the api-level MCPServerState enum.

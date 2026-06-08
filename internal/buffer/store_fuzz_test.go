@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzStoreLifecycle(f *testing.F) {

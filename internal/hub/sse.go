@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // sseEvent is one serialized outbound message held in the replay buffer.

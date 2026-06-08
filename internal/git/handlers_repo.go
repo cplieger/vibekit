@@ -7,11 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"vibekit/internal/gitexec"
 
-	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
-
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/errgroup"
 )
 

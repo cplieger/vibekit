@@ -18,10 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/chat/archive"
 	"golang.org/x/sync/singleflight"
-
-	"vibekit/internal/api"
-	"vibekit/internal/chat/archive"
 )
 
 // errInvalidUTF8 is returned when a chat mutation produces content that

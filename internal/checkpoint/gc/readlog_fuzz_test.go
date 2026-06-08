@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/checkpoint/types"
+	"github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // FuzzReadEventLogParity writes arbitrary JSONL to a temp file and

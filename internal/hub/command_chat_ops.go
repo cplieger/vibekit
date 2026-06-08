@@ -6,7 +6,7 @@ package hub
 import (
 	"context"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // cleanupChatState tears down every in-memory bookkeeping entry for a

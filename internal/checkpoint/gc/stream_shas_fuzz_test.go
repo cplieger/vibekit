@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/checkpoint/types"
+	"github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // FuzzStreamEventSHAsRobustness writes arbitrary data to a temp file

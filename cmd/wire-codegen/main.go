@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/auth"
-	"vibekit/internal/forges"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/forges"
 )
 
 const (
@@ -27,7 +27,6 @@ const (
 	enumDelete     = "delete"
 	enumPending    = "pending"
 	typeMessage    = "Message"
-
 )
 
 // EnumDef defines a named string enum with its valid values.
@@ -405,11 +404,9 @@ func elemDecoderExpr(t reflect.Type) string {
 	}
 	if t.Kind() == reflect.Interface {
 		return tsIdentityCast
-
 	}
 	if isRawMessage(t) {
 		return tsIdentityCast
-
 	}
 	if t.Kind() == reflect.Map {
 		return "(v) => asObject(v)"
@@ -418,7 +415,6 @@ func elemDecoderExpr(t reflect.Type) string {
 		return decoderName(t.Name())
 	}
 	return tsIdentityCast
-
 }
 
 // generateTypes writes types.gen.ts.

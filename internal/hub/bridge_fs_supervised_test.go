@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // fsWriteParams is the wire-form payload respondFSWrite expects. Keep

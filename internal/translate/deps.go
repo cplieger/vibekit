@@ -4,10 +4,9 @@ import (
 	"context"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/ids"
-
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/ids"
 	"golang.org/x/sync/singleflight"
 )
 

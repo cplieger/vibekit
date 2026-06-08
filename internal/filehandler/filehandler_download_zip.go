@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const (

@@ -1,7 +1,7 @@
 package api
 
 import (
-	checkpoint "vibekit/internal/checkpoint/types"
+	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // Per-event payload structs for SSE events. The envelope types and

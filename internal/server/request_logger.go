@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"vibekit/internal/metrics"
+	"github.com/cplieger/vibekit/internal/metrics"
 )
 
 // requestIDHeader is the canonical HTTP header carrying the per-request id.

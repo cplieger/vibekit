@@ -7,8 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"vibekit/internal/api"
-	"vibekit/internal/command"
+
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // slashMux creates a ServeMux with slash routes registered for testing.
@@ -66,9 +67,6 @@ func TestSlashExecute_NoBridgeReturns409(t *testing.T) {
 		t.Errorf("status = %d, want 409", rec.Code)
 	}
 }
-
-
-
 
 // TestSlashExecute_RejectsInvalidChatID pins the validChatID guard parity.
 func TestSlashExecute_RejectsInvalidChatID(t *testing.T) {

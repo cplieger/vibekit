@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // FuzzTruncateForStaging exercises the staging truncation helper with

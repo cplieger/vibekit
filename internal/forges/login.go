@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 
-	"vibekit/internal/forges/oauth"
+	"github.com/cplieger/vibekit/internal/forges/oauth"
 )
 
 // DeviceFlowResponse describes a started OAuth device flow.

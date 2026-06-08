@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // fakeBroadcaster captures broadcasts for assertions. Access is guarded

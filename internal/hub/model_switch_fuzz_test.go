@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzResolveSwitchModel exercises model resolution logic with

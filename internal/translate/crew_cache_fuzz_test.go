@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzCrewCacheConcurrent exercises concurrent lookup/remember/ClearChat

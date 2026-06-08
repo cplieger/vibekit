@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzStore_MutateGetRoundTrip(f *testing.F) {

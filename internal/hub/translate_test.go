@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // Tests for the translate*.go family: ACP notification → domain-event

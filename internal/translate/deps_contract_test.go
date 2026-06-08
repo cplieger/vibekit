@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestStubDeps_Contract verifies that baseDeps satisfies the Deps

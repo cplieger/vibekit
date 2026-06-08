@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"vibekit/internal/chat/archive"
+	"github.com/cplieger/vibekit/internal/chat/archive"
 )
 
 // NewPurgeScheduler builds a scheduler that runs purges based on the

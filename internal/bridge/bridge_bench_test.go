@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // BenchmarkReadLoop_Notifications measures JSON unmarshal throughput for

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // --- switch_model ---

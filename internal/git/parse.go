@@ -8,7 +8,8 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-	"vibekit/internal/gitexec"
+
+	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 // --- git status parsing ---

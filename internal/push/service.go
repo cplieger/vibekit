@@ -12,9 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/settings"
-
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/settings"
 	"golang.org/x/sync/singleflight"
 )
 

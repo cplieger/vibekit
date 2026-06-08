@@ -9,7 +9,7 @@ package hub
 // This satisfies models.Snapshotter, letting the git handler ask for
 // a cheap model for AI commit messages without anyone shelling out.
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // Models is the Snapshotter contract: the first non-empty model list
 // from a live bridge. No aggregation across bridges — they all see

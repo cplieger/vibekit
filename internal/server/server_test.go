@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
-	"vibekit/internal/api"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestSyncPushPreferences(t *testing.T) {

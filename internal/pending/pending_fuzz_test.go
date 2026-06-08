@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzStoreInvariants exercises random sequences of Add/Resolve/RejectAllForChat

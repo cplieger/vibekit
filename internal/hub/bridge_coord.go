@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/command"
-	"vibekit/internal/push"
-	"vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 // BridgeCoordinator encapsulates bridge lifecycle management: creating,

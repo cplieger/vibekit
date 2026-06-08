@@ -3,8 +3,8 @@ package hub
 import (
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/checkpoint"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/checkpoint"
 )
 
 // TestCheckpointStore_SatisfiesInterface verifies that *checkpoint.Store

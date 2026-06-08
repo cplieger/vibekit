@@ -12,9 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"vibekit/internal/api"
-	"vibekit/internal/sessions"
-	"vibekit/internal/version"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/sessions"
+	"github.com/cplieger/vibekit/internal/version"
 )
 
 // Compile-time interface assertion.

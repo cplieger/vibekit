@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibekit/internal/checkpoint"
+	"github.com/cplieger/vibekit/internal/checkpoint"
 )
 
 // newCheckpointHub wires up a Hub with a real checkpoint.Store

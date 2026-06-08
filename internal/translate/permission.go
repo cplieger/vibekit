@@ -1,6 +1,6 @@
 package translate
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // Re-export permission wire types from api for backward compatibility
 // within this package. External consumers should use api directly.

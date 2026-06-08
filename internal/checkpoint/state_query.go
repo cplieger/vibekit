@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	chktypes "vibekit/internal/checkpoint/types"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // Tag is a validated checkpoint tag. Re-exported from the types

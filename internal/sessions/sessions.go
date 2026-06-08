@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // cleanupMaxEntries bounds CleanupStale's startup scan so a

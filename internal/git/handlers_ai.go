@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // AIHandler registers the AI-backed git endpoints (commit-message,

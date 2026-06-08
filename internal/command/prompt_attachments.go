@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // documentExts are file extensions sent as ACP document content blocks.

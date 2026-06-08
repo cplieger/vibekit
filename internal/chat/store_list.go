@@ -9,8 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"vibekit/internal/api"
-
+	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
 )
 

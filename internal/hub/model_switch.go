@@ -18,8 +18,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"vibekit/internal/api"
-	"vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // resolveSwitchModel returns the effective model after applying the

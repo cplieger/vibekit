@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 func TestTruncateForStaging_Table(t *testing.T) {

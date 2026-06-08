@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The

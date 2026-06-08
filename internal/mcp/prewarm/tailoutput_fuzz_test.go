@@ -12,7 +12,7 @@ func FuzzTailOutput(f *testing.F) {
 	f.Add([]byte(""), 0)
 	f.Add([]byte("abc"), 100)
 	f.Add([]byte("éléphant"), 4)
-	f.Add([]byte{0xc3, 0xa9, 0xc3, 0xa9}, 3) // mid-rune cut
+	f.Add([]byte{0xc3, 0xa9, 0xc3, 0xa9}, 3)       // mid-rune cut
 	f.Add([]byte{0xf0, 0x9f, 0x98, 0x80, 0x41}, 2) // emoji + ASCII
 
 	f.Fuzz(func(t *testing.T, data []byte, n int) {

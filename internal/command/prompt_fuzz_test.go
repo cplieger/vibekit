@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzValidatePromptPayload(f *testing.F) {

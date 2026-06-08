@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	cfgsettings "vibekit/internal/settings"
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 )
 
 // writeSettings writes a config.json file in a fresh temp dir and

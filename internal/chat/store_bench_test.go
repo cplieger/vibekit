@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func BenchmarkStore_AppendMessage(b *testing.B) {

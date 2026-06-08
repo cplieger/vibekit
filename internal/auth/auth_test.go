@@ -16,7 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"vibekit/internal/api"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the

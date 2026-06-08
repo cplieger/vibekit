@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.

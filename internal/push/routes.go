@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and

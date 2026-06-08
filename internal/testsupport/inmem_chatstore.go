@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // InMemoryChatStore is a functional in-memory api.ChatStore with broadcast
@@ -25,7 +25,7 @@ func NewInMemoryChatStore() *InMemoryChatStore {
 }
 
 func (s *InMemoryChatStore) SetBroadcaster(b api.Broadcaster) { s.bus = b }
-func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux)   {}
+func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux)  {}
 
 func (s *InMemoryChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bool) {
 	s.mu.Lock()
@@ -122,6 +122,7 @@ func (s *InMemoryChatStore) RestoreArchived(_ context.Context, _ api.ChatID) err
 func (s *InMemoryChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
 	return nil
 }
+
 func (s *InMemoryChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
 	return nil, nil
 }

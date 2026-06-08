@@ -8,9 +8,8 @@ import (
 	"context"
 	"fmt"
 
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 	"golang.org/x/sync/errgroup"
-
-	chktypes "vibekit/internal/checkpoint/types"
 )
 
 // FileStatus is a typed string for diff result statuses. Re-exported

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestNopChatStore_Contract verifies NopChatStore satisfies the no-op

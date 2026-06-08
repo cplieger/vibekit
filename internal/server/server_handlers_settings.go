@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
-	"vibekit/internal/logctl"
-	"vibekit/internal/permissions"
-	"vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/logctl"
+	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {

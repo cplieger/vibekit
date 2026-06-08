@@ -5,9 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/metrics"
-
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/metrics"
 	"golang.org/x/sync/singleflight"
 )
 

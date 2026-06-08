@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/ids"
-	"vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/permissions"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.

@@ -1,6 +1,6 @@
 package permissions
 
-import "vibekit/internal/permissions/eval"
+import "github.com/cplieger/vibekit/internal/permissions/eval"
 
 // Re-export types from the eval sub-package for backward compatibility.
 type SafeMatchMode = eval.SafeMatchMode

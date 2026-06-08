@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {

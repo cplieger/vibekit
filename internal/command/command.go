@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope.

@@ -9,9 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"vibekit/internal/api"
-	"vibekit/internal/gitexec"
-
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
 )
 

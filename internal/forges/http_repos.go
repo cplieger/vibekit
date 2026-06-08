@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // handleRepos dispatches /api/forges/{id}/repos/* paths.

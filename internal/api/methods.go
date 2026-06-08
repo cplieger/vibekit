@@ -36,13 +36,13 @@ const (
 // Session-level ACP method names — streaming updates, permissions,
 // config, and subagent lifecycle.
 const (
-	MethodSessionUpdate      = "session/update"
-	MethodRequestPermission  = "session/request_permission"
-	MethodSetConfigOption    = "session/setConfigOption"
-	MethodTerminate          = "session/terminate"
-	MethodAttach             = "session/attach"
-	MethodList               = "session/list"
-	MethodMessageSend        = "message/send"
+	MethodSessionUpdate     = "session/update"
+	MethodRequestPermission = "session/request_permission"
+	MethodSetConfigOption   = "session/setConfigOption"
+	MethodTerminate         = "session/terminate"
+	MethodAttach            = "session/attach"
+	MethodList              = "session/list"
+	MethodMessageSend       = "message/send"
 )
 
 // ACP content-block type discriminator constants. The "text" value is

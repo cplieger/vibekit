@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // utilityBridge wraps a dedicated kiro-cli bridge for ambient tasks.

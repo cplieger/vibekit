@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // CmdRewindChat creates a new chat branched from a specific turn of
@@ -24,7 +24,7 @@ import (
 //
 // Unlike the old tangent system, the parent is NOT frozen — both
 // chats continue independently.
-func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
+func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -108,7 +108,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 // CmdPromoteRewindChat promotes a rewind chat to replace its parent.
 // Deletes the parent chat and clears the rewind's parent_chat_id so
 // it becomes a top-level chat.
-func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
+func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -151,7 +151,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 
 // CmdDiscardRewindChat discards a rewind chat and returns to the parent.
 // Deletes the rewind chat; the parent is unaffected (it was never frozen).
-func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
+func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
@@ -186,7 +186,7 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 // the running bridge's _kiro.dev/commands/execute path. Vibekit owns
 // persistence of the effort level; this command applies it to the
 // active session.
-func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)  { //nolint:revive // dispatcher handler signature
+func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return

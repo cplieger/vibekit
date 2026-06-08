@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // validateProvider rejects anything that isn't a well-formed HTTPS URL.
@@ -266,5 +266,3 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			api.ErrorJSON("timeout waiting for auth URL"))
 	}
 }
-
-

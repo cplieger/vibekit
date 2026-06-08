@@ -10,7 +10,7 @@ import (
 func TestBoundedParallel_EmptyItems(t *testing.T) {
 	ctx := context.Background()
 	var called atomic.Int32
-	boundedParallel(ctx, []int{}, 4, func(_ int, _ int) {
+	boundedParallel(ctx, []int{}, 4, func(_, _ int) {
 		called.Add(1)
 	})
 	if called.Load() != 0 {
@@ -26,7 +26,7 @@ func TestBoundedParallel_ConcurrencyBound(t *testing.T) {
 	var peak atomic.Int32
 	var current atomic.Int32
 
-	boundedParallel(ctx, items, maxWorkers, func(_ int, _ int) {
+	boundedParallel(ctx, items, maxWorkers, func(_, _ int) {
 		cur := current.Add(1)
 		for {
 			p := peak.Load()
@@ -48,7 +48,7 @@ func TestBoundedParallel_ContextCancellation(t *testing.T) {
 	items := make([]int, 100)
 	var processed atomic.Int32
 
-	boundedParallel(ctx, items, 2, func(i int, _ int) {
+	boundedParallel(ctx, items, 2, func(i, _ int) {
 		processed.Add(1)
 		if i == 5 {
 			cancel()
