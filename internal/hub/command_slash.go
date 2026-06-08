@@ -3,7 +3,7 @@ package hub
 import (
 	"net/http"
 
-	"vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // RegisterSlashRoutes delegates to the command package's implementation.

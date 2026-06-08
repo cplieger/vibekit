@@ -19,9 +19,9 @@ import (
 	"os"
 	"sync/atomic"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // fallbackSeq provides a monotonic collision-free fallback for

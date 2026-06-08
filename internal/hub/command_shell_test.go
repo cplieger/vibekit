@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 func FuzzShellCappedBuffer(f *testing.F) {

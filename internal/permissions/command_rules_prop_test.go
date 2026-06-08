@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/permissions/eval"
+	"github.com/cplieger/vibekit/internal/permissions/eval"
 
 	"pgregory.net/rapid"
 )

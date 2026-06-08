@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ErrorKind discriminates the class of chat store error. Using a

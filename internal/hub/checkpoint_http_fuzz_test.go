@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"testing"
 
-	"vibekit/internal/checkpoint"
+	"github.com/cplieger/vibekit/internal/checkpoint"
 )
 
 // FuzzCheckpointHTTPRouting exercises the checkpoint HTTP handler with

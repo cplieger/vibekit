@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // newEventCaptureDeps returns a baseDeps that captures broadcast events into
@@ -159,7 +159,7 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string) {
 func (*captureMCPRecorder) RecordOAuth(context.Context, string, string)       {}
 func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 func (*captureMCPRecorder) SignalReady()                                      {}
-func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)                    {}
+func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)   {}
 
 func TestSequence_CommandsAvailable_BroadcastsAndPersistsTools(t *testing.T) {
 	deps, events := newEventCaptureDeps()

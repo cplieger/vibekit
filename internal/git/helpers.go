@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/gitexec"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.

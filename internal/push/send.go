@@ -1,7 +1,6 @@
 package push
 
 import (
-	"vibekit/internal/metrics"
 	"bytes"
 	"context"
 	"crypto/aes"
@@ -12,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/cplieger/vibekit/internal/metrics"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // pushPayload is the typed wire shape for Web Push notification payloads.

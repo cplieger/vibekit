@@ -5,7 +5,7 @@ import (
 	"strings"
 	"text/template"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // commitPrefixes is the canonical list of allowed commit-message type

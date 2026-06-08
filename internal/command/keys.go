@@ -2,7 +2,7 @@ package command
 
 import "maps"
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // JSON protocol key constants used across command response maps and
 // pending-permission payloads. These are wire-format identifiers

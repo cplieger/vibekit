@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"path"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // RegisterRoutes wires the MCP config endpoints.

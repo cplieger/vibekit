@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // handleUtilityExplainError explains a tool error in plain language.

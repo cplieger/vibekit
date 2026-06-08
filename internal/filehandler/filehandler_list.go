@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // --- /api/files (GET directory listing) ---

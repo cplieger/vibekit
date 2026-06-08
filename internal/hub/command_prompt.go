@@ -5,7 +5,7 @@ package hub
 import (
 	"encoding/json"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // isEmptyTurn returns true if the prompt response indicates end_turn

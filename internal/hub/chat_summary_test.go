@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestPostprocessSummary_tableDriven(t *testing.T) {

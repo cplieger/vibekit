@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	chktypes "vibekit/internal/checkpoint/types"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // FileStatus is a typed string for diff result statuses. Re-exported

@@ -9,8 +9,8 @@ package hub
 import (
 	"net/http"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // handleFileChanges delegates to the line tracker for

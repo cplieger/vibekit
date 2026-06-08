@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
-	"vibekit/internal/gitexec"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {

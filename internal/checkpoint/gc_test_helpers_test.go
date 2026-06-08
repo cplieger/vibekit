@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	checkpointgc "vibekit/internal/checkpoint/gc"
+	checkpointgc "github.com/cplieger/vibekit/internal/checkpoint/gc"
 )
 
 // runBlobGC sweeps unreferenced blobs. Returns the number of blobs

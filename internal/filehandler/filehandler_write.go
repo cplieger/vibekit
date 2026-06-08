@@ -8,7 +8,7 @@ import (
 	"os"
 	"syscall"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handler) {

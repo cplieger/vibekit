@@ -3,7 +3,7 @@ package translate
 import (
 	"encoding/json"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // noiseRule documents one tool_call title that duplicates the crew card.

@@ -37,7 +37,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	chktypes "vibekit/internal/checkpoint/types"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // ErrPathEscape signals that a workspace-relative path resolves

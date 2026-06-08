@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const (

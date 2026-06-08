@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/chat/archive"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/chat/archive"
 )
 
 // --- OldestArchiveMTime ---

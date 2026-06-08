@@ -6,8 +6,8 @@ import "testing"
 type allowMatcher struct{}
 
 func (allowMatcher) Evaluate(string) (string, bool) { return "allow", true }
-func (allowMatcher) MatchesAllow(string) bool        { return true }
-func (allowMatcher) MatchesDeny(string) bool         { return false }
+func (allowMatcher) MatchesAllow(string) bool       { return true }
+func (allowMatcher) MatchesDeny(string) bool        { return false }
 
 func BenchmarkEvaluateShellCommand(b *testing.B) {
 	cases := []struct {

@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
-	"vibekit/internal/metrics"
-	"vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/metrics"
+	"github.com/cplieger/vibekit/internal/permissions"
 
 	"golang.org/x/sync/singleflight"
 )

@@ -37,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Compile-time interface assertions.

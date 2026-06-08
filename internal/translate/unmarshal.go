@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // unmarshalParams decodes msg.Params into T. Returns the decoded value

@@ -3,7 +3,7 @@ package translate
 import (
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // crewMsgKey identifies a per-chat per-group crew message.

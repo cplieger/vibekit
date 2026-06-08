@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // writeThrottleInterval is the minimum time between fsync operations.

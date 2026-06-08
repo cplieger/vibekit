@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // bridgeState represents the lifecycle state of a sharedBridge.

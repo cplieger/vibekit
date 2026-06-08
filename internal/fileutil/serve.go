@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile"
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ServeJSONFile registers GET/PUT handlers for a JSON file at

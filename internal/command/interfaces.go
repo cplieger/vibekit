@@ -13,8 +13,8 @@ import (
 	"context"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // BridgeAccess provides bridge lifecycle operations needed by prompt,

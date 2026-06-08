@@ -3,7 +3,7 @@ package testsupport
 import (
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Compile-time interface assertion.

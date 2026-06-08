@@ -3,7 +3,7 @@ package mcp
 import (
 	"context"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
@@ -97,11 +97,11 @@ func (t Transport) buildACP(s *Server) acpServer {
 
 func stdioBuilder(s *Server) acpServer {
 	entry := acpServer{
-		"type":    string(TransportStdio),
-		api.JSONKeyName:    s.Name,
-		"command": s.Command,
-		"args":    argsArray(s.Args),
-		"env":     pairsArray(s.Env),
+		"type":          string(TransportStdio),
+		api.JSONKeyName: s.Name,
+		"command":       s.Command,
+		"args":          argsArray(s.Args),
+		"env":           pairsArray(s.Env),
 	}
 	if len(s.DisabledTools) > 0 {
 		entry["disabledTools"] = s.DisabledTools
@@ -111,10 +111,10 @@ func stdioBuilder(s *Server) acpServer {
 
 func remoteBuilder(s *Server) acpServer {
 	entry := acpServer{
-		"type":    string(s.Transport),
+		"type":          string(s.Transport),
 		api.JSONKeyName: s.Name,
-		"url":     s.URL,
-		"headers": pairsArray(s.Headers),
+		"url":           s.URL,
+		"headers":       pairsArray(s.Headers),
 	}
 	if len(s.DisabledTools) > 0 {
 		entry["disabledTools"] = s.DisabledTools

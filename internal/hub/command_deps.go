@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/command"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // Compile-time assertion: Hub satisfies command.Dependencies.

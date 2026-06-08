@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/auth"
-	"vibekit/internal/forges"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/forges"
 )
 
 const (
@@ -27,7 +27,6 @@ const (
 	enumDelete     = "delete"
 	enumPending    = "pending"
 	typeMessage    = "Message"
-
 )
 
 // EnumDef defines a named string enum with its valid values.

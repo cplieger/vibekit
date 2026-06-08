@@ -21,7 +21,7 @@ import (
 	"context"
 	"net/http"
 
-	checkpoint "vibekit/internal/checkpoint/types"
+	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // --- Persistence ---

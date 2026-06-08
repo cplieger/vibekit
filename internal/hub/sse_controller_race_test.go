@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestSSEController_EmitRemoveConcurrent exercises the race between emit

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // --- Unexported Store methods ---

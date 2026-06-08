@@ -1,6 +1,6 @@
 package api
 
-import "vibekit/internal/ids"
+import "github.com/cplieger/vibekit/internal/ids"
 
 // SecretMask is the placeholder value returned for every secret on
 // public reads. Clients send this unchanged on update to keep the

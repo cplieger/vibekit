@@ -12,7 +12,7 @@ import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // flushPendingForChat rejects every outstanding pending op for a chat

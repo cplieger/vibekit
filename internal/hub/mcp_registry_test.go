@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/mcp"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/mcp"
 )
 
 // fakeMCPConfig implements api.MCPConfig for registry filter tests.

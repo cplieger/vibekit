@@ -3,8 +3,8 @@ package chat
 import (
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 func TestStore_ChatStoreContract(t *testing.T) {

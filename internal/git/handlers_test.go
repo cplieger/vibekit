@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/gitexec"
+	"github.com/cplieger/vibekit/internal/gitexec"
 
 	"pgregory.net/rapid"
 )

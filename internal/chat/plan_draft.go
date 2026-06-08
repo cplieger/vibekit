@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // maxPlanDraftBytes caps a plan draft so a runaway client can't fill the

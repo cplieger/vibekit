@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // ServerID is a validated identifier for an MCP server record. Values

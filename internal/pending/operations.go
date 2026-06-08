@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Add stages a new pending op and returns the blocking channel the

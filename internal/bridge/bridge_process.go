@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP

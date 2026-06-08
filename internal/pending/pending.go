@@ -45,7 +45,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Cap is the canonical per-side text cap for OldText/NewText in a

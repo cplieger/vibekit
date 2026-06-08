@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Compile-time assertions.

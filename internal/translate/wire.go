@@ -9,7 +9,7 @@ package translate
 import (
 	"encoding/json"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Shared ACP wire-format decode types for the translate layer. These

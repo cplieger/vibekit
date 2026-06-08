@@ -9,9 +9,9 @@ import (
 	"io"
 	"log/slog"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // fsReadCap caps text reads at 8 MiB. kiro-cli's scratch reads are tiny

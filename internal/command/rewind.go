@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // CmdRewindChat creates a new chat branched from a specific turn of

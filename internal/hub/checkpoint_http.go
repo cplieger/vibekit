@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/checkpoint"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/checkpoint"
 )
 
 // registerCheckpointRoutes is called from RegisterRoutes. Kept in a

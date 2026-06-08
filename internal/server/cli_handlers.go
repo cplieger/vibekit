@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibekit/internal/api"
-	"vibekit/internal/version"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/version"
 )
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

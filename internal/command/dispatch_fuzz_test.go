@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzDispatcherServeHTTP exercises the Dispatcher's top-level HTTP handler

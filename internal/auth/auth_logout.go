@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin

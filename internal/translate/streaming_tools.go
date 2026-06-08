@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // HandleToolCall adds a tool call to the current assistant message

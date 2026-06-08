@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 func newTestStore(t *testing.T) *Store {

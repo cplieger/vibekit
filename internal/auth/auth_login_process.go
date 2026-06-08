@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // classifyLoginStartErr maps a cmd.Start error to an HTTP status code

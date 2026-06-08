@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const (

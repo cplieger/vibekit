@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/mcp/prewarm"
+	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 )
 
 // List returns a deep copy of every server with secrets masked. Safe to

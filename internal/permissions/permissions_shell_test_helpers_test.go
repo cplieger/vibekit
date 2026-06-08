@@ -13,7 +13,7 @@ package permissions
 import (
 	"strings"
 
-	"vibekit/internal/permissions/eval"
+	"github.com/cplieger/vibekit/internal/permissions/eval"
 )
 
 // hasShellMetacharacter reports whether s contains any shell

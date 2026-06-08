@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestSelectIdleBridges(t *testing.T) {
@@ -45,8 +45,6 @@ func TestSelectIdleBridges_allZeroTimesSkipped(t *testing.T) {
 		t.Errorf("zero-time bridges should never cull, got %v", got)
 	}
 }
-
-
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	factory := func() api.ACPBridge { return newNoopBridge() }

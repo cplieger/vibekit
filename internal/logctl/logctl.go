@@ -23,7 +23,7 @@ import (
 	"log/slog"
 	"os"
 
-	"vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 var levelVar slog.LevelVar

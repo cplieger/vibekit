@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // CmdResolvePendingChange settles one staged op.

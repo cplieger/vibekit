@@ -15,15 +15,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/checkpoint"
-	"vibekit/internal/command"
-	"vibekit/internal/dedup"
-	"vibekit/internal/ignore"
-	"vibekit/internal/pending"
-	"vibekit/internal/permissions"
-	"vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/checkpoint"
+	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/dedup"
+	"github.com/cplieger/vibekit/internal/ignore"
+	"github.com/cplieger/vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 const (
