@@ -51,6 +51,8 @@ func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
 		api.MethodSessionUpdate:     h.handleSessionUpdate,
 		api.MethodRequestPermission: h.translator.HandlePermissionRequest,
+		api.MethodElicitationCreate:   h.translator.HandleElicitationCreate,
+		api.MethodElicitationComplete: h.translator.HandleElicitationComplete,
 		methodMetadataLegacy:        h.translator.HandleMetadata,
 		methodMetadata:              h.translator.HandleMetadata,
 		methodCommandsAvailable:     h.translator.HandleCommandsAvailable,

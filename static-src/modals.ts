@@ -3,11 +3,11 @@
 // ---------------------------------------------------------------------------
 
 import { $, el } from "./dom.js";
-import { apiGet, apiPost } from "./api-client.js";
+import { apiGetTyped, apiPost } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { isSafeUrl } from "./utils-url.js";
 import { registerCleanup } from "./actions/index.js";
 import { trapFocus } from "./focus-trap.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 
 /** Active focus-trap release functions keyed by modal element. */
 const modalTraps = new WeakMap<HTMLElement, () => void>();
@@ -296,7 +296,7 @@ function doLogin(
             if (signal.aborted) {
               break;
             }
-            const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
+            const wd = await apiGetTyped("/api/whoami", decodeWhoamiResponse, signal);
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
             if (signal.aborted) {
               break;

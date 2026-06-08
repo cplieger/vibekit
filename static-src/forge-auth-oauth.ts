@@ -10,8 +10,9 @@
 // shared state. Suppressed file-wide.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
-import { apiPost } from "./api-client.js";
-import type { DeviceFlowResponse, PollResult } from "./wire/types.gen.js";
+import { apiPostTyped } from "./api-client.js";
+import type { DeviceFlowResponse } from "./wire/types.gen.js";
+import { decodePollResult } from "./wire/decoders.gen.js";
 import { startDeviceFlow } from "./actions/forge.js";
 
 export interface OAuthFlowDeps {
@@ -112,11 +113,12 @@ async function pollGitHubDevice(
       }
       return;
     }
-    const res = await apiPost<PollResult>(
+    const res = await apiPostTyped(
       "/api/forges/oauth/github/poll",
       {
         device_code: deviceCode,
       },
+      decodePollResult,
       signal,
     );
     if (signal.aborted) {

@@ -168,6 +168,18 @@ export async function apiGetTyped<T>(
   return r.data;
 }
 
+/** POST variant of apiGetTyped: validates the 2xx response body via the
+ *  generated decoder, returning null on non-2xx / network / decode failure. */
+export async function apiPostTyped<T>(
+  path: string,
+  body: unknown,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<T | null> {
+  const r = await requestTyped<T>("POST", path, decoder, body, signal);
+  return r.data;
+}
+
 import { hasErrorString } from "./actions/index.js";
 
 /** Fetch variant that extracts the server's `error` field from non-2xx

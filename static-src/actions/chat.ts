@@ -471,6 +471,28 @@ export const respondPermission = transportAction<{
   error: "Couldn't send permission response",
 });
 
+export const respondElicitation = transportAction<{
+  chatID: string;
+  requestID: number;
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}>({
+  name: "chat.respond_elicitation",
+  scope: ({ chatID, requestID }) => `elicit:${chatID}:${String(requestID)}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  command: ({ chatID, requestID, action, content }) => ({
+    type: "elicitation_response",
+    chat_id: chatID,
+    payload:
+      action === "accept" && content !== undefined
+        ? { request_id: requestID, action, content }
+        : { request_id: requestID, action },
+  }),
+  error: "Couldn't send elicitation response",
+});
+
 // --- chat.restore_checkpoint ---
 
 export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({

@@ -5,7 +5,6 @@
 // ---------------------------------------------------------------------------
 
 import { initAllModals } from "./modals.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitPanel, loadGitRepos } from "./git.js";
 import { restoreFileBrowser } from "./files.js";
@@ -22,7 +21,8 @@ import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
@@ -256,7 +256,7 @@ function initDiagnostics(): void {
 /** Refreshes the identity label from the live /api/whoami endpoint.
  *  Called on startup to populate the sidebar email. */
 async function loadIdentity(): Promise<void> {
-  const info = await apiGet<WhoamiResponse>("/api/whoami");
+  const info = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
   if (info?.email !== undefined && info.email !== "") {
     setUserEmail(info.email);
   }

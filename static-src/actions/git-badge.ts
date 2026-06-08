@@ -5,6 +5,7 @@
 
 import { apiAction, defineAction, ActionError } from "./index.js";
 import type { GitRepoStatusBadge } from "../git-types.js";
+import type { ConfiguredForge } from "../wire/types.gen.js";
 
 /** Single source of truth for the /api/forges endpoint path. */
 export const API_PATH_FORGES = "/api/forges" as const;
@@ -16,11 +17,6 @@ interface StatusAllResponse {
   repos: RepoStatus[];
 }
 
-interface ConfiguredForge {
-  id: string;
-  connected: boolean;
-  last_error?: string;
-}
 interface ForgesListResponse {
   forges: ConfiguredForge[];
 }

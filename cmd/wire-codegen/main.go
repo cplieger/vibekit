@@ -59,6 +59,10 @@ func main() {
 		wiregen.TypeRef[api.ToolCallUpdatePayload](),
 		wiregen.TypeRef[api.CommandsUpdatedPayload](),
 		wiregen.TypeRef[api.AvailableCommand](),
+		wiregen.TypeRef[api.ElicitationPropertySchema](),
+		wiregen.TypeRef[api.ElicitationRequestSchema](),
+		wiregen.TypeRef[api.ElicitationNeededPayload](),
+		wiregen.TypeRef[api.ElicitationCompletePayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),
 		wiregen.TypeRef[forges.Repo](),
 		wiregen.TypeRef[forges.PR](),
@@ -73,30 +77,24 @@ func main() {
 	}
 
 	// Enum values are auto-discovered from each type's const block in source.
-	// Kind/ForgeKind/Transport stay explicit: ForgeKind has no backing Go type,
-	// forges.Kind's source order differs from the wire order, and Transport has
-	// no const block.
+	// Transport stays explicit: it lives in internal/mcp, which isn't a
+	// registered-type (root) package, so discovery doesn't scan it.
 	r.Enums = map[string]wiregen.EnumDef{
 		"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 		"PlanStatus": {}, "CrewStatus": {}, "PendingChangeKind": {},
-		"StopReason": {}, "ErrorCode": {},
+		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
 		"PendingAction": {}, "ClearReason": {},
 		"Transport": {Values: []string{"stdio", "http"}},
-		"ForgeKind": {Values: []string{"github", "gitlab", "codeberg", "gitea"}},
-		"Kind":      {Values: []string{"github", "gitlab", "codeberg", "gitea"}}, // forges.Kind → ForgeKind
 	}
 
 	r.EnumTSName = map[string]string{
 		"Kind": "ForgeKind", // forges.Kind → ForgeKind in TS
 	}
 
-	r.TSNameOverride = map[string]string{
-		"Entry": "RepoEntry",
-	}
-
+	// MCPOAuthPayload's acronym cluster (MCP+OAuth) can't be split
+	// unambiguously, so its snake_case path is given explicitly.
 	r.PathNameOverride = map[string]string{
 		"MCPOAuthPayload": "mcp_oauth_payload",
-		"RepoEntry":       "repo_entry",
 	}
 
 	r.SSEEvents = []wiregen.SSERegEntry{
@@ -105,6 +103,8 @@ func main() {
 		{EventType: "chat_updated", TypeName: "ChatHeader"},
 		{EventType: "commands_updated", TypeName: "CommandsUpdatedPayload"},
 		{EventType: "connected", TypeName: "ConnectedPayload"},
+		{EventType: "elicitation_complete", TypeName: "ElicitationCompletePayload"},
+		{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 		{EventType: "error", TypeName: "ErrorPayload"},
 		{EventType: "mcp_connected", TypeName: "MCPConnectedPayload"},
 		{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},

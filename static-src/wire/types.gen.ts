@@ -8,7 +8,7 @@ export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_fail
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "crew" | "agent_switched" | "compaction_failed" | "inbox";
 
-export type ForgeKind = "github" | "gitlab" | "codeberg" | "gitea";
+export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type PendingAction = "accept" | "reject";
 
@@ -184,6 +184,62 @@ export interface DeviceFlowResponse {
   device_code: string;
   interval: number;
   expires_in: number;
+}
+
+/**
+ * ElicitationCompletePayload is the SSE payload for
+ * type="elicitation_complete": an upstream cancellation telling the
+ * client to dismiss the dialog for RequestID without a user answer.
+ */
+export interface ElicitationCompletePayload {
+  request_id: number;
+}
+
+/**
+ * ElicitationNeededPayload is the SSE payload for type="elicitation_needed".
+ * Mirrors PermissionNeededPayload's role: it carries everything the
+ * client needs to render the dialog plus the RequestID to echo back in
+ * the elicitation_response command. Mode is "form" or "url"; URL-mode
+ * elicitations carry URL and no RequestedSchema.
+ */
+export interface ElicitationNeededPayload {
+  requested_schema?: ElicitationRequestSchema;
+  mode?: string;
+  message?: string;
+  url?: string;
+  tool_call_id?: string;
+  sub_session_id?: string;
+  request_id: number;
+}
+
+/**
+ * ElicitationPropertySchema describes one field in an elicitation form.
+ * Type is the discriminator ("string" | "number" | "integer" |
+ * "boolean" | "array"); the other fields are populated as relevant to
+ * that type. Unset fields are omitted on the wire.
+ */
+export interface ElicitationPropertySchema {
+  type: string;
+  title?: string;
+  description?: string;
+  format?: string;
+  pattern?: string;
+  enum?: string[];
+  default?: unknown;
+  minLength?: number;
+  maxLength?: number;
+}
+
+/**
+ * ElicitationRequestSchema is the JSON-schema-shaped object describing a
+ * form: a map of property name to its schema, plus the required set.
+ */
+export interface ElicitationRequestSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  properties?: Record<string, ElicitationPropertySchema>;
+  required?: string[];
 }
 
 /**

@@ -8,7 +8,6 @@
 // ---------------------------------------------------------------------------
 
 import type { ServerEvent, ModelInfo } from "./types.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
@@ -27,7 +26,8 @@ import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import * as transport from "./transport.js";
 import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import {
   setOnEmpty,
   restoreTabState,
@@ -281,7 +281,7 @@ async function checkAuthAndStart(): Promise<void> {
   suppressPush(false);
 
   let authenticated = false;
-  const d = await apiGet<WhoamiResponse>("/api/whoami");
+  const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
   if (d !== null) {
     const email = d.email;
     if (email !== undefined && email !== "") {
@@ -346,7 +346,7 @@ async function checkAuthAndStart(): Promise<void> {
 function onLoginSuccess(): void {
   hideLoginModal();
   dismissLoadingScreen();
-  void apiGet<WhoamiResponse>("/api/whoami").then((d) => {
+  void apiGetTyped("/api/whoami", decodeWhoamiResponse).then((d) => {
     if (d?.email !== undefined) {
       setUserEmail(d.email);
     }

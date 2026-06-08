@@ -32,6 +32,7 @@ import { $ } from "./dom.js";
 import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
 import { pollAction } from "./actions/index.js";
 import type { GitRepoStatusBadge } from "./git-types.js";
+import type { ConfiguredForge } from "./wire/types.gen.js";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -47,11 +48,6 @@ interface StatusAllResponse {
   repos?: RepoStatus[] | null;
 }
 
-interface ConfiguredForge {
-  id: string;
-  connected: boolean;
-  last_error?: string;
-}
 interface ForgesListResponse {
   forges?: ConfiguredForge[] | null;
 }
