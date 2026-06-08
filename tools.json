@@ -142,6 +142,18 @@
       },
       "description": "Gitea/Codeberg CLI. Auto-installed when you add a Gitea or Codeberg account in Sources.",
       "install": "curl -fsSL -o ${BIN}/tea https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64} && chmod 755 ${BIN}/tea"
+    },
+    "golangci-lint": {
+      "enabled": false,
+      "auto_update": false,
+      "version": "v2.12.2",
+      "update": {
+        "method": "github",
+        "repo": "golangci/golangci-lint"
+      },
+      "requires": ["runtimes.go"],
+      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters: `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central cplieger/ci .golangci.yaml (no separate gofumpt/gci binaries needed). Requires runtimes.go. Pinned (auto_update:false) to match the CI version in go-ci.yaml; bump both together. ~15 MB.",
+      "install": "curl -fsSL https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
     }
   },
   "go": {},
