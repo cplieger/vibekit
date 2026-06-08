@@ -26,6 +26,7 @@ if (ok === null) return;  // toast already fired
 ```
 
 The framework handles:
+
 - Optimistic UI + automatic rollback on failure.
 - Toast on success / error with sensible defaults.
 - Cancellation via `AbortController`.
