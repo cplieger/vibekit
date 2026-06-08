@@ -20,6 +20,7 @@ const (
 	CmdDeleteChat               CommandType = "delete_chat"
 	CmdSwitchModel              CommandType = "switch_model"
 	CmdPermissionResponse       CommandType = "permission_response"
+	CmdElicitationResponse      CommandType = "elicitation_response"
 	CmdSpawnSubagent            CommandType = "spawn_subagent"
 	CmdMessageSubagent          CommandType = "message_subagent"
 	CmdTerminateSubagent        CommandType = "terminate_subagent"
@@ -112,6 +113,16 @@ type SwitchModelCommand struct {
 type PermissionResponseCommand struct {
 	OptionID  string `json:"option_id"`
 	RequestID int64  `json:"request_id"`
+}
+
+// ElicitationResponseCommand is the payload for type="elicitation_response".
+// RequestID echoes the value from the elicitation_needed event. Action is
+// "accept" | "decline" | "cancel"; Content carries the filled form values
+// (an object) only on accept and is forwarded verbatim to kiro-cli.
+type ElicitationResponseCommand struct {
+	Action    string          `json:"action"`
+	Content   json.RawMessage `json:"content,omitempty"`
+	RequestID int64           `json:"request_id"`
 }
 
 // SpawnSubagentCommand is the payload for type="spawn_subagent".

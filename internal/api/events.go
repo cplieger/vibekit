@@ -55,6 +55,8 @@ const (
 	EventConflictDetected      EventType = "conflict_detected"
 	EventConnected             EventType = "connected"
 	EventError                 EventType = "error"
+	EventElicitationNeeded     EventType = "elicitation_needed"
+	EventElicitationComplete   EventType = "elicitation_complete"
 	EventMCPConfigChanged      EventType = "mcp_config_changed"
 	EventMCPConnected          EventType = "mcp_connected"
 	EventMCPDisconnected       EventType = "mcp_disconnected"
@@ -132,4 +134,5 @@ func WorkingLabelForKind(kind ToolKind, title string) string {
 const (
 	WorkingLabelThinking = "Thinking"
 	WorkingLabelApproval = "Waiting for approval"
+	WorkingLabelInput    = "Waiting for input"
 )

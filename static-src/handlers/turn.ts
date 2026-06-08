@@ -19,12 +19,13 @@ import {
   NOTIFY_TITLE,
 } from "../notify.js";
 import { showPermissionDialog } from "../permission.js";
+import { showElicitationDialog, dismissElicitation } from "../elicitation.js";
 import { sendPromptTo } from "../chat-commands.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
-import { respondPermission } from "../actions/chat.js";
+import { respondPermission, respondElicitation } from "../actions/chat.js";
 import { type ErrorRoute, ERROR_ROUTES } from "./error-routing.js";
 export type { ErrorRoute };
 export { ERROR_ROUTES };
@@ -238,6 +239,29 @@ onSSE("permission_needed", (chatID, p) => {
     },
     p.sub_session_id,
   );
+});
+
+onSSE("elicitation_needed", (chatID, p) => {
+  if (isPermissionNeededEnabled()) {
+    notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
+  }
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  showElicitationDialog(p, (action, content) => {
+    void respondElicitation.dispatch(
+      content !== undefined
+        ? { chatID, requestID: p.request_id, action, content }
+        : { chatID, requestID: p.request_id, action },
+    );
+  });
+});
+
+onSSE("elicitation_complete", (chatID, p) => {
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  dismissElicitation(p.request_id);
 });
 
 function lookupToolInput(chatID: string, toolCallID: string): unknown {

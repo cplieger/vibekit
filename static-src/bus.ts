@@ -33,6 +33,8 @@ import type {
   PendingChangesClearedPayload,
   PendingTrustEnabledPayload,
   PendingTrustClearedPayload,
+  ElicitationNeededPayload,
+  ElicitationCompletePayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -61,6 +63,8 @@ export interface SSEPayloads {
   readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
   readonly permission_needed: PermissionNeeded;
+  readonly elicitation_needed: ElicitationNeededPayload;
+  readonly elicitation_complete: ElicitationCompletePayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;

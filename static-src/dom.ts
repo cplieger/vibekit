@@ -106,6 +106,9 @@ class Elements {
   get toolApproval(): HTMLDialogElement {
     return el("tool-approval");
   }
+  get elicitationDialog(): HTMLDialogElement {
+    return el("elicitation-dialog");
+  }
   get contextIndicator(): HTMLButtonElement {
     return el("context-indicator");
   }

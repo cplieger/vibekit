@@ -171,11 +171,17 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 func (b *Bridge) initialize(ctx context.Context) error {
 	// Advertise fs read/write and terminal capabilities. kiro-cli routes
 	// file access and command execution through us when these are true.
+	// elicitation advertises form-mode MCP elicitation support: kiro-cli
+	// only forwards an MCP server's elicitation/create request to us when
+	// this capability is present (verified against kiro-cli 2.6.0, which
+	// gates forwarding on clientCapabilities.elicitation). Without it the
+	// agent has nowhere to surface the prompt and the tool call stalls.
 	_, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
-			"fs":       map[string]any{"readTextFile": true, "writeTextFile": true},
-			"terminal": true,
+			"fs":          map[string]any{"readTextFile": true, "writeTextFile": true},
+			"terminal":    true,
+			"elicitation": map[string]any{"form": map[string]any{}},
 		},
 		"clientInfo": map[string]any{
 			"name": "vibekit", "title": "Vibekit for Kiro", "version": version.Build,

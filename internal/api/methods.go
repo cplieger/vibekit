@@ -21,6 +21,21 @@ const (
 	MethodFSWrite = "fs/write_text_file"
 )
 
+// MCP elicitation method names. When an MCP server requests structured
+// input mid-tool-execution, kiro-cli (acting as the MCP client) forwards
+// the request to us over ACP as elicitation/create — sent the same way
+// as the fs/* requests above (see the agent's client-protocol method
+// registry, where elicitation_create sits beside fs_read_text_file).
+// We surface a form to the user and reply with {action, content}.
+// elicitation/complete is an agent→client notification telling us a
+// pending elicitation was cancelled upstream so we dismiss the dialog.
+// Gated by the clientCapabilities.elicitation capability advertised in
+// bridge.initialize(); without it kiro-cli does not forward elicitation.
+const (
+	MethodElicitationCreate   = "elicitation/create"
+	MethodElicitationComplete = "elicitation/complete"
+)
+
 // Slash-command extension method names (_kiro.dev/commands/* namespace).
 const (
 	MethodCommandsExecute = "_kiro.dev/commands/execute"

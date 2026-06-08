@@ -47,6 +47,7 @@ type CommandType =
   | "trust_pending_changes"
   | "clear_pending_trust"
   | "permission_response"
+  | "elicitation_response"
   | "restore_checkpoint"
   | "undo_edit"
   | "message_subagent"
@@ -106,6 +107,11 @@ export type TypedCommand =
       type: "permission_response";
       chat_id: string;
       payload: { request_id: number; option_id: string };
+    }
+  | {
+      type: "elicitation_response";
+      chat_id: string;
+      payload: { request_id: number; action: string; content?: Record<string, unknown> };
     }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
   | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }

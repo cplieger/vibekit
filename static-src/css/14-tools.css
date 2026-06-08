@@ -1341,3 +1341,91 @@
   color: var(--c-text-primary);
   margin-block: var(--sp-2) var(--sp-1);
 }
+
+/* MCP elicitation dialog: a form requested by an MCP server mid-tool-run.
+   Styled as a centered modal (native <dialog> showModal) rather than the
+   inline tool-approval banner, since it can carry several input fields. */
+[id="elicitation-dialog"] {
+  margin: auto;
+  max-inline-size: min(32rem, 92vw);
+  padding: var(--sp-4);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-accent);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+}
+
+[id="elicitation-dialog"]::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.elicitation-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-block-end: var(--sp-3);
+}
+
+.elicitation-body strong {
+  color: var(--c-accent);
+  font-size: var(--fs-md);
+}
+
+.elicitation-url {
+  align-self: flex-start;
+  text-decoration: none;
+}
+
+.elicitation-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.elicitation-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.elicitation-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-secondary);
+}
+
+.elicitation-hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.elicitation-input {
+  padding: var(--sp-2);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font: inherit;
+}
+
+.elicitation-input:focus-visible {
+  outline: none;
+  border-color: var(--c-accent);
+}
+
+.elicitation-input.elicitation-invalid {
+  border-color: var(--c-red);
+}
+
+.elicitation-checkbox {
+  align-self: flex-start;
+  inline-size: 1.1rem;
+  block-size: 1.1rem;
+}
+
+.elicitation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-block-start: var(--sp-4);
+}

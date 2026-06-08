@@ -15,6 +15,7 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdCancel, wrap(d, CmdCancel))
 	d.Register(api.CmdDeleteChat, wrap(d, CmdDeleteChat))
 	d.Register(api.CmdPermissionResponse, wrap(d, CmdPermission))
+	d.Register(api.CmdElicitationResponse, wrap(d, CmdElicitationResponse))
 	d.Register(api.CmdSpawnSubagent, wrap(d, CmdSpawnSubagent))
 	d.Register(api.CmdMessageSubagent, wrap(d, CmdMessageSubagent))
 	d.Register(api.CmdTerminateSubagent, wrap(d, CmdTerminateSubagent))
