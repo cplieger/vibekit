@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/auth"
 )
 
 // Config holds all environment/flag values needed to build the app.

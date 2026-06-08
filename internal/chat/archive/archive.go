@@ -18,8 +18,8 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Subdir is the subdirectory name under the chats directory where

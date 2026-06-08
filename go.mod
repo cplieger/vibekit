@@ -1,4 +1,4 @@
-module vibekit
+module github.com/cplieger/vibekit
 
 go 1.26.4
 

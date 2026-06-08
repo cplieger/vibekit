@@ -347,8 +347,6 @@ func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag stri
 	return stages, nil
 }
 
-
-
 // applyStagesLocked executes phase 2 of Restore. Callers hold m.mu.
 // On any rename/delete failure we log the offending path and
 // clean up every still-staged sibling for files we haven't

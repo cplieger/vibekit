@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func BenchmarkHandleCompactionStatus(b *testing.B) {

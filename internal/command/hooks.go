@@ -13,8 +13,8 @@ import (
 	"regexp"
 	"strings"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.

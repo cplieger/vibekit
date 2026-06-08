@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ACPBridgeContractTest verifies that an api.ACPBridge implementation

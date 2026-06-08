@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"vibekit/internal/api"
-	"vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/permissions"
 )
 
 // HandlePermissionRequest processes session/request_permission from kiro-cli.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/permissions/eval"
+	"github.com/cplieger/vibekit/internal/permissions/eval"
 )
 
 // FuzzEvaluateShellCommand exercises the full shell-command security

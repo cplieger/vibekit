@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // newHubWithConfigDir wires a Hub pointed at an explicit configDir so

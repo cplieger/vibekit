@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // RegisterDefaults populates the dispatcher with the standard command

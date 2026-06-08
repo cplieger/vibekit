@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/permissions"
-	"vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 // baseDeps is a composable Deps implementation for tests and benchmarks.

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"slices"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleCrewUpdate processes subagent list update notifications.

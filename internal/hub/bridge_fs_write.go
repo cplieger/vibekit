@@ -13,8 +13,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"vibekit/internal/api"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // respondFSWrite handles fs/write_text_file. Request params:

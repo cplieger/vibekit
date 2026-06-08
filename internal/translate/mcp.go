@@ -5,7 +5,7 @@ package translate
 import (
 	"context"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleMCPInitialized processes MCP server_initialized notifications.

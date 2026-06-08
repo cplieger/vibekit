@@ -53,7 +53,7 @@ import (
 	"sync"
 	"time"
 
-	cfgsettings "vibekit/internal/settings"
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -286,5 +286,3 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	}
 	return out
 }
-
-

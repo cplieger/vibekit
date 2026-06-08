@@ -9,8 +9,8 @@ type fixedMatcher struct {
 }
 
 func (f fixedMatcher) Evaluate(string) (string, bool) { return f.mode, f.matched }
-func (f fixedMatcher) MatchesAllow(string) bool        { return f.mode == "allow" && f.matched }
-func (f fixedMatcher) MatchesDeny(string) bool         { return f.mode == "deny" && f.matched }
+func (f fixedMatcher) MatchesAllow(string) bool       { return f.mode == "allow" && f.matched }
+func (f fixedMatcher) MatchesDeny(string) bool        { return f.mode == "deny" && f.matched }
 
 func TestEvaluateShellCommand_PolicyMatrix(t *testing.T) {
 	tests := []struct {
@@ -62,7 +62,7 @@ func TestEvaluateSafeCommand_BuiltinRules(t *testing.T) {
 func TestMatchPattern_ExactAndWildcard(t *testing.T) {
 	tests := []struct {
 		pattern, command string
-		want            bool
+		want             bool
 	}{
 		{"ls", "ls", true},
 		{"ls", "cat", false},
@@ -84,7 +84,7 @@ func TestMatchPattern_ExactAndWildcard(t *testing.T) {
 func TestMatchWildcard_EdgeCases(t *testing.T) {
 	tests := []struct {
 		pattern, command string
-		want            bool
+		want             bool
 	}{
 		{"", "", true},
 		{"*", "anything", true},
@@ -114,7 +114,7 @@ func TestMatchWildcard_EdgeCases(t *testing.T) {
 func TestHasSafePrefix_WordBoundary(t *testing.T) {
 	tests := []struct {
 		command, prefix string
-		want           bool
+		want            bool
 	}{
 		{"git status", "git status", true},
 		{"git status --short", "git status", true},

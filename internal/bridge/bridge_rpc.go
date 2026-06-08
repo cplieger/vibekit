@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const jsonRPCVersion = "2.0"

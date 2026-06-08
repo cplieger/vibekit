@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"vibekit/internal/checkpoint/types"
+	"github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // maxEventLogBytes caps the event log size the GC will read (100 MiB).

@@ -12,9 +12,9 @@ package translate
 import (
 	"context"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
-	"vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/permissions"
 )
 
 // Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).

@@ -73,8 +73,8 @@ func NewMessageIDE() (string, error) {
 	b[1] = byte(ms >> 32) //nolint:gosec // G115: ID encoding
 	b[2] = byte(ms >> 24) //nolint:gosec // G115: ID encoding
 	b[3] = byte(ms >> 16) //nolint:gosec // G115: ID encoding
-	b[4] = byte(ms >> 8) //nolint:gosec // G115: ID encoding
-	b[5] = byte(ms) //nolint:gosec // G115: ID encoding
+	b[4] = byte(ms >> 8)  //nolint:gosec // G115: ID encoding
+	b[5] = byte(ms)       //nolint:gosec // G115: ID encoding
 	b[6] = (b[6] & 0x0F) | 0x70
 	b[8] = (b[8] & 0x3F) | 0x80
 	var buf [36]byte

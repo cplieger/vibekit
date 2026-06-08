@@ -5,7 +5,7 @@ package translate
 import (
 	"context"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleCommandsAvailable processes the commands/available notification.

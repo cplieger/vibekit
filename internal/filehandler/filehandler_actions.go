@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename, copy, move) ---

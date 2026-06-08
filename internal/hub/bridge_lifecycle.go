@@ -1,6 +1,6 @@
 package hub
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // primeReason is the reason a bridge needs priming on the next prompt.
 type primeReason string

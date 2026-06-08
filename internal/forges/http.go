@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.

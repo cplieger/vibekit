@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // FuzzDeriveSubSession exercises the session-routing helper with

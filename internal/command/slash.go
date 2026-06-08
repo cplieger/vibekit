@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 const keyCommand = "command"

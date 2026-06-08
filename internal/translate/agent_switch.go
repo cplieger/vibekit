@@ -6,7 +6,7 @@ import (
 	"context"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleAgentSwitched handles the agent/switched notification.

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 func TestWriteTools(t *testing.T) {

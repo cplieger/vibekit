@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzReplayRing_AppendReplay_Concurrent(f *testing.F) {

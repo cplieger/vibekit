@@ -6,7 +6,7 @@ import (
 	"context"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // CompactionStatus is a typed string enum for compaction status values.

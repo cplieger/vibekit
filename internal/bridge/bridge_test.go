@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestNew_FieldsAndAccessors(t *testing.T) {

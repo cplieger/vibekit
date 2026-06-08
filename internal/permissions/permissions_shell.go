@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"vibekit/internal/permissions/eval"
+	"github.com/cplieger/vibekit/internal/permissions/eval"
 )
 
 // shellPolicy is the local alias for the eval sub-package's ShellPolicy.

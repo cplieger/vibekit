@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {

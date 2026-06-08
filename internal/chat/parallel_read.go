@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a

@@ -3,7 +3,7 @@ package bridge
 import (
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestBridge_SharedContractSuite runs the shared contract test against the real Bridge

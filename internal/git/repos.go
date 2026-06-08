@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
 // maxRepoEntries caps the number of top-level directory entries scanned

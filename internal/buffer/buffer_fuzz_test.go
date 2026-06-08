@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzBufferTrackFileChanges(f *testing.F) {

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	cfgsettings "vibekit/internal/settings"
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 )
 
 // PermissionMode represents the permission evaluation strategy.

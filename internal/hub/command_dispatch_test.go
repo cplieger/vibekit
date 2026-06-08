@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 var safeRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)

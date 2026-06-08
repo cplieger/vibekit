@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // Tests for bridge_buffer.go: buffer.Buffer lifecycle + emitTurnEndedWithStats

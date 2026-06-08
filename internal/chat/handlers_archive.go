@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // handleArchivedChats handles GET (list) and POST (restore) for archived chats.

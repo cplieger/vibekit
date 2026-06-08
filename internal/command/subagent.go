@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // CmdSpawnSubagent spawns a new subagent session.

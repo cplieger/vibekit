@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/dedup"
+	"github.com/cplieger/vibekit/internal/dedup"
 )
 
 func TestCheckDedup_emptyReqIDIsMiss(t *testing.T) {

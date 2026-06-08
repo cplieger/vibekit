@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {

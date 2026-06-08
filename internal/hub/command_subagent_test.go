@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestSubagentCommand_ValidationRejections consolidates the 7 individual

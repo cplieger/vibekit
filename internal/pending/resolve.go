@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ResolveWithText settles an op with accept semantics BUT overrides

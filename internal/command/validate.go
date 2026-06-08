@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // maxPromptBytes caps the text field of a prompt command.

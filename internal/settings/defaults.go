@@ -14,18 +14,18 @@ import "log/slog"
 // Exported constants for settings key names. All consumers should
 // reference these instead of bare string literals to prevent drift.
 const (
-	KeyAgentIgnoreFiles    = "agent_ignore_files"
-	KeyAutoUpdate          = "auto_update"
-	KeyDebugLogs           = "debug_logs"
-	KeyLastModel           = "last_model"
-	KeyModelEffort         = "model_effort"
+	KeyAgentIgnoreFiles     = "agent_ignore_files"
+	KeyAutoUpdate           = "auto_update"
+	KeyDebugLogs            = "debug_logs"
+	KeyLastModel            = "last_model"
+	KeyModelEffort          = "model_effort"
 	KeyNotificationsEnabled = "notifications_enabled"
-	KeyNotifyAgentFinished = "notify_agent_finished"
-	KeyNotifyPermission    = "notify_permission"
-	KeyPermissionMode      = "permission_mode"
-	KeyShellPolicy         = "shell_policy"
-	KeySupervisedDefault   = "supervised_default"
-	KeyTrustTools          = "trust_tools"
+	KeyNotifyAgentFinished  = "notify_agent_finished"
+	KeyNotifyPermission     = "notify_permission"
+	KeyPermissionMode       = "permission_mode"
+	KeyShellPolicy          = "shell_policy"
+	KeySupervisedDefault    = "supervised_default"
+	KeyTrustTools           = "trust_tools"
 )
 
 // DefaultSettings returns the canonical defaults the GET /api/settings

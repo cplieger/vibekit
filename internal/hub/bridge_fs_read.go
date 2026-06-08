@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
-	"vibekit/internal/api"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // handleFSRequest dispatches fs/* incoming requests. Returns true if msg

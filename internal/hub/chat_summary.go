@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // summaryMaxChars caps the summary length so the History tab doesn't

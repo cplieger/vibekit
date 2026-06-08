@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleFallback is the shared logic for agent_not_found and

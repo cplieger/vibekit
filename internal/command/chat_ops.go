@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"vibekit/internal/api"
-	chktypes "vibekit/internal/checkpoint/types"
+	"github.com/cplieger/vibekit/internal/api"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // CmdCreateChat creates a new chat with the given metadata.

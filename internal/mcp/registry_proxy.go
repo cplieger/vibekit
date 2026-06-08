@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -366,6 +366,7 @@ func (c *registryCache) evictLocked() {
 			"count", evicted, "remaining", len(c.entries))
 	}
 }
+
 // --- Normalisation ---
 //
 // The upstream response nests every record in `{server: {...}, _meta: {...}}`

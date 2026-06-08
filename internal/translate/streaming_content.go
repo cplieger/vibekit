@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // maxBufferBytes caps the per-turn content buffer at 32 MiB. Prevents

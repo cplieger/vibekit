@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
-	"vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
 func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {

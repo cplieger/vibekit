@@ -1,7 +1,7 @@
 // Package gitea provides the Gitea/Codeberg ForgeOps implementation.
 package gitea
 
-import "vibekit/internal/forges"
+import "github.com/cplieger/vibekit/internal/forges"
 
 // New returns a ForgeOps for Gitea at the given host.
 func New(host string) (forges.ForgeOps, error) {

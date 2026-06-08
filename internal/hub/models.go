@@ -3,7 +3,7 @@ package hub
 import (
 	"context"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // cheapestModel returns the cheapest reliable model id from the current

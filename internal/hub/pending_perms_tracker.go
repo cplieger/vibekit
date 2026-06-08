@@ -3,7 +3,7 @@ package hub
 import (
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // pendingPermsTracker tracks permission_needed events that haven't been

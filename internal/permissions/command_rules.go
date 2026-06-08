@@ -134,8 +134,6 @@ func normalizeRules(in []Rule) []Rule {
 	return out
 }
 
-
-
 // List returns all rules in insertion order. Returned slice is a copy.
 func (r *CommandRules) List() []Rule {
 	entries := *r.entriesPtr.Load()
@@ -338,5 +336,3 @@ func (r *CommandRules) saveLocked() error {
 	}
 	return atomicfile.SaveBytes(r.path(), data, 0o600)
 }
-
-

@@ -14,8 +14,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }

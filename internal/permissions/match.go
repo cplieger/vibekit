@@ -1,6 +1,6 @@
 package permissions
 
-import "vibekit/internal/permissions/eval"
+import "github.com/cplieger/vibekit/internal/permissions/eval"
 
 // matchPattern delegates to the eval sub-package.
 func matchPattern(pattern, command string) bool {

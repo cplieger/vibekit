@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // handleKiroConfig scans .kiro/ for steering docs, skills, and agents.

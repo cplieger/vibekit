@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // DefaultOutputCap is the shared byte budget for subprocess output

@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // ServerInfo is the narrow view of an MCP server that prewarm needs.

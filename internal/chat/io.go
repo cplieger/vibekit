@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes

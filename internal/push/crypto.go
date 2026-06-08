@@ -6,7 +6,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 
-	pushcrypto "vibekit/internal/push/crypto"
+	pushcrypto "github.com/cplieger/vibekit/internal/push/crypto"
 )
 
 // vapidHeader constructs the VAPID Authorization header (RFC 8292) for

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/sessions"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/sessions"
 
 	"pgregory.net/rapid"
 )

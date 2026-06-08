@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // HandleSessionActivity routes per-subagent activity events.
@@ -47,7 +47,7 @@ func (t *Translator) HandleInboxNotification(ctx context.Context, chatID api.Cha
 		return
 	}
 	fromSession, _ := p["fromSessionId"].(string)
-	content, _ := p["content"].(string)          
+	content, _ := p["content"].(string)
 	if content == "" {
 		raw, err := json.Marshal(p)
 		if err == nil {

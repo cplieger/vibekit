@@ -3,9 +3,9 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cplieger/vibekit/internal/api"
 	"testing"
 	"unicode/utf8"
-	"vibekit/internal/api"
 )
 
 func TestRingBuffer(t *testing.T) {

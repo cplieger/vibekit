@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // kiroSettingsPath returns the path to kiro-cli's settings file.

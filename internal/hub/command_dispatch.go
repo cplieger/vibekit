@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"vibekit/internal/api"
-	"vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // registerCommandHandlers populates the dispatcher with the concrete

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func newRoutedService(t *testing.T) (*Service, *http.ServeMux) {

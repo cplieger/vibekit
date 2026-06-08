@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func FuzzLineTrackerRecord(f *testing.F) {

@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // agentTerminal is one headless subprocess spawned by kiro-cli.

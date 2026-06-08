@@ -12,8 +12,8 @@ import (
 	"os"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // openPartialFile opens (or creates) the partial recovery file for a chat.

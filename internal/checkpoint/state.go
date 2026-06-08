@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strconv"
 
-	chktypes "vibekit/internal/checkpoint/types"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // state is the reconstructed view of a chat's checkpoint history at

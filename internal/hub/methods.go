@@ -1,6 +1,6 @@
 package hub
 
-import "vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/api"
 
 // ACP method name constants. Centralised so a protocol rename is a
 // single-line change with compile-time verification of all consumers.

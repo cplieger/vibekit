@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/bridge"
-	"vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/bridge"
+	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 // --- Bridge contract test ---

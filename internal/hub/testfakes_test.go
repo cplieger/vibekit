@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 // --- Fake ACP bridge ---
@@ -89,10 +89,10 @@ func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 
 func (b *fakeBridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
 
-
 // newNoopBridge returns a zero-value fakeBridge suitable for benchmarks
 // where the bridge is never actually called. Replaces the former stubBridge type.
 func newNoopBridge() api.ACPBridge { return &fakeBridge{notifCh: make(chan *api.RPCResponse)} }
+
 // --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---
 
 type fakeChatStore = testsupport.RecordingChatStore

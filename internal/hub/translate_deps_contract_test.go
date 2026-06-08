@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/api"
-	"vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 // TranslateDepsContractTest exercises every method of translate.Deps

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"vibekit/internal/api"
-	"vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // httptestGet drives a GET request through the hub's pending-changes

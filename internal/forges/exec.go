@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"vibekit/internal/forges/cliexec"
+	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // runCmd executes a CLI command with timeout and captures its output.
@@ -40,5 +40,3 @@ func runJSONEnv(ctx context.Context, timeout time.Duration, extraEnv []string, v
 func sanitizeEnv(env []string) []string {
 	return cliexec.SanitizeEnv(env)
 }
-
-

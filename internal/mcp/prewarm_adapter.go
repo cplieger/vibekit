@@ -3,7 +3,7 @@ package mcp
 import (
 	"context"
 
-	"vibekit/internal/mcp/prewarm"
+	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 )
 
 // NewPrewarmRunner creates a prewarm runner using the store directly

@@ -6,9 +6,9 @@ package git
 
 import (
 	"context"
+	"github.com/cplieger/vibekit/internal/gitexec"
 	"log/slog"
 	"strings"
-	"vibekit/internal/gitexec"
 )
 
 // --- git status parsing ---

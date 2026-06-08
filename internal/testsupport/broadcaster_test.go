@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestNopBroadcaster_NoPanic(t *testing.T) {

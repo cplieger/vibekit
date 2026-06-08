@@ -3,7 +3,7 @@ package hub
 import (
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // replayRing is a fixed-size ring buffer for SSE events. It stores the

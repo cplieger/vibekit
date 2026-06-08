@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Lifecycle encapsulates buffer partial-file orchestration: path

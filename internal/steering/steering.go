@@ -17,9 +17,9 @@ import (
 	"strings"
 	"sync"
 
-	"vibekit/internal/api"
 	"github.com/cplieger/atomicfile"
-	"vibekit/internal/workspace"
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // Read caps bound untrusted workspace input so a crafted repo can't

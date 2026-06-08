@@ -3,7 +3,7 @@ package buffer
 import (
 	"sync"
 
-	"vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Store is a concurrency-safe store for per-chat assistant buffers.

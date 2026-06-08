@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 // Compile-time assertion that NopMCPRecorder satisfies translate.MCPRecorder.

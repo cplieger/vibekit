@@ -3,7 +3,7 @@ package checkpoint
 import (
 	"testing"
 
-	chktypes "vibekit/internal/checkpoint/types"
+	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // FuzzAllocateTagMonotonic verifies that successive allocateTag calls produce
