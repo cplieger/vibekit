@@ -47,23 +47,34 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   anchorEl.setAttribute("aria-expanded", "true");
 
   const pop = el("div", { className: "git-branch-popover", role: "menu" }) as HTMLDivElement;
-  pop.innerHTML = `
-    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off" aria-label="Filter branches">
-    <div class="git-branch-popover-list" role="group" aria-label="Branches">Loading…</div>
-    <form class="git-branch-popover-create">
-      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off" aria-label="New branch name">
-    </form>
-  `;
+  const filter = el("input", {
+    type: "search",
+    className: "tool-form-input git-branch-popover-filter",
+    placeholder: "Filter branches…",
+    autocomplete: "off",
+    "aria-label": "Filter branches",
+  }) as HTMLInputElement;
+  const list = el(
+    "div",
+    { className: "git-branch-popover-list", role: "group", "aria-label": "Branches" },
+    "Loading…",
+  ) as HTMLDivElement;
+  const createInput = el("input", {
+    type: "text",
+    className: "tool-form-input git-branch-popover-create-input",
+    placeholder: "Create new branch…",
+    autocomplete: "off",
+    "aria-label": "New branch name",
+  }) as HTMLInputElement;
+  const createForm = el(
+    "form",
+    { className: "git-branch-popover-create" },
+    createInput,
+  ) as HTMLFormElement;
+  pop.append(filter, list, createForm);
   document.body.appendChild(pop);
   openPopover = pop;
   positionPopover(pop, anchorEl);
-
-  const filter = pop.querySelector<HTMLInputElement>(".git-branch-popover-filter")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const list = pop.querySelector<HTMLDivElement>(".git-branch-popover-list")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const createForm = pop.querySelector<HTMLFormElement>(".git-branch-popover-create")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const createInput = createForm.querySelector<HTMLInputElement>( // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    ".git-branch-popover-create-input",
-  )!;
 
   // Load branches.
   branchController?.abort();

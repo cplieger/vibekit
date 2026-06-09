@@ -26,7 +26,7 @@ import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
-import { escAttr as escapeHTML } from "./strings.js";
+import { iconEl } from "./icon-el.js";
 
 // --- Types ---
 
@@ -372,12 +372,19 @@ function renderGroup(g: RepoGroup): HTMLElement {
   });
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
-  toggle.innerHTML = `
-    <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
-    <span class="git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}" aria-hidden="true">${FORGE_META[g.forge_kind].icon}</span>
-    <span class="git-repo-section-name">${escapeHTML(g.full_name)}</span>
-    <span class="git-repo-section-meta">${escapeHTML(countText)}</span>
-  `;
+  toggle.append(
+    el("span", { className: "git-repo-section-chevron", "aria-hidden": "true" }, "▸"),
+    el(
+      "span",
+      {
+        className: `git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}`,
+        "aria-hidden": "true",
+      },
+      iconEl(FORGE_META[g.forge_kind].icon),
+    ),
+    el("span", { className: "git-repo-section-name" }, g.full_name),
+    el("span", { className: "git-repo-section-meta" }, countText),
+  );
   toggle.addEventListener("click", () => {
     const open = section.classList.toggle("expanded");
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
@@ -565,7 +572,15 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
     // forge). Render a small inline error in the mount.
     const root = document.getElementById("git-prs-mount");
     if (root !== null) {
-      root.innerHTML = `<div class="git-multirepo-error">No connected forge knows about <strong>${escapeHTML(repoName)}</strong> — connect one in Sources.</div>`;
+      root.replaceChildren(
+        el(
+          "div",
+          { className: "git-multirepo-error" },
+          "No connected forge knows about ",
+          el("strong", null, repoName),
+          " — connect one in Sources.",
+        ),
+      );
     }
     return;
   }

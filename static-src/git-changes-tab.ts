@@ -361,7 +361,7 @@ function paintError(msg: string): void {
   if (root === null) {
     return;
   }
-  root.innerHTML = `<div class="git-multirepo-error">${msg}</div>`;
+  root.replaceChildren(el("div", { className: "git-multirepo-error" }, msg));
 }
 
 function renderRepoSection(r: RepoStatus): HTMLElement | null {
@@ -436,7 +436,7 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   const body = el("div", { className: "git-repo-section-body" });
 
   if (!r.is_repo) {
-    body.innerHTML = `<div class="git-repo-row-error">Not a git repository.</div>`;
+    body.append(el("div", { className: "git-repo-row-error" }, "Not a git repository."));
     section.appendChild(body);
     return section;
   }
@@ -823,10 +823,16 @@ function isFeatureBranch(branch: string): boolean {
  *  tab and opens the new-PR dialog with source_branch pre-filled. */
 function renderOpenPRHint(r: RepoStatus): HTMLElement {
   const hint = el("div", { className: "git-open-pr-hint" });
-  hint.innerHTML = `
-    <span class="git-open-pr-hint-icon" aria-hidden="true">💡</span>
-    <span class="git-open-pr-hint-msg">Pushed <strong>${escapeHTML(r.branch)}</strong> to origin. Open a pull request?</span>
-  `;
+  hint.append(
+    el("span", { className: "git-open-pr-hint-icon", "aria-hidden": "true" }, "💡"),
+    el(
+      "span",
+      { className: "git-open-pr-hint-msg" },
+      "Pushed ",
+      el("strong", null, r.branch),
+      " to origin. Open a pull request?",
+    ),
+  );
   const btn = el("button", { type: "button", className: "btn-small btn-primary" }, "Open PR");
   btn.addEventListener("click", () => {
     void (async () => {

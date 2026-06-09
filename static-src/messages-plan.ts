@@ -5,7 +5,6 @@
 // ---------------------------------------------------------------------------
 
 import type { PlanEntry } from "./types.js";
-import { escText } from "./strings.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { getActiveId } from "./store.js";
 import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
@@ -102,8 +101,10 @@ export function buildPlanRow(e: PlanEntry): HTMLDivElement {
 
 export function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
   const icon = e.status === "completed" ? "✅" : e.status === "in_progress" ? "🔄" : "⬜";
-  const pri = e.priority === "high" ? ' <span class="plan-hi">[high]</span>' : "";
-  row.innerHTML = `${icon} ${escText(e.content)}${pri}`;
+  row.replaceChildren(
+    `${icon} ${e.content}`,
+    ...(e.priority === "high" ? [" ", el("span", { className: "plan-hi" }, "[high]")] : []),
+  );
   row.dataset["status"] = e.status;
 }
 
