@@ -25,7 +25,7 @@ vi.mock("./actions/crew.js", () => ({
   sendMessage: { dispatch: vi.fn() },
 }));
 vi.mock("./actions/index.js", () => ({
-  bindLoadingState: vi.fn(() => () => undefined),
+  bindLoadingState: vi.fn(() => vi.fn()),
 }));
 
 import {
@@ -37,6 +37,7 @@ import {
   clearCrews,
 } from "./crew-card.js";
 import { formatToolActivity } from "./format-tool-activity.js";
+import { bindLoadingState } from "./actions/index.js";
 import type { Crew } from "./types.js";
 
 // --- titleFor ---
@@ -159,5 +160,54 @@ describe("activity-line precedence", () => {
     // A pending approval wins over the transient activity.
     setSubagentPendingApproval("sess-1", true);
     expect(act?.textContent).toBe("\u26a0 tool approval needed");
+  });
+});
+
+// --- clearCrews drains per-row bindLoadingState subscriptions ---
+
+describe("clearCrews drains row bindings", () => {
+  function twoSubCrew(): Crew {
+    return {
+      group: "g",
+      subagents: [
+        {
+          session_id: "drain-1",
+          session_name: "n1",
+          agent_name: "a",
+          initial_query: "",
+          status: "working",
+          group: "g",
+        },
+        {
+          session_id: "drain-2",
+          session_name: "n2",
+          agent_name: "a",
+          initial_query: "",
+          status: "working",
+          group: "g",
+        },
+      ],
+    };
+  }
+
+  it("disposes each row's send-button binding exactly once on clear", () => {
+    clearCrews();
+    const bind = vi.mocked(bindLoadingState);
+    bind.mockClear();
+
+    buildCrewCardForReplay("m-drain", twoSubCrew());
+
+    // One bindLoadingState call per subagent row.
+    expect(bind).toHaveBeenCalledTimes(2);
+    const disposers = bind.mock.results
+      .filter((r): r is { type: "return"; value: () => void } => r.type === "return")
+      .map((r) => r.value);
+    expect(disposers).toHaveLength(2);
+
+    clearCrews();
+
+    for (const dispose of disposers) {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    }
   });
 });

@@ -161,6 +161,14 @@ export function clearCrews(): void {
   crewToolEls.clear();
   activityEls.clear();
   pendingApprovals.clear();
+  // Drain the per-row bindLoadingState subscriptions: clearCrews runs on
+  // chat switch/clear BEFORE the message list is wiped wholesale, so the
+  // reconcile.onRemove drain never fires for these rows. Dispose them here
+  // (mirrors history.ts flushRowUnbinds / messages-actions clearActionBindings).
+  for (const u of rowUnbinds.values()) {
+    u();
+  }
+  rowUnbinds.clear();
 }
 
 // --- DOM builders ---

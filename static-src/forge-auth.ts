@@ -654,8 +654,6 @@ const reposRenderDeps: ReposRenderDeps = {
 
 const oauthDeps: OAuthFlowDeps = {
   setStatus,
-  escapeHTML,
-  escapeAttr,
   expandOnNextPaint: (id) => {
     expandOnNextPaint.add(id);
   },
@@ -861,21 +859,6 @@ async function onSignOut(f: ConfiguredForge): Promise<void> {
 }
 
 // --- helpers ---
-
-function escapeHTML(s: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
-}
-
-function escapeAttr(s: string): string {
-  return escapeHTML(s);
-}
 
 function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {
   host.innerHTML = "";

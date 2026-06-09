@@ -315,6 +315,7 @@ function applyStatusUpdate(
     if (b !== null) {
       b.textContent = "";
       b.appendChild(_svgTemplate(ICON_CHEVRON_UP)());
+      b.setAttribute("aria-expanded", "true");
     }
     if (card.querySelector(".tool-explain-btn") === null) {
       const output = card.querySelector(".tool-output")?.textContent ?? "";

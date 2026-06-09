@@ -19,10 +19,6 @@ import { startDeviceFlow } from "./actions/forge.js";
 export interface OAuthFlowDeps {
   /** Set status text in the host element. */
   setStatus: (host: HTMLElement, text: string, kind?: "ok" | "err" | "") => void;
-  /** Escape HTML entities. */
-  escapeHTML: (s: string) => string;
-  /** Escape for attribute values. */
-  escapeAttr: (s: string) => string;
   /** Mark a forge ID for expansion on next paint. */
   expandOnNextPaint: (id: string) => void;
   /** Trigger a full panel re-render. */
@@ -56,7 +52,7 @@ export async function startGitHubDeviceFlow(host: HTMLElement, deps: OAuthFlowDe
     deps.setStatus(host, "Failed to start device flow.", "err");
     return;
   }
-  renderDevicePrompt(host, start, deps);
+  renderDevicePrompt(host, start);
   void pollGitHubDevice(
     host,
     start.device_code,
@@ -66,28 +62,51 @@ export async function startGitHubDeviceFlow(host: HTMLElement, deps: OAuthFlowDe
   );
 }
 
-function renderDevicePrompt(
-  host: HTMLElement,
-  start: DeviceFlowResponse,
-  deps: OAuthFlowDeps,
-): void {
-  host.innerHTML = "";
-  const container = el("div", { className: "forge-device-prompt" });
+/** Render the device-flow prompt (verification link, user code, copy
+ *  button, status line) into `host`. Built with the `el()` factory so
+ *  no untrusted value is ever parsed as HTML. Exported for unit tests
+ *  of the inert-text / non-http(s)-link invariants. */
+export function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void {
+  // Only render an anchor for http(s) URIs; any other scheme (or a
+  // markup-injection payload) is shown as inert text. el() turns
+  // strings into text nodes, never markup, so there is no XSS surface.
   const safeLink = /^https?:\/\//i.test(start.verification_uri);
-  container.innerHTML =
-    `<p>Open ${safeLink ? `<a class="forge-device-link" target="_blank" rel="noreferrer" href="${deps.escapeAttr(start.verification_uri)}">` : ""}${deps.escapeHTML(start.verification_uri)}${safeLink ? "</a>" : ""} and enter:</p>` +
-    `<div class="forge-device-code-row"><code class="forge-device-code">${deps.escapeHTML(start.user_code)}</code><button type="button" class="btn-small forge-copy-btn" data-copy="${deps.escapeAttr(start.user_code)}">Copy</button></div>` +
-    `<div class="forge-device-status">Waiting for approval…</div>`;
-  host.appendChild(container);
-  const copyBtn = container.querySelector<HTMLButtonElement>(".forge-copy-btn");
-  copyBtn?.addEventListener("click", () => {
-    const code = copyBtn.dataset["copy"] ?? "";
-    void navigator.clipboard.writeText(code);
+  const uriNode: HTMLElement | string = safeLink
+    ? el(
+        "a",
+        {
+          className: "forge-device-link",
+          target: "_blank",
+          rel: "noreferrer",
+          href: start.verification_uri,
+        },
+        start.verification_uri,
+      )
+    : start.verification_uri;
+  const intro = el("p", null, "Open ", uriNode, " and enter:");
+
+  const copyBtn = el(
+    "button",
+    { type: "button", className: "btn-small forge-copy-btn" },
+    "Copy",
+  ) as HTMLButtonElement;
+  copyBtn.addEventListener("click", () => {
+    void navigator.clipboard.writeText(start.user_code);
     copyBtn.textContent = "Copied";
     setTimeout(() => {
       copyBtn.textContent = "Copy";
     }, 2000);
   });
+  const codeRow = el(
+    "div",
+    { className: "forge-device-code-row" },
+    el("code", { className: "forge-device-code" }, start.user_code),
+    copyBtn,
+  );
+
+  const status = el("div", { className: "forge-device-status" }, "Waiting for approval…");
+
+  host.replaceChildren(el("div", { className: "forge-device-prompt" }, intro, codeRow, status));
 }
 
 async function pollGitHubDevice(

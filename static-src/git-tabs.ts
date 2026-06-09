@@ -3,39 +3,37 @@
 // panels inside the git view. Mirrors the pattern in settings-tabs.ts.
 // ---------------------------------------------------------------------------
 
+import { signal, subscribe } from "@cplieger/reactive";
 import { wireArrowNav } from "./arrow-nav.js";
 
 export type GitTab = "changes" | "prs" | "sources";
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
 
-let activeTab: GitTab = "changes";
 type Listener = (tab: GitTab) => void;
-const listeners = new Set<Listener>();
+
+// Deduped signal mirroring settings-tabs.ts: a same-value write is a no-op, so
+// re-selecting the active tab no longer re-swaps panels. subscribe() fires
+// immediately on attach to init panel visibility; setGitTab keeps its own
+// early-return guard.
+const activeTab = signal<GitTab>("changes");
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
 export function onGitTabChange(fn: Listener): () => void {
-  listeners.add(fn);
-  fn(activeTab);
-  return (): void => {
-    listeners.delete(fn);
-  };
+  return subscribe(activeTab, fn);
 }
 
 /** Switch to a tab. No-op if already active. */
 export function setGitTab(tab: GitTab): void {
-  if (tab === activeTab) {
+  if (tab === activeTab.peek()) {
     return;
   }
-  activeTab = tab;
-  for (const fn of listeners) {
-    fn(tab);
-  }
+  activeTab.value = tab;
 }
 
 /** Current active tab. */
 export function getGitTab(): GitTab {
-  return activeTab;
+  return activeTab.peek();
 }
 
 /** Wire the static tab buttons + panel visibility. Idempotent (only

@@ -439,3 +439,85 @@ describe("a11y: async-button screen reader announcements", () => {
     vi.useRealTimers();
   });
 });
+
+describe("a11y: failed tool aria-expanded", () => {
+  it("failed status sets aria-expanded=true on the tool toggle", async () => {
+    vi.resetModules();
+    const noop = (): void => {
+      /* noop */
+    };
+    vi.doMock("./scroll.js", () => ({ setUserScrolledUp: noop }));
+    vi.doMock("./editor-openers.js", () => ({ openFile: noop, openFileDiff: noop }));
+    vi.doMock("./tool-group.js", () => ({
+      trackInProgress: noop,
+      untrackInProgress: noop,
+      maybeCollapseGroup: noop,
+      formatDuration: (ms: number) => String(ms),
+    }));
+    vi.doMock("./crew-card.js", () => ({
+      getCrewToolEl: () => undefined,
+      addToolToCrewRow: noop,
+      onCrewToolCompleted: noop,
+      setSubagentActivity: noop,
+    }));
+    vi.doMock("./subagent.js", () => ({
+      isSubAgent: () => false,
+      isSubAgentActive: () => false,
+      appendToSubAgent: noop,
+      createSubAgentCard: () => document.createElement("div"),
+      updateSubAgentCard: noop,
+    }));
+    vi.doMock("./messages-actions.js", () => ({ addEditActions: noop }));
+    vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => undefined }));
+    vi.doMock("./format-tool-activity.js", () => ({ formatToolActivity: (t: string) => t }));
+
+    const { buildToolCard } = await import("./tool-card.js");
+    const { initToolCallbacks, updateToolCall } = await import("./messages-tools.js");
+
+    initToolCallbacks({
+      pushBind: noop,
+      svgTemplate: () => () => document.createElement("span"),
+      refreshGroupHeader: noop,
+      explainError: () => Promise.resolve(""),
+    });
+
+    const card = buildToolCard({
+      id: "tf1",
+      title: "Running: grep",
+      kind: "other",
+      status: "in_progress",
+      input: { pattern: "boom" },
+      live: true,
+    });
+    document.body.appendChild(card);
+
+    const toggle = card.querySelector<HTMLElement>(".tool-toggle")!;
+    const details = card.querySelector<HTMLElement>(".tool-details")!;
+    // Precondition: a live (in_progress) medium-tier card starts collapsed.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(details.classList.contains("collapsed")).toBe(true);
+
+    updateToolCall(card, {
+      id: "tf1",
+      title: "Running: grep",
+      kind: "other",
+      status: "failed",
+      ts: 0,
+    });
+
+    // The failed branch auto-expands the details AND must keep the toggle's
+    // aria-expanded in sync (mirrors wireToggle's expand path).
+    expect(details.classList.contains("collapsed")).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    document.body.removeChild(card);
+    vi.doUnmock("./scroll.js");
+    vi.doUnmock("./editor-openers.js");
+    vi.doUnmock("./tool-group.js");
+    vi.doUnmock("./crew-card.js");
+    vi.doUnmock("./subagent.js");
+    vi.doUnmock("./messages-actions.js");
+    vi.doUnmock("./actions/index.js");
+    vi.doUnmock("./format-tool-activity.js");
+  });
+});

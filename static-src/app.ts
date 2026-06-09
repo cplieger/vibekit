@@ -20,7 +20,7 @@ import {
   isThinking,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { effect } from "@cplieger/reactive";
+import { computed, effect } from "@cplieger/reactive";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
@@ -143,18 +143,23 @@ function init(): void {
   // ACP bridge's session/new response; this listener is the live
   // update path — session-sourced lists are authoritative and
   // overwrite whatever the REST path seeded.
-  let lastModelSig = "";
-  effect(() => {
+  const modelSig = computed(() => {
     void activeSession.value;
     const active = getActive();
     if (active === undefined) {
+      return "";
+    }
+    return active.id + ":" + active.available_models.map((m) => m.id).join(",");
+  });
+  effect(() => {
+    // The computed dedups by value (Object.is) and is glitch-free, so the
+    // effect re-runs only when the active session's id or available_models
+    // actually change — each distinct catalog triggers exactly one fetch.
+    // An empty signature means no active session (the computed's only "" path).
+    if (modelSig.value === "") {
       return;
     }
-    const sig = active.id + ":" + active.available_models.map((m) => m.id).join(",");
-    if (sig !== lastModelSig) {
-      lastModelSig = sig;
-      fetchModelsFromSession();
-    }
+    fetchModelsFromSession();
   });
 
   setupInput();

@@ -39,7 +39,6 @@ import { addAttachment, clearAttachments } from "./attachments.js";
 import { setCurrentModel, getCurrentAgent, getLastModel, withAgent } from "./session-context.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
-import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -344,7 +343,6 @@ export function installStoreSubscribers(): void {
     if (active !== undefined) {
       refreshContextUI(active);
     }
-    recomputeSendState();
     // Reconcile tab names with chat names (server auto-rename propagates here).
     for (const s of getSessions()) {
       if (hasTab(s.id)) {

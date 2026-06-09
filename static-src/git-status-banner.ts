@@ -24,9 +24,26 @@
 // User-dismissable per active key: dismissing forge-auth-failed hides
 // only that state until it transitions (cleared and re-set, or a
 // higher-priority state arrives).
+//
+// State is reactive: `active` (the logically-set keys) and `dismissed` are
+// signals; `topKey` is a computed deriving the highest-priority *visible*
+// banner (the raw top, or null when that top is dismissed). A single
+// effect renders `topKey.value`, so every add / clear / dismiss collapses
+// to a signal write instead of a manual render() call. The computed dedups
+// (Object.is), so a set that doesn't change the visible top — e.g. a
+// lower-priority key arriving under an already-shown one — does not
+// re-render.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import {
+  el,
+  signal,
+  computed,
+  effect,
+  batch,
+  type Signal,
+  type ReadonlySignal,
+} from "@cplieger/reactive";
 
 export type BannerKey = "forge-auth-failed" | "gh-cli-missing" | "forges-not-connected";
 
@@ -44,67 +61,95 @@ const PRIORITY: readonly BannerKey[] = [
   "forges-not-connected",
 ];
 
+/** Highest-priority key present in the active set, ignoring dismissal. */
+function rawTop(active: ReadonlySet<BannerKey>): BannerKey | null {
+  for (const k of PRIORITY) {
+    if (active.has(k)) {
+      return k;
+    }
+  }
+  return null;
+}
+
 class StatusBanner {
   private root: HTMLElement | null = null;
-  private active = new Set<BannerKey>();
-  private dismissed: BannerKey | null = null;
   private callbacks: Callbacks | null = null;
+  private disposeEffect: (() => void) | null = null;
+
+  private readonly active: Signal<ReadonlySet<BannerKey>> = signal<ReadonlySet<BannerKey>>(
+    new Set<BannerKey>(),
+  );
+  private readonly dismissed: Signal<BannerKey | null> = signal<BannerKey | null>(null);
+
+  // The visible banner: the highest-priority active key, or null when that
+  // top key is the dismissed one. Dismissing the top hides the banner
+  // entirely; it does not fall through to a lower-priority active key.
+  private readonly topKey: ReadonlySignal<BannerKey | null> = computed<BannerKey | null>(() => {
+    const top = rawTop(this.active.value);
+    return top === null || top === this.dismissed.value ? null : top;
+  });
 
   init(callbacks: Callbacks): void {
     this.root = document.getElementById("git-status-banner");
     this.callbacks = callbacks;
-    this.render();
+    // ONE render source. Created once (effects persist for the singleton's
+    // lifetime); the immediate run on creation renders against the freshly
+    // grabbed root. Later init() calls reuse the existing effect.
+    this.disposeEffect ??= effect(() => {
+      this.render(this.topKey.value);
+    });
   }
 
   set(key: BannerKey): void {
-    if (this.active.has(key)) {
+    const cur = this.active.peek();
+    if (cur.has(key)) {
       return;
     }
-    this.active.add(key);
-    // If a higher-priority key just became top-active, drop any prior
-    // dismissal so the user sees the more urgent state.
-    if (this.dismissed !== null && this.dismissed !== this.topKey()) {
-      this.dismissed = null;
-    }
-    this.render();
+    const next = new Set(cur);
+    next.add(key);
+    // If a higher-priority key just became the raw top, drop any prior
+    // dismissal so the user sees the more urgent state. Two writes, but
+    // batched into a single effect run.
+    const dism = this.dismissed.peek();
+    const dropDismiss = dism !== null && dism !== rawTop(next);
+    batch(() => {
+      this.active.value = next;
+      if (dropDismiss) {
+        this.dismissed.value = null;
+      }
+    });
   }
 
   clear(key: BannerKey): void {
-    if (!this.active.has(key)) {
+    const cur = this.active.peek();
+    if (!cur.has(key)) {
       return;
     }
-    this.active.delete(key);
-    if (this.dismissed === key) {
-      this.dismissed = null;
-    }
-    this.render();
+    const next = new Set(cur);
+    next.delete(key);
+    const dism = this.dismissed.peek();
+    batch(() => {
+      this.active.value = next;
+      if (dism === key) {
+        this.dismissed.value = null;
+      }
+    });
   }
 
   /** Test seam: drop all state. */
   reset(): void {
-    this.active.clear();
-    this.dismissed = null;
-    if (this.root !== null) {
-      this.root.replaceChildren();
-      this.root.classList.add("hidden");
-    }
+    batch(() => {
+      this.active.value = new Set<BannerKey>();
+      this.dismissed.value = null;
+    });
   }
 
-  private topKey(): BannerKey | null {
-    for (const k of PRIORITY) {
-      if (this.active.has(k)) {
-        return k;
-      }
-    }
-    return null;
-  }
-
-  private render(): void {
+  /** Render the single visible banner row, or hide when `top` is null. */
+  private render(top: BannerKey | null): void {
     if (this.root === null) {
       return;
     }
-    const top = this.topKey();
-    if (top === null || top === this.dismissed) {
+    if (top === null) {
       this.root.replaceChildren();
       this.root.classList.add("hidden");
       return;
@@ -138,8 +183,7 @@ class StatusBanner {
       "✕",
     );
     dismiss.addEventListener("click", () => {
-      this.dismissed = key;
-      this.render();
+      this.dismissed.value = key;
     });
 
     return el(

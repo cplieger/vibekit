@@ -13,6 +13,8 @@
 
 import { el } from "@cplieger/reactive";
 
+import { iconEl } from "./icon-el.js";
+
 const RESET_MS = 1200;
 
 const CHECK_HTML =
@@ -118,9 +120,7 @@ export async function withAsyncFeedback(
   }
 
   btn.dataset["asyncStatus"] = ok ? "success" : "error";
-  const glyphTpl = document.createElement("template");
-  glyphTpl.innerHTML = ok ? CHECK_HTML : X_HTML;
-  btn.replaceChildren(glyphTpl.content);
+  btn.replaceChildren(iconEl(ok ? CHECK_HTML : X_HTML));
   if (origAriaBusy === null) {
     btn.removeAttribute("aria-busy");
   } else {
