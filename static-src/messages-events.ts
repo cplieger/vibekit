@@ -7,7 +7,7 @@
 
 import type { Message, EventKind, Crew } from "./types.js";
 import { ensureCrewSig, clearCrewSig } from "./store-signals.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect } from "@cplieger/reactive";
 import { updateCrew as updateCrewInternal, buildCrewCardForReplay } from "./crew-card.js";
 
 // ---------------------------------------------------------------------------

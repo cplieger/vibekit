@@ -57,10 +57,19 @@ RUN mkdir -p static/vendor && \
 # tsgo's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=1.1.3
+ARG CPLIEGER_ACTIONS_VERSION=1.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
+
+# Fetch @cplieger/reactive TS source (same TS-only pattern). @cplieger/actions
+# imports it, and the app imports it directly; both resolve it via the
+# importmap at runtime (/vendor/cplieger-reactive/index.js).
+# renovate: datasource=npm depName=@cplieger/reactive
+ARG CPLIEGER_REACTIVE_VERSION=1.1.0
+RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
 # Compile TypeScript then build Go (static files embedded via go:embed).
 # BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
@@ -76,6 +85,15 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 ARG BUILD_VERSION=dev
 RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
     /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-reactive \
+        --rootDir static-src/node_modules/@cplieger/reactive/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/reactive/src/*.ts && \
     /tmp/package/lib/tsgo \
         --module ESNext \
         --target ESNext \

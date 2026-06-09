@@ -22,7 +22,7 @@ import {
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
-import { signal, effect } from "./lib/reactive/index.js";
+import { signal, effect } from "@cplieger/reactive";
 import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { promoteRewindChat, discardRewindChat } from "./actions/rewind.js";

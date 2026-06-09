@@ -31,7 +31,7 @@ import {
   ensureBlockTextSig,
   ensureBlockThinkingSig,
 } from "./store-signals.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
 import {

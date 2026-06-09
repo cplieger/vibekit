@@ -4,36 +4,9 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolCall, Crew } from "./types.js";
-import { signal } from "./lib/reactive/index.js";
+import { SignalMap, type Signal } from "@cplieger/reactive";
 
-// --- Generic SignalMap ---
-
-/** A typed map of lazily-created signals keyed by string ID. Provides
- *  get/ensure/clear/clearAll operations for any value type. */
-export class SignalMap<V> {
-  private map = new Map<string, ReturnType<typeof signal<V>>>();
-
-  get(id: string): ReturnType<typeof signal<V>> | undefined {
-    return this.map.get(id);
-  }
-
-  ensure(id: string, initial: V): ReturnType<typeof signal<V>> {
-    let sig = this.map.get(id);
-    if (sig === undefined) {
-      sig = signal(initial);
-      this.map.set(id, sig);
-    }
-    return sig;
-  }
-
-  clear(id: string): void {
-    this.map.delete(id);
-  }
-
-  clearAll(): void {
-    this.map.clear();
-  }
-}
+// SignalMap (the dynamic per-id signal registry) is provided by @cplieger/reactive.
 
 // --- Signal registry instances ---
 
@@ -62,44 +35,44 @@ export const crewSigs = new SignalMap<Crew>();
 
 // --- Public accessors (thin delegates for backward compat) ---
 
-export function getStreamingSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
+export function getStreamingSig(messageID: string): Signal<string> | undefined {
   return streamingTextSigs.get(messageID);
 }
 
-export function getReasoningSig(messageID: string): ReturnType<typeof signal<string>> | undefined {
+export function getReasoningSig(messageID: string): Signal<string> | undefined {
   return streamingReasoningSigs.get(messageID);
 }
 
-export function getToolCallSig(toolID: string): ReturnType<typeof signal<ToolCall>> | undefined {
+export function getToolCallSig(toolID: string): Signal<ToolCall> | undefined {
   return toolCallSigs.get(toolID);
 }
 
-export function getCrewSig(messageID: string): ReturnType<typeof signal<Crew>> | undefined {
+export function getCrewSig(messageID: string): Signal<Crew> | undefined {
   return crewSigs.get(messageID);
 }
 
 export function ensureStreamingSig(
   messageID: string,
   initial: string,
-): ReturnType<typeof signal<string>> {
+): Signal<string> {
   return streamingTextSigs.ensure(messageID, initial);
 }
 
 export function ensureReasoningSig(
   messageID: string,
   initial: string,
-): ReturnType<typeof signal<string>> {
+): Signal<string> {
   return streamingReasoningSigs.ensure(messageID, initial);
 }
 
 export function ensureToolCallSig(
   toolID: string,
   initial: ToolCall,
-): ReturnType<typeof signal<ToolCall>> {
+): Signal<ToolCall> {
   return toolCallSigs.ensure(toolID, initial);
 }
 
-export function ensureCrewSig(messageID: string, initial: Crew): ReturnType<typeof signal<Crew>> {
+export function ensureCrewSig(messageID: string, initial: Crew): Signal<Crew> {
   return crewSigs.ensure(messageID, initial);
 }
 
@@ -112,14 +85,14 @@ export function ensureBlockTextSig(
   messageID: string,
   blockIndex: number,
   initial: string,
-): ReturnType<typeof signal<string>> {
+): Signal<string> {
   return blockTextSigs.ensure(blockKey(messageID, blockIndex), initial);
 }
 
 export function getBlockTextSig(
   messageID: string,
   blockIndex: number,
-): ReturnType<typeof signal<string>> | undefined {
+): Signal<string> | undefined {
   return blockTextSigs.get(blockKey(messageID, blockIndex));
 }
 
@@ -127,14 +100,14 @@ export function ensureBlockThinkingSig(
   messageID: string,
   blockIndex: number,
   initial: string,
-): ReturnType<typeof signal<string>> {
+): Signal<string> {
   return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), initial);
 }
 
 export function getBlockThinkingSig(
   messageID: string,
   blockIndex: number,
-): ReturnType<typeof signal<string>> | undefined {
+): Signal<string> | undefined {
   return blockThinkingSigs.get(blockKey(messageID, blockIndex));
 }
 

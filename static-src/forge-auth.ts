@@ -39,7 +39,7 @@ import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { signOut } from "./actions/forge.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { signal, effect } from "./lib/reactive/index.js";
+import { signal, effect } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";

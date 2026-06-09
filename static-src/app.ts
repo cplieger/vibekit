@@ -20,7 +20,7 @@ import {
   isThinking,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect } from "@cplieger/reactive";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";

@@ -3,12 +3,12 @@
 //
 // State lives in module-level data structures with O(1) indexing.
 // A single `version` signal triggers reactive effects on mutation.
-// Streaming paths use batch() for MessageChannel-deferred rendering.
+// Streaming paths coalesce renders via scheduleMessages (queueMicrotask).
 // User-initiated mutations bump version synchronously for instant feedback.
 // ---------------------------------------------------------------------------
 
 import type { Session, ChatHeader, Message, Usage, ToolCall, PendingChange } from "./types.js";
-import { signal, batch } from "./lib/reactive/index.js";
+import { signal } from "@cplieger/reactive";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
@@ -36,8 +36,17 @@ function emitActive(): void {
 export function emitMessages(): void {
   messagesVersion.value = messagesVersion.peek() + 1;
 }
+let messagesScheduled = false;
 function scheduleMessages(): void {
-  batch(() => {
+  // Coalesce multiple new-block/new-tool events arriving in one tick into a
+  // single render on the next microtask. (The package's batch() flushes
+  // synchronously, so the microtask deferral is owned here.)
+  if (messagesScheduled) {
+    return;
+  }
+  messagesScheduled = true;
+  queueMicrotask(() => {
+    messagesScheduled = false;
     messagesVersion.value = messagesVersion.peek() + 1;
   });
 }

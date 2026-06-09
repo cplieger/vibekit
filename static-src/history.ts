@@ -14,7 +14,7 @@ import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH, iconEl } from "./icons.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { reconcile } from "./lib/reactive/reconcile.js";
+import { reconcile } from "@cplieger/reactive";
 
 interface ArchivedHeader {
   id: string;

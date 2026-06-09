@@ -6,7 +6,7 @@
 
 import type { PlanEntry } from "./types.js";
 import { getActive, messagesVersion } from "./store.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 
 const STATUS_ICON: Record<string, string> = {
