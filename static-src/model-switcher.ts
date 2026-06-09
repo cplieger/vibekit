@@ -22,7 +22,7 @@ import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el } from "@cplieger/reactive";
+import { el, signal, effect } from "@cplieger/reactive";
 import { send } from "./transport.js";
 import { patchSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
@@ -113,7 +113,7 @@ class ModelSwitchController {
   }
 
   private effortRow: HTMLDivElement | null = null;
-  private currentEffort = "";
+  private readonly currentEffort = signal("");
   private effortLoaded = false;
 
   private ensureEffortRow(list: HTMLElement): void {
@@ -127,12 +127,7 @@ class ModelSwitchController {
             | { effort?: string; last_model?: string }
             | undefined;
           if (me?.effort && me.last_model === getActive()?.model) {
-            this.currentEffort = me.effort;
-            if (this.effortRow !== null) {
-              for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-                btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
-              }
-            }
+            this.currentEffort.value = me.effort;
           }
         });
     }
@@ -154,10 +149,17 @@ class ModelSwitchController {
         });
         this.effortRow.appendChild(btn);
       }
-    }
-    // Sync active state.
-    for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-      btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+      // One effect keeps every .effort-btn's active class in sync with the
+      // currentEffort signal (replaces the three hand-rolled sync loops). The
+      // row + controller are app-lifetime singletons, so this never needs
+      // disposal.
+      const row = this.effortRow;
+      effect(() => {
+        const lvl = this.currentEffort.value;
+        for (const btn of row.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+          btn.classList.toggle("active", btn.dataset["level"] === lvl);
+        }
+      });
     }
     // Ensure it's the first child (reconcile manages keyed children
     // after it; the effort row is un-keyed so reconcile ignores it).
@@ -171,12 +173,7 @@ class ModelSwitchController {
     if (session === undefined) {
       return;
     }
-    this.currentEffort = level;
-    if (this.effortRow !== null) {
-      for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-        btn.classList.toggle("active", btn.dataset["level"] === level);
-      }
-    }
+    this.currentEffort.value = level;
     // Dispatch to server (applies to active session).
     void send({
       type: "set_effort",
