@@ -2,7 +2,7 @@
 // Editor UI: rendering helpers (read/edit mode, gutter, highlight, restoreUI).
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { el, reconcile } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
@@ -96,23 +96,26 @@ export function showDiffMode(): void {
 
 export function updateGutter(content: string): void {
   const lineCount = content.split("\n").length;
-  const gutter = $.editorGutter;
-  const currentCount = gutter.children.length;
   const agentLines = getAgentLines(getActiveFilePath());
-
-  if (currentCount > lineCount) {
-    for (let i = currentCount; i > lineCount; i--) {
-      gutter.lastChild?.remove();
-    }
-  } else if (currentCount < lineCount) {
-    for (let i = currentCount + 1; i <= lineCount; i++) {
-      const line = el("div", { className: "gutter-line" }, String(i));
-      if (agentLines.has(i)) {
+  const lines = Array.from({ length: lineCount }, (_, i) => i + 1);
+  // Keyed reconcile by line number: handles add/remove on line-count change
+  // AND refreshes the agent-modified class on EXISTING rows when agentLines
+  // changes (the by-count diff this replaced never re-styled pre-existing
+  // rows, so an agent edit that didn't change the line count left stale
+  // highlights).
+  reconcile($.editorGutter, lines, {
+    key: (n) => String(n),
+    mount: (n) => {
+      const line = el("div", { className: "gutter-line" }, String(n));
+      if (agentLines.has(n)) {
         line.classList.add("gutter-agent-modified");
       }
-      gutter.appendChild(line);
-    }
-  }
+      return line;
+    },
+    update: (lineEl, n) => {
+      lineEl.classList.toggle("gutter-agent-modified", agentLines.has(n));
+    },
+  });
 }
 
 export function rebuildGutter(content: string): void {
