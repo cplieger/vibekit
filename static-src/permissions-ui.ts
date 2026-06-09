@@ -174,17 +174,20 @@ class PermissionsUIController {
 
   private renderChips(): void {
     const chips = byId<HTMLDivElement>("trust-list-chips");
-    chips.replaceChildren();
-    for (const name of this.currentList) {
-      chips.appendChild(
+    // Keyed reconcile (keyed by tool name) so add/remove touches only the
+    // changed chip instead of rebuilding the whole row. The empty state is a
+    // separate element (trust-list-empty-hint), toggled in renderEditor, so
+    // this container holds only chips — no replaceChildren/reconcile mixing.
+    reconcile(chips, this.currentList, {
+      key: (name: string) => name,
+      mount: (name: string) =>
         buildChip({
           label: name,
           onRemove: () => {
             this.removeTool(name);
           },
         }),
-      );
-    }
+    });
   }
 
   private addTool(name: string): void {
