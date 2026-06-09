@@ -2,7 +2,9 @@
 // MCP UI: section scaffold, server list rendering, row sub-components, init.
 // ---------------------------------------------------------------------------
 
-import { $, el } from "./dom.js";
+import { el } from "@cplieger/reactive";
+
+import { $, byId } from "./dom.js";
 import { onSSE } from "./bus.js";
 import { closeModal, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -37,36 +39,30 @@ function buildSectionScaffold(): void {
     return;
   }
 
-  const title = document.createElement("h3");
-  title.className = "section-title";
-  title.textContent = "MCP integrations";
+  const title = el("h3", { className: "section-title" }, "MCP integrations");
 
-  const hint = document.createElement("p");
-  hint.className = "section-hint";
-  hint.textContent =
-    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.";
+  const hint = el(
+    "p",
+    { className: "section-hint" },
+    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.",
+  );
 
-  const actionRow = document.createElement("div");
-  actionRow.className = "section-actions-row";
-
-  const actions = document.createElement("div");
-  actions.className = "action-bar action-bar-inline";
-
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "action-pill";
-  addBtn.setAttribute("data-tooltip", "Connect integration");
-  addBtn.setAttribute("aria-label", "Connect integration");
+  const addBtn = el("button", {
+    type: "button",
+    className: "action-pill",
+    "data-tooltip": "Connect integration",
+    "aria-label": "Connect integration",
+  });
   addBtn.innerHTML = ICON_PLUS_16;
   addBtn.addEventListener("click", () => {
     openAddModal();
   });
-  actions.appendChild(addBtn);
 
-  actionRow.appendChild(actions);
+  const actions = el("div", { className: "action-bar action-bar-inline" }, addBtn);
 
-  sectionBody = document.createElement("div");
-  sectionBody.className = "mcp-server-list";
+  const actionRow = el("div", { className: "section-actions-row" }, actions);
+
+  sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
 
   section.replaceChildren(title, hint, actionRow, sectionBody);
 }
@@ -91,11 +87,13 @@ function renderRows(): void {
   sectionBody.replaceChildren();
 
   if (configured.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "mcp-empty";
-    empty.textContent =
-      "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
-    sectionBody.appendChild(empty);
+    sectionBody.appendChild(
+      el(
+        "p",
+        { className: "mcp-empty" },
+        "No integrations connected yet. Click + to search the official MCP registry or paste a config.",
+      ),
+    );
     return;
   }
 
@@ -106,41 +104,34 @@ function renderRows(): void {
 
 function renderRow(s: Server): HTMLDivElement {
   const st = status.get(s.name);
-  const row = document.createElement("div");
-  row.className = "mcp-row";
-  row.dataset["serverId"] = s.id;
 
   const toggle = renderEnableToggle(s);
-  const body = document.createElement("div");
-  body.className = "mcp-row-body";
 
-  const nameLine = document.createElement("div");
-  nameLine.className = "mcp-row-name-line";
-  const name = document.createElement("span");
-  name.className = "mcp-row-name";
-  name.textContent = s.name;
+  const name = el("span", { className: "mcp-row-name" }, s.name);
   const dot = renderStatusDot(s, st);
-  const transportBadge = document.createElement("span");
-  transportBadge.className = `mcp-transport mcp-transport-${s.transport}`;
-  transportBadge.textContent = s.transport;
-  nameLine.append(dot, name, transportBadge);
+  const transportBadge = el(
+    "span",
+    { className: `mcp-transport mcp-transport-${s.transport}` },
+    s.transport,
+  );
+  const nameLine = el("div", { className: "mcp-row-name-line" }, dot, name, transportBadge);
 
-  const meta = document.createElement("div");
-  meta.className = "mcp-row-meta";
-  meta.textContent = renderMeta(s, st);
+  const meta = el("div", { className: "mcp-row-meta" }, renderMeta(s, st));
 
-  body.append(nameLine, meta);
-
+  const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
   if (st?.state === "needs_auth") {
     body.appendChild(renderOAuthPill(st.oauth_url));
   }
 
-  const actions = document.createElement("div");
-  actions.className = "mcp-row-actions";
-  actions.append(renderEditBtn(s), renderDeleteBtn(s));
+  const actions = el("div", { className: "mcp-row-actions" }, renderEditBtn(s), renderDeleteBtn(s));
 
-  row.append(toggle, body, actions);
-  return row;
+  return el(
+    "div",
+    { className: "mcp-row", "data-server-id": s.id },
+    toggle,
+    body,
+    actions,
+  ) as HTMLDivElement;
 }
 
 // --- Row sub-components ---
@@ -161,9 +152,7 @@ function isFailedWithError(
 }
 
 function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
-  const dot = document.createElement("span");
-  dot.className = "mcp-dot";
-  dot.setAttribute("role", "img");
+  const dot = el("span", { className: "mcp-dot", role: "img" });
   if (!s.enabled) {
     dot.classList.add("disabled");
     dot.title = "Disabled";
@@ -198,12 +187,11 @@ function renderMeta(s: Server, st: RuntimeStatus | undefined): string {
 }
 
 function renderEnableToggle(s: Server): HTMLLabelElement {
-  const label = document.createElement("label");
-  label.className = "toggle mcp-toggle";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.checked = s.enabled;
-  input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
+  const input = el("input", {
+    type: "checkbox",
+    checked: s.enabled,
+    "aria-label": `${s.enabled ? "Disable" : "Enable"} ${s.name}`,
+  }) as HTMLInputElement;
   input.addEventListener("change", () => {
     // input.checked is already the NEW value (browser flipped it).
     input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
@@ -218,25 +206,27 @@ function renderEnableToggle(s: Server): HTMLLabelElement {
       },
     );
   });
-  const slider = document.createElement("span");
-  slider.className = "toggle-slider";
-  label.append(input, slider);
+  const slider = el("span", { className: "toggle-slider" });
+  const label = el("label", { className: "toggle mcp-toggle" }, input, slider) as HTMLLabelElement;
   rowBindingCleanups.push(bindLoadingState("mcp.toggle_server", input));
   return label;
 }
 
 function renderOAuthPill(url: string): HTMLAnchorElement {
-  const link = document.createElement("a");
-  link.className = "mcp-oauth-pill";
   const safe = isSafeURL(url);
-  link.href = safe ? url : "#";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = safe ? "Finish sign-in →" : "Invalid OAuth URL";
-  link.title = safe
-    ? "Open the server's authorisation page in a new tab."
-    : "The server sent an unsafe URL (not http or https).";
-  return link;
+  return el(
+    "a",
+    {
+      className: "mcp-oauth-pill",
+      href: safe ? url : "#",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      title: safe
+        ? "Open the server's authorisation page in a new tab."
+        : "The server sent an unsafe URL (not http or https).",
+    },
+    safe ? "Finish sign-in →" : "Invalid OAuth URL",
+  ) as HTMLAnchorElement;
 }
 
 function isSafeURL(url: string): boolean {
@@ -249,11 +239,12 @@ function isSafeURL(url: string): boolean {
 }
 
 function renderEditBtn(s: Server): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "icon-btn";
-  btn.setAttribute("data-tooltip", "Edit");
-  btn.setAttribute("aria-label", `Edit ${s.name}`);
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn",
+    "data-tooltip": "Edit",
+    "aria-label": `Edit ${s.name}`,
+  }) as HTMLButtonElement;
   btn.innerHTML = ICON_EDIT_14;
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
@@ -263,11 +254,12 @@ function renderEditBtn(s: Server): HTMLButtonElement {
 }
 
 function renderDeleteBtn(s: Server): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "icon-btn danger";
-  btn.setAttribute("data-tooltip", "Remove");
-  btn.setAttribute("aria-label", `Remove ${s.name}`);
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn danger",
+    "data-tooltip": "Remove",
+    "aria-label": `Remove ${s.name}`,
+  }) as HTMLButtonElement;
   btn.innerHTML = ICON_TRASH_14;
   rowBindingCleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
@@ -318,7 +310,7 @@ export function initMCP(): void {
   buildSectionScaffold();
   mcpState.setRenderCallback(renderSection);
 
-  const close = el<HTMLButtonElement>("mcp-modal-close");
+  const close = byId<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => {
     cleanupModal();
     closeModal($.mcpModal);
@@ -397,8 +389,7 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
       return;
     }
     if (badge === null) {
-      badge = document.createElement("span");
-      badge.className = "prewarm-badge";
+      badge = el("span", { className: "prewarm-badge" });
       const nameEl = row.querySelector(".mcp-row-name");
       if (nameEl !== null) {
         nameEl.after(badge);

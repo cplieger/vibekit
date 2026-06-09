@@ -21,6 +21,7 @@ import { humanName } from "./strings.js";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { openModal } from "./modals.js";
+import { el } from "@cplieger/reactive";
 
 /** Number of trailing sentences shown in the sub-agent preview card. */
 const PREVIEW_SENTENCES = 4;
@@ -53,14 +54,14 @@ export function appendToSubAgent(text: string): void {
   if (activeId === "") {
     return;
   }
-  const el = els.get(activeId);
-  if (el === undefined) {
+  const card = els.get(activeId);
+  if (card === undefined) {
     return;
   }
   let acc = transcripts.get(activeId) ?? "";
   acc += text;
   transcripts.set(activeId, acc);
-  const preview = el.querySelector(".subagent-preview");
+  const preview = card.querySelector(".subagent-preview");
   if (preview !== null) {
     preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
   }
@@ -76,9 +77,7 @@ export function appendToSubAgent(text: string): void {
 
 /** Build a spinner element for the sub-agent card header. */
 function buildSpinner(): HTMLDivElement {
-  const spinner = document.createElement("div");
-  spinner.className = "subagent-spinner";
-  return spinner;
+  return el("div", { className: "subagent-spinner" }) as HTMLDivElement;
 }
 
 /** Render a sub-agent card into a container (the caller picks placement). */
@@ -95,45 +94,28 @@ export function createSubAgentCard(
     activeId = id;
   }
 
-  const el = document.createElement("div");
-  el.className = "subagent-call";
+  const card = el("div", { className: "subagent-call" }) as HTMLDivElement;
 
-  const header = document.createElement("div");
-  header.className = "subagent-header";
+  const header = el(
+    "div",
+    { className: "subagent-header" },
+    active ? buildSpinner() : el("span", { className: "subagent-icon" }, "🤖"),
+    el("span", { className: "subagent-name" }, label),
+    el("span", { className: `tool-status ${status}` }, status),
+  );
+  card.appendChild(header);
 
-  if (active) {
-    header.appendChild(buildSpinner());
-  } else {
-    const iconSpan = document.createElement("span");
-    iconSpan.className = "subagent-icon";
-    iconSpan.textContent = "🤖";
-    header.appendChild(iconSpan);
-  }
-
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "subagent-name";
-  nameSpan.textContent = label;
-  header.appendChild(nameSpan);
-
-  const statusSpan = document.createElement("span");
-  statusSpan.className = `tool-status ${status}`;
-  statusSpan.textContent = status;
-  header.appendChild(statusSpan);
-
-  el.appendChild(header);
-
-  const preview = document.createElement("div");
-  preview.className = "subagent-preview";
+  const preview = el("div", { className: "subagent-preview" });
   if (storedOutput !== undefined && storedOutput !== "") {
     preview.textContent = lastSentences(storedOutput, PREVIEW_SENTENCES);
   }
-  el.appendChild(preview);
+  card.appendChild(preview);
 
-  el.addEventListener("click", () => {
+  card.addEventListener("click", () => {
     openPopup(id, label);
   });
-  els.set(id, el);
-  return el;
+  els.set(id, card);
+  return card;
 }
 
 /** Update an existing sub-agent card (status + appended output). */
@@ -142,12 +124,12 @@ export function updateSubAgentCard(
   status: ToolStatus | undefined,
   output: string | undefined,
 ): boolean {
-  const el = els.get(id);
-  if (el === undefined) {
+  const card = els.get(id);
+  if (card === undefined) {
     return false;
   }
   if (status !== undefined) {
-    const s = el.querySelector(".tool-status");
+    const s = card.querySelector(".tool-status");
     if (s !== null) {
       s.textContent = status;
       s.className = `tool-status ${status}`;
@@ -157,11 +139,9 @@ export function updateSubAgentCard(
       activeId = "";
     }
     if (done) {
-      const spinner = el.querySelector(".subagent-header .subagent-spinner");
+      const spinner = card.querySelector(".subagent-header .subagent-spinner");
       if (spinner !== null) {
-        const icon = document.createElement("span");
-        icon.className = "subagent-icon";
-        icon.textContent = "🤖";
+        const icon = el("span", { className: "subagent-icon" }, "🤖");
         spinner.replaceWith(icon);
       }
     }
@@ -170,7 +150,7 @@ export function updateSubAgentCard(
     let acc = transcripts.get(id) ?? "";
     acc += (acc !== "" ? "\n" : "") + output;
     transcripts.set(id, acc);
-    const preview = el.querySelector(".subagent-preview");
+    const preview = card.querySelector(".subagent-preview");
     if (preview !== null) {
       preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
     }

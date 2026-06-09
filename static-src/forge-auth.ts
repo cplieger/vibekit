@@ -39,7 +39,7 @@ import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { signOut } from "./actions/forge.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { signal, effect } from "@cplieger/reactive";
+import { signal, effect, el } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
@@ -415,17 +415,11 @@ function paintErrorState(root: HTMLElement): void {
   if (root.querySelector(":scope > .forge-error") !== null) {
     return;
   } // already shown
-  const errDiv = document.createElement("div");
-  errDiv.className = "forge-error";
-  errDiv.textContent = "Failed to load forges.";
-  const retryBtn = document.createElement("button");
-  retryBtn.type = "button";
-  retryBtn.className = "btn-small";
-  retryBtn.textContent = "Retry";
+  const retryBtn = el("button", { type: "button", className: "btn-small" }, "Retry");
   retryBtn.addEventListener("click", () => {
     void renderForgesPanel();
   });
-  errDiv.appendChild(retryBtn);
+  const errDiv = el("div", { className: "forge-error" }, "Failed to load forges.", retryBtn);
   root.appendChild(errDiv);
 }
 
@@ -442,9 +436,7 @@ const kindSpec: ReconcileSpec<ForgeKind> = {
 const accountSpec: ReconcileSpec<ConfiguredForge> = {
   key: (a) => a.id,
   mount: (a) => {
-    const li = document.createElement("li");
-    li.className = "forge-account-row";
-    li.dataset["id"] = a.id;
+    const li = el("li", { className: "forge-account-row", "data-id": a.id });
     paintAccountRow(li, a);
     return li;
   },
@@ -472,48 +464,43 @@ const repoSpec: ReconcileSpec<Repo> = {
  *  preserved across re-paints); the account list is reconciled on
  *  every update. */
 function buildKindSection(kind: ForgeKind): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "forge-kind-section";
-  section.dataset["kind"] = kind;
+  const section = el("section", { className: "forge-kind-section", "data-kind": kind });
 
   // Header: badge + title + add button.
-  const header = document.createElement("header");
-  header.className = "forge-kind-header";
-  const badge = document.createElement("span");
-  badge.className = `forge-kind-badge forge-kind-${kind}`;
-  badge.replaceChildren(iconEl(KIND_ICONS[kind]));
-  header.appendChild(badge);
-  const title = document.createElement("h3");
-  title.className = "forge-kind-title";
-  title.textContent = kindTitle(kind);
-  header.appendChild(title);
+  const badge = el(
+    "span",
+    { className: `forge-kind-badge forge-kind-${kind}` },
+    iconEl(KIND_ICONS[kind]),
+  );
+  const title = el("h3", { className: "forge-kind-title" }, kindTitle(kind));
 
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "btn-small forge-kind-add-btn";
-  addBtn.dataset["forgeAdd"] = kind;
-  addBtn.setAttribute("aria-label", "Add an account");
-  addBtn.setAttribute("data-tooltip", "Add an account");
-  addBtn.replaceChildren(iconEl(ICON_PLUS_16));
+  const addBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small forge-kind-add-btn",
+      "data-forge-add": kind,
+      "aria-label": "Add an account",
+      "data-tooltip": "Add an account",
+    },
+    iconEl(ICON_PLUS_16),
+  );
   addBtn.addEventListener("click", () => {
     onAddAccount(kind, section);
   });
-  header.appendChild(addBtn);
 
+  const header = el("header", { className: "forge-kind-header" }, badge, title, addBtn);
   section.appendChild(header);
 
   // Always present an account list container so reconcile has a
   // deterministic mount point. Empty list renders nothing.
-  const list = document.createElement("ul");
-  list.className = "forge-account-list";
+  const list = el("ul", { className: "forge-account-list" });
   section.appendChild(list);
   reconcile(list, accountsForKind(kind), accountSpec);
 
   // Inline mount point for the add-account pane (OAuth + PAT) and
   // status messages. Non-keyed sibling — survives reconcile.
-  const slot = document.createElement("div");
-  slot.className = "forge-kind-slot";
-  slot.dataset["forgeSlot"] = kind;
+  const slot = el("div", { className: "forge-kind-slot", "data-forge-slot": kind });
   section.appendChild(slot);
 
   return section;
@@ -566,13 +553,7 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
 }
 
 function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
-  const top = document.createElement("div");
-  top.className = "forge-account-row-top";
-
-  const id = document.createElement("div");
-  id.className = "forge-account-identity";
-  const primary = document.createElement("span");
-  primary.className = "forge-account-primary";
+  const primary = el("span", { className: "forge-account-primary" });
   const hasEmail = a.email !== undefined && a.email !== "";
   const hasUsername = a.username !== undefined && a.username !== "";
   if (hasEmail || hasUsername) {
@@ -586,9 +567,8 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
     primary.classList.add("skeleton", "forge-account-primary-skeleton");
     primary.setAttribute("aria-label", "Loading account identity…");
   }
-  id.appendChild(primary);
-  const meta = document.createElement("span");
-  meta.className = "forge-account-meta";
+
+  const meta = el("span", { className: "forge-account-meta" });
   const parts: string[] = [];
   if (hasEmail && hasUsername) {
     parts.push("@" + a.username!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
@@ -597,45 +577,45 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
     parts.push(a.host);
   }
   meta.textContent = parts.join(" · ");
-  id.appendChild(meta);
-  if (!a.connected && a.last_error !== undefined && a.last_error !== "") {
-    const err = document.createElement("span");
-    err.className = "forge-account-error";
-    err.textContent = a.last_error;
-    id.appendChild(err);
-  }
-  top.appendChild(id);
 
-  const actions = document.createElement("div");
-  actions.className = "forge-account-actions";
+  const id = el("div", { className: "forge-account-identity" }, primary, meta);
+  if (!a.connected && a.last_error !== undefined && a.last_error !== "") {
+    id.appendChild(el("span", { className: "forge-account-error" }, a.last_error));
+  }
+
+  const actions = el("div", { className: "forge-account-actions" });
 
   const manageURL = manageAccountURL(a.kind, a.host);
   if (manageURL !== "") {
-    const manage = document.createElement("a");
-    manage.href = manageURL;
-    manage.target = "_blank";
-    manage.rel = "noreferrer";
-    manage.className = "btn-small forge-account-manage";
-    const manageLabel = document.createElement("span");
-    manageLabel.textContent = "Manage";
-    manage.replaceChildren(manageLabel, iconEl(ICON_EXTERNAL));
-    manage.setAttribute("data-tooltip", "Manage account on forge");
-    manage.setAttribute("aria-label", "Manage account on forge");
+    const manageLabel = el("span", null, "Manage");
+    const manage = el(
+      "a",
+      {
+        href: manageURL,
+        target: "_blank",
+        rel: "noreferrer",
+        className: "btn-small forge-account-manage",
+        "data-tooltip": "Manage account on forge",
+        "aria-label": "Manage account on forge",
+      },
+      manageLabel,
+      iconEl(ICON_EXTERNAL),
+    );
     actions.appendChild(manage);
   }
 
-  const out = document.createElement("button");
-  out.type = "button";
-  out.className = "btn-small btn-danger";
-  out.textContent = "Sign out";
+  const out = el(
+    "button",
+    { type: "button", className: "btn-small btn-danger" },
+    "Sign out",
+  ) as HTMLButtonElement;
   out.addEventListener("click", () => {
     void onSignOut(a);
   });
   signOutUnbinds.push(bindLoadingState("forge.sign_out", out));
   actions.appendChild(out);
 
-  top.appendChild(actions);
-  return top;
+  return el("div", { className: "forge-account-row-top" }, id, actions);
 }
 
 // --- Account repos (details) ------------------------------------------
@@ -738,20 +718,23 @@ async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<voi
     return; // CLI already present.
   }
 
-  const banner = document.createElement("div");
-  banner.className = "forge-cli-banner inline-install-banner";
-  const msg = document.createElement("p");
-  msg.className = "section-hint";
-  msg.textContent = `The ${cli.name} CLI powers ${kindTitle(kind)} integration and isn't installed yet. It installs automatically when you sign in, or install it now:`;
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small";
-  btn.textContent = `Install ${cli.name}`;
-  const out = document.createElement("div");
-  out.className = "rolling-output hidden";
-  out.setAttribute("role", "log");
-  out.setAttribute("aria-live", "polite");
-  out.setAttribute("aria-label", `${cli.name} install progress`);
+  const banner = el("div", { className: "forge-cli-banner inline-install-banner" });
+  const msg = el(
+    "p",
+    { className: "section-hint" },
+    `The ${cli.name} CLI powers ${kindTitle(kind)} integration and isn't installed yet. It installs automatically when you sign in, or install it now:`,
+  );
+  const btn = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    `Install ${cli.name}`,
+  ) as HTMLButtonElement;
+  const out = el("div", {
+    className: "rolling-output hidden",
+    role: "log",
+    "aria-live": "polite",
+    "aria-label": `${cli.name} install progress`,
+  }) as HTMLDivElement;
 
   btn.addEventListener("click", () => {
     void (async () => {
@@ -783,8 +766,7 @@ function showAddPane(section: HTMLElement, kind: ForgeKind): void {
   const slot = slotOf(section);
   slot.innerHTML = "";
 
-  const pane = document.createElement("div");
-  pane.className = "forge-add-pane";
+  const pane = el("div", { className: "forge-add-pane" });
 
   // The forge CLI (gh/glab/tea) is opt-in and installed on demand.
   // Backend EnsureCLI also installs it on login submit, but probing
@@ -793,43 +775,32 @@ function showAddPane(section: HTMLElement, kind: ForgeKind): void {
   void gateAddPaneOnCLI(pane, kind);
 
   // Lead-in text. Phrasing depends on whether OAuth is offered.
-  const intro = document.createElement("p");
-  intro.className = "forge-add-pane-intro";
   const hasOAuth = oauthByKind[kind] === true;
-  intro.textContent = hasOAuth
-    ? "Sign in with the one-time browser flow, or paste a personal access token. Either path produces a token the CLI uses for git + API operations."
-    : "Paste a personal access token. The CLI uses it for git + API operations.";
+  const intro = el(
+    "p",
+    { className: "forge-add-pane-intro" },
+    hasOAuth
+      ? "Sign in with the one-time browser flow, or paste a personal access token. Either path produces a token the CLI uses for git + API operations."
+      : "Paste a personal access token. The CLI uses it for git + API operations.",
+  );
   pane.appendChild(intro);
 
   // For kinds with OAuth: OAuth section on top, divider, PAT below.
   if (hasOAuth) {
-    const oauth = document.createElement("div");
-    oauth.className = "forge-add-pane-section";
-    const oauthHeading = document.createElement("h4");
-    oauthHeading.className = "forge-add-pane-heading";
-    oauthHeading.textContent = "Browser-based sign-in";
-    oauth.appendChild(oauthHeading);
-    const oauthBody = document.createElement("div");
-    oauthBody.className = "forge-add-pane-body";
-    oauth.appendChild(oauthBody);
+    const oauthHeading = el("h4", { className: "forge-add-pane-heading" }, "Browser-based sign-in");
+    const oauthBody = el("div", { className: "forge-add-pane-body" });
+    const oauth = el("div", { className: "forge-add-pane-section" }, oauthHeading, oauthBody);
     pane.appendChild(oauth);
     void startGitHubDeviceFlow(oauthBody, oauthDeps);
 
-    const divider = document.createElement("hr");
-    divider.className = "forge-add-pane-divider";
+    const divider = el("hr", { className: "forge-add-pane-divider" });
     pane.appendChild(divider);
   }
 
   // PAT form (works for every kind via the kind-agnostic backend).
-  const patSection = document.createElement("div");
-  patSection.className = "forge-add-pane-section";
-  const patHeading = document.createElement("h4");
-  patHeading.className = "forge-add-pane-heading";
-  patHeading.textContent = "Personal access token";
-  patSection.appendChild(patHeading);
-  const patBody = document.createElement("div");
-  patBody.className = "forge-add-pane-body";
-  patSection.appendChild(patBody);
+  const patHeading = el("h4", { className: "forge-add-pane-heading" }, "Personal access token");
+  const patBody = el("div", { className: "forge-add-pane-body" });
+  const patSection = el("div", { className: "forge-add-pane-section" }, patHeading, patBody);
   pane.appendChild(patSection);
 
   slot.appendChild(pane);
@@ -844,7 +815,7 @@ function closeSlot(slot: HTMLElement): void {
 function slotOf(section: HTMLElement): HTMLElement {
   const slot = section.querySelector<HTMLElement>("[data-forge-slot]");
   if (slot === null) {
-    const div = document.createElement("div");
+    const div = el("div");
     section.appendChild(div);
     return div;
   }
@@ -908,8 +879,6 @@ function escapeAttr(s: string): string {
 
 function setStatus(host: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {
   host.innerHTML = "";
-  const div = document.createElement("div");
-  div.className = `forge-card-status ${kind}`;
-  div.textContent = text;
+  const div = el("div", { className: `forge-card-status ${kind}` }, text);
   host.appendChild(div);
 }

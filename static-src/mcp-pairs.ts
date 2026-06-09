@@ -2,6 +2,7 @@
 // MCP key/value pair editor — reusable sub-module for env vars and headers.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { type KeyPair, SECRET_MASK } from "./mcp-state.js";
 import { ICON_CLOSE } from "./icons.js";
 
@@ -22,20 +23,21 @@ export function renderKeyPairList(host: HTMLDivElement, pairs: KeyPair[], kind: 
 const touchedInputs = new WeakSet<HTMLInputElement>();
 
 export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind): void {
-  const row = document.createElement("div");
-  row.className = "mcp-pair-row";
+  const row = el("div", { className: "mcp-pair-row" });
 
-  const nameIn = document.createElement("input");
-  nameIn.type = "text";
-  nameIn.className = "tool-form-input mcp-pair-name";
-  nameIn.placeholder = kind === "env" ? "VAR_NAME" : "Header-Name";
-  nameIn.value = kv.name;
+  const nameIn = el("input", {
+    type: "text",
+    className: "tool-form-input mcp-pair-name",
+    placeholder: kind === "env" ? "VAR_NAME" : "Header-Name",
+    value: kv.name,
+  });
 
-  const valIn = document.createElement("input");
-  valIn.type = kv.value === SECRET_MASK ? "password" : "text";
-  valIn.className = "tool-form-input mcp-pair-value";
-  valIn.placeholder = kind === "env" ? "value" : "value";
-  valIn.value = kv.value;
+  const valIn = el("input", {
+    type: kv.value === SECRET_MASK ? "password" : "text",
+    className: "tool-form-input mcp-pair-value",
+    placeholder: kind === "env" ? "value" : "value",
+    value: kv.value,
+  }) as HTMLInputElement;
   if (kv.value === SECRET_MASK) {
     valIn.dataset["secret"] = "true";
     valIn.dataset["wasSecret"] = "true";
@@ -62,11 +64,12 @@ export function appendKeyPair(host: HTMLDivElement, kv: KeyPair, kind: PairKind)
     touchedInputs.delete(valIn);
   });
 
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "icon-btn mcp-pair-del";
-  del.title = "Remove";
-  del.setAttribute("aria-label", "Remove");
+  const del = el("button", {
+    type: "button",
+    className: "icon-btn mcp-pair-del",
+    title: "Remove",
+    "aria-label": "Remove",
+  });
   del.innerHTML = ICON_CLOSE;
   del.addEventListener("click", () => {
     row.remove();

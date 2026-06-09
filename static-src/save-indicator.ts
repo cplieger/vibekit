@@ -7,14 +7,13 @@
 // naturally because each call resets the state machine.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {
-  const d = document.createElement("div");
-  d.className = "spinner-sm";
-  return d;
+  return el("div", { className: "spinner-sm" }) as HTMLDivElement;
 }
 
 let fadeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -51,9 +50,9 @@ export function showSaving(): void {
   // next showSaved should not be delayed by an old error.
   lastErrorAt = 0;
   clearTimers();
-  const el = $.settingsSaveStatus;
-  el.replaceChildren(spinnerNode());
-  el.classList.remove("hidden", "fade-out");
+  const statusEl = $.settingsSaveStatus;
+  statusEl.replaceChildren(spinnerNode());
+  statusEl.classList.remove("hidden", "fade-out");
 }
 
 export function showSaved(): void {
@@ -85,13 +84,13 @@ function doShowSaved(): void {
   }
   fadeTimer = undefined;
   hideTimer = undefined;
-  const el = $.settingsSaveStatus;
-  el.replaceChildren(iconEl(ICON_SAVE_OK));
-  el.classList.remove("hidden", "fade-out");
+  const statusEl = $.settingsSaveStatus;
+  statusEl.replaceChildren(iconEl(ICON_SAVE_OK));
+  statusEl.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
-    el.classList.add("fade-out");
+    statusEl.classList.add("fade-out");
     hideTimer = setTimeout(() => {
-      el.classList.add("hidden");
+      statusEl.classList.add("hidden");
     }, 400);
   }, 1200);
 }
@@ -103,13 +102,13 @@ export function showError(): void {
   lastShownAt = Date.now();
   lastErrorAt = Date.now();
   clearTimers();
-  const el = $.settingsSaveStatus;
-  el.replaceChildren(iconEl(ICON_SAVE_FAIL));
-  el.classList.remove("hidden", "fade-out");
+  const statusEl = $.settingsSaveStatus;
+  statusEl.replaceChildren(iconEl(ICON_SAVE_FAIL));
+  statusEl.classList.remove("hidden", "fade-out");
   fadeTimer = setTimeout(() => {
-    el.classList.add("fade-out");
+    statusEl.classList.add("fade-out");
     hideTimer = setTimeout(() => {
-      el.classList.add("hidden");
+      statusEl.classList.add("hidden");
     }, 400);
   }, 2400); // longer than success — error deserves more eye time
 }

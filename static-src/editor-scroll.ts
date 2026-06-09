@@ -4,6 +4,8 @@
 // line?)` after the target file's content is rendered.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 import { $ } from "./dom.js";
 
 /** Smooth-scroll the editor pane so the given 1-based line lands in the
@@ -29,8 +31,7 @@ export function flashEditorLine(line: number): void {
   }
   const lh = getLineHeight();
   const pad = getPaddingTop();
-  const flash = document.createElement("div");
-  flash.className = "editor-line-flash";
+  const flash = el("div", { className: "editor-line-flash" });
   flash.style.top = `${String(pad + (line - 1) * lh)}px`;
   flash.style.height = `${String(lh)}px`;
   scroller.appendChild(flash);

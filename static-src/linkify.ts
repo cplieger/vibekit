@@ -5,6 +5,7 @@
 // code samples aren't clobbered.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { openFile } from "./editor-openers.js";
 import { fileIcon } from "./icons.js";
 import { FILE_EXTS } from "./file-extensions.js";
@@ -69,17 +70,16 @@ function makeLink(path: string, lineStr: string | undefined): HTMLButtonElement 
   const line = lineStr !== undefined ? parseInt(lineStr, 10) : undefined;
   const basename = path.split("/").pop() ?? path;
   const label = line !== undefined ? `${basename}:${String(line)}` : basename;
-  const btn = document.createElement("button");
-  btn.className = "inline-file-link";
-  btn.title = line !== undefined ? `${path}:${String(line)}` : path;
-  const iconSpan = document.createElement("span");
-  iconSpan.className = "inline-file-icon";
+  const btn = el("button", {
+    className: "inline-file-link",
+    title: line !== undefined ? `${path}:${String(line)}` : path,
+  });
+  const iconSpan = el("span", { className: "inline-file-icon" });
   iconSpan.innerHTML = fileIcon(basename, false);
-  const labelSpan = document.createElement("span");
-  labelSpan.textContent = label;
+  const labelSpan = el("span", undefined, label);
   btn.append(iconSpan, labelSpan);
   btn.addEventListener("click", () => {
     openFile(path, line);
   });
-  return btn;
+  return btn as HTMLButtonElement;
 }

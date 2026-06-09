@@ -4,6 +4,7 @@
 // All icons use fill='currentColor' to inherit the parent text color.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import type { ToolKind } from "./types.js";
 import { extToIconKey } from "./file-extensions.js";
 
@@ -301,8 +302,7 @@ const iconTemplateCache = new Map<string, HTMLElement>();
 export function iconEl(svgStr: string): HTMLElement {
   let tpl = iconTemplateCache.get(svgStr);
   if (tpl === undefined) {
-    tpl = document.createElement("span");
-    tpl.className = "icon-wrap";
+    tpl = el("span", { className: "icon-wrap" });
     tpl.innerHTML = svgStr;
     iconTemplateCache.set(svgStr, tpl);
   }

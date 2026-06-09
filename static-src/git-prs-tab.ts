@@ -25,6 +25,7 @@ import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 import { escAttr as escapeHTML } from "./strings.js";
 
 // --- Types ---
@@ -226,7 +227,7 @@ function paintInner(): void {
     // Wipe any prior keyed sections, then show centered empty state.
     reconcile(root, [] as RepoGroup[], {
       key: (g) => g.full_name,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
     for (const child of [...root.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
@@ -244,7 +245,7 @@ function paintInner(): void {
   if (visible.length === 0) {
     reconcile(root, [] as RepoGroup[], {
       key: (g) => g.full_name,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
     for (const child of [...root.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
@@ -301,10 +302,9 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
   if (g.error !== undefined && g.error !== "") {
     body.replaceChildren();
-    const err = document.createElement("div");
-    err.className = "git-repo-row-error";
-    err.textContent = `Failed to load PRs: ${g.error}`;
-    body.appendChild(err);
+    body.appendChild(
+      el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
+    );
     return;
   }
 
@@ -316,17 +316,19 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
   if (filtered.length === 0) {
     body.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "git-repo-row-empty";
-    empty.textContent = `No open pull requests on ${kindTitle(g.forge_kind)}.`;
-    body.appendChild(empty);
+    body.appendChild(
+      el(
+        "div",
+        { className: "git-repo-row-empty" },
+        `No open pull requests on ${kindTitle(g.forge_kind)}.`,
+      ),
+    );
     return;
   }
 
   let list = body.querySelector<HTMLElement>(":scope > .git-pr-list");
   if (list === null) {
-    list = document.createElement("ul");
-    list.className = "git-pr-list";
+    list = el("ul", { className: "git-pr-list" });
     body.replaceChildren(list);
   }
   reconcile(list, filtered, {
@@ -350,9 +352,7 @@ function renderEmptyState(opts: { icon: string; title: string; hint: string }): 
 function renderGroup(g: RepoGroup): HTMLElement {
   const expandedDefault = g.prs.length > 0 || filterText !== "";
 
-  const section = document.createElement("section");
-  section.className = "git-repo-section";
-  section.dataset["repo"] = g.full_name;
+  const section = el("section", { className: "git-repo-section", "data-repo": g.full_name });
   if (expandedDefault) {
     section.classList.add("expanded");
   }
@@ -361,13 +361,13 @@ function renderGroup(g: RepoGroup): HTMLElement {
   // name + count (left side, click-to-toggle), and a right-aligned
   // [+ New PR] button. The button's stopPropagation keeps the
   // toggle from firing when the user clicks New PR.
-  const header = document.createElement("div");
-  header.className = "git-repo-section-header git-repo-section-header-row";
+  const header = el("div", { className: "git-repo-section-header git-repo-section-header-row" });
 
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "git-repo-section-header-toggle";
-  toggle.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
+  const toggle = el("button", {
+    type: "button",
+    className: "git-repo-section-header-toggle",
+    "aria-expanded": expandedDefault ? "true" : "false",
+  });
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
   toggle.innerHTML = `
@@ -382,10 +382,7 @@ function renderGroup(g: RepoGroup): HTMLElement {
   });
   header.appendChild(toggle);
 
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.className = "btn-small btn-primary";
-  newBtn.textContent = "+ New PR";
+  const newBtn = el("button", { type: "button", className: "btn-small btn-primary" }, "+ New PR");
   newBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     openNewPRDialog(g);
@@ -394,22 +391,22 @@ function renderGroup(g: RepoGroup): HTMLElement {
 
   section.appendChild(header);
 
-  const body = document.createElement("div");
-  body.className = "git-repo-section-body";
+  const body = el("div", { className: "git-repo-section-body" });
 
   if (g.error !== undefined && g.error !== "") {
-    const err = document.createElement("div");
-    err.className = "git-repo-row-error";
-    err.textContent = `Failed to load PRs: ${g.error}`;
-    body.appendChild(err);
+    body.appendChild(
+      el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
+    );
   } else if (g.prs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-repo-row-empty";
-    empty.textContent = `No open pull requests on ${kindTitle(g.forge_kind)}.`;
-    body.appendChild(empty);
+    body.appendChild(
+      el(
+        "div",
+        { className: "git-repo-row-empty" },
+        `No open pull requests on ${kindTitle(g.forge_kind)}.`,
+      ),
+    );
   } else {
-    const list = document.createElement("ul");
-    list.className = "git-pr-list";
+    const list = el("ul", { className: "git-pr-list" });
     const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
     const filtered =
       filterText === "" || groupMatchesFilter
@@ -426,11 +423,9 @@ function renderGroup(g: RepoGroup): HTMLElement {
 }
 
 function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "git-pr-row";
+  const li = el("li", { className: "git-pr-row" });
 
-  const meta = document.createElement("div");
-  meta.className = "git-pr-row-meta";
+  const meta = el("div", { className: "git-pr-row-meta" });
 
   // Title + number share one click target — opens the PR on the
   // forge in a new tab. Keeps the row reading like a link without
@@ -438,18 +433,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const hasURL = pr.url !== undefined && pr.url !== "";
   const linkOrSpan = (cls: string, text: string): HTMLElement => {
     if (hasURL) {
-      const a = document.createElement("a");
-      a.className = cls;
-      a.href = pr.url!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-      a.target = "_blank";
-      a.rel = "noreferrer";
-      a.textContent = text;
+      const a = el("a", { className: cls, target: "_blank", rel: "noreferrer" }, text);
+      a.setAttribute("href", pr.url!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       return a;
     }
-    const s = document.createElement("span");
-    s.className = cls;
-    s.textContent = text;
-    return s;
+    return el("span", { className: cls }, text);
   };
 
   const num = linkOrSpan("git-pr-row-number", `#${pr.number}`);
@@ -460,16 +448,12 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   meta.appendChild(title);
 
   if (pr.draft === true) {
-    const draft = document.createElement("span");
-    draft.className = "git-pr-row-tag";
-    draft.textContent = "draft";
-    meta.appendChild(draft);
+    meta.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
   }
 
   li.appendChild(meta);
 
-  const sub = document.createElement("div");
-  sub.className = "git-pr-row-sub";
+  const sub = el("div", { className: "git-pr-row-sub" });
   const parts: string[] = [];
   if (pr.author !== undefined && pr.author !== "") {
     parts.push(`by @${pr.author}`);
@@ -484,13 +468,13 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   li.appendChild(sub);
 
   // Actions
-  const actions = document.createElement("div");
-  actions.className = "git-pr-row-actions";
+  const actions = el("div", { className: "git-pr-row-actions" });
 
-  const merge = document.createElement("button");
-  merge.type = "button";
-  merge.className = "btn-small btn-primary";
-  merge.textContent = "Merge";
+  const merge = el(
+    "button",
+    { type: "button", className: "btn-small btn-primary" },
+    "Merge",
+  ) as HTMLButtonElement;
   const mergeReason = computeMergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
   merge.setAttribute(
@@ -519,10 +503,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   });
   actions.appendChild(merge);
 
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "btn-small btn-danger";
-  close.textContent = "Close";
+  const close = el(
+    "button",
+    { type: "button", className: "btn-small btn-danger" },
+    "Close",
+  ) as HTMLButtonElement;
   close.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(

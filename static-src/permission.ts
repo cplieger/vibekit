@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { PermissionOption } from "./types.js";
+import { el } from "@cplieger/reactive";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
@@ -48,54 +49,44 @@ export function showPermissionDialog(
   // Build content via DOM construction (no innerHTML).
   content.replaceChildren();
 
-  const headingEl = document.createElement("strong");
-  headingEl.textContent = heading;
-  content.appendChild(headingEl);
+  content.appendChild(el("strong", null, heading));
 
   if (isModeSwitch) {
-    const originDiv = document.createElement("div");
-    originDiv.className = "approval-origin";
-    originDiv.textContent = title;
-    content.appendChild(originDiv);
+    content.appendChild(el("div", { className: "approval-origin" }, title));
   } else if (isSubagent) {
     const agentName = getSubagentName(subSessionId);
-    const originDiv = document.createElement("div");
-    originDiv.className = "approval-origin";
-    originDiv.append("for subagent ");
-    const strong = document.createElement("strong");
-    strong.textContent = agentName;
-    originDiv.appendChild(strong);
-    content.appendChild(originDiv);
+    content.appendChild(
+      el("div", { className: "approval-origin" }, "for subagent ", el("strong", null, agentName)),
+    );
   } else if (mcp !== null) {
-    const originDiv = document.createElement("div");
-    originDiv.className = "approval-origin";
-    originDiv.append("from ");
-    const strong = document.createElement("strong");
-    strong.textContent = mcp.server;
-    originDiv.appendChild(strong);
-    originDiv.append(" MCP integration");
-    content.appendChild(originDiv);
+    content.appendChild(
+      el(
+        "div",
+        { className: "approval-origin" },
+        "from ",
+        el("strong", null, mcp.server),
+        " MCP integration",
+      ),
+    );
   }
 
-  const idDiv = document.createElement("div");
-  idDiv.className = "approval-id";
-  idDiv.textContent = toolCallId;
-  content.appendChild(idDiv);
+  content.appendChild(el("div", { className: "approval-id" }, toolCallId));
 
   if (preview !== "") {
-    const preEl = document.createElement("pre");
-    preEl.className = "approval-input";
-    preEl.textContent = preview;
-    content.appendChild(preEl);
+    content.appendChild(el("pre", { className: "approval-input" }, preview));
   }
 
   actions.replaceChildren();
   for (const opt of options) {
-    const btn = document.createElement("button");
-    btn.textContent = opt.name;
-    btn.className = opt.kind.startsWith("allow")
-      ? "btn-small confirm-allow"
-      : "btn-small confirm-danger";
+    const btn = el(
+      "button",
+      {
+        className: opt.kind.startsWith("allow")
+          ? "btn-small confirm-allow"
+          : "btn-small confirm-danger",
+      },
+      opt.name,
+    );
     btn.addEventListener("click", () => {
       onSelect(opt.option_id);
       hidePermission();
@@ -181,23 +172,14 @@ function buildAlwaysAllowRow(
     presets.push(command.trim());
   }
 
-  const details = document.createElement("details");
-  details.className = "always-allow-details";
-  const summary = document.createElement("summary");
-  summary.className = "always-allow-summary";
-  summary.textContent = "Always allow\u2026";
-  details.appendChild(summary);
-
-  const body = document.createElement("div");
-  body.className = "always-allow-body";
+  const body = el("div", { className: "always-allow-body" });
 
   for (const pattern of presets) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "always-allow-preset";
-    const code = document.createElement("code");
-    code.textContent = pattern;
-    row.appendChild(code);
+    const row = el(
+      "button",
+      { type: "button", className: "always-allow-preset" },
+      el("code", null, pattern),
+    );
     row.addEventListener("click", () => {
       void addWhitelistEntry(pattern);
       onSelect(allowOpt.option_id);
@@ -207,17 +189,13 @@ function buildAlwaysAllowRow(
   }
 
   // Custom pattern input.
-  const custom = document.createElement("div");
-  custom.className = "always-allow-custom";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "chip-input";
-  input.placeholder = `${base} *`;
-  input.setAttribute("aria-label", "Custom command pattern");
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "action-pill";
-  addBtn.textContent = "Add";
+  const input = el("input", {
+    type: "text",
+    className: "chip-input",
+    placeholder: `${base} *`,
+    "aria-label": "Custom command pattern",
+  }) as HTMLInputElement;
+  const addBtn = el("button", { type: "button", className: "action-pill" }, "Add");
   addBtn.addEventListener("click", () => {
     const val = input.value.trim();
     if (val === "") {
@@ -227,12 +205,14 @@ function buildAlwaysAllowRow(
     onSelect(allowOpt.option_id);
     hidePermission();
   });
-  custom.appendChild(input);
-  custom.appendChild(addBtn);
-  body.appendChild(custom);
+  body.appendChild(el("div", { className: "always-allow-custom" }, input, addBtn));
 
-  details.appendChild(body);
-  return details;
+  return el(
+    "details",
+    { className: "always-allow-details" },
+    el("summary", { className: "always-allow-summary" }, "Always allow\u2026"),
+    body,
+  ) as HTMLDetailsElement;
 }
 
 export function hidePermission(): void {

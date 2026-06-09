@@ -3,6 +3,7 @@
 // Extracted from forge-auth.ts.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { ICON_DOWNLOAD, ICON_EXTERNAL, ICON_GLOBE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
@@ -23,18 +24,16 @@ export interface RepoDeps {
 }
 
 export function renderRepoRow(repo: Repo, deps: RepoDeps): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "forge-account-repo-row";
+  const li = el("li", { className: "forge-account-repo-row" });
   const cloned = deps.isCloned(repo.name);
 
   li.appendChild(renderRepoState(cloned));
 
-  const idEl = document.createElement("div");
-  idEl.className = "forge-account-repo-identity";
-  const name = document.createElement("span");
-  name.className = "forge-account-repo-name";
-  name.textContent = repo.full_name;
-  idEl.appendChild(name);
+  const idEl = el(
+    "div",
+    { className: "forge-account-repo-identity" },
+    el("span", { className: "forge-account-repo-name" }, repo.full_name),
+  );
   const tags: string[] = [];
   if (repo.private === true) {
     tags.push("private");
@@ -49,10 +48,7 @@ export function renderRepoRow(repo: Repo, deps: RepoDeps): HTMLElement {
     tags.push(repo.default_branch);
   }
   if (tags.length > 0) {
-    const tagSpan = document.createElement("span");
-    tagSpan.className = "forge-account-repo-tags";
-    tagSpan.textContent = tags.join(" · ");
-    idEl.appendChild(tagSpan);
+    idEl.appendChild(el("span", { className: "forge-account-repo-tags" }, tags.join(" · ")));
   }
   li.appendChild(idEl);
 
@@ -61,14 +57,15 @@ export function renderRepoRow(repo: Repo, deps: RepoDeps): HTMLElement {
 }
 
 export function renderRepoState(cloned: boolean): HTMLElement {
-  const state = document.createElement("span");
-  state.className = "forge-account-repo-state";
+  const state = el("span", { className: "forge-account-repo-state" });
   if (cloned) {
-    const dot = document.createElement("span");
-    dot.className = "git-sources-cloned-dot";
-    dot.setAttribute("aria-label", "Cloned");
-    dot.setAttribute("data-tooltip", "Cloned and tracked");
-    state.appendChild(dot);
+    state.appendChild(
+      el("span", {
+        className: "git-sources-cloned-dot",
+        "aria-label": "Cloned",
+        "data-tooltip": "Cloned and tracked",
+      }),
+    );
   } else {
     state.appendChild(iconEl(ICON_GLOBE));
     state.setAttribute("data-tooltip", "Remote, not cloned");
@@ -78,39 +75,50 @@ export function renderRepoState(cloned: boolean): HTMLElement {
 }
 
 export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): HTMLElement {
-  const actions = document.createElement("span");
-  actions.className = "forge-account-repo-actions";
+  const actions = el("span", { className: "forge-account-repo-actions" });
 
   if (repo.url !== undefined && repo.url !== "") {
-    const open = document.createElement("a");
-    open.href = repo.url;
-    open.target = "_blank";
-    open.rel = "noreferrer";
-    open.className = "btn-small icon-only";
-    open.replaceChildren(iconEl(ICON_EXTERNAL));
-    open.setAttribute("data-tooltip", "Open on forge");
-    open.setAttribute("aria-label", "Open on forge");
+    const open = el(
+      "a",
+      {
+        href: repo.url,
+        target: "_blank",
+        rel: "noreferrer",
+        className: "btn-small icon-only",
+        "data-tooltip": "Open on forge",
+        "aria-label": "Open on forge",
+      },
+      iconEl(ICON_EXTERNAL),
+    );
     actions.appendChild(open);
   }
 
   if (cloned) {
-    const trash = document.createElement("button");
-    trash.type = "button";
-    trash.className = "btn-small btn-danger icon-only";
-    trash.replaceChildren(iconEl(ICON_TRASH));
-    trash.setAttribute("data-tooltip", "Remove local copy");
-    trash.setAttribute("aria-label", "Remove local copy");
+    const trash = el(
+      "button",
+      {
+        type: "button",
+        className: "btn-small btn-danger icon-only",
+        "data-tooltip": "Remove local copy",
+        "aria-label": "Remove local copy",
+      },
+      iconEl(ICON_TRASH),
+    ) as HTMLButtonElement;
     trash.addEventListener("click", () => {
       void withAsyncFeedback(trash, () => removeLocalRepo(repo, deps));
     });
     actions.appendChild(trash);
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
-    const clone = document.createElement("button");
-    clone.type = "button";
-    clone.className = "btn-small icon-only";
-    clone.replaceChildren(iconEl(ICON_DOWNLOAD));
-    clone.setAttribute("data-tooltip", "Clone into workspace");
-    clone.setAttribute("aria-label", "Clone into workspace");
+    const clone = el(
+      "button",
+      {
+        type: "button",
+        className: "btn-small icon-only",
+        "data-tooltip": "Clone into workspace",
+        "aria-label": "Clone into workspace",
+      },
+      iconEl(ICON_DOWNLOAD),
+    ) as HTMLButtonElement;
     clone.addEventListener("click", () => {
       void withAsyncFeedback(clone, () => cloneRepo(repo, deps));
     });

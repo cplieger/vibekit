@@ -14,6 +14,7 @@ import { $ } from "./dom.js";
 import { getActiveId } from "./store.js";
 import { load, save } from "./ui-state.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 import type { BannerLevel } from "./types.js";
 
 interface BannerEntry {
@@ -73,26 +74,28 @@ export function showBanner(
     existing.message = message;
     return;
   }
-  const el = document.createElement("div");
-  el.className = `banner banner-${level}`;
-  el.setAttribute("role", level === "error" ? "alert" : "status");
-  const msg = document.createElement("span");
-  msg.className = "banner-msg";
-  msg.textContent = message;
-  el.appendChild(msg);
+  const msg = el("span", { className: "banner-msg" }, message);
+  const node = el(
+    "div",
+    {
+      className: `banner banner-${level}`,
+      role: level === "error" ? "alert" : "status",
+    },
+    msg,
+  ) as HTMLDivElement;
   if (dismissible) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "banner-dismiss";
-    btn.textContent = "\u00d7";
-    btn.ariaLabel = "Dismiss";
+    const btn = el(
+      "button",
+      { type: "button", className: "banner-dismiss", "aria-label": "Dismiss" },
+      "\u00d7",
+    );
     btn.addEventListener("click", () => {
       removeBanner(chatID, code);
       persistDismiss(chatID, code);
     });
-    el.appendChild(btn);
+    node.appendChild(btn);
   }
-  const entry: BannerEntry = { code, chatID, message, level, dismissible, el };
+  const entry: BannerEntry = { code, chatID, message, level, dismissible, el: node };
   banners.set(key, entry);
   renderStack();
 }

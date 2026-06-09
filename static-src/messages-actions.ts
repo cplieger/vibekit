@@ -3,6 +3,7 @@
 // accept/reject. Extracted from messages.ts for single-reason-to-change.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X, iconEl } from "./icons.js";
 import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
@@ -23,24 +24,27 @@ export function clearActionBindings(): void {
 }
 
 /** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
-export function addEditActions(el: HTMLDivElement): void {
-  if (el.querySelector(".tool-edit-actions") !== null) {
+export function addEditActions(card: HTMLDivElement): void {
+  if (card.querySelector(".tool-edit-actions") !== null) {
     return;
   }
-  const filePath = el.dataset["filePath"] ?? "";
+  const filePath = card.dataset["filePath"] ?? "";
   if (filePath === "") {
     return;
   }
 
-  const row = document.createElement("div");
-  row.className = "tool-edit-actions";
+  const row = el("div", { className: "tool-edit-actions" });
 
-  const undoBtn = document.createElement("button");
-  undoBtn.type = "button";
-  undoBtn.className = "turn-action-btn";
-  undoBtn.replaceChildren(iconEl(ICON_UNDO));
-  undoBtn.setAttribute("data-tooltip", "Undo this edit");
-  undoBtn.setAttribute("aria-label", "Undo this edit");
+  const undoBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "turn-action-btn",
+      "data-tooltip": "Undo this edit",
+      "aria-label": "Undo this edit",
+    },
+    iconEl(ICON_UNDO),
+  ) as HTMLButtonElement;
   actionBindUnbinds.push(bindLoadingState("messages.undo_edit", undoBtn));
   undoBtn.addEventListener("click", () => {
     const chatID = getActiveId();
@@ -48,8 +52,8 @@ export function addEditActions(el: HTMLDivElement): void {
       return;
     }
     let tag = "";
-    const group = el.closest(".tool-group");
-    let sibling: Element | null = (group ?? el).previousElementSibling;
+    const group = card.closest(".tool-group");
+    let sibling: Element | null = (group ?? card).previousElementSibling;
     while (sibling !== null) {
       const btn = sibling.querySelector<HTMLElement>(".checkpoint-restore");
       if (btn !== null) {
@@ -74,18 +78,22 @@ export function addEditActions(el: HTMLDivElement): void {
     );
   });
 
-  const diffBtn = document.createElement("button");
-  diffBtn.type = "button";
-  diffBtn.className = "turn-action-btn";
-  diffBtn.replaceChildren(iconEl(ICON_DIFF));
-  diffBtn.setAttribute("data-tooltip", "View diff");
-  diffBtn.setAttribute("aria-label", "View diff");
+  const diffBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "turn-action-btn",
+      "data-tooltip": "View diff",
+      "aria-label": "View diff",
+    },
+    iconEl(ICON_DIFF),
+  );
   diffBtn.addEventListener("click", () => {
     openFileGitDiff(filePath);
   });
 
   row.append(undoBtn, diffBtn);
-  el.appendChild(row);
+  card.appendChild(row);
   void import("./conflicts.js")
     .then((m) => {
       const chatID = getActiveId();
@@ -101,54 +109,68 @@ export function addEditActions(el: HTMLDivElement): void {
 /** Add Accept / Reject / Diff buttons to a tool card whose write is
  *  staged under Supervised mode. */
 function addPendingActions(
-  el: HTMLDivElement,
+  card: HTMLDivElement,
   toolCallID: string,
   chatID: string,
   path: string,
 ): void {
-  const status = el.querySelector(".tool-status");
+  const status = card.querySelector(".tool-status");
   if (status !== null) {
     status.textContent = "awaiting_approval";
     status.className = "tool-status awaiting_approval";
   }
-  el.querySelector(".tool-spinner")?.remove();
+  card.querySelector(".tool-spinner")?.remove();
 
-  const existing = el.querySelector<HTMLDivElement>(".tool-pending-actions");
+  const existing = card.querySelector<HTMLDivElement>(".tool-pending-actions");
   if (existing !== null) {
     existing.dataset["toolCallId"] = toolCallID;
     return;
   }
 
-  const row = document.createElement("div");
-  row.className = "tool-pending-actions";
-  row.dataset["toolCallId"] = toolCallID;
+  const row = el("div", {
+    className: "tool-pending-actions",
+    "data-tool-call-id": toolCallID,
+    "data-path": path,
+  });
 
-  const diffBtn = document.createElement("button");
-  diffBtn.type = "button";
-  diffBtn.className = "turn-action-btn";
-  diffBtn.replaceChildren(iconEl(ICON_DIFF));
-  diffBtn.setAttribute("data-tooltip", "View diff");
-  diffBtn.setAttribute("aria-label", "View diff");
+  const diffBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "turn-action-btn",
+      "data-tooltip": "View diff",
+      "aria-label": "View diff",
+    },
+    iconEl(ICON_DIFF),
+  );
   diffBtn.addEventListener("click", () => {
     openPendingDiff(chatID, row.dataset["toolCallId"] ?? toolCallID);
   });
 
-  const rejectBtn = document.createElement("button");
-  rejectBtn.type = "button";
-  rejectBtn.className = "turn-action-btn";
-  rejectBtn.replaceChildren(iconEl(ICON_X));
-  rejectBtn.setAttribute("data-tooltip", "Reject");
-  rejectBtn.setAttribute("aria-label", "Reject change");
+  const rejectBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "turn-action-btn",
+      "data-tooltip": "Reject",
+      "aria-label": "Reject change",
+    },
+    iconEl(ICON_X),
+  ) as HTMLButtonElement;
   rejectBtn.addEventListener("click", () => {
     resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "reject");
   });
 
-  const acceptBtn = document.createElement("button");
-  acceptBtn.type = "button";
-  acceptBtn.className = "turn-action-btn primary";
-  acceptBtn.replaceChildren(iconEl(ICON_CHECK));
-  acceptBtn.setAttribute("data-tooltip", "Accept");
-  acceptBtn.setAttribute("aria-label", "Accept change");
+  const acceptBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "turn-action-btn primary",
+      "data-tooltip": "Accept",
+      "aria-label": "Accept change",
+    },
+    iconEl(ICON_CHECK),
+  ) as HTMLButtonElement;
   acceptBtn.addEventListener("click", () => {
     resolveOne(chatID, row.dataset["toolCallId"] ?? toolCallID, "accept");
   });
@@ -161,8 +183,7 @@ function addPendingActions(
   );
 
   row.append(diffBtn, rejectBtn, acceptBtn);
-  row.dataset["path"] = path;
-  el.appendChild(row);
+  card.appendChild(row);
 }
 
 function resolveOne(chatID: string, toolCallID: string, action: "accept" | "reject"): void {
@@ -185,9 +206,9 @@ function findToolCardForPath(path: string): HTMLDivElement | null {
 }
 
 /** Strip the pending-action row and restore the card's status pill. */
-function removePendingActions(el: HTMLDivElement, finalStatus: "completed" | "failed"): void {
-  el.querySelector(".tool-pending-actions")?.remove();
-  const status = el.querySelector(".tool-status");
+function removePendingActions(card: HTMLDivElement, finalStatus: "completed" | "failed"): void {
+  card.querySelector(".tool-pending-actions")?.remove();
+  const status = card.querySelector(".tool-status");
   if (status !== null) {
     status.textContent = finalStatus;
     status.className = `tool-status ${finalStatus}`;

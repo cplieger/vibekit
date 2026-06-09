@@ -12,6 +12,8 @@
 // a function" TypeError and the "tooltip never dismisses" sticking bug.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 // -- State machine ----------------------------------------------------------
 
 type TooltipState =
@@ -131,15 +133,15 @@ class TooltipController {
     }
     this.teardown();
 
-    const tip = document.createElement("div");
-    tip.className = "vk-tooltip";
-    tip.textContent = text;
-    tip.setAttribute("role", "tooltip");
     // Generate a unique id so screen readers can associate the
     // tooltip with the anchor via aria-describedby. Without this the
     // tooltip is purely visual — AT users never hear the content.
     const tipID = `vk-tip-${++tipIDSeq}`;
-    tip.id = tipID;
+    const tip = el(
+      "div",
+      { className: "vk-tooltip", role: "tooltip", id: tipID },
+      text,
+    ) as HTMLDivElement;
     document.body.appendChild(tip);
     anchor.setAttribute("aria-describedby", tipID);
 

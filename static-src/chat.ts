@@ -19,7 +19,7 @@ import {
   removeChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
-import { effect } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 import { renderStack as renderBanners } from "./banner-stack.js";
 import { sendPromptTo } from "./chat-commands.js";
@@ -147,13 +147,9 @@ export function activateChatView(id: string): void {
       }
       if (!ok) {
         // Show retry button on failed load.
-        const retry = document.createElement("div");
-        retry.className = "load-error";
+        const retry = el("div", { className: "load-error" });
         retry.innerHTML = "<span>Failed to load messages.</span>";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "btn-small";
-        btn.textContent = "Retry";
+        const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
         btn.addEventListener("click", () => {
           retry.remove();
           activateChatView(id);

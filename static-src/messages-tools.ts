@@ -16,7 +16,7 @@
 
 import type { ToolCall, ToolStatus, ToolDiff } from "./types.js";
 import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
-import { effect } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
 import { ICON_CHEVRON_UP } from "./icons.js";
 import {
@@ -126,9 +126,10 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     if (isSubAgentActive()) {
       const preview = formatNestedToolPreview(tc);
       appendToSubAgent(preview);
-      const placeholder = document.createElement("div");
-      placeholder.className = "subagent-folded-tool";
-      placeholder.dataset["toolId"] = tc.id;
+      const placeholder = el("div", {
+        className: "subagent-folded-tool",
+        "data-tool-id": tc.id,
+      }) as HTMLDivElement;
       toolEls.set(tc.id, placeholder);
       const sig = ensureToolCallSig(tc.id, tc);
       let last = tc;
@@ -166,8 +167,8 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     if (tc.locations !== undefined && tc.locations.length > 0) {
       opts.locations = tc.locations;
     }
-    const el = buildToolCard(opts);
-    toolEls.set(tc.id, el);
+    const card = buildToolCard(opts);
+    toolEls.set(tc.id, card);
 
     if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
       addToolToCrewRow(tc.sub_session_id, tc);
@@ -180,12 +181,12 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
       if (next === lastApplied) {
         return;
       }
-      applyToolCallUpdate(el, next);
+      applyToolCallUpdate(card, next);
       mirrorToolUpdateToCrew(next);
       lastApplied = next;
     });
     toolEffects.set(tc.id, cleanup);
-    return el;
+    return card;
   },
   update: (el, tc) => {
     if (el.classList.contains("subagent-call")) {
@@ -271,70 +272,71 @@ function mirrorToolUpdateToCrew(tc: ToolCall): void {
 }
 
 function applyStatusUpdate(
-  el: HTMLDivElement,
+  card: HTMLDivElement,
   status: ToolStatus,
   serverDurationMs: number | undefined,
   toolId: string,
 ): void {
-  const s = el.querySelector(".tool-status");
+  const s = card.querySelector(".tool-status");
   if (s !== null) {
     s.textContent = status;
     s.className = `tool-status ${status}`;
   }
   const done = isToolDone(status);
   if (done) {
-    el.querySelector(".tool-spinner")?.remove();
-    untrackInProgress(el);
+    card.querySelector(".tool-spinner")?.remove();
+    untrackInProgress(card);
     const ms =
       serverDurationMs ??
       (() => {
-        const start = el.dataset["startMs"];
+        const start = card.dataset["startMs"];
         if (start === undefined) {
           return 0;
         }
-        delete el.dataset["startMs"];
+        delete card.dataset["startMs"];
         return Date.now() - parseInt(start, 10);
       })();
-    const dur = el.querySelector(".tool-duration");
+    const dur = card.querySelector(".tool-duration");
     if (dur !== null && ms >= 1000) {
       dur.textContent = formatDuration(ms);
     }
-    maybeCollapseGroup(el);
-    const group = el.closest(".tool-group");
+    maybeCollapseGroup(card);
+    const group = card.closest(".tool-group");
     if (group !== null) {
       _refreshGroupHeader(group as HTMLElement);
     }
-    if (status === "completed" && el.dataset["kind"] === "edit") {
-      addEditActions(el);
+    if (status === "completed" && card.dataset["kind"] === "edit") {
+      addEditActions(card);
     }
   }
   if (status === "failed") {
-    el.querySelector(".tool-details")?.classList.remove("collapsed");
-    const b = el.querySelector(".tool-toggle");
+    card.querySelector(".tool-details")?.classList.remove("collapsed");
+    const b = card.querySelector(".tool-toggle");
     if (b !== null) {
       b.textContent = "";
       b.appendChild(_svgTemplate(ICON_CHEVRON_UP)());
     }
-    if (el.querySelector(".tool-explain-btn") === null) {
-      const output = el.querySelector(".tool-output")?.textContent ?? "";
+    if (card.querySelector(".tool-explain-btn") === null) {
+      const output = card.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "tool-explain-btn";
-        btn.textContent = "Explain this error";
+        const btn = el(
+          "button",
+          { type: "button", className: "tool-explain-btn" },
+          "Explain this error",
+        ) as HTMLButtonElement;
         _pushBind(
           toolId,
           bindLoadingState("messages.explain_error", btn, { pendingClass: "btn-loading" }),
         );
         btn.addEventListener("click", () => {
-          void _explainError(output, el.dataset["title"] ?? "").then((explanation) => {
+          void _explainError(output, card.dataset["title"] ?? "").then((explanation) => {
             if (explanation !== "") {
               btn.textContent = explanation;
               btn.className = "tool-explain-result";
             }
           });
         });
-        el.appendChild(btn);
+        card.appendChild(btn);
       }
     }
   }
@@ -349,21 +351,21 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
   }
 }
 
-function applyOutputUpdate(el: HTMLDivElement, output: string): void {
-  const box = el.querySelector(".tool-output-box");
+function applyOutputUpdate(card: HTMLDivElement, output: string): void {
+  const box = card.querySelector(".tool-output-box");
   if (box !== null) {
     const pre = box.querySelector("pre");
     if (pre !== null) {
       pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
     } else {
-      const newPre = document.createElement("pre");
+      const newPre = el("pre");
       newPre.innerHTML = ansiToHtml(output);
       box.appendChild(newPre);
     }
     box.scrollTop = box.scrollHeight;
     return;
   }
-  const out = el.querySelector(".tool-output");
+  const out = card.querySelector(".tool-output");
   if (out === null) {
     return;
   }
@@ -371,7 +373,7 @@ function applyOutputUpdate(el: HTMLDivElement, output: string): void {
   if (existingPre !== null) {
     existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
   } else {
-    const pre = document.createElement("pre");
+    const pre = el("pre");
     pre.innerHTML = ansiToHtml(output);
     out.appendChild(pre);
   }

@@ -5,6 +5,7 @@
 // cycle with shell.ts).
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { highlightByLang, normalizeLang } from "./highlight.js";
 import { ICON_COPY, ICON_PLAY, iconEl } from "./icons.js";
 
@@ -53,14 +54,11 @@ function decorateOne(pre: HTMLElement): void {
     codeEl.innerHTML = highlightByLang(text, hlLang);
   }
 
-  const wrap = document.createElement("div");
-  wrap.className = "code-wrap";
+  const wrap = el("div", { className: "code-wrap" });
   pre.parentElement?.insertBefore(wrap, pre);
   wrap.appendChild(pre);
 
-  const actions = document.createElement("div");
-  actions.className = "code-actions";
-  actions.appendChild(makeCopyButton(text));
+  const actions = el("div", { className: "code-actions" }, makeCopyButton(text));
   if (isRunnableShell(lang, text)) {
     actions.appendChild(makeRunButton(text));
   }
@@ -103,11 +101,11 @@ export function isRunnableShell(lang: string, text: string): boolean {
 }
 
 function makeCopyButton(text: string): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.className = "code-act-btn";
-  btn.setAttribute("data-tooltip", "Copy");
-  btn.setAttribute("aria-label", "Copy");
-  btn.replaceChildren(iconEl(ICON_COPY));
+  const btn = el(
+    "button",
+    { className: "code-act-btn", "data-tooltip": "Copy", "aria-label": "Copy" },
+    iconEl(ICON_COPY),
+  ) as HTMLButtonElement;
   let timer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener("click", () => {
     if (copyCb !== null) {
@@ -123,9 +121,7 @@ function makeCopyButton(text: string): HTMLButtonElement {
 }
 
 function makeRunButton(text: string): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.className = "code-act-btn";
-  btn.replaceChildren(iconEl(ICON_PLAY));
+  const btn = el("button", { className: "code-act-btn" }, iconEl(ICON_PLAY)) as HTMLButtonElement;
   if (shellRunCb === null) {
     btn.setAttribute("data-tooltip", "Shell not available");
     btn.setAttribute("aria-label", "Shell not available");

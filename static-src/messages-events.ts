@@ -7,7 +7,7 @@
 
 import type { Message, EventKind, Crew } from "./types.js";
 import { ensureCrewSig, clearCrewSig } from "./store-signals.js";
-import { effect } from "@cplieger/reactive";
+import { el, effect } from "@cplieger/reactive";
 import { updateCrew as updateCrewInternal, buildCrewCardForReplay } from "./crew-card.js";
 
 // ---------------------------------------------------------------------------
@@ -62,12 +62,8 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
   cancelled: { kind: "skip" },
   inbox: {
     kind: "inline",
-    render: (m) => {
-      const el = document.createElement("div");
-      el.className = "message system inbox-message";
-      el.textContent = m.content ?? "Subagent message";
-      return el;
-    },
+    render: (m) =>
+      el("div", { className: "message system inbox-message" }, m.content ?? "Subagent message"),
   },
   crew: {
     kind: "inline",
@@ -133,7 +129,7 @@ export function updateEvent(_el: HTMLElement, _m: Message): void {
 // ---------------------------------------------------------------------------
 
 function buildCrewEvent(msgId: string, crew: Crew): HTMLElement {
-  const el = buildCrewCardForReplay(msgId, crew);
+  const node = buildCrewCardForReplay(msgId, crew);
   const sig = ensureCrewSig(msgId, crew);
   let lastApplied = crew;
   const cleanup = effect(() => {
@@ -142,17 +138,16 @@ function buildCrewEvent(msgId: string, crew: Crew): HTMLElement {
       return;
     }
     updateCrewInternal(msgId, next, () => {
-      /* no-op: el already mounted */
+      /* no-op: node already mounted */
     });
     lastApplied = next;
   });
   crewEffects.set(msgId, cleanup);
-  return el;
+  return node;
 }
 
-function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = `boundary boundary-${kind}`;
+function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLElement {
+  const node = el("div", { className: `boundary boundary-${kind}` });
   let icon = "";
   for (const entry of Object.values(EVENT_RENDER_MAP)) {
     if (entry.kind === "boundary" && entry.boundary === kind) {
@@ -160,20 +155,11 @@ function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLDivElement
       break;
     }
   }
-  const iconSpan = document.createElement("span");
-  iconSpan.className = "boundary-icon";
-  iconSpan.textContent = icon;
-  el.appendChild(iconSpan);
-  const labelSpan = document.createElement("span");
-  labelSpan.className = "boundary-label";
-  labelSpan.textContent = label;
-  el.appendChild(labelSpan);
-  return el;
+  node.appendChild(el("span", { className: "boundary-icon" }, icon));
+  node.appendChild(el("span", { className: "boundary-label" }, label));
+  return node;
 }
 
 export function buildSystemFallback(m: Message): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "message system";
-  el.textContent = m.content ?? m.event_kind ?? "";
-  return el;
+  return el("div", { className: "message system" }, m.content ?? m.event_kind ?? "");
 }

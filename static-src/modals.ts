@@ -2,7 +2,8 @@
 // Shared modal utilities (close, overlay dismiss, confirm dialog, login)
 // ---------------------------------------------------------------------------
 
-import { $, el } from "./dom.js";
+import { el } from "@cplieger/reactive";
+import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { isSafeUrl } from "./utils-url.js";
@@ -102,7 +103,7 @@ export class RollingOutput {
   }
 
   private openModal(): void {
-    const modal = el<HTMLDivElement>(this.modalId);
+    const modal = byId<HTMLDivElement>(this.modalId);
     const body = modal.querySelector(".subagent-modal-body, pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     if (body !== null) {
@@ -152,13 +153,13 @@ export function hideLoginModal(): void {
 }
 
 export function initLoginModal(onLoggedIn: () => void): void {
-  const freeBtn = el<HTMLButtonElement>("modal-login-free");
-  const ssoBtn = el<HTMLButtonElement>("modal-login-sso");
-  const ssoForm = el<HTMLDivElement>("modal-sso-form");
-  const ssoSubmit = el<HTMLButtonElement>("modal-sso-submit");
-  const providerInput = el<HTMLInputElement>("modal-provider");
-  const regionInput = el<HTMLInputElement>("modal-region");
-  const status = el<HTMLDivElement>("modal-status");
+  const freeBtn = byId<HTMLButtonElement>("modal-login-free");
+  const ssoBtn = byId<HTMLButtonElement>("modal-login-sso");
+  const ssoForm = byId<HTMLDivElement>("modal-sso-form");
+  const ssoSubmit = byId<HTMLButtonElement>("modal-sso-submit");
+  const providerInput = byId<HTMLInputElement>("modal-provider");
+  const regionInput = byId<HTMLInputElement>("modal-region");
+  const status = byId<HTMLDivElement>("modal-status");
 
   freeBtn.addEventListener("click", () => {
     ssoForm.classList.add("hidden");
@@ -239,11 +240,8 @@ function doLogin(
         if (d.error === "already_logged_in") {
           status.textContent = "";
           status.append("You\u2019re already signed in. ");
-          const reloadBtn = document.createElement("button");
-          reloadBtn.type = "button";
-          reloadBtn.className = "btn-small";
+          const reloadBtn = el("button", { type: "button", className: "btn-small" }, "Reload");
           reloadBtn.style.marginInlineStart = "var(--sp-2)";
-          reloadBtn.textContent = "Reload";
           reloadBtn.addEventListener("click", () => {
             location.reload();
           });
@@ -259,26 +257,24 @@ function doLogin(
         status.textContent = "";
         if (codeText) {
           status.append(codeText);
-          status.append(document.createElement("br"));
+          status.append(el("br"));
         }
         if (isSafeUrl(d.url)) {
-          const link = document.createElement("a");
-          link.href = d.url;
-          link.target = "_blank";
-          link.rel = "noopener";
+          const link = el(
+            "a",
+            { href: d.url, target: "_blank", rel: "noopener" },
+            "Open login page",
+          );
           link.style.color = "var(--c-accent)";
-          link.textContent = "Open login page";
           status.append(link);
         } else {
-          const span = document.createElement("span");
+          const span = el("span", null, d.url);
           span.style.color = "var(--c-text-tertiary)";
-          span.textContent = d.url;
           status.append(span);
         }
-        status.append(document.createElement("br"));
-        const hint = document.createElement("span");
+        status.append(el("br"));
+        const hint = el("span", null, "Complete login in the browser, then come back.");
         hint.style.color = "var(--c-text-tertiary)";
-        hint.textContent = "Complete login in the browser, then come back.";
         status.append(hint);
         const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
         const ctrl = new AbortController();

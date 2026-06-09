@@ -7,6 +7,8 @@
 //   if (ok) doDelete();
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 import { trapFocus } from "./focus-trap.js";
 
 let dialogEl: HTMLDialogElement | null = null;
@@ -18,33 +20,33 @@ function ensureDialog(): HTMLDialogElement {
   if (dialogEl !== null) {
     return dialogEl;
   }
-  dialogEl = document.createElement("dialog");
-  dialogEl.className = "vk-confirm-dialog";
   // The <dialog> element gets implicit role="dialog". For destructive
   // variants we upgrade to role="alertdialog" at show-time so AT
   // announces the message with the urgency it deserves.
-  const msgP = document.createElement("p");
-  msgP.className = "vk-confirm-msg";
-  msgP.id = "vk-confirm-msg";
+  const msgP = el("p", { className: "vk-confirm-msg", id: "vk-confirm-msg" });
 
-  const actionsDiv = document.createElement("div");
-  actionsDiv.className = "vk-confirm-actions";
+  const cancelButton = el(
+    "button",
+    { type: "button", className: "vk-confirm-cancel btn-small" },
+    "Cancel",
+  );
 
-  const cancelButton = document.createElement("button");
-  cancelButton.type = "button";
-  cancelButton.className = "vk-confirm-cancel btn-small";
-  cancelButton.textContent = "Cancel";
+  const okButton = el(
+    "button",
+    { type: "button", className: "vk-confirm-ok btn-small confirm-danger" },
+    "Confirm",
+  );
 
-  const okButton = document.createElement("button");
-  okButton.type = "button";
-  okButton.className = "vk-confirm-ok btn-small confirm-danger";
-  okButton.textContent = "Confirm";
+  const actionsDiv = el("div", { className: "vk-confirm-actions" }, cancelButton, okButton);
 
-  actionsDiv.append(cancelButton, okButton);
-  dialogEl.append(msgP, actionsDiv);
   // aria-labelledby links the dialog accname to the message paragraph
   // so SR users hear the message when the dialog opens.
-  dialogEl.setAttribute("aria-labelledby", "vk-confirm-msg");
+  dialogEl = el(
+    "dialog",
+    { className: "vk-confirm-dialog", "aria-labelledby": "vk-confirm-msg" },
+    msgP,
+    actionsDiv,
+  ) as HTMLDialogElement;
   document.body.appendChild(dialogEl);
   return dialogEl;
 }

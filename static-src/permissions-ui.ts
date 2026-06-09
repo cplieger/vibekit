@@ -15,12 +15,13 @@
 
 import { patchSettings } from "./persist.js";
 import type { PermissionMode, AppSettings } from "./persist.js";
-import { el, maybeEl } from "./dom.js";
+import { byId, maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -62,7 +63,7 @@ class PermissionsUIController {
     this.currentList = [...(initial.trust_tools ?? [])];
 
     for (const m of ["trust-all", "trust-list", "prompt"] as PermissionMode[]) {
-      const radio = el<HTMLInputElement>(`perm-mode-${m}`);
+      const radio = byId<HTMLInputElement>(`perm-mode-${m}`);
       radio.checked = this.currentMode === m;
       radio.addEventListener("change", () => {
         if (!radio.checked) {
@@ -82,14 +83,14 @@ class PermissionsUIController {
       });
     }
 
-    const adder = el("trust-list-add");
+    const adder = byId("trust-list-add");
     adder.setAttribute("aria-label", "Add trusted tool");
     adder.setAttribute("aria-expanded", "false");
     adder.addEventListener("click", () => {
       this.toggleMenu();
     });
 
-    const menu = el<HTMLDivElement>("trust-list-menu");
+    const menu = byId<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
       const t = e.target as Node;
       if (!adder.contains(t) && !menu.contains(t)) {
@@ -161,18 +162,18 @@ class PermissionsUIController {
   // --- Private: permission mode ---
 
   private renderEditor(): void {
-    const editor = el<HTMLDivElement>("trust-list-editor");
+    const editor = byId<HTMLDivElement>("trust-list-editor");
     editor.classList.toggle("hidden", this.currentMode !== "trust-list");
     if (this.currentMode !== "trust-list") {
       return;
     }
     this.renderChips();
-    const hint = el<HTMLParagraphElement>("trust-list-empty-hint");
+    const hint = byId<HTMLParagraphElement>("trust-list-empty-hint");
     hint.classList.toggle("hidden", this.currentList.length > 0);
   }
 
   private renderChips(): void {
-    const chips = el<HTMLDivElement>("trust-list-chips");
+    const chips = byId<HTMLDivElement>("trust-list-chips");
     chips.replaceChildren();
     for (const name of this.currentList) {
       chips.appendChild(
@@ -206,8 +207,8 @@ class PermissionsUIController {
   }
 
   private toggleMenu(): void {
-    const menu = el<HTMLDivElement>("trust-list-menu");
-    const adder = el("trust-list-add");
+    const menu = byId<HTMLDivElement>("trust-list-menu");
+    const adder = byId("trust-list-add");
     if (!menu.classList.contains("hidden")) {
       menu.classList.add("hidden");
       adder.setAttribute("aria-expanded", "false");
@@ -219,10 +220,7 @@ class PermissionsUIController {
     reconcile(menu, remaining, {
       key: (name: string) => name,
       mount: (name: string) => {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "chip-menu-item";
-        item.textContent = name;
+        const item = el("button", { type: "button", className: "chip-menu-item" }, name);
         item.addEventListener("click", () => {
           this.addTool(name);
           menu.classList.add("hidden");
@@ -269,11 +267,13 @@ class PermissionsUIController {
     container.replaceChildren();
 
     if (this.commandRules.length === 0) {
-      const hint = document.createElement("p");
-      hint.className = "text-muted text-sm";
-      hint.textContent =
-        "No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.";
-      container.appendChild(hint);
+      container.appendChild(
+        el(
+          "p",
+          { className: "text-muted text-sm" },
+          "No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.",
+        ),
+      );
       return;
     }
 
@@ -375,11 +375,13 @@ class PermissionsUIController {
     }
     container.replaceChildren();
     if (this.ignoreFiles.length === 0) {
-      const hint = document.createElement("p");
-      hint.className = "text-muted text-sm";
-      hint.textContent =
-        "No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).";
-      container.appendChild(hint);
+      container.appendChild(
+        el(
+          "p",
+          { className: "text-muted text-sm" },
+          "No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).",
+        ),
+      );
       return;
     }
     for (const entry of this.ignoreFiles) {

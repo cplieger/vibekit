@@ -26,6 +26,8 @@
 // higher-priority state arrives).
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 export type BannerKey = "forge-auth-failed" | "gh-cli-missing" | "forges-not-connected";
 
 interface Callbacks {
@@ -112,44 +114,49 @@ class StatusBanner {
   }
 
   private buildContent(key: BannerKey): HTMLElement {
-    const wrap = document.createElement("div");
-    wrap.className = "git-status-banner-row";
-    wrap.dataset["state"] = key;
-
-    const icon = document.createElement("span");
-    icon.className = "git-status-banner-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = key === "forge-auth-failed" ? "⚠" : "ⓘ";
-    wrap.appendChild(icon);
-
-    const msg = document.createElement("span");
-    msg.className = "git-status-banner-msg";
-    msg.textContent = messageFor(key);
-    wrap.appendChild(msg);
-
-    const cta = document.createElement("button");
-    cta.type = "button";
-    cta.className = "btn-small git-status-banner-cta";
-    cta.dataset["bannerCta"] = key;
-    cta.textContent = ctaLabelFor(key);
+    const cta = el(
+      "button",
+      {
+        type: "button",
+        className: "btn-small git-status-banner-cta",
+        "data-banner-cta": key,
+      },
+      ctaLabelFor(key),
+    );
     cta.addEventListener("click", () => {
       this.fireCTA(key);
     });
-    wrap.appendChild(cta);
 
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.className = "icon-btn git-status-banner-dismiss";
-    dismiss.dataset["bannerDismiss"] = key;
-    dismiss.setAttribute("aria-label", "Dismiss");
-    dismiss.textContent = "✕";
+    const dismiss = el(
+      "button",
+      {
+        type: "button",
+        className: "icon-btn git-status-banner-dismiss",
+        "data-banner-dismiss": key,
+        "aria-label": "Dismiss",
+      },
+      "✕",
+    );
     dismiss.addEventListener("click", () => {
       this.dismissed = key;
       this.render();
     });
-    wrap.appendChild(dismiss);
 
-    return wrap;
+    return el(
+      "div",
+      {
+        className: "git-status-banner-row",
+        "data-state": key,
+      },
+      el(
+        "span",
+        { className: "git-status-banner-icon", "aria-hidden": "true" },
+        key === "forge-auth-failed" ? "⚠" : "ⓘ",
+      ),
+      el("span", { className: "git-status-banner-msg" }, messageFor(key)),
+      cta,
+      dismiss,
+    );
   }
 
   private fireCTA(key: BannerKey): void {

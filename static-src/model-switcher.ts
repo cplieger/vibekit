@@ -22,6 +22,7 @@ import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 import { send } from "./transport.js";
 import { patchSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
@@ -90,7 +91,7 @@ class ModelSwitchController {
     if (session === undefined) {
       reconcile(list, [] as ModelInfo[], {
         key: () => "",
-        mount: () => document.createElement("div"),
+        mount: () => el("div"),
       });
       return;
     }
@@ -104,8 +105,8 @@ class ModelSwitchController {
     reconcile(list, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildModelOption(m),
-      update: (el, m) => {
-        this.syncModelOption(el, m, current);
+      update: (node, m) => {
+        this.syncModelOption(node, m, current);
       },
     });
     wireArrowNav(list, ".pill-model-item");
@@ -136,19 +137,17 @@ class ModelSwitchController {
         });
     }
     if (this.effortRow === null) {
-      this.effortRow = document.createElement("div");
-      this.effortRow.className = "effort-row";
-      this.effortRow.setAttribute("aria-label", "Reasoning effort");
-      const label = document.createElement("span");
-      label.className = "effort-label";
-      label.textContent = "Effort";
-      this.effortRow.appendChild(label);
+      this.effortRow = el(
+        "div",
+        { className: "effort-row", "aria-label": "Reasoning effort" },
+        el("span", { className: "effort-label" }, "Effort"),
+      ) as HTMLDivElement;
       for (const { id: level, label } of EFFORT_LEVELS) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "effort-btn";
-        btn.dataset["level"] = level;
-        btn.textContent = label;
+        const btn = el(
+          "button",
+          { type: "button", className: "effort-btn", "data-level": level },
+          label,
+        );
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           this.setEffort(level);
@@ -195,17 +194,17 @@ class ModelSwitchController {
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {
-    const opt = document.createElement("div");
-    opt.dataset["model"] = m.model_id;
-    opt.setAttribute("role", "option");
     const label = humanName(m.model_name || m.model_id);
-    opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
-    const name = document.createElement("span");
-    name.textContent = label;
-    const meta = document.createElement("span");
-    meta.className = "pill-model-meta";
-    meta.textContent = `${String(m.rate_multiplier)}x`;
-    opt.append(name, meta);
+    const opt = el(
+      "div",
+      {
+        "data-model": m.model_id,
+        role: "option",
+        "aria-label": `${label}, ${String(m.rate_multiplier)}x credits`,
+      },
+      el("span", null, label),
+      el("span", { className: "pill-model-meta" }, `${String(m.rate_multiplier)}x`),
+    );
     // Click handler reads the live "current" each time so a switch from
     // another path (hotkey, REST sync) doesn't leave a stale handler.
     opt.addEventListener("click", (e: MouseEvent) => {

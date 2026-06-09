@@ -44,6 +44,7 @@ import {
   downloadFiles,
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { FileBrowserState } from "./files-state.js";
 export { FileBrowserState } from "./files-state.js";
@@ -325,41 +326,34 @@ function renderList(opts: { transition?: boolean } = {}): void {
 }
 
 function parentRow(): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = FB_ROW;
+  const checkSpan = el("span", { className: FB_CHECK });
 
-  const checkSpan = document.createElement("span");
-  checkSpan.className = FB_CHECK;
+  const icon = el("span", { className: "fb-icon" }, iconEl(FILE_ICONS["folder"] ?? ""));
 
-  const icon = document.createElement("span");
-  icon.className = "fb-icon";
-  icon.replaceChildren(iconEl(FILE_ICONS["folder"] ?? ""));
-
-  const nameSpan = document.createElement("span");
-  nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
-  nameSpan.textContent = "..";
+  const nameSpan = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, "..");
   nameSpan.addEventListener("click", () => {
     navigate(parentPath(state.currentPath));
   });
 
-  const metaSpan = document.createElement("span");
-  metaSpan.className = FB_META;
+  const metaSpan = el("span", { className: FB_META });
 
-  row.append(checkSpan, icon, nameSpan, metaSpan);
+  const row = el(
+    "div",
+    { className: FB_ROW },
+    checkSpan,
+    icon,
+    nameSpan,
+    metaSpan,
+  ) as HTMLDivElement;
   return row;
 }
 
 function entryRow(entry: FileEntry): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = FB_ROW;
-  row.setAttribute("role", "listitem");
-  row.dataset["name"] = entry.name;
-  row.dataset["isDir"] = String(entry.isDir);
-
-  const check = document.createElement("input");
-  check.type = "checkbox";
-  check.className = FB_CHECK;
-  check.checked = state.selected.has(entry.name);
+  const check = el("input", {
+    type: "checkbox",
+    className: FB_CHECK,
+    checked: state.selected.has(entry.name),
+  }) as HTMLInputElement;
   check.addEventListener("change", () => {
     if (check.checked) {
       state.selectEntry(entry.name);
@@ -370,13 +364,9 @@ function entryRow(entry: FileEntry): HTMLDivElement {
     updateRowHighlights();
   });
 
-  const icon = document.createElement("span");
-  icon.className = "fb-icon";
-  icon.replaceChildren(iconEl(fileIcon(entry.name, entry.isDir)));
+  const icon = el("span", { className: "fb-icon" }, iconEl(fileIcon(entry.name, entry.isDir)));
 
-  const name = document.createElement("span");
-  name.className = `${FB_NAME} ${FB_NAME_LINK}`;
-  name.textContent = entry.name;
+  const name = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, entry.name);
   name.addEventListener("click", (e: MouseEvent) => {
     if (e.shiftKey && state.lastClickedName !== "") {
       shiftSelect(state.lastClickedName, entry.name);
@@ -389,17 +379,27 @@ function entryRow(entry: FileEntry): HTMLDivElement {
     }
   });
 
-  const meta = document.createElement("span");
-  meta.className = FB_META;
   const parts: string[] = [];
   if (!entry.isDir) {
     parts.push(formatSize(entry.size));
   }
   parts.push(formatDate(entry.modTime));
   parts.push(entry.mode);
-  meta.textContent = parts.join("   ·   ");
+  const meta = el("span", { className: FB_META }, parts.join("   ·   "));
 
-  row.append(check, icon, name, meta);
+  const row = el(
+    "div",
+    {
+      className: FB_ROW,
+      role: "listitem",
+      "data-name": entry.name,
+      "data-is-dir": String(entry.isDir),
+    },
+    check,
+    icon,
+    name,
+    meta,
+  ) as HTMLDivElement;
 
   return row;
 }
@@ -422,13 +422,13 @@ function shiftSelect(from: string, to: string): void {
 
 function updateRowHighlights(): void {
   for (const row of [...$.fbList.children]) {
-    const el = row as HTMLDivElement;
-    const name = el.dataset["name"];
+    const node = row as HTMLDivElement;
+    const name = node.dataset["name"];
     if (name === undefined) {
       continue;
     }
-    el.classList.toggle("fb-row-selected", state.selected.has(name));
-    const check = el.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
+    node.classList.toggle("fb-row-selected", state.selected.has(name));
+    const check = node.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
     if (check !== null) {
       check.checked = state.selected.has(name);
     }
@@ -481,7 +481,7 @@ function renameSelected(): void {
 
 function startInlineRename(targetName: string): void {
   const row = [...$.fbList.children].find(
-    (el) => (el as HTMLDivElement).dataset["name"] === targetName,
+    (child) => (child as HTMLDivElement).dataset["name"] === targetName,
   ) as HTMLDivElement | undefined;
   if (row === undefined) {
     return;
@@ -490,10 +490,11 @@ function startInlineRename(targetName: string): void {
   const nameEl = row.querySelector(`.${FB_NAME}`)!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const original = nameEl.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "fb-name-edit";
-  input.value = original;
+  const input = el("input", {
+    type: "text",
+    className: "fb-name-edit",
+    value: original,
+  }) as HTMLInputElement;
   nameEl.replaceWith(input);
   input.focus();
   const dotIdx = original.lastIndexOf(".");
@@ -505,9 +506,7 @@ function startInlineRename(targetName: string): void {
 
   let committed = false;
   const restore = (text: string): HTMLElement => {
-    const span = document.createElement("span");
-    span.className = `${FB_NAME} ${FB_NAME_LINK}`;
-    span.textContent = text;
+    const span = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, text);
     input.replaceWith(span);
     return span;
   };
@@ -605,10 +604,11 @@ function downloadSelected(): void {
   // ever becomes an issue, disable the button briefly via setTimeout.
   const singleName = names.length === 1 ? names[0] : undefined;
   if (singleName !== undefined && state.entryMap.get(singleName)?.isDir !== true) {
-    const a = document.createElement("a");
-    a.href = `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, singleName))}`;
-    a.download = singleName;
-    a.rel = "noopener";
+    const a = el("a", {
+      href: `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, singleName))}`,
+      download: singleName,
+      rel: "noopener",
+    });
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -620,9 +620,7 @@ function downloadSelected(): void {
 }
 
 function uploadViaDialog(): void {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
+  const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
   input.addEventListener("change", () => {
     if (input.files !== null && input.files.length > 0) {
       void upload.dispatch(

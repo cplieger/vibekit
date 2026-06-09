@@ -11,6 +11,8 @@
 // tests can observe it without parsing innerHTML.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 const RESET_MS = 1200;
 
 const CHECK_HTML =
@@ -31,16 +33,18 @@ let liveRegion: HTMLElement | null = null;
 
 function announce(message: string): void {
   if (liveRegion === null) {
-    liveRegion = document.createElement("span");
-    liveRegion.className = "sr-only";
-    liveRegion.setAttribute("aria-live", "polite");
-    liveRegion.setAttribute("aria-atomic", "true");
+    liveRegion = el("span", {
+      className: "sr-only",
+      "aria-live": "polite",
+      "aria-atomic": "true",
+    });
     document.body.appendChild(liveRegion);
   }
+  const region = liveRegion;
   // Clear then set to ensure re-announcement of identical messages.
-  liveRegion.textContent = "";
+  region.textContent = "";
   setTimeout(() => {
-    liveRegion!.textContent = message; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    region.textContent = message;
   }, 50);
 }
 
@@ -78,9 +82,10 @@ export async function withAsyncFeedback(
   const origDisabled = btn.disabled;
   const origAriaBusy = btn.getAttribute("aria-busy");
 
-  const spinnerEl = document.createElement("span");
-  spinnerEl.className = "spinner-sm btn-async-spinner";
-  spinnerEl.setAttribute("aria-hidden", "true");
+  const spinnerEl = el("span", {
+    className: "spinner-sm btn-async-spinner",
+    "aria-hidden": "true",
+  });
 
   btn.dataset["asyncStatus"] = "pending";
   btn.disabled = true;

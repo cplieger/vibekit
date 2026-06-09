@@ -11,6 +11,7 @@
 // If ANSI rendering is needed later, swap <pre> for xterm.js read-only.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
 import { registerCleanup } from "./actions/index.js";
 
@@ -102,29 +103,38 @@ function createTab(termId: string, command: string, args?: string[]): void {
   const shortLabel = label.length > 20 ? label.slice(0, 18) + "\u2026" : label;
 
   // Create tab button.
-  const tab = document.createElement("button");
-  tab.type = "button";
-  tab.className = "shell-tab";
-  tab.dataset["shellTab"] = termId;
-  tab.setAttribute("role", "tab");
-  tab.setAttribute("aria-selected", "false");
-  tab.textContent = shortLabel;
-  tab.title = label;
+  const tab = el(
+    "button",
+    {
+      type: "button",
+      className: "shell-tab",
+      "data-shell-tab": termId,
+      role: "tab",
+      "aria-selected": "false",
+      title: label,
+    },
+    shortLabel,
+  ) as HTMLButtonElement;
   tabBar.appendChild(tab);
 
   // Create output pane.
-  const pane = document.createElement("div");
-  pane.className = "agent-term-pane hidden";
-  pane.dataset["termId"] = termId;
-  const pre = document.createElement("pre");
-  pre.className = "agent-term-output";
   // role="log" is implicit aria-live=off (navigable but not auto-announced).
   // Terminals stream char-by-char; aria-live="polite" would flood screen
   // readers. Users can navigate to the region; exit status announced
   // separately via announceTermExit.
-  pre.setAttribute("role", "log");
-  pre.setAttribute("aria-label", `Terminal output: ${label}`);
-  pane.appendChild(pre);
+  const pre = el("pre", {
+    className: "agent-term-output",
+    role: "log",
+    "aria-label": `Terminal output: ${label}`,
+  }) as HTMLPreElement;
+  const pane = el(
+    "div",
+    {
+      className: "agent-term-pane hidden",
+      "data-term-id": termId,
+    },
+    pre,
+  );
   container.appendChild(pane);
 
   terms.set(termId, {

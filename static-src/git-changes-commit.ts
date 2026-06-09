@@ -8,6 +8,7 @@ import { apiGet } from "./api-client.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { bindLoadingState } from "./actions/index.js";
 import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
+import { el } from "@cplieger/reactive";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
@@ -23,18 +24,13 @@ export interface CommitDeps {
 
 /** Render the recent-commits collapsible section for a repo. */
 export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElement {
-  const wrap = document.createElement("details");
-  wrap.className = "git-recent-commits";
-
-  const summary = document.createElement("summary");
-  summary.className = "git-recent-commits-summary";
-  summary.textContent = "Recent commits";
-  wrap.appendChild(summary);
-
-  const body = document.createElement("div");
-  body.className = "git-recent-commits-body";
-  body.textContent = "Loading…";
-  wrap.appendChild(body);
+  const body = el("div", { className: "git-recent-commits-body" }, "Loading…");
+  const wrap = el(
+    "details",
+    { className: "git-recent-commits" },
+    el("summary", { className: "git-recent-commits-summary" }, "Recent commits"),
+    body,
+  ) as HTMLDetailsElement;
 
   let loaded = false;
   wrap.addEventListener("toggle", () => {
@@ -59,22 +55,16 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
         return;
       }
       body.replaceChildren();
-      const list = document.createElement("ul");
-      list.className = "git-recent-commits-list";
+      const list = el("ul", { className: "git-recent-commits-list" });
       for (const line of entries.slice(0, 20)) {
-        const li = document.createElement("li");
-        li.className = "git-recent-commits-row";
+        const li = el("li", { className: "git-recent-commits-row" });
         // line shape: "<sha> <subject>"
         const sp = line.indexOf(" ");
         if (sp > 0) {
-          const sha = document.createElement("code");
-          sha.className = "git-recent-commits-sha";
-          sha.textContent = line.slice(0, sp);
-          li.appendChild(sha);
-          const sub = document.createElement("span");
-          sub.className = "git-recent-commits-subject";
-          sub.textContent = line.slice(sp + 1);
-          li.appendChild(sub);
+          li.appendChild(el("code", { className: "git-recent-commits-sha" }, line.slice(0, sp)));
+          li.appendChild(
+            el("span", { className: "git-recent-commits-subject" }, line.slice(sp + 1)),
+          );
         } else {
           li.textContent = line;
         }
@@ -89,14 +79,14 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
 
 /** Render the commit message textarea + AI generate + Commit button. */
 export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "git-commit-area";
+  const wrap = el("div", { className: "git-commit-area" });
 
-  const ta = document.createElement("textarea");
-  ta.className = "git-commit-input";
-  ta.placeholder = "Commit message…";
-  ta.rows = 2;
-  ta.dataset["repo"] = r.repo;
+  const ta = el("textarea", {
+    className: "git-commit-input",
+    placeholder: "Commit message…",
+    rows: 2,
+    "data-repo": r.repo,
+  }) as HTMLTextAreaElement;
   // Restore previously typed commit message.
   const saved = deps.commitMessages.get(r.repo);
   if (saved) {
@@ -104,14 +94,17 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
   }
   wrap.appendChild(ta);
 
-  const row = document.createElement("div");
-  row.className = "git-commit-row";
+  const row = el("div", { className: "git-commit-row" });
 
-  const ai = document.createElement("button");
-  ai.type = "button";
-  ai.className = "btn-small";
-  ai.textContent = "✨ AI message";
-  ai.setAttribute("data-tooltip", "Generate commit message from staged changes");
+  const ai = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small",
+      "data-tooltip": "Generate commit message from staged changes",
+    },
+    "✨ AI message",
+  ) as HTMLButtonElement;
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
@@ -125,10 +118,11 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
   row.appendChild(ai);
   deps.bindingCleanups.push(bindLoadingState("git.generate_message", ai));
 
-  const commit = document.createElement("button");
-  commit.type = "button";
-  commit.className = "btn-small btn-primary";
-  commit.textContent = "Commit";
+  const commit = el(
+    "button",
+    { type: "button", className: "btn-small btn-primary" },
+    "Commit",
+  ) as HTMLButtonElement;
   commit.addEventListener("click", () => {
     void withAsyncFeedback(commit, async () => {
       const message = ta.value.trim();

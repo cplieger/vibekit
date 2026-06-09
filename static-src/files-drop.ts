@@ -8,15 +8,16 @@
 // path ends up in the prompt input.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { openFilePicker } from "./files-picker.js";
 import { upload } from "./actions/files.js";
 import { attachPathToActiveChat } from "./chat.js";
-import { el } from "./dom.js";
+import { byId } from "./dom.js";
 import { installDropZone } from "./drop-zone.js";
 
 export function initChatAttach(): void {
-  const attachBtn = el<HTMLButtonElement>("attach-btn");
-  const chatView = el<HTMLDivElement>("chat-view");
+  const attachBtn = byId<HTMLButtonElement>("attach-btn");
+  const chatView = byId<HTMLDivElement>("chat-view");
 
   attachBtn.addEventListener("click", () => {
     openFilePicker();
@@ -28,8 +29,7 @@ export function initChatAttach(): void {
     if (overlay !== null) {
       return overlay;
     }
-    overlay = document.createElement("div");
-    overlay.className = "chat-drop-overlay hidden";
+    overlay = el("div", { className: "chat-drop-overlay hidden" }) as HTMLDivElement;
     overlay.innerHTML =
       '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
       'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +

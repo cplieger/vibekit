@@ -26,10 +26,11 @@ import {
   FB_META,
 } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
-import { el } from "./dom.js";
+import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 type DirEntry = { kind: "up" } | { kind: "file"; name: string; isDir: boolean };
 
@@ -50,22 +51,20 @@ export function openFilePicker(preUploadFiles?: FileList, startPath = "."): void
   selected.clear();
   loadDir();
   syncAttachBtn();
-  openModal(el<HTMLDivElement>("filepicker-modal"));
+  openModal(byId<HTMLDivElement>("filepicker-modal"));
   if (preUploadFiles !== undefined && preUploadFiles.length > 0) {
     performUpload(preUploadFiles);
   }
 }
 
 export function initFilePicker(): void {
-  el("filepicker-close").addEventListener("click", () => {
-    closeModal(el<HTMLDivElement>("filepicker-modal"));
+  byId("filepicker-close").addEventListener("click", () => {
+    closeModal(byId<HTMLDivElement>("filepicker-modal"));
   });
 
   // "Upload here" button: OS file dialog → upload → auto-attach.
-  el("filepicker-upload").addEventListener("click", () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
+  byId("filepicker-upload").addEventListener("click", () => {
+    const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
     input.addEventListener("change", () => {
       if (input.files === null || input.files.length === 0) {
         return;
@@ -75,12 +74,12 @@ export function initFilePicker(): void {
     input.click();
   });
 
-  bindLoadingState("files.upload", el<HTMLButtonElement>("filepicker-upload"), {
+  bindLoadingState("files.upload", byId<HTMLButtonElement>("filepicker-upload"), {
     preserveDisabled: true,
   });
 
   // "Attach" button: attach all selected paths to the chat.
-  el("filepicker-attach").addEventListener("click", () => {
+  byId("filepicker-attach").addEventListener("click", () => {
     if (selected.size === 0) {
       return;
     }
@@ -88,10 +87,10 @@ export function initFilePicker(): void {
       attachPathToActiveChat(joinPath(currentPath, name));
     }
     selected.clear();
-    closeModal(el<HTMLDivElement>("filepicker-modal"));
+    closeModal(byId<HTMLDivElement>("filepicker-modal"));
   });
 
-  const pathEl = el<HTMLInputElement>("filepicker-path");
+  const pathEl = byId<HTMLInputElement>("filepicker-path");
   initEditablePath(pathEl, {
     onNavigate: (target) => {
       currentPath = target;
@@ -104,7 +103,7 @@ export function initFilePicker(): void {
 }
 
 function performUpload(files: FileList): void {
-  const modal = el<HTMLDivElement>("filepicker-modal");
+  const modal = byId<HTMLDivElement>("filepicker-modal");
   void upload.dispatch(
     { files, targetDir: currentPath },
     {
@@ -120,7 +119,7 @@ function performUpload(files: FileList): void {
 }
 
 function syncAttachBtn(): void {
-  const btn = el<HTMLButtonElement>("filepicker-attach");
+  const btn = byId<HTMLButtonElement>("filepicker-attach");
   btn.disabled = selected.size === 0;
   btn.textContent =
     selected.size > 0
@@ -129,8 +128,8 @@ function syncAttachBtn(): void {
 }
 
 function loadDir(): void {
-  const list = el<HTMLDivElement>("filepicker-list");
-  const pathEl = el<HTMLInputElement>("filepicker-path");
+  const list = byId<HTMLDivElement>("filepicker-list");
+  const pathEl = byId<HTMLInputElement>("filepicker-path");
   pathEl.value = displayPath(currentPath);
   pathEl.readOnly = true;
 
@@ -148,7 +147,7 @@ function loadDir(): void {
         return;
       }
       // Wipe keyed children + show error row.
-      reconcile(list, [], { key: () => "", mount: () => document.createElement("div") });
+      reconcile(list, [], { key: () => "", mount: () => el("div") });
       list.appendChild(
         errorRow(d.error, () => {
           loadDir();
@@ -181,28 +180,17 @@ function loadDir(): void {
     });
 
     if (sorted.length === 0 && currentPath === ".") {
-      const empty = document.createElement("div");
-      empty.className = FB_ROW;
-      const meta = document.createElement("span");
-      meta.className = FB_META;
-      meta.textContent = "Empty";
-      empty.appendChild(meta);
-      list.appendChild(empty);
+      list.appendChild(
+        el("div", { className: FB_ROW }, el("span", { className: FB_META }, "Empty")),
+      );
     }
   });
 }
 
 function upRow(): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = FB_ROW;
+  const icon = el("span", { className: "fb-icon" }, iconEl(FILE_ICONS["folder"] ?? ""));
 
-  const icon = document.createElement("span");
-  icon.className = "fb-icon";
-  icon.replaceChildren(iconEl(FILE_ICONS["folder"] ?? ""));
-
-  const nameSpan = document.createElement("span");
-  nameSpan.className = `${FB_NAME} ${FB_NAME_LINK}`;
-  nameSpan.textContent = "..";
+  const nameSpan = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, "..");
   nameSpan.addEventListener("click", () => {
     currentPath = parentPath(currentPath);
     selected.clear();
@@ -210,20 +198,17 @@ function upRow(): HTMLDivElement {
     syncAttachBtn();
   });
 
-  row.append(icon, nameSpan);
-  return row;
+  return el("div", { className: FB_ROW }, icon, nameSpan) as HTMLDivElement;
 }
 
 function entryRow(name: string, isDir: boolean): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = FB_ROW;
-
   // Checkbox for multi-select.
-  const check = document.createElement("input");
-  check.type = "checkbox";
-  check.className = FB_CHECK;
-  check.checked = selected.has(name);
-  check.setAttribute("aria-label", `Select ${name}`);
+  const check = el("input", {
+    type: "checkbox",
+    className: FB_CHECK,
+    checked: selected.has(name),
+    "aria-label": `Select ${name}`,
+  }) as HTMLInputElement;
   check.addEventListener("change", () => {
     if (check.checked) {
       selected.add(name);
@@ -233,13 +218,13 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
     syncAttachBtn();
   });
 
-  const icon = document.createElement("span");
-  icon.className = "fb-icon";
-  icon.replaceChildren(iconEl(isDir ? (FILE_ICONS["folder"] ?? "") : fileIcon(name, false)));
+  const icon = el(
+    "span",
+    { className: "fb-icon" },
+    iconEl(isDir ? (FILE_ICONS["folder"] ?? "") : fileIcon(name, false)),
+  );
 
-  const label = document.createElement("span");
-  label.className = `${FB_NAME} ${FB_NAME_LINK}`;
-  label.textContent = name;
+  const label = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, name);
   label.addEventListener("click", () => {
     if (isDir) {
       currentPath = joinPath(currentPath, name);
@@ -258,6 +243,5 @@ function entryRow(name: string, isDir: boolean): HTMLDivElement {
     }
   });
 
-  row.append(check, icon, label);
-  return row;
+  return el("div", { className: FB_ROW }, check, icon, label) as HTMLDivElement;
 }

@@ -12,6 +12,7 @@ import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { getActive, getActiveId } from "./store.js";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { copyClipboard } from "./actions/messages.js";
+import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -36,42 +37,44 @@ export function initTurnActionCallbacks(cbs: {
 // Public
 // ---------------------------------------------------------------------------
 
-export function attachTurnActions(el: HTMLDivElement): void {
-  const wrap = el.closest<HTMLElement>(".msg-wrap");
+export function attachTurnActions(contentEl: HTMLDivElement): void {
+  const wrap = contentEl.closest<HTMLElement>(".msg-wrap");
   const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
   const session = getActive();
   const msg = session?.messages.find((m) => m.id === msgID);
-  const raw = msg?.content ?? el.textContent ?? "";
+  const raw = msg?.content ?? contentEl.textContent ?? "";
   if (raw.trim() === "") {
     return;
   }
-  if (el.nextElementSibling?.classList.contains("turn-actions")) {
+  if (contentEl.nextElementSibling?.classList.contains("turn-actions")) {
     return;
   }
 
   const chatID = getActiveId();
-  const row = document.createElement("div");
-  row.className = "turn-actions";
 
-  const leftSlot = document.createElement("span");
-  leftSlot.className = "turn-actions-summary";
-  row.appendChild(leftSlot);
-
-  const rightSlot = document.createElement("span");
-  rightSlot.className = "turn-actions-buttons";
-  row.appendChild(rightSlot);
+  const rightSlot = el("span", { className: "turn-actions-buttons" });
+  const row = el(
+    "div",
+    { className: "turn-actions" },
+    el("span", { className: "turn-actions-summary" }),
+    rightSlot,
+  );
 
   const makeBtn = (
     svgMarkup: string,
     ariaLabel: string,
     onClick: (btn: HTMLButtonElement) => void,
   ): HTMLButtonElement => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "turn-action-btn";
-    btn.appendChild(_svgTemplate(svgMarkup)());
-    btn.setAttribute("aria-label", ariaLabel);
-    btn.setAttribute("data-tooltip", ariaLabel);
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        className: "turn-action-btn",
+        "aria-label": ariaLabel,
+        "data-tooltip": ariaLabel,
+      },
+      _svgTemplate(svgMarkup)(),
+    ) as HTMLButtonElement;
     btn.addEventListener("click", () => {
       onClick(btn);
     });
@@ -99,7 +102,7 @@ export function attachTurnActions(el: HTMLDivElement): void {
 
   rightSlot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, el.textContent ?? "");
+      copyAndAnimate(btn, contentEl.textContent ?? "");
     }),
   );
   rightSlot.appendChild(
@@ -115,10 +118,11 @@ export function attachTurnActions(el: HTMLDivElement): void {
     );
     rightSlot.appendChild(
       makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
-        const a = document.createElement("a");
-        a.href = `/api/chats/${encodeURIComponent(chatID)}/export`;
-        a.download = `${chatID}.json`;
-        a.rel = "noopener";
+        const a = el("a", {
+          href: `/api/chats/${encodeURIComponent(chatID)}/export`,
+          download: `${chatID}.json`,
+          rel: "noopener",
+        });
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -129,6 +133,6 @@ export function attachTurnActions(el: HTMLDivElement): void {
   if (wrap !== null && wrap !== undefined) {
     wrap.appendChild(row);
   } else {
-    el.insertAdjacentElement("afterend", row);
+    contentEl.insertAdjacentElement("afterend", row);
   }
 }

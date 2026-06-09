@@ -9,6 +9,7 @@
 // approval-dialog vocabulary.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import type { ElicitationNeededPayload, ElicitationPropertySchema } from "./types.js";
 import { $ } from "./dom.js";
 import { trapFocus } from "./focus-trap.js";
@@ -49,28 +50,38 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
   answered = false;
 
   const dialogEl = dlg();
-  const form = dialogEl.querySelector(".elicitation-form") as HTMLFormElement;
-  const body = dialogEl.querySelector(".elicitation-body") as HTMLDivElement;
-  const fieldsEl = dialogEl.querySelector(".elicitation-fields") as HTMLDivElement;
-  const actions = dialogEl.querySelector(".elicitation-actions") as HTMLDivElement;
+  const form = dialogEl.querySelector<HTMLFormElement>(".elicitation-form");
+  const body = dialogEl.querySelector<HTMLElement>(".elicitation-body");
+  const fieldsEl = dialogEl.querySelector<HTMLElement>(".elicitation-fields");
+  const actions = dialogEl.querySelector<HTMLElement>(".elicitation-actions");
+  if (!form || !body || !fieldsEl || !actions) {
+    return;
+  }
   body.replaceChildren();
   fieldsEl.replaceChildren();
   actions.replaceChildren();
 
-  const heading = document.createElement("strong");
-  heading.textContent = payload.message !== undefined && payload.message !== "" ? payload.message : "Input requested";
+  const heading = el(
+    "strong",
+    null,
+    payload.message !== undefined && payload.message !== "" ? payload.message : "Input requested",
+  );
   body.appendChild(heading);
 
   const isURL = payload.mode === "url" && payload.url !== undefined && payload.url !== "";
   const readers: FieldReader[] = [];
 
   if (isURL) {
-    const link = document.createElement("a");
-    link.className = "elicitation-url btn-small confirm-allow";
-    link.href = payload.url ?? "";
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Open link\u2026";
+    const link = el(
+      "a",
+      {
+        className: "elicitation-url btn-small confirm-allow",
+        href: payload.url ?? "",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+      "Open link\u2026",
+    );
     body.appendChild(link);
   } else {
     const schema = payload.requested_schema;
@@ -84,10 +95,11 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
   }
 
   // --- action buttons ---
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "button";
-  submitBtn.className = "btn-small confirm-allow";
-  submitBtn.textContent = isURL ? "Done" : "Submit";
+  const submitBtn = el(
+    "button",
+    { type: "button", className: "btn-small confirm-allow" },
+    isURL ? "Done" : "Submit",
+  );
   submitBtn.addEventListener("click", () => {
     const content = isURL ? undefined : collect(readers, fieldsEl);
     if (!isURL && content === null) {
@@ -96,17 +108,22 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
     finish("accept", content ?? undefined);
   });
 
-  const declineBtn = document.createElement("button");
-  declineBtn.type = "button";
-  declineBtn.className = "btn-small confirm-danger";
-  declineBtn.textContent = "Decline";
-  declineBtn.addEventListener("click", () => finish("decline"));
+  const declineBtn = el(
+    "button",
+    { type: "button", className: "btn-small confirm-danger" },
+    "Decline",
+  );
+  declineBtn.addEventListener("click", () => {
+    finish("decline");
+  });
 
   actions.append(submitBtn, declineBtn);
 
   // Native <dialog> "cancel" (Escape) and "close" both settle as cancel
   // unless the user already submitted/declined.
-  form.onsubmit = (e): void => e.preventDefault();
+  form.onsubmit = (e): void => {
+    e.preventDefault();
+  };
   dialogEl.oncancel = (e): void => {
     e.preventDefault();
     finish("cancel");
@@ -154,18 +171,18 @@ function renderField(
   schema: ElicitationPropertySchema,
   required: boolean,
 ): FieldReader {
-  const wrap = document.createElement("label");
-  wrap.className = "elicitation-field";
+  const wrap = el("label", { className: "elicitation-field" });
 
-  const labelText = document.createElement("span");
-  labelText.className = "elicitation-label";
-  labelText.textContent = (schema.title !== undefined && schema.title !== "" ? schema.title : name) + (required ? " *" : "");
+  const labelText = el(
+    "span",
+    { className: "elicitation-label" },
+    (schema.title !== undefined && schema.title !== "" ? schema.title : name) +
+      (required ? " *" : ""),
+  );
   wrap.appendChild(labelText);
 
   if (schema.description !== undefined && schema.description !== "") {
-    const hint = document.createElement("span");
-    hint.className = "elicitation-hint";
-    hint.textContent = schema.description;
+    const hint = el("span", { className: "elicitation-hint" }, schema.description);
     wrap.appendChild(hint);
   }
 
@@ -187,18 +204,13 @@ interface Control {
 function buildControl(name: string, schema: ElicitationPropertySchema): Control {
   // Enum → <select>.
   if (schema.enum !== undefined && schema.enum.length > 0) {
-    const sel = document.createElement("select");
-    sel.className = "elicitation-input";
-    sel.name = name;
-    const blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = "\u2014";
-    sel.appendChild(blank);
+    const sel = el(
+      "select",
+      { className: "elicitation-input", name },
+      el("option", { value: "" }, "\u2014"),
+    ) as HTMLSelectElement;
     for (const opt of schema.enum) {
-      const o = document.createElement("option");
-      o.value = opt;
-      o.textContent = opt;
-      sel.appendChild(o);
+      sel.appendChild(el("option", { value: opt }, opt));
     }
     if (typeof schema.default === "string") {
       sel.value = schema.default;
@@ -208,10 +220,11 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
 
   switch (schema.type) {
     case "boolean": {
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.className = "elicitation-checkbox";
-      box.name = name;
+      const box = el("input", {
+        type: "checkbox",
+        className: "elicitation-checkbox",
+        name,
+      }) as HTMLInputElement;
       if (schema.default === true) {
         box.checked = true;
       }
@@ -220,10 +233,11 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
     }
     case "number":
     case "integer": {
-      const inp = document.createElement("input");
-      inp.type = "number";
-      inp.className = "elicitation-input";
-      inp.name = name;
+      const inp = el("input", {
+        type: "number",
+        className: "elicitation-input",
+        name,
+      }) as HTMLInputElement;
       if (schema.type === "integer") {
         inp.step = "1";
       }
@@ -244,11 +258,12 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
     case "array": {
       // No structured items in the wire schema; accept comma-separated
       // values and emit a string[]. Empty → omitted.
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.className = "elicitation-input";
-      inp.name = name;
-      inp.placeholder = "comma,separated,values";
+      const inp = el("input", {
+        type: "text",
+        className: "elicitation-input",
+        name,
+        placeholder: "comma,separated,values",
+      }) as HTMLInputElement;
       return {
         el: inp,
         read: () => {
@@ -261,10 +276,11 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
       };
     }
     default: {
-      const inp = document.createElement("input");
-      inp.type = schema.format === "email" ? "email" : schema.format === "uri" ? "url" : "text";
-      inp.className = "elicitation-input";
-      inp.name = name;
+      const inp = el("input", {
+        type: schema.format === "email" ? "email" : schema.format === "uri" ? "url" : "text",
+        className: "elicitation-input",
+        name,
+      }) as HTMLInputElement;
       if (schema.pattern !== undefined && schema.pattern !== "") {
         inp.pattern = schema.pattern;
       }
@@ -287,7 +303,7 @@ function buildControl(name: string, schema: ElicitationPropertySchema): Control 
 function collect(readers: FieldReader[], container: HTMLElement): Record<string, unknown> | null {
   const required = new Set<string>();
   for (const labelEl of container.querySelectorAll<HTMLElement>(".elicitation-label")) {
-    if (labelEl.textContent?.endsWith(" *") === true) {
+    if (labelEl.textContent.endsWith(" *")) {
       // strip the trailing " *" and recover the field name via its input
       const input = labelEl.parentElement?.querySelector<HTMLElement>("[name]");
       const n = input?.getAttribute("name");

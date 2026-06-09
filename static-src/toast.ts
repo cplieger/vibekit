@@ -15,6 +15,7 @@ import {
   promoteFromQueue,
   enqueueWithCap,
 } from "./toast-engine.js";
+import { el } from "@cplieger/reactive";
 
 export type { ToastLevel, ToastRetry };
 
@@ -30,11 +31,12 @@ function ensureContainer(): HTMLDivElement {
   if (containerEl !== null) {
     return containerEl;
   }
-  const stack = document.createElement("div");
-  stack.className = "vk-toast-stack";
-  stack.setAttribute("role", "status");
-  stack.setAttribute("aria-live", "polite");
-  stack.setAttribute("aria-atomic", "false");
+  const stack = el("div", {
+    className: "vk-toast-stack",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "false",
+  }) as HTMLDivElement;
   document.body.appendChild(stack);
   containerEl = stack;
   installEscHandler();
@@ -104,26 +106,29 @@ function mount(
 ): () => void {
   const stack = ensureContainer();
 
-  const el = document.createElement("div");
-  el.className = `vk-toast vk-toast-${level}`;
-  el.setAttribute("tabindex", "0");
-  el.setAttribute("aria-label", `${level} notification: ${message}. Click to dismiss.`);
+  const node = el("div", {
+    className: `vk-toast vk-toast-${level}`,
+    tabindex: "0",
+    "aria-label": `${level} notification: ${message}. Click to dismiss.`,
+  }) as HTMLDivElement;
   if (level === "error") {
-    el.setAttribute("role", "alert");
+    node.setAttribute("role", "alert");
   }
 
-  const msgEl = document.createElement("span");
-  msgEl.className = "vk-toast-msg";
-  msgEl.textContent = message;
-  el.appendChild(msgEl);
+  const msgEl = el("span", { className: "vk-toast-msg" }, message);
+  node.appendChild(msgEl);
 
   let retryBtn: HTMLButtonElement | null;
   if (retry !== undefined) {
-    retryBtn = document.createElement("button");
-    retryBtn.type = "button";
-    retryBtn.className = "vk-toast-retry";
-    retryBtn.textContent = retry.label ?? "Retry";
-    retryBtn.setAttribute("aria-label", retry.label ?? "Retry action");
+    retryBtn = el(
+      "button",
+      {
+        type: "button",
+        className: "vk-toast-retry",
+        "aria-label": retry.label ?? "Retry action",
+      },
+      retry.label ?? "Retry",
+    ) as HTMLButtonElement;
     retryBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const handler = retry.onClick;
@@ -139,20 +144,21 @@ function mount(
         console.error("[toast] retry handler threw", err);
       }
     });
-    el.appendChild(retryBtn);
+    node.appendChild(retryBtn);
   }
 
   let progressEl: HTMLSpanElement | null = null;
   if (duration > 0) {
-    progressEl = document.createElement("span");
-    progressEl.className = "vk-toast-progress";
-    progressEl.setAttribute("aria-hidden", "true");
+    progressEl = el("span", {
+      className: "vk-toast-progress",
+      "aria-hidden": "true",
+    });
     progressEl.style.width = "100%";
-    el.appendChild(progressEl);
+    node.appendChild(progressEl);
   }
 
   const t: ToastEntry = {
-    el,
+    el: node,
     level,
     duration,
     remaining: duration,
@@ -162,27 +168,27 @@ function mount(
     dismissed: false,
   };
 
-  el.addEventListener("click", () => {
+  node.addEventListener("click", () => {
     dismiss(t);
   });
-  el.addEventListener("mouseenter", () => {
+  node.addEventListener("mouseenter", () => {
     pauseTimer(t);
   });
-  el.addEventListener("mouseleave", () => {
+  node.addEventListener("mouseleave", () => {
     resumeTimer(t, dismiss);
   });
-  el.addEventListener("focusin", () => {
+  node.addEventListener("focusin", () => {
     pauseTimer(t);
   });
-  el.addEventListener("focusout", () => {
+  node.addEventListener("focusout", () => {
     resumeTimer(t, dismiss);
   });
 
-  stack.appendChild(el);
+  stack.appendChild(node);
   visible.push(t);
 
   requestAnimationFrame(() => {
-    el.classList.add("vk-toast-shown");
+    node.classList.add("vk-toast-shown");
   });
 
   startTimer(t, dismiss);

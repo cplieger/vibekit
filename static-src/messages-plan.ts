@@ -10,6 +10,7 @@ import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { getActiveId } from "./store.js";
 import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
 import { openPlanDraftPath } from "./editor-openers.js";
+import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
 // Plan element builders
@@ -17,35 +18,38 @@ import { openPlanDraftPath } from "./editor-openers.js";
 
 /** Build the plan card shell and reconcile entries into it. */
 export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = "plan-message";
+  const card = el("div", { className: "plan-message" }) as HTMLDivElement;
 
-  const header = document.createElement("div");
-  header.className = "plan-header";
-  header.textContent = "Plan";
-  el.appendChild(header);
+  const header = el("div", { className: "plan-header" }, "Plan");
+  card.appendChild(header);
 
-  const list = document.createElement("div");
-  list.className = "plan-entries";
-  el.appendChild(list);
+  const list = el("div", { className: "plan-entries" }) as HTMLDivElement;
+  card.appendChild(list);
   reconcilePlanEntries(list, entries);
 
-  const actions = document.createElement("div");
-  actions.className = "plan-actions";
-  const editBtn = document.createElement("button");
-  editBtn.className = "plan-edit-btn btn-small";
-  editBtn.title = "Open this plan in the editor for tweaks before handing it to the default agent";
-  editBtn.textContent = "Edit";
-  const runBtn = document.createElement("button");
-  runBtn.className = "plan-run-btn btn-small";
-  runBtn.title = "Switch to the default agent and implement this plan";
-  runBtn.textContent = "Run this plan";
+  const actions = el("div", { className: "plan-actions" });
+  const editBtn = el(
+    "button",
+    {
+      className: "plan-edit-btn btn-small",
+      title: "Open this plan in the editor for tweaks before handing it to the default agent",
+    },
+    "Edit",
+  );
+  const runBtn = el(
+    "button",
+    {
+      className: "plan-run-btn btn-small",
+      title: "Switch to the default agent and implement this plan",
+    },
+    "Run this plan",
+  );
   actions.append(editBtn, runBtn);
-  el.appendChild(actions);
+  card.appendChild(actions);
 
-  el.dataset["plan"] = JSON.stringify(entries);
+  card.dataset["plan"] = JSON.stringify(entries);
   const latestMd = (): string => {
-    const stored = el.dataset["plan"];
+    const stored = card.dataset["plan"];
     if (stored === undefined) {
       return planToMarkdown([...entries]);
     }
@@ -62,7 +66,7 @@ export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
     void runPlan(getActiveId(), latestMd());
   });
 
-  return el;
+  return card;
 }
 
 /** Update an existing plan element's entries in place. */
@@ -91,8 +95,7 @@ export function reconcilePlanEntries(list: HTMLDivElement, entries: readonly Pla
 }
 
 export function buildPlanRow(e: PlanEntry): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "plan-entry";
+  const row = el("div", { className: "plan-entry" }) as HTMLDivElement;
   updatePlanRow(row, e);
   return row;
 }

@@ -20,8 +20,8 @@ import {
   patchTool,
 } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { $, el } from "./dom.js";
-import { reconcile } from "@cplieger/reactive";
+import { $, byId } from "./dom.js";
+import { el, reconcile } from "@cplieger/reactive";
 
 type ToolEntry =
   | { kind: "label"; sec: string; isBuiltin: boolean }
@@ -142,28 +142,28 @@ function isMethodKind(v: string): v is MethodKind {
 // getters so the module can import before DOMContentLoaded.
 const f = {
   get title(): HTMLElement {
-    return el("tool-modal-title");
+    return byId("tool-modal-title");
   },
   get cat(): HTMLSelectElement {
-    return el("tool-cat");
+    return byId("tool-cat");
   },
   get name(): HTMLInputElement {
-    return el("tool-name");
+    return byId("tool-name");
   },
   get version(): HTMLInputElement {
-    return el("tool-version");
+    return byId("tool-version");
   },
   get install(): HTMLInputElement {
-    return el("tool-install");
+    return byId("tool-install");
   },
   get binaries(): HTMLInputElement {
-    return el("tool-binaries");
+    return byId("tool-binaries");
   },
   get pkg(): HTMLInputElement {
-    return el("tool-package");
+    return byId("tool-package");
   },
   get save(): HTMLButtonElement {
-    return el("tool-modal-save");
+    return byId("tool-modal-save");
   },
 };
 
@@ -205,10 +205,7 @@ class ToolsManager {
       },
       onError: () => {
         $.toolsList.replaceChildren();
-        const errDiv = document.createElement("div");
-        errDiv.className = "list-empty";
-        errDiv.textContent = "Failed to load tools";
-        $.toolsList.appendChild(errDiv);
+        $.toolsList.appendChild(el("div", { className: "list-empty" }, "Failed to load tools"));
       },
     });
   }
@@ -268,10 +265,7 @@ class ToolsManager {
 
     if (flat.length === 0) {
       container.replaceChildren();
-      const emptyDiv = document.createElement("div");
-      emptyDiv.className = "list-empty";
-      emptyDiv.textContent = "No tools configured";
-      container.appendChild(emptyDiv);
+      container.appendChild(el("div", { className: "list-empty" }, "No tools configured"));
       return;
     }
 
@@ -291,10 +285,7 @@ class ToolsManager {
       },
       mount: (e: ToolEntry) => {
         if (e.kind === "label") {
-          const label = document.createElement("div");
-          label.className = "list-group-label";
-          label.textContent = e.isBuiltin ? "base os" : e.sec;
-          return label;
+          return el("div", { className: "list-group-label" }, e.isBuiltin ? "base os" : e.sec);
         }
         return this.renderToolRow(e.sec, e.name, e.entry, e.isBuiltin);
       },
@@ -320,27 +311,26 @@ class ToolsManager {
     entry: Record<string, unknown> | undefined,
     isBuiltin: boolean,
   ): HTMLDivElement {
-    const row = document.createElement("div");
-    row.className = "list-row";
-
     // enabled defaults to true when the field is absent (user-authored
     // entries). Pre-populated entries ship enabled:false.
     const enabled = (entry?.["enabled"] as boolean | undefined) ?? true;
+
+    const row = el(
+      "div",
+      { className: "list-row" },
+      el("span", { className: "list-row-name" }, name),
+      el(
+        "span",
+        { className: "list-row-meta" },
+        isBuiltin
+          ? ((entry?.["description"] as string | undefined) ?? "")
+          : this.metaText(entry, enabled),
+      ),
+    ) as HTMLDivElement;
+
     if (!isBuiltin && !enabled) {
       row.classList.add("list-row-disabled");
     }
-
-    const nameEl = document.createElement("span");
-    nameEl.className = "list-row-name";
-    nameEl.textContent = name;
-
-    const verEl = document.createElement("span");
-    verEl.className = "list-row-meta";
-    verEl.textContent = isBuiltin
-      ? ((entry?.["description"] as string | undefined) ?? "")
-      : this.metaText(entry, enabled);
-
-    row.append(nameEl, verEl);
     if (!isBuiltin) {
       row.appendChild(this.toolActions(sec, name, entry, enabled));
     }
@@ -370,14 +360,14 @@ class ToolsManager {
     entry: Record<string, unknown> | undefined,
     enabled: boolean,
   ): HTMLDivElement {
-    const actions = document.createElement("div");
-    actions.className = "list-row-actions";
+    const actions = el("div", { className: "list-row-actions" }) as HTMLDivElement;
 
     if (!enabled) {
-      const enableBtn = document.createElement("button");
-      enableBtn.className = "btn-small list-row-enable";
-      enableBtn.textContent = "Enable";
-      enableBtn.setAttribute("aria-label", `Enable ${name}`);
+      const enableBtn = el(
+        "button",
+        { className: "btn-small list-row-enable", "aria-label": `Enable ${name}` },
+        "Enable",
+      ) as HTMLButtonElement;
       enableBtn.addEventListener("click", () => {
         // Immediate feedback: large runtimes/LSPs (Go, JRE, clangd) can
         // take minutes, and the install output is buffered server-side,
@@ -393,16 +383,17 @@ class ToolsManager {
 
     // Pin toggle: filled = auto_update off (pinned), outline = on.
     const autoUpdate = (entry?.["auto_update"] as boolean | undefined) ?? true;
-    const pinBtn = document.createElement("button");
-    pinBtn.className = "list-row-btn list-row-pin";
-    pinBtn.setAttribute("aria-label", autoUpdate ? `Pin ${name} version` : `Unpin ${name}`);
-    pinBtn.setAttribute(
-      "data-tooltip",
-      autoUpdate
-        ? "Auto-updating on container start. Click to pin this version."
-        : "Pinned — won't auto-update. Click to resume auto-updates.",
+    const pinBtn = el(
+      "button",
+      {
+        className: "list-row-btn list-row-pin",
+        "aria-label": autoUpdate ? `Pin ${name} version` : `Unpin ${name}`,
+        "data-tooltip": autoUpdate
+          ? "Auto-updating on container start. Click to pin this version."
+          : "Pinned — won't auto-update. Click to resume auto-updates.",
+      },
+      autoUpdateIcon(autoUpdate),
     );
-    pinBtn.replaceChildren(autoUpdateIcon(autoUpdate));
     if (!autoUpdate) {
       pinBtn.classList.add("list-row-pin-active");
     }
@@ -410,20 +401,20 @@ class ToolsManager {
       void this.togglePin(sec, name, !autoUpdate);
     });
 
-    const editBtn = document.createElement("button");
-    editBtn.className = "list-row-btn";
-    editBtn.setAttribute("data-tooltip", "Edit");
-    editBtn.setAttribute("aria-label", `Edit ${name}`);
-    editBtn.replaceChildren(iconEl(ICON_EDIT));
+    const editBtn = el(
+      "button",
+      { className: "list-row-btn", "data-tooltip": "Edit", "aria-label": `Edit ${name}` },
+      iconEl(ICON_EDIT),
+    );
     editBtn.addEventListener("click", () => {
       this.openToolModal(sec, name);
     });
 
-    const delBtn = document.createElement("button");
-    delBtn.className = "list-row-btn";
-    delBtn.setAttribute("data-tooltip", "Delete");
-    delBtn.setAttribute("aria-label", `Delete ${name}`);
-    delBtn.replaceChildren(iconEl(ICON_TRASH));
+    const delBtn = el(
+      "button",
+      { className: "list-row-btn", "data-tooltip": "Delete", "aria-label": `Delete ${name}` },
+      iconEl(ICON_TRASH),
+    );
     delBtn.addEventListener("click", () => {
       void this.runDelete(sec, name);
     });
@@ -623,11 +614,11 @@ function autoUpdateIcon(autoUpdate: boolean): HTMLElement {
 }
 
 function toggleLabel(id: string, show: boolean): void {
-  el(id).style.display = show ? "" : "none";
+  byId(id).style.display = show ? "" : "none";
 }
 
 function setHintText(id: string, text: string): void {
-  el(id).textContent = text;
+  byId(id).textContent = text;
 }
 
 // Singleton instance — internal to the module.

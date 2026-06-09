@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
+import { el } from "@cplieger/reactive";
 
 // --- CSS class constants for the file browser UI ---
 export const FB_ROW = "fb-row";
@@ -154,17 +155,13 @@ export function displayPath(currentPath: string): string {
 
 /** Build an error row element safely (no innerHTML with user content). */
 export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = FB_ROW;
-  const span = document.createElement("span");
-  span.className = FB_META;
-  span.textContent = msg;
-  row.appendChild(span);
+  const row = el(
+    "div",
+    { className: FB_ROW },
+    el("span", { className: FB_META }, msg),
+  ) as HTMLDivElement;
   if (onRetry !== undefined) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-small";
-    btn.textContent = "Retry";
+    const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
     btn.addEventListener("click", onRetry);
     row.appendChild(btn);
   }

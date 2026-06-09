@@ -10,6 +10,7 @@
 // shared state. Suppressed file-wide.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
+import { el } from "@cplieger/reactive";
 import { apiPostTyped } from "./api-client.js";
 import type { DeviceFlowResponse } from "./wire/types.gen.js";
 import { decodePollResult } from "./wire/decoders.gen.js";
@@ -71,8 +72,7 @@ function renderDevicePrompt(
   deps: OAuthFlowDeps,
 ): void {
   host.innerHTML = "";
-  const container = document.createElement("div");
-  container.className = "forge-device-prompt";
+  const container = el("div", { className: "forge-device-prompt" });
   const safeLink = /^https?:\/\//i.test(start.verification_uri);
   container.innerHTML =
     `<p>Open ${safeLink ? `<a class="forge-device-link" target="_blank" rel="noreferrer" href="${deps.escapeAttr(start.verification_uri)}">` : ""}${deps.escapeHTML(start.verification_uri)}${safeLink ? "</a>" : ""} and enter:</p>` +

@@ -9,6 +9,7 @@ import { defineAction, ActionError, retryNetwork } from "./actions/index.js";
 import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 interface KiroConfigItem {
   name: string;
@@ -49,10 +50,9 @@ export function loadKiroConfig(): void {
       render($.kiroConfigList, d.items);
     },
     onError: () => {
-      const empty = document.createElement("div");
-      empty.className = "list-empty";
-      empty.textContent = "Failed to load config";
-      $.kiroConfigList.replaceChildren(empty);
+      $.kiroConfigList.replaceChildren(
+        el("div", { className: "list-empty" }, "Failed to load config"),
+      );
     },
   });
 }
@@ -84,10 +84,7 @@ function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
 
   if (flat.length === 0) {
     container.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "list-empty";
-    empty.textContent = "No .kiro/ configuration found";
-    container.appendChild(empty);
+    container.appendChild(el("div", { className: "list-empty" }, "No .kiro/ configuration found"));
     return;
   }
 
@@ -97,31 +94,19 @@ function render(container: HTMLDivElement, items: KiroConfigItem[]): void {
   });
 }
 
-function labelRow(type: string): HTMLDivElement {
-  const label = document.createElement("div");
-  label.className = "list-group-label";
-  label.textContent = TYPE_LABELS[type] ?? type;
-  return label;
+function labelRow(type: string): HTMLElement {
+  return el("div", { className: "list-group-label" }, TYPE_LABELS[type] ?? type);
 }
 
-function itemRow(item: KiroConfigItem): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "list-row";
-  row.style.cursor = "pointer";
+function itemRow(item: KiroConfigItem): HTMLElement {
+  const name = el("span", { className: "list-row-name" }, item.name);
+  const meta = el("span", { className: "list-row-meta" }, item.inclusion ?? "");
 
-  const name = document.createElement("span");
-  name.className = "list-row-name";
-  name.textContent = item.name;
-
-  const meta = document.createElement("span");
-  meta.className = "list-row-meta";
-  meta.textContent = item.inclusion ?? "";
-
-  const edit = document.createElement("span");
-  edit.className = "list-row-btn";
+  const edit = el("span", { className: "list-row-btn" });
   edit.innerHTML = ICON_EDIT;
 
-  row.append(name, meta, edit);
+  const row = el("div", { className: "list-row" }, name, meta, edit);
+  row.style.cursor = "pointer";
   row.addEventListener("click", () => {
     openFile(item.path);
   });

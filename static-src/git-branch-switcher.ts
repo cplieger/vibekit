@@ -13,6 +13,7 @@ import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 interface BranchEntry {
   name: string;
@@ -45,9 +46,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   activeAnchor = anchorEl;
   anchorEl.setAttribute("aria-expanded", "true");
 
-  const pop = document.createElement("div");
-  pop.className = "git-branch-popover";
-  pop.setAttribute("role", "menu");
+  const pop = el("div", { className: "git-branch-popover", role: "menu" }) as HTMLDivElement;
   pop.innerHTML = `
     <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off" aria-label="Filter branches">
     <div class="git-branch-popover-list" role="group" aria-label="Branches">Loading…</div>
@@ -95,7 +94,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       if (filtered.length === 0) {
         reconcile(list, [] as BranchEntry[], {
           key: (b) => b.name,
-          mount: () => document.createElement("div"),
+          mount: () => el("div"),
           onRemove: onRemoveRow,
         });
         list.textContent = q === "" ? "No branches." : "No matching branches.";
@@ -104,11 +103,15 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       reconcile(list, filtered, {
         key: (b: BranchEntry) => b.name,
         mount: (b: BranchEntry) => {
-          const row = document.createElement("button");
-          row.type = "button";
-          row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
-          row.setAttribute("role", "menuitem");
-          row.textContent = b.name;
+          const row = el(
+            "button",
+            {
+              type: "button",
+              className: `git-branch-popover-row${b.current ? " current" : ""}`,
+              role: "menuitem",
+            },
+            b.name,
+          ) as HTMLButtonElement;
           if (b.current) {
             row.setAttribute("data-tooltip", "Current branch");
           }

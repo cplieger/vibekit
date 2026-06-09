@@ -2,6 +2,7 @@
 // Editor UI: rendering helpers (read/edit mode, gutter, highlight, restoreUI).
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
@@ -105,9 +106,7 @@ export function updateGutter(content: string): void {
     }
   } else if (currentCount < lineCount) {
     for (let i = currentCount + 1; i <= lineCount; i++) {
-      const line = document.createElement("div");
-      line.className = "gutter-line";
-      line.textContent = String(i);
+      const line = el("div", { className: "gutter-line" }, String(i));
       if (agentLines.has(i)) {
         line.classList.add("gutter-agent-modified");
       }
@@ -122,9 +121,7 @@ export function rebuildGutter(content: string): void {
   gutter.replaceChildren();
   const agentLines = getAgentLines(getActiveFilePath());
   for (let i = 1; i <= lineCount; i++) {
-    const line = document.createElement("div");
-    line.className = "gutter-line";
-    line.textContent = String(i);
+    const line = el("div", { className: "gutter-line" }, String(i));
     if (agentLines.has(i)) {
       line.classList.add("gutter-agent-modified");
     }

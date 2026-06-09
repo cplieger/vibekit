@@ -25,6 +25,7 @@ import {
   type ToolRenderInfo,
 } from "./tool-schema.js";
 import { trackInProgress } from "./tool-group.js";
+import { el } from "@cplieger/reactive";
 
 export interface BuildToolCardOpts {
   id: string;
@@ -47,69 +48,65 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
   const displayTitle = info.mcp !== null ? formatMCPToolName(info.mcp.tool) : rawTitle;
 
-  const el = document.createElement("div");
-  el.className = `tool-call tool-tier-${tier}`;
-  el.dataset["kind"] = info.kind;
-  el.dataset["title"] = displayTitle;
-  el.dataset["tier"] = tier;
-  el.dataset["toolId"] = opts.id;
+  const node = el("div", { className: `tool-call tool-tier-${tier}` }) as HTMLDivElement;
+  node.dataset["kind"] = info.kind;
+  node.dataset["title"] = displayTitle;
+  node.dataset["tier"] = tier;
+  node.dataset["toolId"] = opts.id;
   if (info.mcp !== null) {
-    el.dataset["mcpServer"] = info.mcp.server;
+    node.dataset["mcpServer"] = info.mcp.server;
   }
   if (info.filePath !== "") {
-    el.dataset["filename"] = info.fileBasename;
-    el.dataset["filePath"] = info.filePath;
+    node.dataset["filename"] = info.fileBasename;
+    node.dataset["filePath"] = info.filePath;
   }
   if (opts.live && isToolActive(opts.status)) {
-    el.dataset["startMs"] = String(Date.now());
-    trackInProgress(el);
+    node.dataset["startMs"] = String(Date.now());
+    trackInProgress(node);
   }
 
-  el.appendChild(buildHeader(opts, displayTitle, info));
+  node.appendChild(buildHeader(opts, displayTitle, info));
 
   // Medium tier: add a subtitle row with the first meaningful input param.
   if (tier === "medium") {
     const subtitle = extractSubtitle(opts.input);
     if (subtitle !== "") {
-      const sub = document.createElement("div");
-      sub.className = "tool-subtitle";
-      sub.textContent = subtitle;
-      el.appendChild(sub);
+      const sub = el("div", { className: "tool-subtitle" }, subtitle);
+      node.appendChild(sub);
     }
   }
 
   // Complex tier: add a scrollable output box.
   // Simple + medium: add a hidden details block (toggle on click).
   if (tier === "complex") {
-    const outputBox = document.createElement("div");
-    outputBox.className = "tool-output-box";
-    el.appendChild(outputBox);
+    const outputBox = el("div", { className: "tool-output-box" }) as HTMLDivElement;
+    node.appendChild(outputBox);
     if (opts.output !== undefined && opts.output !== "") {
       appendToOutputBox(outputBox, opts.output);
     }
   } else {
-    el.insertAdjacentHTML("beforeend", buildDetails(opts));
+    node.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
-      appendOutput(el, opts.output);
+      appendOutput(node, opts.output);
     }
   }
 
-  wireFileLink(el, info.filePath);
+  wireFileLink(node, info.filePath);
   if (tier !== "simple") {
-    wireToggle(el);
+    wireToggle(node);
   }
 
   if (opts.diffs !== undefined && opts.diffs.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const d = opts.diffs[0]!;
-    insertDiffPreview(el, d.path, {
+    insertDiffPreview(node, d.path, {
       oldText: d.old_text ?? "",
       newText: d.new_text,
     });
   } else if (info.writesFile && info.diffSources !== null) {
-    insertDiffPreview(el, info.filePath, info.diffSources);
+    insertDiffPreview(node, info.filePath, info.diffSources);
   }
-  return el;
+  return node;
 }
 
 /** Extract a one-line subtitle from tool input for medium-tier cards. */
@@ -134,8 +131,7 @@ function appendToOutputBox(box: HTMLDivElement, text: string): void {
   if (pre !== null) {
     pre.textContent += text;
   } else {
-    const newPre = document.createElement("pre");
-    newPre.textContent = text;
+    const newPre = el("pre", null, text);
     box.appendChild(newPre);
   }
   box.scrollTop = box.scrollHeight;
@@ -148,67 +144,56 @@ function buildHeader(
   displayTitle: string,
   info: ToolRenderInfo,
 ): HTMLDivElement {
-  const header = document.createElement("div");
-  header.className = "tool-header";
-  header.title = opts.title;
+  const header = el("div", { className: "tool-header", title: opts.title }) as HTMLDivElement;
 
-  const iconSpan = document.createElement("span");
-  iconSpan.className = "tool-icon";
-  iconSpan.replaceChildren(iconEl(toolIcon(info.kind, opts.title)));
+  const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info.kind, opts.title)));
   header.appendChild(iconSpan);
 
-  const titleSpan = document.createElement("span");
-  titleSpan.className = "tool-title";
-  titleSpan.textContent = displayTitle;
+  const titleSpan = el("span", { className: "tool-title" }, displayTitle);
   header.appendChild(titleSpan);
 
   if (info.mcp !== null) {
-    const badge = document.createElement("span");
-    badge.className = "tool-mcp-badge";
-    badge.title = `From the ${info.mcp.server} MCP integration`;
+    const badge = el(
+      "span",
+      { className: "tool-mcp-badge", title: `From the ${info.mcp.server} MCP integration` },
+      info.mcp.server,
+    );
     badge.style.setProperty("--mcp-hue", String(mcpHue(info.mcp.server)));
-    badge.textContent = info.mcp.server;
     header.appendChild(badge);
   }
 
   if (info.filePath !== "") {
-    const btn = document.createElement("button");
-    btn.className = "tool-file-link";
-    btn.dataset["path"] = info.filePath;
-    btn.title = info.filePath;
-    const fIcon = document.createElement("span");
-    fIcon.className = "tool-file-icon";
-    fIcon.replaceChildren(iconEl(fileIcon(info.fileBasename, false)));
-    btn.appendChild(fIcon);
-    const fName = document.createElement("span");
-    fName.className = "tool-file-name";
-    fName.textContent = info.fileBasename;
-    btn.appendChild(fName);
+    const btn = el(
+      "button",
+      { className: "tool-file-link", "data-path": info.filePath, title: info.filePath },
+      el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
+      el("span", { className: "tool-file-name" }, info.fileBasename),
+    );
     header.appendChild(btn);
   }
 
   if (opts.live && isToolActive(opts.status)) {
-    const spinner = document.createElement("span");
-    spinner.className = "tool-spinner";
+    const spinner = el("span", { className: "tool-spinner" });
     header.appendChild(spinner);
   }
 
   if (opts.live) {
-    const duration = document.createElement("span");
-    duration.className = "tool-duration";
+    const duration = el("span", { className: "tool-duration" });
     header.appendChild(duration);
   }
 
-  const status = document.createElement("span");
-  status.className = `tool-status ${opts.status}`;
-  status.textContent = opts.status;
+  const status = el("span", { className: `tool-status ${opts.status}` }, opts.status);
   header.appendChild(status);
 
-  const toggle = document.createElement("button");
-  toggle.className = "tool-toggle";
-  toggle.setAttribute("aria-expanded", "false");
-  toggle.setAttribute("aria-label", "Toggle tool details");
-  toggle.replaceChildren(iconEl(ICON_CHEVRON_DOWN));
+  const toggle = el(
+    "button",
+    {
+      className: "tool-toggle",
+      "aria-expanded": "false",
+      "aria-label": "Toggle tool details",
+    },
+    iconEl(ICON_CHEVRON_DOWN),
+  );
   header.appendChild(toggle);
 
   return header;
@@ -267,12 +252,12 @@ function wireToggle(el: HTMLElement): void {
   });
 }
 
-function appendOutput(el: HTMLElement, output: string): void {
-  const out = el.querySelector(".tool-output");
+function appendOutput(node: HTMLElement, output: string): void {
+  const out = node.querySelector(".tool-output");
   if (out === null) {
     return;
   }
-  const pre = document.createElement("pre");
+  const pre = el("pre");
   pre.innerHTML = ansiToHtml(output);
   out.appendChild(pre);
 }
@@ -280,7 +265,7 @@ function appendOutput(el: HTMLElement, output: string): void {
 // --- Inline diff preview for file-writing tools ---
 
 export function insertDiffPreview(
-  el: HTMLDivElement,
+  node: HTMLDivElement,
   filePath: string,
   src: { oldText: string; newText: string },
 ): void {
@@ -290,17 +275,13 @@ export function insertDiffPreview(
     return;
   }
 
-  const wrap = document.createElement("div");
-  wrap.className = "tool-diff-preview";
+  const wrap = el("div", { className: "tool-diff-preview" });
 
-  const stats = document.createElement("div");
-  stats.className = "tool-diff-stats";
+  const stats = el("div", { className: "tool-diff-stats" });
   stats.innerHTML =
     `<span class="diff-add-count">+${String(s.adds)}</span>` +
     `<span class="diff-del-count">-${String(s.dels)}</span>`;
-  const viewBtn = document.createElement("button");
-  viewBtn.className = "tool-diff-view-btn";
-  viewBtn.textContent = "View diff";
+  const viewBtn = el("button", { className: "tool-diff-view-btn" }, "View diff");
   viewBtn.addEventListener("click", (e: Event) => {
     e.stopPropagation();
     openFileDiff(filePath, src.oldText, src.newText, { oldLabel: "before", newLabel: "after" });
@@ -314,11 +295,13 @@ export function insertDiffPreview(
   wrap.appendChild(mini);
 
   if (trimmed.more > 0) {
-    const more = document.createElement("div");
-    more.className = "tool-diff-more";
-    more.textContent = `+${String(trimmed.more)} more change${trimmed.more === 1 ? "" : "s"}`;
+    const more = el(
+      "div",
+      { className: "tool-diff-more" },
+      `+${String(trimmed.more)} more change${trimmed.more === 1 ? "" : "s"}`,
+    );
     wrap.appendChild(more);
   }
 
-  el.insertBefore(wrap, el.querySelector(".tool-details"));
+  node.insertBefore(wrap, node.querySelector(".tool-details"));
 }

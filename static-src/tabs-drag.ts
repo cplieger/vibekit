@@ -4,6 +4,8 @@
 // tab store only via the reorderTabs callback at the end of a drag.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 const DRAG_THRESHOLD_PX = 5;
 const DRAG_HOLD_MS = 300;
 
@@ -36,12 +38,12 @@ class TabDragController {
   }
 
   /** Attach drag-to-reorder behavior to a tab element. */
-  attachDrag(el: HTMLElement): void {
+  attachDrag(tabEl: HTMLElement): void {
     let downY = 0;
     let downTimer: ReturnType<typeof setTimeout> | null = null;
     let armed = false;
 
-    el.addEventListener("pointerdown", (e) => {
+    tabEl.addEventListener("pointerdown", (e) => {
       if ((e.target as HTMLElement).closest(".tab-close") !== null) {
         return;
       }
@@ -53,29 +55,29 @@ class TabDragController {
       if (e.pointerType === "touch") {
         downTimer = setTimeout(() => {
           if (armed) {
-            this.startDrag(el, e.clientY, e.pointerId);
+            this.startDrag(tabEl, e.clientY, e.pointerId);
           }
         }, DRAG_HOLD_MS);
       }
     });
 
-    el.addEventListener("pointermove", (e) => {
+    tabEl.addEventListener("pointermove", (e) => {
       if (!armed || this.dragEl !== null) {
         return;
       }
       if (e.pointerType !== "touch" && Math.abs(e.clientY - downY) > DRAG_THRESHOLD_PX) {
-        this.startDrag(el, e.clientY, e.pointerId);
+        this.startDrag(tabEl, e.clientY, e.pointerId);
       }
     });
 
-    el.addEventListener("pointerup", () => {
+    tabEl.addEventListener("pointerup", () => {
       armed = false;
       if (downTimer !== null) {
         clearTimeout(downTimer);
         downTimer = null;
       }
     });
-    el.addEventListener("pointercancel", () => {
+    tabEl.addEventListener("pointercancel", () => {
       armed = false;
       if (downTimer !== null) {
         clearTimeout(downTimer);
@@ -84,38 +86,37 @@ class TabDragController {
     });
   }
 
-  private startDrag(el: HTMLElement, clientY: number, pointerId: number): void {
-    this.dragEl = el;
-    const rect = el.getBoundingClientRect();
+  private startDrag(tabEl: HTMLElement, clientY: number, pointerId: number): void {
+    this.dragEl = tabEl;
+    const rect = tabEl.getBoundingClientRect();
     this.dragOffsetY = clientY - rect.top;
 
-    this.dragGhost = el.cloneNode(true) as HTMLElement;
+    this.dragGhost = tabEl.cloneNode(true) as HTMLElement;
     this.dragGhost.classList.add("tab-drag-ghost");
     this.dragGhost.style.width = `${rect.width}px`;
     this.dragGhost.style.left = `${rect.left}px`;
     this.dragGhost.style.top = `${rect.top}px`;
     document.body.appendChild(this.dragGhost);
 
-    this.dragIndicator = document.createElement("div");
-    this.dragIndicator.className = "tab-drag-indicator";
-    el.insertAdjacentElement("afterend", this.dragIndicator);
-    this.dragTargetIdx = [...(el.parentElement?.children ?? [])]
-      .filter((c) => c !== el && c !== this.dragIndicator)
+    this.dragIndicator = el("div", { className: "tab-drag-indicator" });
+    tabEl.insertAdjacentElement("afterend", this.dragIndicator);
+    this.dragTargetIdx = [...(tabEl.parentElement?.children ?? [])]
+      .filter((c) => c !== tabEl && c !== this.dragIndicator)
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       .indexOf(this.dragIndicator.nextElementSibling!);
     if (this.dragTargetIdx === -1) {
-      this.dragTargetIdx = [...(el.parentElement?.children ?? [])].filter(
-        (c) => c !== el && c !== this.dragIndicator,
+      this.dragTargetIdx = [...(tabEl.parentElement?.children ?? [])].filter(
+        (c) => c !== tabEl && c !== this.dragIndicator,
       ).length;
     }
 
-    el.classList.add("tab-drag-placeholder");
-    el.parentElement?.classList.add("dragging");
+    tabEl.classList.add("tab-drag-placeholder");
+    tabEl.parentElement?.classList.add("dragging");
 
-    el.setPointerCapture(pointerId);
-    el.addEventListener("pointermove", this.boundDragMove);
-    el.addEventListener("pointerup", this.boundDragEnd);
-    el.addEventListener("pointercancel", this.boundDragEnd);
+    tabEl.setPointerCapture(pointerId);
+    tabEl.addEventListener("pointermove", this.boundDragMove);
+    tabEl.addEventListener("pointerup", this.boundDragEnd);
+    tabEl.addEventListener("pointercancel", this.boundDragEnd);
     document.body.style.userSelect = "none";
   }
 
@@ -154,10 +155,7 @@ class TabDragController {
 
     this.dragTargetIdx = target;
 
-    if (this.dragIndicator === null) {
-      this.dragIndicator = document.createElement("div");
-      this.dragIndicator.className = "tab-drag-indicator";
-    }
+    this.dragIndicator ??= el("div", { className: "tab-drag-indicator" });
     if (target >= siblings.length) {
       list.appendChild(this.dragIndicator);
     } else {
@@ -243,6 +241,6 @@ export function setReorderCallback(fn: (order: string[]) => void): void {
 }
 
 /** Attach drag-to-reorder behavior to a tab element. */
-export function attachDrag(el: HTMLElement): void {
-  instance.attachDrag(el);
+export function attachDrag(tabEl: HTMLElement): void {
+  instance.attachDrag(tabEl);
 }

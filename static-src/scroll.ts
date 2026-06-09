@@ -18,6 +18,7 @@
 // continue to compile unchanged. The observer does the real work.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { loadMoreSkeleton } from "./skeleton.js";
 import { $ } from "./dom.js";
 
@@ -99,17 +100,17 @@ class ScrollController {
     const reobserveChildren = (): void => {
       const current = new Set<Element>(this.messagesEl.children);
       // Unobserve removed children.
-      for (const el of observed) {
-        if (!current.has(el)) {
-          resizeObserver.unobserve(el);
-          observed.delete(el);
+      for (const child of observed) {
+        if (!current.has(child)) {
+          resizeObserver.unobserve(child);
+          observed.delete(child);
         }
       }
       // Observe new children.
-      for (const el of current) {
-        if (!observed.has(el)) {
-          resizeObserver.observe(el);
-          observed.add(el);
+      for (const child of current) {
+        if (!observed.has(child)) {
+          resizeObserver.observe(child);
+          observed.add(child);
         }
       }
     };
@@ -149,7 +150,9 @@ class ScrollController {
   }
 
   trimOldMessages(): void {
-    const children = [...this.messagesEl.children].filter((el) => el.id !== "load-more-indicator");
+    const children = [...this.messagesEl.children].filter(
+      (child) => child.id !== "load-more-indicator",
+    );
     const excess = children.length - DOM_MESSAGE_CAP;
     if (excess <= 0) {
       return;
@@ -244,10 +247,11 @@ class ScrollController {
     let indicator = document.getElementById("load-more-indicator");
     if (this.hasMoreMessages && this.onLoadMore !== null) {
       if (indicator === null) {
-        indicator = document.createElement("div");
-        indicator.id = "load-more-indicator";
-        indicator.className = "message system";
-        indicator.textContent = "Scroll up for older messages";
+        indicator = el(
+          "div",
+          { id: "load-more-indicator", className: "message system" },
+          "Scroll up for older messages",
+        );
         this.messagesEl.prepend(indicator);
       }
     } else if (indicator !== null) {

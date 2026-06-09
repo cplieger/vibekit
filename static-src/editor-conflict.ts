@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { el } from "@cplieger/reactive";
 import {
   parseConflicts,
   resolveHunk,
@@ -89,24 +90,26 @@ export function renderConflictOverlay(state: FileState): void {
   }
   const conflict = state.mode.conflict;
   overlay.classList.remove("hidden");
-  const header = document.createElement("div");
-  header.className = "conflict-status";
-  header.textContent = `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`;
-  overlay.appendChild(header);
+  overlay.appendChild(
+    el(
+      "div",
+      { className: "conflict-status" },
+      `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`,
+    ),
+  );
   for (let i = 0; i < conflict.hunks.length; i++) {
     const hunk = conflict.hunks[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const row = document.createElement("div");
-    row.className = "conflict-hunk-row";
-    const title = document.createElement("span");
-    title.className = "conflict-hunk-title";
-    title.textContent = `Line ${String(hunk.startLine + 1)}: ${hunk.ourLabel || "HEAD"} vs ${hunk.theirLabel || "incoming"}`;
-    row.appendChild(title);
+    const row = el("div", { className: "conflict-hunk-row" });
+    row.appendChild(
+      el(
+        "span",
+        { className: "conflict-hunk-title" },
+        `Line ${String(hunk.startLine + 1)}: ${hunk.ourLabel || "HEAD"} vs ${hunk.theirLabel || "incoming"}`,
+      ),
+    );
     const suggestion = state.suggestions.get(hunk.startLine);
     if (suggestion !== undefined && suggestion.preview !== null) {
-      const pill = document.createElement("span");
-      pill.className = "conflict-suggest-pill";
-      pill.textContent = "AI suggestion";
-      row.appendChild(pill);
+      row.appendChild(el("span", { className: "conflict-suggest-pill" }, "AI suggestion"));
       row.appendChild(
         resolveBtn("Accept", () => {
           acceptSuggestion(state, i);
@@ -118,10 +121,7 @@ export function renderConflictOverlay(state: FileState): void {
         }),
       );
       overlay.appendChild(row);
-      const preview = document.createElement("pre");
-      preview.className = "conflict-suggest-preview";
-      preview.textContent = suggestion.preview;
-      overlay.appendChild(preview);
+      overlay.appendChild(el("pre", { className: "conflict-suggest-preview" }, suggestion.preview));
       continue;
     }
     row.appendChild(
@@ -139,29 +139,28 @@ export function renderConflictOverlay(state: FileState): void {
         applyResolution(state, i, "both");
       }),
     );
-    const suggestBtn = document.createElement("button");
-    suggestBtn.className = "conflict-btn conflict-btn-suggest";
-    suggestBtn.textContent = suggestion?.loading === true ? "Suggesting..." : "Suggest";
-    suggestBtn.title = "Propose a merged version using the utility AI bridge";
-    suggestBtn.disabled = suggestion?.loading === true;
+    const suggestBtn = el(
+      "button",
+      {
+        className: "conflict-btn conflict-btn-suggest",
+        title: "Propose a merged version using the utility AI bridge",
+        disabled: suggestion?.loading === true,
+      },
+      suggestion?.loading === true ? "Suggesting..." : "Suggest",
+    );
     suggestBtn.addEventListener("click", () => {
       void requestSuggestion(state, i);
     });
     row.appendChild(suggestBtn);
     if (suggestion !== undefined && suggestion.error !== "") {
-      const err = document.createElement("span");
-      err.className = "conflict-suggest-error";
-      err.textContent = suggestion.error;
-      row.appendChild(err);
+      row.appendChild(el("span", { className: "conflict-suggest-error" }, suggestion.error));
     }
     overlay.appendChild(row);
   }
 }
 
-function resolveBtn(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.className = "conflict-btn";
-  b.textContent = label;
+function resolveBtn(label: string, onClick: () => void): HTMLElement {
+  const b = el("button", { className: "conflict-btn" }, label);
   b.addEventListener("click", onClick);
   return b;
 }

@@ -9,6 +9,7 @@
 // reads via fs_read.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { badgeForExt } from "./file-extensions.js";
 import { reconcile } from "./reconcile.js";
@@ -83,27 +84,22 @@ function renderPills(): void {
 }
 
 function buildAttachmentPill(att: AttachedFile): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "attachment-pill";
-  li.title = att.path;
+  const icon = el("span", { className: "attachment-icon" }, iconFor(att.name));
 
-  const icon = document.createElement("span");
-  icon.className = "attachment-icon";
-  icon.textContent = iconFor(att.name);
+  const label = el("span", { className: "attachment-name" }, att.name);
 
-  const label = document.createElement("span");
-  label.className = "attachment-name";
-  label.textContent = att.name;
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "attachment-close";
-  close.textContent = "×";
-  close.setAttribute("aria-label", `Remove ${att.name}`);
+  const close = el(
+    "button",
+    {
+      type: "button",
+      className: "attachment-close",
+      "aria-label": `Remove ${att.name}`,
+    },
+    "×",
+  );
   close.addEventListener("click", () => {
     removeAttachment(att.path);
   });
 
-  li.append(icon, label, close);
-  return li;
+  return el("li", { className: "attachment-pill", title: att.path }, icon, label, close);
 }
