@@ -147,8 +147,11 @@ export function activateChatView(id: string): void {
       }
       if (!ok) {
         // Show retry button on failed load.
-        const retry = el("div", { className: "load-error" });
-        retry.innerHTML = "<span>Failed to load messages.</span>";
+        const retry = el(
+          "div",
+          { className: "load-error" },
+          el("span", {}, "Failed to load messages."),
+        );
         const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
         btn.addEventListener("click", () => {
           retry.remove();

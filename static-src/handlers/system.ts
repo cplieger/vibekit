@@ -9,6 +9,7 @@
 // counters reconcile alongside the message history.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
@@ -134,10 +135,11 @@ onSSE("steering_loaded", (chatID, payload) => {
   if (msgs.querySelector(".steering-badge") !== null) {
     return;
   }
-  const badge = document.createElement("div");
-  badge.className = "steering-badge";
-  badge.setAttribute("data-chat-entry", "");
-  badge.textContent = `Context loaded: ${docs.join(", ")}`;
+  const badge = el(
+    "div",
+    { className: "steering-badge", "data-chat-entry": "" },
+    `Context loaded: ${docs.join(", ")}`,
+  );
   msgs.appendChild(badge);
 });
 

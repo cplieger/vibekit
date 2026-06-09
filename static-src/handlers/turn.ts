@@ -2,6 +2,7 @@
 // SSE handlers for turn lifecycle + permission dialog + errors.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { onSSE } from "../bus.js";
 import {
   setThinking,
@@ -158,12 +159,16 @@ onSSE("turn_ended", (chatID, p) => {
       // Dedup: skip DOM insertion only (side-effects already fired above)
       const nextEl = lastMsg.nextElementSibling;
       if (!nextEl?.classList.contains("turn-summary")) {
-        const summary = document.createElement("div");
-        summary.className = "turn-summary";
-        summary.setAttribute("role", "note");
-        summary.setAttribute("aria-label", "Turn summary");
-        summary.setAttribute("data-chat-entry", "");
-        summary.textContent = summaryText;
+        const summary = el(
+          "div",
+          {
+            className: "turn-summary",
+            role: "note",
+            "aria-label": "Turn summary",
+            "data-chat-entry": "",
+          },
+          summaryText,
+        );
         lastMsg.insertAdjacentElement("afterend", summary);
       }
     }
@@ -187,11 +192,11 @@ onSSE("turn_ended", (chatID, p) => {
     if (removed > 0) {
       parts.push(`-${String(removed)}`);
     }
-    const banner = document.createElement("div");
-    banner.className = "turn-file-changes";
-    banner.setAttribute("role", "note");
-    banner.setAttribute("data-chat-entry", "");
-    banner.textContent = parts.join(" · ");
+    const banner = el(
+      "div",
+      { className: "turn-file-changes", role: "note", "data-chat-entry": "" },
+      parts.join(" · "),
+    );
     // Dedup: skip if a turn-file-changes already exists as the last entry
     const lastChild = msgsEl.lastElementChild;
     if (lastChild !== null && !lastChild.classList.contains("turn-file-changes")) {

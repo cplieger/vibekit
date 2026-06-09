@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { ICON_EDIT } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { openFile } from "./editor-openers.js";
 import { defineAction, ActionError, retryNetwork } from "./actions/index.js";
 import { apiGet } from "./api-client.js";
@@ -102,8 +103,7 @@ function itemRow(item: KiroConfigItem): HTMLElement {
   const name = el("span", { className: "list-row-name" }, item.name);
   const meta = el("span", { className: "list-row-meta" }, item.inclusion ?? "");
 
-  const edit = el("span", { className: "list-row-btn" });
-  edit.innerHTML = ICON_EDIT;
+  const edit = el("span", { className: "list-row-btn" }, iconEl(ICON_EDIT));
 
   const row = el("div", { className: "list-row" }, name, meta, edit);
   row.style.cursor = "pointer";
