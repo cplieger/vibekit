@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { openEditorView, closeTab } from "./tabs.js";
+import { effect } from "@cplieger/reactive";
+import { openEditorView, closeTab, setTabDirty } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -108,6 +109,9 @@ interface OpenOpts {
   ref?: string;
 }
 
+// Per-file dirty->tab-indicator effects, disposed on close.
+const dirtyTabUnbinds = new Map<string, () => void>();
+
 function open(path: string, opts: OpenOpts): void {
   saveCurrentState();
   let state = fileStates.get(path);
@@ -115,6 +119,13 @@ function open(path: string, opts: OpenOpts): void {
     state = freshState(path);
     fileStates.set(path, state);
     persistOpenFiles();
+    const created = state;
+    dirtyTabUnbinds.set(
+      path,
+      effect(() => {
+        setTabDirty(`editor:${path}`, created.dirty.value);
+      }),
+    );
   }
   state.mode.value = opts.mode;
   if (opts.repo !== undefined) {
@@ -330,6 +341,8 @@ export function closeEditorFile(path: string): void {
   if (state?.mode.value.kind === "conflict") {
     abortSuggestion(path);
   }
+  dirtyTabUnbinds.get(path)?.();
+  dirtyTabUnbinds.delete(path);
   fileStates.delete(path);
   pendingLines.delete(path);
   clearAgentLineCache(path);

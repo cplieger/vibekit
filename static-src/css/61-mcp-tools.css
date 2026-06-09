@@ -598,6 +598,13 @@
   background: var(--c-yellow);
 }
 
+/* Steady accent dot = unsaved changes on an editor tab. Editor tabs never
+   receive setTabStatus (thinking/permission are chat-tab states), so the
+   shared .tab-status-dot is exclusively the dirty indicator for them. */
+.tab-dot-dirty {
+  background: var(--c-accent);
+}
+
 /* Styled tooltip (replaces bare title attributes) */
 .vk-tooltip {
   position: fixed;

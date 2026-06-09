@@ -253,6 +253,18 @@ export function setTabStatus(id: string, status: "" | "thinking" | "permission")
   el.classList.toggle("tab-dot-permission", status === "permission");
 }
 
+/** Mark an editor tab as having unsaved changes (a steady accent dot).
+ *  Reuses the shared .tab-status-dot: editor tabs never receive setTabStatus
+ *  (thinking/permission are chat-tab states), so there is no contention. */
+export function setTabDirty(id: string, dirty: boolean): void {
+  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
+  if (el === null) {
+    return;
+  }
+  el.classList.toggle("hidden", !dirty);
+  el.classList.toggle("tab-dot-dirty", dirty);
+}
+
 function reorderTabs(order: string[]): void {
   const byID = new Map(state.tabs.map((t) => [t.id, t]));
   const next: TabSpec[] = [];

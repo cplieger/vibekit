@@ -205,3 +205,34 @@ describe("hasTab", () => {
     expect(hasTab("a")).toBe(false);
   });
 });
+
+describe("setTabDirty (editor unsaved indicator)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("shows a steady dirty dot when dirty and clears it when clean", async () => {
+    const { setTabDirty } = await import("./tabs.js");
+    document.body.innerHTML =
+      '<div data-tab-id="editor:/a.ts"><span class="tab-status-dot hidden"></span></div>';
+    const dot = document.querySelector(".tab-status-dot");
+    if (dot === null) {
+      throw new Error("dot missing");
+    }
+
+    setTabDirty("editor:/a.ts", true);
+    expect(dot.classList.contains("tab-dot-dirty")).toBe(true);
+    expect(dot.classList.contains("hidden")).toBe(false);
+
+    setTabDirty("editor:/a.ts", false);
+    expect(dot.classList.contains("tab-dot-dirty")).toBe(false);
+    expect(dot.classList.contains("hidden")).toBe(true);
+  });
+
+  it("no-ops when the tab is not mounted", async () => {
+    const { setTabDirty } = await import("./tabs.js");
+    expect(() => {
+      setTabDirty("editor:/missing.ts", true);
+    }).not.toThrow();
+  });
+});
