@@ -67,8 +67,12 @@ export function abortSuggestion(path?: string): void {
 }
 
 export function renderConflictModeUI(state: FileState): void {
-  if (state.mode.kind !== "conflict") {
-    state.mode = { kind: "conflict", conflict: parseConflicts(state.current), editing: true };
+  if (state.mode.value.kind !== "conflict") {
+    state.mode.value = {
+      kind: "conflict",
+      conflict: parseConflicts(state.current),
+      editing: true,
+    };
   }
   $.editorContent.value = state.current;
   showEditMode();
@@ -84,11 +88,11 @@ export function renderConflictModeUI(state: FileState): void {
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
   overlay.replaceChildren();
-  if (state.mode.kind !== "conflict" || state.mode.conflict.hunks.length === 0) {
+  if (state.mode.value.kind !== "conflict" || state.mode.value.conflict.hunks.length === 0) {
     overlay.classList.add("hidden");
     return;
   }
-  const conflict = state.mode.conflict;
+  const conflict = state.mode.value.conflict;
   overlay.classList.remove("hidden");
   overlay.appendChild(
     el(
@@ -166,10 +170,10 @@ function resolveBtn(label: string, onClick: () => void): HTMLElement {
 }
 
 function applyResolution(state: FileState, hunkIndex: number, resolution: Resolution): void {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const newContent = resolveHunk(state.mode.conflict, hunkIndex, resolution);
+  const newContent = resolveHunk(state.mode.value.conflict, hunkIndex, resolution);
   state.current = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
@@ -177,19 +181,19 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
   $.editorSaveBtn.disabled = state.current === state.original;
   updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode = { kind: "edit", editing: false };
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  state.mode = { kind: "conflict", conflict: parsed, editing: true };
+  state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   renderConflictOverlay(state);
 }
 
 async function requestSuggestion(state: FileState, hunkIndex: number): Promise<void> {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const hunk = state.mode.conflict.hunks[hunkIndex];
+  const hunk = state.mode.value.conflict.hunks[hunkIndex];
   if (hunk === undefined) {
     return;
   }
@@ -208,7 +212,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   const myDispatchId = bumpSuggestionGen(state.path);
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
-  const context = buildHunkContext(state.mode.conflict, hunk);
+  const context = buildHunkContext(state.mode.value.conflict, hunk);
   const body = {
     ours: hunk.oursLines.join("\n"),
     theirs: hunk.theirsLines.join("\n"),
@@ -222,13 +226,13 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     return;
   }
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
   if (getActiveFilePath() !== state.path) {
     return;
   } // stale file switch
-  const current = state.mode.conflict.hunks[hunkIndex];
+  const current = state.mode.value.conflict.hunks[hunkIndex];
   if (current?.startLine !== hunk.startLine) {
     return;
   }
@@ -246,10 +250,10 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
 }
 
 function acceptSuggestion(state: FileState, hunkIndex: number): void {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const hunk = state.mode.conflict.hunks[hunkIndex];
+  const hunk = state.mode.value.conflict.hunks[hunkIndex];
   if (hunk === undefined) {
     return;
   }
@@ -259,11 +263,11 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
   }
   const previewLines = suggestion.preview === "" ? [] : suggestion.preview.split("\n");
   const out = [
-    ...state.mode.conflict.lines.slice(0, hunk.startLine),
+    ...state.mode.value.conflict.lines.slice(0, hunk.startLine),
     ...previewLines,
-    ...state.mode.conflict.lines.slice(hunk.endLine + 1),
+    ...state.mode.value.conflict.lines.slice(hunk.endLine + 1),
   ];
-  const newContent = out.join("\n") + (state.mode.conflict.trailingNewline ? "\n" : "");
+  const newContent = out.join("\n") + (state.mode.value.conflict.trailingNewline ? "\n" : "");
   state.current = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
@@ -271,11 +275,11 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
   $.editorSaveBtn.disabled = state.current === state.original;
   updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode = { kind: "edit", editing: false };
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  state.mode = { kind: "conflict", conflict: parsed, editing: true };
+  state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   renderConflictOverlay(state);
 }
 

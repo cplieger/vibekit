@@ -7,7 +7,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import { $ } from "./dom.js";
-import { countHunks } from "./diff-pane.js";
 import { getActiveId, get } from "./store.js";
 import { resolvePendingChange } from "./actions/chat.js";
 import { resolvePendingPartial } from "./actions/editor.js";
@@ -69,17 +68,10 @@ export function refreshPendingToolbar(state: FileState): void {
     : "Apply only the accepted hunks";
 }
 
-/** Count the hunks in a pending diff source. Cached on state. */
+/** Count the hunks in a pending diff source. Derived (computed) from
+ *  `mode`; auto-recomputes when the mode changes. */
 function pendingHunkCountFor(state: FileState): number {
-  if (state.pendingHunkCount !== null) {
-    return state.pendingHunkCount;
-  }
-  if (state.mode.kind !== "diff") {
-    return 0;
-  }
-  const count = countHunks(getCachedDiff(state));
-  state.pendingHunkCount = count;
-  return count;
+  return state.pendingHunkCount.value;
 }
 
 /** Apply the active pending op with only the user-accepted hunks. */
@@ -92,7 +84,7 @@ export async function applyActivePendingPartial(): Promise<void> {
   if (chatID === "" || toolCallID === "") {
     return;
   }
-  if (state.mode.kind !== "diff") {
+  if (state.mode.value.kind !== "diff") {
     return;
   }
 
@@ -222,7 +214,7 @@ function buildDiscussTemplate(filePath: string, hunkText: string, state: FileSta
     lines.push("```diff");
     lines.push(hunkText);
     lines.push("```");
-  } else if (state !== null && state.mode.kind === "diff") {
+  } else if (state !== null && state.mode.value.kind === "diff") {
     lines.push("```diff");
     for (const line of buildUnifiedDiffLines(state)) {
       lines.push(line);

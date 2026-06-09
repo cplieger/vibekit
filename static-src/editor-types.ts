@@ -4,7 +4,9 @@
 // editor-ui, and editor-openers.
 // ---------------------------------------------------------------------------
 
+import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
 import { lineDiff, type DiffLine } from "./diff.js";
+import { countHunks } from "./diff-pane.js";
 import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
@@ -122,14 +124,18 @@ export interface FileState {
   current: string;
   loaded: boolean;
   error: string;
-  mode: FileMode;
+  mode: Signal<FileMode>;
   suggestions: Map<number, HunkSuggestion>;
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
   pendingHunkDecisions: Map<number, "accept" | "reject">;
-  pendingHunkCount: number | null;
-  cachedDiff: DiffLine[] | null;
+  /** Hunk count of the current diff. Derived (computed) from `mode`;
+   *  auto-invalidates whenever `mode` is reassigned. */
+  pendingHunkCount: ReadonlySignal<number>;
+  /** Line diff of the current diff source. Derived (computed) from
+   *  `mode`; auto-invalidates whenever `mode` is reassigned. */
+  cachedDiff: ReadonlySignal<DiffLine[]>;
 }
 
 interface HunkSuggestion {
@@ -166,32 +172,40 @@ class EditorState {
   }
 
   freshState(path: string): FileState {
+    // `mode` is the single reactive input. `cachedDiff` and
+    // `pendingHunkCount` are computeds derived from it, so they
+    // auto-invalidate the moment `mode` is reassigned — no manual
+    // `= null` cache busting anywhere. The diff depends ONLY on
+    // `mode` (its `diffSource` is a snapshot captured at mode-entry;
+    // the editor is read-only in diff mode), so `current`/`original`
+    // are not inputs and stay plain fields.
+    const mode = signal<FileMode>({ kind: "edit", editing: false });
+    const cachedDiff = computed<DiffLine[]>(() => {
+      const m = mode.value;
+      return m.kind === "diff" ? lineDiff(m.diffSource.oldContent, m.diffSource.newContent) : [];
+    });
+    const pendingHunkCount = computed<number>(() => {
+      const m = mode.value;
+      return m.kind === "diff" ? countHunks(cachedDiff.value) : 0;
+    });
     return {
       path,
       original: "",
       current: "",
       loaded: false,
       error: "",
-      mode: { kind: "edit", editing: false },
+      mode,
       suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
       pendingHunkDecisions: new Map(),
-      pendingHunkCount: null,
-      cachedDiff: null,
+      pendingHunkCount,
+      cachedDiff,
     };
   }
 
   getCachedDiff(state: FileState): DiffLine[] {
-    if (state.cachedDiff !== null) {
-      return state.cachedDiff;
-    }
-    if (state.mode.kind !== "diff") {
-      return [];
-    }
-    const diff = lineDiff(state.mode.diffSource.oldContent, state.mode.diffSource.newContent);
-    state.cachedDiff = diff;
-    return diff;
+    return state.cachedDiff.value;
   }
 }
 

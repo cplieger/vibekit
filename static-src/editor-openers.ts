@@ -116,9 +116,7 @@ function open(path: string, opts: OpenOpts): void {
     fileStates.set(path, state);
     persistOpenFiles();
   }
-  state.mode = opts.mode;
-  state.pendingHunkCount = null;
-  state.cachedDiff = null;
+  state.mode.value = opts.mode;
   if (opts.repo !== undefined) {
     state.repo = opts.repo;
   }
@@ -158,23 +156,22 @@ export async function fetchGitDiffSources(
     }
     return;
   }
-  if (state.mode.kind !== "diff") {
+  const m = state.mode.value;
+  if (m.kind !== "diff") {
     return;
   }
   if (!fileStates.has(state.path)) {
     return;
   }
   const { oldContent, newContent, error } = result;
-  state.mode = {
+  state.mode.value = {
     kind: "diff",
     diffSource: {
-      ...state.mode.diffSource,
+      ...m.diffSource,
       oldContent,
       newContent,
     },
   };
-  state.pendingHunkCount = null;
-  state.cachedDiff = null;
   if (!state.loaded) {
     state.original = newContent;
     state.current = newContent;
@@ -202,7 +199,8 @@ export function activateFile(path: string): void {
 
   void fetchAgentLines(path);
 
-  if (state.mode.kind === "diff" && state.mode.diffSource.fromGit && !state.loaded) {
+  const m = state.mode.value;
+  if (m.kind === "diff" && m.diffSource.fromGit && !state.loaded) {
     $.editorCode.textContent = "Loading diff...";
     showReadMode();
     return;
@@ -224,7 +222,8 @@ function saveCurrentState(): void {
   if (
     state !== undefined &&
     state.loaded &&
-    ((state.mode.kind === "edit" && state.mode.editing) || state.mode.kind === "conflict")
+    ((state.mode.value.kind === "edit" && state.mode.value.editing) ||
+      state.mode.value.kind === "conflict")
   ) {
     state.current = $.editorContent.value;
   }
@@ -264,8 +263,8 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   state.loaded = true;
   state.error = "";
   const parsed = parseConflicts(state.current);
-  if (parsed.hunks.length > 0 && state.mode.kind === "edit") {
-    state.mode = { kind: "conflict", conflict: parsed, editing: true };
+  if (parsed.hunks.length > 0 && state.mode.value.kind === "edit") {
+    state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   }
   restoreUI(state);
   applyPendingLine(state.path);
@@ -277,9 +276,7 @@ function settlePendingDiff(state: FileState, error: string, oldText = "", newTex
   state.loaded = true;
   state.original = newText;
   state.current = newText;
-  state.mode = { kind: "diff", diffSource: pendingDiffSource(oldText, newText) };
-  state.pendingHunkCount = null;
-  state.cachedDiff = null;
+  state.mode.value = { kind: "diff", diffSource: pendingDiffSource(oldText, newText) };
   restoreUI(state);
 }
 
@@ -330,7 +327,7 @@ function persistOpenFiles(): void {
 
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
-  if (state?.mode.kind === "conflict") {
+  if (state?.mode.value.kind === "conflict") {
     abortSuggestion(path);
   }
   fileStates.delete(path);

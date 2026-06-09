@@ -78,10 +78,37 @@ describe("routeForPath", () => {
 });
 
 describe("getCachedDiff", () => {
-  it("first call computes and caches diff, second returns same reference", async () => {
+  it("edit mode returns an empty array", async () => {
     const { getCachedDiff, freshState } = await import("./editor-types.js");
     const state = freshState("test.ts");
-    state.mode = {
+    state.mode.value = { kind: "edit", editing: false };
+    expect(getCachedDiff(state)).toEqual([]);
+  });
+
+  it("diff mode computes the line diff of the diff source", async () => {
+    const { getCachedDiff, freshState } = await import("./editor-types.js");
+    const state = freshState("test.ts");
+    state.mode.value = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "a\nb\n",
+        newContent: "a\nc\n",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
+    const diff = getCachedDiff(state);
+    // "b" deleted, "c" added; "a" stays as context.
+    expect(diff.some((l) => l.kind === "del" && l.text === "b")).toBe(true);
+    expect(diff.some((l) => l.kind === "add" && l.text === "c")).toBe(true);
+    expect(diff.some((l) => l.kind === "ctx" && l.text === "a")).toBe(true);
+  });
+
+  it("memoizes: two reads with mode unchanged return the same array reference", async () => {
+    const { getCachedDiff, freshState } = await import("./editor-types.js");
+    const state = freshState("test.ts");
+    state.mode.value = {
       kind: "diff",
       diffSource: {
         oldContent: "a\nb\n",
@@ -94,13 +121,75 @@ describe("getCachedDiff", () => {
     const first = getCachedDiff(state);
     expect(first.length).toBeGreaterThan(0);
     const second = getCachedDiff(state);
-    expect(second).toBe(first); // same reference — cached
+    expect(second).toBe(first); // same reference — the computed caches
   });
 
-  it("non-diff mode returns empty array", async () => {
+  it("auto-invalidates: reassigning mode (no manual cache reset) yields the new diff", async () => {
     const { getCachedDiff, freshState } = await import("./editor-types.js");
     const state = freshState("test.ts");
-    state.mode = { kind: "edit", editing: false };
-    expect(getCachedDiff(state)).toEqual([]);
+    state.mode.value = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "a\nb",
+        newContent: "a\nc",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
+    const before = getCachedDiff(state);
+    expect(before.some((l) => l.kind === "add" && l.text === "c")).toBe(true);
+
+    // Reassign mode ONLY. The pre-reactive code required an explicit
+    // `state.cachedDiff = null` here; the computed must refresh on its own.
+    state.mode.value = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "a\nb",
+        newContent: "a\nZ",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
+    const after = getCachedDiff(state);
+    expect(after).not.toBe(before); // recomputed, not the stale cached array
+    expect(after.some((l) => l.kind === "add" && l.text === "Z")).toBe(true);
+    expect(after.some((l) => l.kind === "add" && l.text === "c")).toBe(false);
+  });
+
+  it("pendingHunkCount auto-recomputes when mode changes", async () => {
+    const { freshState } = await import("./editor-types.js");
+    const state = freshState("test.ts");
+
+    // One changed line between two context lines → exactly one hunk.
+    state.mode.value = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "a\nb\nc",
+        newContent: "a\nX\nc",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
+    expect(state.pendingHunkCount.value).toBe(1);
+
+    // Three changed lines separated by unchanged context → three hunks.
+    state.mode.value = {
+      kind: "diff",
+      diffSource: {
+        oldContent: "1\n2\n3\n4\n5",
+        newContent: "A\n2\nB\n4\nC",
+        oldLabel: "old",
+        newLabel: "new",
+        fromGit: false,
+      },
+    };
+    expect(state.pendingHunkCount.value).toBe(3);
+
+    // Leaving diff mode → no hunks, with no manual reset.
+    state.mode.value = { kind: "edit", editing: false };
+    expect(state.pendingHunkCount.value).toBe(0);
   });
 });

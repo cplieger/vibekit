@@ -47,7 +47,7 @@ export function restoreUI(state: FileState): void {
     return;
   }
 
-  switch (state.mode.kind) {
+  switch (state.mode.value.kind) {
     case "diff":
       renderDiffModeUI(state);
       return;

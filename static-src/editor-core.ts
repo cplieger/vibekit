@@ -114,8 +114,12 @@ export function initEditor(): void {
     state.current = $.editorContent.value;
     $.editorSaveBtn.disabled = state.current === state.original;
     updateGutter(state.current);
-    if (state.mode.kind === "conflict") {
-      state.mode = { kind: "conflict", conflict: parseConflicts(state.current), editing: true };
+    if (state.mode.value.kind === "conflict") {
+      state.mode.value = {
+        kind: "conflict",
+        conflict: parseConflicts(state.current),
+        editing: true,
+      };
       renderConflictOverlay(state);
     }
   });
@@ -148,22 +152,18 @@ function toggleDiffMode(): void {
   if (state === undefined) {
     return;
   }
-  if (state.mode.kind === "diff") {
-    state.mode = { kind: "edit", editing: false };
-    state.cachedDiff = null;
-    state.pendingHunkCount = null;
+  if (state.mode.value.kind === "diff") {
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
   if (state.current === state.original) {
     return;
   }
-  state.mode = {
+  state.mode.value = {
     kind: "diff",
     diffSource: unsavedDiffSource(state.original, state.current),
   };
-  state.cachedDiff = null;
-  state.pendingHunkCount = null;
   restoreUI(state);
 }
 
@@ -172,14 +172,13 @@ function startEditing(): void {
   if (state === undefined) {
     return;
   }
-  if (state.mode.kind === "diff") {
-    state.returnToGitDiff = state.mode.diffSource.fromGit
-      ? { ref: state.mode.diffSource.oldLabel, repo: state.repo }
+  const m = state.mode.value;
+  if (m.kind === "diff") {
+    state.returnToGitDiff = m.diffSource.fromGit
+      ? { ref: m.diffSource.oldLabel, repo: state.repo }
       : null;
-    state.cachedDiff = null;
-    state.pendingHunkCount = null;
   }
-  state.mode = { kind: "edit", editing: true };
+  state.mode.value = { kind: "edit", editing: true };
   $.editorContent.value = state.current;
   showEditMode();
   updateGutter(state.current);
@@ -219,15 +218,14 @@ function stopEditing(state: FileState): void {
   if (state.returnToGitDiff !== null) {
     const { ref, repo } = state.returnToGitDiff;
     state.returnToGitDiff = null;
-    state.mode = {
+    state.mode.value = {
       kind: "diff",
       diffSource: gitDiffSource(ref, "", state.current),
     };
-    state.pendingHunkCount = null;
     void fetchGitDiffSources(state, repo, ref);
     return;
   }
-  state.mode = { kind: "edit", editing: false };
+  state.mode.value = { kind: "edit", editing: false };
   renderHighlight(state.original, state.path);
   showReadMode();
   $.editorEditBtn.classList.remove("hidden");
@@ -267,18 +265,18 @@ function saveFile(): void {
         }
         $.editorError.classList.add("hidden");
         if (getActiveFilePath() === state.path) {
-          if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-            state.mode = { kind: "edit", editing: false };
+          const m = state.mode.value;
+          if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
+            state.mode.value = { kind: "edit", editing: false };
             renderEditModeUI(state);
           }
           if (state.returnToGitDiff !== null) {
             const { ref, repo } = state.returnToGitDiff;
             state.returnToGitDiff = null;
-            state.mode = {
+            state.mode.value = {
               kind: "diff",
               diffSource: gitDiffSource(ref, "", content),
             };
-            state.pendingHunkCount = null;
             void fetchGitDiffSources(state, repo, ref);
           }
         }
