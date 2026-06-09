@@ -8,6 +8,7 @@ require (
 	github.com/cplieger/atomicfile v1.1.0
 	github.com/cplieger/metrics v1.0.2
 	github.com/cplieger/vterm v1.0.10
+	github.com/cplieger/wiregen v1.1.0
 	golang.org/x/sync v0.21.0
 	pgregory.net/rapid v1.3.0
 )
