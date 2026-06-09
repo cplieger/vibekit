@@ -3,14 +3,8 @@
 // signal-based cancellation. Extracted from forge-auth.ts.
 // ---------------------------------------------------------------------------
 
-// signal.aborted defensive guards: the @typescript-eslint/no-unnecessary-condition
-// rule sees AbortSignal.aborted as boolean (always defined) and flags the
-// re-checks inside async loops as redundant, but the value flips between
-// awaited microtasks — the re-check IS necessary to bail before mutating
-// shared state. Suppressed file-wide.
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-
 import { el } from "@cplieger/reactive";
+import { pollUntil } from "@cplieger/actions";
 import { apiPostTyped } from "./api-client.js";
 import type { DeviceFlowResponse } from "./wire/types.gen.js";
 import { decodePollResult } from "./wire/decoders.gen.js";
@@ -117,83 +111,60 @@ async function pollGitHubDevice(
   deps: OAuthFlowDeps,
 ): Promise<void> {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
-  let attempts = 0;
-  let backoff = intervalSec;
+  // pollUntil has no host concept; the caller aborts `signal` on host
+  // teardown, but every status write is also guarded by host.isConnected
+  // so a detached node is never touched (mirrors the old loop, which
+  // bailed without writing once host.isConnected went false).
+  const setStatus = (text: string): void => {
+    if (host.isConnected && statusEl !== null) {
+      statusEl.textContent = text;
+    }
+  };
 
-  while (!signal.aborted && host.isConnected) {
-    await sleepWithSignal(backoff * 1000, signal);
-    if (signal.aborted || !host.isConnected) {
-      return;
-    }
-    attempts++;
-    if (attempts > POLL_MAX_ATTEMPTS) {
-      if (statusEl !== null) {
-        statusEl.textContent = "Timed out waiting for approval. Try again.";
-      }
-      return;
-    }
-    const res = await apiPostTyped(
-      "/api/forges/oauth/github/poll",
-      {
-        device_code: deviceCode,
+  const outcome = await pollUntil(
+    (s) =>
+      apiPostTyped(
+        "/api/forges/oauth/github/poll",
+        { device_code: deviceCode },
+        decodePollResult,
+        s,
+      ),
+    {
+      intervalMs: intervalSec * 1000,
+      // complete / expired / error are terminal; "pending" keeps polling.
+      until: (r) => r.status !== "pending",
+      maxAttempts: POLL_MAX_ATTEMPTS,
+      backoff: { factor: 2, maxMs: POLL_BACKOFF_CAP_SEC * 1000 },
+      // A null poll result is a network error: surface it, then back off.
+      // The non-null "pending" case needs no status change (the
+      // "Waiting for approval…" text stays), so onPoll is omitted.
+      onTransientError: () => {
+        setStatus("Network error. Retrying…");
       },
-      decodePollResult,
       signal,
-    );
-    if (signal.aborted) {
-      return;
-    }
-    if (res === null) {
-      if (statusEl !== null) {
-        statusEl.textContent = "Network error. Retrying…";
-      }
-      backoff = Math.min(backoff * 2, POLL_BACKOFF_CAP_SEC);
-      continue;
-    }
-    // Reset backoff on successful network response.
-    backoff = intervalSec;
-    if (res.status === "complete") {
-      if (statusEl !== null) {
-        statusEl.textContent = "Connected.";
-      }
-      deps.expandOnNextPaint("github:github.com");
-      deps.renderForgesPanel();
-      return;
-    }
-    if (res.status === "expired") {
-      if (statusEl !== null) {
-        statusEl.textContent = "Device code expired. Try again.";
-      }
-      return;
-    }
-    if (res.status === "error") {
-      if (statusEl !== null) {
-        statusEl.textContent = `Error: ${res.error ?? "unknown"}`;
-      }
-      return;
-    }
-  }
-}
+    },
+  );
 
-/** Sleep for `ms` milliseconds, aborting early if the signal fires. */
-function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) {
-    return Promise.resolve();
+  if (outcome.status === "aborted") {
+    return; // caller cancelled / host torn down
   }
-  return new Promise<void>((resolve) => {
-    const ac = new AbortController();
-    const t = setTimeout(() => {
-      ac.abort();
-      resolve();
-    }, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        ac.abort();
-        resolve();
-      },
-      { signal: ac.signal },
-    );
-  });
+  if (outcome.status === "timeout") {
+    setStatus("Timed out waiting for approval. Try again.");
+    return;
+  }
+  // outcome.status === "done": inspect the terminal poll result.
+  const res = outcome.result;
+  if (res.status === "complete") {
+    setStatus("Connected.");
+    deps.expandOnNextPaint("github:github.com");
+    deps.renderForgesPanel();
+    return;
+  }
+  if (res.status === "expired") {
+    setStatus("Device code expired. Try again.");
+    return;
+  }
+  if (res.status === "error") {
+    setStatus(`Error: ${res.error ?? "unknown"}`);
+  }
 }

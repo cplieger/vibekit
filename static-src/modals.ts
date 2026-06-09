@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { pollUntil } from "@cplieger/actions";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
@@ -286,25 +287,26 @@ function doLogin(
           AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000),
         ]);
         void (async () => {
-          while (!signal.aborted) {
-            await new Promise<void>((r) => setTimeout(r, 3000));
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-            if (signal.aborted) {
-              break;
-            }
-            const wd = await apiGetTyped("/api/whoami", decodeWhoamiResponse, signal);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-            if (signal.aborted) {
-              break;
-            }
-            if (wd?.email !== undefined && wd.email !== "") {
-              loginPollAbort = null;
-              loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-              loginPollUnregister = null;
-              onLoggedIn();
-              return;
-            }
+          // Wait-then-poll /api/whoami every 3s until it reports a
+          // signed-in email (terminal), the user dismisses (ctrl), or the
+          // 10-minute deadline fires — both rolled into `signal`. A null
+          // whoami (not-yet-logged-in / transient) keeps polling at 3s.
+          const outcome = await pollUntil(
+            (s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s),
+            {
+              intervalMs: 3000,
+              until: (wd) => wd.email !== undefined && wd.email !== "",
+              signal,
+            },
+          );
+          if (outcome.status === "done") {
+            loginPollAbort = null;
+            loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+            loginPollUnregister = null;
+            onLoggedIn();
+            return;
           }
+          // Otherwise aborted: distinguish a user dismiss from the deadline.
           if (ctrl.signal.aborted) {
             return;
           } // user dismissed

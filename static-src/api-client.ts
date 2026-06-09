@@ -9,20 +9,15 @@
 // served by transport.ts's `send()` function. Keep the two separate.
 // ---------------------------------------------------------------------------
 
+import { API_TIMEOUT_MS, withTimeout } from "@cplieger/actions";
+
 const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
 
-export const API_TIMEOUT_MS = 30_000;
-
-/** Compose an optional caller signal with a fresh timeout signal. Uses
- *  native AbortSignal.any() + AbortSignal.timeout() — both are baseline
- *  in every browser we ship to (Safari 17.4+, Chrome 124+, Firefox 124+).
- *  https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static
- *  https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static */
-export function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
-  return signal !== undefined
-    ? AbortSignal.any([signal, AbortSignal.timeout(ms)])
-    : AbortSignal.timeout(ms);
-}
+// API_TIMEOUT_MS and withTimeout are provided by @cplieger/actions
+// (byte-identical to the former local copies). Re-exported here so
+// existing consumers (e.g. editor-openers.ts) keep importing them
+// from "./api-client.js" unchanged.
+export { API_TIMEOUT_MS, withTimeout };
 
 /** Internal fetch wrapper shared by apiGet/apiPost/apiDelete.
  *  Applies a timeout signal (via withTimeout), logs failures centrally,
