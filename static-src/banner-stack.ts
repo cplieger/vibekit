@@ -47,7 +47,13 @@ const visibleIds = computed<readonly string[]>(
 );
 
 let bound = false;
-function ensureBound(): void {
+
+/** Mount + bind the banner stack. The bindList renders reactively from the
+ *  collection + activeSession, so add / remove / chat-switch all re-render
+ *  automatically; this is idempotent (the `bound` flag guards against
+ *  double-binding) and is called both internally by `showBanner` and from the
+ *  chat-switch call site in chat.ts. */
+export function ensureBound(): void {
   if (bound) {
     return;
   }
@@ -170,13 +176,6 @@ export function clearBannersForChat(chatID: string): void {
   if (filtered.length !== state.dismissed_banners.length) {
     save({ dismissed_banners: filtered });
   }
-}
-
-/** Ensure the stack is mounted/bound. The bindList renders reactively from the
- *  collection + activeSession, so a chat switch re-renders automatically; this
- *  is retained for the chat-switch call site and is idempotent. */
-export function renderStack(): void {
-  ensureBound();
 }
 
 const PRUNE_THRESHOLD = 200;

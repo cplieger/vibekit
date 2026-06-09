@@ -37,8 +37,8 @@ describe("a11y: missing labels", () => {
     container.id = "banner-stack";
     document.body.appendChild(container);
 
-    const { renderStack } = await import("./banner-stack.js");
-    renderStack();
+    const { ensureBound } = await import("./banner-stack.js");
+    ensureBound();
 
     expect(container.getAttribute("aria-label")).toBe("Notifications");
     expect(container.getAttribute("aria-live")).toBe("polite");

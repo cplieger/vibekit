@@ -58,10 +58,10 @@ export async function fetchAgentLines(path: string): Promise<void> {
   }
   agentLineCache.set(path, data.changes);
   agentLineSetCache.delete(path);
-  // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
+  // Refresh gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);
   if (state?.loaded) {
-    rebuildGutter(state.current);
+    updateGutter(state.current);
   }
 }
 
@@ -94,45 +94,40 @@ export function showDiffMode(): void {
 
 // --- Gutter ---
 
-export function updateGutter(content: string): void {
+export function updateGutter(content: string, agentLines?: ReadonlySet<number>): void {
   const lineCount = content.split("\n").length;
-  const agentLines = getAgentLines(getActiveFilePath());
+  // Production callers omit `agentLines` and get the per-file cache; tests
+  // inject an explicit set so the reconcile behaviour is observable without
+  // seeding module-private caches.
+  const marks = agentLines ?? getAgentLines(getActiveFilePath());
   const lines = Array.from({ length: lineCount }, (_, i) => i + 1);
-  // Keyed reconcile by line number: handles add/remove on line-count change
-  // AND refreshes the agent-modified class on EXISTING rows when agentLines
-  // changes (the by-count diff this replaced never re-styled pre-existing
-  // rows, so an agent edit that didn't change the line count left stale
-  // highlights).
+  // Keyed reconcile by line number is the sole owner of the gutter DOM. It
+  // handles add/remove on line-count change (a file switch reconciles cleanly
+  // — surplus rows are removed, missing rows mounted) AND refreshes the
+  // agent-modified class on EXISTING rows: `update` toggles the class
+  // unconditionally, so a switch to a file with different (or no) agent lines
+  // clears stale highlights without any manual replaceChildren(). Dropping the
+  // clear also preserves row identity + scrollTop across switches.
   reconcile($.editorGutter, lines, {
     key: (n) => String(n),
     mount: (n) => {
       const line = el("div", { className: "gutter-line" }, String(n));
-      if (agentLines.has(n)) {
+      if (marks.has(n)) {
         line.classList.add("gutter-agent-modified");
       }
       return line;
     },
     update: (lineEl, n) => {
-      lineEl.classList.toggle("gutter-agent-modified", agentLines.has(n));
+      lineEl.classList.toggle("gutter-agent-modified", marks.has(n));
     },
   });
-}
-
-export function rebuildGutter(content: string): void {
-  // Clear any rows, then let updateGutter's keyed reconcile own the gutter.
-  // Without the clear+delegate, the manually-built (non-reconcile-keyed) rows
-  // this used to append would be orphaned by the next updateGutter (reconcile
-  // only tracks its own keyed children + inserts the fresh set after them),
-  // permanently doubling the gutter to [stale 1..N][live 1..N].
-  $.editorGutter.replaceChildren();
-  updateGutter(content);
 }
 
 // --- Highlight rendering ---
 
 export function renderHighlight(content: string, path: string): void {
   $.editorCode.innerHTML = highlight(content, path);
-  rebuildGutter(content);
+  updateGutter(content);
 }
 
 // --- Edit-mode UI ---
@@ -148,7 +143,7 @@ export function renderEditModeUI(state: FileState): void {
   if (editing) {
     $.editorContent.value = state.current;
     showEditMode();
-    rebuildGutter(state.current);
+    updateGutter(state.current);
     $.editorEditBtn.classList.add("hidden");
     $.editorCancelBtn.classList.remove("hidden");
     $.editorSaveBtn.classList.remove("hidden");

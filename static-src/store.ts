@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Session, ChatHeader, Message, Usage, ToolCall, PendingChange } from "./types.js";
-import { signal, computed, createCollection } from "@cplieger/reactive";
+import { signal, computed, createCollection, batch } from "@cplieger/reactive";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
@@ -350,13 +350,20 @@ export function removeChat(id: string): void {
   }
   const wasActive = activeId.peek() === id;
   const order = sessions.ids.peek();
-  sessions.remove(id);
-  msgIndex.delete(id);
-  _queuedAttachments.delete(id);
-  if (wasActive) {
-    const remaining = order.filter((x) => x !== id);
-    activeId.value = remaining[0] ?? "";
-  }
+  // Both reactive writes below — sessions.remove (fires sessions.ids) and the
+  // activeId reassignment — feed the `activeSession` computed. Batch them so
+  // active-session subscribers re-derive ONCE, not twice; otherwise removing
+  // the active chat double-fires the computed and the messages renderer flashes
+  // a transient teardown of the new chat's DOM.
+  batch(() => {
+    sessions.remove(id);
+    msgIndex.delete(id);
+    _queuedAttachments.delete(id);
+    if (wasActive) {
+      const remaining = order.filter((x) => x !== id);
+      activeId.value = remaining[0] ?? "";
+    }
+  });
 }
 
 /** Re-insert a previously-removed session at a specific index (or at the head

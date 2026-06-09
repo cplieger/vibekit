@@ -21,7 +21,7 @@ import {
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
 import type { Session } from "./types.js";
-import { renderStack as renderBanners } from "./banner-stack.js";
+import { ensureBound } from "./banner-stack.js";
 import { sendPromptTo } from "./chat-commands.js";
 import {
   openTab,
@@ -114,7 +114,7 @@ export function activateChatView(id: string): void {
   setActive(id);
   hideModelPicker();
   clearAttachments();
-  renderBanners();
+  ensureBound();
   // Prefetch conflict records so badges on historical tool calls
   // are present as soon as the messages render. Dynamic import
   // keeps the conflicts module lazy — most chats never see one.

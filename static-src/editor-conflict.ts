@@ -14,7 +14,7 @@ import {
 import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath, fileStates } from "./editor-types.js";
-import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
+import { updateGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/index.js";
 
 registerCleanup(() => {
@@ -72,7 +72,7 @@ export function renderConflictModeUI(state: FileState): void {
   }
   $.editorContent.value = state.current;
   showEditMode();
-  rebuildGutter(state.current);
+  updateGutter(state.current);
   $.editorEditBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
@@ -175,7 +175,7 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
   state.suggestions.clear();
   $.editorContent.value = newContent;
   $.editorSaveBtn.disabled = state.current === state.original;
-  rebuildGutter(newContent);
+  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
     state.mode = { kind: "edit", editing: false };
     renderEditModeUI(state);
@@ -269,7 +269,7 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
   state.suggestions.clear();
   $.editorContent.value = newContent;
   $.editorSaveBtn.disabled = state.current === state.original;
-  rebuildGutter(newContent);
+  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
     state.mode = { kind: "edit", editing: false };
     renderEditModeUI(state);

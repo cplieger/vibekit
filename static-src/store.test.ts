@@ -26,6 +26,7 @@ import {
   getActiveId,
 } from "./store.js";
 import type { Session } from "./types.js";
+import { effect, flushSync } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
 const arbMessage = () =>
@@ -215,6 +216,88 @@ describe("setActive updates the active session", () => {
     expect(activeSession.peek()).toBeUndefined();
     setActive("");
     expect(getActiveId()).toBe("");
+  });
+});
+
+describe("activeSession reactivity (two-tier tracking + batch)", () => {
+  it("activeSession re-fires on active-session field change, not on inactive", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+
+    let count = 0;
+    const dispose = effect(() => {
+      void activeSession.value;
+      count++;
+    });
+    // effect() runs once synchronously on registration.
+    const afterRegister = count;
+
+    // A field change on the ACTIVE session re-derives activeSession.
+    setWorkingLabel("a", "x");
+    flushSync();
+    expect(count).toBe(afterRegister + 1);
+    expect(activeSession.value?.working_label).toBe("x");
+
+    const afterActiveChange = count;
+
+    // A field change on an INACTIVE session fires only that session's signal,
+    // which activeSession does not track — so the counter must not move.
+    setWorkingLabel("b", "y");
+    flushSync();
+    expect(count).toBe(afterActiveChange);
+
+    dispose();
+  });
+
+  it("activeSession recovers when active id set before session exists", () => {
+    setSessions([]);
+    setActive("ghost");
+    // No session yet for the active id.
+    expect(activeSession.value).toBeUndefined();
+
+    // The session arrives after the id was made active. Recovery relies on the
+    // computed tracking sessions.ids (the `void sessions.ids.value` line), since
+    // signalFor("ghost") didn't exist to be tracked at first derive.
+    upsertHeader({
+      id: "ghost",
+      name: "ghost",
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        turn_count: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+      created_at: 0,
+      updated_at: 0,
+      message_count: 0,
+    });
+
+    expect(activeSession.value?.id).toBe("ghost");
+  });
+
+  it("removeChat of active does not double-render", () => {
+    setSessions([makeSession("rc-a"), makeSession("rc-b")]);
+    setActive("rc-a");
+
+    let count = 0;
+    const dispose = effect(() => {
+      void activeSession.value;
+      count++;
+    });
+    // Discard the registration run + setup so we count only the removal.
+    count = 0;
+
+    removeChat("rc-a");
+    flushSync();
+
+    // The batch() in removeChat coalesces sessions.remove (sessions.ids) and the
+    // activeId reassignment into ONE re-derive of activeSession. Without it this
+    // would be 2.
+    expect(count).toBe(1);
+
+    dispose();
   });
 });
 

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-// Unit tests for crew-card.ts pure functions: signature, titleFor, formatToolActivity.
+// Unit tests for crew-card.ts: titleFor, formatToolActivity (pure functions)
+// and the activity-line precedence shared by buildRow + the reconcile update.
 import { describe, it, expect, vi } from "vitest";
 
 // Set up the minimal DOM that transitive imports need at module level.
@@ -20,107 +21,23 @@ vi.mock("./transport.js", () => ({
 vi.mock("./store.js", () => ({
   getActiveId: vi.fn(() => ""),
 }));
+vi.mock("./actions/crew.js", () => ({
+  sendMessage: { dispatch: vi.fn() },
+}));
+vi.mock("./actions/index.js", () => ({
+  bindLoadingState: vi.fn(() => () => undefined),
+}));
 
-import { signature, titleFor } from "./crew-card.js";
+import {
+  titleFor,
+  buildCrewCardForReplay,
+  updateCrew,
+  setSubagentActivity,
+  setSubagentPendingApproval,
+  clearCrews,
+} from "./crew-card.js";
 import { formatToolActivity } from "./format-tool-activity.js";
 import type { Crew } from "./types.js";
-
-// --- signature ---
-
-describe("signature", () => {
-  const cases: { name: string; crew: Crew; expected: string }[] = [
-    {
-      name: "single working subagent",
-      crew: {
-        group: "g1",
-        subagents: [
-          {
-            session_id: "s1",
-            session_name: "n1",
-            agent_name: "a1",
-            initial_query: "",
-            status: "working",
-            group: "g1",
-          },
-        ],
-      },
-      expected: "g1|s1:working:;",
-    },
-    {
-      name: "multiple subagents with status_msg",
-      crew: {
-        group: "g2",
-        subagents: [
-          {
-            session_id: "s1",
-            session_name: "n1",
-            agent_name: "a1",
-            initial_query: "",
-            status: "terminated",
-            status_msg: "done",
-            group: "g2",
-          },
-          {
-            session_id: "s2",
-            session_name: "n2",
-            agent_name: "a2",
-            initial_query: "",
-            status: "error",
-            status_msg: "timeout",
-            group: "g2",
-          },
-        ],
-      },
-      expected: "g2|s1:terminated:done;s2:error:timeout;",
-    },
-    {
-      name: "with pending stages",
-      crew: {
-        group: "g3",
-        subagents: [
-          {
-            session_id: "s1",
-            session_name: "n1",
-            agent_name: "a1",
-            initial_query: "",
-            status: "working",
-            group: "g3",
-          },
-        ],
-        pending_stages: [{ name: "stage-a", agent_name: "a2" }],
-      },
-      expected: "g3|s1:working:;p:stage-a;",
-    },
-    {
-      name: "no subagents, no pending stages",
-      crew: { group: "empty", subagents: [] },
-      expected: "empty|",
-    },
-    {
-      name: "pending_stages undefined",
-      crew: {
-        group: "x",
-        subagents: [
-          {
-            session_id: "s1",
-            session_name: "n",
-            agent_name: "a",
-            initial_query: "",
-            status: "pending",
-            group: "x",
-          },
-        ],
-      },
-      expected: "x|s1:pending:;",
-    },
-  ];
-
-  for (const { name, crew, expected } of cases) {
-    it(name, () => {
-      expect(signature(crew)).toBe(expected);
-    });
-  }
-});
 
 // --- titleFor ---
 
@@ -201,4 +118,46 @@ describe("formatToolActivity", () => {
       expect(formatToolActivity(input)).toBe(expected);
     });
   }
+});
+
+// --- activity-line precedence (buildRow + reconcile update share applyActivity) ---
+
+describe("activity-line precedence", () => {
+  function workingCrew(): Crew {
+    return {
+      group: "g",
+      subagents: [
+        {
+          session_id: "sess-1",
+          session_name: "n",
+          agent_name: "a",
+          initial_query: "",
+          status: "working",
+          group: "g",
+        },
+      ],
+    };
+  }
+
+  it("activity precedence: transient tool activity survives a later snapshot, pending-approval wins", () => {
+    clearCrews();
+    const msgId = "m-activity";
+    const card = buildCrewCardForReplay(msgId, workingCrew());
+    const act = card.querySelector('.crew-row[data-session-id="sess-1"] .crew-row-activity');
+
+    // Initial snapshot seeds the generic placeholder.
+    expect(act?.textContent).toBe("Working\u2026");
+
+    // A live tool sets transient activity via the SSE setter.
+    setSubagentActivity("sess-1", "Reading x");
+    expect(act?.textContent).toBe("Reading x");
+
+    // A later snapshot — still working, no status_msg — must NOT clobber it.
+    updateCrew(msgId, workingCrew(), () => undefined);
+    expect(act?.textContent).toBe("Reading x");
+
+    // A pending approval wins over the transient activity.
+    setSubagentPendingApproval("sess-1", true);
+    expect(act?.textContent).toBe("\u26a0 tool approval needed");
+  });
 });

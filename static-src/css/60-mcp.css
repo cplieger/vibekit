@@ -323,7 +323,9 @@
   color: var(--c-yellow);
 }
 
-[id="trust-list-empty-hint"] {
+[id="trust-list-empty-hint"],
+[id="command-rules-empty-hint"],
+[id="agent-ignore-empty-hint"] {
   color: var(--c-yellow);
 }
 

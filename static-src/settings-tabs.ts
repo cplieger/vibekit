@@ -46,9 +46,13 @@ export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
 // --- Store ---
 
 type Listener = (tab: SettingsTab) => void;
-// equals:false so forceSettingsTab() re-notifies even on the same tab (router
-// back/forward re-sync); setSettingsTab keeps its own early-return guard.
-const activeTab = signal<SettingsTab>("general", { equals: false });
+// Deduped signal: a same-value write is a no-op, so forcing the already-active
+// tab no longer re-swaps panels (which caused a double swap on first load and
+// spurious view-transitions on same-tab popstate). The outer Settings view is
+// still shown/hidden by the router via setTabRoute() in forceSettingsTab(),
+// independent of this signal. subscribe() still fires immediately on first
+// load to init panels; setSettingsTab keeps its own early-return guard.
+const activeTab = signal<SettingsTab>("general");
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
 function onTabChange(fn: Listener): () => void {

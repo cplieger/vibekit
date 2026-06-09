@@ -23,7 +23,7 @@ import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
-import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
+import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 import { escAttr as escapeHTML } from "./strings.js";
@@ -44,15 +44,16 @@ interface PRListResponse {
 
 // --- State ---
 
-let lastGroups: RepoGroup[] = [];
 let filterText = "";
 let refreshGen = 0;
 let refreshController: AbortController | null = null;
 registerCleanup(() => refreshController?.abort());
 
-// --- Accessors for optimistic mutations (wired via git-prs-state) ---
-// removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
-// to break the circular dependency with actions/git-prs.ts.
+// --- Canonical PR groups + optimistic mutations live in git-prs-state.ts ---
+// (getPRGroups/setPRGroups own the array; removePRFromGroups and
+// reinsertPRInGroups mutate it) to break the circular dependency with
+// actions/git-prs.ts. The tab reads groups exclusively via getPRGroups().
+
 // --- Public API ---
 
 let prsInited = false;
@@ -62,7 +63,7 @@ export function initPRsTab(): void {
     return;
   }
   prsInited = true;
-  bindPRState({ groups: lastGroups, paint });
+  bindPRPaint(paint);
 
   const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
@@ -183,8 +184,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
     return;
   }
 
-  lastGroups = groups;
-  updateGroupsRef(lastGroups);
+  setPRGroups(groups);
   paint();
 }
 
@@ -200,7 +200,9 @@ function paintInner(): void {
     return;
   }
 
-  if (lastGroups.length === 0) {
+  const groups = getPRGroups();
+
+  if (groups.length === 0) {
     root.innerHTML = renderEmptyState({
       icon: ICON_PR_EMPTY,
       title: "No connected forges",
@@ -210,7 +212,7 @@ function paintInner(): void {
   }
 
   const visible: RepoGroup[] = [];
-  for (const g of lastGroups) {
+  for (const g of groups) {
     const matchesFilter =
       filterText === "" ||
       g.full_name.toLowerCase().includes(filterText) ||
@@ -550,14 +552,14 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
  *  haven't fetched groups yet, refetch first; the source branch is
  *  pre-filled from the call site so the user doesn't have to retype. */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
-  if (lastGroups.length === 0) {
+  if (getPRGroups().length === 0) {
     try {
       await refreshPRs();
     } catch {
-      /* ignore — we'll check lastGroups below */
+      /* ignore — we'll check the groups below */
     }
   }
-  const group = lastGroups.find((g) => g.name === repoName);
+  const group = getPRGroups().find((g) => g.name === repoName);
   if (group === undefined) {
     // Repo not in any forge group (probably not on a connected
     // forge). Render a small inline error in the mount.

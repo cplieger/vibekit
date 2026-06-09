@@ -38,7 +38,6 @@ function q(parent: Element, sel: string): Element {
 type CrewEntry = { kind: "sub"; sub: CrewSubagent } | { kind: "pending"; ps: CrewPendingStage };
 
 const cards = new Map<string, HTMLDivElement>();
-const cardState = new WeakMap<HTMLDivElement, string>();
 // Per-subagent tool containers, keyed on session_id. Preserved across
 // crew-card rebuilds so tool cards aren't destroyed when the snapshot
 // updates (which replaces all rows).
@@ -185,11 +184,6 @@ function build(messageID: string, crew: Crew): HTMLDivElement {
 }
 
 function applyState(card: HTMLDivElement, crew: Crew): void {
-  const sig = signature(crew);
-  if (cardState.get(card) === sig) {
-    return;
-  }
-  cardState.set(card, sig);
   const body = q(card, ".crew-body");
   const count = q(card, ".crew-count");
 
@@ -245,21 +239,12 @@ function applyState(card: HTMLDivElement, crew: Crew): void {
           oldIcon.replaceWith(createStatusIcon(e.sub.status));
         }
       }
-      // Sync activity text (mirrors initial paint logic in buildRow).
+      // Sync activity via the shared helper. Snapshots set authoritative
+      // text only (terminated / pending-approval / server status_msg) and
+      // never clobber transient tool activity set via setSubagentActivity.
       const actEl = activityEls.get(e.sub.session_id);
       if (actEl !== undefined) {
-        if (e.sub.status === "terminated") {
-          actEl.textContent = "Done";
-          actEl.classList.add("crew-activity-done");
-        } else if (pendingApprovals.has(e.sub.session_id)) {
-          actEl.textContent = "\u26a0 tool approval needed";
-        } else if (e.sub.status_msg !== undefined && e.sub.status_msg !== "") {
-          actEl.textContent = e.sub.status_msg;
-          actEl.classList.remove("crew-activity-done");
-        } else if (e.sub.status === "working") {
-          actEl.textContent = "Working\u2026";
-          actEl.classList.remove("crew-activity-done");
-        }
+        applyActivity(actEl, e.sub, pendingApprovals.has(e.sub.session_id));
       }
     },
     onRemove: (_: HTMLElement, key: string) => {
@@ -270,17 +255,6 @@ function applyState(card: HTMLDivElement, crew: Crew): void {
       }
     },
   });
-}
-
-export function signature(crew: Crew): string {
-  let s = crew.group + "|";
-  for (const sub of crew.subagents) {
-    s += `${sub.session_id}:${sub.status}:${sub.status_msg ?? ""};`;
-  }
-  for (const ps of crew.pending_stages ?? []) {
-    s += `p:${ps.name};`;
-  }
-  return s;
 }
 
 // --- Row builders ---
@@ -321,6 +295,37 @@ function createStatusIcon(status: CrewStatus): HTMLSpanElement {
   return el("span", { className: def.className, "aria-label": def.label }, iconEl(def.svg));
 }
 
+/** Apply the collapsed-row activity line for a subagent from snapshot state.
+ *  Sets authoritative text only — terminated -> "Done", a pending approval,
+ *  or a server-supplied status_msg. For a working subagent with no specific
+ *  message it seeds the generic placeholder ONLY when the line is empty, so a
+ *  snapshot never clobbers transient tool activity set live via
+ *  setSubagentActivity(). Shared by buildRow (initial paint) and the
+ *  reconcile update path. */
+function applyActivity(
+  actEl: HTMLSpanElement,
+  sub: CrewSubagent,
+  hasPendingApproval: boolean,
+): void {
+  if (sub.status === "terminated") {
+    actEl.textContent = "Done";
+    actEl.classList.add("crew-activity-done");
+    return;
+  }
+  actEl.classList.remove("crew-activity-done");
+  if (hasPendingApproval) {
+    actEl.textContent = "\u26a0 tool approval needed";
+    return;
+  }
+  if (sub.status_msg !== undefined && sub.status_msg !== "") {
+    actEl.textContent = sub.status_msg;
+    return;
+  }
+  if (sub.status === "working" && actEl.textContent === "") {
+    actEl.textContent = "Working\u2026";
+  }
+}
+
 function buildRow(sub: CrewSubagent): HTMLDivElement {
   const r = el("div", {
     className: `crew-row crew-status-${sub.status}`,
@@ -348,17 +353,8 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
   // Register the activity element for live updates.
   activityEls.set(sub.session_id, actEl);
 
-  // Set initial activity text based on status.
-  if (sub.status === "terminated") {
-    actEl.textContent = "Done";
-    actEl.classList.add("crew-activity-done");
-  } else if (pendingApprovals.has(sub.session_id)) {
-    actEl.textContent = "\u26a0 tool approval needed";
-  } else if (sub.status_msg !== undefined && sub.status_msg !== "") {
-    actEl.textContent = sub.status_msg;
-  } else if (sub.status === "working") {
-    actEl.textContent = "Working\u2026";
-  }
+  // Seed the initial activity text via the shared helper.
+  applyActivity(actEl, sub, pendingApprovals.has(sub.session_id));
 
   // Expandable body: query + tools + message input.
   const expand = el("div", { className: "crew-row-expand" });
