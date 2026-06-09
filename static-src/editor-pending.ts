@@ -2,10 +2,6 @@
 // Editor: Supervised pending-change resolution from editor toolbar.
 // ---------------------------------------------------------------------------
 
-// Defensive null check on state.original which the type marks non-null
-// but is initialized lazily.
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-
 import { $ } from "./dom.js";
 import { getActiveId, get } from "./store.js";
 import { resolvePendingChange } from "./actions/chat.js";
@@ -125,7 +121,7 @@ export function buildPartialMergeText(
   decisions: Map<number, "accept" | "reject">,
 ): string {
   const diff = getCachedDiff(state);
-  const eol = detectEOL(state.original ?? "");
+  const eol = detectEOL(state.original.value);
   const out: string[] = [];
   let hunkIdx = 0;
   let inHunk = false;

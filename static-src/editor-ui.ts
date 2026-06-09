@@ -61,7 +61,7 @@ export async function fetchAgentLines(path: string): Promise<void> {
   // Refresh gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);
   if (state?.loaded) {
-    updateGutter(state.current);
+    updateGutter(state.current.value);
   }
 }
 
@@ -135,22 +135,21 @@ export function renderHighlight(content: string, path: string): void {
 export function renderEditModeUI(state: FileState): void {
   $.editorEditBtn.disabled = false;
   const isPlanDraft = isPlanDraftPath(state.path);
-  const isModified = state.current !== state.original;
+  const isModified = state.current.value !== state.original.value;
   $.editorDiffBtn.classList.toggle("hidden", isPlanDraft || !isModified);
   $.editorDiffBtn.setAttribute("data-tooltip", "View diff vs saved");
   $.editorDiffBtn.setAttribute("aria-label", "View diff vs saved");
   const m = state.mode.value;
   const editing = m.kind === "edit" && m.editing;
   if (editing) {
-    $.editorContent.value = state.current;
+    $.editorContent.value = state.current.value;
     showEditMode();
-    updateGutter(state.current);
+    updateGutter(state.current.value);
     $.editorEditBtn.classList.add("hidden");
     $.editorCancelBtn.classList.remove("hidden");
     $.editorSaveBtn.classList.remove("hidden");
-    $.editorSaveBtn.disabled = state.current === state.original;
   } else {
-    renderHighlight(state.current, state.path);
+    renderHighlight(state.current.value, state.path);
     showReadMode();
     $.editorEditBtn.classList.remove("hidden");
     $.editorCancelBtn.classList.add("hidden");

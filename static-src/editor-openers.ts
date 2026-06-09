@@ -173,8 +173,8 @@ export async function fetchGitDiffSources(
     },
   };
   if (!state.loaded) {
-    state.original = newContent;
-    state.current = newContent;
+    state.original.value = newContent;
+    state.current.value = newContent;
   }
   state.loaded = true;
   state.error = error;
@@ -225,7 +225,7 @@ function saveCurrentState(): void {
     ((state.mode.value.kind === "edit" && state.mode.value.editing) ||
       state.mode.value.kind === "conflict")
   ) {
-    state.current = $.editorContent.value;
+    state.current.value = $.editorContent.value;
   }
 }
 
@@ -258,11 +258,11 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     restoreUI(state);
     return;
   }
-  state.original = d.content ?? "";
-  state.current = state.original;
+  state.original.value = d.content ?? "";
+  state.current.value = state.original.value;
   state.loaded = true;
   state.error = "";
-  const parsed = parseConflicts(state.current);
+  const parsed = parseConflicts(state.current.value);
   if (parsed.hunks.length > 0 && state.mode.value.kind === "edit") {
     state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   }
@@ -274,8 +274,8 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
 function settlePendingDiff(state: FileState, error: string, oldText = "", newText = ""): void {
   state.error = error;
   state.loaded = true;
-  state.original = newText;
-  state.current = newText;
+  state.original.value = newText;
+  state.current.value = newText;
   state.mode.value = { kind: "diff", diffSource: pendingDiffSource(oldText, newText) };
   restoreUI(state);
 }

@@ -120,11 +120,17 @@ export type FileMode =
 
 export interface FileState {
   path: string;
-  original: string;
-  current: string;
+  /** Saved-on-disk content. Reactive so `dirty` can derive from it. */
+  original: Signal<string>;
+  /** Live editor-buffer content. Reactive so `dirty` can derive from it. */
+  current: Signal<string>;
   loaded: boolean;
   error: string;
   mode: Signal<FileMode>;
+  /** Dirty flag: true when `current` differs from `original`. Derived
+   *  (computed) from those two signals; recomputes on every edit and on
+   *  save (original := current). */
+  dirty: ReadonlySignal<boolean>;
   suggestions: Map<number, HunkSuggestion>;
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
@@ -148,13 +154,24 @@ interface HunkSuggestion {
 
 class EditorState {
   readonly files = new Map<string, FileState>();
-  private activePath = "";
+  private activePath = signal<string>("");
 
   getActivePath(): string {
-    return this.activePath;
+    return this.activePath.value;
   }
   setActivePath(path: string): void {
-    this.activePath = path;
+    this.activePath.value = path;
+  }
+
+  /** Reactive: whether the active file has unsaved changes. Reads BOTH
+   *  the `activePath` signal AND the active file's `dirty` computed, so
+   *  it recomputes on edits (dirty flips) and on tab switch (activePath
+   *  changes → re-tracks the newly-active file's `dirty`). Drives the
+   *  module-level `activeDirty` computed below while keeping `activePath`
+   *  encapsulated — the raw signal is never exported. */
+  isActiveDirty(): boolean {
+    const s = this.files.get(this.activePath.value);
+    return s ? s.dirty.value : false;
   }
 
   getOpenFilePaths(): string[] {
@@ -164,7 +181,7 @@ class EditorState {
   getDirtyPaths(): string[] {
     const out: string[] = [];
     for (const [, state] of this.files) {
-      if (state.loaded && state.current !== state.original) {
+      if (state.loaded && state.dirty.value) {
         out.push(state.path);
       }
     }
@@ -172,14 +189,16 @@ class EditorState {
   }
 
   freshState(path: string): FileState {
-    // `mode` is the single reactive input. `cachedDiff` and
-    // `pendingHunkCount` are computeds derived from it, so they
-    // auto-invalidate the moment `mode` is reassigned — no manual
-    // `= null` cache busting anywhere. The diff depends ONLY on
-    // `mode` (its `diffSource` is a snapshot captured at mode-entry;
-    // the editor is read-only in diff mode), so `current`/`original`
-    // are not inputs and stay plain fields.
+    // Reactive inputs: `mode`, `current`, `original`. Everything else is a
+    // computed derived from them, so it auto-invalidates with no manual
+    // cache busting. `cachedDiff`/`pendingHunkCount` depend ONLY on `mode`
+    // (the diff's `diffSource` is a snapshot captured at mode-entry; the
+    // editor is read-only in diff mode). `dirty` depends only on
+    // `current`/`original`, so it flips on every edit and on save.
     const mode = signal<FileMode>({ kind: "edit", editing: false });
+    const current = signal("");
+    const original = signal("");
+    const dirty = computed<boolean>(() => current.value !== original.value);
     const cachedDiff = computed<DiffLine[]>(() => {
       const m = mode.value;
       return m.kind === "diff" ? lineDiff(m.diffSource.oldContent, m.diffSource.newContent) : [];
@@ -190,11 +209,12 @@ class EditorState {
     });
     return {
       path,
-      original: "",
-      current: "",
+      original,
+      current,
       loaded: false,
       error: "",
       mode,
+      dirty,
       suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
@@ -211,6 +231,12 @@ class EditorState {
 
 /** Singleton instance — sub-modules operate on this rather than module-level variables. */
 const editorState = new EditorState();
+
+/** Reactive flag: true when the active editor file has unsaved changes.
+ *  The save-button effect in editor-core owns the button's disabled state
+ *  by reading this (plus `isPending("editor.save_file")`). Recomputes on
+ *  both edits and tab switches via `EditorState.isActiveDirty`. */
+export const activeDirty = computed<boolean>(() => editorState.isActiveDirty());
 
 // --- Exports (delegate to singleton) ---
 

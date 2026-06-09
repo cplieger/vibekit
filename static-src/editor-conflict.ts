@@ -70,17 +70,16 @@ export function renderConflictModeUI(state: FileState): void {
   if (state.mode.value.kind !== "conflict") {
     state.mode.value = {
       kind: "conflict",
-      conflict: parseConflicts(state.current),
+      conflict: parseConflicts(state.current.value),
       editing: true,
     };
   }
-  $.editorContent.value = state.current;
+  $.editorContent.value = state.current.value;
   showEditMode();
-  updateGutter(state.current);
+  updateGutter(state.current.value);
   $.editorEditBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
-  $.editorSaveBtn.disabled = state.current === state.original;
   $.editorDiffBtn.classList.add("hidden");
   renderConflictOverlay(state);
 }
@@ -174,11 +173,10 @@ function applyResolution(state: FileState, hunkIndex: number, resolution: Resolu
     return;
   }
   const newContent = resolveHunk(state.mode.value.conflict, hunkIndex, resolution);
-  state.current = newContent;
+  state.current.value = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
   $.editorContent.value = newContent;
-  $.editorSaveBtn.disabled = state.current === state.original;
   updateGutter(newContent);
   if (parsed.hunks.length === 0) {
     state.mode.value = { kind: "edit", editing: false };
@@ -268,11 +266,10 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
     ...state.mode.value.conflict.lines.slice(hunk.endLine + 1),
   ];
   const newContent = out.join("\n") + (state.mode.value.conflict.trailingNewline ? "\n" : "");
-  state.current = newContent;
+  state.current.value = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
   $.editorContent.value = newContent;
-  $.editorSaveBtn.disabled = state.current === state.original;
   updateGutter(newContent);
   if (parsed.hunks.length === 0) {
     state.mode.value = { kind: "edit", editing: false };
