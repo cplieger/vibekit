@@ -78,6 +78,7 @@ const activeId = signal("");
  *  Active-session UI subscribers read `activeSession.value` to re-render only
  *  when the active session (or which session is active) changes. */
 export const activeSession = computed<Session | undefined>(() => {
+  void sessions.ids.value; // also re-derive on structural changes (add/remove/setAll)
   const id = activeId.value;
   return id === "" ? undefined : sessions.signalFor(id)?.value;
 });
@@ -281,7 +282,7 @@ export function upsertHeader(h: ChatHeader): void {
         available_models: h.available_models ?? [],
         supervised_mode: h.supervised_mode ?? false,
         usage: h.usage,
-        message_count: h.message_count,
+        message_count: Math.max(s.message_count, h.message_count),
       };
       if (h.auto_approve_crew !== undefined) {
         next.auto_approve_crew = h.auto_approve_crew;

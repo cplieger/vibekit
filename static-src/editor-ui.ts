@@ -119,17 +119,13 @@ export function updateGutter(content: string): void {
 }
 
 export function rebuildGutter(content: string): void {
-  const lineCount = content.split("\n").length;
-  const gutter = $.editorGutter;
-  gutter.replaceChildren();
-  const agentLines = getAgentLines(getActiveFilePath());
-  for (let i = 1; i <= lineCount; i++) {
-    const line = el("div", { className: "gutter-line" }, String(i));
-    if (agentLines.has(i)) {
-      line.classList.add("gutter-agent-modified");
-    }
-    gutter.appendChild(line);
-  }
+  // Clear any rows, then let updateGutter's keyed reconcile own the gutter.
+  // Without the clear+delegate, the manually-built (non-reconcile-keyed) rows
+  // this used to append would be orphaned by the next updateGutter (reconcile
+  // only tracks its own keyed children + inserts the fresh set after them),
+  // permanently doubling the gutter to [stale 1..N][live 1..N].
+  $.editorGutter.replaceChildren();
+  updateGutter(content);
 }
 
 // --- Highlight rendering ---
