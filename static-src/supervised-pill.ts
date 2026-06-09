@@ -18,7 +18,7 @@
 // extend the existing .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
-import { getActive, activeVersion } from "./store.js";
+import { getActive, activeSession } from "./store.js";
 import { effect, el } from "@cplieger/reactive";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
@@ -69,7 +69,7 @@ class SupervisedPillController {
 
     effect(() => {
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      activeVersion.value;
+      activeSession.value;
       this.render();
     });
   }

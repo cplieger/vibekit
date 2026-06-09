@@ -12,7 +12,7 @@ import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
   contextSizeFor,
-  sessionsVersion,
+  activeSession,
   getActiveId,
   getActive,
   get,
@@ -145,7 +145,7 @@ function init(): void {
   // overwrite whatever the REST path seeded.
   let lastModelSig = "";
   effect(() => {
-    void sessionsVersion.value;
+    void activeSession.value;
     const active = getActive();
     if (active === undefined) {
       return;

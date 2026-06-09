@@ -22,8 +22,8 @@ import {
   setName,
   peekQueuedAttachments,
   setLastQueuedAttachments,
-  activeVersion,
-  sessionsVersion,
+  activeSession,
+  getActiveId,
 } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -193,86 +193,28 @@ describe("Store idempotency (property-based)", () => {
   });
 });
 
-describe("setActive emits version bumps", () => {
-  // Regression: messages.ts paint() effect watches activeVersion. Without
-  // setActive bumping activeVersion the messages renderer doesn't re-run
-  // on chat switch and #messages keeps the previous chat's children
-  // (visible as stale messages bleeding through under the new chat's
-  // model picker until a new message arrives in the new chat).
-  it("bumps activeVersion when active changes", () => {
-    setSessions([
-      {
-        id: "a",
-        name: "A",
-        agent: "kiro_default",
-        model: "",
-        acp_session_id: "",
-        current_mode_id: "",
-        available_modes: [],
-        message_count: 0,
-        messages: [],
-        pending_changes: [],
-        prompt_queue: [],
-        supervised: false,
-        thinking: false,
-        usage: {
-          context_size: 0,
-          tokens_total: 0,
-          credits: 0,
-          turns: 0,
-          last_turn_credits: 0,
-          messages: 0,
-          tools: 0,
-          last_turn_at: 0,
-        },
-        working_label: "Thinking",
-        oldest_checkpoint_tag: "",
-        has_more: false,
-      } as unknown as Session,
-      {
-        id: "b",
-        name: "B",
-        agent: "kiro_default",
-        model: "",
-        acp_session_id: "",
-        current_mode_id: "",
-        available_modes: [],
-        message_count: 0,
-        messages: [],
-        pending_changes: [],
-        prompt_queue: [],
-        supervised: false,
-        thinking: false,
-        usage: {
-          context_size: 0,
-          tokens_total: 0,
-          credits: 0,
-          turns: 0,
-          last_turn_credits: 0,
-          messages: 0,
-          tools: 0,
-          last_turn_at: 0,
-        },
-        working_label: "Thinking",
-        oldest_checkpoint_tag: "",
-        has_more: false,
-      } as unknown as Session,
-    ]);
+describe("setActive updates the active session", () => {
+  // Regression: messages.ts paint() effect tracks activeSession. setActive
+  // must re-derive activeSession on chat switch so the renderer re-runs and
+  // #messages doesn't keep the previous chat's children (stale messages
+  // bleeding through under the new chat's model picker).
+  it("activeSession follows the active id", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
     setActive("a");
-    const beforeActive = activeVersion.peek();
-    const beforeSessions = sessionsVersion.peek();
+    expect(getActiveId()).toBe("a");
+    expect(activeSession.peek()?.id).toBe("a");
     setActive("b");
-    expect(activeVersion.peek()).toBeGreaterThan(beforeActive);
-    expect(sessionsVersion.peek()).toBeGreaterThan(beforeSessions);
+    expect(getActiveId()).toBe("b");
+    expect(activeSession.peek()?.id).toBe("b");
   });
 
-  it("is a no-op when active id is unchanged", () => {
+  it("is a no-op / undefined when no active id", () => {
     setSessions([]);
     setActive("");
-    const before = { active: activeVersion.peek(), sessions: sessionsVersion.peek() };
+    expect(getActiveId()).toBe("");
+    expect(activeSession.peek()).toBeUndefined();
     setActive("");
-    expect(activeVersion.peek()).toBe(before.active);
-    expect(sessionsVersion.peek()).toBe(before.sessions);
+    expect(getActiveId()).toBe("");
   });
 });
 

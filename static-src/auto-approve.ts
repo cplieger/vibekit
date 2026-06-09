@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { getActive, activeVersion } from "./store.js";
+import { getActive, activeSession } from "./store.js";
 import { effect } from "@cplieger/reactive";
 import { setAutoApproveCrew } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -39,7 +39,7 @@ export function initAutoApprove(): void {
 
   // Re-render on every store change (active chat switch, flag change).
   effect(() => {
-    void activeVersion.value;
+    void activeSession.value;
     render();
   });
 }

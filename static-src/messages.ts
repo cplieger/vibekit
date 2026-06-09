@@ -22,7 +22,7 @@
 
 import type { Message, Block } from "./types.js";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "./markdown.js";
-import { getActive, messagesVersion, activeVersion } from "./store.js";
+import { getActive, messagesVersion, activeSession } from "./store.js";
 import {
   ensureStreamingSig,
   clearStreamingSig,
@@ -193,7 +193,7 @@ export function mountChatView(): void {
   initMessageActions();
   effect(() => {
     void messagesVersion.value;
-    void activeVersion.value;
+    void activeSession.value;
     paint();
   });
 }

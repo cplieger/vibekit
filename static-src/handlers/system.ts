@@ -21,7 +21,7 @@ import {
   setCurrentMode,
   clearMsgIndex,
   invalidateSession,
-  sessionsVersion,
+  emitMessages,
 } from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { refreshCompactionThreshold } from "../status.js";
@@ -170,7 +170,7 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     s.messages = [];
     s.has_more = false;
     clearMsgIndex(chatID);
-    sessionsVersion.value = sessionsVersion.peek() + 1;
+    emitMessages();
     // Rely on the version-effect's renderUpdates (triggered by
     // loadMessages bumping version) rather than an explicit
     // renderSwitch here — avoids a redundant intermediate render

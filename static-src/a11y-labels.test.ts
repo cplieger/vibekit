@@ -143,6 +143,9 @@ describe("a11y: aria-expanded on popover triggers", () => {
       version: { value: 1 },
       sessionsVersion: { value: 1 },
       activeVersion: { value: 1 },
+      activeSession: {
+        value: { id: "s1", supervised_mode: true, pending_changes: [], messages: [] },
+      },
       messagesVersion: { value: 1 },
     }));
     vi.doMock("./signals.js", () => ({
@@ -231,6 +234,9 @@ describe("a11y: aria-expanded on popover triggers", () => {
       version: { value: 1 },
       sessionsVersion: { value: 1 },
       activeVersion: { value: 1 },
+      activeSession: {
+        value: { id: "s1", supervised_mode: true, pending_changes: [], messages: [] },
+      },
       messagesVersion: { value: 1 },
     }));
     vi.doMock("./signals.js", () => ({

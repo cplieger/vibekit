@@ -9,14 +9,7 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
-import {
-  setSessions,
-  get,
-  getSessions,
-  rebuildMsgIndex,
-  emitSessions,
-  emitMessages,
-} from "./store.js";
+import { setSessions, get, getSessions, rebuildMsgIndex, emitMessages } from "./store.js";
 
 // --- Inline decoders ---
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
@@ -122,7 +115,6 @@ export async function loadList(): Promise<boolean> {
   }
   setSessions(next);
   listController = null;
-  emitSessions();
   return true;
 }
 

@@ -19,7 +19,7 @@ vi.mock("../store.js", () => ({
   setCurrentMode: vi.fn(),
   clearMsgIndex: vi.fn(),
   invalidateSession: vi.fn(),
-  sessionsVersion: { value: 0, peek: () => 0 },
+  emitMessages: vi.fn(),
   version: { value: 0, peek: () => 0 },
 }));
 

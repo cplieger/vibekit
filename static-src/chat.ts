@@ -15,7 +15,7 @@ import {
   upsertHeader,
   contextSizeFor,
   defaultUsage,
-  activeVersion,
+  activeSession,
   removeChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
@@ -339,7 +339,7 @@ export function createPlannerSession(): void {
 export function installStoreSubscribers(): void {
   mountChatView();
   effect(() => {
-    void activeVersion.value;
+    void activeSession.value;
     const active = getActive();
     if (active !== undefined) {
       refreshContextUI(active);
