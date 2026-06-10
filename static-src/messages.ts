@@ -22,7 +22,7 @@
 
 import type { Message, Block } from "./types.js";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "./markdown.js";
-import { getActive, messagesVersion, activeVersion } from "./store.js";
+import { getActive, messagesVersion, activeSession } from "./store.js";
 import {
   ensureStreamingSig,
   clearStreamingSig,
@@ -31,7 +31,7 @@ import {
   ensureBlockTextSig,
   ensureBlockThinkingSig,
 } from "./store-signals.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR as RECONCILE_KEY, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
 import {
@@ -193,7 +193,7 @@ export function mountChatView(): void {
   initMessageActions();
   effect(() => {
     void messagesVersion.value;
-    void activeVersion.value;
+    void activeSession.value;
     paint();
   });
 }
@@ -305,22 +305,22 @@ function teardownAll(): void {
 const messageSpec: ReconcileSpec<Message> = {
   key: (m) => m.id,
   mount: (m) => {
-    const el = buildMessage(m);
+    const node = buildMessage(m);
     // Only animate genuinely-new appended messages; chat-switch replay
     // and pagination prepends mount silently. See paint() for how
     // appendNewIds is populated.
     if (appendNewIds.has(m.id)) {
-      el.setAttribute("data-chat-entry", "");
+      node.setAttribute("data-chat-entry", "");
     }
     const stagger = staggerIndex.get(m.id);
     if (stagger !== undefined && stagger > 0) {
-      el.style.setProperty("--stagger-index", String(stagger));
+      node.style.setProperty("--stagger-index", String(stagger));
     }
     messageStates.set(m.id, {
-      el,
+      el: node,
       streaming: m.role === "assistant" && isLikelyLiveStreaming(m),
     });
-    return el;
+    return node;
   },
   update: (el, m) => {
     updateMessage(el, m);
@@ -368,31 +368,35 @@ function updateMessage(el: HTMLElement, m: Message): void {
 // --- User ---
 
 function buildUser(m: Message): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "msg-wrap msg-wrap-user";
+  const wrap = el("div", { className: "msg-wrap msg-wrap-user" });
 
   // Optional checkpoint divider above the bubble.
   const cp = checkpointTags.get(m.id) ?? "";
   if (cp !== "") {
-    const line = document.createElement("div");
-    line.className = "checkpoint-line";
-    const label = document.createElement("span");
-    label.className = "checkpoint-label";
-    label.textContent = "Checkpoint";
-    const btn = document.createElement("button");
-    btn.className = "checkpoint-restore";
-    btn.type = "button";
-    btn.dataset["tag"] = cp;
-    btn.title = "Restore files to this point";
-    btn.setAttribute("aria-label", `Restore to checkpoint ${cp}`);
-    btn.textContent = "Restore";
+    const line = el("div", { className: "checkpoint-line" });
+    const label = el("span", { className: "checkpoint-label" }, "Checkpoint");
+    const btn = el(
+      "button",
+      {
+        className: "checkpoint-restore",
+        type: "button",
+        "data-tag": cp,
+        title: "Restore files to this point",
+        "aria-label": `Restore to checkpoint ${cp}`,
+      },
+      "Restore",
+    );
     // Rewind button: creates a new chat branched from this turn.
-    const rewindBtn = document.createElement("button");
-    rewindBtn.className = "checkpoint-rewind";
-    rewindBtn.type = "button";
-    rewindBtn.title = "Rewind conversation from this point";
-    rewindBtn.setAttribute("aria-label", "Rewind from this turn");
-    rewindBtn.textContent = "Rewind";
+    const rewindBtn = el(
+      "button",
+      {
+        className: "checkpoint-rewind",
+        type: "button",
+        title: "Rewind conversation from this point",
+        "aria-label": "Rewind from this turn",
+      },
+      "Rewind",
+    );
     rewindBtn.addEventListener("click", () => {
       // Find the turn index for this message.
       const session = getActive();
@@ -422,9 +426,7 @@ function buildUser(m: Message): HTMLElement {
   }
 
   const row = makeRow("user");
-  const bubble = document.createElement("div");
-  bubble.className = "message user";
-  bubble.textContent = m.content ?? "";
+  const bubble = el("div", { className: "message user" }, m.content ?? "");
   linkifyPaths(bubble);
   row.appendChild(bubble);
   wrap.appendChild(row);
@@ -444,8 +446,7 @@ function buildUser(m: Message): HTMLElement {
 // --- Assistant (with streaming) ---
 
 function buildAssistant(m: Message): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "msg-wrap msg-wrap-assistant";
+  const wrap = el("div", { className: "msg-wrap msg-wrap-assistant" });
 
   const blocks = m.blocks ?? [];
   // Block-aware path: render text, tool_use, and thinking blocks in
@@ -524,8 +525,9 @@ function buildReasoningBlock(
   live: boolean,
   messageID: string,
 ): HTMLDetailsElement {
-  const details = document.createElement("details");
-  details.className = "reasoning-block msg-reasoning";
+  const details = el("details", {
+    className: "reasoning-block msg-reasoning",
+  }) as HTMLDetailsElement;
   if (live) {
     details.open = true;
     // .streaming gates the "active thinking" CSS affordances (pulsing
@@ -534,14 +536,14 @@ function buildReasoningBlock(
     details.classList.add("streaming");
   }
 
-  const summary = document.createElement("summary");
-  summary.className = "reasoning-summary";
-  summary.textContent = live ? "Thinking…" : "Reasoning";
+  const summary = el(
+    "summary",
+    { className: "reasoning-summary" },
+    live ? "Thinking…" : "Reasoning",
+  );
   details.appendChild(summary);
 
-  const body = document.createElement("blockquote");
-  body.className = "reasoning-body";
-  body.textContent = reasoning;
+  const body = el("blockquote", { className: "reasoning-body" }, reasoning);
   details.appendChild(body);
 
   if (live) {
@@ -580,8 +582,7 @@ function mountContentBubble(
   messageID: string,
 ): HTMLDivElement {
   const row = makeRow("assistant");
-  const bubble = document.createElement("div");
-  bubble.className = "message assistant";
+  const bubble = el("div", { className: "message assistant" }) as HTMLDivElement;
   if (live) {
     bubble.classList.add("streaming");
   }
@@ -630,14 +631,17 @@ function ensureStream(bubble: HTMLDivElement): MarkdownStream {
  *  tool cards are appended as keyed children; the header is un-keyed
  *  so reconcile leaves it alone. */
 function mountToolGroup(parent: HTMLElement): HTMLDivElement {
-  const group = document.createElement("div");
-  group.className = "tool-group";
-  const header = document.createElement("div");
-  header.className = "tool-group-header";
-  header.setAttribute("role", "button");
-  header.setAttribute("tabindex", "0");
-  header.setAttribute("aria-expanded", "true");
-  header.innerHTML = '<span class="tool-group-count"></span>';
+  const group = el("div", { className: "tool-group" }) as HTMLDivElement;
+  const header = el(
+    "div",
+    {
+      className: "tool-group-header",
+      role: "button",
+      tabindex: "0",
+      "aria-expanded": "true",
+    },
+    el("span", { className: "tool-group-count" }),
+  );
   const onToggle = (): void => {
     group.classList.add(CLS_USER_TOGGLED);
     const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
@@ -698,10 +702,10 @@ function buildAssistantBlocks(wrap: HTMLElement, m: Message, blocks: Block[], li
     // earlier blocks are sealed (a new block was started after them
     // because the run kind changed: text → tool, tool → text, etc.).
     const isLiveBlock = live && i === lastIdx;
-    const el = mountBlockElement(block, i, m, isLiveBlock);
-    if (el !== null) {
-      el.setAttribute("data-block-idx", String(i));
-      wrap.appendChild(el);
+    const node = mountBlockElement(block, i, m, isLiveBlock);
+    if (node !== null) {
+      node.setAttribute("data-block-idx", String(i));
+      wrap.appendChild(node);
     }
   }
 }
@@ -763,13 +767,13 @@ function mountBlockElement(
       if (tc === undefined) {
         return null;
       }
-      const el = toolSpec.mount(tc);
+      const node = toolSpec.mount(tc);
       // Reconcile-key marker so any future global reconcile pass over
       // tool_calls leaves these inline mounts alone (the data attribute
       // mirrors what reconcile.ts uses internally).
-      if (el instanceof HTMLElement) {
-        el.setAttribute(RECONCILE_KEY, tc.id);
-        return el;
+      if (node instanceof HTMLElement) {
+        node.setAttribute(RECONCILE_KEY, tc.id);
+        return node;
       }
       return null;
     }
@@ -790,8 +794,7 @@ function mountTextBlockBubble(
   live: boolean,
 ): HTMLElement {
   const row = makeRow("assistant");
-  const bubble = document.createElement("div");
-  bubble.className = "message assistant";
+  const bubble = el("div", { className: "message assistant" }) as HTMLDivElement;
   if (live) {
     bubble.classList.add("streaming");
   }
@@ -854,13 +857,13 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
           continue;
         }
         const isLiveBlock = state.streaming && i === lastIdx;
-        const el = mountBlockElement(block, i, m, isLiveBlock);
-        if (el !== null) {
-          el.setAttribute("data-block-idx", String(i));
+        const node = mountBlockElement(block, i, m, isLiveBlock);
+        if (node !== null) {
+          node.setAttribute("data-block-idx", String(i));
           if (plan !== null) {
-            wrap.insertBefore(el, plan);
+            wrap.insertBefore(node, plan);
           } else {
-            wrap.appendChild(el);
+            wrap.appendChild(node);
           }
         }
       }
@@ -1012,10 +1015,8 @@ function isLikelyLiveStreaming(m: Message): boolean {
 // --- Helpers ---
 
 function makeRow(side: "user" | "assistant"): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = `msg-row msg-row-${side}`;
-  const avatar = document.createElement("div");
-  avatar.className = "msg-avatar";
+  const row = el("div", { className: `msg-row msg-row-${side}` }) as HTMLDivElement;
+  const avatar = el("div", { className: "msg-avatar" });
   avatar.appendChild(side === "assistant" ? cloneKiroAvatar() : cloneUserAvatar());
   row.appendChild(avatar);
   return row;

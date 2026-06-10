@@ -20,6 +20,7 @@
 // Exactly one panel is visible at a time; the rest get .hidden.
 // ---------------------------------------------------------------------------
 
+import { signal, subscribe } from "@cplieger/reactive";
 import { $, maybeViewTransition } from "./dom.js";
 import type { SettingsTab } from "./router.js";
 import { pushRoute } from "./router.js";
@@ -44,31 +45,29 @@ export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
 
 // --- Store ---
 
-let activeTab: SettingsTab = "general";
 type Listener = (tab: SettingsTab) => void;
-const listeners = new Set<Listener>();
+// Deduped signal: a same-value write is a no-op, so forcing the already-active
+// tab no longer re-swaps panels (which caused a double swap on first load and
+// spurious view-transitions on same-tab popstate). The outer Settings view is
+// still shown/hidden by the router via setTabRoute() in forceSettingsTab(),
+// independent of this signal. subscribe() still fires immediately on first
+// load to init panels; setSettingsTab keeps its own early-return guard.
+const activeTab = signal<SettingsTab>("general");
 
 /** Subscribe to tab changes. Fires immediately with the current tab. */
 function onTabChange(fn: Listener): () => void {
-  listeners.add(fn);
-  fn(activeTab);
-  return (): void => {
-    listeners.delete(fn);
-  };
+  return subscribe(activeTab, fn);
 }
 
 /** Switch to a tab. No-op if already active. Updates URL and notifies
- *  listeners (DOM panel visibility, load callbacks, etc). */
+ *  subscribers (DOM panel visibility, load callbacks, etc). */
 function setSettingsTab(tab: SettingsTab): void {
-  if (tab === activeTab) {
+  if (tab === activeTab.peek()) {
     return;
   }
-  activeTab = tab;
   setTabRoute(tab);
   pushRoute({ kind: "settings", tab });
-  for (const fn of listeners) {
-    fn(tab);
-  }
+  activeTab.value = tab;
 }
 
 // --- DOM wiring ---
@@ -148,9 +147,6 @@ function isSettingsTab(v: string): v is SettingsTab {
  *  Safe to call even if Settings isn't currently the active app tab;
  *  the tab state is preserved for when it opens. */
 export function forceSettingsTab(tab: SettingsTab): void {
-  activeTab = tab;
   setTabRoute(tab);
-  for (const fn of listeners) {
-    fn(tab);
-  }
+  activeTab.value = tab;
 }

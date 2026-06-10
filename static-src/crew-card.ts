@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Crew, CrewSubagent, CrewPendingStage, CrewStatus, ToolCall } from "./types.js";
+import { el } from "@cplieger/reactive";
 import { scroll, trimOldMessages } from "./scroll.js";
 import { breakToolGroup } from "./tool-group.js";
 import { buildToolCard } from "./tool-card.js";
@@ -37,7 +38,6 @@ function q(parent: Element, sel: string): Element {
 type CrewEntry = { kind: "sub"; sub: CrewSubagent } | { kind: "pending"; ps: CrewPendingStage };
 
 const cards = new Map<string, HTMLDivElement>();
-const cardState = new WeakMap<HTMLDivElement, string>();
 // Per-subagent tool containers, keyed on session_id. Preserved across
 // crew-card rebuilds so tool cards aren't destroyed when the snapshot
 // updates (which replaces all rows).
@@ -59,9 +59,9 @@ const rowUnbinds = new Map<string, () => void>();
 /** Update the collapsed-row activity line for a subagent. Called when
  *  a tool call arrives, updates, or a permission is requested. */
 export function setSubagentActivity(subSessionID: string, text: string): void {
-  const el = activityEls.get(subSessionID);
-  if (el !== undefined) {
-    el.textContent = text;
+  const act = activityEls.get(subSessionID);
+  if (act !== undefined) {
+    act.textContent = text;
   }
 }
 
@@ -91,16 +91,16 @@ export function addToolToCrewRow(subSessionID: string, tc: ToolCall): boolean {
   if (container === undefined) {
     return false;
   }
-  const el = buildToolCard({
+  const toolCard = buildToolCard({
     id: tc.id,
     title: tc.title,
     kind: tc.kind,
     status: tc.status,
     live: false,
   });
-  el.classList.add("crew-tool-card");
-  container.appendChild(el);
-  crewToolEls.set(tc.id, el);
+  toolCard.classList.add("crew-tool-card");
+  container.appendChild(toolCard);
+  crewToolEls.set(tc.id, toolCard);
   // Update the collapsed-row activity line with the tool name.
   if (isToolActive(tc.status)) {
     setSubagentActivity(subSessionID, formatToolActivity(tc.title));
@@ -132,26 +132,26 @@ function addCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => voi
     return;
   }
   breakToolGroup();
-  const el = build(messageID, crew);
-  cards.set(messageID, el);
-  append(el);
+  const card = build(messageID, crew);
+  cards.set(messageID, card);
+  append(card);
   trimOldMessages();
   scroll();
 }
 
 export function updateCrew(messageID: string, crew: Crew, append: (el: HTMLElement) => void): void {
-  const el = cards.get(messageID);
-  if (el === undefined) {
+  const card = cards.get(messageID);
+  if (card === undefined) {
     addCrew(messageID, crew, append);
     return;
   }
-  applyState(el, crew);
+  applyState(card, crew);
 }
 
 export function buildCrewCardForReplay(messageID: string, crew: Crew): HTMLDivElement {
-  const el = build(messageID, crew);
-  cards.set(messageID, el);
-  return el;
+  const card = build(messageID, crew);
+  cards.set(messageID, card);
+  return card;
 }
 
 export function clearCrews(): void {
@@ -161,43 +161,39 @@ export function clearCrews(): void {
   crewToolEls.clear();
   activityEls.clear();
   pendingApprovals.clear();
+  // Drain the per-row bindLoadingState subscriptions: clearCrews runs on
+  // chat switch/clear BEFORE the message list is wiped wholesale, so the
+  // reconcile.onRemove drain never fires for these rows. Dispose them here
+  // (mirrors history.ts flushRowUnbinds / messages-actions clearActionBindings).
+  for (const u of rowUnbinds.values()) {
+    u();
+  }
+  rowUnbinds.clear();
 }
 
 // --- DOM builders ---
 
 function build(messageID: string, crew: Crew): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = "crew-card";
-  el.dataset["messageId"] = messageID;
+  const icon = el("span", { className: "crew-icon" }, "\u2699");
+  const title = el("span", { className: "crew-title" }, titleFor(crew));
+  const count = el("span", { className: "crew-count" });
+  const header = el("div", { className: "crew-header" }, icon, title, count);
 
-  const header = document.createElement("div");
-  header.className = "crew-header";
-  const icon = document.createElement("span");
-  icon.className = "crew-icon";
-  icon.textContent = "\u2699";
-  const title = document.createElement("span");
-  title.className = "crew-title";
-  title.textContent = titleFor(crew);
-  const count = document.createElement("span");
-  count.className = "crew-count";
-  header.append(icon, title, count);
+  const body = el("div", { className: "crew-body" });
 
-  const body = document.createElement("div");
-  body.className = "crew-body";
-
-  el.append(header, body);
-  applyState(el, crew);
-  return el;
+  const card = el(
+    "div",
+    { className: "crew-card", "data-message-id": messageID },
+    header,
+    body,
+  ) as HTMLDivElement;
+  applyState(card, crew);
+  return card;
 }
 
-function applyState(el: HTMLDivElement, crew: Crew): void {
-  const sig = signature(crew);
-  if (cardState.get(el) === sig) {
-    return;
-  }
-  cardState.set(el, sig);
-  const body = q(el, ".crew-body");
-  const count = q(el, ".crew-count");
+function applyState(card: HTMLDivElement, crew: Crew): void {
+  const body = q(card, ".crew-body");
+  const count = q(card, ".crew-count");
 
   const active = crew.subagents.filter((s) => s.status === "working").length;
   const done = crew.subagents.filter((s) => s.status === "terminated").length;
@@ -210,7 +206,7 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
     countText += ` \u00b7 ${String(pending)} pending`;
   }
   count.textContent = countText;
-  el.classList.toggle("crew-done", active === 0 && pending === 0);
+  card.classList.toggle("crew-done", active === 0 && pending === 0);
 
   // Reconcile rows in place. Identity preservation means in-flight
   // input drafts in `.crew-msg-field` survive automatically — no need
@@ -251,21 +247,12 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
           oldIcon.replaceWith(createStatusIcon(e.sub.status));
         }
       }
-      // Sync activity text (mirrors initial paint logic in buildRow).
+      // Sync activity via the shared helper. Snapshots set authoritative
+      // text only (terminated / pending-approval / server status_msg) and
+      // never clobber transient tool activity set via setSubagentActivity.
       const actEl = activityEls.get(e.sub.session_id);
       if (actEl !== undefined) {
-        if (e.sub.status === "terminated") {
-          actEl.textContent = "Done";
-          actEl.classList.add("crew-activity-done");
-        } else if (pendingApprovals.has(e.sub.session_id)) {
-          actEl.textContent = "\u26a0 tool approval needed";
-        } else if (e.sub.status_msg !== undefined && e.sub.status_msg !== "") {
-          actEl.textContent = e.sub.status_msg;
-          actEl.classList.remove("crew-activity-done");
-        } else if (e.sub.status === "working") {
-          actEl.textContent = "Working\u2026";
-          actEl.classList.remove("crew-activity-done");
-        }
+        applyActivity(actEl, e.sub, pendingApprovals.has(e.sub.session_id));
       }
     },
     onRemove: (_: HTMLElement, key: string) => {
@@ -276,17 +263,6 @@ function applyState(el: HTMLDivElement, crew: Crew): void {
       }
     },
   });
-}
-
-export function signature(crew: Crew): string {
-  let s = crew.group + "|";
-  for (const sub of crew.subagents) {
-    s += `${sub.session_id}:${sub.status}:${sub.status_msg ?? ""};`;
-  }
-  for (const ps of crew.pending_stages ?? []) {
-    s += `p:${ps.name};`;
-  }
-  return s;
 }
 
 // --- Row builders ---
@@ -324,84 +300,99 @@ const CREW_STATUS_ICONS: Readonly<Record<CrewStatus, StatusIconDef>> = {
 
 function createStatusIcon(status: CrewStatus): HTMLSpanElement {
   const def = CREW_STATUS_ICONS[status];
-  const span = document.createElement("span");
-  span.className = def.className;
-  span.setAttribute("aria-label", def.label);
-  span.replaceChildren(iconEl(def.svg));
-  return span;
+  return el("span", { className: def.className, "aria-label": def.label }, iconEl(def.svg));
+}
+
+/** Apply the collapsed-row activity line for a subagent from snapshot state.
+ *  Sets authoritative text only — terminated -> "Done", a pending approval,
+ *  or a server-supplied status_msg. For a working subagent with no specific
+ *  message it seeds the generic placeholder ONLY when the line is empty, so a
+ *  snapshot never clobbers transient tool activity set live via
+ *  setSubagentActivity(). Shared by buildRow (initial paint) and the
+ *  reconcile update path. */
+function applyActivity(
+  actEl: HTMLSpanElement,
+  sub: CrewSubagent,
+  hasPendingApproval: boolean,
+): void {
+  if (sub.status === "terminated") {
+    actEl.textContent = "Done";
+    actEl.classList.add("crew-activity-done");
+    return;
+  }
+  actEl.classList.remove("crew-activity-done");
+  if (hasPendingApproval) {
+    actEl.textContent = "\u26a0 tool approval needed";
+    return;
+  }
+  if (sub.status_msg !== undefined && sub.status_msg !== "") {
+    actEl.textContent = sub.status_msg;
+    return;
+  }
+  if (sub.status === "working" && actEl.textContent === "") {
+    actEl.textContent = "Working\u2026";
+  }
 }
 
 function buildRow(sub: CrewSubagent): HTMLDivElement {
-  const r = document.createElement("div");
-  r.className = `crew-row crew-status-${sub.status}`;
-  r.dataset["sessionId"] = sub.session_id;
+  const r = el("div", {
+    className: `crew-row crew-status-${sub.status}`,
+    "data-session-id": sub.session_id,
+  }) as HTMLDivElement;
 
-  const head = document.createElement("button");
-  head.type = "button";
-  head.className = "crew-row-head";
-  head.appendChild(createStatusIcon(sub.status));
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "crew-name";
-  nameSpan.textContent = sub.session_name || sub.session_id;
-  const agentSpan = document.createElement("span");
-  agentSpan.className = "crew-agent";
-  agentSpan.textContent = sub.agent_name;
-  head.append(nameSpan, agentSpan);
+  const nameSpan = el("span", { className: "crew-name" }, sub.session_name || sub.session_id);
+  const agentSpan = el("span", { className: "crew-agent" }, sub.agent_name);
+  const head = el(
+    "button",
+    { type: "button", className: "crew-row-head" },
+    createStatusIcon(sub.status),
+    nameSpan,
+    agentSpan,
+  );
   if (sub.depends_on !== undefined && sub.depends_on.length > 0) {
     head.appendChild(createDepsIndicator(sub.depends_on));
   }
-  const actEl = document.createElement("span");
-  actEl.className = "crew-row-activity";
+  const actEl = el("span", { className: "crew-row-activity" });
   head.appendChild(actEl);
-  const chevron = document.createElement("span");
-  chevron.className = "crew-chevron";
-  chevron.textContent = "\u25b8";
+  const chevron = el("span", { className: "crew-chevron" }, "\u25b8");
   head.appendChild(chevron);
   r.appendChild(head);
 
   // Register the activity element for live updates.
   activityEls.set(sub.session_id, actEl);
 
-  // Set initial activity text based on status.
-  if (sub.status === "terminated") {
-    actEl.textContent = "Done";
-    actEl.classList.add("crew-activity-done");
-  } else if (pendingApprovals.has(sub.session_id)) {
-    actEl.textContent = "\u26a0 tool approval needed";
-  } else if (sub.status_msg !== undefined && sub.status_msg !== "") {
-    actEl.textContent = sub.status_msg;
-  } else if (sub.status === "working") {
-    actEl.textContent = "Working\u2026";
-  }
+  // Seed the initial activity text via the shared helper.
+  applyActivity(actEl, sub, pendingApprovals.has(sub.session_id));
 
   // Expandable body: query + tools + message input.
-  const expand = document.createElement("div");
-  expand.className = "crew-row-expand";
+  const expand = el("div", { className: "crew-row-expand" });
   const isExpanded = expandedRows.has(sub.session_id);
   if (!isExpanded) {
     expand.classList.add("hidden");
   }
 
   if (sub.initial_query !== "") {
-    const query = document.createElement("div");
-    query.className = "crew-row-query";
-    query.textContent = sub.initial_query;
+    const query = el("div", { className: "crew-row-query" }, sub.initial_query);
     expand.appendChild(query);
   }
 
   // Message input at the bottom of the expanded body.
-  const inputRow = document.createElement("div");
-  inputRow.className = "crew-msg-input";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Message this subagent\u2026";
-  input.className = "crew-msg-field";
-  const sendBtn = document.createElement("button");
-  sendBtn.type = "button";
-  sendBtn.className = "crew-msg-send";
-  sendBtn.textContent = "\u2191";
-  sendBtn.setAttribute("data-tooltip", "Send");
-  sendBtn.setAttribute("aria-label", "Send");
+  const inputRow = el("div", { className: "crew-msg-input" });
+  const input = el("input", {
+    type: "text",
+    placeholder: "Message this subagent\u2026",
+    className: "crew-msg-field",
+  }) as HTMLInputElement;
+  const sendBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "crew-msg-send",
+      "data-tooltip": "Send",
+      "aria-label": "Send",
+    },
+    "\u2191",
+  ) as HTMLButtonElement;
   rowUnbinds.set(`sub:${sub.session_id}`, bindLoadingState("crew.send_message", sendBtn));
   const doSend = (): void => {
     const text = input.value.trim();
@@ -455,18 +446,16 @@ function buildRow(sub: CrewSubagent): HTMLDivElement {
 }
 
 function buildPendingRow(ps: CrewPendingStage): HTMLDivElement {
-  const r = document.createElement("div");
-  r.className = "crew-row crew-status-pending";
-  const head = document.createElement("div");
-  head.className = "crew-row-head";
-  head.appendChild(createStatusIcon("pending"));
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "crew-name";
-  nameSpan.textContent = ps.name;
-  const agentSpan = document.createElement("span");
-  agentSpan.className = "crew-agent";
-  agentSpan.textContent = ps.agent_name;
-  head.append(nameSpan, agentSpan);
+  const r = el("div", { className: "crew-row crew-status-pending" }) as HTMLDivElement;
+  const nameSpan = el("span", { className: "crew-name" }, ps.name);
+  const agentSpan = el("span", { className: "crew-agent" }, ps.agent_name);
+  const head = el(
+    "div",
+    { className: "crew-row-head" },
+    createStatusIcon("pending"),
+    nameSpan,
+    agentSpan,
+  );
   if (ps.depends_on !== undefined && ps.depends_on.length > 0) {
     head.appendChild(createDepsIndicator(ps.depends_on));
   }
@@ -475,11 +464,11 @@ function buildPendingRow(ps: CrewPendingStage): HTMLDivElement {
 }
 
 function createDepsIndicator(deps: string[]): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.className = "crew-deps";
-  span.title = `Depends on: ${deps.join(", ")}`;
-  span.textContent = `\u2193 ${String(deps.length)}`;
-  return span;
+  return el(
+    "span",
+    { className: "crew-deps", title: `Depends on: ${deps.join(", ")}` },
+    `\u2193 ${String(deps.length)}`,
+  );
 }
 
 export function titleFor(crew: Crew): string {
@@ -498,8 +487,7 @@ function getOrCreateToolContainer(row: HTMLDivElement, sessionID: string): HTMLD
     }
     return container;
   }
-  container = document.createElement("div");
-  container.className = "crew-row-tools";
+  container = el("div", { className: "crew-row-tools" }) as HTMLDivElement;
   const expand = row.querySelector(".crew-row-expand");
   if (expand !== null) {
     const msgInput = expand.querySelector(".crew-msg-input");
@@ -516,8 +504,8 @@ export function onCrewToolCompleted(subSessionID: string): void {
   if (pendingApprovals.has(subSessionID)) {
     return;
   }
-  const el = activityEls.get(subSessionID);
-  if (el === undefined) {
+  const act = activityEls.get(subSessionID);
+  if (act === undefined) {
     return;
   }
   // Check if there are still active tools for this subagent.
@@ -528,6 +516,6 @@ export function onCrewToolCompleted(subSessionID: string): void {
       return;
     } // Still has active tools.
   }
-  el.textContent = "Done";
-  el.classList.add("crew-activity-done");
+  act.textContent = "Done";
+  act.classList.add("crew-activity-done");
 }

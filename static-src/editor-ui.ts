@@ -2,6 +2,8 @@
 // Editor UI: rendering helpers (read/edit mode, gutter, highlight, restoreUI).
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+import { reconcile } from "./reconcile.js";
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
@@ -57,10 +59,10 @@ export async function fetchAgentLines(path: string): Promise<void> {
   }
   agentLineCache.set(path, data.changes);
   agentLineSetCache.delete(path);
-  // Rebuild gutter to reflect newly-fetched agent lines if file is displayed.
+  // Refresh gutter to reflect newly-fetched agent lines if file is displayed.
   const state = fileStates.get(path);
   if (state?.loaded) {
-    rebuildGutter(state.current);
+    updateGutter(state.current.value);
   }
 }
 
@@ -93,50 +95,40 @@ export function showDiffMode(): void {
 
 // --- Gutter ---
 
-export function updateGutter(content: string): void {
+export function updateGutter(content: string, agentLines?: ReadonlySet<number>): void {
   const lineCount = content.split("\n").length;
-  const gutter = $.editorGutter;
-  const currentCount = gutter.children.length;
-  const agentLines = getAgentLines(getActiveFilePath());
-
-  if (currentCount > lineCount) {
-    for (let i = currentCount; i > lineCount; i--) {
-      gutter.lastChild?.remove();
-    }
-  } else if (currentCount < lineCount) {
-    for (let i = currentCount + 1; i <= lineCount; i++) {
-      const line = document.createElement("div");
-      line.className = "gutter-line";
-      line.textContent = String(i);
-      if (agentLines.has(i)) {
+  // Production callers omit `agentLines` and get the per-file cache; tests
+  // inject an explicit set so the reconcile behaviour is observable without
+  // seeding module-private caches.
+  const marks = agentLines ?? getAgentLines(getActiveFilePath());
+  const lines = Array.from({ length: lineCount }, (_, i) => i + 1);
+  // Keyed reconcile by line number is the sole owner of the gutter DOM. It
+  // handles add/remove on line-count change (a file switch reconciles cleanly
+  // — surplus rows are removed, missing rows mounted) AND refreshes the
+  // agent-modified class on EXISTING rows: `update` toggles the class
+  // unconditionally, so a switch to a file with different (or no) agent lines
+  // clears stale highlights without any manual replaceChildren(). Dropping the
+  // clear also preserves row identity + scrollTop across switches.
+  reconcile($.editorGutter, lines, {
+    key: (n) => String(n),
+    mount: (n) => {
+      const line = el("div", { className: "gutter-line" }, String(n));
+      if (marks.has(n)) {
         line.classList.add("gutter-agent-modified");
       }
-      gutter.appendChild(line);
-    }
-  }
-}
-
-export function rebuildGutter(content: string): void {
-  const lineCount = content.split("\n").length;
-  const gutter = $.editorGutter;
-  gutter.replaceChildren();
-  const agentLines = getAgentLines(getActiveFilePath());
-  for (let i = 1; i <= lineCount; i++) {
-    const line = document.createElement("div");
-    line.className = "gutter-line";
-    line.textContent = String(i);
-    if (agentLines.has(i)) {
-      line.classList.add("gutter-agent-modified");
-    }
-    gutter.appendChild(line);
-  }
+      return line;
+    },
+    update: (lineEl, n) => {
+      lineEl.classList.toggle("gutter-agent-modified", marks.has(n));
+    },
+  });
 }
 
 // --- Highlight rendering ---
 
 export function renderHighlight(content: string, path: string): void {
   $.editorCode.innerHTML = highlight(content, path);
-  rebuildGutter(content);
+  updateGutter(content);
 }
 
 // --- Edit-mode UI ---
@@ -144,21 +136,21 @@ export function renderHighlight(content: string, path: string): void {
 export function renderEditModeUI(state: FileState): void {
   $.editorEditBtn.disabled = false;
   const isPlanDraft = isPlanDraftPath(state.path);
-  const isModified = state.current !== state.original;
+  const isModified = state.current.value !== state.original.value;
   $.editorDiffBtn.classList.toggle("hidden", isPlanDraft || !isModified);
   $.editorDiffBtn.setAttribute("data-tooltip", "View diff vs saved");
   $.editorDiffBtn.setAttribute("aria-label", "View diff vs saved");
-  const editing = state.mode.kind === "edit" && state.mode.editing;
+  const m = state.mode.value;
+  const editing = m.kind === "edit" && m.editing;
   if (editing) {
-    $.editorContent.value = state.current;
+    $.editorContent.value = state.current.value;
     showEditMode();
-    rebuildGutter(state.current);
+    updateGutter(state.current.value);
     $.editorEditBtn.classList.add("hidden");
     $.editorCancelBtn.classList.remove("hidden");
     $.editorSaveBtn.classList.remove("hidden");
-    $.editorSaveBtn.disabled = state.current === state.original;
   } else {
-    renderHighlight(state.current, state.path);
+    renderHighlight(state.current.value, state.path);
     showReadMode();
     $.editorEditBtn.classList.remove("hidden");
     $.editorCancelBtn.classList.add("hidden");

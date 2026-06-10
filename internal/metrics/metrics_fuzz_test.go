@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	m "github.com/cplieger/metrics"
+	m "github.com/cplieger/metrics/v2"
 )
 
 func FuzzHistogramObserve(f *testing.F) {

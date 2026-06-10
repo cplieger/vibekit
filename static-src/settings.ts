@@ -5,7 +5,6 @@
 // ---------------------------------------------------------------------------
 
 import { initAllModals } from "./modals.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitPanel, loadGitRepos } from "./git.js";
 import { restoreFileBrowser } from "./files.js";
@@ -22,14 +21,20 @@ import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { $ } from "./dom.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
-import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import {
+  bindLoadingState,
+  registerCleanup,
+  debouncedDispatch,
+  subscribeByName,
+} from "./actions/index.js";
 
 // Shared generation counter for kiro-setting saves. Last-write-wins:
 // if two settings change in rapid succession, only the final save
@@ -151,8 +156,13 @@ export function initUI(): void {
 
 function initSteeringEditor(): void {
   const textarea = $.steeringInput;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let saveGen = 0;
+  // debouncedDispatch coalesces rapid keystrokes into a single trailing
+  // dispatch after the quiet window (replaces the manual clearTimeout +
+  // setTimeout(600) + saveGen pattern). saveGen is no longer needed: the
+  // action has scope:"settings", so dispatches serialize (ordered
+  // resolution), and the indicator is driven by the action's own
+  // lifecycle events below rather than a per-dispatch .then().
+  const debouncedSave = debouncedDispatch(saveSteering, { wait: 600 });
 
   void apiGet<{ content?: string }>("/api/steering").then((d) => {
     if (d?.content !== undefined) {
@@ -160,29 +170,26 @@ function initSteeringEditor(): void {
     }
   });
 
+  const unsub = subscribeByName("settings.save_steering", (inst) => {
+    if (inst.status === "success") {
+      showSaved();
+    } else if (inst.status === "error") {
+      showError();
+    }
+  });
+
   textarea.addEventListener("input", () => {
-    clearTimeout(timer);
     showSaving();
-    timer = setTimeout(() => {
-      const gen = ++saveGen;
-      void saveSteering.dispatch({ content: textarea.value }, { silent: true }).then((r) => {
-        if (gen !== saveGen) {
-          return;
-        } // newer save pending, skip indicator update
-        if (r === null) {
-          showError();
-        } else {
-          showSaved();
-        }
-      });
-    }, 600);
+    debouncedSave({ content: textarea.value });
   });
 
   registerCleanup(() => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-      void saveSteering.dispatch({ content: textarea.value }, { silent: true });
+    // Stop touching the indicator (mirrors the original cleanup, which
+    // flushed without updating it), then flush any pending edit so an
+    // unsaved change still persists on teardown.
+    unsub();
+    if (debouncedSave.isPending()) {
+      void debouncedSave.flush({ content: textarea.value });
     }
   });
 }
@@ -256,7 +263,7 @@ function initDiagnostics(): void {
 /** Refreshes the identity label from the live /api/whoami endpoint.
  *  Called on startup to populate the sidebar email. */
 async function loadIdentity(): Promise<void> {
-  const info = await apiGet<WhoamiResponse>("/api/whoami");
+  const info = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
   if (info?.email !== undefined && info.email !== "") {
     setUserEmail(info.email);
   }

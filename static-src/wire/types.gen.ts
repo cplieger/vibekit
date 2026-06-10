@@ -8,7 +8,7 @@ export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_fail
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "crew" | "agent_switched" | "compaction_failed" | "inbox";
 
-export type ForgeKind = "github" | "gitlab" | "codeberg" | "gitea";
+export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type PendingAction = "accept" | "reject";
 
@@ -26,23 +26,55 @@ export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export type Transport = "stdio" | "http";
 
+/**
+ * AvailableCommand is one entry in the slash-command catalogue surfaced
+ * by kiro-cli's _kiro.dev/commands/available notification. The wire
+ * shape carries opaque metadata; clients consume only Name and Description.
+ */
 export interface AvailableCommand {
   meta?: Record<string, unknown>;
   name: string;
   description?: string;
 }
 
+/**
+ * Block is one entry in an assistant message's chronological content
+ * array. Position in Message.Blocks IS the order in which the agent
+ * emitted the block — text → tool → text → tool, etc. — so the client
+ * renders them inline as they happened rather than concatenating all
+ * text into one bubble at the top with tools dumped below.
+ * //
+ * Replay-compatible: messages persisted before this field existed have
+ * Blocks=nil. Renderers fall back to the legacy Content + ToolCalls
+ * layout when Blocks is empty.
+ */
 export interface Block {
+  /** Type is the discriminator: text | tool_use | thinking. */
   type: string;
+  /**
+ * Text carries the markdown text for Type=BlockText. Accumulated
+ * across MessageChunkPayload events targeting this block index.
+ */
   text?: string;
+  /** Thinking carries the reasoning text for Type=BlockThinking. */
   thinking?: string;
+  /**
+ * ToolCallID references a tool by ID in Message.ToolCalls for
+ * Type=BlockToolUse. Empty for other types.
+ */
   tool_call_id?: string;
 }
 
+/** ChatDeletedPayload is the payload for type="chat_deleted". */
 export interface ChatDeletedPayload {
   id: string;
 }
 
+/**
+ * ChatHeader is the metadata-only view of a Chat. Field order is driven
+ * by fieldalignment packing, not Chat's field order; both structs
+ * serialise to JSON independently so the visual mismatch is harmless.
+ */
 export interface ChatHeader {
   parent_chat_id?: string;
   name: string;
@@ -64,6 +96,7 @@ export interface ChatHeader {
   auto_approve_crew?: boolean;
 }
 
+/** Check is a single CI status check for a commit. */
 export interface Check {
   name: string;
   status: string;
@@ -71,11 +104,16 @@ export interface Check {
   url?: string;
 }
 
+/** CommandsUpdatedPayload is the payload for type="commands_updated". */
 export interface CommandsUpdatedPayload {
   commands: AvailableCommand[];
   prompts?: AvailableCommand[];
 }
 
+/**
+ * ConfiguredForge is one connected forge backend. Constructed from
+ * the CLI config files.
+ */
 export interface ConfiguredForge {
   id: string;
   kind: ForgeKind;
@@ -87,17 +125,33 @@ export interface ConfiguredForge {
   connected: boolean;
 }
 
+/**
+ * ConnectedPayload is the payload for type="connected", the SSE handshake
+ * event. Floor is the oldest event ID still in the replay ring; Head is
+ * the newest. Clients with last-seen-id < Floor know they missed events
+ * and should refetch authoritative state.
+ */
 export interface ConnectedPayload {
   floor: number;
   head: number;
 }
 
+/**
+ * Crew is the live state of one crew message. Subagents is the latest
+ * snapshot; Group is the shared group id across the subagents (used
+ * for message identity when kiro-cli emits subsequent updates).
+ * PendingStages lists subagents that are planned but not yet spawned.
+ */
 export interface Crew {
   group: string;
   subagents: CrewSubagent[];
   pending_stages?: CrewPendingStage[];
 }
 
+/**
+ * CrewPendingStage is a planned subagent that hasn't spawned yet.
+ * kiro-cli emits these in the pendingStages array of list_update.
+ */
 export interface CrewPendingStage {
   name: string;
   agent_name: string;
@@ -105,6 +159,12 @@ export interface CrewPendingStage {
   depends_on?: string[];
 }
 
+/**
+ * CrewSubagent is one subagent in a `crew` event message, sourced from
+ * kiro-cli's `_kiro.dev/subagent/list_update` notification. Each
+ * kiro-cli snapshot replaces the full list; we persist the last seen
+ * snapshot on the message so reloading a chat shows the final state.
+ */
 export interface CrewSubagent {
   session_id: string;
   session_name: string;
@@ -117,6 +177,7 @@ export interface CrewSubagent {
   depends_on?: string[];
 }
 
+/** DeviceFlowResponse describes a started OAuth device flow. */
 export interface DeviceFlowResponse {
   user_code: string;
   verification_uri: string;
@@ -125,17 +186,79 @@ export interface DeviceFlowResponse {
   expires_in: number;
 }
 
+/**
+ * ElicitationCompletePayload is the SSE payload for
+ * type="elicitation_complete": an upstream cancellation telling the
+ * client to dismiss the dialog for RequestID without a user answer.
+ */
+export interface ElicitationCompletePayload {
+  request_id: number;
+}
+
+/**
+ * ElicitationNeededPayload is the SSE payload for type="elicitation_needed".
+ * Mirrors PermissionNeededPayload's role: it carries everything the
+ * client needs to render the dialog plus the RequestID to echo back in
+ * the elicitation_response command. Mode is "form" or "url"; URL-mode
+ * elicitations carry URL and no RequestedSchema.
+ */
+export interface ElicitationNeededPayload {
+  requested_schema?: ElicitationRequestSchema;
+  mode?: string;
+  message?: string;
+  url?: string;
+  tool_call_id?: string;
+  sub_session_id?: string;
+  request_id: number;
+}
+
+/**
+ * ElicitationPropertySchema describes one field in an elicitation form.
+ * Type is the discriminator ("string" | "number" | "integer" |
+ * "boolean" | "array"); the other fields are populated as relevant to
+ * that type. Unset fields are omitted on the wire.
+ */
+export interface ElicitationPropertySchema {
+  default?: unknown;
+  minLength?: number;
+  maxLength?: number;
+  type: string;
+  title?: string;
+  description?: string;
+  format?: string;
+  pattern?: string;
+  enum?: string[];
+}
+
+/**
+ * ElicitationRequestSchema is the JSON-schema-shaped object describing a
+ * form: a map of property name to its schema, plus the required set.
+ */
+export interface ElicitationRequestSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  properties?: Record<string, ElicitationPropertySchema>;
+  required?: string[];
+}
+
+/**
+ * ErrorPayload is the payload for type="error". Code lets clients react
+ * per-class without string-matching.
+ */
 export interface ErrorPayload {
   code: ErrorCode;
   message: string;
 }
 
+/** FileChange tracks per-file change stats during a turn. */
 export interface FileChange {
   lines_added: number;
   lines_removed: number;
   is_new_file?: boolean;
 }
 
+/** Issue represents a forge issue. */
 export interface Issue {
   title: string;
   body?: string;
@@ -148,43 +271,100 @@ export interface Issue {
   updated_at?: number;
 }
 
+/** Label is a forge label (used on PRs and issues). */
 export interface Label {
   name: string;
   color?: string;
   description?: string;
 }
 
+/**
+ * MCPConnectedPayload is the payload for type="mcp_connected", emitted
+ * when kiro-cli reports _kiro.dev/mcp/server_initialized.
+ */
 export interface MCPConnectedPayload {
   server: string;
 }
 
+/**
+ * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
+ * Emitted when the hub's last bridge exits: kiro-cli's MCP subprocesses
+ * shut down with it, so no configured server is currently live.
+ * Clients use this to clear their runtime-state map.
+ */
 export interface MCPDisconnectedPayload {
   server: string;
 }
 
+/**
+ * MCPFailedPayload is the payload for type="mcp_failed", emitted
+ * when kiro-cli reports _kiro.dev/mcp/server_init_failure.
+ */
 export interface MCPFailedPayload {
   server: string;
   error: string;
 }
 
+/**
+ * MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted
+ * when kiro-cli reports _kiro.dev/mcp/oauth_request. URL is the
+ * provider's authorisation endpoint; the user completes the flow in a
+ * new tab.
+ */
 export interface MCPOAuthPayload {
   server: string;
   url: string;
 }
 
+/**
+ * Message is one entry in a chat transcript. Tool calls are embedded in
+ * assistant messages (not standalone messages). Event messages carry an
+ * EventKind for inline rendering (compression, cancellation, restart,
+ * subagent orchestration).
+ */
 export interface Message {
+  /**
+ * Crew is populated only for EventKind=crew messages; holds the
+ * latest subagent snapshot from kiro-cli's list_update stream.
+ */
   crew?: Crew;
   id: string;
   role: Role;
   content?: string;
+  /**
+ * Reasoning is the agent's "thinking" trace for this turn —
+ * extended-thinking models emit it as a parallel stream alongside
+ * Content. Persisted on the same message so the one-message-per-turn
+ * invariant holds; rendered above the content bubble in the UI.
+ */
   reasoning?: string;
   event_kind?: EventKind;
   tool_calls?: ToolCall[];
   plan?: PlanEntry[];
+  /**
+ * Blocks is the chronologically-ordered content array — text /
+ * tool_use / thinking blocks in the order the agent emitted them.
+ * Mirrors Anthropic's Messages API content array. Newly-streamed
+ * assistant messages populate Blocks alongside Content / ToolCalls
+ * (the latter two are kept for back-compat with replay of older
+ * messages that don't have Blocks). The client prefers Blocks when
+ * non-empty and falls back to Content + ToolCalls otherwise.
+ */
   blocks?: Block[];
   ts: number;
 }
 
+/**
+ * MessageChunkPayload is the payload for type="message_chunk" (assistant
+ * streaming deltas). IsReasoning distinguishes reasoning deltas from
+ * regular content deltas — both flow through the same SSE event but
+ * land on different fields client-side (Message.Reasoning vs Content).
+ * BlockIndex addresses the chronological content block this delta
+ * belongs to (Anthropic's content_block_delta.index): consecutive text
+ * chunks share an index; a tool_call between text segments bumps the
+ * next text chunk to a new index. Clients use this to accumulate
+ * deltas into the right block in Message.Blocks.
+ */
 export interface MessageChunkPayload {
   message_id: string;
   delta: string;
@@ -192,12 +372,18 @@ export interface MessageChunkPayload {
   block_index: number;
 }
 
+/**
+ * MeteringItem is one usage dimension reported by kiro-cli's
+ * meteringUsage array. UnitPlural is the canonical identifier
+ * ("credits", "tokens", "requests"); UnitSingular is its singular form.
+ */
 export interface MeteringItem {
   unit_singular: string;
   unit_plural: string;
   value: number;
 }
 
+/** PR represents a pull/merge request. */
 export interface PR {
   title: string;
   body?: string;
@@ -213,6 +399,17 @@ export interface PR {
   draft?: boolean;
 }
 
+/**
+ * PendingChange is one staged file operation awaiting user approval in
+ * Supervised mode. Key is ToolCallID (kiro-cli's id; unique per call);
+ * the Kind discriminates between writes, creates (no OldText), and
+ * deletes (no NewText).
+ * //
+ * OldText and NewText are capped at pendingTextCap on the server side
+ * (4 MiB). When truncated, the client's "View diff" tab falls back to
+ * a file fetch for the full content; the staged payload only carries
+ * enough for the pill-popover summary and the inline diff preview.
+ */
 export interface PendingChange {
   tool_call_id: string;
   chat_id: string;
@@ -224,46 +421,77 @@ export interface PendingChange {
   truncated?: boolean;
 }
 
+/**
+ * PendingChangeAddedPayload is the payload for type="pending_change_added".
+ * Emitted when the Supervised-mode fs handler has received a write from
+ * kiro-cli and is blocking the agent until the user resolves it. Clients
+ * render a tool-card-level Accept/Reject pair and surface the op in the
+ * Supervised pill's popover.
+ */
 export interface PendingChangeAddedPayload {
   change: PendingChange;
 }
 
+/**
+ * PendingChangeResolvedPayload is the payload for
+ * type="pending_change_resolved". Emitted after the user accepts or
+ * rejects a staged change, after the fs handler has unblocked and the
+ * disk state reflects the decision. Clients drop the op from the pending
+ * pill and update the source tool card's status.
+ */
 export interface PendingChangeResolvedPayload {
   tool_call_id: string;
   action: PendingAction;
   path?: string;
 }
 
+/**
+ * PendingChangesClearedPayload is the payload for
+ * type="pending_changes_cleared". Emitted when a turn is cancelled or
+ * the chat's Supervised mode is disabled while ops are outstanding;
+ * every pending op for the chat is rejected server-side and the client
+ * flushes its pending list.
+ */
 export interface PendingChangesClearedPayload {
   reason?: ClearReason;
 }
 
+/** PermissionNeededPayload is the payload for type="permission_needed". */
 export interface PermissionNeededPayload {
   tool_call_id?: string;
   title?: string;
+  /**
+ * Kind forwards the ACP toolCall.kind so the client can style
+ * distinctive permission prompts (switch_mode gets a different
+ * dialog vs an execute_bash prompt).
+ */
   kind?: ToolKind;
   sub_session_id?: string;
   options: PermissionOption[];
   request_id: number;
 }
 
+/** PermissionOption is one selectable response in a permission dialog. */
 export interface PermissionOption {
   option_id: string;
   name: string;
   kind: string;
 }
 
+/** PlanEntry is one item in an agent-authored plan. */
 export interface PlanEntry {
   content: string;
   priority: string;
   status: PlanStatus;
 }
 
+/** PollResult is the per-poll status during the device flow. */
 export interface PollResult {
   status: string;
   error?: string;
 }
 
+/** Release represents a tagged release. */
 export interface Release {
   tag_name: string;
   name?: string;
@@ -274,6 +502,7 @@ export interface Release {
   prerelease?: boolean;
 }
 
+/** Repo is a remote repository accessible via the authenticated forge. */
 export interface Repo {
   owner: string;
   name: string;
@@ -288,12 +517,23 @@ export interface Repo {
   updated_at?: number;
 }
 
+/**
+ * SessionMode describes one mode the running agent supports. Populated
+ * from the `modes.availableModes` field of kiro-cli's session/new or
+ * session/load response; kept on the chat so the UI can render a mode
+ * pill without re-querying the bridge.
+ */
 export interface SessionMode {
   id: string;
   name: string;
   description?: string;
 }
 
+/**
+ * SessionModel describes one model the running agent can swap to, as
+ * declared by kiro-cli's session/new response. Replaces our prior
+ * shell-out to `kiro-cli chat --list-models`.
+ */
 export interface SessionModel {
   id: string;
   name: string;
@@ -301,6 +541,11 @@ export interface SessionModel {
   rate_multiplier?: number;
 }
 
+/**
+ * ToolCall is a tool invocation inside an assistant message. One assistant
+ * message may have multiple tool calls; each can be updated in place as
+ * status changes (pending → in_progress → completed/failed).
+ */
 export interface ToolCall {
   id: string;
   title: string;
@@ -315,28 +560,49 @@ export interface ToolCall {
   ts: number;
 }
 
+/**
+ * ToolCallPayload is the payload for type="tool_call". BlockIndex is
+ * the position of the tool_use block in the assistant message's
+ * chronological Blocks array — the client uses it to insert the tool
+ * card at the right spot relative to surrounding text blocks.
+ */
 export interface ToolCallPayload {
   message_id: string;
   tool_call: ToolCall;
   block_index: number;
 }
 
+/** ToolCallUpdatePayload is the payload for type="tool_call_update". */
 export interface ToolCallUpdatePayload {
   message_id: string;
   tool_call: ToolCall;
 }
 
+/**
+ * ToolDiff is a before/after text change from a write tool call. Sent
+ * by kiro-cli in tool_call notifications for edit operations. Path is
+ * workspace-relative (absolute paths from kiro-cli are normalised via
+ * hub.relPath before being stored here); OldText/NewText are the
+ * changed fragments, not full-file contents.
+ */
 export interface ToolDiff {
   path: string;
   old_text?: string;
   new_text: string;
 }
 
+/**
+ * ToolLocation is a file path (and optional line) the agent is working
+ * with. Sent by kiro-cli in tool_call and tool_call_update notifications.
+ * Used by the editor to scroll to the file the agent is accessing or
+ * modifying.
+ */
 export interface ToolLocation {
   path: string;
   line?: number;
 }
 
+/** TurnEndedPayload is the payload for type="turn_ended". */
 export interface TurnEndedPayload {
   changed_files?: Record<string, FileChange>;
   stop_reason?: StopReason;
@@ -344,6 +610,7 @@ export interface TurnEndedPayload {
   elapsed_ms?: number;
 }
 
+/** Usage is a chat's last-known context and billing snapshot. */
 export interface Usage {
   metering_items?: MeteringItem[];
   context_pct: number;
@@ -354,6 +621,7 @@ export interface Usage {
   has_real_data: boolean;
 }
 
+/** User represents the authenticated forge account. */
 export interface User {
   login: string;
   name?: string;

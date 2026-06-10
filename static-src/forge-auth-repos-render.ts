@@ -6,6 +6,7 @@
 // reconcile specs — those are injected via the RenderDeps interface.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { ICON_DOWNLOAD, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
@@ -26,41 +27,38 @@ export function buildAccountReposDetails(
   repos: Repo[],
   deps: ReposRenderDeps,
 ): HTMLElement {
-  const details = document.createElement("details");
-  details.className = "forge-account-repos";
-  details.dataset["accountId"] = a.id;
+  const details = el("details", {
+    className: "forge-account-repos",
+    "data-account-id": a.id,
+  }) as HTMLDetailsElement;
   if (deps.expandOnNextPaint.has(a.id)) {
     details.open = true;
     deps.expandOnNextPaint.delete(a.id);
   }
 
-  const summary = document.createElement("summary");
-  summary.className = "forge-account-repos-summary";
-  const chevron = document.createElement("span");
-  chevron.className = "forge-account-repos-chevron";
-  chevron.setAttribute("aria-hidden", "true");
-  chevron.textContent = "▸";
-  const repoIcon = document.createElement("span");
-  repoIcon.className = "forge-account-repos-icon";
-  repoIcon.setAttribute("aria-hidden", "true");
-  repoIcon.replaceChildren(iconEl(ICON_REPO));
-  const labelSpan = document.createElement("span");
-  labelSpan.className = "forge-account-repos-label";
-  summary.replaceChildren(chevron, repoIcon, labelSpan);
+  const summary = el(
+    "summary",
+    { className: "forge-account-repos-summary" },
+    el("span", { className: "forge-account-repos-chevron", "aria-hidden": "true" }, "▸"),
+    el("span", { className: "forge-account-repos-icon", "aria-hidden": "true" }, iconEl(ICON_REPO)),
+    el("span", { className: "forge-account-repos-label" }),
+  );
   setAccountSummaryLabel(summary, repos, deps);
   refreshAccountSummaryButtons(summary, repos, deps);
   details.appendChild(summary);
 
   if (repos.length === 0) {
-    const none = document.createElement("div");
-    none.className = "forge-account-repos-empty";
-    none.textContent = "No repositories accessible to this account.";
-    details.appendChild(none);
+    details.appendChild(
+      el(
+        "div",
+        { className: "forge-account-repos-empty" },
+        "No repositories accessible to this account.",
+      ),
+    );
     return details;
   }
 
-  const list = document.createElement("ul");
-  list.className = "forge-account-repos-list";
+  const list = el("ul", { className: "forge-account-repos-list" });
   details.appendChild(list);
   reconcile(list, sortRepos(repos, deps), deps.repoSpec);
   return details;
@@ -88,17 +86,19 @@ export function updateAccountReposDetails(
   if (repos.length === 0) {
     list?.remove();
     if (emptyEl === null) {
-      const none = document.createElement("div");
-      none.className = "forge-account-repos-empty";
-      none.textContent = "No repositories accessible to this account.";
-      details.appendChild(none);
+      details.appendChild(
+        el(
+          "div",
+          { className: "forge-account-repos-empty" },
+          "No repositories accessible to this account.",
+        ),
+      );
     }
     return;
   }
   emptyEl?.remove();
   if (list === null) {
-    list = document.createElement("ul");
-    list.className = "forge-account-repos-list";
+    list = el("ul", { className: "forge-account-repos-list" });
     details.appendChild(list);
   }
   reconcile(list, sortRepos(repos, deps), deps.repoSpec);
@@ -161,17 +161,17 @@ function refreshAccountSummaryButtons(
 }
 
 function makeCloneAllButton(cloneable: Repo[], deps: ReposRenderDeps): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small forge-account-repos-clone-all";
-  const countSpan = document.createElement("span");
-  countSpan.textContent = String(cloneable.length);
-  btn.replaceChildren(iconEl(ICON_DOWNLOAD), countSpan);
-  btn.setAttribute(
-    "data-tooltip",
-    `Clone every uncloned repo on this account (${cloneable.length})`,
-  );
-  btn.setAttribute("aria-label", `Clone ${cloneable.length} uncloned repos`);
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small forge-account-repos-clone-all",
+      "data-tooltip": `Clone every uncloned repo on this account (${cloneable.length})`,
+      "aria-label": `Clone ${cloneable.length} uncloned repos`,
+    },
+    iconEl(ICON_DOWNLOAD),
+    el("span", null, String(cloneable.length)),
+  ) as HTMLButtonElement;
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
@@ -185,17 +185,17 @@ function makeCloneAllButton(cloneable: Repo[], deps: ReposRenderDeps): HTMLButto
 }
 
 function makeDeleteAllButton(clonedRepos: Repo[], deps: ReposRenderDeps): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small btn-danger forge-account-repos-delete-all";
-  const delCountSpan = document.createElement("span");
-  delCountSpan.textContent = String(clonedRepos.length);
-  btn.replaceChildren(iconEl(ICON_TRASH), delCountSpan);
-  btn.setAttribute(
-    "data-tooltip",
-    `Remove every locally-cloned repo on this account (${clonedRepos.length})`,
-  );
-  btn.setAttribute("aria-label", `Delete ${clonedRepos.length} local clones`);
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small btn-danger forge-account-repos-delete-all",
+      "data-tooltip": `Remove every locally-cloned repo on this account (${clonedRepos.length})`,
+      "aria-label": `Delete ${clonedRepos.length} local clones`,
+    },
+    iconEl(ICON_TRASH),
+    el("span", null, String(clonedRepos.length)),
+  ) as HTMLButtonElement;
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     ev.preventDefault();

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"os"
@@ -16,6 +17,18 @@ import (
 	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/settings"
 )
+
+// durabilityOnly reports whether err is an atomicfile parent-directory fsync
+// failure (PhaseDirSync). When true the file was renamed into place — the
+// content is persisted — but the directory fsync that guarantees the rename
+// survives an immediate power loss did not complete. For settings writes the
+// persisted content is what the user cares about, so callers treat this as a
+// success (logging the durability gap) rather than returning HTTP 500 for a
+// write that actually landed on disk.
+func durabilityOnly(err error) bool {
+	var we *atomicfile.WriteError
+	return errors.As(err, &we) && we.Phase == atomicfile.PhaseDirSync
+}
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	path := s.steering.CustomPath()
@@ -54,8 +67,13 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 		// also creates the parent dir). Replaces a bare os.WriteFile
 		// that could leave a truncated file on a crash mid-write.
 		if err := atomicfile.SaveBytes(path, []byte(body.Content), 0o644); err != nil {
-			api.InternalError(w, err)
-			return
+			if !durabilityOnly(err) {
+				api.InternalError(w, err)
+				return
+			}
+			// Content is on disk; only the parent-dir fsync was unconfirmed.
+			slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
+				"path", path, "error", err)
 		}
 		api.Ok(w)
 	default:
@@ -122,8 +140,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// to zero bytes (which would silently revert every preference to
 		// its consumer-side default on the next read).
 		if wErr := atomicfile.SaveBytes(path, append(pretty, '\n'), 0o644); wErr != nil {
-			api.InternalError(w, wErr)
-			return
+			if !durabilityOnly(wErr) {
+				api.InternalError(w, wErr)
+				return
+			}
+			// Config is on disk; only the parent-dir fsync was unconfirmed.
+			// Fall through so the broadcast and preference syncs still run.
+			slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
+				"path", path, "error", wErr)
 		}
 		api.Ok(w)
 		s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))

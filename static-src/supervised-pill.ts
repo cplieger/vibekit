@@ -18,8 +18,8 @@
 // extend the existing .pill-expandable / .pill-expanded rules.
 // ---------------------------------------------------------------------------
 
-import { getActive, activeVersion } from "./store.js";
-import { effect } from "./lib/reactive/index.js";
+import { getActive, activeSession } from "./store.js";
+import { effect, el } from "@cplieger/reactive";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { openPendingDiff } from "./editor-openers.js";
 import {
@@ -69,7 +69,7 @@ class SupervisedPillController {
 
     effect(() => {
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      activeVersion.value;
+      activeSession.value;
       this.render();
     });
   }
@@ -167,30 +167,24 @@ class SupervisedPillController {
     const frag = document.createDocumentFragment();
 
     // Header: title + toggle switch.
-    const header = document.createElement("div");
-    header.className = "supervised-header";
-
-    const title = document.createElement("div");
-    title.className = "supervised-title";
-    title.textContent = "Supervised mode";
-    header.appendChild(title);
-
-    const toggleLabel = document.createElement("label");
-    toggleLabel.className = "supervised-toggle-label";
-
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.id = "supervised-toggle";
-    toggle.checked = supervised;
-    toggleLabel.appendChild(toggle);
-
-    const toggleText = document.createElement("span");
-    toggleText.className = "supervised-toggle-text";
-    toggleText.textContent = supervised ? "On" : "Off";
-    toggleLabel.appendChild(toggleText);
-
-    header.appendChild(toggleLabel);
-    frag.appendChild(header);
+    const toggle = el("input", {
+      type: "checkbox",
+      id: "supervised-toggle",
+      checked: supervised,
+    }) as HTMLInputElement;
+    frag.appendChild(
+      el(
+        "div",
+        { className: "supervised-header" },
+        el("div", { className: "supervised-title" }, "Supervised mode"),
+        el(
+          "label",
+          { className: "supervised-toggle-label" },
+          toggle,
+          el("span", { className: "supervised-toggle-text" }, supervised ? "On" : "Off"),
+        ),
+      ),
+    );
 
     toggle.addEventListener("change", () => {
       const enabled = toggle.checked;
@@ -200,140 +194,113 @@ class SupervisedPillController {
 
     // Trusted-this-turn short-circuit.
     if (trusted) {
-      const explainer = document.createElement("p");
-      explainer.className = "supervised-hint";
-      explainer.textContent =
-        "Trusted for this turn. Changes apply immediately until the turn ends. The agent's next turn starts staging again.";
-      frag.appendChild(explainer);
+      frag.appendChild(
+        el(
+          "p",
+          { className: "supervised-hint" },
+          "Trusted for this turn. Changes apply immediately until the turn ends. The agent's next turn starts staging again.",
+        ),
+      );
 
-      const actions = document.createElement("div");
-      actions.className = "supervised-bulk-actions";
-      const stopBtn = document.createElement("button");
-      stopBtn.type = "button";
-      stopBtn.className = "pill-button";
-      stopBtn.dataset["action"] = "stop-trusting";
-      stopBtn.textContent = "Stop trusting";
+      const stopBtn = el(
+        "button",
+        { type: "button", className: "pill-button", "data-action": "stop-trusting" },
+        "Stop trusting",
+      );
       stopBtn.addEventListener("click", () => {
         this.stopTrusting();
       });
-      actions.appendChild(stopBtn);
-      frag.appendChild(actions);
+      frag.appendChild(el("div", { className: "supervised-bulk-actions" }, stopBtn));
       return frag;
     }
 
     // Explanation paragraph.
-    const hint = document.createElement("p");
-    hint.className = "supervised-hint";
-    hint.textContent = supervised
-      ? "Every file change the agent makes will pause here for you to review before it hits disk."
-      : "File changes apply immediately. Turn on to review every change before it's saved.";
-    frag.appendChild(hint);
+    frag.appendChild(
+      el(
+        "p",
+        { className: "supervised-hint" },
+        supervised
+          ? "Every file change the agent makes will pause here for you to review before it hits disk."
+          : "File changes apply immediately. Turn on to review every change before it's saved.",
+      ),
+    );
 
     if (pending.length === 0) {
       return frag;
     }
 
-    const list = document.createElement("ul");
-    list.className = "supervised-pending-list";
-    list.setAttribute("role", "list");
+    const list = el("ul", { className: "supervised-pending-list", role: "list" });
     for (const change of pending) {
       list.appendChild(this.buildRow(change));
     }
     frag.appendChild(list);
 
     // Bulk actions.
-    const actions = document.createElement("div");
-    actions.className = "supervised-bulk-actions";
-
-    const rejectAllBtn = document.createElement("button");
-    rejectAllBtn.className = "pill-button";
-    rejectAllBtn.dataset["action"] = "reject-all";
-    rejectAllBtn.textContent = "Reject all";
+    const rejectAllBtn = el(
+      "button",
+      { className: "pill-button", "data-action": "reject-all" },
+      "Reject all",
+    );
     rejectAllBtn.addEventListener("click", () => {
       this.bulkResolve("reject");
     });
-    actions.appendChild(rejectAllBtn);
 
-    const trustBtn = document.createElement("button");
-    trustBtn.className = "pill-button";
-    trustBtn.dataset["action"] = "trust-remaining";
-    trustBtn.textContent = "Trust remaining";
+    const trustBtn = el(
+      "button",
+      { className: "pill-button", "data-action": "trust-remaining" },
+      "Trust remaining",
+    );
     trustBtn.addEventListener("click", () => {
       this.trustRemaining();
     });
-    actions.appendChild(trustBtn);
 
-    const acceptAllBtn = document.createElement("button");
-    acceptAllBtn.className = "pill-button primary";
-    acceptAllBtn.dataset["action"] = "accept-all";
-    acceptAllBtn.textContent = "Accept all";
+    const acceptAllBtn = el(
+      "button",
+      { className: "pill-button primary", "data-action": "accept-all" },
+      "Accept all",
+    );
     acceptAllBtn.addEventListener("click", () => {
       this.bulkResolve("accept");
     });
-    actions.appendChild(acceptAllBtn);
 
-    frag.appendChild(actions);
+    frag.appendChild(
+      el("div", { className: "supervised-bulk-actions" }, rejectAllBtn, trustBtn, acceptAllBtn),
+    );
 
     return frag;
   }
 
   private buildRow(change: PendingChange): HTMLLIElement {
-    const li = document.createElement("li");
-    li.className = "supervised-pending-row";
-    li.dataset["toolCallId"] = change.tool_call_id;
-    li.dataset["kind"] = change.kind;
-    li.dataset["path"] = change.path;
-
     const basename = (() => {
       const parts = change.path.split(/[/\\]/);
       return parts[parts.length - 1] ?? change.path;
     })();
     const kindGlyph = change.kind === "create" ? "+" : change.kind === "delete" ? "−" : "✎";
 
-    // Glyph
-    const glyphSpan = document.createElement("span");
-    glyphSpan.className = "supervised-row-glyph";
-    glyphSpan.textContent = kindGlyph;
-    li.appendChild(glyphSpan);
-
-    // File label
-    const fileSpan = document.createElement("span");
-    fileSpan.className = "supervised-row-file";
-    fileSpan.title = change.path;
-    fileSpan.textContent = basename;
-    li.appendChild(fileSpan);
-
-    // Action buttons
-    const actionsSpan = document.createElement("span");
-    actionsSpan.className = "supervised-row-actions";
-
-    const diffBtn = document.createElement("button");
-    diffBtn.className = "pill-button";
-    diffBtn.dataset["action"] = "diff";
-    diffBtn.textContent = "Diff";
+    // Action buttons (named for addEventListener + loading-state binding).
+    const diffBtn = el("button", { className: "pill-button", "data-action": "diff" }, "Diff");
     diffBtn.addEventListener("click", () => {
       openPendingDiff(this.currentChatID(), change.tool_call_id);
       collapseAll();
     });
-    actionsSpan.appendChild(diffBtn);
 
-    const rejectBtn = document.createElement("button");
-    rejectBtn.className = "pill-button";
-    rejectBtn.dataset["action"] = "reject";
-    rejectBtn.textContent = "Reject";
+    const rejectBtn = el(
+      "button",
+      { className: "pill-button", "data-action": "reject" },
+      "Reject",
+    ) as HTMLButtonElement;
     rejectBtn.addEventListener("click", () => {
       this.resolveOne(change.tool_call_id, "reject");
     });
-    actionsSpan.appendChild(rejectBtn);
 
-    const acceptBtn = document.createElement("button");
-    acceptBtn.className = "pill-button primary";
-    acceptBtn.dataset["action"] = "accept";
-    acceptBtn.textContent = "Accept";
+    const acceptBtn = el(
+      "button",
+      { className: "pill-button primary", "data-action": "accept" },
+      "Accept",
+    ) as HTMLButtonElement;
     acceptBtn.addEventListener("click", () => {
       this.resolveOne(change.tool_call_id, "accept");
     });
-    actionsSpan.appendChild(acceptBtn);
 
     this.unbinds.push(
       bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], acceptBtn),
@@ -342,8 +309,18 @@ class SupervisedPillController {
       bindLoadingState(["chat.resolve_pending_change", "chat.resolve_all_pending"], rejectBtn),
     );
 
-    li.appendChild(actionsSpan);
-    return li;
+    return el(
+      "li",
+      {
+        className: "supervised-pending-row",
+        "data-tool-call-id": change.tool_call_id,
+        "data-kind": change.kind,
+        "data-path": change.path,
+      },
+      el("span", { className: "supervised-row-glyph" }, kindGlyph),
+      el("span", { className: "supervised-row-file", title: change.path }, basename),
+      el("span", { className: "supervised-row-actions" }, diffBtn, rejectBtn, acceptBtn),
+    ) as HTMLLIElement;
   }
 
   private resolveOne(toolCallID: string, action: "accept" | "reject"): void {

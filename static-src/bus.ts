@@ -12,6 +12,8 @@
 //   emitBus(event, …) — emits a typed bus event to every onBus handler.
 // ---------------------------------------------------------------------------
 
+import { createBus } from "@cplieger/reactive";
+
 import type {
   ServerEvent,
   ChatHeader,
@@ -33,6 +35,8 @@ import type {
   PendingChangesClearedPayload,
   PendingTrustEnabledPayload,
   PendingTrustClearedPayload,
+  ElicitationNeededPayload,
+  ElicitationCompletePayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -61,6 +65,8 @@ export interface SSEPayloads {
   readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
   readonly permission_needed: PermissionNeeded;
+  readonly elicitation_needed: ElicitationNeededPayload;
+  readonly elicitation_complete: ElicitationCompletePayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;
@@ -151,7 +157,6 @@ function getSnapshot(slot: HandlerSlot): AnyHandler[] {
 }
 
 const sseHandlers = new Map<string, HandlerSlot>();
-const busHandlers = new Map<string, HandlerSlot>();
 
 /** Subscribe to an SSE event with a typed payload. Returns an unsubscribe
  *  function. */
@@ -206,33 +211,16 @@ export interface BusPayloads {
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
 }
 
-export type BusHandler<K extends keyof BusPayloads> = BusPayloads[K] extends undefined
-  ? () => void
-  : (payload: BusPayloads[K]) => void;
+// The generic cross-module bus is backed by @cplieger/reactive's createBus
+// (the SSE surface above stays bespoke: it routes ServerEvents with a
+// chatID-prepended handler shape + a decoder registry).
+const bus = createBus<BusPayloads>();
 
 /** Subscribe to a typed bus event. Returns an unsubscribe function. */
-export function onBus<K extends keyof BusPayloads>(event: K, fn: BusHandler<K>): () => void {
-  return addHandler(busHandlers, event, fn as AnyHandler);
-}
+export const onBus = bus.on;
 
 /** Emit a typed bus event. */
-export function emitBus<K extends keyof BusPayloads>(
-  ...args: BusPayloads[K] extends undefined ? [event: K] : [event: K, payload: BusPayloads[K]]
-): void {
-  const [event, ...rest] = args;
-  const slot = busHandlers.get(event);
-  if (slot === undefined) {
-    return;
-  }
-  const fns = getSnapshot(slot);
-  for (const fn of fns) {
-    try {
-      fn(...rest);
-    } catch (e) {
-      console.error(`[bus] handler error for "${event}":`, e);
-    }
-  }
-}
+export const emitBus = bus.emit;
 
 // --- SSE payload decoder registry ---
 //

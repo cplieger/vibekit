@@ -15,12 +15,13 @@
 
 import { patchSettings } from "./persist.js";
 import type { PermissionMode, AppSettings } from "./persist.js";
-import { el, maybeEl } from "./dom.js";
+import { byId, maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 // Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
 // the trust list.
@@ -62,7 +63,7 @@ class PermissionsUIController {
     this.currentList = [...(initial.trust_tools ?? [])];
 
     for (const m of ["trust-all", "trust-list", "prompt"] as PermissionMode[]) {
-      const radio = el<HTMLInputElement>(`perm-mode-${m}`);
+      const radio = byId<HTMLInputElement>(`perm-mode-${m}`);
       radio.checked = this.currentMode === m;
       radio.addEventListener("change", () => {
         if (!radio.checked) {
@@ -82,14 +83,14 @@ class PermissionsUIController {
       });
     }
 
-    const adder = el("trust-list-add");
+    const adder = byId("trust-list-add");
     adder.setAttribute("aria-label", "Add trusted tool");
     adder.setAttribute("aria-expanded", "false");
     adder.addEventListener("click", () => {
       this.toggleMenu();
     });
 
-    const menu = el<HTMLDivElement>("trust-list-menu");
+    const menu = byId<HTMLDivElement>("trust-list-menu");
     document.addEventListener("click", (e: MouseEvent) => {
       const t = e.target as Node;
       if (!adder.contains(t) && !menu.contains(t)) {
@@ -161,29 +162,32 @@ class PermissionsUIController {
   // --- Private: permission mode ---
 
   private renderEditor(): void {
-    const editor = el<HTMLDivElement>("trust-list-editor");
+    const editor = byId<HTMLDivElement>("trust-list-editor");
     editor.classList.toggle("hidden", this.currentMode !== "trust-list");
     if (this.currentMode !== "trust-list") {
       return;
     }
     this.renderChips();
-    const hint = el<HTMLParagraphElement>("trust-list-empty-hint");
+    const hint = byId<HTMLParagraphElement>("trust-list-empty-hint");
     hint.classList.toggle("hidden", this.currentList.length > 0);
   }
 
   private renderChips(): void {
-    const chips = el<HTMLDivElement>("trust-list-chips");
-    chips.replaceChildren();
-    for (const name of this.currentList) {
-      chips.appendChild(
+    const chips = byId<HTMLDivElement>("trust-list-chips");
+    // Keyed reconcile (keyed by tool name) so add/remove touches only the
+    // changed chip instead of rebuilding the whole row. The empty state is a
+    // separate element (trust-list-empty-hint), toggled in renderEditor, so
+    // this container holds only chips — no replaceChildren/reconcile mixing.
+    reconcile(chips, this.currentList, {
+      key: (name: string) => name,
+      mount: (name: string) =>
         buildChip({
           label: name,
           onRemove: () => {
             this.removeTool(name);
           },
         }),
-      );
-    }
+    });
   }
 
   private addTool(name: string): void {
@@ -206,8 +210,8 @@ class PermissionsUIController {
   }
 
   private toggleMenu(): void {
-    const menu = el<HTMLDivElement>("trust-list-menu");
-    const adder = el("trust-list-add");
+    const menu = byId<HTMLDivElement>("trust-list-menu");
+    const adder = byId("trust-list-add");
     if (!menu.classList.contains("hidden")) {
       menu.classList.add("hidden");
       adder.setAttribute("aria-expanded", "false");
@@ -219,10 +223,7 @@ class PermissionsUIController {
     reconcile(menu, remaining, {
       key: (name: string) => name,
       mount: (name: string) => {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "chip-menu-item";
-        item.textContent = name;
+        const item = el("button", { type: "button", className: "chip-menu-item" }, name);
         item.addEventListener("click", () => {
           this.addTool(name);
           menu.classList.add("hidden");
@@ -263,43 +264,49 @@ class PermissionsUIController {
 
   private renderRuleChips(): void {
     const container = maybeEl("command-rules-chips");
+    const hint = maybeEl("command-rules-empty-hint");
+    if (hint !== null) {
+      hint.classList.toggle("hidden", this.commandRules.length > 0);
+    }
     if (container === null) {
       return;
     }
-    container.replaceChildren();
-
-    if (this.commandRules.length === 0) {
-      const hint = document.createElement("p");
-      hint.className = "text-muted text-sm";
-      hint.textContent =
-        "No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.";
-      container.appendChild(hint);
-      return;
-    }
-
-    for (const entry of this.commandRules) {
-      const modeLabel = entry.mode === "deny" ? "Deny" : "Allow";
-      const prioLabel = entry.priority > 0 ? ` P${String(entry.priority)}` : "";
-      const chip = buildChip({
-        label: entry.pattern,
-        code: true,
-        badge: { text: modeLabel + prioLabel, className: "chip-mode" },
-        chipClass: `chip mono chip-rule-${entry.mode}`,
-        onRemove: () => {
-          void this.removeRule(entry.pattern);
-        },
-      });
-      chip.dataset["pattern"] = entry.pattern;
-      // Click the mode label to flip allow↔deny in place.
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const modeEl = chip.querySelector(".chip-mode")!;
-      modeEl.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const next: RuleMode = entry.mode === "allow" ? "deny" : "allow";
-        void this.addRule(entry.pattern, next, entry.priority);
-      });
-      container.appendChild(chip);
-    }
+    // Composite key (pattern:mode:priority) so a mode flip or priority change
+    // re-mounts the chip fresh — rebuilding its badge text, the
+    // `chip-rule-<mode>` class, AND the `.chip-mode` click closure together.
+    // A key-by-pattern, mount-only reconcile would reuse the stale node and
+    // leave all three pointing at the previous render. The empty state is a
+    // sibling element (command-rules-empty-hint), toggled above, so this
+    // container holds only chips — no replaceChildren/reconcile mixing.
+    reconcile(container, this.commandRules, {
+      key: (entry) => `${entry.pattern}:${entry.mode}:${String(entry.priority)}`,
+      mount: (entry) => {
+        const modeLabel = entry.mode === "deny" ? "Deny" : "Allow";
+        const prioLabel = entry.priority > 0 ? ` P${String(entry.priority)}` : "";
+        const chip = buildChip({
+          label: entry.pattern,
+          code: true,
+          badge: { text: modeLabel + prioLabel, className: "chip-mode" },
+          chipClass: `chip mono chip-rule-${entry.mode}`,
+          onRemove: () => {
+            void this.removeRule(entry.pattern);
+          },
+        });
+        chip.dataset["pattern"] = entry.pattern;
+        // Click the mode label to flip allow↔deny in place. The closure
+        // captures THIS render's entry, and the composite key guarantees a
+        // fresh mount on every flip, so the toggle direction stays correct.
+        const modeEl = chip.querySelector<HTMLElement>(".chip-mode");
+        if (modeEl !== null) {
+          modeEl.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const next: RuleMode = entry.mode === "allow" ? "deny" : "allow";
+            void this.addRule(entry.pattern, next, entry.priority);
+          });
+        }
+        return chip;
+      },
+    });
   }
 
   private setRules = (rules: CommandRule[]): void => {
@@ -370,20 +377,20 @@ class PermissionsUIController {
 
   private renderIgnoreChips(): void {
     const container = maybeEl("agent-ignore-chips");
+    const hint = maybeEl("agent-ignore-empty-hint");
+    if (hint !== null) {
+      hint.classList.toggle("hidden", this.ignoreFiles.length > 0);
+    }
     if (container === null) {
       return;
     }
-    container.replaceChildren();
-    if (this.ignoreFiles.length === 0) {
-      const hint = document.createElement("p");
-      hint.className = "text-muted text-sm";
-      hint.textContent =
-        "No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).";
-      container.appendChild(hint);
-      return;
-    }
-    for (const entry of this.ignoreFiles) {
-      container.appendChild(
+    // Ignore entries are immutable strings, so a key-by-entry, mount-only
+    // reconcile is sufficient (no update fn needed): add/remove touches only
+    // the changed chip and preserves the rest. The empty state is a sibling
+    // element (agent-ignore-empty-hint), toggled above.
+    reconcile(container, this.ignoreFiles, {
+      key: (entry) => entry,
+      mount: (entry) =>
         buildChip({
           label: entry,
           code: true,
@@ -394,8 +401,7 @@ class PermissionsUIController {
             this.renderIgnoreChips();
           },
         }),
-      );
-    }
+    });
   }
 }
 

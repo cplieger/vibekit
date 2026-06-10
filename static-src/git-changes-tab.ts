@@ -19,6 +19,7 @@ import { preserveGitScroll } from "./git-scroll.js";
 import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 import { escAttr as escapeHTML } from "./strings.js";
 import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
 
@@ -305,7 +306,7 @@ function paintInner(): void {
   if (visibleRepos.length === 0) {
     reconcile(root, [] as RepoStatus[], {
       key: (r) => r.repo,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
     if (filterText !== "") {
       root.innerHTML = renderEmptyState({
@@ -330,7 +331,7 @@ function paintInner(): void {
     key: (r: RepoStatus) => r.repo,
     mount: (r: RepoStatus) => {
       const section = renderRepoSection(r);
-      return section ?? document.createElement("section");
+      return section ?? el("section");
     },
     update: (section: HTMLElement, r: RepoStatus) => {
       const fresh = renderRepoSection(r);
@@ -360,7 +361,7 @@ function paintError(msg: string): void {
   if (root === null) {
     return;
   }
-  root.innerHTML = `<div class="git-multirepo-error">${msg}</div>`;
+  root.replaceChildren(el("div", { className: "git-multirepo-error" }, msg));
 }
 
 function renderRepoSection(r: RepoStatus): HTMLElement | null {
@@ -388,18 +389,17 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     expandedDefault = dataDefault;
   }
 
-  const section = document.createElement("section");
-  section.className = "git-repo-section";
-  section.dataset["repo"] = r.repo;
+  const section = el("section", { className: "git-repo-section", "data-repo": r.repo });
   if (expandedDefault) {
     section.classList.add("expanded");
   }
 
   // Header
-  const header = document.createElement("button");
-  header.type = "button";
-  header.className = "git-repo-section-header";
-  header.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
+  const header = el("button", {
+    type: "button",
+    className: "git-repo-section-header",
+    "aria-expanded": expandedDefault ? "true" : "false",
+  });
   header.innerHTML = renderHeaderHTML(r);
   header.addEventListener("click", (ev) => {
     // If the click target is inside a branch chip, route to the
@@ -433,11 +433,10 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   section.appendChild(header);
 
   // Body (the part that toggles)
-  const body = document.createElement("div");
-  body.className = "git-repo-section-body";
+  const body = el("div", { className: "git-repo-section-body" });
 
   if (!r.is_repo) {
-    body.innerHTML = `<div class="git-repo-row-error">Not a git repository.</div>`;
+    body.append(el("div", { className: "git-repo-row-error" }, "Not a git repository."));
     section.appendChild(body);
     return section;
   }
@@ -452,15 +451,9 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
 
   // File list (staged first, then unstaged)
   if (filteredFiles.length === 0 && !r.has_dirty) {
-    const clean = document.createElement("div");
-    clean.className = "git-repo-row-clean";
-    clean.textContent = "Clean.";
-    body.appendChild(clean);
+    body.appendChild(el("div", { className: "git-repo-row-clean" }, "Clean."));
   } else if (filteredFiles.length === 0) {
-    const noMatch = document.createElement("div");
-    noMatch.className = "git-repo-row-empty";
-    noMatch.textContent = "No paths match the filter.";
-    body.appendChild(noMatch);
+    body.appendChild(el("div", { className: "git-repo-row-empty" }, "No paths match the filter."));
   } else {
     body.appendChild(renderFileList(r, filteredFiles));
   }
@@ -503,16 +496,18 @@ function renderHeaderHTML(r: RepoStatus): string {
 }
 
 function renderActionBar(r: RepoStatus): HTMLElement {
-  const bar = document.createElement("div");
-  bar.className = "git-repo-action-bar";
+  const bar = el("div", { className: "git-repo-action-bar" });
 
   const btn = (label: string, title: string, danger = false): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `btn-small${danger ? " btn-danger" : ""}`;
-    b.textContent = label;
-    b.setAttribute("data-tooltip", title);
-    return b;
+    return el(
+      "button",
+      {
+        type: "button",
+        className: `btn-small${danger ? " btn-danger" : ""}`,
+        "data-tooltip": title,
+      },
+      label,
+    ) as HTMLButtonElement;
   };
 
   const stageAllBtn = btn("Stage all", "Stage every unstaged change");
@@ -566,10 +561,7 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   bar.appendChild(discardAllBtn);
   bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
 
-  const sep = document.createElement("span");
-  sep.className = "action-bar-sep";
-  sep.setAttribute("aria-hidden", "true");
-  bar.appendChild(sep);
+  bar.appendChild(el("span", { className: "action-bar-sep", "aria-hidden": "true" }));
 
   const pullBtn = btn("Pull", "git pull");
   pullBtn.addEventListener("click", () => {
@@ -641,8 +633,7 @@ function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
     }
     return a.path.localeCompare(b.path);
   });
-  const list = document.createElement("ul");
-  list.className = "git-file-list";
+  const list = el("ul", { className: "git-file-list" });
   for (const f of sorted) {
     list.appendChild(renderFileRow(r, f));
   }
@@ -650,28 +641,23 @@ function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
 }
 
 function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
-  const li = document.createElement("li");
-  li.className = `git-file-row${f.staged ? " staged" : ""}`;
+  const li = el("li", { className: `git-file-row${f.staged ? " staged" : ""}` });
 
   // Top row: status + path + actions. The whole top row is the
   // click target for toggling the inline diff.
-  const top = document.createElement("div");
-  top.className = "git-file-row-top";
+  const top = el("div", { className: "git-file-row-top" });
 
-  const status = document.createElement("span");
-  status.className = "git-file-status";
-  status.textContent = f.display || statusLetter(f.status);
-  status.setAttribute("data-tooltip", describeStatus(f.status));
+  const status = el(
+    "span",
+    { className: "git-file-status", "data-tooltip": describeStatus(f.status) },
+    f.display || statusLetter(f.status),
+  );
   top.appendChild(status);
 
-  const path = document.createElement("span");
-  path.className = "git-file-path";
-  path.textContent = f.path;
-  path.setAttribute("data-tooltip", f.path);
+  const path = el("span", { className: "git-file-path", "data-tooltip": f.path }, f.path);
   top.appendChild(path);
 
-  const actions = document.createElement("span");
-  actions.className = "git-file-actions";
+  const actions = el("span", { className: "git-file-actions" });
 
   const action = (
     label: string,
@@ -679,11 +665,15 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
     fn: () => Promise<unknown>,
     danger = false,
   ): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `btn-small${danger ? " btn-danger" : ""}`;
-    b.textContent = label;
-    b.setAttribute("data-tooltip", title);
+    const b = el(
+      "button",
+      {
+        type: "button",
+        className: `btn-small${danger ? " btn-danger" : ""}`,
+        "data-tooltip": title,
+      },
+      label,
+    ) as HTMLButtonElement;
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       void withAsyncFeedback(b, fn);
@@ -729,8 +719,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   li.appendChild(top);
 
   // Inline diff drawer (hidden until clicked). Lazy-loaded.
-  const diffDrawer = document.createElement("div");
-  diffDrawer.className = "git-file-diff hidden";
+  const diffDrawer = el("div", { className: "git-file-diff hidden" });
   li.appendChild(diffDrawer);
 
   // Bug 4: Unique key for tracking expanded state across re-renders.
@@ -751,13 +740,8 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
       }
       if (data === null) {
         diffDrawer.replaceChildren();
-        const msg = document.createElement("span");
-        msg.textContent = "Failed to load diff.";
-        diffDrawer.appendChild(msg);
-        const retryBtn = document.createElement("button");
-        retryBtn.type = "button";
-        retryBtn.className = "btn-small";
-        retryBtn.textContent = "Retry";
+        diffDrawer.appendChild(el("span", null, "Failed to load diff."));
+        const retryBtn = el("button", { type: "button", className: "btn-small" }, "Retry");
         retryBtn.addEventListener("click", () => {
           loadedDiff = false;
           loadDiff();
@@ -771,9 +755,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
         return;
       }
       diffDrawer.replaceChildren();
-      const pre = document.createElement("pre");
-      pre.className = "git-file-diff-pre";
-      pre.appendChild(renderDiffWithColors(diff));
+      const pre = el("pre", { className: "git-file-diff-pre" }, renderDiffWithColors(diff));
       diffDrawer.appendChild(pre);
     });
   };
@@ -808,8 +790,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
 function renderDiffWithColors(diff: string): DocumentFragment {
   const frag = document.createDocumentFragment();
   for (const line of diff.split("\n")) {
-    const span = document.createElement("span");
-    span.className = "git-diff-line";
+    const span = el("span", { className: "git-diff-line" });
     if (line.startsWith("+++") || line.startsWith("---")) {
       span.classList.add("git-diff-line-meta");
     } else if (line.startsWith("@@")) {
@@ -841,16 +822,18 @@ function isFeatureBranch(branch: string): boolean {
  *  open a PR for the just-pushed branch. Click switches to the PRs
  *  tab and opens the new-PR dialog with source_branch pre-filled. */
 function renderOpenPRHint(r: RepoStatus): HTMLElement {
-  const hint = document.createElement("div");
-  hint.className = "git-open-pr-hint";
-  hint.innerHTML = `
-    <span class="git-open-pr-hint-icon" aria-hidden="true">💡</span>
-    <span class="git-open-pr-hint-msg">Pushed <strong>${escapeHTML(r.branch)}</strong> to origin. Open a pull request?</span>
-  `;
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small btn-primary";
-  btn.textContent = "Open PR";
+  const hint = el("div", { className: "git-open-pr-hint" });
+  hint.append(
+    el("span", { className: "git-open-pr-hint-icon", "aria-hidden": "true" }, "💡"),
+    el(
+      "span",
+      { className: "git-open-pr-hint-msg" },
+      "Pushed ",
+      el("strong", null, r.branch),
+      " to origin. Open a pull request?",
+    ),
+  );
+  const btn = el("button", { type: "button", className: "btn-small btn-primary" }, "Open PR");
   btn.addEventListener("click", () => {
     void (async () => {
       const { setGitTab } = await import("./git-tabs.js");

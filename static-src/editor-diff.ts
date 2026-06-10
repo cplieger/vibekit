@@ -10,12 +10,13 @@ import { isPendingPath, getCachedDiff } from "./editor-types.js";
 import { renderEditModeUI, showDiffMode } from "./editor-ui.js";
 
 export function renderDiffModeUI(state: FileState): void {
-  if (state.mode.kind !== "diff") {
-    state.mode = { kind: "edit", editing: false };
+  const m = state.mode.value;
+  if (m.kind !== "diff") {
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  const src = state.mode.diffSource;
+  const src = m.diffSource;
   $.editorDiffPane.replaceChildren();
   const diff = getCachedDiff(state);
   const pending = isPendingPath(state.path);

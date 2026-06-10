@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildPartialMergeText } from "./editor-pending.js";
 import type { FileState } from "./editor-core.js";
+import { freshState } from "./editor-types.js";
 import type { DiffLine } from "./diff.js";
 
 // --- Mocks for integration tests ---
@@ -51,20 +52,29 @@ vi.mock("./banner-stack.js", () => ({
 }));
 
 function makeState(diff: DiffLine[]): FileState {
-  return {
-    path: "test.ts",
-    original: "",
-    current: "",
-    loaded: true,
-    error: "",
-    mode: { kind: "edit", editing: false },
-    suggestions: new Map(),
-    returnToGitDiff: null,
-    repo: "",
-    pendingHunkDecisions: new Map(),
-    pendingHunkCount: null,
-    cachedDiff: diff,
+  // FileState.cachedDiff is now a computed derived from `mode`, so it can no
+  // longer be injected directly. Reconstruct a diff source whose
+  // lineDiff(old, new) reproduces this diff for getCachedDiff(state):
+  //   oldContent = ctx + del lines, newContent = ctx + add lines.
+  // buildPartialMergeText segments hunks on ctx lines (independent of
+  // lineDiff's internal del/add grouping) and collects each hunk's old/new
+  // lines into separate buckets, so the merged output is invariant to how
+  // lineDiff orders changes within a ctx-bounded segment.
+  const oldContent = diff
+    .filter((l) => l.kind !== "add")
+    .map((l) => l.text)
+    .join("\n");
+  const newContent = diff
+    .filter((l) => l.kind !== "del")
+    .map((l) => l.text)
+    .join("\n");
+  const state = freshState("test.ts");
+  state.loaded = true;
+  state.mode.value = {
+    kind: "diff",
+    diffSource: { oldContent, newContent, oldLabel: "old", newLabel: "new", fromGit: false },
   };
+  return state;
 }
 
 function ctx(text: string, oldNo = 0, newNo = 0): DiffLine {
@@ -176,16 +186,13 @@ describe("applyActivePendingPartial", () => {
   it("shows size-limit banner when merged text exceeds 4 MiB", async () => {
     const { fileStates } = await import("./editor-types.js");
     const path = "pending:chat1:tc1";
-    // Create a state with a huge diff that produces >4MiB merged text
+    // 5 big context lines → getCachedDiff yields 5 ctx lines →
+    // buildPartialMergeText passes them through unchanged → merged text
+    // ≈ 5 MiB, over the 4 MiB cap that triggers the banner.
     const bigLine = "x".repeat(1024 * 1024); // 1 MiB per line
     const diff: DiffLine[] = [ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine), ctx(bigLine)];
-    const state = makeState(diff) as any;
+    const state = makeState(diff);
     state.path = path;
-    state.mode = {
-      kind: "diff",
-      diffSource: { oldContent: "", newContent: "", oldLabel: "", newLabel: "", fromGit: false },
-    };
-    state.pendingHunkDecisions = new Map();
     fileStates.set(path, state);
     vi.spyOn(await import("./editor-types.js"), "getActiveFilePath").mockReturnValue(path);
 

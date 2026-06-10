@@ -76,15 +76,44 @@ describe("retention", () => {
     const listener = vi.fn();
     const unsub = mod.onRetentionChange(listener);
 
+    // subscribe() fires immediately with the current value (default 1).
+    expect(listener).toHaveBeenCalledTimes(1);
+
     await mod.refreshRetention();
 
     expect(mod.isRetentionEnabled()).toBe(true);
-    expect(listener).toHaveBeenCalledTimes(1);
+    // Immediate fire + one fire for the 1 -> 14 change.
+    expect(listener).toHaveBeenCalledTimes(2);
 
     unsub();
     // After unsub, listener should not fire again
     mockFetchKiroSetting.mockResolvedValue(0);
     await mod.refreshRetention();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("subscribe fires on retentionDays change 0<->N and isRetentionEnabled flips", async () => {
+    let next = 0;
+    mockFetchKiroSetting.mockImplementation(async () => next);
+
+    const mod = await import("./retention.js");
+    const listener = vi.fn();
+    mod.onRetentionChange(listener);
+
+    // Immediate fire on register with the default value (1 => enabled).
     expect(listener).toHaveBeenCalledTimes(1);
+    expect(mod.isRetentionEnabled()).toBe(true);
+
+    // N -> 0: fires on change, retention now disabled.
+    next = 0;
+    await mod.refreshRetention();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(mod.isRetentionEnabled()).toBe(false);
+
+    // 0 -> N: fires on change, retention re-enabled.
+    next = 14;
+    await mod.refreshRetention();
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(mod.isRetentionEnabled()).toBe(true);
   });
 });

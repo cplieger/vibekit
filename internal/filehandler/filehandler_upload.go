@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 
+	"github.com/cplieger/atomicfile"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -140,6 +140,19 @@ func writeUploads(ctx context.Context, targetDir string, files []*multipart.File
 // partial write never surfaces under the user's expected filename.
 // Returns the number of bytes written. ctx lets a client disconnect
 // abort the copy mid-stream (same guarantee actionCopy provides).
+// countingReader tallies bytes read so writeOneUpload can report the
+// uploaded size even though atomicfile.WriteReader performs the copy.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
 func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) (n int64, err error) {
 	src, err := fh.Open()
 	if err != nil {
@@ -147,50 +160,15 @@ func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) 
 	}
 	defer func() { _ = src.Close() }()
 
-	dir := filepath.Dir(dest)
-	tmp, err := os.CreateTemp(dir, filepath.Base(dest)+".upload-*")
-	if err != nil {
-		return 0, err
+	// Cap the per-file copy (one malformed part can't blow past the global
+	// multipart budget) and abort at the next chunk boundary on context cancel.
+	cr := &countingReader{r: &ctxReader{ctx: ctx, r: io.LimitReader(src, maxUploadSize)}}
+	// atomicfile writes to a temp sibling, fsyncs it, renames over dest, then
+	// fsyncs the parent dir — the durability step the old hand-rolled path
+	// omitted. It refuses a symlink dest (safer than replacing it) and removes
+	// the temp on any error, so dest is never left a partial write.
+	if werr := atomicfile.WriteReader(ctx, dest, cr, 0o600); werr != nil {
+		return cr.n, werr
 	}
-	tmpName := tmp.Name()
-	// Remove the temp file on any error path. A SIGKILL between the
-	// CreateTemp and Rename calls leaves a `.upload-*` sibling, which
-	// a future boot sweep can clean up; the dest filename is never
-	// occupied by a partial write.
-	defer func() {
-		if err != nil {
-			_ = os.Remove(tmpName) //nolint:gosec // G703: path validated by workspace root check
-		}
-	}()
-
-	// Cap per-file copy so one malformed part can't blow past the
-	// global multipart budget that MaxBytesReader enforces above.
-	// ctxReader aborts the copy at the next chunk boundary when the
-	// request context cancels (client disconnect mid-upload).
-	n, err = io.Copy(tmp, &ctxReader{
-		ctx: ctx,
-		r:   io.LimitReader(src, maxUploadSize),
-	})
-	if err != nil {
-		_ = tmp.Close()
-		return n, err
-	}
-	if err = tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return n, err
-	}
-	if closeErr := tmp.Close(); closeErr != nil {
-		err = closeErr
-		return n, err
-	}
-	// os.Rename on Linux replaces a pre-existing symlink at `dest`
-	// rather than following it (symmetric to the O_NOFOLLOW the old
-	// direct-open used). Combined with resolvePath's EvalSymlinks
-	// check, the upload destination is sandboxed even when a sibling
-	// in the directory is a traversal-pointing symlink.
-	if renameErr := os.Rename(tmpName, dest); renameErr != nil { //nolint:gosec // G703: path validated against workspace root
-		err = renameErr
-		return n, err
-	}
-	return n, nil
+	return cr.n, nil
 }

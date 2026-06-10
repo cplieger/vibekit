@@ -22,10 +22,11 @@ import {
   setName,
   peekQueuedAttachments,
   setLastQueuedAttachments,
-  activeVersion,
-  sessionsVersion,
+  activeSession,
+  getActiveId,
 } from "./store.js";
 import type { Session } from "./types.js";
+import { effect, flushSync } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
 const arbMessage = () =>
@@ -193,86 +194,110 @@ describe("Store idempotency (property-based)", () => {
   });
 });
 
-describe("setActive emits version bumps", () => {
-  // Regression: messages.ts paint() effect watches activeVersion. Without
-  // setActive bumping activeVersion the messages renderer doesn't re-run
-  // on chat switch and #messages keeps the previous chat's children
-  // (visible as stale messages bleeding through under the new chat's
-  // model picker until a new message arrives in the new chat).
-  it("bumps activeVersion when active changes", () => {
-    setSessions([
-      {
-        id: "a",
-        name: "A",
-        agent: "kiro_default",
-        model: "",
-        acp_session_id: "",
-        current_mode_id: "",
-        available_modes: [],
-        message_count: 0,
-        messages: [],
-        pending_changes: [],
-        prompt_queue: [],
-        supervised: false,
-        thinking: false,
-        usage: {
-          context_size: 0,
-          tokens_total: 0,
-          credits: 0,
-          turns: 0,
-          last_turn_credits: 0,
-          messages: 0,
-          tools: 0,
-          last_turn_at: 0,
-        },
-        working_label: "Thinking",
-        oldest_checkpoint_tag: "",
-        has_more: false,
-      } as unknown as Session,
-      {
-        id: "b",
-        name: "B",
-        agent: "kiro_default",
-        model: "",
-        acp_session_id: "",
-        current_mode_id: "",
-        available_modes: [],
-        message_count: 0,
-        messages: [],
-        pending_changes: [],
-        prompt_queue: [],
-        supervised: false,
-        thinking: false,
-        usage: {
-          context_size: 0,
-          tokens_total: 0,
-          credits: 0,
-          turns: 0,
-          last_turn_credits: 0,
-          messages: 0,
-          tools: 0,
-          last_turn_at: 0,
-        },
-        working_label: "Thinking",
-        oldest_checkpoint_tag: "",
-        has_more: false,
-      } as unknown as Session,
-    ]);
+describe("setActive updates the active session", () => {
+  // Regression: messages.ts paint() effect tracks activeSession. setActive
+  // must re-derive activeSession on chat switch so the renderer re-runs and
+  // #messages doesn't keep the previous chat's children (stale messages
+  // bleeding through under the new chat's model picker).
+  it("activeSession follows the active id", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
     setActive("a");
-    const beforeActive = activeVersion.peek();
-    const beforeSessions = sessionsVersion.peek();
+    expect(getActiveId()).toBe("a");
+    expect(activeSession.peek()?.id).toBe("a");
     setActive("b");
-    expect(activeVersion.peek()).toBeGreaterThan(beforeActive);
-    expect(sessionsVersion.peek()).toBeGreaterThan(beforeSessions);
+    expect(getActiveId()).toBe("b");
+    expect(activeSession.peek()?.id).toBe("b");
   });
 
-  it("is a no-op when active id is unchanged", () => {
+  it("is a no-op / undefined when no active id", () => {
     setSessions([]);
     setActive("");
-    const before = { active: activeVersion.peek(), sessions: sessionsVersion.peek() };
+    expect(getActiveId()).toBe("");
+    expect(activeSession.peek()).toBeUndefined();
     setActive("");
-    expect(activeVersion.peek()).toBe(before.active);
-    expect(sessionsVersion.peek()).toBe(before.sessions);
+    expect(getActiveId()).toBe("");
+  });
+});
+
+describe("activeSession reactivity (two-tier tracking + batch)", () => {
+  it("activeSession re-fires on active-session field change, not on inactive", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+
+    let count = 0;
+    const dispose = effect(() => {
+      void activeSession.value;
+      count++;
+    });
+    // effect() runs once synchronously on registration.
+    const afterRegister = count;
+
+    // A field change on the ACTIVE session re-derives activeSession.
+    setWorkingLabel("a", "x");
+    flushSync();
+    expect(count).toBe(afterRegister + 1);
+    expect(activeSession.value?.working_label).toBe("x");
+
+    const afterActiveChange = count;
+
+    // A field change on an INACTIVE session fires only that session's signal,
+    // which activeSession does not track — so the counter must not move.
+    setWorkingLabel("b", "y");
+    flushSync();
+    expect(count).toBe(afterActiveChange);
+
+    dispose();
+  });
+
+  it("activeSession recovers when active id set before session exists", () => {
+    setSessions([]);
+    setActive("ghost");
+    // No session yet for the active id.
+    expect(activeSession.value).toBeUndefined();
+
+    // The session arrives after the id was made active. Recovery relies on the
+    // computed tracking sessions.ids (the `void sessions.ids.value` line), since
+    // signalFor("ghost") didn't exist to be tracked at first derive.
+    upsertHeader({
+      id: "ghost",
+      name: "ghost",
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        turn_count: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+      created_at: 0,
+      updated_at: 0,
+      message_count: 0,
+    });
+
+    expect(activeSession.value?.id).toBe("ghost");
+  });
+
+  it("removeChat of active does not double-render", () => {
+    setSessions([makeSession("rc-a"), makeSession("rc-b")]);
+    setActive("rc-a");
+
+    let count = 0;
+    const dispose = effect(() => {
+      void activeSession.value;
+      count++;
+    });
+    // Discard the registration run + setup so we count only the removal.
+    count = 0;
+
+    removeChat("rc-a");
+    flushSync();
+
+    // The batch() in removeChat coalesces sessions.remove (sessions.ids) and the
+    // activeId reassignment into ONE re-derive of activeSession. Without it this
+    // would be 2.
+    expect(count).toBe(1);
+
+    dispose();
   });
 });
 
@@ -566,15 +591,15 @@ describe("Store setLastQueuedAttachments", () => {
 import { appendChunk, upsertToolCall } from "./store.js";
 import {
   ensureStreamingSig,
-  getStreamingSig,
+  streamingTextSigs,
   clearStreamingSig,
   ensureReasoningSig,
-  getReasoningSig,
+  streamingReasoningSigs,
   clearReasoningSig,
   ensureToolCallSig,
   clearToolCallSig,
   ensureCrewSig,
-  getCrewSig,
+  crewSigs,
   clearCrewSig,
 } from "./store-signals.js";
 import type { ToolCall, Crew } from "./types.js";
@@ -616,16 +641,16 @@ describe("streaming signals", () => {
 
   it("clearStreamingSig + getStreamingSig: signal is gone after clear", () => {
     ensureStreamingSig("m-x", "x");
-    expect(getStreamingSig("m-x")).toBeDefined();
+    expect(streamingTextSigs.get("m-x")).toBeDefined();
     clearStreamingSig("m-x");
-    expect(getStreamingSig("m-x")).toBeUndefined();
+    expect(streamingTextSigs.get("m-x")).toBeUndefined();
   });
 
   it("clearReasoningSig + getReasoningSig: signal is gone after clear", () => {
     ensureReasoningSig("m-y", "y");
-    expect(getReasoningSig("m-y")).toBeDefined();
+    expect(streamingReasoningSigs.get("m-y")).toBeDefined();
     clearReasoningSig("m-y");
-    expect(getReasoningSig("m-y")).toBeUndefined();
+    expect(streamingReasoningSigs.get("m-y")).toBeUndefined();
   });
 });
 
@@ -718,8 +743,8 @@ describe("per-crew signal", () => {
 
   it("clearCrewSig + getCrewSig", () => {
     ensureCrewSig("c-z", sampleCrew("z"));
-    expect(getCrewSig("c-z")).toBeDefined();
+    expect(crewSigs.get("c-z")).toBeDefined();
     clearCrewSig("c-z");
-    expect(getCrewSig("c-z")).toBeUndefined();
+    expect(crewSigs.get("c-z")).toBeUndefined();
   });
 });

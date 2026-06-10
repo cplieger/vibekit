@@ -1,51 +1,52 @@
 // ---------------------------------------------------------------------------
-// Shared state helpers for git-prs optimistic mutations.
-// Extracted to break the circular dependency between git-prs-tab.ts
+// Single source of truth for the git-prs tab's PR groups + paint hook.
+//
+// Owns the canonical `groups` array so the tab's paint() and the
+// optimistic merge/close mutations (in actions/git-prs.ts) operate on
+// ONE array — there is no second `lastGroups` to keep in sync. Lives in
+// its own module to break the circular dependency between git-prs-tab.ts
 // and actions/git-prs.ts.
 // ---------------------------------------------------------------------------
 
-// --- Types ---
-
-import type { GitPR as PR, GitRepoGroup } from "./git-types.js";
-
-interface RepoGroup extends Omit<GitRepoGroup, "forge_kind"> {
-  forge_kind: string;
-}
+import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
 export interface PRRemoveResult {
   group: RepoGroup;
   pr: PR;
 }
 
-// --- Mutable state reference (set by git-prs-tab at init time) ---
+// --- Single source of truth ---
 
-let groupsRef: { groups: RepoGroup[]; paint: () => void } | null = null;
+let groups: RepoGroup[] = [];
+let paintFn: (() => void) | null = null;
 
-/** Called by git-prs-tab to wire up the shared state. */
-export function bindPRState(ref: { groups: RepoGroup[]; paint: () => void }): void {
-  groupsRef = ref;
+/** Wire the repaint callback (called once by git-prs-tab at init). */
+export function bindPRPaint(paint: () => void): void {
+  paintFn = paint;
 }
 
-/** Update the groups array reference (called after refreshPRs assigns a new array). */
-export function updateGroupsRef(groups: RepoGroup[]): void {
-  if (groupsRef !== null) {
-    groupsRef.groups = groups;
-  }
+/** Read the canonical groups array. Mutations to its members are
+ *  reflected by the next paint(); the tab reads exclusively through this. */
+export function getPRGroups(): RepoGroup[] {
+  return groups;
 }
 
-// --- Accessors for optimistic mutations (used by actions/git-prs) ---
+/** Replace the canonical groups array (called by refreshPRs after a fetch). */
+export function setPRGroups(next: RepoGroup[]): void {
+  groups = next;
+}
 
-/** Remove a PR from lastGroups by identity and repaint. Returns info needed to rollback. */
+// --- Optimistic mutations (used by actions/git-prs) ---
+
+/** Remove a PR from the canonical groups by identity and repaint.
+ *  Returns the info needed to roll back, or undefined if not found. */
 export function removePRFromGroups(
   forgeId: string,
   owner: string,
   name: string,
   prNumber: number,
 ): PRRemoveResult | undefined {
-  if (groupsRef === null) {
-    return undefined;
-  }
-  for (const g of groupsRef.groups) {
+  for (const g of groups) {
     if (g.forge_id !== forgeId || g.owner !== owner || g.name !== name) {
       continue;
     }
@@ -54,18 +55,16 @@ export function removePRFromGroups(
       continue;
     }
     const pr = g.prs.splice(pi, 1)[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    groupsRef.paint();
+    paintFn?.();
     return { group: g, pr };
   }
   return undefined;
 }
 
-/** Re-insert a previously removed PR (rollback). Uses PR.number ordering. */
+/** Re-insert a previously removed PR (rollback) into its current group,
+ *  positioned by descending PR.number. Dedup-guarded against double rollback. */
 export function reinsertPRInGroups(result: PRRemoveResult): void {
-  if (groupsRef === null) {
-    return;
-  }
-  const currentGroup = groupsRef.groups.find(
+  const currentGroup = groups.find(
     (g) =>
       g.forge_id === result.group.forge_id &&
       g.owner === result.group.owner &&
@@ -84,5 +83,5 @@ export function reinsertPRInGroups(result: PRRemoveResult): void {
     return;
   }
   currentGroup.prs.splice(idx, 0, result.pr);
-  groupsRef.paint();
+  paintFn?.();
 }

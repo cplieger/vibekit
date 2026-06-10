@@ -5,13 +5,19 @@
 //
 // 0 = off (delete on tab close, no history).
 // >0 = archive on tab close, show history, server purges after N days.
+//
+// Backed by a reactive signal (see settings-tabs.ts for the same pattern):
+// onRetentionChange is just subscribe(), so consumers re-run on every
+// change. subscribe() also fires immediately with the current value — the
+// only consumer (the history-button toggle) is idempotent, so the extra
+// initial run is harmless.
 // ---------------------------------------------------------------------------
 
+import { signal, subscribe } from "@cplieger/reactive";
 import { fetchKiroSetting } from "./api-client.js";
 import { defineAction, retryNetwork } from "./actions/index.js";
 
-let retentionDays = 1;
-const listeners = new Set<() => void>();
+const retentionDays = signal(1);
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 const refreshRetentionAction = defineAction<void, number>({
@@ -34,15 +40,13 @@ const refreshRetentionAction = defineAction<void, number>({
 });
 
 export function isRetentionEnabled(): boolean {
-  return retentionDays > 0;
+  return retentionDays.value > 0;
 }
 
-/** Subscribe to retention changes. Returns an unsubscribe function. */
+/** Subscribe to retention changes. Returns an unsubscribe function.
+ *  Fires immediately with the current value on subscribe. */
 export function onRetentionChange(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
+  return subscribe(retentionDays, fn);
 }
 
 export async function refreshRetention(): Promise<void> {
@@ -50,8 +54,5 @@ export async function refreshRetention(): Promise<void> {
   if (result === null) {
     return;
   }
-  retentionDays = result;
-  for (const fn of listeners) {
-    fn();
-  }
+  retentionDays.value = result;
 }

@@ -8,6 +8,7 @@ import type { ForgeKind } from "./wire/types.gen.js";
 import { HOST_LOCKED_KINDS, DEFAULT_HOST } from "./forge-types.js";
 import { connectPAT } from "./actions/forge.js";
 import { bindLoadingState } from "./actions/index.js";
+import { el } from "@cplieger/reactive";
 
 type PATHelp = { kind: "link"; url: string; label: string } | { kind: "text"; text: string };
 
@@ -55,29 +56,23 @@ export function renderPATForm(
   hostEl.innerHTML = "";
 
   const help = PAT_HELP[kind];
-  const helpEl = document.createElement("p");
-  helpEl.className = "forge-help";
+  const helpEl = el("p", { className: "forge-help" });
   switch (help.kind) {
-    case "link": {
-      const a = document.createElement("a");
-      a.href = help.url;
-      a.target = "_blank";
-      a.rel = "noreferrer";
-      a.textContent = help.label;
-      helpEl.appendChild(a);
+    case "link":
+      helpEl.appendChild(
+        el("a", { href: help.url, target: "_blank", rel: "noreferrer" }, help.label),
+      );
       break;
-    }
     case "text":
       helpEl.textContent = help.text;
       break;
   }
   hostEl.appendChild(helpEl);
 
-  const form = document.createElement("form");
-  form.className = "forge-pat-form";
+  const form = el("form", { className: "forge-pat-form" });
 
   const hostLocked = HOST_LOCKED_KINDS.includes(kind);
-  const hostInput = document.createElement("input");
+  const hostInput = el("input") as HTMLInputElement;
   if (hostLocked) {
     hostInput.type = "hidden";
   } else {
@@ -89,27 +84,25 @@ export function renderPATForm(
   hostInput.value = DEFAULT_HOST[kind];
   form.appendChild(hostInput);
 
-  const tokenInput = document.createElement("input");
-  tokenInput.type = "password";
-  tokenInput.placeholder = "token";
-  tokenInput.className = "tool-form-input";
-  tokenInput.required = true;
+  const tokenInput = el("input", {
+    type: "password",
+    placeholder: "token",
+    className: "tool-form-input",
+    required: true,
+  }) as HTMLInputElement;
   form.appendChild(tokenInput);
 
-  const status = document.createElement("div");
-  status.className = "forge-card-status";
+  const status = el("div", { className: "forge-card-status" });
   form.appendChild(status);
 
-  const submit = document.createElement("button");
-  submit.type = "submit";
-  submit.className = "btn-small btn-primary";
-  submit.textContent = "Connect";
+  const submit = el(
+    "button",
+    { type: "submit", className: "btn-small btn-primary" },
+    "Connect",
+  ) as HTMLButtonElement;
   form.appendChild(submit);
 
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "btn-small";
-  cancel.textContent = "Cancel";
+  const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
 
   const unbindLoading = bindLoadingState("forge.connect_pat", submit);
   deps.addPatFormUnbind(unbindLoading);

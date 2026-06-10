@@ -10,6 +10,8 @@
 // PR-row menu).
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 export interface OverflowMenuItem {
   /** Stable identifier — also used as data-overflow-item attribute. */
   id: string;
@@ -35,23 +37,28 @@ let opened: OpenedMenu | null = null;
 export function openOverflowMenu(trigger: HTMLElement, items: readonly OverflowMenuItem[]): void {
   closeOverflowMenu();
 
-  const root = document.createElement("div");
-  root.className = "overflow-menu";
-  root.setAttribute("role", "menu");
-  root.setAttribute("aria-label", "Actions");
+  const root = el("div", {
+    className: "overflow-menu",
+    role: "menu",
+    "aria-label": "Actions",
+  });
 
   for (const item of items) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "overflow-menu-item";
-    btn.dataset["overflowItem"] = item.id;
-    btn.setAttribute("role", "menuitem");
-    btn.textContent = item.label;
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        className: "overflow-menu-item",
+        "data-overflow-item": item.id,
+        role: "menuitem",
+        disabled: item.disabled,
+      },
+      item.label,
+    );
     if (item.danger === true) {
       btn.classList.add("overflow-menu-item-danger");
     }
     if (item.disabled === true) {
-      btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
     }
     btn.addEventListener("click", () => {

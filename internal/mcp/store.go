@@ -48,9 +48,14 @@ var (
 
 // Transport names the MCP transports vibekit accepts in mcp.json.
 // "stdio" is universal; "http" is the Streamable HTTP transport
-// (2025-03-26 MCP spec). The legacy "sse" value is accepted on parse
-// and silently normalized to "http" — kiro-cli's client-side fallback
-// logic handles servers that only speak the old HTTP+SSE protocol.
+// (2025-03-26 MCP spec).
+//
+// The legacy "sse" value is accepted ONLY at parse boundaries
+// (ParseTransport, UnmarshalJSON migration path, registry-proxy
+// passthrough) and silently normalized to "http" — kiro-cli's
+// client-side fallback handles servers that only speak the old
+// HTTP+SSE protocol. "sse" is never stored on disk and never appears
+// in API responses, so the wire surface is strictly stdio | http.
 type Transport string
 
 const (

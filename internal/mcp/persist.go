@@ -10,7 +10,9 @@ import (
 
 // UnmarshalJSON validates the transport field at the JSON parse boundary,
 // rejecting unknown transport values early rather than letting them flow
-// through to runtime dispatch.
+// through to runtime dispatch. The legacy "sse" value on disk is normalized
+// to "http" via ParseTransport so legacy files migrate transparently on
+// the next write.
 func (s *Server) UnmarshalJSON(data []byte) error {
 	type serverAlias Server
 	var raw serverAlias
@@ -18,9 +20,11 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if raw.Transport != "" {
-		if _, err := ParseTransport(string(raw.Transport)); err != nil {
+		parsed, err := ParseTransport(string(raw.Transport))
+		if err != nil {
 			return err
 		}
+		raw.Transport = parsed
 	}
 	*s = Server(raw)
 	return nil

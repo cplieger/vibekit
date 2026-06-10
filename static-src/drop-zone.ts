@@ -4,6 +4,8 @@
 // provide the container, overlay element, and drop handler.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 /** Options for installing a drop zone on a container element. */
 export interface DropZoneOptions {
   /** The element that receives drag events. */
@@ -37,13 +39,14 @@ export function installDropZone(opts: DropZoneOptions): void {
     if (liveRegion !== null) {
       return liveRegion;
     }
-    const el = document.createElement("div");
-    el.className = "sr-only";
-    el.setAttribute("aria-live", "assertive");
-    el.setAttribute("aria-atomic", "true");
-    document.body.appendChild(el);
-    liveRegion = el;
-    return el;
+    const node = el("div", {
+      className: "sr-only",
+      "aria-live": "assertive",
+      "aria-atomic": "true",
+    });
+    document.body.appendChild(node);
+    liveRegion = node;
+    return node;
   }
 
   opts.container.addEventListener("dragenter", (e: DragEvent) => {

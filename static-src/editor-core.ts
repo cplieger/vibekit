@@ -13,12 +13,13 @@
 //   editor-openers.ts  — file open, load, and fetch logic
 // ---------------------------------------------------------------------------
 
+import { effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, isPending } from "./actions/index.js";
 import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import {
   resolveActivePending,
@@ -39,6 +40,7 @@ import {
   fileStates,
   getActiveFilePath,
   freshState,
+  activeDirty,
   isPendingPath,
   parsePendingPath,
   makePendingPath,
@@ -69,11 +71,7 @@ export function initEditor(): void {
     void sendActivePlan();
   });
 
-  // Registry-driven loading state: button auto-disables while the
-  // dispatch is in flight. preserveDisabled keeps the
-  // content-unchanged disable from the input listener intact, since
-  // bindLoadingState OR's the original disabled value.
-  bindLoadingState("editor.save_file", $.editorSaveBtn, { preserveDisabled: true });
+  // Registry-driven loading state for the send-plan button.
   bindLoadingState("editor.send_plan", $.editorSendPlanBtn);
   $.editorPendingAcceptBtn.addEventListener("click", () => {
     void resolveActivePending("accept");
@@ -111,16 +109,29 @@ export function initEditor(): void {
     if (state === undefined) {
       return;
     }
-    state.current = $.editorContent.value;
-    $.editorSaveBtn.disabled = state.current === state.original;
-    updateGutter(state.current);
-    if (state.mode.kind === "conflict") {
-      state.mode = { kind: "conflict", conflict: parseConflicts(state.current), editing: true };
+    state.current.value = $.editorContent.value;
+    updateGutter(state.current.value);
+    if (state.mode.value.kind === "conflict") {
+      state.mode.value = {
+        kind: "conflict",
+        conflict: parseConflicts(state.current.value),
+        editing: true,
+      };
       renderConflictOverlay(state);
     }
   });
   $.editorContent.addEventListener("scroll", () => {
     $.editorGutter.scrollTop = $.editorContent.scrollTop;
+  });
+
+  // Sole owner of the save button's disabled state: disabled when the
+  // active file is clean OR a save is in flight; enabled exactly when the
+  // active file is dirty and no save is running. `activeDirty` re-tracks on
+  // edits and tab switches; `isPending` is signal-backed, so this one effect
+  // replaces the former bindLoadingState(save_file) plus every scattered
+  // imperative `disabled = current === original` write.
+  effect(() => {
+    $.editorSaveBtn.disabled = !activeDirty.value || isPending("editor.save_file");
   });
 }
 
@@ -148,22 +159,18 @@ function toggleDiffMode(): void {
   if (state === undefined) {
     return;
   }
-  if (state.mode.kind === "diff") {
-    state.mode = { kind: "edit", editing: false };
-    state.cachedDiff = null;
-    state.pendingHunkCount = null;
+  if (state.mode.value.kind === "diff") {
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  if (state.current === state.original) {
+  if (state.current.value === state.original.value) {
     return;
   }
-  state.mode = {
+  state.mode.value = {
     kind: "diff",
-    diffSource: unsavedDiffSource(state.original, state.current),
+    diffSource: unsavedDiffSource(state.original.value, state.current.value),
   };
-  state.cachedDiff = null;
-  state.pendingHunkCount = null;
   restoreUI(state);
 }
 
@@ -172,23 +179,21 @@ function startEditing(): void {
   if (state === undefined) {
     return;
   }
-  if (state.mode.kind === "diff") {
-    state.returnToGitDiff = state.mode.diffSource.fromGit
-      ? { ref: state.mode.diffSource.oldLabel, repo: state.repo }
+  const m = state.mode.value;
+  if (m.kind === "diff") {
+    state.returnToGitDiff = m.diffSource.fromGit
+      ? { ref: m.diffSource.oldLabel, repo: state.repo }
       : null;
-    state.cachedDiff = null;
-    state.pendingHunkCount = null;
   }
-  state.mode = { kind: "edit", editing: true };
-  $.editorContent.value = state.current;
+  state.mode.value = { kind: "edit", editing: true };
+  $.editorContent.value = state.current.value;
   showEditMode();
-  updateGutter(state.current);
+  updateGutter(state.current.value);
   $.editorContent.focus();
   $.editorEditBtn.classList.add("hidden");
   $.editorDiffBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
-  $.editorSaveBtn.disabled = state.current === state.original;
 }
 
 function confirmStopEditing(): void {
@@ -196,7 +201,7 @@ function confirmStopEditing(): void {
   if (state === undefined) {
     return;
   }
-  if (state.current !== state.original) {
+  if (state.current.value !== state.original.value) {
     void (async () => {
       const ok = await confirmDialog("Discard unsaved changes?", "Discard", "destructive");
       if (ok) {
@@ -211,24 +216,23 @@ function confirmStopEditing(): void {
 function stopEditing(state: FileState): void {
   // Guard: if user switched tabs during the confirm dialog, reset silently.
   if (getActiveFilePath() !== state.path) {
-    state.current = state.original;
+    state.current.value = state.original.value;
     return;
   }
-  state.current = state.original;
+  state.current.value = state.original.value;
   $.editorConflictOverlay.classList.add("hidden");
   if (state.returnToGitDiff !== null) {
     const { ref, repo } = state.returnToGitDiff;
     state.returnToGitDiff = null;
-    state.mode = {
+    state.mode.value = {
       kind: "diff",
-      diffSource: gitDiffSource(ref, "", state.current),
+      diffSource: gitDiffSource(ref, "", state.current.value),
     };
-    state.pendingHunkCount = null;
     void fetchGitDiffSources(state, repo, ref);
     return;
   }
-  state.mode = { kind: "edit", editing: false };
-  renderHighlight(state.original, state.path);
+  state.mode.value = { kind: "edit", editing: false };
+  renderHighlight(state.original.value, state.path);
   showReadMode();
   $.editorEditBtn.classList.remove("hidden");
   $.editorCancelBtn.classList.add("hidden");
@@ -259,26 +263,25 @@ function saveFile(): void {
           }
           return;
         }
-        state.original = content;
+        state.original.value = content;
         // Don't overwrite state.current — user may have edited during save.
-        // Re-derive button state from live values; guard against file switch.
-        if (getActiveFilePath() === state.path) {
-          $.editorSaveBtn.disabled = state.current === state.original;
-        }
+        // The save-button effect re-derives `disabled` from `activeDirty`
+        // (dirty flips to false once original === current, unless the user
+        // edited during the save), so no manual write here.
         $.editorError.classList.add("hidden");
         if (getActiveFilePath() === state.path) {
-          if (state.mode.kind === "conflict" && state.mode.conflict.hunks.length === 0) {
-            state.mode = { kind: "edit", editing: false };
+          const m = state.mode.value;
+          if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
+            state.mode.value = { kind: "edit", editing: false };
             renderEditModeUI(state);
           }
           if (state.returnToGitDiff !== null) {
             const { ref, repo } = state.returnToGitDiff;
             state.returnToGitDiff = null;
-            state.mode = {
+            state.mode.value = {
               kind: "diff",
               diffSource: gitDiffSource(ref, "", content),
             };
-            state.pendingHunkCount = null;
             void fetchGitDiffSources(state, repo, ref);
           }
         }
@@ -298,7 +301,7 @@ async function sendActivePlan(): Promise<void> {
   if (chatID === "") {
     return;
   }
-  const content = state.current; // capture before await
+  const content = state.current.value; // capture before await
   const result = await sendPlanAction.dispatch({ chatID, content });
   if (result === null) {
     if (getActiveFilePath() === state.path) {
@@ -307,5 +310,5 @@ async function sendActivePlan(): Promise<void> {
     }
     return;
   }
-  state.original = content;
+  state.original.value = content;
 }

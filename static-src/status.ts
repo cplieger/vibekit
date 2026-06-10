@@ -12,6 +12,7 @@ import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
+import { el } from "@cplieger/reactive";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
 // --- Context bar controller ---
@@ -138,18 +139,18 @@ function renderMetering(items: MeteringItem[]): void {
     return;
   }
   box.classList.remove("hidden");
-  const rows: HTMLElement[] = items.map((item) => {
-    const row = document.createElement("span");
-    row.className = "pill-metering-row";
-    const label = document.createElement("span");
-    label.className = "pill-metering-label";
-    label.textContent = item.value === 1 ? item.unit_singular : item.unit_plural;
-    const value = document.createElement("span");
-    value.className = "pill-metering-value";
-    value.textContent = formatMetering(item.value);
-    row.append(label, value);
-    return row;
-  });
+  const rows: HTMLElement[] = items.map((item) =>
+    el(
+      "span",
+      { className: "pill-metering-row" },
+      el(
+        "span",
+        { className: "pill-metering-label" },
+        item.value === 1 ? item.unit_singular : item.unit_plural,
+      ),
+      el("span", { className: "pill-metering-value" }, formatMetering(item.value)),
+    ),
+  );
   box.replaceChildren(...rows);
 }
 
@@ -172,12 +173,13 @@ function getStatusLiveEl(): HTMLElement {
   if (statusLiveEl === null) {
     statusLiveEl = document.getElementById("status-live");
     if (statusLiveEl === null) {
-      statusLiveEl = document.createElement("span");
-      statusLiveEl.id = "status-live";
-      statusLiveEl.setAttribute("role", "status");
-      statusLiveEl.setAttribute("aria-live", "polite");
-      statusLiveEl.setAttribute("aria-atomic", "true");
-      statusLiveEl.className = "sr-only";
+      statusLiveEl = el("span", {
+        id: "status-live",
+        role: "status",
+        "aria-live": "polite",
+        "aria-atomic": "true",
+        className: "sr-only",
+      });
       document.body.appendChild(statusLiveEl);
     }
   }

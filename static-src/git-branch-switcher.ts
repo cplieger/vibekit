@@ -13,6 +13,7 @@ import { apiGet } from "./api-client.js";
 import { checkoutBranch } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 interface BranchEntry {
   name: string;
@@ -45,26 +46,35 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   activeAnchor = anchorEl;
   anchorEl.setAttribute("aria-expanded", "true");
 
-  const pop = document.createElement("div");
-  pop.className = "git-branch-popover";
-  pop.setAttribute("role", "menu");
-  pop.innerHTML = `
-    <input type="search" class="tool-form-input git-branch-popover-filter" placeholder="Filter branches…" autocomplete="off" aria-label="Filter branches">
-    <div class="git-branch-popover-list" role="group" aria-label="Branches">Loading…</div>
-    <form class="git-branch-popover-create">
-      <input type="text" class="tool-form-input git-branch-popover-create-input" placeholder="Create new branch…" autocomplete="off" aria-label="New branch name">
-    </form>
-  `;
+  const pop = el("div", { className: "git-branch-popover", role: "menu" }) as HTMLDivElement;
+  const filter = el("input", {
+    type: "search",
+    className: "tool-form-input git-branch-popover-filter",
+    placeholder: "Filter branches…",
+    autocomplete: "off",
+    "aria-label": "Filter branches",
+  }) as HTMLInputElement;
+  const list = el(
+    "div",
+    { className: "git-branch-popover-list", role: "group", "aria-label": "Branches" },
+    "Loading…",
+  ) as HTMLDivElement;
+  const createInput = el("input", {
+    type: "text",
+    className: "tool-form-input git-branch-popover-create-input",
+    placeholder: "Create new branch…",
+    autocomplete: "off",
+    "aria-label": "New branch name",
+  }) as HTMLInputElement;
+  const createForm = el(
+    "form",
+    { className: "git-branch-popover-create" },
+    createInput,
+  ) as HTMLFormElement;
+  pop.append(filter, list, createForm);
   document.body.appendChild(pop);
   openPopover = pop;
   positionPopover(pop, anchorEl);
-
-  const filter = pop.querySelector<HTMLInputElement>(".git-branch-popover-filter")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const list = pop.querySelector<HTMLDivElement>(".git-branch-popover-list")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const createForm = pop.querySelector<HTMLFormElement>(".git-branch-popover-create")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const createInput = createForm.querySelector<HTMLInputElement>( // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    ".git-branch-popover-create-input",
-  )!;
 
   // Load branches.
   branchController?.abort();
@@ -95,7 +105,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       if (filtered.length === 0) {
         reconcile(list, [] as BranchEntry[], {
           key: (b) => b.name,
-          mount: () => document.createElement("div"),
+          mount: () => el("div"),
           onRemove: onRemoveRow,
         });
         list.textContent = q === "" ? "No branches." : "No matching branches.";
@@ -104,11 +114,15 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       reconcile(list, filtered, {
         key: (b: BranchEntry) => b.name,
         mount: (b: BranchEntry) => {
-          const row = document.createElement("button");
-          row.type = "button";
-          row.className = `git-branch-popover-row${b.current ? " current" : ""}`;
-          row.setAttribute("role", "menuitem");
-          row.textContent = b.name;
+          const row = el(
+            "button",
+            {
+              type: "button",
+              className: `git-branch-popover-row${b.current ? " current" : ""}`,
+              role: "menuitem",
+            },
+            b.name,
+          ) as HTMLButtonElement;
           if (b.current) {
             row.setAttribute("data-tooltip", "Current branch");
           }

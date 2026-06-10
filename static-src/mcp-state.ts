@@ -5,6 +5,12 @@
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
 import {
+  SignalMap,
+  createCollection,
+  type ReadonlySignal,
+  type Collection,
+} from "@cplieger/reactive";
+import {
   asObject,
   decodeArray,
   optBool,
@@ -98,7 +104,12 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
 
 // --- Wire types (match internal/mcp + internal/hub/mcp_registry) ---
 
-export type Transport = "stdio" | "http" | "sse";
+// Transport mirrors the wiregen-emitted shape: 'sse' is rejected at the
+// API/wire boundary so the only legal client-facing values are 'stdio'
+// and 'http'. The legacy 'sse' value still survives at parse boundaries
+// (kiro-cli / on-disk migration) but never lands in the store.
+export type { Transport } from "./wire/types.gen.js";
+import type { Transport } from "./wire/types.gen.js";
 
 export interface KeyPair {
   name: string;
@@ -164,19 +175,55 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   }
 }
 
-// --- MCPStateController ---
+// --- Runtime status registry (per-server signal, keyed by server name) ---
+
+const statusMap = new SignalMap<RuntimeStatus>();
+
+function idleStatus(name: string): RuntimeStatus {
+  return { name, state: "idle" };
+}
+
+/** Reactive per-server runtime-status signal (created lazily as "idle"). Read
+ *  `.value` inside an effect to re-render only when THIS server's status
+ *  changes. */
+export function statusSignalFor(name: string): ReadonlySignal<RuntimeStatus> {
+  return statusMap.ensure(name, idleStatus(name));
+}
+
+// --- Prewarm registry (per-server npx-install state, keyed by server id) ---
+
+export type PrewarmState = "none" | "installing" | "failed";
+
+const prewarmMap = new SignalMap<PrewarmState>();
+
+/** Reactive per-server prewarm-state signal (created lazily as "none"). */
+export function prewarmSignalFor(id: string): ReadonlySignal<PrewarmState> {
+  return prewarmMap.ensure(id, "none");
+}
+
+/** Set a server's prewarm state ("done" clears the badge -> "none"). */
+export function setPrewarm(id: string, state: "installing" | "done" | "failed"): void {
+  prewarmMap.ensure(id, "none").value = state === "done" ? "none" : state;
+}
+
+// --- Server collection (ordered, keyed by id) ---
+
+/** The configured MCP servers. Rendered by bindList in mcp-ui; per-server
+ *  field changes fire `signalFor(id)`, add/remove/reorder fire `ids`. */
+export const servers: Collection<Server> = createCollection<Server>((s) => s.id);
+
+/** Snapshot of the configured servers (non-reactive). */
+export function configuredServers(): Server[] {
+  return servers.items();
+}
+
+// --- MCP fetch controller (servers + status; no manual render callback) ---
 
 class MCPStateController {
-  private readonly _status = new Map<string, RuntimeStatus>();
-  renderCb: (() => void) | null = null;
   private readonly serversSlot = new CancellableSlot();
   private readonly statusSlot = new CancellableSlot();
   private serversFetchPending = false;
   private statusFetchPending = false;
-
-  get status(): ReadonlyMap<string, RuntimeStatus> {
-    return this._status;
-  }
 
   abort(): void {
     this.serversSlot.abort();
@@ -185,16 +232,14 @@ class MCPStateController {
     this.statusFetchPending = false;
   }
 
-  setRenderCallback(cb: () => void): void {
-    this.renderCb = cb;
-  }
-
   setStatus(name: string, rs: RuntimeStatus): void {
-    this._status.set(name, rs);
+    statusMap.ensure(name, rs).value = rs;
   }
 
   deleteStatus(name: string): void {
-    this._status.delete(name);
+    // Reset to idle (fires the signal so subscribed rows re-render) rather
+    // than clear (which would orphan the row's subscription).
+    statusMap.ensure(name, idleStatus(name)).value = idleStatus(name);
   }
 
   refetchServers(): void {
@@ -214,8 +259,7 @@ class MCPStateController {
     if (signal.aborted) {
       return;
     }
-    configured = d?.servers ?? [];
-    this.renderCb?.();
+    servers.setAll(d?.servers ?? []);
   }
 
   refetchStatus(): void {
@@ -235,11 +279,17 @@ class MCPStateController {
     if (signal.aborted) {
       return;
     }
-    this._status.clear();
+    const seen = new Set<string>();
     for (const s of d?.servers ?? []) {
-      this._status.set(s.name, adaptStatus(s));
+      seen.add(s.name);
+      this.setStatus(s.name, adaptStatus(s));
     }
-    this.renderCb?.();
+    // Servers with no reported status revert to idle (fires their signal).
+    for (const s of servers.items()) {
+      if (!seen.has(s.name)) {
+        this.deleteStatus(s.name);
+      }
+    }
   }
 }
 
@@ -251,44 +301,39 @@ registerCleanup(() => {
   instance.abort();
 });
 
-// `configured` remains a module-level let (live binding for consumers).
-// `status` is a readonly reference to the controller's internal Map.
-export let configured: readonly Server[] = [];
-export const status: ReadonlyMap<string, RuntimeStatus> = instance.status;
+// --- Optimistic mutation helpers (over the collection) ---
 
-// --- Optimistic mutation helpers ---
-
-/** Patch a configured entry in-place and re-render. Returns the previous entry for rollback. */
+/** Patch a configured entry in-place. Returns the previous entry for rollback. */
 export function updateConfiguredEntry(id: string, patch: Partial<Server>): Server | undefined {
-  const idx = configured.findIndex((s) => s.id === id);
-  if (idx === -1) {
+  const prev = servers.get(id);
+  if (prev === undefined) {
     return undefined;
   }
-  const prev = { ...configured[idx] } as Server;
-  const arr = [...configured];
-  arr[idx] = { ...arr[idx], ...patch } as Server;
-  configured = arr;
-  instance.renderCb?.();
-  return prev;
+  const snapshot = { ...prev };
+  servers.update(id, (cur) => ({ ...cur, ...patch }));
+  return snapshot;
 }
 
 /** @internal Remove a configured entry by id. Returns [entry, index] for rollback. */
 export function removeConfiguredEntry(id: string): [Server, number] | undefined {
-  const arr = [...configured];
-  const idx = arr.findIndex((s) => s.id === id);
+  const idx = servers.ids.peek().indexOf(id);
   if (idx === -1) {
     return undefined;
   }
-  const entry = arr[idx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  arr.splice(idx, 1);
-  configured = arr;
-  instance.renderCb?.();
+  const entry = servers.get(id);
+  if (entry === undefined) {
+    return undefined;
+  }
+  servers.remove(id);
   return [entry, idx];
 }
 
 /** Re-insert a previously removed entry at its original position when available. */
 export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
-  const arr = [...configured];
+  if (servers.has(entry.id)) {
+    return;
+  }
+  const arr = servers.items();
   let pos: number;
   if (atIndex !== undefined && atIndex >= 0 && atIndex <= arr.length) {
     pos = atIndex;
@@ -300,6 +345,5 @@ export function insertConfiguredEntry(entry: Server, atIndex?: number): void {
     }
   }
   arr.splice(pos, 0, entry);
-  configured = arr;
-  instance.renderCb?.();
+  servers.setAll(arr);
 }

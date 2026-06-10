@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/metrics"
@@ -40,7 +39,7 @@ func requestLogger(next http.Handler) http.Handler {
 		w.Header().Set(requestIDHeader, id)
 		ctx := context.WithValue(r.Context(), reqIDKey{}, id)
 
-		rw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		rw := metrics.NewStatusRecorder(w)
 		start := time.Now()
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
@@ -48,28 +47,12 @@ func requestLogger(next http.Handler) http.Handler {
 		slog.InfoContext(ctx, "http",
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", rw.status,
+			"status", rw.Status(),
 			"duration_ms", dur.Milliseconds(),
 			"request_id", id,
 		)
-		metrics.HTTPRequests.Inc(r.Method, r.URL.Path, strconv.Itoa(rw.status))
-		metrics.HTTPDuration.Observe(dur.Seconds())
+		metrics.RecordHTTP(r.Method, r.URL.Path, rw.Status(), dur)
 	})
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-
-	status      int
-	wroteHeader bool
-}
-
-func (sw *statusWriter) WriteHeader(code int) {
-	if !sw.wroteHeader {
-		sw.status = code
-		sw.wroteHeader = true
-	}
-	sw.ResponseWriter.WriteHeader(code)
 }
 
 func reqIDOrNew(inbound string) string {

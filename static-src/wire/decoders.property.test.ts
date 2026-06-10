@@ -357,6 +357,40 @@ const permissionNeededPayloadArb = fc.record({
   sub_session_id: optField(fc.string()),
 });
 
+const elicitationCompletePayloadArb = fc.record({
+  request_id: posInt,
+});
+
+const elicitationPropertySchemaArb = fc.record({
+  type: fc.string({ minLength: 1 }),
+  title: optField(fc.string()),
+  description: optField(fc.string()),
+  format: optField(fc.string()),
+  pattern: optField(fc.string()),
+  enum: optField(fc.array(fc.string())),
+  default: optField(fc.string()),
+  minLength: optField(posInt),
+  maxLength: optField(posInt),
+});
+
+const elicitationRequestSchemaArb = fc.record({
+  type: optField(fc.string()),
+  title: optField(fc.string()),
+  description: optField(fc.string()),
+  properties: optField(fc.dictionary(fc.string(), elicitationPropertySchemaArb)),
+  required: optField(fc.array(fc.string())),
+});
+
+const elicitationNeededPayloadArb = fc.record({
+  request_id: posInt,
+  requested_schema: optField(elicitationRequestSchemaArb),
+  mode: optField(fc.string()),
+  message: optField(fc.string()),
+  url: optField(fc.string()),
+  tool_call_id: optField(fc.string()),
+  sub_session_id: optField(fc.string()),
+});
+
 const pollResultArb = fc.record({
   status: fc.string({ minLength: 1 }),
   error: optField(fc.string()),
@@ -518,6 +552,26 @@ const decoderRegistry: {
     name: "decodePermissionNeededPayload",
     decoder: decoders.decodePermissionNeededPayload,
     arb: permissionNeededPayloadArb,
+  },
+  {
+    name: "decodeElicitationNeededPayload",
+    decoder: decoders.decodeElicitationNeededPayload,
+    arb: elicitationNeededPayloadArb,
+  },
+  {
+    name: "decodeElicitationCompletePayload",
+    decoder: decoders.decodeElicitationCompletePayload,
+    arb: elicitationCompletePayloadArb,
+  },
+  {
+    name: "decodeElicitationPropertySchema",
+    decoder: decoders.decodeElicitationPropertySchema,
+    arb: elicitationPropertySchemaArb,
+  },
+  {
+    name: "decodeElicitationRequestSchema",
+    decoder: decoders.decodeElicitationRequestSchema,
+    arb: elicitationRequestSchemaArb,
   },
   {
     name: "decodePermissionOption",

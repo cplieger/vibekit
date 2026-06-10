@@ -21,6 +21,7 @@
 // chat at most). We cap at 100 per chat to bound memory against
 // a pathological runaway.
 
+import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12, iconEl } from "./icons.js";
@@ -195,12 +196,12 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   }
   let chip = existing;
   if (chip === null) {
-    chip = document.createElement("button");
-    (chip as HTMLButtonElement).type = "button";
-    chip.className = "conflict-chip";
-    const chipLabel = document.createElement("span");
-    chipLabel.className = "conflict-chip-label";
-    chip.replaceChildren(iconEl(ICON_WARN_12), chipLabel);
+    chip = el(
+      "button",
+      { type: "button", className: "conflict-chip" },
+      iconEl(ICON_WARN_12),
+      el("span", { className: "conflict-chip-label" }),
+    );
     chip.addEventListener("click", () => {
       void openConflictDiff(chatID, path);
     });

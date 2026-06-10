@@ -24,9 +24,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/cplieger/atomicfile"
 )
 
 // installPaths holds where setup-tools.sh and tools.json live.
@@ -168,16 +169,9 @@ func defaultManifestEntry(cli string) (map[string]any, error) {
 
 // atomicWriteJSON writes the manifest with pretty-printing, atomically.
 func atomicWriteJSON(path string, manifest map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil { //nolint:gosec // G306: user config file, not secrets
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.SaveBytes(path, append(data, '\n'), 0o644)
 }

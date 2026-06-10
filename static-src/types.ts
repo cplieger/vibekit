@@ -14,6 +14,7 @@
 // --- Wire types (re-exported from generated) ---
 
 export type {
+  AvailableCommand,
   // Enums
   ClearReason,
   CrewStatus,
@@ -50,6 +51,10 @@ export type {
   ChatDeletedPayload,
   CommandsUpdatedPayload,
   ConnectedPayload,
+  ElicitationNeededPayload,
+  ElicitationCompletePayload,
+  ElicitationPropertySchema,
+  ElicitationRequestSchema,
   ErrorPayload,
   MCPConnectedPayload,
   MCPDisconnectedPayload,
@@ -94,14 +99,6 @@ export interface ModelInfo {
   model_id: string;
   rate_multiplier: number;
   description?: string;
-}
-
-/** Slash-command catalogue entry. The wire shape is opaque (kiro-cli
- *  forwards arbitrary metadata); the client only consumes name + description. */
-export interface AvailableCommand {
-  name: string;
-  description?: string;
-  meta?: Record<string, unknown>;
 }
 
 /** Connection status flag, surfaced through the status bar. */

@@ -12,7 +12,7 @@
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- caller uses T for inference: el<HTMLInputElement>("id")
-export function el<T extends HTMLElement>(id: string): T {
+export function byId<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id);
   if (e === null) {
     throw new Error(`Missing element: #${id}`);
@@ -36,507 +36,510 @@ export function maybeEl<T extends HTMLElement>(id: string): T | null {
 class Elements {
   // Sidebar
   get sidebar(): HTMLElement {
-    return el("sidebar");
+    return byId("sidebar");
   }
   get tabList(): HTMLDivElement {
-    return el("tab-list");
+    return byId("tab-list");
   }
   get newChatBtn(): HTMLButtonElement {
-    return el("new-chat");
+    return byId("new-chat");
   }
   get newPlanBtn(): HTMLButtonElement {
-    return el("new-plan");
+    return byId("new-plan");
   }
   get menuToggle(): HTMLButtonElement {
-    return el("menu-toggle");
+    return byId("menu-toggle");
   }
   get sidebarClose(): HTMLButtonElement {
-    return el("sidebar-close");
+    return byId("sidebar-close");
   }
   get settingsBtn(): HTMLButtonElement {
-    return el("settings-btn");
+    return byId("settings-btn");
   }
   get statusDot(): HTMLButtonElement {
-    return el("status-dot");
+    return byId("status-dot");
   }
   get userEmail(): HTMLElement {
-    return el("user-email");
+    return byId("user-email");
   }
   get logoutBtn(): HTMLButtonElement {
-    return el("logout-btn");
+    return byId("logout-btn");
   }
 
   // Chat
   get messages(): HTMLDivElement {
-    return el("messages");
+    return byId("messages");
   }
   get messagesWrap(): HTMLDivElement {
-    return el("messages-wrap");
+    return byId("messages-wrap");
   }
   get bannerStack(): HTMLDivElement {
-    return el("banner-stack");
+    return byId("banner-stack");
   }
   get scrollBottom(): HTMLButtonElement {
-    return el("scroll-bottom");
+    return byId("scroll-bottom");
   }
   get modelPicker(): HTMLDivElement {
-    return el("model-picker");
+    return byId("model-picker");
   }
   get promptForm(): HTMLFormElement {
-    return el("prompt-form");
+    return byId("prompt-form");
   }
   get promptInput(): HTMLTextAreaElement {
-    return el("prompt-input");
+    return byId("prompt-input");
   }
   get attachmentRow(): HTMLUListElement {
-    return el("attachment-row");
+    return byId("attachment-row");
   }
   get sendBtn(): HTMLButtonElement {
-    return el("send-btn");
+    return byId("send-btn");
   }
   get autoApproveCrewBtn(): HTMLButtonElement {
-    return el("auto-approve-crew-btn");
+    return byId("auto-approve-crew-btn");
   }
   get switchModelBtn(): HTMLButtonElement {
-    return el("switch-model-btn");
+    return byId("switch-model-btn");
   }
   get modelSwitchList(): HTMLDivElement {
-    return el("model-switch-list");
+    return byId("model-switch-list");
   }
   get toolApproval(): HTMLDialogElement {
-    return el("tool-approval");
+    return byId("tool-approval");
+  }
+  get elicitationDialog(): HTMLDialogElement {
+    return byId("elicitation-dialog");
   }
   get contextIndicator(): HTMLButtonElement {
-    return el("context-indicator");
+    return byId("context-indicator");
   }
   get contextRingFill(): HTMLElement {
-    return el("context-ring-fill");
+    return byId("context-ring-fill");
   }
   get contextLabel(): HTMLElement {
-    return el("context-label");
+    return byId("context-label");
   }
 
   // Context popup
   get ctxModelPill(): HTMLElement {
-    return el("ctx-model-pill");
+    return byId("ctx-model-pill");
   }
   get ctxTokens(): HTMLElement {
-    return el("ctx-tokens");
+    return byId("ctx-tokens");
   }
   get ctxCredits(): HTMLElement {
-    return el("ctx-credits");
+    return byId("ctx-credits");
   }
   get ctxTurns(): HTMLElement {
-    return el("ctx-turns");
+    return byId("ctx-turns");
   }
   get ctxLastTurn(): HTMLElement {
-    return el("ctx-last-turn");
+    return byId("ctx-last-turn");
   }
   get ctxMsgs(): HTMLElement {
-    return el("ctx-msgs");
+    return byId("ctx-msgs");
   }
   get ctxTools(): HTMLElement {
-    return el("ctx-tools");
+    return byId("ctx-tools");
   }
   get ctxMetering(): HTMLElement {
-    return el("ctx-metering");
+    return byId("ctx-metering");
   }
 
   // Status popup
   get stWs(): HTMLElement {
-    return el("st-ws");
+    return byId("st-ws");
   }
   get stKiro(): HTMLElement {
-    return el("st-kiro");
+    return byId("st-kiro");
   }
   get stAuth(): HTMLElement {
-    return el("st-auth");
+    return byId("st-auth");
   }
 
   // Settings
   get steeringInput(): HTMLTextAreaElement {
-    return el("steering-input");
+    return byId("steering-input");
   }
   get autoUpdateToggle(): HTMLInputElement {
-    return el("auto-update-toggle");
+    return byId("auto-update-toggle");
   }
   get toolUpdateBtn(): HTMLButtonElement {
-    return el("tool-update-btn");
+    return byId("tool-update-btn");
   }
   get toolUpdateOutput(): HTMLDivElement {
-    return el("tool-update-output");
+    return byId("tool-update-output");
   }
   get toolAddBtn(): HTMLButtonElement {
-    return el("tool-add-btn");
+    return byId("tool-add-btn");
   }
   get toolsList(): HTMLDivElement {
-    return el("tools-list");
+    return byId("tools-list");
   }
 
   // Shell
   get shellPanel(): HTMLDivElement {
-    return el("shell-panel");
+    return byId("shell-panel");
   }
   get shellBtn(): HTMLButtonElement {
-    return el("shell-btn");
+    return byId("shell-btn");
   }
   get shellToggleBtn(): HTMLButtonElement {
-    return el("shell-toggle-btn");
+    return byId("shell-toggle-btn");
   }
   get shellClearBtn(): HTMLButtonElement {
-    return el("shell-clear-btn");
+    return byId("shell-clear-btn");
   }
   get shellKillBtn(): HTMLButtonElement {
-    return el("shell-kill-btn");
+    return byId("shell-kill-btn");
   }
   get shellFullscreenBtn(): HTMLButtonElement {
-    return el("shell-fullscreen-btn");
+    return byId("shell-fullscreen-btn");
   }
   get shellTerminal(): HTMLDivElement {
-    return el("shell-terminal");
+    return byId("shell-terminal");
   }
   get shellStatus(): HTMLElement {
-    return el("shell-status");
+    return byId("shell-status");
   }
   get shellTitle(): HTMLElement {
-    return el("shell-title-text");
+    return byId("shell-title-text");
   }
   get shellResize(): HTMLDivElement {
-    return el("shell-resize");
+    return byId("shell-resize");
   }
   get termInput(): HTMLTextAreaElement {
-    return el("term-input");
+    return byId("term-input");
   }
   get keyToolbar(): HTMLDivElement {
-    return el("key-toolbar");
+    return byId("key-toolbar");
   }
 
   // Git
   get gitBtn(): HTMLButtonElement {
-    return el("git-btn");
+    return byId("git-btn");
   }
   get gitBadge(): HTMLElement {
-    return el("git-badge");
+    return byId("git-badge");
   }
   get gitBranchBtn(): HTMLButtonElement {
-    return el("git-branch-btn");
+    return byId("git-branch-btn");
   }
 
   // File browser
   get filesBtn(): HTMLButtonElement {
-    return el("files-btn");
+    return byId("files-btn");
   }
   get fbList(): HTMLDivElement {
-    return el("fb-list");
+    return byId("fb-list");
   }
   get fbBack(): HTMLButtonElement {
-    return el("fb-back");
+    return byId("fb-back");
   }
   get fbForward(): HTMLButtonElement {
-    return el("fb-forward");
+    return byId("fb-forward");
   }
   get fbPath(): HTMLInputElement {
-    return el("fb-path");
+    return byId("fb-path");
   }
   get fbUpload(): HTMLButtonElement {
-    return el("fb-upload");
+    return byId("fb-upload");
   }
   get fbDownload(): HTMLButtonElement {
-    return el("fb-download");
+    return byId("fb-download");
   }
   get fbNewFile(): HTMLButtonElement {
-    return el("fb-new-file");
+    return byId("fb-new-file");
   }
   get fbNewFolder(): HTMLButtonElement {
-    return el("fb-new-folder");
+    return byId("fb-new-folder");
   }
   get fbAddToChat(): HTMLButtonElement {
-    return el("fb-add-to-chat");
+    return byId("fb-add-to-chat");
   }
   get fbRename(): HTMLButtonElement {
-    return el("fb-rename");
+    return byId("fb-rename");
   }
   get fbDelete(): HTMLButtonElement {
-    return el("fb-delete");
+    return byId("fb-delete");
   }
   get fbDropOverlay(): HTMLDivElement {
-    return el("fb-drop-overlay");
+    return byId("fb-drop-overlay");
   }
 
   // History
   get historyBtn(): HTMLButtonElement {
-    return el("history-btn");
+    return byId("history-btn");
   }
 
   // Editor
   get editorContent(): HTMLTextAreaElement {
-    return el("editor-content");
+    return byId("editor-content");
   }
   get editorHighlight(): HTMLPreElement {
-    return el("editor-highlight");
+    return byId("editor-highlight");
   }
   get editorCode(): HTMLElement {
-    return el("editor-code");
+    return byId("editor-code");
   }
   get editorGutter(): HTMLPreElement {
-    return el("editor-gutter");
+    return byId("editor-gutter");
   }
   get editorFilename(): HTMLElement {
-    return el("editor-filename");
+    return byId("editor-filename");
   }
   get editorError(): HTMLElement {
-    return el("editor-error");
+    return byId("editor-error");
   }
   get editorEditBtn(): HTMLButtonElement {
-    return el("editor-edit-btn");
+    return byId("editor-edit-btn");
   }
   get editorSaveBtn(): HTMLButtonElement {
-    return el("editor-save-btn");
+    return byId("editor-save-btn");
   }
   get editorCancelBtn(): HTMLButtonElement {
-    return el("editor-cancel-btn");
+    return byId("editor-cancel-btn");
   }
   get editorDiffBtn(): HTMLButtonElement {
-    return el("editor-diff-btn");
+    return byId("editor-diff-btn");
   }
   get editorDiffPane(): HTMLDivElement {
-    return el("editor-diff-pane");
+    return byId("editor-diff-pane");
   }
   get editorConflictOverlay(): HTMLDivElement {
-    return el("editor-conflict-overlay");
+    return byId("editor-conflict-overlay");
   }
   get editorSendPlanBtn(): HTMLButtonElement {
-    return el("editor-send-plan-btn");
+    return byId("editor-send-plan-btn");
   }
   get editorPendingAcceptBtn(): HTMLButtonElement {
-    return el("editor-pending-accept-btn");
+    return byId("editor-pending-accept-btn");
   }
   get editorPendingRejectBtn(): HTMLButtonElement {
-    return el("editor-pending-reject-btn");
+    return byId("editor-pending-reject-btn");
   }
   get editorPendingApplyPartialBtn(): HTMLButtonElement {
-    return el("editor-pending-apply-partial-btn");
+    return byId("editor-pending-apply-partial-btn");
   }
   get editorPendingDiscussBtn(): HTMLButtonElement {
-    return el("editor-pending-discuss-btn");
+    return byId("editor-pending-discuss-btn");
   }
   get supervisedPill(): HTMLElement {
-    return el("supervised-pill");
+    return byId("supervised-pill");
   }
 
   // Modals
   get loginModal(): HTMLDivElement {
-    return el("login-modal");
+    return byId("login-modal");
   }
   get toolModal(): HTMLDivElement {
-    return el("tool-modal");
+    return byId("tool-modal");
   }
   get gitOutputModal(): HTMLDivElement {
-    return el("git-output-modal");
+    return byId("git-output-modal");
   }
   get gitBranchModal(): HTMLDivElement {
-    return el("git-branch-modal");
+    return byId("git-branch-modal");
   }
   get subagentModal(): HTMLDivElement {
-    return el("subagent-modal");
+    return byId("subagent-modal");
   }
 
   // Git panel (added 2026 audit)
   get gitOutputBar(): HTMLDivElement {
-    return el("git-output-bar");
+    return byId("git-output-bar");
   }
   get gitRepoSection(): HTMLDivElement {
-    return el("git-repo-section");
+    return byId("git-repo-section");
   }
   get gitStagedSection(): HTMLDivElement {
-    return el("git-staged-section");
+    return byId("git-staged-section");
   }
   get gitStagedList(): HTMLDivElement {
-    return el("git-staged-list");
+    return byId("git-staged-list");
   }
   get gitChangedList(): HTMLDivElement {
-    return el("git-changed-list");
+    return byId("git-changed-list");
   }
   get gitLogList(): HTMLDivElement {
-    return el("git-log-list");
+    return byId("git-log-list");
   }
   get gitRepoBar(): HTMLDivElement {
-    return el("git-repo-bar");
+    return byId("git-repo-bar");
   }
   get gitCommitMsg(): HTMLTextAreaElement {
-    return el("git-commit-msg");
+    return byId("git-commit-msg");
   }
   get gitNewBranch(): HTMLInputElement {
-    return el("git-new-branch");
+    return byId("git-new-branch");
   }
   get gitBranchList(): HTMLDivElement {
-    return el("git-branch-list");
+    return byId("git-branch-list");
   }
   get gitRefreshBtn(): HTMLButtonElement {
-    return el("git-refresh-btn");
+    return byId("git-refresh-btn");
   }
   get gitStageAllBtn(): HTMLButtonElement {
-    return el("git-stage-all-btn");
+    return byId("git-stage-all-btn");
   }
   get gitUnstageAllBtn(): HTMLButtonElement {
-    return el("git-unstage-all-btn");
+    return byId("git-unstage-all-btn");
   }
   get gitDiscardAllBtn(): HTMLButtonElement {
-    return el("git-discard-all-btn");
+    return byId("git-discard-all-btn");
   }
   get gitCommitBtn(): HTMLButtonElement {
-    return el("git-commit-btn");
+    return byId("git-commit-btn");
   }
   get gitPushBtn(): HTMLButtonElement {
-    return el("git-push-btn");
+    return byId("git-push-btn");
   }
   get gitPullBtn(): HTMLButtonElement {
-    return el("git-pull-btn");
+    return byId("git-pull-btn");
   }
   get gitOverflowBtn(): HTMLButtonElement {
-    return el("git-overflow-btn");
+    return byId("git-overflow-btn");
   }
   get gitAiMsgBtn(): HTMLButtonElement {
-    return el("git-ai-msg-btn");
+    return byId("git-ai-msg-btn");
   }
   get gitCreateBranchBtn(): HTMLButtonElement {
-    return el("git-create-branch-btn");
+    return byId("git-create-branch-btn");
   }
   get gitStashBtn(): HTMLButtonElement {
-    return el("git-stash-btn");
+    return byId("git-stash-btn");
   }
   get gitStashPopBtn(): HTMLButtonElement {
-    return el("git-stash-pop-btn");
+    return byId("git-stash-pop-btn");
   }
 
   // Kiro config viewer (list rendered into the Instructions tab)
   get kiroConfigList(): HTMLDivElement {
-    return el("kiro-config-list");
+    return byId("kiro-config-list");
   }
 
   // PR panel
   get prSection(): HTMLElement {
-    return el("git-pr-section");
+    return byId("git-pr-section");
   }
   get prList(): HTMLDivElement {
-    return el("git-pr-list");
+    return byId("git-pr-list");
   }
   get prEmpty(): HTMLElement {
-    return el("git-pr-empty");
+    return byId("git-pr-empty");
   }
   get prPlaceholder(): HTMLElement {
-    return el("git-pr-placeholder");
+    return byId("git-pr-placeholder");
   }
   get prCreateDialog(): HTMLDialogElement {
-    return el("pr-create-dialog");
+    return byId("pr-create-dialog");
   }
   get prDialogStatus(): HTMLElement {
-    return el("pr-dialog-status");
+    return byId("pr-dialog-status");
   }
   get prBase(): HTMLInputElement {
-    return el("pr-base");
+    return byId("pr-base");
   }
   get prHead(): HTMLInputElement {
-    return el("pr-head");
+    return byId("pr-head");
   }
   get prTitle(): HTMLInputElement {
-    return el("pr-title");
+    return byId("pr-title");
   }
   get prBody(): HTMLTextAreaElement {
-    return el("pr-body");
+    return byId("pr-body");
   }
   get prDraft(): HTMLInputElement {
-    return el("pr-draft");
+    return byId("pr-draft");
   }
   get prSubmitBtn(): HTMLButtonElement {
-    return el("pr-submit-btn");
+    return byId("pr-submit-btn");
   }
   get prGenerateBtn(): HTMLButtonElement {
-    return el("pr-generate-btn");
+    return byId("pr-generate-btn");
   }
   get prNewBtn(): HTMLButtonElement {
-    return el("git-pr-new-btn");
+    return byId("git-pr-new-btn");
   }
 
   // CI pill
   get ciPill(): HTMLButtonElement {
-    return el("git-ci-pill");
+    return byId("git-ci-pill");
   }
   get ciPanel(): HTMLDivElement {
-    return el("git-ci-panel");
+    return byId("git-ci-panel");
   }
 
   // Settings panel (extra getters added by api-client migration)
   get settingsSaveStatus(): HTMLSpanElement {
-    return el("settings-save-status");
+    return byId("settings-save-status");
   }
   get notifyToggle(): HTMLInputElement {
-    return el("notify-toggle");
+    return byId("notify-toggle");
   }
   get notifyHint(): HTMLParagraphElement {
-    return el("notify-hint");
+    return byId("notify-hint");
   }
   get notifySubOptions(): HTMLDivElement {
-    return el("notify-sub-options");
+    return byId("notify-sub-options");
   }
   get notifyFinishedToggle(): HTMLInputElement {
-    return el("notify-finished-toggle");
+    return byId("notify-finished-toggle");
   }
   get notifyPermissionToggle(): HTMLInputElement {
-    return el("notify-permission-toggle");
+    return byId("notify-permission-toggle");
   }
 
   // Settings tab bar (mobile dropdown + desktop segmented control)
   get settingsTabBar(): HTMLDivElement {
-    return el("settings-tab-bar");
+    return byId("settings-tab-bar");
   }
   get settingsTabSelect(): HTMLSelectElement {
-    return el("settings-tab-select");
+    return byId("settings-tab-select");
   }
 
   // MCP modal (shared by add + edit)
   get mcpModal(): HTMLDivElement {
-    return el("mcp-modal");
+    return byId("mcp-modal");
   }
 
   // Upload progress bar (shared UI at the bottom of viewport)
   get uploadProgress(): HTMLDivElement {
-    return el("upload-progress");
+    return byId("upload-progress");
   }
   get uploadProgressFill(): HTMLDivElement {
-    return el("upload-progress-fill");
+    return byId("upload-progress-fill");
   }
   get uploadProgressLabel(): HTMLElement {
-    return el("upload-progress-label");
+    return byId("upload-progress-label");
   }
   get uploadProgressCancel(): HTMLButtonElement {
-    return el("upload-progress-cancel");
+    return byId("upload-progress-cancel");
   }
 
   // Theme toggle
   get themeBtn(): HTMLButtonElement {
-    return el("theme-btn");
+    return byId("theme-btn");
   }
 
   // Subagent modal
   get subagentModalTitle(): HTMLElement {
-    return el("subagent-modal-title");
+    return byId("subagent-modal-title");
   }
   get subagentModalBody(): HTMLPreElement {
-    return el("subagent-modal-body");
+    return byId("subagent-modal-body");
   }
 
   // Tabs / shell
   get toolbarTitle(): HTMLElement {
-    return el("toolbar-title");
+    return byId("toolbar-title");
   }
 
   // Startup
   get appRoot(): HTMLElement {
-    return el("app");
+    return byId("app");
   }
   get chatArea(): HTMLElement {
-    return el("chat-area");
+    return byId("chat-area");
   }
 }
 

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { el } from "@cplieger/reactive";
 import {
   parseConflicts,
   resolveHunk,
@@ -13,7 +14,7 @@ import {
 import { suggestResolution } from "./actions/editor.js";
 import type { FileState } from "./editor-types.js";
 import { getActiveFilePath, fileStates } from "./editor-types.js";
-import { rebuildGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
+import { updateGutter, renderEditModeUI, showEditMode } from "./editor-ui.js";
 import { registerCleanup } from "./actions/index.js";
 
 registerCleanup(() => {
@@ -66,16 +67,19 @@ export function abortSuggestion(path?: string): void {
 }
 
 export function renderConflictModeUI(state: FileState): void {
-  if (state.mode.kind !== "conflict") {
-    state.mode = { kind: "conflict", conflict: parseConflicts(state.current), editing: true };
+  if (state.mode.value.kind !== "conflict") {
+    state.mode.value = {
+      kind: "conflict",
+      conflict: parseConflicts(state.current.value),
+      editing: true,
+    };
   }
-  $.editorContent.value = state.current;
+  $.editorContent.value = state.current.value;
   showEditMode();
-  rebuildGutter(state.current);
+  updateGutter(state.current.value);
   $.editorEditBtn.classList.add("hidden");
   $.editorCancelBtn.classList.remove("hidden");
   $.editorSaveBtn.classList.remove("hidden");
-  $.editorSaveBtn.disabled = state.current === state.original;
   $.editorDiffBtn.classList.add("hidden");
   renderConflictOverlay(state);
 }
@@ -83,30 +87,32 @@ export function renderConflictModeUI(state: FileState): void {
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
   overlay.replaceChildren();
-  if (state.mode.kind !== "conflict" || state.mode.conflict.hunks.length === 0) {
+  if (state.mode.value.kind !== "conflict" || state.mode.value.conflict.hunks.length === 0) {
     overlay.classList.add("hidden");
     return;
   }
-  const conflict = state.mode.conflict;
+  const conflict = state.mode.value.conflict;
   overlay.classList.remove("hidden");
-  const header = document.createElement("div");
-  header.className = "conflict-status";
-  header.textContent = `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`;
-  overlay.appendChild(header);
+  overlay.appendChild(
+    el(
+      "div",
+      { className: "conflict-status" },
+      `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`,
+    ),
+  );
   for (let i = 0; i < conflict.hunks.length; i++) {
     const hunk = conflict.hunks[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const row = document.createElement("div");
-    row.className = "conflict-hunk-row";
-    const title = document.createElement("span");
-    title.className = "conflict-hunk-title";
-    title.textContent = `Line ${String(hunk.startLine + 1)}: ${hunk.ourLabel || "HEAD"} vs ${hunk.theirLabel || "incoming"}`;
-    row.appendChild(title);
+    const row = el("div", { className: "conflict-hunk-row" });
+    row.appendChild(
+      el(
+        "span",
+        { className: "conflict-hunk-title" },
+        `Line ${String(hunk.startLine + 1)}: ${hunk.ourLabel || "HEAD"} vs ${hunk.theirLabel || "incoming"}`,
+      ),
+    );
     const suggestion = state.suggestions.get(hunk.startLine);
     if (suggestion !== undefined && suggestion.preview !== null) {
-      const pill = document.createElement("span");
-      pill.className = "conflict-suggest-pill";
-      pill.textContent = "AI suggestion";
-      row.appendChild(pill);
+      row.appendChild(el("span", { className: "conflict-suggest-pill" }, "AI suggestion"));
       row.appendChild(
         resolveBtn("Accept", () => {
           acceptSuggestion(state, i);
@@ -118,10 +124,7 @@ export function renderConflictOverlay(state: FileState): void {
         }),
       );
       overlay.appendChild(row);
-      const preview = document.createElement("pre");
-      preview.className = "conflict-suggest-preview";
-      preview.textContent = suggestion.preview;
-      overlay.appendChild(preview);
+      overlay.appendChild(el("pre", { className: "conflict-suggest-preview" }, suggestion.preview));
       continue;
     }
     row.appendChild(
@@ -139,58 +142,56 @@ export function renderConflictOverlay(state: FileState): void {
         applyResolution(state, i, "both");
       }),
     );
-    const suggestBtn = document.createElement("button");
-    suggestBtn.className = "conflict-btn conflict-btn-suggest";
-    suggestBtn.textContent = suggestion?.loading === true ? "Suggesting..." : "Suggest";
-    suggestBtn.title = "Propose a merged version using the utility AI bridge";
-    suggestBtn.disabled = suggestion?.loading === true;
+    const suggestBtn = el(
+      "button",
+      {
+        className: "conflict-btn conflict-btn-suggest",
+        title: "Propose a merged version using the utility AI bridge",
+        disabled: suggestion?.loading === true,
+      },
+      suggestion?.loading === true ? "Suggesting..." : "Suggest",
+    );
     suggestBtn.addEventListener("click", () => {
       void requestSuggestion(state, i);
     });
     row.appendChild(suggestBtn);
     if (suggestion !== undefined && suggestion.error !== "") {
-      const err = document.createElement("span");
-      err.className = "conflict-suggest-error";
-      err.textContent = suggestion.error;
-      row.appendChild(err);
+      row.appendChild(el("span", { className: "conflict-suggest-error" }, suggestion.error));
     }
     overlay.appendChild(row);
   }
 }
 
-function resolveBtn(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.className = "conflict-btn";
-  b.textContent = label;
+function resolveBtn(label: string, onClick: () => void): HTMLElement {
+  const b = el("button", { className: "conflict-btn" }, label);
   b.addEventListener("click", onClick);
   return b;
 }
 
 function applyResolution(state: FileState, hunkIndex: number, resolution: Resolution): void {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const newContent = resolveHunk(state.mode.conflict, hunkIndex, resolution);
-  state.current = newContent;
+  const newContent = resolveHunk(state.mode.value.conflict, hunkIndex, resolution);
+  state.current.value = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
   $.editorContent.value = newContent;
-  $.editorSaveBtn.disabled = state.current === state.original;
-  rebuildGutter(newContent);
+  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode = { kind: "edit", editing: false };
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  state.mode = { kind: "conflict", conflict: parsed, editing: true };
+  state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   renderConflictOverlay(state);
 }
 
 async function requestSuggestion(state: FileState, hunkIndex: number): Promise<void> {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const hunk = state.mode.conflict.hunks[hunkIndex];
+  const hunk = state.mode.value.conflict.hunks[hunkIndex];
   if (hunk === undefined) {
     return;
   }
@@ -209,7 +210,7 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
   const myDispatchId = bumpSuggestionGen(state.path);
   state.suggestions.set(hunk.startLine, { loading: true, preview: null, error: "" });
   renderConflictOverlay(state);
-  const context = buildHunkContext(state.mode.conflict, hunk);
+  const context = buildHunkContext(state.mode.value.conflict, hunk);
   const body = {
     ours: hunk.oursLines.join("\n"),
     theirs: hunk.theirsLines.join("\n"),
@@ -223,13 +224,13 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
     return;
   }
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
   if (getActiveFilePath() !== state.path) {
     return;
   } // stale file switch
-  const current = state.mode.conflict.hunks[hunkIndex];
+  const current = state.mode.value.conflict.hunks[hunkIndex];
   if (current?.startLine !== hunk.startLine) {
     return;
   }
@@ -247,10 +248,10 @@ async function requestSuggestion(state: FileState, hunkIndex: number): Promise<v
 }
 
 function acceptSuggestion(state: FileState, hunkIndex: number): void {
-  if (state.mode.kind !== "conflict") {
+  if (state.mode.value.kind !== "conflict") {
     return;
   }
-  const hunk = state.mode.conflict.hunks[hunkIndex];
+  const hunk = state.mode.value.conflict.hunks[hunkIndex];
   if (hunk === undefined) {
     return;
   }
@@ -260,23 +261,22 @@ function acceptSuggestion(state: FileState, hunkIndex: number): void {
   }
   const previewLines = suggestion.preview === "" ? [] : suggestion.preview.split("\n");
   const out = [
-    ...state.mode.conflict.lines.slice(0, hunk.startLine),
+    ...state.mode.value.conflict.lines.slice(0, hunk.startLine),
     ...previewLines,
-    ...state.mode.conflict.lines.slice(hunk.endLine + 1),
+    ...state.mode.value.conflict.lines.slice(hunk.endLine + 1),
   ];
-  const newContent = out.join("\n") + (state.mode.conflict.trailingNewline ? "\n" : "");
-  state.current = newContent;
+  const newContent = out.join("\n") + (state.mode.value.conflict.trailingNewline ? "\n" : "");
+  state.current.value = newContent;
   const parsed = parseConflicts(newContent);
   state.suggestions.clear();
   $.editorContent.value = newContent;
-  $.editorSaveBtn.disabled = state.current === state.original;
-  rebuildGutter(newContent);
+  updateGutter(newContent);
   if (parsed.hunks.length === 0) {
-    state.mode = { kind: "edit", editing: false };
+    state.mode.value = { kind: "edit", editing: false };
     renderEditModeUI(state);
     return;
   }
-  state.mode = { kind: "conflict", conflict: parsed, editing: true };
+  state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
   renderConflictOverlay(state);
 }
 

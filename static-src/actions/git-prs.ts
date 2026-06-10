@@ -1,6 +1,6 @@
-// Actions for the Git PRs tab: merge, close, refresh.
-// Create PR and generate() are INLINE (error surfaces in the dialog)
-// and are intentionally excluded.
+// Actions for the Git PRs tab: create, merge, close, refresh.
+// generate() (AI PR-description) stays INLINE (error surfaces in the
+// dialog) and is intentionally excluded.
 // ---------------------------------------------------------------------------
 
 import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
@@ -61,6 +61,51 @@ export const closePR = apiAction<PRArgs, unknown, PRRemoveResult>({
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+});
+
+/** Args for opening a new pull request. */
+interface CreatePRArgs {
+  forge_id: string;
+  owner: string;
+  name: string;
+  source_branch: string;
+  target_branch: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+/** Open a new pull request. The create dialog renders its own inline
+ *  status/error line, so `error: false` (no toast) and the caller
+ *  reads the resolved result. NOT retryable: a timed-out create may
+ *  have opened the PR server-side, so a retry could open a duplicate
+ *  (same rationale as mergePR). */
+export const createPR = apiAction<CreatePRArgs, { number?: number; error?: string }>({
+  name: "git.create_pr",
+  scope: (args) =>
+    "git:" +
+    args.forge_id +
+    ":" +
+    args.owner +
+    "/" +
+    args.name +
+    ":" +
+    args.source_branch +
+    ">" +
+    args.target_branch,
+  dedupe: true,
+  request: (args) => ({
+    method: "POST",
+    path: `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.owner)}/${encodeURIComponent(args.name)}/prs`,
+    body: {
+      source_branch: args.source_branch,
+      target_branch: args.target_branch,
+      title: args.title,
+      body: args.body,
+      draft: args.draft,
+    },
+  }),
+  error: false,
 });
 
 /** Refresh all PRs across connected forges. */

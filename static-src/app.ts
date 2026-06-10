@@ -8,12 +8,11 @@
 // ---------------------------------------------------------------------------
 
 import type { ServerEvent, ModelInfo } from "./types.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
   contextSizeFor,
-  sessionsVersion,
+  activeSession,
   getActiveId,
   getActive,
   get,
@@ -21,13 +20,14 @@ import {
   isThinking,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { effect } from "./lib/reactive/index.js";
+import { computed, effect } from "@cplieger/reactive";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import * as transport from "./transport.js";
 import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import {
   setOnEmpty,
   restoreTabState,
@@ -143,18 +143,23 @@ function init(): void {
   // ACP bridge's session/new response; this listener is the live
   // update path — session-sourced lists are authoritative and
   // overwrite whatever the REST path seeded.
-  let lastModelSig = "";
-  effect(() => {
-    void sessionsVersion.value;
+  const modelSig = computed(() => {
+    void activeSession.value;
     const active = getActive();
     if (active === undefined) {
+      return "";
+    }
+    return active.id + ":" + active.available_models.map((m) => m.id).join(",");
+  });
+  effect(() => {
+    // The computed dedups by value (Object.is) and is glitch-free, so the
+    // effect re-runs only when the active session's id or available_models
+    // actually change — each distinct catalog triggers exactly one fetch.
+    // An empty signature means no active session (the computed's only "" path).
+    if (modelSig.value === "") {
       return;
     }
-    const sig = active.id + ":" + active.available_models.map((m) => m.id).join(",");
-    if (sig !== lastModelSig) {
-      lastModelSig = sig;
-      fetchModelsFromSession();
-    }
+    fetchModelsFromSession();
   });
 
   setupInput();
@@ -281,7 +286,7 @@ async function checkAuthAndStart(): Promise<void> {
   suppressPush(false);
 
   let authenticated = false;
-  const d = await apiGet<WhoamiResponse>("/api/whoami");
+  const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
   if (d !== null) {
     const email = d.email;
     if (email !== undefined && email !== "") {
@@ -346,7 +351,7 @@ async function checkAuthAndStart(): Promise<void> {
 function onLoginSuccess(): void {
   hideLoginModal();
   dismissLoadingScreen();
-  void apiGet<WhoamiResponse>("/api/whoami").then((d) => {
+  void apiGetTyped("/api/whoami", decodeWhoamiResponse).then((d) => {
     if (d?.email !== undefined) {
       setUserEmail(d.email);
     }

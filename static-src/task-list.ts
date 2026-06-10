@@ -6,7 +6,7 @@
 
 import type { PlanEntry } from "./types.js";
 import { getActive, messagesVersion } from "./store.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect, el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 
 const STATUS_ICON: Record<string, string> = {
@@ -81,16 +81,12 @@ function refreshTaskList(): void {
 }
 
 function buildTaskRow(entry: PlanEntry): HTMLElement {
-  const row = document.createElement("div");
-  row.className = `task-item task-${entry.status}`;
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const iconText = STATUS_ICON[entry.status] ?? STATUS_ICON["pending"]!;
-  const iconSpan = document.createElement("span");
-  iconSpan.className = "task-icon";
-  iconSpan.textContent = iconText;
-  const textSpan = document.createElement("span");
-  textSpan.className = "task-text";
-  textSpan.textContent = entry.content;
-  row.append(iconSpan, textSpan);
-  return row;
+  return el(
+    "div",
+    { className: `task-item task-${entry.status}` },
+    el("span", { className: "task-icon" }, iconText),
+    el("span", { className: "task-text" }, entry.content),
+  );
 }

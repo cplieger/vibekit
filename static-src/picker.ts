@@ -15,6 +15,7 @@ import { $ } from "./dom.js";
 import { getActive } from "./store.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 /** Per-agent label + description for the picker header. The agent name
  *  from the session is the lookup key; unknown agents fall back to the
@@ -70,8 +71,7 @@ class ModelPickerController {
 
     let desc = picker.querySelector(".picker-desc");
     if (desc === null) {
-      desc = document.createElement("div");
-      desc.className = "picker-desc";
+      desc = el("div", { className: "picker-desc" });
       label.after(desc);
     }
     desc.textContent = info.description;
@@ -87,18 +87,18 @@ class ModelPickerController {
     }
 
     if (this.models.length === 0) {
-      const loading = document.createElement("div");
-      loading.className = "picker-btn picker-loading";
-      loading.textContent = "Loading models…";
-      loading.setAttribute("aria-busy", "true");
-      loading.setAttribute("role", "option");
+      const loading = el(
+        "div",
+        { className: "picker-btn picker-loading", "aria-busy": "true", role: "option" },
+        "Loading models…",
+      );
       grid.appendChild(loading);
     }
     reconcile(grid, this.models, {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildPickerBtn(m, currentModelId),
-      update: (el, m) => {
-        this.syncPickerBtn(el, m, currentModelId);
+      update: (node, m) => {
+        this.syncPickerBtn(node, m, currentModelId);
       },
     });
     wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
@@ -111,16 +111,12 @@ class ModelPickerController {
   }
 
   private buildPickerBtn(m: ModelInfo, currentModelId: string): HTMLElement {
-    const btn = document.createElement("button");
-    btn.setAttribute("data-model", m.model_id);
-    btn.setAttribute("role", "option");
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "picker-name";
-    nameSpan.textContent = humanName(m.model_name || m.model_id);
-    const metaSpan = document.createElement("span");
-    metaSpan.className = "picker-meta";
-    metaSpan.textContent = `${String(m.rate_multiplier)}x credits`;
-    btn.append(nameSpan, metaSpan);
+    const btn = el(
+      "button",
+      { "data-model": m.model_id, role: "option" },
+      el("span", { className: "picker-name" }, humanName(m.model_name || m.model_id)),
+      el("span", { className: "picker-meta" }, `${String(m.rate_multiplier)}x credits`),
+    );
     btn.addEventListener("click", () => {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const grid = $.modelPicker.querySelector<HTMLElement>(".picker-grid")!;

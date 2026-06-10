@@ -2,6 +2,7 @@
 // SSE handlers for turn lifecycle + permission dialog + errors.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { onSSE } from "../bus.js";
 import {
   setThinking,
@@ -19,12 +20,13 @@ import {
   NOTIFY_TITLE,
 } from "../notify.js";
 import { showPermissionDialog } from "../permission.js";
+import { showElicitationDialog, dismissElicitation } from "../elicitation.js";
 import { sendPromptTo } from "../chat-commands.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { setSubagentPendingApproval } from "../crew-card.js";
-import { respondPermission } from "../actions/chat.js";
+import { respondPermission, respondElicitation } from "../actions/chat.js";
 import { type ErrorRoute, ERROR_ROUTES } from "./error-routing.js";
 export type { ErrorRoute };
 export { ERROR_ROUTES };
@@ -157,12 +159,16 @@ onSSE("turn_ended", (chatID, p) => {
       // Dedup: skip DOM insertion only (side-effects already fired above)
       const nextEl = lastMsg.nextElementSibling;
       if (!nextEl?.classList.contains("turn-summary")) {
-        const summary = document.createElement("div");
-        summary.className = "turn-summary";
-        summary.setAttribute("role", "note");
-        summary.setAttribute("aria-label", "Turn summary");
-        summary.setAttribute("data-chat-entry", "");
-        summary.textContent = summaryText;
+        const summary = el(
+          "div",
+          {
+            className: "turn-summary",
+            role: "note",
+            "aria-label": "Turn summary",
+            "data-chat-entry": "",
+          },
+          summaryText,
+        );
         lastMsg.insertAdjacentElement("afterend", summary);
       }
     }
@@ -186,11 +192,11 @@ onSSE("turn_ended", (chatID, p) => {
     if (removed > 0) {
       parts.push(`-${String(removed)}`);
     }
-    const banner = document.createElement("div");
-    banner.className = "turn-file-changes";
-    banner.setAttribute("role", "note");
-    banner.setAttribute("data-chat-entry", "");
-    banner.textContent = parts.join(" · ");
+    const banner = el(
+      "div",
+      { className: "turn-file-changes", role: "note", "data-chat-entry": "" },
+      parts.join(" · "),
+    );
     // Dedup: skip if a turn-file-changes already exists as the last entry
     const lastChild = msgsEl.lastElementChild;
     if (lastChild !== null && !lastChild.classList.contains("turn-file-changes")) {
@@ -238,6 +244,29 @@ onSSE("permission_needed", (chatID, p) => {
     },
     p.sub_session_id,
   );
+});
+
+onSSE("elicitation_needed", (chatID, p) => {
+  if (isPermissionNeededEnabled()) {
+    notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
+  }
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  showElicitationDialog(p, (action, content) => {
+    void respondElicitation.dispatch(
+      content !== undefined
+        ? { chatID, requestID: p.request_id, action, content }
+        : { chatID, requestID: p.request_id, action },
+    );
+  });
+});
+
+onSSE("elicitation_complete", (chatID, p) => {
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  dismissElicitation(p.request_id);
 });
 
 function lookupToolInput(chatID: string, toolCallID: string): unknown {

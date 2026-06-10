@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { flushSync } from "@cplieger/reactive";
 
 import {
   initStatusBanner,
@@ -165,5 +166,57 @@ describe("git-status-banner", () => {
     setBanner("forges-not-connected");
     expect(bannerEl().querySelectorAll(".git-status-banner-row").length).toBe(1);
     expect(visibleState()).toBe("forge-auth-failed");
+  });
+
+  it("render fires exactly once per state transition", () => {
+    const root = bannerEl();
+    // Spy after init's first render so the counter only sees transitions.
+    const spy = vi.spyOn(root, "replaceChildren");
+
+    // Single set → one render.
+    setBanner("forge-auth-failed");
+    flushSync();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // A lower-priority key arriving under the shown top mutates the active set,
+    // but the visible topKey is unchanged, so the deduped computed does not
+    // re-notify the effect → no extra render.
+    setBanner("gh-cli-missing");
+    flushSync();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Dismiss the top: one signal write → one render (hides; no fall-through).
+    root.querySelector<HTMLButtonElement>("[data-banner-dismiss]")?.click();
+    flushSync();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(visibleState()).toBeNull();
+
+    // Clearing the dismissed top writes BOTH active and dismissed (the latter
+    // reset because dism === cleared key) — two signal writes — but batch()
+    // coalesces them into a single effect run.
+    clearBanner("forge-auth-failed");
+    flushSync();
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(visibleState()).toBe("gh-cli-missing");
+  });
+
+  it("topKey reflects highest-priority active, skipping dismissed", () => {
+    // Highest-priority active wins regardless of insertion order.
+    setBanner("gh-cli-missing");
+    setBanner("forge-auth-failed");
+    flushSync();
+    expect(visibleState()).toBe("forge-auth-failed");
+
+    // Dismissing the top yields no visible banner: the dismissed top is
+    // skipped and the banner hides rather than falling through to the
+    // lower-priority gh-cli-missing.
+    bannerEl().querySelector<HTMLButtonElement>("[data-banner-dismiss]")?.click();
+    flushSync();
+    expect(visibleState()).toBeNull();
+
+    // Clearing the dismissed top now reveals the next-priority active key.
+    clearBanner("forge-auth-failed");
+    flushSync();
+    expect(visibleState()).toBe("gh-cli-missing");
   });
 });

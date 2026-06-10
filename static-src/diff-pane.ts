@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { lineDiff, type DiffLine } from "./diff.js";
+import { el } from "@cplieger/reactive";
 
 export interface DiffPaneOpts {
   /** Optional max rows. When set, rows beyond the limit are dropped and a
@@ -43,20 +44,15 @@ export interface DiffPaneOpts {
 export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTMLDivElement {
   const lineNumbers = opts.lineNumbers !== false;
   const syncScroll = opts.syncScroll !== false;
-  const container = document.createElement("div");
-  container.className = "diff-pane";
+  const container = el("div", { className: "diff-pane" }) as HTMLDivElement;
 
   if (opts.oldLabel !== undefined || opts.newLabel !== undefined) {
-    const header = document.createElement("div");
-    header.className = "diff-pane-header";
-    const l = document.createElement("span");
-    l.className = "diff-pane-label diff-pane-label-old";
-    l.textContent = opts.oldLabel ?? "";
-    const r = document.createElement("span");
-    r.className = "diff-pane-label diff-pane-label-new";
-    r.textContent = opts.newLabel ?? "";
-    header.appendChild(l);
-    header.appendChild(r);
+    const header = el(
+      "div",
+      { className: "diff-pane-header" },
+      el("span", { className: "diff-pane-label diff-pane-label-old" }, opts.oldLabel ?? ""),
+      el("span", { className: "diff-pane-label diff-pane-label-new" }, opts.newLabel ?? ""),
+    );
     if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
       header.appendChild(buildWhitespaceToggle(container, opts));
     }
@@ -64,21 +60,18 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   } else if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
     // No labels, but callers still want the toggle. Build a minimal
     // header that only carries it.
-    const header = document.createElement("div");
-    header.className = "diff-pane-header diff-pane-header-toolbar";
-    header.appendChild(buildWhitespaceToggle(container, opts));
-    container.appendChild(header);
+    container.appendChild(
+      el(
+        "div",
+        { className: "diff-pane-header diff-pane-header-toolbar" },
+        buildWhitespaceToggle(container, opts),
+      ),
+    );
   }
 
-  const body = document.createElement("div");
-  body.className = "diff-pane-body";
-  const leftCol = document.createElement("div");
-  leftCol.className = "diff-col diff-col-old";
-  const rightCol = document.createElement("div");
-  rightCol.className = "diff-col diff-col-new";
-  body.appendChild(leftCol);
-  body.appendChild(rightCol);
-  container.appendChild(body);
+  const leftCol = el("div", { className: "diff-col diff-col-old" }) as HTMLDivElement;
+  const rightCol = el("div", { className: "diff-col diff-col-new" }) as HTMLDivElement;
+  container.appendChild(el("div", { className: "diff-pane-body" }, leftCol, rightCol));
 
   const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
   let rowCount = 0;
@@ -91,10 +84,9 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   }
   const extra = Math.max(0, lines.length - rowCount);
   if (extra > 0) {
-    const more = document.createElement("div");
-    more.className = "diff-more";
-    more.textContent = `+${String(extra)} more line${extra === 1 ? "" : "s"}`;
-    container.appendChild(more);
+    container.appendChild(
+      el("div", { className: "diff-more" }, `+${String(extra)} more line${extra === 1 ? "" : "s"}`),
+    );
   }
 
   if (syncScroll) {
@@ -109,17 +101,17 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   if (hasHunkActions) {
     const hunks = identifyHunks(lines);
     for (const hunk of hunks) {
-      const toolbar = document.createElement("div");
-      toolbar.className = "diff-hunk-toolbar";
+      const toolbar = el("div", { className: "diff-hunk-toolbar" });
 
       if (opts.onAcceptHunk !== undefined) {
         const acceptCb = opts.onAcceptHunk;
         const idx = hunk.index;
         const newLines = hunk.lines.filter((l) => l.kind === "add").map((l) => l.text);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "diff-hunk-btn accept";
-        btn.textContent = "\u2713 Accept";
+        const btn = el(
+          "button",
+          { type: "button", className: "diff-hunk-btn accept" },
+          "\u2713 Accept",
+        ) as HTMLButtonElement;
         btn.addEventListener("click", () => {
           acceptCb(idx, newLines);
           btn.disabled = true;
@@ -134,10 +126,11 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
       if (opts.onRejectHunk !== undefined) {
         const rejectCb = opts.onRejectHunk;
         const idx = hunk.index;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "diff-hunk-btn reject";
-        btn.textContent = "\u2717 Reject";
+        const btn = el(
+          "button",
+          { type: "button", className: "diff-hunk-btn reject" },
+          "\u2717 Reject",
+        ) as HTMLButtonElement;
         btn.addEventListener("click", () => {
           rejectCb(idx);
           btn.disabled = true;
@@ -156,10 +149,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
           .map((l) => `${l.kind === "del" ? "-" : "+"}${l.text}`)
           .join("\n");
         if (hunkText !== "") {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "diff-ask-btn";
-          btn.textContent = "Ask";
+          const btn = el("button", { type: "button", className: "diff-ask-btn" }, "Ask");
           btn.addEventListener("click", () => {
             askCb(hunkText);
           });
@@ -216,10 +206,8 @@ function appendRow(
 }
 
 function makeRowPair(line: DiffLine, lineNumbers: boolean): [HTMLDivElement, HTMLDivElement] {
-  const left = document.createElement("div");
-  const right = document.createElement("div");
-  left.className = "diff-row";
-  right.className = "diff-row";
+  const left = el("div", { className: "diff-row" }) as HTMLDivElement;
+  const right = el("div", { className: "diff-row" }) as HTMLDivElement;
 
   if (line.kind === "ctx") {
     populateRow(left, line.oldNo, line.text, "ctx", lineNumbers);
@@ -243,22 +231,21 @@ function populateRow(
 ): void {
   row.classList.add(`diff-row-${kind}`);
   if (lineNumbers) {
-    const gutter = document.createElement("span");
-    gutter.className = "diff-gutter";
-    gutter.textContent = lineNo > 0 ? String(lineNo) : "";
-    row.appendChild(gutter);
+    row.appendChild(el("span", { className: "diff-gutter" }, lineNo > 0 ? String(lineNo) : ""));
   }
-  const content = document.createElement("span");
-  content.className = "diff-content";
   // Marker glyph so colour-blind users still parse the row kind.
-  const marker = document.createElement("span");
-  marker.className = "diff-marker";
-  marker.textContent = kind === "add" ? "+" : kind === "del" ? "-" : kind === "ctx" ? " " : " ";
-  content.appendChild(marker);
-  const textSpan = document.createElement("span");
-  textSpan.textContent = text;
-  content.appendChild(textSpan);
-  row.appendChild(content);
+  row.appendChild(
+    el(
+      "span",
+      { className: "diff-content" },
+      el(
+        "span",
+        { className: "diff-marker" },
+        kind === "add" ? "+" : kind === "del" ? "-" : kind === "ctx" ? " " : " ",
+      ),
+      el("span", {}, text),
+    ),
+  );
 }
 
 function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
@@ -285,14 +272,13 @@ function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
  *  without the caller needing to participate; the pane becomes
  *  self-contained for the common case. */
 function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): HTMLLabelElement {
-  const wrap = document.createElement("label");
-  wrap.className = "diff-pane-ws-toggle";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  const span = document.createElement("span");
-  span.textContent = "Ignore whitespace";
-  wrap.appendChild(input);
-  wrap.appendChild(span);
+  const input = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const wrap = el(
+    "label",
+    { className: "diff-pane-ws-toggle" },
+    input,
+    el("span", {}, "Ignore whitespace"),
+  ) as HTMLLabelElement;
   input.addEventListener("change", () => {
     const ignore = input.checked;
     if (opts.source === undefined && opts.onToggleWhitespace !== undefined) {

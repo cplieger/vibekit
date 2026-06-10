@@ -14,13 +14,14 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
-import { bindPRState } from "../git-prs-state.js";
+import { bindPRPaint, setPRGroups } from "../git-prs-state.js";
+import type { GitRepoGroup } from "../git-types.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { mergePR, closePR } from "./git-prs.js";
 
 const mockFetch = vi.fn();
 
-function makeGroups() {
+function makeGroups(): GitRepoGroup[] {
   return [
     {
       forge_id: "gh1",
@@ -45,8 +46,8 @@ beforeEach(() => {
   mockFetch.mockReset();
   paint.mockReset();
   vi.stubGlobal("fetch", mockFetch);
-  const groups = makeGroups();
-  bindPRState({ groups, paint });
+  bindPRPaint(paint);
+  setPRGroups(makeGroups());
 });
 
 const prArgs = { forge_id: "gh1", owner: "org", name: "repo", pr_number: 5 };
@@ -60,7 +61,7 @@ describe("mergePR optimistic + rollback", () => {
 
   it("reinserts PR on failure", async () => {
     const groups = makeGroups();
-    bindPRState({ groups, paint });
+    setPRGroups(groups);
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     await mergePR.dispatch(prArgs);
     const prs = groups[0]!.prs;
@@ -69,7 +70,7 @@ describe("mergePR optimistic + rollback", () => {
 
   it("preserves PR ordering after rollback", async () => {
     const groups = makeGroups();
-    bindPRState({ groups, paint });
+    setPRGroups(groups);
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     await mergePR.dispatch(prArgs);
     const numbers = groups[0]!.prs.map((p) => p.number);
@@ -86,7 +87,7 @@ describe("closePR optimistic + rollback", () => {
 
   it("reinserts PR on failure", async () => {
     const groups = makeGroups();
-    bindPRState({ groups, paint });
+    setPRGroups(groups);
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     await closePR.dispatch(prArgs);
     const prs = groups[0]!.prs;
@@ -95,7 +96,7 @@ describe("closePR optimistic + rollback", () => {
 
   it("preserves PR ordering after rollback", async () => {
     const groups = makeGroups();
-    bindPRState({ groups, paint });
+    setPRGroups(groups);
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     await closePR.dispatch(prArgs);
     const numbers = groups[0]!.prs.map((p) => p.number);

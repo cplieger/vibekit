@@ -8,12 +8,17 @@
 // Banners are per-device (dismissal state in localStorage) and auto-
 // clear when the underlying condition resolves (e.g. agent_switched
 // clears agent_not_found + agent_config_error).
+//
+// State is a createCollection<BannerEntry>; the stack is rendered by a single
+// bindList over a computed active-chat view, so add / remove / chat-switch all
+// flow through ONE reactive render source (no direct DOM mutation that could
+// desync the reconcile view).
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { getActiveId } from "./store.js";
+import { activeSession } from "./store.js";
 import { load, save } from "./ui-state.js";
-import { reconcile } from "./reconcile.js";
+import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import type { BannerLevel } from "./types.js";
 
 interface BannerEntry {
@@ -25,7 +30,45 @@ interface BannerEntry {
   el: HTMLDivElement;
 }
 
-const banners = new Map<string, BannerEntry>();
+const banners = createCollection<BannerEntry>((e) => bannerKey(e.chatID, e.code));
+
+// Visible banners = those for the active chat. Tracks the collection structure
+// + activeSession (so a chat switch re-renders) and stays shallow-equal so a
+// no-op recompute doesn't reconcile.
+const visibleIds = computed<readonly string[]>(
+  () => {
+    const activeID = activeSession.value?.id ?? "";
+    return banners
+      .items()
+      .filter((e) => e.chatID === activeID)
+      .map((e) => bannerKey(e.chatID, e.code));
+  },
+  { equals: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]) },
+);
+
+let bound = false;
+
+/** Mount + bind the banner stack. The bindList renders reactively from the
+ *  collection + activeSession, so add / remove / chat-switch all re-render
+ *  automatically; this is idempotent (the `bound` flag guards against
+ *  double-binding) and is called both internally by `showBanner` and from the
+ *  chat-switch call site in chat.ts. */
+export function ensureBound(): void {
+  if (bound) {
+    return;
+  }
+  bound = true;
+  const container = $.bannerStack;
+  container.setAttribute("aria-label", "Notifications");
+  container.setAttribute("aria-live", "polite");
+  // Reuse the entry-owned element so banner identity (and any ongoing
+  // transitions / focus) persists across re-renders.
+  bindList(
+    container,
+    { ids: visibleIds, signalFor: (id) => banners.signalFor(id) },
+    { mount: (e) => e.el },
+  );
+}
 
 function bannerKey(chatID: string, code: string): string {
   return `${chatID}:${code}`;
@@ -65,7 +108,8 @@ export function showBanner(
   const key = bannerKey(chatID, code);
   const existing = banners.get(key);
   if (existing !== undefined) {
-    // Replace message in place.
+    // Replace message in place on the entry-owned element (a single text node;
+    // the row's identity is unchanged, so no structural reconcile is needed).
     const msg = existing.el.querySelector(".banner-msg");
     if (msg !== null) {
       msg.textContent = message;
@@ -73,38 +117,38 @@ export function showBanner(
     existing.message = message;
     return;
   }
-  const el = document.createElement("div");
-  el.className = `banner banner-${level}`;
-  el.setAttribute("role", level === "error" ? "alert" : "status");
-  const msg = document.createElement("span");
-  msg.className = "banner-msg";
-  msg.textContent = message;
-  el.appendChild(msg);
+  const msg = el("span", { className: "banner-msg" }, message);
+  const node = el(
+    "div",
+    {
+      className: `banner banner-${level}`,
+      role: level === "error" ? "alert" : "status",
+    },
+    msg,
+  ) as HTMLDivElement;
   if (dismissible) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "banner-dismiss";
-    btn.textContent = "\u00d7";
-    btn.ariaLabel = "Dismiss";
+    const btn = el(
+      "button",
+      { type: "button", className: "banner-dismiss", "aria-label": "Dismiss" },
+      "\u00d7",
+    );
     btn.addEventListener("click", () => {
       removeBanner(chatID, code);
       persistDismiss(chatID, code);
     });
-    el.appendChild(btn);
+    node.appendChild(btn);
   }
-  const entry: BannerEntry = { code, chatID, message, level, dismissible, el };
-  banners.set(key, entry);
-  renderStack();
+  const entry: BannerEntry = { code, chatID, message, level, dismissible, el: node };
+  ensureBound();
+  banners.upsert(entry);
+  pruneStaleDissmissals();
 }
 
 function removeBanner(chatID: string, code: string): void {
-  const key = bannerKey(chatID, code);
-  const entry = banners.get(key);
-  if (entry === undefined) {
+  if (!banners.has(bannerKey(chatID, code))) {
     return;
   }
-  entry.el.remove();
-  banners.delete(key);
+  banners.remove(bannerKey(chatID, code));
   clearDismiss(chatID, code);
 }
 
@@ -115,24 +159,15 @@ export function clearBannerCodes(chatID: string, codes: string[]): void {
   }
 }
 
-/** Drop every banner (and its dismissed-state persistence) for a
- *  chat that no longer exists. Called from the chat_deleted bus
- *  handler so orphan BannerEntry objects + localStorage entries
- *  don't accumulate over a long session.
- *
- *  We iterate the Map keys defensively (a delete inside the loop
- *  would invalidate a forward iterator on some engines) and also
- *  prune the dismissed_banners localStorage entries for that chat. */
+/** Drop every banner (and its dismissed-state persistence) for a chat that no
+ *  longer exists. Called from the chat_deleted bus handler so orphan entries +
+ *  localStorage entries don't accumulate over a long session. */
 export function clearBannersForChat(chatID: string): void {
   const prefix = `${chatID}:`;
-  // 1. Detach DOM + drop in-memory entries.
-  for (const key of [...banners.keys()]) {
+  // 1. Drop in-memory entries (bindList detaches their elements reactively).
+  for (const key of banners.ids.peek()) {
     if (key.startsWith(prefix)) {
-      const entry = banners.get(key);
-      if (entry !== undefined) {
-        entry.el.remove();
-      }
-      banners.delete(key);
+      banners.remove(key);
     }
   }
   // 2. Prune persisted dismissals so localStorage doesn't grow forever.
@@ -143,33 +178,10 @@ export function clearBannersForChat(chatID: string): void {
   }
 }
 
-/** Re-render: show only banners for the active chat. */
-export function renderStack(): void {
-  const container = $.bannerStack;
-  if (!container.hasAttribute("aria-label")) {
-    container.setAttribute("aria-label", "Notifications");
-    container.setAttribute("aria-live", "polite");
-  }
-  const activeID = getActiveId();
-  const visible: BannerEntry[] = [];
-  for (const entry of banners.values()) {
-    if (entry.chatID === activeID) {
-      visible.push(entry);
-    }
-  }
-  reconcile(container, visible, {
-    key: (e: BannerEntry) => bannerKey(e.chatID, e.code),
-    // Reuse the entry-owned element so banner identity (and any
-    // ongoing transitions / focus) persists across re-renders.
-    mount: (e: BannerEntry) => e.el,
-  });
-  pruneStaleDissmissals();
-}
-
 const PRUNE_THRESHOLD = 200;
 
-/** Prune dismissed_banners entries that exceed the threshold. Keeps
- *  only the most recent entries (tail of the array). */
+/** Prune dismissed_banners entries that exceed the threshold. Keeps only the
+ *  most recent entries (tail of the array). */
 function pruneStaleDissmissals(): void {
   const state = load();
   if (state.dismissed_banners.length <= PRUNE_THRESHOLD) {

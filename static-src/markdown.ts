@@ -23,6 +23,7 @@
 // large writes get yielded across tasks.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";
@@ -94,9 +95,12 @@ export interface MarkdownStream {
 /** Streaming markdown renderer for live assistant bubbles. Owns its
  *  own write buffer, 200ms flush schedule, and per-block decoration +
  *  animation hooks. Large writes split across tasks. */
-export function createMarkdownStream(el: HTMLElement): MarkdownStream {
+export function createMarkdownStream(host: HTMLElement): MarkdownStream {
   const p: Parser = parser(
-    domRenderer(el, { onBlockComplete: decorateAndAnimate, animateText: true }),
+    domRenderer(host, {
+      onBlockComplete: decorateAndAnimate,
+      animateText: true,
+    }),
   );
   let buffer = "";
   let pendingParse = ""; // text queued for chunked parsing
@@ -176,8 +180,8 @@ export function createMarkdownStream(el: HTMLElement): MarkdownStream {
  *  decoration but no entry animation. Synchronous — replay paths
  *  aren't time-critical (they happen on chat-switch, not in the
  *  streaming hot path). */
-export function renderMarkdownInto(el: HTMLElement, md: string): void {
-  const p = parser(domRenderer(el, { onBlockComplete: decorate }));
+export function renderMarkdownInto(host: HTMLElement, md: string): void {
+  const p = parser(domRenderer(host, { onBlockComplete: decorate }));
   parser_write(p, md);
   parser_end(p);
 }
@@ -186,7 +190,7 @@ export function renderMarkdownInto(el: HTMLElement, md: string): void {
  *  hover previews, and any other surface that wants the structural
  *  HTML without the decoration overlay. */
 export function renderMarkdown(md: string): string {
-  const tmp = document.createElement("div");
+  const tmp = el("div");
   const p = parser(domRenderer(tmp));
   parser_write(p, md);
   parser_end(p);

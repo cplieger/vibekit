@@ -3,24 +3,16 @@
 // signal-based cancellation. Extracted from forge-auth.ts.
 // ---------------------------------------------------------------------------
 
-// signal.aborted defensive guards: the @typescript-eslint/no-unnecessary-condition
-// rule sees AbortSignal.aborted as boolean (always defined) and flags the
-// re-checks inside async loops as redundant, but the value flips between
-// awaited microtasks — the re-check IS necessary to bail before mutating
-// shared state. Suppressed file-wide.
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-
-import { apiPost } from "./api-client.js";
-import type { DeviceFlowResponse, PollResult } from "./wire/types.gen.js";
+import { el } from "@cplieger/reactive";
+import { pollUntil } from "./actions/index.js";
+import { apiPostTyped } from "./api-client.js";
+import type { DeviceFlowResponse } from "./wire/types.gen.js";
+import { decodePollResult } from "./wire/decoders.gen.js";
 import { startDeviceFlow } from "./actions/forge.js";
 
 export interface OAuthFlowDeps {
   /** Set status text in the host element. */
   setStatus: (host: HTMLElement, text: string, kind?: "ok" | "err" | "") => void;
-  /** Escape HTML entities. */
-  escapeHTML: (s: string) => string;
-  /** Escape for attribute values. */
-  escapeAttr: (s: string) => string;
   /** Mark a forge ID for expansion on next paint. */
   expandOnNextPaint: (id: string) => void;
   /** Trigger a full panel re-render. */
@@ -54,7 +46,7 @@ export async function startGitHubDeviceFlow(host: HTMLElement, deps: OAuthFlowDe
     deps.setStatus(host, "Failed to start device flow.", "err");
     return;
   }
-  renderDevicePrompt(host, start, deps);
+  renderDevicePrompt(host, start);
   void pollGitHubDevice(
     host,
     start.device_code,
@@ -64,29 +56,51 @@ export async function startGitHubDeviceFlow(host: HTMLElement, deps: OAuthFlowDe
   );
 }
 
-function renderDevicePrompt(
-  host: HTMLElement,
-  start: DeviceFlowResponse,
-  deps: OAuthFlowDeps,
-): void {
-  host.innerHTML = "";
-  const container = document.createElement("div");
-  container.className = "forge-device-prompt";
+/** Render the device-flow prompt (verification link, user code, copy
+ *  button, status line) into `host`. Built with the `el()` factory so
+ *  no untrusted value is ever parsed as HTML. Exported for unit tests
+ *  of the inert-text / non-http(s)-link invariants. */
+export function renderDevicePrompt(host: HTMLElement, start: DeviceFlowResponse): void {
+  // Only render an anchor for http(s) URIs; any other scheme (or a
+  // markup-injection payload) is shown as inert text. el() turns
+  // strings into text nodes, never markup, so there is no XSS surface.
   const safeLink = /^https?:\/\//i.test(start.verification_uri);
-  container.innerHTML =
-    `<p>Open ${safeLink ? `<a class="forge-device-link" target="_blank" rel="noreferrer" href="${deps.escapeAttr(start.verification_uri)}">` : ""}${deps.escapeHTML(start.verification_uri)}${safeLink ? "</a>" : ""} and enter:</p>` +
-    `<div class="forge-device-code-row"><code class="forge-device-code">${deps.escapeHTML(start.user_code)}</code><button type="button" class="btn-small forge-copy-btn" data-copy="${deps.escapeAttr(start.user_code)}">Copy</button></div>` +
-    `<div class="forge-device-status">Waiting for approval…</div>`;
-  host.appendChild(container);
-  const copyBtn = container.querySelector<HTMLButtonElement>(".forge-copy-btn");
-  copyBtn?.addEventListener("click", () => {
-    const code = copyBtn.dataset["copy"] ?? "";
-    void navigator.clipboard.writeText(code);
+  const uriNode: HTMLElement | string = safeLink
+    ? el(
+        "a",
+        {
+          className: "forge-device-link",
+          target: "_blank",
+          rel: "noreferrer",
+          href: start.verification_uri,
+        },
+        start.verification_uri,
+      )
+    : start.verification_uri;
+  const intro = el("p", null, "Open ", uriNode, " and enter:");
+
+  const copyBtn = el(
+    "button",
+    { type: "button", className: "btn-small forge-copy-btn" },
+    "Copy",
+  ) as HTMLButtonElement;
+  copyBtn.addEventListener("click", () => {
+    void navigator.clipboard.writeText(start.user_code);
     copyBtn.textContent = "Copied";
     setTimeout(() => {
       copyBtn.textContent = "Copy";
     }, 2000);
   });
+  const codeRow = el(
+    "div",
+    { className: "forge-device-code-row" },
+    el("code", { className: "forge-device-code" }, start.user_code),
+    copyBtn,
+  );
+
+  const status = el("div", { className: "forge-device-status" }, "Waiting for approval…");
+
+  host.replaceChildren(el("div", { className: "forge-device-prompt" }, intro, codeRow, status));
 }
 
 async function pollGitHubDevice(
@@ -97,82 +111,60 @@ async function pollGitHubDevice(
   deps: OAuthFlowDeps,
 ): Promise<void> {
   const statusEl = host.querySelector<HTMLDivElement>(".forge-device-status");
-  let attempts = 0;
-  let backoff = intervalSec;
+  // pollUntil has no host concept; the caller aborts `signal` on host
+  // teardown, but every status write is also guarded by host.isConnected
+  // so a detached node is never touched (mirrors the old loop, which
+  // bailed without writing once host.isConnected went false).
+  const setStatus = (text: string): void => {
+    if (host.isConnected && statusEl !== null) {
+      statusEl.textContent = text;
+    }
+  };
 
-  while (!signal.aborted && host.isConnected) {
-    await sleepWithSignal(backoff * 1000, signal);
-    if (signal.aborted || !host.isConnected) {
-      return;
-    }
-    attempts++;
-    if (attempts > POLL_MAX_ATTEMPTS) {
-      if (statusEl !== null) {
-        statusEl.textContent = "Timed out waiting for approval. Try again.";
-      }
-      return;
-    }
-    const res = await apiPost<PollResult>(
-      "/api/forges/oauth/github/poll",
-      {
-        device_code: deviceCode,
+  const outcome = await pollUntil(
+    (s) =>
+      apiPostTyped(
+        "/api/forges/oauth/github/poll",
+        { device_code: deviceCode },
+        decodePollResult,
+        s,
+      ),
+    {
+      intervalMs: intervalSec * 1000,
+      // complete / expired / error are terminal; "pending" keeps polling.
+      until: (r) => r.status !== "pending",
+      maxAttempts: POLL_MAX_ATTEMPTS,
+      backoff: { factor: 2, maxMs: POLL_BACKOFF_CAP_SEC * 1000 },
+      // A null poll result is a network error: surface it, then back off.
+      // The non-null "pending" case needs no status change (the
+      // "Waiting for approval…" text stays), so onPoll is omitted.
+      onTransientError: () => {
+        setStatus("Network error. Retrying…");
       },
       signal,
-    );
-    if (signal.aborted) {
-      return;
-    }
-    if (res === null) {
-      if (statusEl !== null) {
-        statusEl.textContent = "Network error. Retrying…";
-      }
-      backoff = Math.min(backoff * 2, POLL_BACKOFF_CAP_SEC);
-      continue;
-    }
-    // Reset backoff on successful network response.
-    backoff = intervalSec;
-    if (res.status === "complete") {
-      if (statusEl !== null) {
-        statusEl.textContent = "Connected.";
-      }
-      deps.expandOnNextPaint("github:github.com");
-      deps.renderForgesPanel();
-      return;
-    }
-    if (res.status === "expired") {
-      if (statusEl !== null) {
-        statusEl.textContent = "Device code expired. Try again.";
-      }
-      return;
-    }
-    if (res.status === "error") {
-      if (statusEl !== null) {
-        statusEl.textContent = `Error: ${res.error ?? "unknown"}`;
-      }
-      return;
-    }
-  }
-}
+    },
+  );
 
-/** Sleep for `ms` milliseconds, aborting early if the signal fires. */
-function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) {
-    return Promise.resolve();
+  if (outcome.status === "aborted") {
+    return; // caller cancelled / host torn down
   }
-  return new Promise<void>((resolve) => {
-    const ac = new AbortController();
-    const t = setTimeout(() => {
-      ac.abort();
-      resolve();
-    }, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        ac.abort();
-        resolve();
-      },
-      { signal: ac.signal },
-    );
-  });
+  if (outcome.status === "timeout") {
+    setStatus("Timed out waiting for approval. Try again.");
+    return;
+  }
+  // outcome.status === "done": inspect the terminal poll result.
+  const res = outcome.result;
+  if (res.status === "complete") {
+    setStatus("Connected.");
+    deps.expandOnNextPaint("github:github.com");
+    deps.renderForgesPanel();
+    return;
+  }
+  if (res.status === "expired") {
+    setStatus("Device code expired. Try again.");
+    return;
+  }
+  if (res.status === "error") {
+    setStatus(`Error: ${res.error ?? "unknown"}`);
+  }
 }

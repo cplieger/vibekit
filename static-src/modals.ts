@@ -2,12 +2,14 @@
 // Shared modal utilities (close, overlay dismiss, confirm dialog, login)
 // ---------------------------------------------------------------------------
 
-import { $, el } from "./dom.js";
-import { apiGet, apiPost } from "./api-client.js";
+import { el } from "@cplieger/reactive";
+import { pollUntil } from "./actions/index.js";
+import { $, byId } from "./dom.js";
+import { apiGetTyped, apiPost } from "./api-client.js";
+import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { isSafeUrl } from "./utils-url.js";
 import { registerCleanup } from "./actions/index.js";
 import { trapFocus } from "./focus-trap.js";
-import type { WhoamiResponse } from "./wire/types.gen.js";
 
 /** Active focus-trap release functions keyed by modal element. */
 const modalTraps = new WeakMap<HTMLElement, () => void>();
@@ -102,7 +104,7 @@ export class RollingOutput {
   }
 
   private openModal(): void {
-    const modal = el<HTMLDivElement>(this.modalId);
+    const modal = byId<HTMLDivElement>(this.modalId);
     const body = modal.querySelector(".subagent-modal-body, pre")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
     if (body !== null) {
@@ -152,13 +154,13 @@ export function hideLoginModal(): void {
 }
 
 export function initLoginModal(onLoggedIn: () => void): void {
-  const freeBtn = el<HTMLButtonElement>("modal-login-free");
-  const ssoBtn = el<HTMLButtonElement>("modal-login-sso");
-  const ssoForm = el<HTMLDivElement>("modal-sso-form");
-  const ssoSubmit = el<HTMLButtonElement>("modal-sso-submit");
-  const providerInput = el<HTMLInputElement>("modal-provider");
-  const regionInput = el<HTMLInputElement>("modal-region");
-  const status = el<HTMLDivElement>("modal-status");
+  const freeBtn = byId<HTMLButtonElement>("modal-login-free");
+  const ssoBtn = byId<HTMLButtonElement>("modal-login-sso");
+  const ssoForm = byId<HTMLDivElement>("modal-sso-form");
+  const ssoSubmit = byId<HTMLButtonElement>("modal-sso-submit");
+  const providerInput = byId<HTMLInputElement>("modal-provider");
+  const regionInput = byId<HTMLInputElement>("modal-region");
+  const status = byId<HTMLDivElement>("modal-status");
 
   freeBtn.addEventListener("click", () => {
     ssoForm.classList.add("hidden");
@@ -239,11 +241,8 @@ function doLogin(
         if (d.error === "already_logged_in") {
           status.textContent = "";
           status.append("You\u2019re already signed in. ");
-          const reloadBtn = document.createElement("button");
-          reloadBtn.type = "button";
-          reloadBtn.className = "btn-small";
+          const reloadBtn = el("button", { type: "button", className: "btn-small" }, "Reload");
           reloadBtn.style.marginInlineStart = "var(--sp-2)";
-          reloadBtn.textContent = "Reload";
           reloadBtn.addEventListener("click", () => {
             location.reload();
           });
@@ -259,26 +258,24 @@ function doLogin(
         status.textContent = "";
         if (codeText) {
           status.append(codeText);
-          status.append(document.createElement("br"));
+          status.append(el("br"));
         }
         if (isSafeUrl(d.url)) {
-          const link = document.createElement("a");
-          link.href = d.url;
-          link.target = "_blank";
-          link.rel = "noopener";
+          const link = el(
+            "a",
+            { href: d.url, target: "_blank", rel: "noopener" },
+            "Open login page",
+          );
           link.style.color = "var(--c-accent)";
-          link.textContent = "Open login page";
           status.append(link);
         } else {
-          const span = document.createElement("span");
+          const span = el("span", null, d.url);
           span.style.color = "var(--c-text-tertiary)";
-          span.textContent = d.url;
           status.append(span);
         }
-        status.append(document.createElement("br"));
-        const hint = document.createElement("span");
+        status.append(el("br"));
+        const hint = el("span", null, "Complete login in the browser, then come back.");
         hint.style.color = "var(--c-text-tertiary)";
-        hint.textContent = "Complete login in the browser, then come back.";
         status.append(hint);
         const MAX_POLL_ATTEMPTS = 200; // ~10 minutes at 3s intervals
         const ctrl = new AbortController();
@@ -290,25 +287,26 @@ function doLogin(
           AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000),
         ]);
         void (async () => {
-          while (!signal.aborted) {
-            await new Promise<void>((r) => setTimeout(r, 3000));
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-            if (signal.aborted) {
-              break;
-            }
-            const wd = await apiGet<WhoamiResponse>("/api/whoami", signal);
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-            if (signal.aborted) {
-              break;
-            }
-            if (wd?.email !== undefined && wd.email !== "") {
-              loginPollAbort = null;
-              loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-              loginPollUnregister = null;
-              onLoggedIn();
-              return;
-            }
+          // Wait-then-poll /api/whoami every 3s until it reports a
+          // signed-in email (terminal), the user dismisses (ctrl), or the
+          // 10-minute deadline fires — both rolled into `signal`. A null
+          // whoami (not-yet-logged-in / transient) keeps polling at 3s.
+          const outcome = await pollUntil(
+            (s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s),
+            {
+              intervalMs: 3000,
+              until: (wd) => wd.email !== undefined && wd.email !== "",
+              signal,
+            },
+          );
+          if (outcome.status === "done") {
+            loginPollAbort = null;
+            loginPollUnregister?.(); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+            loginPollUnregister = null;
+            onLoggedIn();
+            return;
           }
+          // Otherwise aborted: distinguish a user dismiss from the deadline.
           if (ctrl.signal.aborted) {
             return;
           } // user dismissed

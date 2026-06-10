@@ -14,7 +14,8 @@ import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH, iconEl } from "./icons.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { reconcile } from "./lib/reactive/reconcile.js";
+import { el } from "@cplieger/reactive";
+import { reconcile } from "./reconcile.js";
 
 interface ArchivedHeader {
   id: string;
@@ -87,10 +88,13 @@ class HistoryController {
     if (d === null) {
       this.flushRowUnbinds();
       container.replaceChildren();
-      const err = document.createElement("div");
-      err.className = "list-empty";
-      err.textContent = "Failed to load history. Check your connection and try again.";
-      container.appendChild(err);
+      container.appendChild(
+        el(
+          "div",
+          { className: "list-empty" },
+          "Failed to load history. Check your connection and try again.",
+        ),
+      );
       return;
     }
     const chats = d.chats ?? []; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
@@ -105,10 +109,7 @@ class HistoryController {
     if (chats.length === 0) {
       this.flushRowUnbinds();
       container.replaceChildren();
-      const empty = document.createElement("div");
-      empty.className = "list-empty";
-      empty.textContent = "No archived chats.";
-      container.appendChild(empty);
+      container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
       return;
     }
 
@@ -157,10 +158,7 @@ class HistoryController {
             this.rowUnbinds.delete(chatId);
           }
           if (container.querySelector("[data-chat-id]") === null) {
-            const empty = document.createElement("div");
-            empty.className = "list-empty";
-            empty.textContent = "No archived chats.";
-            container.appendChild(empty);
+            container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
           }
           void deleteArchivedChat.dispatch(chatId);
         }
@@ -175,37 +173,39 @@ class HistoryController {
     summary?: string;
     updated_at: number;
   }): HTMLElement {
-    const row = document.createElement("div");
-    row.className = "list-row history-table-row";
-    row.setAttribute("data-chat-entry", "");
-    row.setAttribute("data-chat-id", chat.id);
+    const row = el("div", {
+      className: "list-row history-table-row",
+      "data-chat-entry": "",
+      "data-chat-id": chat.id,
+    });
 
-    const nameWrap = document.createElement("div");
-    nameWrap.className = "list-row-title";
-    nameWrap.setAttribute("data-action", "restore");
-    const name = document.createElement("span");
-    name.className = "list-row-name";
-    name.textContent = chat.name;
-    nameWrap.appendChild(name);
-    if (chat.summary !== undefined && chat.summary !== "") {
-      const sum = document.createElement("span");
-      sum.className = "list-row-summary";
-      sum.textContent = chat.summary;
-      nameWrap.appendChild(sum);
-    }
+    const nameWrap = el(
+      "div",
+      { className: "list-row-title", "data-action": "restore" },
+      el("span", { className: "list-row-name" }, chat.name),
+      chat.summary !== undefined && chat.summary !== ""
+        ? el("span", { className: "list-row-summary" }, chat.summary)
+        : null,
+    );
     nameWrap.style.cursor = "pointer";
 
-    const date = document.createElement("span");
-    date.className = "list-row-meta";
-    date.textContent = new Date(chat.updated_at).toLocaleString();
+    const date = el(
+      "span",
+      { className: "list-row-meta" },
+      new Date(chat.updated_at).toLocaleString(),
+    );
 
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn-small btn-danger icon-only";
-    delBtn.setAttribute("data-tooltip", "Delete permanently");
-    delBtn.setAttribute("aria-label", `Delete ${chat.name}`);
-    delBtn.setAttribute("data-action", "delete");
-    delBtn.replaceChildren(iconEl(ICON_TRASH));
+    const delBtn = el(
+      "button",
+      {
+        type: "button",
+        className: "btn-small btn-danger icon-only",
+        "data-tooltip": "Delete permanently",
+        "aria-label": `Delete ${chat.name}`,
+        "data-action": "delete",
+      },
+      iconEl(ICON_TRASH),
+    ) as HTMLButtonElement;
 
     row.append(nameWrap, date, delBtn);
     this.rowUnbinds.set(chat.id, bindLoadingState("chat.delete_archived", delBtn));
@@ -256,10 +256,8 @@ class HistoryController {
 
     if (chats.length === 0) {
       list.replaceChildren();
-      const hint = document.createElement("p");
-      hint.className = "text-muted text-sm";
+      const hint = el("p", { className: "text-muted text-sm" }, "No archived chats.");
       hint.style.padding = "var(--sp-2) var(--sp-3)";
-      hint.textContent = "No archived chats.";
       list.appendChild(hint);
       return;
     }
@@ -294,28 +292,23 @@ class HistoryController {
 }
 
 function buildArchivedSidebarRow(chat: ArchivedHeader): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "history-row";
-  row.setAttribute("data-chat-id", chat.id);
-  const nameWrap = document.createElement("div");
-  nameWrap.className = "history-name-wrap";
-  const name = document.createElement("span");
-  name.className = "history-name";
-  name.textContent = chat.name;
-  nameWrap.appendChild(name);
-  if (chat.summary !== undefined && chat.summary !== "") {
-    const sum = document.createElement("span");
-    sum.className = "history-summary";
-    sum.textContent = chat.summary;
-    nameWrap.appendChild(sum);
-  }
-  const restore = document.createElement("button");
-  restore.type = "button";
-  restore.className = "history-restore";
-  restore.textContent = "Restore";
-  restore.setAttribute("data-action", "restore");
-  row.append(nameWrap, restore);
-  return row;
+  return el(
+    "div",
+    { className: "history-row", "data-chat-id": chat.id },
+    el(
+      "div",
+      { className: "history-name-wrap" },
+      el("span", { className: "history-name" }, chat.name),
+      chat.summary !== undefined && chat.summary !== ""
+        ? el("span", { className: "history-summary" }, chat.summary)
+        : null,
+    ),
+    el(
+      "button",
+      { type: "button", className: "history-restore", "data-action": "restore" },
+      "Restore",
+    ),
+  );
 }
 
 const historyCtrl = new HistoryController();

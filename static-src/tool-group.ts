@@ -9,6 +9,7 @@
 // controlled) so the UI doesn't fight against the reader.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { setUserScrolledUp } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
@@ -29,15 +30,15 @@ class ToolGroupTracker {
     this.currentGroup = null;
   }
 
-  getOrCreateGroup(mount: (el: HTMLElement) => void): HTMLDivElement {
+  getOrCreateGroup(mount: (node: HTMLElement) => void): HTMLDivElement {
     if (!this.lastWasToolCall || this.currentGroup === null) {
-      const group = document.createElement("div");
-      group.className = "tool-group";
-      const header = document.createElement("div");
-      header.className = "tool-group-header";
-      header.setAttribute("role", "button");
-      header.setAttribute("tabindex", "0");
-      header.setAttribute("aria-expanded", "true");
+      const group = el("div", { className: "tool-group" }) as HTMLDivElement;
+      const header = el("div", {
+        className: "tool-group-header",
+        role: "button",
+        tabindex: "0",
+        "aria-expanded": "true",
+      }) as HTMLDivElement;
       header.innerHTML = '<span class="tool-group-count"></span>';
       header.addEventListener("click", () => {
         onHeaderClick(group, header);
@@ -57,13 +58,13 @@ class ToolGroupTracker {
     return this.currentGroup;
   }
 
-  trackInProgress(el: HTMLElement): void {
-    this.inProgressElements.add(el);
+  trackInProgress(node: HTMLElement): void {
+    this.inProgressElements.add(node);
     this.startTicker();
   }
 
-  untrackInProgress(el: HTMLElement): void {
-    this.inProgressElements.delete(el);
+  untrackInProgress(node: HTMLElement): void {
+    this.inProgressElements.delete(node);
     if (this.inProgressElements.size === 0) {
       this.stopTicker();
     }
@@ -75,17 +76,17 @@ class ToolGroupTracker {
     }
     this.tickTimer = setInterval(() => {
       const now = Date.now();
-      for (const el of this.inProgressElements) {
-        const start = el.dataset["startMs"];
+      for (const node of this.inProgressElements) {
+        const start = node.dataset["startMs"];
         if (start === undefined) {
-          this.inProgressElements.delete(el);
+          this.inProgressElements.delete(node);
           continue;
         }
         const ms = now - parseInt(start, 10);
         if (ms < 2000) {
           continue;
         }
-        const dur = el.querySelector(".tool-duration");
+        const dur = node.querySelector(".tool-duration");
         if (dur !== null) {
           dur.textContent = formatDuration(ms);
         }
@@ -116,15 +117,15 @@ export function breakToolGroup(): void {
   tracker.breakGroup();
 }
 
-export function getOrCreateToolGroup(mount: (el: HTMLElement) => void): HTMLDivElement {
+export function getOrCreateToolGroup(mount: (node: HTMLElement) => void): HTMLDivElement {
   return tracker.getOrCreateGroup(mount);
 }
 
-export function trackInProgress(el: HTMLElement): void {
-  tracker.trackInProgress(el);
+export function trackInProgress(node: HTMLElement): void {
+  tracker.trackInProgress(node);
 }
-export function untrackInProgress(el: HTMLElement): void {
-  tracker.untrackInProgress(el);
+export function untrackInProgress(node: HTMLElement): void {
+  tracker.untrackInProgress(node);
 }
 
 // --- Header update ---
@@ -314,8 +315,8 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
   }
 }
 
-export function maybeCollapseGroup(el: HTMLElement): void {
-  const group = el.closest<HTMLElement>(".tool-group");
+export function maybeCollapseGroup(node: HTMLElement): void {
+  const group = node.closest<HTMLElement>(".tool-group");
   if (group === null) {
     return;
   }

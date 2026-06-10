@@ -9,9 +9,9 @@
 // reads via fs_read.
 // ---------------------------------------------------------------------------
 
+import { el, createCollection, bindList, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { badgeForExt } from "./file-extensions.js";
-import { reconcile } from "./reconcile.js";
 
 /** One attached file. */
 export interface AttachedFile {
@@ -19,7 +19,23 @@ export interface AttachedFile {
   name: string; // filename.ext (display)
 }
 
-const attached: AttachedFile[] = [];
+// Ordered keyed collection of attachments (keyed by workspace path). The
+// pill row is rendered via bindList (per-pill reactivity) and a hidden-toggle
+// effect — no manual renderPills() calls.
+const attached = createCollection<AttachedFile>((a) => a.path);
+
+let bound = false;
+function ensureBound(): void {
+  if (bound) {
+    return;
+  }
+  bound = true;
+  const row = $.attachmentRow;
+  bindList(row, attached, { mount: (att) => buildAttachmentPill(att) });
+  effect(() => {
+    row.classList.toggle("hidden", attached.ids.value.length === 0);
+  });
+}
 
 // Extension → icon derived from the file-extensions registry.
 function iconFor(name: string): string {
@@ -34,76 +50,50 @@ function iconFor(name: string): string {
 /** Add a file to the attachment list. */
 export function addAttachment(path: string): void {
   // Deduplicate by path.
-  if (attached.some((a) => a.path === path)) {
+  if (attached.has(path)) {
     return;
   }
   const parts = path.split("/");
   const name = parts[parts.length - 1] ?? path;
-  attached.push({ path, name });
-  renderPills();
+  ensureBound();
+  attached.upsert({ path, name });
 }
 
 /** Remove an attachment by path. */
 function removeAttachment(path: string): void {
-  const idx = attached.findIndex((a) => a.path === path);
-  if (idx === -1) {
-    return;
-  }
-  attached.splice(idx, 1);
-  renderPills();
+  attached.remove(path);
 }
 
 /** Take all attachments (clears the list). Returns the array for the
  *  prompt payload. */
 export function takeAttachments(): AttachedFile[] {
-  const out = [...attached];
-  attached.length = 0;
-  renderPills();
+  const out = attached.items();
+  attached.clear();
   return out;
 }
 
 /** Clear all attachments without returning them. */
 export function clearAttachments(): void {
-  attached.length = 0;
-  renderPills();
-}
-
-function renderPills(): void {
-  const row = $.attachmentRow;
-  if (attached.length === 0) {
-    row.replaceChildren();
-    row.classList.add("hidden");
-    return;
-  }
-  row.classList.remove("hidden");
-  reconcile(row, attached, {
-    key: (a: AttachedFile) => a.path,
-    mount: buildAttachmentPill,
-  });
+  attached.clear();
 }
 
 function buildAttachmentPill(att: AttachedFile): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "attachment-pill";
-  li.title = att.path;
+  const icon = el("span", { className: "attachment-icon" }, iconFor(att.name));
 
-  const icon = document.createElement("span");
-  icon.className = "attachment-icon";
-  icon.textContent = iconFor(att.name);
+  const label = el("span", { className: "attachment-name" }, att.name);
 
-  const label = document.createElement("span");
-  label.className = "attachment-name";
-  label.textContent = att.name;
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "attachment-close";
-  close.textContent = "×";
-  close.setAttribute("aria-label", `Remove ${att.name}`);
+  const close = el(
+    "button",
+    {
+      type: "button",
+      className: "attachment-close",
+      "aria-label": `Remove ${att.name}`,
+    },
+    "×",
+  );
   close.addEventListener("click", () => {
     removeAttachment(att.path);
   });
 
-  li.append(icon, label, close);
-  return li;
+  return el("li", { className: "attachment-pill", title: att.path }, icon, label, close);
 }

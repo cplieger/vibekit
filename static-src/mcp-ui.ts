@@ -1,8 +1,17 @@
 // ---------------------------------------------------------------------------
 // MCP UI: section scaffold, server list rendering, row sub-components, init.
+//
+// Rows are rendered by a single bindList over the `servers` collection
+// (keyed by id), so add/remove/reorder touch the DOM minimally and a row
+// element persists across changes (no full-rebuild that loses toggle focus or
+// re-binds bindLoadingState every render). Each row owns one effect that reads
+// its server signal + the per-server runtime-status + prewarm signals and
+// surgically patches the dot / meta / oauth pill / prewarm badge / toggle.
 // ---------------------------------------------------------------------------
 
-import { $, el } from "./dom.js";
+import { el, bindList, effect } from "@cplieger/reactive";
+
+import { $, byId } from "./dom.js";
 import { onSSE } from "./bus.js";
 import { closeModal, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -11,9 +20,13 @@ import {
   type Server,
   type RuntimeStatus,
   type RuntimeState,
-  configured,
-  status,
+  type PrewarmState,
+  servers,
   mcpState,
+  statusSignalFor,
+  prewarmSignalFor,
+  setPrewarm,
+  configuredServers,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
@@ -23,12 +36,19 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
-let rowBindingCleanups: (() => void)[] = [];
+let emptyMsg: HTMLParagraphElement | null = null;
+let listBound = false;
+
+// Per-row cleanups (the row effect + its bindLoadingState bindings), disposed
+// when the row leaves the list.
+const rowCleanups = new Map<string, (() => void)[]>();
 registerCleanup(() => {
-  for (const fn of rowBindingCleanups) {
-    fn();
+  for (const cs of rowCleanups.values()) {
+    for (const fn of cs) {
+      fn();
+    }
   }
-  rowBindingCleanups = [];
+  rowCleanups.clear();
 });
 
 function buildSectionScaffold(): void {
@@ -37,109 +57,152 @@ function buildSectionScaffold(): void {
     return;
   }
 
-  const title = document.createElement("h3");
-  title.className = "section-title";
-  title.textContent = "MCP integrations";
+  const title = el("h3", { className: "section-title" }, "MCP integrations");
 
-  const hint = document.createElement("p");
-  hint.className = "section-hint";
-  hint.textContent =
-    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.";
+  const hint = el(
+    "p",
+    { className: "section-hint" },
+    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.",
+  );
 
-  const actionRow = document.createElement("div");
-  actionRow.className = "section-actions-row";
-
-  const actions = document.createElement("div");
-  actions.className = "action-bar action-bar-inline";
-
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "action-pill";
-  addBtn.setAttribute("data-tooltip", "Connect integration");
-  addBtn.setAttribute("aria-label", "Connect integration");
+  const addBtn = el("button", {
+    type: "button",
+    className: "action-pill",
+    "data-tooltip": "Connect integration",
+    "aria-label": "Connect integration",
+  });
   addBtn.innerHTML = ICON_PLUS_16;
   addBtn.addEventListener("click", () => {
     openAddModal();
   });
-  actions.appendChild(addBtn);
 
-  actionRow.appendChild(actions);
+  const actions = el("div", { className: "action-bar action-bar-inline" }, addBtn);
+  const actionRow = el("div", { className: "section-actions-row" }, actions);
 
-  sectionBody = document.createElement("div");
-  sectionBody.className = "mcp-server-list";
+  emptyMsg = el(
+    "p",
+    { className: "mcp-empty" },
+    "No integrations connected yet. Click + to search the official MCP registry or paste a config.",
+  ) as HTMLParagraphElement;
+  sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
 
-  section.replaceChildren(title, hint, actionRow, sectionBody);
+  section.replaceChildren(title, hint, actionRow, emptyMsg, sectionBody);
+  bindServerList();
 }
 
-// --- Section render ---
+// --- Reactive server list ---
 
-function renderSection(): void {
-  if (sectionBody === null) {
+function bindServerList(): void {
+  if (listBound || sectionBody === null) {
     return;
   }
-  renderRows();
+  listBound = true;
+  const empty = emptyMsg;
+  bindList(sectionBody, servers, {
+    mount: (s, id) => mountRow(s, id),
+    onRemove: (_el, id) => {
+      cleanupRow(id);
+    },
+  });
+  // Empty-state toggle (sibling of the bindList container, not reconciled).
+  effect(() => {
+    if (empty !== null) {
+      empty.hidden = servers.ids.value.length > 0;
+    }
+  });
 }
 
-function renderRows(): void {
-  if (sectionBody === null) {
-    return;
-  }
-  for (const fn of rowBindingCleanups) {
-    fn();
-  }
-  rowBindingCleanups = [];
-  sectionBody.replaceChildren();
-
-  if (configured.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "mcp-empty";
-    empty.textContent =
-      "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
-    sectionBody.appendChild(empty);
-    return;
-  }
-
-  for (const s of configured) {
-    sectionBody.appendChild(renderRow(s));
+function cleanupRow(id: string): void {
+  const cs = rowCleanups.get(id);
+  if (cs !== undefined) {
+    for (const fn of cs) {
+      fn();
+    }
+    rowCleanups.delete(id);
   }
 }
 
-function renderRow(s: Server): HTMLDivElement {
-  const st = status.get(s.name);
-  const row = document.createElement("div");
-  row.className = "mcp-row";
-  row.dataset["serverId"] = s.id;
+function mountRow(s: Server, id: string): HTMLElement {
+  const cleanups: (() => void)[] = [];
 
-  const toggle = renderEnableToggle(s);
-  const body = document.createElement("div");
-  body.className = "mcp-row-body";
+  // Toggle (built once; the effect only syncs .checked so user focus survives).
+  const input = el("input", { type: "checkbox" }) as HTMLInputElement;
+  input.addEventListener("change", () => {
+    input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
+    void toggleServer.dispatch(
+      { id, enabled: input.checked },
+      {
+        silent: true,
+        onSuccess: () => {
+          mcpState.refetchServers();
+        },
+      },
+    );
+  });
+  cleanups.push(bindLoadingState("mcp.toggle_server", input));
+  const toggle = el(
+    "label",
+    { className: "toggle mcp-toggle" },
+    input,
+    el("span", { className: "toggle-slider" }),
+  );
 
-  const nameLine = document.createElement("div");
-  nameLine.className = "mcp-row-name-line";
-  const name = document.createElement("span");
-  name.className = "mcp-row-name";
-  name.textContent = s.name;
-  const dot = renderStatusDot(s, st);
-  const transportBadge = document.createElement("span");
-  transportBadge.className = `mcp-transport mcp-transport-${s.transport}`;
-  transportBadge.textContent = s.transport;
-  nameLine.append(dot, name, transportBadge);
+  const dot = el("span", { className: "mcp-dot", role: "img" });
+  const nameEl = el("span", { className: "mcp-row-name" });
+  const transportBadge = el("span", { className: "mcp-transport" });
+  const nameLine = el("div", { className: "mcp-row-name-line" }, dot, nameEl, transportBadge);
+  const meta = el("div", { className: "mcp-row-meta" });
+  const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
 
-  const meta = document.createElement("div");
-  meta.className = "mcp-row-meta";
-  meta.textContent = renderMeta(s, st);
+  const editBtn = renderEditBtn(s, cleanups);
+  const deleteBtn = renderDeleteBtn(s, cleanups);
+  const actions = el("div", { className: "mcp-row-actions" }, editBtn, deleteBtn);
 
-  body.append(nameLine, meta);
+  const row = el(
+    "div",
+    { className: "mcp-row", "data-server-id": id },
+    toggle,
+    body,
+    actions,
+  ) as HTMLDivElement;
 
-  if (st?.state === "needs_auth") {
-    body.appendChild(renderOAuthPill(st.oauth_url));
-  }
+  // Per-row content tier: react to this server's config + runtime status +
+  // prewarm, patching surgically (no replaceChildren -> focus/identity kept).
+  let oauthPill: HTMLAnchorElement | null = null;
+  let oauthUrl: string | null = null;
+  let prewarmBadge: HTMLSpanElement | null = null;
+  cleanups.push(
+    effect(() => {
+      const cur = servers.signalFor(id)?.value ?? s;
+      const st = statusSignalFor(cur.name).value;
+      const pw = prewarmSignalFor(id).value;
 
-  const actions = document.createElement("div");
-  actions.className = "mcp-row-actions";
-  actions.append(renderEditBtn(s), renderDeleteBtn(s));
+      input.checked = cur.enabled;
+      input.setAttribute("aria-label", `${cur.enabled ? "Disable" : "Enable"} ${cur.name}`);
+      nameEl.textContent = cur.name;
+      transportBadge.className = `mcp-transport mcp-transport-${cur.transport}`;
+      transportBadge.textContent = cur.transport;
+      applyStatusDot(dot, cur, st);
+      meta.textContent = renderMeta(cur, st);
 
-  row.append(toggle, body, actions);
+      if (cur.enabled && st.state === "needs_auth") {
+        if (oauthPill === null || oauthUrl !== st.oauth_url) {
+          oauthPill?.remove();
+          oauthPill = renderOAuthPill(st.oauth_url);
+          oauthUrl = st.oauth_url;
+          body.appendChild(oauthPill);
+        }
+      } else if (oauthPill !== null) {
+        oauthPill.remove();
+        oauthPill = null;
+        oauthUrl = null;
+      }
+
+      prewarmBadge = applyPrewarm(prewarmBadge, nameEl, pw);
+    }),
+  );
+
+  rowCleanups.set(id, cleanups);
   return row;
 }
 
@@ -160,83 +223,72 @@ function isFailedWithError(
   return st.state === FAILED && st.error !== "";
 }
 
-function renderStatusDot(s: Server, st: RuntimeStatus | undefined): HTMLSpanElement {
-  const dot = document.createElement("span");
+function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): void {
   dot.className = "mcp-dot";
-  dot.setAttribute("role", "img");
   if (!s.enabled) {
     dot.classList.add("disabled");
     dot.title = "Disabled";
     dot.setAttribute("aria-label", `${s.name}: disabled`);
-  } else if (st === undefined) {
-    dot.classList.add("idle");
-    dot.title = "Not yet connected — start a chat to initialise";
-    dot.setAttribute("aria-label", `${s.name}: idle`);
-  } else {
-    const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-    dot.classList.add(meta.css);
-    if (isFailedWithError(st)) {
-      dot.title = `Failed to initialise: ${st.error}`;
-      dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
-    } else {
-      dot.title = meta.title;
-      dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
-    }
+    return;
   }
-  return dot;
+  const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  dot.classList.add(meta.css);
+  if (isFailedWithError(st)) {
+    dot.title = `Failed to initialise: ${st.error}`;
+    dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
+  } else {
+    dot.title = meta.title;
+    dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
+  }
 }
 
-function renderMeta(s: Server, st: RuntimeStatus | undefined): string {
+function renderMeta(s: Server, st: RuntimeStatus): string {
   if (!s.enabled) {
     return "Disabled";
   }
   const origin = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
-  if (st !== undefined && isFailedWithError(st)) {
+  if (isFailedWithError(st)) {
     return `${origin} — ${st.error}`;
   }
   return origin;
 }
 
-function renderEnableToggle(s: Server): HTMLLabelElement {
-  const label = document.createElement("label");
-  label.className = "toggle mcp-toggle";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.checked = s.enabled;
-  input.setAttribute("aria-label", `${s.enabled ? "Disable" : "Enable"} ${s.name}`);
-  input.addEventListener("change", () => {
-    // input.checked is already the NEW value (browser flipped it).
-    input.setAttribute("aria-label", `${input.checked ? "Disable" : "Enable"} ${s.name}`);
-    // Pass the previous state explicitly so rollback restores correctly.
-    void toggleServer.dispatch(
-      { id: s.id, enabled: input.checked },
-      {
-        silent: true,
-        onSuccess: () => {
-          mcpState.refetchServers();
-        },
-      },
-    );
-  });
-  const slider = document.createElement("span");
-  slider.className = "toggle-slider";
-  label.append(input, slider);
-  rowBindingCleanups.push(bindLoadingState("mcp.toggle_server", input));
-  return label;
+/** Add/update/remove the prewarm badge after the name. Returns the badge (or
+ *  null when cleared) so the caller tracks it across effect runs. */
+function applyPrewarm(
+  badge: HTMLSpanElement | null,
+  nameEl: HTMLElement,
+  pw: PrewarmState,
+): HTMLSpanElement | null {
+  if (pw === "none") {
+    badge?.remove();
+    return null;
+  }
+  let b = badge;
+  if (b === null) {
+    b = el("span", { className: "prewarm-badge" });
+    nameEl.after(b);
+  }
+  b.textContent = pw === "installing" ? "Installing…" : "Install failed";
+  b.classList.toggle("prewarm-failed", pw !== "installing");
+  return b;
 }
 
 function renderOAuthPill(url: string): HTMLAnchorElement {
-  const link = document.createElement("a");
-  link.className = "mcp-oauth-pill";
   const safe = isSafeURL(url);
-  link.href = safe ? url : "#";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = safe ? "Finish sign-in →" : "Invalid OAuth URL";
-  link.title = safe
-    ? "Open the server's authorisation page in a new tab."
-    : "The server sent an unsafe URL (not http or https).";
-  return link;
+  return el(
+    "a",
+    {
+      className: "mcp-oauth-pill",
+      href: safe ? url : "#",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      title: safe
+        ? "Open the server's authorisation page in a new tab."
+        : "The server sent an unsafe URL (not http or https).",
+    },
+    safe ? "Finish sign-in →" : "Invalid OAuth URL",
+  ) as HTMLAnchorElement;
 }
 
 function isSafeURL(url: string): boolean {
@@ -248,28 +300,30 @@ function isSafeURL(url: string): boolean {
   }
 }
 
-function renderEditBtn(s: Server): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "icon-btn";
-  btn.setAttribute("data-tooltip", "Edit");
-  btn.setAttribute("aria-label", `Edit ${s.name}`);
+function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn",
+    "data-tooltip": "Edit",
+    "aria-label": `Edit ${s.name}`,
+  }) as HTMLButtonElement;
   btn.innerHTML = ICON_EDIT_14;
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
   });
-  rowBindingCleanups.push(bindLoadingState("mcp.open_edit", btn));
+  cleanups.push(bindLoadingState("mcp.open_edit", btn));
   return btn;
 }
 
-function renderDeleteBtn(s: Server): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "icon-btn danger";
-  btn.setAttribute("data-tooltip", "Remove");
-  btn.setAttribute("aria-label", `Remove ${s.name}`);
+function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn danger",
+    "data-tooltip": "Remove",
+    "aria-label": `Remove ${s.name}`,
+  }) as HTMLButtonElement;
   btn.innerHTML = ICON_TRASH_14;
-  rowBindingCleanups.push(bindLoadingState("mcp.delete_server", btn));
+  cleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(
@@ -316,18 +370,16 @@ async function openEditModal(id: string): Promise<void> {
 
 export function initMCP(): void {
   buildSectionScaffold();
-  mcpState.setRenderCallback(renderSection);
 
-  const close = el<HTMLButtonElement>("mcp-modal-close");
+  const close = byId<HTMLButtonElement>("mcp-modal-close");
   close.addEventListener("click", () => {
     cleanupModal();
     closeModal($.mcpModal);
   });
 
   // Hook into Escape and overlay-dismiss paths: closeModal toggles the
-  // 'hidden' class on the modal element. Watch for that transition and
-  // call cleanupModal regardless of which code path closed the modal.
-  // (cleanupModal is idempotent so the close-button path is harmless.)
+  // 'hidden' class on the modal element. Watch for that transition and call
+  // cleanupModal regardless of which path closed the modal (idempotent).
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
       if (m.attributeName === "class" && $.mcpModal.classList.contains("hidden")) {
@@ -337,32 +389,22 @@ export function initMCP(): void {
   });
   observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
 
+  // Runtime status / config changes flow through the per-server signals; the
+  // row effects re-render reactively (no explicit re-render call needed).
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
   });
   onSSE("mcp_connected", (_chat, p) => {
     mcpState.setStatus(p.server, { name: p.server, state: "connected" });
-    renderSection();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    mcpState.setStatus(p.server, {
-      name: p.server,
-      state: "needs_auth",
-      oauth_url: p.url,
-    });
-    renderSection();
+    mcpState.setStatus(p.server, { name: p.server, state: "needs_auth", oauth_url: p.url });
   });
   onSSE("mcp_failed", (_chat, p) => {
-    mcpState.setStatus(p.server, {
-      name: p.server,
-      state: "failed",
-      error: p.error,
-    });
-    renderSection();
+    mcpState.setStatus(p.server, { name: p.server, state: "failed", error: p.error });
   });
   onSSE("mcp_disconnected", (_chat, p) => {
     mcpState.deleteStatus(p.server);
-    renderSection();
   });
   onSSE("mcp_prewarm", (_chat, p) => {
     updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
@@ -374,40 +416,14 @@ export function initMCP(): void {
 
 // --- Prewarm progress indicator ---
 
-/** Show/hide a prewarm status badge on the server row matching the package name. */
+/** Map an npx prewarm event (keyed by package) to its server's prewarm signal. */
 function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
-  // Find the server row whose configured command's npx package matches exactly.
-  const rows = document.querySelectorAll<HTMLElement>(".mcp-row");
-  for (const row of rows) {
-    const serverId = row.dataset["serverId"] ?? "";
-    const server = configured.find((s) => s.id === serverId);
-    if (server === undefined) {
-      continue;
-    }
+  for (const server of configuredServers()) {
     const serverPkg = extractNpxPackage(server);
     if (serverPkg !== pkg && server.name !== pkg) {
       continue;
     }
-
-    let badge = row.querySelector(".prewarm-badge");
-    if (state === "done") {
-      if (badge !== null) {
-        badge.remove();
-      }
-      return;
-    }
-    if (badge === null) {
-      badge = document.createElement("span");
-      badge.className = "prewarm-badge";
-      const nameEl = row.querySelector(".mcp-row-name");
-      if (nameEl !== null) {
-        nameEl.after(badge);
-      } else {
-        row.prepend(badge);
-      }
-    }
-    badge.textContent = state === "installing" ? "Installing…" : "Install failed";
-    badge.classList.toggle("prewarm-failed", state !== "installing");
+    setPrewarm(server.id, state);
     return;
   }
 }

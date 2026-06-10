@@ -323,7 +323,9 @@
   color: var(--c-yellow);
 }
 
-[id="trust-list-empty-hint"] {
+[id="trust-list-empty-hint"],
+[id="command-rules-empty-hint"],
+[id="agent-ignore-empty-hint"] {
   color: var(--c-yellow);
 }
 
@@ -432,7 +434,7 @@
   }
 }
 
-/* Transport badge: stdio / http / sse */
+/* Transport badge: stdio / http */
 .mcp-transport {
   padding: 0.0625rem 0.375rem;
   border-radius: 999rem;

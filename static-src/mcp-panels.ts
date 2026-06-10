@@ -3,7 +3,8 @@
 // submit helpers, and key/value pair editors.
 // ---------------------------------------------------------------------------
 
-import { $, el } from "./dom.js";
+import { $, byId } from "./dom.js";
+import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
 import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
@@ -64,10 +65,10 @@ interface InitArgs {
 }
 
 export function initModal(args: InitArgs): void {
-  const title = el<HTMLSpanElement>("mcp-modal-title");
+  const title = byId<HTMLSpanElement>("mcp-modal-title");
   title.textContent = session.editing.id === "" ? "Connect integration" : "Edit integration";
 
-  const tabs = el<HTMLDivElement>("mcp-modal-tabs");
+  const tabs = byId<HTMLDivElement>("mcp-modal-tabs");
   tabs.classList.toggle("hidden", session.editing.id !== "");
   for (const btn of tabs.querySelectorAll<HTMLButtonElement>(".mcp-modal-tab")) {
     btn.classList.toggle("active", btn.dataset["mcpMode"] === args.mode);
@@ -174,19 +175,23 @@ setSwitchMode((kind, slug, identifier, fields) => {
     setMode("npm", null);
     fillNpmForm(slug, identifier, fields);
   } else {
+    // Any non-npm registry hit (http, streamable-http, sse, ...) lands
+    // on the remote panel. Transport is always "http" — kiro-cli does
+    // the HTTP+SSE fallback at connection time per the 2025-03-26 MCP
+    // spec, so no user-visible transport pick is needed.
     setMode("remote", null);
-    fillRemoteForm(slug, kind === "sse" ? "sse" : "http", identifier, fields);
+    fillRemoteForm(slug, identifier, fields);
   }
 });
 
 // --- Panel: npm (stdio via npx) ---
 
 function initNpmPanel(existing: Server | null): void {
-  const name = el<HTMLInputElement>("mcp-npm-name");
-  const pkg = el<HTMLInputElement>("mcp-npm-pkg");
-  const prewarm = el<HTMLInputElement>("mcp-npm-prewarm");
-  const envList = el<HTMLDivElement>("mcp-npm-env");
-  const errEl = el<HTMLParagraphElement>("mcp-npm-error");
+  const name = byId<HTMLInputElement>("mcp-npm-name");
+  const pkg = byId<HTMLInputElement>("mcp-npm-pkg");
+  const prewarm = byId<HTMLInputElement>("mcp-npm-prewarm");
+  const envList = byId<HTMLDivElement>("mcp-npm-env");
+  const errEl = byId<HTMLParagraphElement>("mcp-npm-error");
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
@@ -206,11 +211,11 @@ function initNpmPanel(existing: Server | null): void {
     renderKeyPairList(envList, [], "env");
   }
 
-  el<HTMLButtonElement>("mcp-npm-add-env").onclick = (): void => {
+  byId<HTMLButtonElement>("mcp-npm-add-env").onclick = (): void => {
     appendKeyPair(envList, { name: "", value: "" }, "env");
   };
 
-  el<HTMLButtonElement>("mcp-npm-save").onclick = (): void => {
+  byId<HTMLButtonElement>("mcp-npm-save").onclick = (): void => {
     const args = ["-y", pkg.value.trim()].filter((a) => a !== "");
     const transport: Transport = PANEL_MODES.npm.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     void submitServer(
@@ -224,7 +229,7 @@ function initNpmPanel(existing: Server | null): void {
         enabled: existing?.enabled ?? true,
       },
       errEl,
-      el<HTMLButtonElement>("mcp-npm-save"),
+      byId<HTMLButtonElement>("mcp-npm-save"),
     );
   };
 }
@@ -250,32 +255,35 @@ async function gateNpmPanelOnNode(): Promise<void> {
     return; // Node already present, nothing to do.
   }
 
-  const banner = document.createElement("div");
-  banner.className = "mcp-node-banner inline-install-banner";
-  const msg = document.createElement("p");
-  msg.className = "section-hint";
-  msg.textContent =
-    "npx-based MCP servers need the Node.js runtime (~100 MB). It isn't installed yet.";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small btn-primary";
-  btn.textContent = "Install Node.js runtime";
-  const out = document.createElement("div");
-  out.className = "rolling-output hidden";
-  out.setAttribute("role", "log");
-  out.setAttribute("aria-live", "polite");
-  out.setAttribute("aria-label", "Node install progress");
+  const banner = el("div", { className: "mcp-node-banner inline-install-banner" });
+  const msg = el(
+    "p",
+    { className: "section-hint" },
+    "npx-based MCP servers need the Node.js runtime (~100 MB). It isn't installed yet.",
+  );
+  const btn = el(
+    "button",
+    { type: "button", className: "btn-small btn-primary" },
+    "Install Node.js runtime",
+  ) as HTMLButtonElement;
+  const out = el("div", {
+    className: "rolling-output hidden",
+    role: "log",
+    "aria-live": "polite",
+    "aria-label": "Node install progress",
+  }) as HTMLDivElement;
 
+  // Disable the button while the enable runs (auto re-enabled on settle);
+  // replaces the manual btn.disabled toggles.
+  bindLoadingState("tools.enable", btn);
   btn.addEventListener("click", () => {
     void (async () => {
-      btn.disabled = true;
       const roll = new RollingOutput(out, "git-output-modal");
       out.classList.remove("hidden");
       roll.append("Installing Node.js runtime…");
       const d = await enableTool.dispatch({ section: "runtimes", name: "node" });
       if (d === null || d.error !== undefined) {
         roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
-        btn.disabled = false;
         return;
       }
       roll.append(d.output ?? "");
@@ -283,8 +291,6 @@ async function gateNpmPanelOnNode(): Promise<void> {
       const after = await getToolsStatus.dispatch();
       if (after !== null && after["npx"] === true) {
         banner.remove();
-      } else {
-        btn.disabled = false;
       }
     })();
   });
@@ -303,10 +309,10 @@ function fillNpmForm(
     secret?: boolean | undefined;
   }[],
 ): void {
-  el<HTMLInputElement>("mcp-npm-name").value = name;
-  el<HTMLInputElement>("mcp-npm-pkg").value = pkg;
-  el<HTMLInputElement>("mcp-npm-prewarm").checked = true;
-  const list = el<HTMLDivElement>("mcp-npm-env");
+  byId<HTMLInputElement>("mcp-npm-name").value = name;
+  byId<HTMLInputElement>("mcp-npm-pkg").value = pkg;
+  byId<HTMLInputElement>("mcp-npm-prewarm").checked = true;
+  const list = byId<HTMLDivElement>("mcp-npm-env");
   renderKeyPairList(
     list,
     fields.map((f) => ({ name: f.name, value: "" })),
@@ -325,38 +331,37 @@ export function extractNpxPackage(s: Server): string {
   return "";
 }
 
-// --- Panel: remote (http/sse) ---
+// --- Panel: remote (http; kiro-cli falls back to HTTP+SSE per the
+// 2025-03-26 MCP spec at connection time, so no user-visible
+// transport pick is needed) ---
 
 function initRemotePanel(existing: Server | null): void {
-  const name = el<HTMLInputElement>("mcp-remote-name");
-  const typeSel = el<HTMLSelectElement>("mcp-remote-type");
-  const url = el<HTMLInputElement>("mcp-remote-url");
-  const oauthClientID = el<HTMLInputElement>("mcp-remote-oauth-client-id");
-  const headers = el<HTMLDivElement>("mcp-remote-headers");
-  const errEl = el<HTMLParagraphElement>("mcp-remote-error");
+  const name = byId<HTMLInputElement>("mcp-remote-name");
+  const url = byId<HTMLInputElement>("mcp-remote-url");
+  const oauthClientID = byId<HTMLInputElement>("mcp-remote-oauth-client-id");
+  const headers = byId<HTMLDivElement>("mcp-remote-headers");
+  const errEl = byId<HTMLParagraphElement>("mcp-remote-error");
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
   if (existing !== null) {
     name.value = existing.name;
-    typeSel.value = existing.transport === "sse" ? "sse" : "http";
     url.value = existing.url ?? "";
     oauthClientID.value = existing.oauth_client_id ?? "";
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
-    typeSel.value = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     url.value = "";
     oauthClientID.value = "";
     renderKeyPairList(headers, [], "header");
   }
 
-  el<HTMLButtonElement>("mcp-remote-add-header").onclick = (): void => {
+  byId<HTMLButtonElement>("mcp-remote-add-header").onclick = (): void => {
     appendKeyPair(headers, { name: "", value: "" }, "header");
   };
 
-  el<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
-    const transport: Transport = typeSel.value === "sse" ? "sse" : "http";
+  byId<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
+    const transport: Transport = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const body: Partial<Server> = {
       transport,
       name: name.value.trim(),
@@ -368,13 +373,12 @@ function initRemotePanel(existing: Server | null): void {
     if (oauthID !== "") {
       body.oauth_client_id = oauthID;
     }
-    void submitServer(body, errEl, el<HTMLButtonElement>("mcp-remote-save"));
+    void submitServer(body, errEl, byId<HTMLButtonElement>("mcp-remote-save"));
   };
 }
 
 function fillRemoteForm(
   name: string,
-  type: Transport,
   url: string,
   fields: {
     name: string;
@@ -383,10 +387,9 @@ function fillRemoteForm(
     secret?: boolean | undefined;
   }[],
 ): void {
-  el<HTMLInputElement>("mcp-remote-name").value = name;
-  el<HTMLSelectElement>("mcp-remote-type").value = type;
-  el<HTMLInputElement>("mcp-remote-url").value = url;
-  const list = el<HTMLDivElement>("mcp-remote-headers");
+  byId<HTMLInputElement>("mcp-remote-name").value = name;
+  byId<HTMLInputElement>("mcp-remote-url").value = url;
+  const list = byId<HTMLDivElement>("mcp-remote-headers");
   renderKeyPairList(
     list,
     fields.map((f) => ({ name: f.name, value: "" })),
@@ -397,8 +400,8 @@ function fillRemoteForm(
 // --- Panel: raw JSON ---
 
 function initRawPanel(existing: Server | null): void {
-  const textarea = el<HTMLTextAreaElement>("mcp-raw-input");
-  const err = el<HTMLParagraphElement>("mcp-raw-error");
+  const textarea = byId<HTMLTextAreaElement>("mcp-raw-input");
+  const err = byId<HTMLParagraphElement>("mcp-raw-error");
   err.classList.add("hidden");
   err.textContent = "";
 
@@ -408,7 +411,7 @@ function initRawPanel(existing: Server | null): void {
     textarea.value = RAW_TEMPLATE;
   }
 
-  el<HTMLButtonElement>("mcp-raw-save").onclick = (): void => {
+  byId<HTMLButtonElement>("mcp-raw-save").onclick = (): void => {
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(textarea.value) as Record<string, unknown>;
@@ -424,7 +427,7 @@ function initRawPanel(existing: Server | null): void {
       return;
     }
     body.enabled = existing?.enabled ?? true;
-    void submitServer(body, err, el<HTMLButtonElement>("mcp-raw-save"));
+    void submitServer(body, err, byId<HTMLButtonElement>("mcp-raw-save"));
   };
 }
 
@@ -479,10 +482,10 @@ export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server>
 // --- Disabled tools chip list ---
 
 function initDisabledToolsSection(server: Server | null): void {
-  const section = el<HTMLDivElement>("mcp-disabled-tools");
-  const chips = el<HTMLDivElement>("mcp-disabled-chips");
-  const input = el<HTMLInputElement>("mcp-disabled-input");
-  const addBtn = el<HTMLButtonElement>("mcp-disabled-add");
+  const section = byId<HTMLDivElement>("mcp-disabled-tools");
+  const chips = byId<HTMLDivElement>("mcp-disabled-chips");
+  const input = byId<HTMLInputElement>("mcp-disabled-input");
+  const addBtn = byId<HTMLButtonElement>("mcp-disabled-add");
 
   if (server === null) {
     section.classList.add("hidden");
@@ -531,18 +534,11 @@ function renderToolSuggestions(
     return;
   }
 
-  suggestionsEl = document.createElement("div");
-  suggestionsEl.className = "mcp-tool-suggestions";
-  const label = document.createElement("span");
-  label.className = "mcp-tool-suggestions-label";
-  label.textContent = "Available:";
-  suggestionsEl.appendChild(label);
+  const label = el("span", { className: "mcp-tool-suggestions-label" }, "Available:");
+  suggestionsEl = el("div", { className: "mcp-tool-suggestions" }, label);
 
   for (const name of available) {
-    const pill = document.createElement("button");
-    pill.type = "button";
-    pill.className = "action-pill mono";
-    pill.textContent = name;
+    const pill = el("button", { type: "button", className: "action-pill mono" }, name);
     pill.addEventListener("click", () => {
       if (!session.disabledToolsList.includes(name)) {
         session.disabledToolsList.push(name);

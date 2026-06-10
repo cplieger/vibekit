@@ -1,25 +1,27 @@
 // ---------------------------------------------------------------------------
 // Shell panel: server-side VT terminal connected via WebSocket.
 //
-// Replaces the previous xterm.js-based implementation. The server now
-// maintains a VT500 screen buffer (internal/vt) and sends only changed
-// rows as compact binary frames. The browser renders a simple DOM-based
-// cell grid (term-render.ts) — no xterm.js dependency, ~8 MB lighter.
+// The engine is the shared @cplieger/vterm library. The Go server
+// (internal/hub/shell.go → vterm/terminal) maintains a VT500 screen
+// buffer and sends only changed rows as compact binary frames; the
+// browser renders a DOM cell grid via vterm's render module. The
+// client → server socket lifecycle (reconnect backoff + resume/inputAck
+// reliability) lives in vterm's connection module — this file only wires
+// vibekit-specific UI (sticky-Ctrl, mobile key toolbar, tap-to-focus).
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
-import { ShellWS, encoder } from "./shell-ws.js";
-import { decodeWireBinary } from "./term-wire-binary.js";
-import { handleScreen, handleScroll, init as initRender, computeSize } from "./term-render.js";
-import { init as initScroll, scrollToBottom } from "./term-scroll.js";
-import { mapKeyboardEvent, bracketTextForPaste } from "./term-keyboard.js";
-import { setModes } from "./term-modes.js";
+import { render, keyboard, scroll, connection } from "@cplieger/vterm";
+import type { ServerMessage } from "@cplieger/vterm";
+
+const { mapKeyboardEvent, bracketTextForPaste } = keyboard;
 
 const RESIZE_DEBOUNCE_MS = 100;
+const SHELL_WS_PATH = "/api/shell/ws";
 
-const shellWS = new ShellWS();
+const encoder = new TextEncoder();
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let shellContainer: HTMLElement;
 let initialized = false;
@@ -36,15 +38,16 @@ export function initShellPanel(): void {
   shellContainer = $.shellTerminal;
 
   // Initialize the DOM renderer + scroll tracking.
-  initRender({ output: shellContainer, termWrap: shellContainer });
-  initScroll({ scrollEl: shellContainer });
+  render.init({ output: shellContainer, termWrap: shellContainer });
+  render.updateFontMetrics();
+  scroll.init({ scrollEl: shellContainer });
 
   // Keyboard input → WebSocket.
   shellContainer.setAttribute("tabindex", "0");
   shellContainer.addEventListener("keydown", onKeyDown);
   shellContainer.addEventListener("paste", onPaste);
 
-  // Delegated click handler for terminal links. term-render.ts wraps
+  // Delegated click handler for terminal links. vterm's renderer wraps
   // detected URLs in <a class="term-link" target="_blank"> but in some
   // contexts (contenteditable, focus-capturing containers) the browser
   // suppresses default link navigation. This handler ensures clicks on
@@ -57,7 +60,8 @@ export function initShellPanel(): void {
     }
   });
 
-  // Resize observer → send resize control message to server.
+  // Resize observer → re-measure font metrics and send a resize control
+  // message to the server.
   const ro = new ResizeObserver(() => {
     if (resizeTimer !== null) {
       clearTimeout(resizeTimer);
@@ -140,7 +144,7 @@ export function initShellPanel(): void {
 
   document.getElementById("kb-scroll-bottom")?.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    scrollToBottom();
+    scroll.scrollToBottom();
   });
 
   // Remove no-transition class after two rAF calls (port vibecli's pattern).
@@ -152,30 +156,52 @@ export function initShellPanel(): void {
 
   // Wire the "run in shell" callback for code blocks.
   setShellRunCallback((cmd: string) => {
-    shellWS.sendRaw(encoder.encode(`${cmd}\n`));
+    connection.sendBinary(encoder.encode(`${cmd}\n`));
   });
 
-  // Set up WebSocket callbacks.
-  shellWS.setCallbacks({
-    onMessage(data: ArrayBuffer | string) {
-      if (typeof data === "string") {
-        return; // We only expect binary frames.
+  // Set up the vterm connection (client → server socket lifecycle).
+  connection.init({
+    wsPath: SHELL_WS_PATH,
+    computeSize: render.computeSize,
+    onMessage(msg: ServerMessage) {
+      switch (msg.type) {
+        case "screen":
+          render.handleScreen(msg);
+          break;
+        case "scroll":
+          render.handleScroll(msg);
+          break;
+        case "modes":
+          // The connection module already applied the mode state via
+          // modes.setModes; reflect reverse-video (DECSCNM) into the DOM.
+          render.updateReverseVideo();
+          break;
+        // "title"/"resumeAck" are handled inside the connection module
+        // (or intentionally ignored — vibekit owns its own document.title).
       }
-      handleBinaryFrame(data);
     },
     onOpen() {
       sendResize();
     },
     onClose() {
-      // ShellWS handles reconnect internally.
+      // The connection module handles reconnect internally.
     },
-    onReconnecting() {
+    onConnecting() {
       // Could show a "reconnecting..." indicator.
     },
   });
 
-  // Connect on first show (the shell tab activation will call
-  // restoreShell which sets active + connects).
+  // Reconnect promptly when the tab returns from background (iOS sleep,
+  // bfcache restore). The server PTY persists across WS drops and
+  // replays screen + scrollback on resume.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && initialized) {
+      connection.reconnectNow();
+    }
+  });
+  window.addEventListener("pageshow", () => {
+    connection.reconnectNow();
+  });
 }
 
 /**
@@ -183,34 +209,8 @@ export function initShellPanel(): void {
  * Activates the WS connection and focuses the container.
  */
 export function restoreShell(): void {
-  shellWS.setActive(true);
-  void shellWS.connect();
+  connection.connect();
   shellContainer.focus();
-}
-
-function handleBinaryFrame(data: ArrayBuffer): void {
-  const msg = decodeWireBinary(data);
-  if (msg === null) {
-    return;
-  }
-
-  switch (msg.type) {
-    case "screen":
-      handleScreen(msg);
-      break;
-    case "scroll":
-      handleScroll(msg);
-      break;
-    case "modes": {
-      const m = msg;
-      setModes(m.bracketedPaste, m.applicationCursor);
-      break;
-    }
-    case "resumeAck":
-      // Resume protocol acknowledgement. Input replay not implemented
-      // in vibekit (vibecli does it via predict.ts); just acknowledge.
-      break;
-  }
 }
 
 // --- Sticky Ctrl modifier ---
@@ -269,7 +269,7 @@ function applyStickyCtrl(data: string): string {
 }
 
 function sendSeq(seq: string): void {
-  shellWS.sendRaw(encoder.encode(seq));
+  connection.sendBinary(encoder.encode(seq));
 }
 
 function onKeyDown(e: KeyboardEvent): void {
@@ -280,7 +280,7 @@ function onKeyDown(e: KeyboardEvent): void {
   const result = mapKeyboardEvent(e);
   if (result.kind === "send") {
     e.preventDefault();
-    shellWS.sendRaw(encoder.encode(result.bytes));
+    connection.sendBinary(encoder.encode(result.bytes));
   }
   // "scroll-up"/"scroll-down"/"ignore" — let the browser handle or ignore.
 }
@@ -290,16 +290,17 @@ function onPaste(e: ClipboardEvent): void {
   const text = e.clipboardData?.getData("text");
   if (text) {
     const prepared = bracketTextForPaste(text);
-    shellWS.sendRaw(encoder.encode(prepared));
+    connection.sendBinary(encoder.encode(prepared));
   }
 }
 
 function sendResize(): void {
-  const { cols, rows } = computeSize();
+  render.updateFontMetrics();
+  const { cols, rows } = render.computeSize();
   if (cols < 1 || rows < 1) {
     return;
   }
-  shellWS.sendControl({ type: "resize", cols, rows });
+  connection.sendResize();
 }
 
 // Suppress unused-import lint for getScrollEl (used by other modules

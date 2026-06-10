@@ -20,12 +20,13 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
+import { mergePR, closePR, createPR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
-import { bindPRState, updateGroupsRef } from "./git-prs-state.js";
+import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
-import { escAttr as escapeHTML } from "./strings.js";
+import { el } from "@cplieger/reactive";
+import { iconEl } from "./icon-el.js";
 
 // --- Types ---
 
@@ -43,15 +44,16 @@ interface PRListResponse {
 
 // --- State ---
 
-let lastGroups: RepoGroup[] = [];
 let filterText = "";
 let refreshGen = 0;
 let refreshController: AbortController | null = null;
 registerCleanup(() => refreshController?.abort());
 
-// --- Accessors for optimistic mutations (wired via git-prs-state) ---
-// removePRFromGroups and reinsertPRInGroups live in git-prs-state.ts
-// to break the circular dependency with actions/git-prs.ts.
+// --- Canonical PR groups + optimistic mutations live in git-prs-state.ts ---
+// (getPRGroups/setPRGroups own the array; removePRFromGroups and
+// reinsertPRInGroups mutate it) to break the circular dependency with
+// actions/git-prs.ts. The tab reads groups exclusively via getPRGroups().
+
 // --- Public API ---
 
 let prsInited = false;
@@ -61,7 +63,7 @@ export function initPRsTab(): void {
     return;
   }
   prsInited = true;
-  bindPRState({ groups: lastGroups, paint });
+  bindPRPaint(paint);
 
   const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
   filterEl?.addEventListener("input", () => {
@@ -182,8 +184,7 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
     return;
   }
 
-  lastGroups = groups;
-  updateGroupsRef(lastGroups);
+  setPRGroups(groups);
   paint();
 }
 
@@ -199,7 +200,9 @@ function paintInner(): void {
     return;
   }
 
-  if (lastGroups.length === 0) {
+  const groups = getPRGroups();
+
+  if (groups.length === 0) {
     root.innerHTML = renderEmptyState({
       icon: ICON_PR_EMPTY,
       title: "No connected forges",
@@ -209,7 +212,7 @@ function paintInner(): void {
   }
 
   const visible: RepoGroup[] = [];
-  for (const g of lastGroups) {
+  for (const g of groups) {
     const matchesFilter =
       filterText === "" ||
       g.full_name.toLowerCase().includes(filterText) ||
@@ -226,7 +229,7 @@ function paintInner(): void {
     // Wipe any prior keyed sections, then show centered empty state.
     reconcile(root, [] as RepoGroup[], {
       key: (g) => g.full_name,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
     for (const child of [...root.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
@@ -244,7 +247,7 @@ function paintInner(): void {
   if (visible.length === 0) {
     reconcile(root, [] as RepoGroup[], {
       key: (g) => g.full_name,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
     for (const child of [...root.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
@@ -301,10 +304,9 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
   if (g.error !== undefined && g.error !== "") {
     body.replaceChildren();
-    const err = document.createElement("div");
-    err.className = "git-repo-row-error";
-    err.textContent = `Failed to load PRs: ${g.error}`;
-    body.appendChild(err);
+    body.appendChild(
+      el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
+    );
     return;
   }
 
@@ -316,17 +318,19 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
   if (filtered.length === 0) {
     body.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "git-repo-row-empty";
-    empty.textContent = `No open pull requests on ${kindTitle(g.forge_kind)}.`;
-    body.appendChild(empty);
+    body.appendChild(
+      el(
+        "div",
+        { className: "git-repo-row-empty" },
+        `No open pull requests on ${kindTitle(g.forge_kind)}.`,
+      ),
+    );
     return;
   }
 
   let list = body.querySelector<HTMLElement>(":scope > .git-pr-list");
   if (list === null) {
-    list = document.createElement("ul");
-    list.className = "git-pr-list";
+    list = el("ul", { className: "git-pr-list" });
     body.replaceChildren(list);
   }
   reconcile(list, filtered, {
@@ -350,9 +354,7 @@ function renderEmptyState(opts: { icon: string; title: string; hint: string }): 
 function renderGroup(g: RepoGroup): HTMLElement {
   const expandedDefault = g.prs.length > 0 || filterText !== "";
 
-  const section = document.createElement("section");
-  section.className = "git-repo-section";
-  section.dataset["repo"] = g.full_name;
+  const section = el("section", { className: "git-repo-section", "data-repo": g.full_name });
   if (expandedDefault) {
     section.classList.add("expanded");
   }
@@ -361,31 +363,35 @@ function renderGroup(g: RepoGroup): HTMLElement {
   // name + count (left side, click-to-toggle), and a right-aligned
   // [+ New PR] button. The button's stopPropagation keeps the
   // toggle from firing when the user clicks New PR.
-  const header = document.createElement("div");
-  header.className = "git-repo-section-header git-repo-section-header-row";
+  const header = el("div", { className: "git-repo-section-header git-repo-section-header-row" });
 
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "git-repo-section-header-toggle";
-  toggle.setAttribute("aria-expanded", expandedDefault ? "true" : "false");
+  const toggle = el("button", {
+    type: "button",
+    className: "git-repo-section-header-toggle",
+    "aria-expanded": expandedDefault ? "true" : "false",
+  });
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
-  toggle.innerHTML = `
-    <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
-    <span class="git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}" aria-hidden="true">${FORGE_META[g.forge_kind].icon}</span>
-    <span class="git-repo-section-name">${escapeHTML(g.full_name)}</span>
-    <span class="git-repo-section-meta">${escapeHTML(countText)}</span>
-  `;
+  toggle.append(
+    el("span", { className: "git-repo-section-chevron", "aria-hidden": "true" }, "▸"),
+    el(
+      "span",
+      {
+        className: `git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}`,
+        "aria-hidden": "true",
+      },
+      iconEl(FORGE_META[g.forge_kind].icon),
+    ),
+    el("span", { className: "git-repo-section-name" }, g.full_name),
+    el("span", { className: "git-repo-section-meta" }, countText),
+  );
   toggle.addEventListener("click", () => {
     const open = section.classList.toggle("expanded");
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
   });
   header.appendChild(toggle);
 
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.className = "btn-small btn-primary";
-  newBtn.textContent = "+ New PR";
+  const newBtn = el("button", { type: "button", className: "btn-small btn-primary" }, "+ New PR");
   newBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     openNewPRDialog(g);
@@ -394,22 +400,22 @@ function renderGroup(g: RepoGroup): HTMLElement {
 
   section.appendChild(header);
 
-  const body = document.createElement("div");
-  body.className = "git-repo-section-body";
+  const body = el("div", { className: "git-repo-section-body" });
 
   if (g.error !== undefined && g.error !== "") {
-    const err = document.createElement("div");
-    err.className = "git-repo-row-error";
-    err.textContent = `Failed to load PRs: ${g.error}`;
-    body.appendChild(err);
+    body.appendChild(
+      el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
+    );
   } else if (g.prs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "git-repo-row-empty";
-    empty.textContent = `No open pull requests on ${kindTitle(g.forge_kind)}.`;
-    body.appendChild(empty);
+    body.appendChild(
+      el(
+        "div",
+        { className: "git-repo-row-empty" },
+        `No open pull requests on ${kindTitle(g.forge_kind)}.`,
+      ),
+    );
   } else {
-    const list = document.createElement("ul");
-    list.className = "git-pr-list";
+    const list = el("ul", { className: "git-pr-list" });
     const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
     const filtered =
       filterText === "" || groupMatchesFilter
@@ -426,11 +432,9 @@ function renderGroup(g: RepoGroup): HTMLElement {
 }
 
 function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
-  const li = document.createElement("li");
-  li.className = "git-pr-row";
+  const li = el("li", { className: "git-pr-row" });
 
-  const meta = document.createElement("div");
-  meta.className = "git-pr-row-meta";
+  const meta = el("div", { className: "git-pr-row-meta" });
 
   // Title + number share one click target — opens the PR on the
   // forge in a new tab. Keeps the row reading like a link without
@@ -438,18 +442,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const hasURL = pr.url !== undefined && pr.url !== "";
   const linkOrSpan = (cls: string, text: string): HTMLElement => {
     if (hasURL) {
-      const a = document.createElement("a");
-      a.className = cls;
-      a.href = pr.url!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-      a.target = "_blank";
-      a.rel = "noreferrer";
-      a.textContent = text;
+      const a = el("a", { className: cls, target: "_blank", rel: "noreferrer" }, text);
+      a.setAttribute("href", pr.url!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       return a;
     }
-    const s = document.createElement("span");
-    s.className = cls;
-    s.textContent = text;
-    return s;
+    return el("span", { className: cls }, text);
   };
 
   const num = linkOrSpan("git-pr-row-number", `#${pr.number}`);
@@ -460,16 +457,12 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   meta.appendChild(title);
 
   if (pr.draft === true) {
-    const draft = document.createElement("span");
-    draft.className = "git-pr-row-tag";
-    draft.textContent = "draft";
-    meta.appendChild(draft);
+    meta.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
   }
 
   li.appendChild(meta);
 
-  const sub = document.createElement("div");
-  sub.className = "git-pr-row-sub";
+  const sub = el("div", { className: "git-pr-row-sub" });
   const parts: string[] = [];
   if (pr.author !== undefined && pr.author !== "") {
     parts.push(`by @${pr.author}`);
@@ -484,13 +477,13 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   li.appendChild(sub);
 
   // Actions
-  const actions = document.createElement("div");
-  actions.className = "git-pr-row-actions";
+  const actions = el("div", { className: "git-pr-row-actions" });
 
-  const merge = document.createElement("button");
-  merge.type = "button";
-  merge.className = "btn-small btn-primary";
-  merge.textContent = "Merge";
+  const merge = el(
+    "button",
+    { type: "button", className: "btn-small btn-primary" },
+    "Merge",
+  ) as HTMLButtonElement;
   const mergeReason = computeMergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
   merge.setAttribute(
@@ -519,10 +512,11 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   });
   actions.appendChild(merge);
 
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "btn-small btn-danger";
-  close.textContent = "Close";
+  const close = el(
+    "button",
+    { type: "button", className: "btn-small btn-danger" },
+    "Close",
+  ) as HTMLButtonElement;
   close.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(
@@ -565,20 +559,28 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
  *  haven't fetched groups yet, refetch first; the source branch is
  *  pre-filled from the call site so the user doesn't have to retype. */
 export async function openNewPRForRepo(repoName: string, sourceBranch: string): Promise<void> {
-  if (lastGroups.length === 0) {
+  if (getPRGroups().length === 0) {
     try {
       await refreshPRs();
     } catch {
-      /* ignore — we'll check lastGroups below */
+      /* ignore — we'll check the groups below */
     }
   }
-  const group = lastGroups.find((g) => g.name === repoName);
+  const group = getPRGroups().find((g) => g.name === repoName);
   if (group === undefined) {
     // Repo not in any forge group (probably not on a connected
     // forge). Render a small inline error in the mount.
     const root = document.getElementById("git-prs-mount");
     if (root !== null) {
-      root.innerHTML = `<div class="git-multirepo-error">No connected forge knows about <strong>${escapeHTML(repoName)}</strong> — connect one in Sources.</div>`;
+      root.replaceChildren(
+        el(
+          "div",
+          { className: "git-multirepo-error" },
+          "No connected forge knows about ",
+          el("strong", null, repoName),
+          " — connect one in Sources.",
+        ),
+      );
     }
     return;
   }
@@ -628,6 +630,10 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const newSubmit = submitBtn.cloneNode(true) as HTMLButtonElement;
   submitBtn.replaceWith(newSubmit);
   newSubmit.disabled = false;
+  // Disable the submit button while a create is in flight (replaces the
+  // former manual disabled toggle + double-submit guard). Disposed on
+  // dialog close so the per-open clone doesn't leak an effect.
+  const unbindCreatePR = bindLoadingState("git.create_pr", newSubmit);
   const newGenerate = generateBtn.cloneNode(true) as HTMLButtonElement;
   generateBtn.replaceWith(newGenerate);
   // The static close buttons (data-pr-close) keep their close handler
@@ -644,6 +650,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   dlg.addEventListener(
     "close",
     () => {
+      unbindCreatePR();
       generateAbort.abort();
     },
     { once: true },
@@ -696,27 +703,25 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   // Stage 2: review + submit.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   newSubmit.addEventListener("click", async () => {
-    newSubmit.disabled = true;
     if (status !== null) {
       status.textContent = "Opening PR…";
       status.className = "forge-status";
     }
-    const res = await apiPost<{ number?: number; error?: string }>(
-      `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
-      {
-        source_branch: headInput.value.trim(),
-        target_branch: baseInput.value.trim(),
-        title: titleInput.value.trim(),
-        body: bodyInput.value,
-        draft: draftInput.checked,
-      },
-    );
+    const res = await createPR.dispatch({
+      forge_id: g.forge_id,
+      owner: g.owner,
+      name: g.name,
+      source_branch: headInput.value.trim(),
+      target_branch: baseInput.value.trim(),
+      title: titleInput.value.trim(),
+      body: bodyInput.value,
+      draft: draftInput.checked,
+    });
     if (res === null) {
       if (status !== null) {
         status.textContent = "Network error.";
         status.className = "forge-status err";
       }
-      newSubmit.disabled = false;
       return;
     }
     if (res.error !== undefined && res.error !== "") {
@@ -724,7 +729,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
         status.textContent = res.error;
         status.className = "forge-status err";
       }
-      newSubmit.disabled = false;
       return;
     }
     dlg.close();

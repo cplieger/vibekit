@@ -22,6 +22,7 @@ import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { bindLoadingState } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el, signal, effect } from "@cplieger/reactive";
 import { send } from "./transport.js";
 import { patchSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
@@ -90,7 +91,7 @@ class ModelSwitchController {
     if (session === undefined) {
       reconcile(list, [] as ModelInfo[], {
         key: () => "",
-        mount: () => document.createElement("div"),
+        mount: () => el("div"),
       });
       return;
     }
@@ -104,15 +105,15 @@ class ModelSwitchController {
     reconcile(list, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildModelOption(m),
-      update: (el, m) => {
-        this.syncModelOption(el, m, current);
+      update: (node, m) => {
+        this.syncModelOption(node, m, current);
       },
     });
     wireArrowNav(list, ".pill-model-item");
   }
 
   private effortRow: HTMLDivElement | null = null;
-  private currentEffort = "";
+  private readonly currentEffort = signal("");
   private effortLoaded = false;
 
   private ensureEffortRow(list: HTMLElement): void {
@@ -126,39 +127,39 @@ class ModelSwitchController {
             | { effort?: string; last_model?: string }
             | undefined;
           if (me?.effort && me.last_model === getActive()?.model) {
-            this.currentEffort = me.effort;
-            if (this.effortRow !== null) {
-              for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-                btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
-              }
-            }
+            this.currentEffort.value = me.effort;
           }
         });
     }
     if (this.effortRow === null) {
-      this.effortRow = document.createElement("div");
-      this.effortRow.className = "effort-row";
-      this.effortRow.setAttribute("aria-label", "Reasoning effort");
-      const label = document.createElement("span");
-      label.className = "effort-label";
-      label.textContent = "Effort";
-      this.effortRow.appendChild(label);
+      this.effortRow = el(
+        "div",
+        { className: "effort-row", "aria-label": "Reasoning effort" },
+        el("span", { className: "effort-label" }, "Effort"),
+      ) as HTMLDivElement;
       for (const { id: level, label } of EFFORT_LEVELS) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "effort-btn";
-        btn.dataset["level"] = level;
-        btn.textContent = label;
+        const btn = el(
+          "button",
+          { type: "button", className: "effort-btn", "data-level": level },
+          label,
+        );
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           this.setEffort(level);
         });
         this.effortRow.appendChild(btn);
       }
-    }
-    // Sync active state.
-    for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-      btn.classList.toggle("active", btn.dataset["level"] === this.currentEffort);
+      // One effect keeps every .effort-btn's active class in sync with the
+      // currentEffort signal (replaces the three hand-rolled sync loops). The
+      // row + controller are app-lifetime singletons, so this never needs
+      // disposal.
+      const row = this.effortRow;
+      effect(() => {
+        const lvl = this.currentEffort.value;
+        for (const btn of row.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
+          btn.classList.toggle("active", btn.dataset["level"] === lvl);
+        }
+      });
     }
     // Ensure it's the first child (reconcile manages keyed children
     // after it; the effort row is un-keyed so reconcile ignores it).
@@ -172,12 +173,7 @@ class ModelSwitchController {
     if (session === undefined) {
       return;
     }
-    this.currentEffort = level;
-    if (this.effortRow !== null) {
-      for (const btn of this.effortRow.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-        btn.classList.toggle("active", btn.dataset["level"] === level);
-      }
-    }
+    this.currentEffort.value = level;
     // Dispatch to server (applies to active session).
     void send({
       type: "set_effort",
@@ -195,17 +191,17 @@ class ModelSwitchController {
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {
-    const opt = document.createElement("div");
-    opt.dataset["model"] = m.model_id;
-    opt.setAttribute("role", "option");
     const label = humanName(m.model_name || m.model_id);
-    opt.setAttribute("aria-label", `${label}, ${String(m.rate_multiplier)}x credits`);
-    const name = document.createElement("span");
-    name.textContent = label;
-    const meta = document.createElement("span");
-    meta.className = "pill-model-meta";
-    meta.textContent = `${String(m.rate_multiplier)}x`;
-    opt.append(name, meta);
+    const opt = el(
+      "div",
+      {
+        "data-model": m.model_id,
+        role: "option",
+        "aria-label": `${label}, ${String(m.rate_multiplier)}x credits`,
+      },
+      el("span", null, label),
+      el("span", { className: "pill-model-meta" }, `${String(m.rate_multiplier)}x`),
+    );
     // Click handler reads the live "current" each time so a switch from
     // another path (hotkey, REST sync) doesn't leave a stale handler.
     opt.addEventListener("click", (e: MouseEvent) => {

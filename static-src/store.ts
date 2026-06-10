@@ -1,14 +1,21 @@
 // ---------------------------------------------------------------------------
-// Client-side session store — signals-based rewrite.
+// Client-side session store.
 //
-// State lives in module-level data structures with O(1) indexing.
-// A single `version` signal triggers reactive effects on mutation.
-// Streaming paths use batch() for MessageChannel-deferred rendering.
-// User-initiated mutations bump version synchronously for instant feedback.
+// Sessions live in a createCollection<Session> (ordered, keyed by id, with a
+// per-session signal + a structure/order signal). `activeId` is a signal;
+// `activeSession` is a computed that tracks the active session's per-entity
+// signal — subscribers read it to react only to active-session changes.
+//
+// MESSAGES are deliberately NOT a collection: each session owns a Message[]
+// with sub-message (block/tool/crew) streaming signals in store-signals.ts,
+// finer-grained than a per-message signal. The messages renderer subscribes
+// to `messagesVersion` (coarse "list shape changed") while the SignalMaps do
+// the per-block/per-tool/per-crew fine-grained work. Streaming paths coalesce
+// renders via scheduleMessages (queueMicrotask).
 // ---------------------------------------------------------------------------
 
 import type { Session, ChatHeader, Message, Usage, ToolCall, PendingChange } from "./types.js";
-import { signal, batch } from "./lib/reactive/index.js";
+import { signal, computed, createCollection, batch } from "@cplieger/reactive";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
@@ -19,25 +26,24 @@ import {
   crewSigs,
 } from "./store-signals.js";
 
-// --- Reactive version counters: effects subscribe to the relevant signal ---
-/** Session list changes: add, remove, reorder, name, model, mode changes. */
-export const sessionsVersion = signal(0);
-/** Active session metadata: thinking, queue, supervised, pending_changes, usage. */
-export const activeVersion = signal(0);
-/** Message list changes: append, upsert (non-streaming), tool calls. */
+// --- Messages reactivity: the renderer + task-list subscribe to this ---
+/** Message list changes: append, upsert (non-streaming), tool calls, new block. */
 export const messagesVersion = signal(0);
 
-export function emitSessions(): void {
-  sessionsVersion.value = sessionsVersion.peek() + 1;
-}
-function emitActive(): void {
-  activeVersion.value = activeVersion.peek() + 1;
-}
 export function emitMessages(): void {
   messagesVersion.value = messagesVersion.peek() + 1;
 }
+let messagesScheduled = false;
 function scheduleMessages(): void {
-  batch(() => {
+  // Coalesce multiple new-block/new-tool events arriving in one tick into a
+  // single render on the next microtask. (The package's batch() flushes
+  // synchronously, so the microtask deferral is owned here.)
+  if (messagesScheduled) {
+    return;
+  }
+  messagesScheduled = true;
+  queueMicrotask(() => {
+    messagesScheduled = false;
     messagesVersion.value = messagesVersion.peek() + 1;
   });
 }
@@ -60,48 +66,55 @@ export function parseContextSize(description: string): number | undefined {
   return undefined;
 }
 
-// --- State ---
-let _sessions: Session[] = [];
-let _activeId = "";
-let sessionIndex = new Map<string, Session>();
+// --- Session state: the collection is the single source of truth ---
+/** Ordered keyed collection of sessions. Structure ops fire `sessions.ids`;
+ *  per-session field writes (via collection.update) fire `signalFor(id)`.
+ *  Module-private: consumers go through the typed accessors/mutators below
+ *  and the `activeSession` computed. */
+const sessions = createCollection<Session>((s) => s.id);
+/** The active chat id. */
+const activeId = signal("");
+/** Active session, tracking the active id AND the active session's signal.
+ *  Active-session UI subscribers read `activeSession.value` to re-render only
+ *  when the active session (or which session is active) changes. */
+export const activeSession = computed<Session | undefined>(() => {
+  void sessions.ids.value; // also re-derive on structural changes (add/remove/setAll)
+  const id = activeId.value;
+  return id === "" ? undefined : sessions.signalFor(id)?.value;
+});
+
 const msgIndex = new Map<string, Map<string, number>>();
 const _queuedAttachments = new Map<string, unknown[][]>();
 
 // --- Accessors ---
 export function getSessions(): Session[] {
-  return _sessions;
+  return sessions.items();
 }
 export function getActiveId(): string {
-  return _activeId;
+  return activeId.peek();
 }
 export function getActive(): Session | undefined {
-  return sessionIndex.get(_activeId);
+  const id = activeId.peek();
+  return id === "" ? undefined : sessions.get(id);
 }
 export function get(id: string): Session | undefined {
-  return sessionIndex.get(id);
+  return sessions.get(id);
 }
 
 export function setSessions(v: Session[]): void {
-  _sessions = v;
-  sessionIndex = new Map(v.map((s) => [s.id, s]));
+  sessions.setAll(v);
   msgIndex.clear();
 }
 
 export function setActive(id: string): void {
-  if (_activeId === id) {
+  if (activeId.peek() === id) {
     return;
   }
-  _activeId = id;
-  emitSessions();
-  // Effects that read getActive() / depend on the active session
-  // (messages renderer, follow pill, auto-approve, supervised pill,
-  // chat banners) subscribe to activeVersion. Without bumping it
-  // here the messages effect doesn't re-run on chat switch and
-  // #messages keeps the previous chat's DOM children — visible as
-  // stale messages bleeding through under the new chat's model
-  // picker until something else (e.g. an arriving message) bumps
-  // messagesVersion.
-  emitActive();
+  // Setting activeId re-derives `activeSession` (and the messages renderer,
+  // which tracks activeSession, repaints the new chat's #messages). Without
+  // this the renderer would keep the previous chat's DOM until something else
+  // bumped messagesVersion.
+  activeId.value = id;
 }
 
 export function isThinking(id: string): boolean {
@@ -109,24 +122,15 @@ export function isThinking(id: string): boolean {
 }
 
 export function setThinking(id: string, v: boolean): void {
-  const s = get(id);
-  if (s === undefined) {
-    return;
-  }
-  s.thinking = v;
-  if (!v) {
-    s.working_label = "Thinking";
-  }
-  emitActive();
+  sessions.update(id, (s) => ({
+    ...s,
+    thinking: v,
+    working_label: v ? s.working_label : "Thinking",
+  }));
 }
 
 export function setWorkingLabel(id: string, label: string): void {
-  const s = get(id);
-  if (s === undefined) {
-    return;
-  }
-  s.working_label = label;
-  emitActive();
+  sessions.update(id, (s) => ({ ...s, working_label: label }));
 }
 
 export function queuedPrompt(id: string): string | undefined {
@@ -142,22 +146,13 @@ export function enqueuePrompt(id: string, text: string, attachments?: readonly u
   if (s === undefined) {
     return;
   }
-  s.prompt_queue ??= [];
-  s.prompt_queue.push(text);
-  if (attachments !== undefined && attachments.length > 0) {
-    if (!_queuedAttachments.has(id)) {
-      _queuedAttachments.set(id, []);
-    }
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    _queuedAttachments.get(id)!.push([...attachments]);
-  } else {
-    if (!_queuedAttachments.has(id)) {
-      _queuedAttachments.set(id, []);
-    }
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    _queuedAttachments.get(id)!.push([]);
+  const queue = [...(s.prompt_queue ?? []), text];
+  if (!_queuedAttachments.has(id)) {
+    _queuedAttachments.set(id, []);
   }
-  emitActive();
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  _queuedAttachments.get(id)!.push(attachments !== undefined ? [...attachments] : []);
+  sessions.update(id, (cur) => ({ ...cur, prompt_queue: queue }));
 }
 
 export function dequeuePrompt(id: string): string | undefined {
@@ -169,10 +164,17 @@ export function dequeuePrompt(id: string): string | undefined {
   if (q === undefined || q.length === 0) {
     return undefined;
   }
-  const next = q.shift();
-  if (q.length === 0) {
-    delete s.prompt_queue;
-  }
+  const rest = q.slice(1);
+  const next = q[0];
+  sessions.update(id, (cur) => {
+    const copy = { ...cur };
+    if (rest.length === 0) {
+      delete copy.prompt_queue;
+    } else {
+      copy.prompt_queue = rest;
+    }
+    return copy;
+  });
   // Also shift attachments (consumed via dequeuePromptAttachments or discarded).
   const aq = _queuedAttachments.get(id);
   if (aq !== undefined) {
@@ -181,12 +183,11 @@ export function dequeuePrompt(id: string): string | undefined {
       _queuedAttachments.delete(id);
     }
   }
-  emitActive();
   return next;
 }
 
-/** Dequeue the attachments for the next queued prompt (peek without removing —
- *  call before dequeuePrompt to capture them). */
+/** Peek the attachments for the next queued prompt (call before dequeuePrompt
+ *  to capture them). */
 export function peekQueuedAttachments(id: string): readonly unknown[] {
   const aq = _queuedAttachments.get(id);
   if (aq === undefined || aq.length === 0) {
@@ -207,18 +208,17 @@ export function setLastQueuedAttachments(id: string, attachments: readonly unkno
 }
 
 export function setQueuedPrompt(id: string, text: string | undefined): void {
-  const s = get(id);
-  if (s === undefined) {
-    return;
-  }
   if (text === undefined) {
-    delete s.prompt_queue;
     _queuedAttachments.delete(id);
+    sessions.update(id, (cur) => {
+      const copy = { ...cur };
+      delete copy.prompt_queue;
+      return copy;
+    });
   } else {
-    s.prompt_queue = [text];
     _queuedAttachments.set(id, [[]]);
+    sessions.update(id, (cur) => ({ ...cur, prompt_queue: [text] }));
   }
-  emitActive();
 }
 
 // --- Index helpers ---
@@ -232,6 +232,8 @@ export function invalidateSession(chatID: string): void {
   if (s === undefined) {
     return;
   }
+  // Messages cleared in place (messages live on the session object; the
+  // messages renderer reacts to messagesVersion, not the session signal).
   s.messages = [];
   s.has_more = false;
   clearMsgIndex(chatID);
@@ -265,107 +267,115 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
 export function upsertHeader(h: ChatHeader): void {
   const existing = get(h.id);
   if (existing !== undefined) {
-    existing.name = h.name;
-    existing.agent = h.agent ?? "";
-    existing.model = h.model ?? "";
-    existing.acp_session_id = h.acp_session_id ?? "";
-    existing.current_mode_id = h.current_mode_id ?? "";
-    existing.available_modes = h.available_modes ?? [];
-    existing.available_models = h.available_models ?? [];
-    existing.supervised_mode = h.supervised_mode ?? false;
-    if (h.auto_approve_crew !== undefined) {
-      existing.auto_approve_crew = h.auto_approve_crew;
-    }
-    existing.usage = h.usage;
-    existing.message_count = h.message_count;
-    if (h.compaction_watermark !== undefined) {
-      existing.compaction_watermark = h.compaction_watermark;
-    } else {
-      delete existing.compaction_watermark;
-    }
-    if (h.oldest_checkpoint_tag !== undefined) {
-      existing.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
-    } else {
-      delete existing.oldest_checkpoint_tag;
-    }
-    if (h.parent_chat_id !== undefined) {
-      existing.parent_chat_id = h.parent_chat_id;
-    } else {
-      delete existing.parent_chat_id;
-    }
-  } else {
-    const s: Session = {
-      id: h.id,
-      name: h.name,
-      agent: h.agent ?? "",
-      model: h.model ?? "",
-      acp_session_id: h.acp_session_id ?? "",
-      current_mode_id: h.current_mode_id ?? "",
-      available_modes: h.available_modes ?? [],
-      available_models: h.available_models ?? [],
-      auto_approve_crew: h.auto_approve_crew ?? false,
-      supervised_mode: h.supervised_mode ?? false,
-      pending_changes: [],
-      usage: h.usage,
-      message_count: h.message_count,
-      messages: [],
-      has_more: h.message_count > 0,
-      thinking: false,
-      working_label: "Thinking",
-      ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
-    };
-    if (h.compaction_watermark !== undefined) {
-      s.compaction_watermark = h.compaction_watermark;
-    }
-    if (h.oldest_checkpoint_tag !== undefined) {
-      s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
-    }
-    _sessions.unshift(s);
-    sessionIndex.set(s.id, s);
+    // Server-authoritative re-sync of the header fields (preserve messages,
+    // pending_changes, thinking, working_label, trusted_this_turn which are
+    // client/stream-owned).
+    sessions.update(h.id, (s) => {
+      const next: Session = {
+        ...s,
+        name: h.name,
+        agent: h.agent ?? "",
+        model: h.model ?? "",
+        acp_session_id: h.acp_session_id ?? "",
+        current_mode_id: h.current_mode_id ?? "",
+        available_modes: h.available_modes ?? [],
+        available_models: h.available_models ?? [],
+        supervised_mode: h.supervised_mode ?? false,
+        usage: h.usage,
+        message_count: Math.max(s.message_count, h.message_count),
+      };
+      if (h.auto_approve_crew !== undefined) {
+        next.auto_approve_crew = h.auto_approve_crew;
+      }
+      if (h.compaction_watermark !== undefined) {
+        next.compaction_watermark = h.compaction_watermark;
+      } else {
+        delete next.compaction_watermark;
+      }
+      if (h.oldest_checkpoint_tag !== undefined) {
+        next.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
+      } else {
+        delete next.oldest_checkpoint_tag;
+      }
+      if (h.parent_chat_id !== undefined) {
+        next.parent_chat_id = h.parent_chat_id;
+      } else {
+        delete next.parent_chat_id;
+      }
+      return next;
+    });
+    return;
   }
-  emitSessions();
+  const s: Session = {
+    id: h.id,
+    name: h.name,
+    agent: h.agent ?? "",
+    model: h.model ?? "",
+    acp_session_id: h.acp_session_id ?? "",
+    current_mode_id: h.current_mode_id ?? "",
+    available_modes: h.available_modes ?? [],
+    available_models: h.available_models ?? [],
+    auto_approve_crew: h.auto_approve_crew ?? false,
+    supervised_mode: h.supervised_mode ?? false,
+    pending_changes: [],
+    usage: h.usage,
+    message_count: h.message_count,
+    messages: [],
+    has_more: h.message_count > 0,
+    thinking: false,
+    working_label: "Thinking",
+    ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
+  };
+  if (h.compaction_watermark !== undefined) {
+    s.compaction_watermark = h.compaction_watermark;
+  }
+  if (h.oldest_checkpoint_tag !== undefined) {
+    s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
+  }
+  // New sessions go to the front of the list (matches the previous unshift).
+  sessions.prepend([s]);
 }
 
 export function setCurrentMode(id: string, modeID: string): void {
   const s = get(id);
-  if (s === undefined) {
+  if (s === undefined || s.current_mode_id === modeID) {
     return;
   }
-  if (s.current_mode_id === modeID) {
-    return;
-  }
-  s.current_mode_id = modeID;
-  emitSessions();
+  sessions.update(id, (cur) => ({ ...cur, current_mode_id: modeID }));
 }
 
 export function removeChat(id: string): void {
-  const idx = _sessions.findIndex((s) => s.id === id);
-  if (idx === -1) {
+  if (!sessions.has(id)) {
     return;
   }
-  _sessions.splice(idx, 1);
-  sessionIndex.delete(id);
-  msgIndex.delete(id);
-  _queuedAttachments.delete(id);
-  if (_activeId === id) {
-    _activeId = _sessions[0]?.id ?? "";
-  }
-  emitSessions();
+  const wasActive = activeId.peek() === id;
+  const order = sessions.ids.peek();
+  // Both reactive writes below — sessions.remove (fires sessions.ids) and the
+  // activeId reassignment — feed the `activeSession` computed. Batch them so
+  // active-session subscribers re-derive ONCE, not twice; otherwise removing
+  // the active chat double-fires the computed and the messages renderer flashes
+  // a transient teardown of the new chat's DOM.
+  batch(() => {
+    sessions.remove(id);
+    msgIndex.delete(id);
+    _queuedAttachments.delete(id);
+    if (wasActive) {
+      const remaining = order.filter((x) => x !== id);
+      activeId.value = remaining[0] ?? "";
+    }
+  });
 }
 
-/** Re-insert a previously-removed session at a specific index (or at
- *  the head if no index given). Used by optimistic action rollbacks
- *  that captured the session before removeChat() and need to put it
- *  back on failure. Idempotent: if a session with the same id already
- *  exists, the existing entry is preserved. */
+/** Re-insert a previously-removed session at a specific index (or at the head
+ *  if no index given). Used by optimistic action rollbacks. Idempotent. */
 export function reinsertSession(session: Session, atIndex?: number): void {
-  if (sessionIndex.has(session.id)) {
+  if (sessions.has(session.id)) {
     return;
   }
-  const target = atIndex !== undefined ? Math.max(0, Math.min(atIndex, _sessions.length)) : 0;
-  _sessions.splice(target, 0, session);
-  sessionIndex.set(session.id, session);
-  emitSessions();
+  const order = [...sessions.items()];
+  const target = atIndex !== undefined ? Math.max(0, Math.min(atIndex, order.length)) : 0;
+  order.splice(target, 0, session);
+  sessions.setAll(order);
 }
 
 export function appendMessage(chatID: string, msg: Message): void {
@@ -418,8 +428,10 @@ export function addPendingChange(chatID: string, change: PendingChange): void {
   if (s.pending_changes.some((p) => p.tool_call_id === change.tool_call_id)) {
     return;
   }
-  s.pending_changes = [...s.pending_changes, change];
-  emitActive();
+  sessions.update(chatID, (cur) => ({
+    ...cur,
+    pending_changes: [...cur.pending_changes, change],
+  }));
 }
 
 export function removePendingChange(chatID: string, toolCallID: string): void {
@@ -431,8 +443,7 @@ export function removePendingChange(chatID: string, toolCallID: string): void {
   if (next.length === s.pending_changes.length) {
     return;
   }
-  s.pending_changes = next;
-  emitActive();
+  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: next }));
 }
 
 export function clearPendingChanges(chatID: string): void {
@@ -440,8 +451,7 @@ export function clearPendingChanges(chatID: string): void {
   if (s === undefined || s.pending_changes.length === 0) {
     return;
   }
-  s.pending_changes = [];
-  emitActive();
+  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: [] }));
 }
 
 export function setSupervisedMode(chatID: string, enabled: boolean): void {
@@ -449,8 +459,7 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
   if (s === undefined || s.supervised_mode === enabled) {
     return;
   }
-  s.supervised_mode = enabled;
-  emitActive();
+  sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
 }
 
 export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
@@ -458,33 +467,28 @@ export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
   if (s === undefined || s.auto_approve_crew === enabled) {
     return;
   }
-  s.auto_approve_crew = enabled;
-  emitActive();
+  sessions.update(chatID, (cur) => ({ ...cur, auto_approve_crew: enabled }));
 }
 
 /** Set session model and notify subscribers. Used by switchModel. */
 export function setModel(chatID: string, model: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
+  if (!sessions.has(chatID)) {
     return;
   }
-  s.model = model;
-  emitSessions();
+  sessions.update(chatID, (cur) => ({ ...cur, model }));
 }
 
 /** Set session name and notify subscribers. */
 export function setName(chatID: string, name: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
+  if (!sessions.has(chatID)) {
     return;
   }
-  s.name = name;
-  emitSessions();
+  sessions.update(chatID, (cur) => ({ ...cur, name }));
 }
 
 /** Return the current index of a session in the list, or -1. */
 export function indexOfSession(id: string): number {
-  return _sessions.findIndex((s) => s.id === id);
+  return sessions.ids.peek().indexOf(id);
 }
 
 export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
@@ -492,12 +496,10 @@ export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
   if (s === undefined) {
     return;
   }
-  const current = s.trusted_this_turn === true;
-  if (current === trusted) {
+  if ((s.trusted_this_turn === true) === trusted) {
     return;
   }
-  s.trusted_this_turn = trusted;
-  emitActive();
+  sessions.update(chatID, (cur) => ({ ...cur, trusted_this_turn: trusted }));
 }
 
 export function appendChunk(
@@ -531,8 +533,7 @@ export function appendChunk(
   // Mirror the delta into the chronological blocks array using the
   // server-provided block_index. The server guarantees consecutive
   // chunks for the same kind share an index; a tool_call between
-  // text segments bumps the next text chunk to a new index. So we
-  // either extend an existing block at this index or create one.
+  // text segments bumps the next text chunk to a new index.
   msg.blocks ??= [];
   const blockKind = isReasoning ? "thinking" : "text";
   if (msg.blocks[blockIndex] === undefined) {
@@ -555,12 +556,8 @@ export function appendChunk(
     scheduleMessages();
     return;
   }
-  // Fire the per-block signal (fine-grained — only the block at
-  // blockIndex re-renders) before the legacy per-message signal
-  // (back-compat for any code path that still subscribes by message
-  // id only). When the renderer mounted the block via the
-  // chronological path, the per-block signal exists and its effect
-  // appends the delta directly to that block's bubble.
+  // Fire the per-block signal (fine-grained — only the block at blockIndex
+  // re-renders) before the legacy per-message signal.
   const blockK = blockKey(messageID, blockIndex);
   const blockMap = isReasoning ? blockThinkingSigs : blockTextSigs;
   const blockSig = blockMap.get(blockK);
@@ -622,8 +619,7 @@ export function upsertToolCall(
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
     // First time we see this tool call — pin it to the chronological
-    // block index the server reported. This anchors the tool card
-    // between the surrounding text blocks.
+    // block index the server reported.
     while (msg.blocks.length < blockIndex) {
       msg.blocks.push({ type: "text" });
     }

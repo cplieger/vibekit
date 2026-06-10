@@ -2,7 +2,7 @@
 // MCP registry search panel — extracted from mcp-panels.ts for isolation.
 // ---------------------------------------------------------------------------
 
-import { el } from "./dom.js";
+import { byId } from "./dom.js";
 import { searchRegistry, type RegistrySearchResult } from "./actions/mcp.js";
 import {
   subscribeToActions,
@@ -12,6 +12,7 @@ import {
 } from "./actions/index.js";
 import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { el } from "@cplieger/reactive";
 
 // --- Types ---
 
@@ -64,9 +65,9 @@ export function cleanupSearch(): void {
 }
 
 export function initSearchPanel(): void {
-  const input = el<HTMLInputElement>("mcp-search-input");
-  const results = el<HTMLDivElement>("mcp-search-results");
-  const btn = el<HTMLButtonElement>("mcp-search-btn");
+  const input = byId<HTMLInputElement>("mcp-search-input");
+  const results = byId<HTMLDivElement>("mcp-search-results");
+  const btn = byId<HTMLButtonElement>("mcp-search-btn");
   input.value = "";
   results.replaceChildren();
   input.focus();
@@ -138,12 +139,9 @@ function renderSearchResults(
   if (d.servers.length === 0) {
     reconcile(results, [] as RegistryEntry[], {
       key: (e) => e.name,
-      mount: () => document.createElement("div"),
+      mount: () => el("div"),
     });
-    const empty = document.createElement("p");
-    empty.className = "mcp-empty";
-    empty.textContent = `No results for "${q}".`;
-    results.appendChild(empty);
+    results.appendChild(el("p", { className: "mcp-empty" }, `No results for "${q}".`));
     return;
   }
   reconcile(results, d.servers, {
@@ -156,14 +154,18 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   retryBtnUnbind?.();
   retryBtnUnbind = null;
   results.replaceChildren();
-  const err = document.createElement("p");
-  err.className = "mcp-empty";
-  err.textContent = "Registry unreachable. Use the Remote URL or npm package forms instead.";
-  results.appendChild(err);
-  const retryBtn = document.createElement("button");
-  retryBtn.type = "button";
-  retryBtn.className = "btn-small";
-  retryBtn.textContent = "Retry";
+  results.appendChild(
+    el(
+      "p",
+      { className: "mcp-empty" },
+      "Registry unreachable. Use the Remote URL or npm package forms instead.",
+    ),
+  );
+  const retryBtn = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Retry",
+  ) as HTMLButtonElement;
   retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn);
   retryBtn.addEventListener("click", () => {
     void searchRegistry.dispatch({ q });
@@ -172,24 +174,17 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
 }
 
 function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "mcp-result";
-
-  const head = document.createElement("div");
-  head.className = "mcp-result-head";
-  const name = document.createElement("span");
-  name.className = "mcp-result-name";
-  name.textContent = entry.title ?? entry.name;
-  const version = document.createElement("span");
-  version.className = "mcp-result-version";
-  version.textContent = entry.version ?? "";
-  head.append(name, version);
-
-  const desc = document.createElement("p");
-  desc.className = "mcp-result-desc";
-  desc.textContent = entry.description ?? entry.name;
-
-  row.append(head, desc);
+  const row = el(
+    "div",
+    { className: "mcp-result" },
+    el(
+      "div",
+      { className: "mcp-result-head" },
+      el("span", { className: "mcp-result-name" }, entry.title ?? entry.name),
+      el("span", { className: "mcp-result-version" }, entry.version ?? ""),
+    ),
+    el("p", { className: "mcp-result-desc" }, entry.description ?? entry.name),
+  ) as HTMLDivElement;
 
   for (const pkg of entry.packages ?? []) {
     row.appendChild(renderInstallBtn(entry, "npm", pkg.identifier, pkg.env_vars ?? []));
@@ -219,10 +214,11 @@ function renderInstallBtn(
   identifier: string,
   fields: InstallField[],
 ): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "btn-small mcp-install-btn";
-  btn.textContent = `Use ${kind}: ${identifier}`;
+  const btn = el(
+    "button",
+    { type: "button", className: "btn-small mcp-install-btn" },
+    `Use ${kind}: ${identifier}`,
+  ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
     const slug = simplifyName(entry.name);
     switchMode?.(kind, slug, identifier, fields);

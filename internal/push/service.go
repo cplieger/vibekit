@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/ssrf"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/settings"
 	"golang.org/x/sync/singleflight"
@@ -91,13 +92,31 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	// redirect externally today). TLS MinVersion pinned to 1.2 so
 	// a future stdlib default change can't silently weaken the
 	// transport that carries VAPID-signed tokens.
+	//
+	// The transport is ssrf.SafeTransport: isAllowedPushEndpoint
+	// remains the PRIMARY gate (name-based FCM/Mozilla/Apple/WNS
+	// allowlist, https-only, no explicit ports), and SafeTransport
+	// sits beneath it as an IP-layer backstop — it resolves DNS once
+	// and validates every resolved IP, plus a net.Dialer Control hook
+	// re-validates the actually-connected IP at socket creation. That
+	// closes the residual DNS-rebinding / suffix-subdomain-to-internal
+	// vectors a purely name-based check leaves open. Ports are pinned to
+	// 443 — the dialer enforces this, and the allowlist already rejects
+	// explicit ports so every legitimate vendor endpoint is default-443.
+	// https is enforced by the allowlist and the redirect check, NOT the
+	// transport (SafeTransport's dialer never sees the URL scheme), so no
+	// scheme option is passed. SafeTransport carries
+	// no TLSClientConfig or idle-pool size via options, so those two
+	// original settings are applied to the returned *http.Transport.
+	pushTransport := ssrf.SafeTransport(
+		ssrf.WithAllowedPorts(443),
+		ssrf.WithLogger(slog.Default()),
+	)
+	pushTransport.MaxIdleConnsPerHost = 2
+	pushTransport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	s.client = &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     90 * time.Second,
-			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-		},
+		Timeout:   10 * time.Second,
+		Transport: pushTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("push: too many redirects")

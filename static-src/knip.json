@@ -9,6 +9,7 @@
     "**/*.property.test.ts"
   ],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
+  "ignore": ["wire/*.gen.ts"],
   "ignoreDependencies": [
     "eslint",
     "prettier",

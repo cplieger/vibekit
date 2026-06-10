@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Exponential backoff computation — shared by transport.ts and shell-ws.ts.
+// Exponential backoff computation — used by transport.ts (SSE reconnect).
 // ---------------------------------------------------------------------------
 
 export const BACKOFF_CAP_MS = 30_000;

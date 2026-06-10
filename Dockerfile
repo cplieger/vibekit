@@ -57,10 +57,28 @@ RUN mkdir -p static/vendor && \
 # tsgo's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=1.1.4
+ARG CPLIEGER_ACTIONS_VERSION=2.0.0
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
+
+# Fetch @cplieger/reactive TS source (same TS-only pattern). @cplieger/actions
+# imports it, and the app imports it directly; both resolve it via the
+# importmap at runtime (/vendor/cplieger-reactive/index.js).
+# renovate: datasource=npm depName=@cplieger/reactive
+ARG CPLIEGER_REACTIVE_VERSION=1.1.0
+RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
+
+# Fetch @cplieger/vterm TS source (same TS-only pattern). shell.ts imports
+# render/keyboard/scroll/connection from it; resolved via the importmap at
+# runtime (/vendor/cplieger-vterm/index.js).
+# renovate: datasource=npm depName=@cplieger/vterm
+ARG CPLIEGER_VTERM_VERSION=1.1.0
+RUN mkdir -p static-src/node_modules/@cplieger/vterm && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/vterm/-/vterm-${CPLIEGER_VTERM_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/vterm --strip-components=1
 
 # Compile TypeScript then build Go (static files embedded via go:embed).
 # BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
@@ -80,11 +98,29 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
+        --outDir static/vendor/cplieger-reactive \
+        --rootDir static-src/node_modules/@cplieger/reactive/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/reactive/src/*.ts && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
         --outDir static/vendor/cplieger-actions \
         --rootDir static-src/node_modules/@cplieger/actions/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/actions/src/*.ts
+        static-src/node_modules/@cplieger/actions/src/*.ts && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-vterm \
+        --rootDir static-src/node_modules/@cplieger/vterm/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/vterm/src/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file

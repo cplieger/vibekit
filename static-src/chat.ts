@@ -15,13 +15,13 @@ import {
   upsertHeader,
   contextSizeFor,
   defaultUsage,
-  activeVersion,
+  activeSession,
   removeChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
-import { effect } from "./lib/reactive/index.js";
+import { effect, el } from "@cplieger/reactive";
 import type { Session } from "./types.js";
-import { renderStack as renderBanners } from "./banner-stack.js";
+import { ensureBound } from "./banner-stack.js";
 import { sendPromptTo } from "./chat-commands.js";
 import {
   openTab,
@@ -39,7 +39,6 @@ import { addAttachment, clearAttachments } from "./attachments.js";
 import { setCurrentModel, getCurrentAgent, getLastModel, withAgent } from "./session-context.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
-import { recompute as recomputeSendState } from "./send-state.js";
 import { $ } from "./dom.js";
 import { isRetentionEnabled } from "./retention.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -114,7 +113,7 @@ export function activateChatView(id: string): void {
   setActive(id);
   hideModelPicker();
   clearAttachments();
-  renderBanners();
+  ensureBound();
   // Prefetch conflict records so badges on historical tool calls
   // are present as soon as the messages render. Dynamic import
   // keeps the conflicts module lazy — most chats never see one.
@@ -147,13 +146,12 @@ export function activateChatView(id: string): void {
       }
       if (!ok) {
         // Show retry button on failed load.
-        const retry = document.createElement("div");
-        retry.className = "load-error";
-        retry.innerHTML = "<span>Failed to load messages.</span>";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "btn-small";
-        btn.textContent = "Retry";
+        const retry = el(
+          "div",
+          { className: "load-error" },
+          el("span", {}, "Failed to load messages."),
+        );
+        const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
         btn.addEventListener("click", () => {
           retry.remove();
           activateChatView(id);
@@ -340,12 +338,11 @@ export function createPlannerSession(): void {
 export function installStoreSubscribers(): void {
   mountChatView();
   effect(() => {
-    void activeVersion.value;
+    void activeSession.value;
     const active = getActive();
     if (active !== undefined) {
       refreshContextUI(active);
     }
-    recomputeSendState();
     // Reconcile tab names with chat names (server auto-rename propagates here).
     for (const s of getSessions()) {
       if (hasTab(s.id)) {

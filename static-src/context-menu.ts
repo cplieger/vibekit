@@ -3,6 +3,8 @@
 // Escape key, focus management, and ARIA roles.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
+
 export interface ContextMenuItem {
   label: string;
   action: () => void;
@@ -19,18 +21,13 @@ export function showContextMenu(
   items: ContextMenuItem[],
   position: ContextMenuPosition,
 ): () => void {
-  const menu = document.createElement("div");
-  menu.className = "tab-context-menu";
-  menu.setAttribute("role", "menu");
+  const menu = el("div", { className: "tab-context-menu", role: "menu" });
   menu.style.position = "absolute";
   menu.style.left = `${position.x}px`;
   menu.style.top = `${position.y}px`;
 
   for (const item of items) {
-    const btn = document.createElement("button");
-    btn.textContent = item.label;
-    btn.className = "tab-context-item";
-    btn.setAttribute("role", "menuitem");
+    const btn = el("button", { className: "tab-context-item", role: "menuitem" }, item.label);
     btn.addEventListener("click", () => {
       dismiss();
       item.action();

@@ -22,7 +22,7 @@ import {
 } from "./icons.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
-import { signal, effect } from "./lib/reactive/index.js";
+import { signal, effect, el } from "@cplieger/reactive";
 import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { promoteRewindChat, discardRewindChat } from "./actions/rewind.js";
@@ -251,6 +251,18 @@ export function setTabStatus(id: string, status: "" | "thinking" | "permission")
   el.classList.toggle("hidden", status === "");
   el.classList.toggle("tab-dot-thinking", status === "thinking");
   el.classList.toggle("tab-dot-permission", status === "permission");
+}
+
+/** Mark an editor tab as having unsaved changes (a steady accent dot).
+ *  Reuses the shared .tab-status-dot: editor tabs never receive setTabStatus
+ *  (thinking/permission are chat-tab states), so there is no contention. */
+export function setTabDirty(id: string, dirty: boolean): void {
+  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
+  if (el === null) {
+    return;
+  }
+  el.classList.toggle("hidden", !dirty);
+  el.classList.toggle("tab-dot-dirty", dirty);
 }
 
 function reorderTabs(order: string[]): void {
@@ -524,37 +536,34 @@ function renderDOM(): void {
 }
 
 function createTabEl(tab: TabSpec): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "tab";
-  el.dataset["tabId"] = tab.id;
-  el.dataset["kind"] = tab.kind;
-  el.setAttribute("role", "tab");
+  const node = el("div", {
+    className: "tab",
+    "data-tab-id": tab.id,
+    "data-kind": tab.kind,
+    role: "tab",
+  });
 
-  const icon = document.createElement("span");
-  icon.className = "tab-icon";
-  icon.replaceChildren(iconEl(ICONS[tab.kind]));
+  const icon = el("span", { className: "tab-icon" }, iconEl(ICONS[tab.kind]));
 
-  const name = document.createElement("span");
-  name.className = "tab-name";
-  name.textContent = tab.name;
+  const name = el("span", { className: "tab-name" }, tab.name);
 
-  const close = document.createElement("button");
-  close.className = "tab-close";
-  close.replaceChildren(iconEl(ICON_CLOSE));
-  close.setAttribute("aria-label", `Close ${tab.name}`);
+  const close = el(
+    "button",
+    { className: "tab-close", "aria-label": `Close ${tab.name}` },
+    iconEl(ICON_CLOSE),
+  );
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();
     closeTab(tab.id);
   });
 
-  const statusDot = document.createElement("span");
-  statusDot.className = "tab-status-dot hidden";
+  const statusDot = el("span", { className: "tab-status-dot hidden" });
 
-  el.append(icon, name, statusDot, close);
-  attachTabInteraction(el, tab.id);
+  node.append(icon, name, statusDot, close);
+  attachTabInteraction(node, tab.id);
 
   // Right-click "Promote" for rewind children.
-  el.addEventListener("contextmenu", (e) => {
+  node.addEventListener("contextmenu", (e) => {
     const s = storeGet(tab.id);
     if (!s?.parent_chat_id) {
       return;
@@ -573,7 +582,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
     );
   });
 
-  return el;
+  return node;
 }
 
 // --- Interaction (click, middle-click, drag, keyboard) ---

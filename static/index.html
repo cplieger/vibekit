@@ -122,6 +122,13 @@
           <div class="approval-body"></div>
           <div class="approval-actions"></div>
         </dialog>
+        <dialog id="elicitation-dialog">
+          <form class="elicitation-form" method="dialog">
+            <div class="elicitation-body"></div>
+            <div class="elicitation-fields"></div>
+            <div class="elicitation-actions"></div>
+          </form>
+        </dialog>
         <form id="prompt-form" class="bottom-bar">
           <div class="prompt-box">
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
@@ -509,6 +516,9 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
                   </button>
                 </div>
+                <p id="command-rules-empty-hint" class="section-hint hidden">
+                  No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.
+                </p>
               </div>
               <div id="agent-ignore-section">
                 <h4 class="section-subtitle">Agent ignore files</h4>
@@ -520,6 +530,9 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
                   </button>
                 </div>
+                <p id="agent-ignore-empty-hint" class="section-hint hidden">
+                  No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).
+                </p>
               </div>
             </div>
           </div>
@@ -909,18 +922,12 @@
         <div id="mcp-search-results" class="mcp-search-results"></div>
       </div>
 
-      <!-- Remote URL panel: http/sse -->
+      <!-- Remote URL panel: HTTP (kiro-cli falls back to HTTP+SSE per the 2025-03-26 MCP spec) -->
       <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
-        <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP or SSE. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
+        <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP. kiro-cli speaks Streamable HTTP and automatically falls back to HTTP+SSE for legacy servers (2025-03-26 MCP spec). Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
         <label class="tool-form-label">Name
           <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
           <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
-        </label>
-        <label class="tool-form-label">Transport
-          <select id="mcp-remote-type" class="tool-form-select">
-            <option value="http">HTTP</option>
-            <option value="sse">SSE (streamable)</option>
-          </select>
         </label>
         <label class="tool-form-label">URL
           <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
@@ -1078,7 +1085,9 @@
     {
       "imports": {
         "ansi_up": "/vendor/ansi_up.js",
-        "@cplieger/actions": "/vendor/cplieger-actions/index.js"
+        "@cplieger/actions": "/vendor/cplieger-actions/index.js",
+        "@cplieger/reactive": "/vendor/cplieger-reactive/index.js",
+        "@cplieger/vterm": "/vendor/cplieger-vterm/index.js"
       }
     }
   </script>

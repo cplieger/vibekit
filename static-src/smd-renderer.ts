@@ -56,6 +56,7 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { isSafeUrl } from "./utils-url.js";
+import { el } from "@cplieger/reactive";
 
 export type { Renderer } from "./smd-parser-types.js";
 
@@ -72,7 +73,7 @@ export interface DomRendererData {
 }
 
 function makeEl(tag: string): HTMLElement {
-  return document.createElement(tag);
+  return el(tag);
 }
 
 const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
@@ -242,14 +243,14 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   node.setAttribute(attrName, value);
 }
 
-/** Factory for a DOM renderer rooted at `el`. Caller can register
+/** Factory for a DOM renderer rooted at `root`. Caller can register
  *  `onBlockComplete` to receive a callback when each top-level block
  *  finishes (paragraph, pre/code, heading, list, blockquote, table).
  *  `animateText` (default false) opts into per-chunk fade-in: each
  *  text emission is wrapped in `<span data-vk-chunk-enter>` so the
  *  CSS animation in 13-messages.css runs as each delta lands. */
 export function domRenderer(
-  el: HTMLElement,
+  root: HTMLElement,
   options: { onBlockComplete?: (block: HTMLElement) => void; animateText?: boolean } = {},
 ): Renderer<DomRendererData> {
   return {
@@ -258,7 +259,7 @@ export function domRenderer(
     add_text: add_text_dom,
     set_attr: set_attr_dom,
     data: {
-      nodes: [el],
+      nodes: [root],
       index: 0,
       onBlockComplete: options.onBlockComplete,
       animateText: options.animateText ?? false,

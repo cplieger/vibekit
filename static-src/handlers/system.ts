@@ -9,6 +9,7 @@
 // counters reconcile alongside the message history.
 // ---------------------------------------------------------------------------
 
+import { el } from "@cplieger/reactive";
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
@@ -20,7 +21,7 @@ import {
   setCurrentMode,
   clearMsgIndex,
   invalidateSession,
-  sessionsVersion,
+  emitMessages,
 } from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { refreshCompactionThreshold } from "../status.js";
@@ -134,10 +135,11 @@ onSSE("steering_loaded", (chatID, payload) => {
   if (msgs.querySelector(".steering-badge") !== null) {
     return;
   }
-  const badge = document.createElement("div");
-  badge.className = "steering-badge";
-  badge.setAttribute("data-chat-entry", "");
-  badge.textContent = `Context loaded: ${docs.join(", ")}`;
+  const badge = el(
+    "div",
+    { className: "steering-badge", "data-chat-entry": "" },
+    `Context loaded: ${docs.join(", ")}`,
+  );
   msgs.appendChild(badge);
 });
 
@@ -168,7 +170,7 @@ onSSE("checkpoint_restored", (chatID, _payload) => {
     s.messages = [];
     s.has_more = false;
     clearMsgIndex(chatID);
-    sessionsVersion.value = sessionsVersion.peek() + 1;
+    emitMessages();
     // Rely on the version-effect's renderUpdates (triggered by
     // loadMessages bumping version) rather than an explicit
     // renderSwitch here — avoids a redundant intermediate render
