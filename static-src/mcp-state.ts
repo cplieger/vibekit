@@ -104,7 +104,12 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
 
 // --- Wire types (match internal/mcp + internal/hub/mcp_registry) ---
 
-export type Transport = "stdio" | "http" | "sse";
+// Transport mirrors the wiregen-emitted shape: 'sse' is rejected at the
+// API/wire boundary so the only legal client-facing values are 'stdio'
+// and 'http'. The legacy 'sse' value still survives at parse boundaries
+// (kiro-cli / on-disk migration) but never lands in the store.
+export type { Transport } from "./wire/types.gen.js";
+import type { Transport } from "./wire/types.gen.js";
 
 export interface KeyPair {
   name: string;

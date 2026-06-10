@@ -175,8 +175,12 @@ setSwitchMode((kind, slug, identifier, fields) => {
     setMode("npm", null);
     fillNpmForm(slug, identifier, fields);
   } else {
+    // Any non-npm registry hit (http, streamable-http, sse, ...) lands
+    // on the remote panel. Transport is always "http" — kiro-cli does
+    // the HTTP+SSE fallback at connection time per the 2025-03-26 MCP
+    // spec, so no user-visible transport pick is needed.
     setMode("remote", null);
-    fillRemoteForm(slug, kind === "sse" ? "sse" : "http", identifier, fields);
+    fillRemoteForm(slug, identifier, fields);
   }
 });
 
@@ -327,11 +331,12 @@ export function extractNpxPackage(s: Server): string {
   return "";
 }
 
-// --- Panel: remote (http/sse) ---
+// --- Panel: remote (http; kiro-cli falls back to HTTP+SSE per the
+// 2025-03-26 MCP spec at connection time, so no user-visible
+// transport pick is needed) ---
 
 function initRemotePanel(existing: Server | null): void {
   const name = byId<HTMLInputElement>("mcp-remote-name");
-  const typeSel = byId<HTMLSelectElement>("mcp-remote-type");
   const url = byId<HTMLInputElement>("mcp-remote-url");
   const oauthClientID = byId<HTMLInputElement>("mcp-remote-oauth-client-id");
   const headers = byId<HTMLDivElement>("mcp-remote-headers");
@@ -341,13 +346,11 @@ function initRemotePanel(existing: Server | null): void {
 
   if (existing !== null) {
     name.value = existing.name;
-    typeSel.value = existing.transport === "sse" ? "sse" : "http";
     url.value = existing.url ?? "";
     oauthClientID.value = existing.oauth_client_id ?? "";
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
-    typeSel.value = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     url.value = "";
     oauthClientID.value = "";
     renderKeyPairList(headers, [], "header");
@@ -358,7 +361,7 @@ function initRemotePanel(existing: Server | null): void {
   };
 
   byId<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
-    const transport: Transport = typeSel.value === "sse" ? "sse" : "http";
+    const transport: Transport = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const body: Partial<Server> = {
       transport,
       name: name.value.trim(),
@@ -376,7 +379,6 @@ function initRemotePanel(existing: Server | null): void {
 
 function fillRemoteForm(
   name: string,
-  type: Transport,
   url: string,
   fields: {
     name: string;
@@ -386,7 +388,6 @@ function fillRemoteForm(
   }[],
 ): void {
   byId<HTMLInputElement>("mcp-remote-name").value = name;
-  byId<HTMLSelectElement>("mcp-remote-type").value = type;
   byId<HTMLInputElement>("mcp-remote-url").value = url;
   const list = byId<HTMLDivElement>("mcp-remote-headers");
   renderKeyPairList(

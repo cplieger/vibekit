@@ -922,18 +922,12 @@
         <div id="mcp-search-results" class="mcp-search-results"></div>
       </div>
 
-      <!-- Remote URL panel: http/sse -->
+      <!-- Remote URL panel: HTTP (kiro-cli falls back to HTTP+SSE per the 2025-03-26 MCP spec) -->
       <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
-        <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP or SSE. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
+        <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP. kiro-cli speaks Streamable HTTP and automatically falls back to HTTP+SSE for legacy servers (2025-03-26 MCP spec). Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
         <label class="tool-form-label">Name
           <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
           <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
-        </label>
-        <label class="tool-form-label">Transport
-          <select id="mcp-remote-type" class="tool-form-select">
-            <option value="http">HTTP</option>
-            <option value="sse">SSE (streamable)</option>
-          </select>
         </label>
         <label class="tool-form-label">URL
           <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
