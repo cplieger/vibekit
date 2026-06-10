@@ -219,15 +219,15 @@ export interface ElicitationNeededPayload {
  * that type. Unset fields are omitted on the wire.
  */
 export interface ElicitationPropertySchema {
+  default?: unknown;
+  minLength?: number;
+  maxLength?: number;
   type: string;
   title?: string;
   description?: string;
   format?: string;
   pattern?: string;
   enum?: string[];
-  default?: unknown;
-  minLength?: number;
-  maxLength?: number;
 }
 
 /**

@@ -97,6 +97,7 @@ func main() {
 		"MCPOAuthPayload": "mcp_oauth_payload",
 	}
 
+	const typeMessage = "Message" // 3 SSE events decode to api.Message
 	r.SSEEvents = []wiregen.SSERegEntry{
 		{EventType: "chat_created", TypeName: "ChatHeader"},
 		{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
@@ -110,10 +111,10 @@ func main() {
 		{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
 		{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
 		{EventType: "mcp_oauth_needed", TypeName: "MCPOAuthPayload"},
-		{EventType: "message_appended", TypeName: "Message"},
+		{EventType: "message_appended", TypeName: typeMessage},
 		{EventType: "message_chunk", TypeName: "MessageChunkPayload"},
-		{EventType: "message_created", TypeName: "Message"},
-		{EventType: "message_updated", TypeName: "Message"},
+		{EventType: "message_created", TypeName: typeMessage},
+		{EventType: "message_updated", TypeName: typeMessage},
 		{EventType: "pending_change_added", TypeName: "PendingChangeAddedPayload"},
 		{EventType: "pending_change_resolved", TypeName: "PendingChangeResolvedPayload"},
 		{EventType: "pending_changes_cleared", TypeName: "PendingChangesClearedPayload"},

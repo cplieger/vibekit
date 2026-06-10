@@ -19,15 +19,15 @@ import "encoding/json"
 // "boolean" | "array"); the other fields are populated as relevant to
 // that type. Unset fields are omitted on the wire.
 type ElicitationPropertySchema struct {
+	Default     any      `json:"default,omitempty"`
+	MinLength   *int     `json:"minLength,omitempty"`
+	MaxLength   *int     `json:"maxLength,omitempty"`
 	Type        string   `json:"type"`
 	Title       string   `json:"title,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Format      string   `json:"format,omitempty"`
 	Pattern     string   `json:"pattern,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
-	Default     any      `json:"default,omitempty"`
-	MinLength   *int     `json:"minLength,omitempty"`
-	MaxLength   *int     `json:"maxLength,omitempty"`
 }
 
 // ElicitationRequestSchema is the JSON-schema-shaped object describing a

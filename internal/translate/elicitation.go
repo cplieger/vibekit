@@ -26,12 +26,12 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 		return
 	}
 	type elicitParams struct {
+		RequestedSchema *api.ElicitationRequestSchema `json:"requestedSchema"`
 		Mode            string                        `json:"mode"`
 		Message         string                        `json:"message"`
 		URL             string                        `json:"url"`
 		SessionID       string                        `json:"sessionId"`
 		ToolCallID      string                        `json:"toolCallId"`
-		RequestedSchema *api.ElicitationRequestSchema `json:"requestedSchema"`
 	}
 	p, ok := unmarshalParams[elicitParams](msg, api.MethodElicitationCreate)
 	if !ok {

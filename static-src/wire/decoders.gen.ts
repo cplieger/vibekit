@@ -217,6 +217,11 @@ export const decodeElicitationPropertySchema: Decoder<ElicitationPropertySchema>
   const out: ElicitationPropertySchema = {
     type: reqStr(o, "type", "$.elicitation_property_schema"),
   };
+  if (o["default"] !== undefined) out.default = o["default"] as unknown;
+  const minLength = optNum(o, "minLength", "$.elicitation_property_schema");
+  if (minLength !== undefined) out.minLength = minLength;
+  const maxLength = optNum(o, "maxLength", "$.elicitation_property_schema");
+  if (maxLength !== undefined) out.maxLength = maxLength;
   const title = optStr(o, "title", "$.elicitation_property_schema");
   if (title !== undefined) out.title = title;
   const description = optStr(o, "description", "$.elicitation_property_schema");
@@ -226,11 +231,6 @@ export const decodeElicitationPropertySchema: Decoder<ElicitationPropertySchema>
   const pattern = optStr(o, "pattern", "$.elicitation_property_schema");
   if (pattern !== undefined) out.pattern = pattern;
   if (o["enum"] !== undefined) out.enum = decodeArray(o["enum"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.elicitation_property_schema.enum");
-  if (o["default"] !== undefined) out.default = o["default"] as unknown;
-  const minLength = optNum(o, "minLength", "$.elicitation_property_schema");
-  if (minLength !== undefined) out.minLength = minLength;
-  const maxLength = optNum(o, "maxLength", "$.elicitation_property_schema");
-  if (maxLength !== undefined) out.maxLength = maxLength;
   return out;
 };
 
