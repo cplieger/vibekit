@@ -32,9 +32,9 @@ import (
 )
 
 // ShellManager wraps the terminal.Handler to provide the same interface
-// the Hub expects (RegisterRoutes, Shutdown, SetCwd). The terminal
-// package handles all PTY lifecycle, VT parsing, binary wire encoding,
-// client fan-out, and reconnect replay internally.
+// the Hub expects (RegisterRoutes, Shutdown). The terminal package
+// handles all PTY lifecycle, VT parsing, binary wire encoding, client
+// fan-out, and reconnect replay internally.
 type ShellManager struct {
 	handler *terminal.Handler
 }
@@ -62,8 +62,3 @@ func (h *Hub) handleShellWS(w http.ResponseWriter, r *http.Request) {
 func (sm *ShellManager) kill() {
 	sm.handler.Shutdown()
 }
-
-// SetCwd is a no-op for now — the terminal package doesn't support
-// changing the working directory of a running session. New sessions
-// will use the workDir passed at construction.
-func (sm *ShellManager) SetCwd(_ string) {}

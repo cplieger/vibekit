@@ -591,15 +591,15 @@ describe("Store setLastQueuedAttachments", () => {
 import { appendChunk, upsertToolCall } from "./store.js";
 import {
   ensureStreamingSig,
-  getStreamingSig,
+  streamingTextSigs,
   clearStreamingSig,
   ensureReasoningSig,
-  getReasoningSig,
+  streamingReasoningSigs,
   clearReasoningSig,
   ensureToolCallSig,
   clearToolCallSig,
   ensureCrewSig,
-  getCrewSig,
+  crewSigs,
   clearCrewSig,
 } from "./store-signals.js";
 import type { ToolCall, Crew } from "./types.js";
@@ -641,16 +641,16 @@ describe("streaming signals", () => {
 
   it("clearStreamingSig + getStreamingSig: signal is gone after clear", () => {
     ensureStreamingSig("m-x", "x");
-    expect(getStreamingSig("m-x")).toBeDefined();
+    expect(streamingTextSigs.get("m-x")).toBeDefined();
     clearStreamingSig("m-x");
-    expect(getStreamingSig("m-x")).toBeUndefined();
+    expect(streamingTextSigs.get("m-x")).toBeUndefined();
   });
 
   it("clearReasoningSig + getReasoningSig: signal is gone after clear", () => {
     ensureReasoningSig("m-y", "y");
-    expect(getReasoningSig("m-y")).toBeDefined();
+    expect(streamingReasoningSigs.get("m-y")).toBeDefined();
     clearReasoningSig("m-y");
-    expect(getReasoningSig("m-y")).toBeUndefined();
+    expect(streamingReasoningSigs.get("m-y")).toBeUndefined();
   });
 });
 
@@ -743,8 +743,8 @@ describe("per-crew signal", () => {
 
   it("clearCrewSig + getCrewSig", () => {
     ensureCrewSig("c-z", sampleCrew("z"));
-    expect(getCrewSig("c-z")).toBeDefined();
+    expect(crewSigs.get("c-z")).toBeDefined();
     clearCrewSig("c-z");
-    expect(getCrewSig("c-z")).toBeUndefined();
+    expect(crewSigs.get("c-z")).toBeUndefined();
   });
 });

@@ -321,10 +321,11 @@ func writeIdempotentReplay(w http.ResponseWriter, e *idempotencyEntry) {
 
 // idempotencyWriter writes through to the real ResponseWriter while
 // buffering the response (status + body) for caching. Mirrors the
-// embed + WriteHeader-guard idiom of requestLogger's statusWriter,
-// adding a capped body buffer. Once the buffer would exceed limit it
-// sets overflow and stops buffering (the client still receives the full
-// stream); an overflowed response is not cached.
+// embed + WriteHeader-guard idiom of the StatusRecorder returned by
+// metrics.NewStatusRecorder, adding a capped body buffer. Once the
+// buffer would exceed limit it sets overflow and stops buffering (the
+// client still receives the full stream); an overflowed response is
+// not cached.
 type idempotencyWriter struct {
 	http.ResponseWriter
 	buf         bytes.Buffer

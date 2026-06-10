@@ -1,9 +1,9 @@
 // Shared circular byte buffer for subprocess output replay.
 //
-// Both agent terminals and the PTY shell keep the last N bytes of
-// output for replay on reconnect. This type unifies the two
-// implementations with UTF-8 boundary awareness on read (advances
-// past partial multi-byte characters at the cut point).
+// Agent terminals keep the last N bytes of output for replay on
+// reconnect. (The PTY shell migrated to vterm, which owns its own
+// buffer.) This type is UTF-8 boundary aware on read (advances past
+// partial multi-byte characters at the cut point).
 
 package hub
 

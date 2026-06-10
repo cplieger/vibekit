@@ -6,9 +6,10 @@
 // and stream output into a <pre> element. When the process exits, the tab
 // gets a status indicator.
 //
-// These are NOT full xterm.js instances (no input, no ANSI parsing needed
-// for most agent commands). Plain <pre> with monospace font and auto-scroll.
-// If ANSI rendering is needed later, swap <pre> for xterm.js read-only.
+// These are NOT full terminal emulators (no input, no ANSI parsing
+// needed for most agent commands). Plain <pre> with monospace font and
+// auto-scroll. If ANSI rendering is needed later, swap <pre> for the
+// vterm read-only renderer.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";

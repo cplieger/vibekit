@@ -33,23 +33,7 @@ export const toolCallSigs = new SignalMap<ToolCall>();
 /** Per-crew-message signal. */
 export const crewSigs = new SignalMap<Crew>();
 
-// --- Public accessors (thin delegates for backward compat) ---
-
-export function getStreamingSig(messageID: string): Signal<string> | undefined {
-  return streamingTextSigs.get(messageID);
-}
-
-export function getReasoningSig(messageID: string): Signal<string> | undefined {
-  return streamingReasoningSigs.get(messageID);
-}
-
-export function getToolCallSig(toolID: string): Signal<ToolCall> | undefined {
-  return toolCallSigs.get(toolID);
-}
-
-export function getCrewSig(messageID: string): Signal<Crew> | undefined {
-  return crewSigs.get(messageID);
-}
+// --- Public accessors ---
 
 export function ensureStreamingSig(
   messageID: string,
@@ -89,26 +73,12 @@ export function ensureBlockTextSig(
   return blockTextSigs.ensure(blockKey(messageID, blockIndex), initial);
 }
 
-export function getBlockTextSig(
-  messageID: string,
-  blockIndex: number,
-): Signal<string> | undefined {
-  return blockTextSigs.get(blockKey(messageID, blockIndex));
-}
-
 export function ensureBlockThinkingSig(
   messageID: string,
   blockIndex: number,
   initial: string,
 ): Signal<string> {
   return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), initial);
-}
-
-export function getBlockThinkingSig(
-  messageID: string,
-  blockIndex: number,
-): Signal<string> | undefined {
-  return blockThinkingSigs.get(blockKey(messageID, blockIndex));
 }
 
 export function clearStreamingSig(messageID: string): void {
@@ -125,15 +95,4 @@ export function clearToolCallSig(toolID: string): void {
 
 export function clearCrewSig(messageID: string): void {
   crewSigs.clear(messageID);
-}
-
-/** Clear all signal maps at once. Used on chat-switch to avoid stale
- *  subscriptions leaking into the new chat's render cycle. */
-export function clearAllSignals(): void {
-  streamingTextSigs.clearAll();
-  streamingReasoningSigs.clearAll();
-  blockTextSigs.clearAll();
-  blockThinkingSigs.clearAll();
-  toolCallSigs.clearAll();
-  crewSigs.clearAll();
 }

@@ -33,9 +33,6 @@ func init() {
 // Handler returns an HTTP handler serving Prometheus text format.
 func Handler() http.HandlerFunc { return registry.Handler() }
 
-// StatusRecorder captures an HTTP response status for instrumentation.
-type StatusRecorder = m.StatusRecorder
-
 // NewStatusRecorder wraps w to capture its response status code.
 func NewStatusRecorder(w http.ResponseWriter) *m.StatusRecorder { return m.NewStatusRecorder(w) }
 
