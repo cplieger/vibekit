@@ -22,6 +22,7 @@ export {
   registerCleanup,
   debouncedDispatch,
   pollAction,
+  pollUntil,
   withTimeout,
   getActionLog,
   API_TIMEOUT_MS,

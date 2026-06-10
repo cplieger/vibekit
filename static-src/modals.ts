@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { pollUntil } from "@cplieger/actions";
+import { pollUntil } from "./actions/index.js";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";

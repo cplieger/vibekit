@@ -2,7 +2,8 @@
 // Editor UI: rendering helpers (read/edit mode, gutter, highlight, restoreUI).
 // ---------------------------------------------------------------------------
 
-import { el, reconcile } from "@cplieger/reactive";
+import { el } from "@cplieger/reactive";
+import { reconcile } from "./reconcile.js";
 import { $ } from "./dom.js";
 import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";

@@ -21,7 +21,8 @@ import {
 } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
-import { el, reconcile } from "@cplieger/reactive";
+import { el } from "@cplieger/reactive";
+import { reconcile } from "./reconcile.js";
 
 type ToolEntry =
   | { kind: "label"; sec: string; isBuiltin: boolean }

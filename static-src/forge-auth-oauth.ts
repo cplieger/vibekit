@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { pollUntil } from "@cplieger/actions";
+import { pollUntil } from "./actions/index.js";
 import { apiPostTyped } from "./api-client.js";
 import type { DeviceFlowResponse } from "./wire/types.gen.js";
 import { decodePollResult } from "./wire/decoders.gen.js";
