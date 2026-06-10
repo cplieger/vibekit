@@ -54,9 +54,9 @@ const BACKGROUND_ALLOWLIST = new Set<string>([
   // Modal dialogs surface errors inline rather than via toast.
   "modals.ts",
 
-  // Inline dialog mutations: error surfaces in the dialog status line,
+  // Inline dialog mutation: error surfaces in the dialog status line,
   // not via toast. Intentionally excluded from the action framework.
-  "git-prs-tab.ts", // await apiPost for PR creation + description generation (inline dialog)
+  "git-prs-tab.ts", // await apiPost for AI PR-description generation (inline dialog; PR creation is now the git.create_pr action)
 
   // Fire-and-forget cleanup after successful plan send.
   "plan-actions.ts", // await apiDelete plan-draft + await apiPutOrError plan update

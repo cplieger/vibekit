@@ -734,24 +734,23 @@ async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<voi
     "aria-label": `${cli.name} install progress`,
   }) as HTMLDivElement;
 
+  // Disable the button while the enable runs (auto re-enabled on settle);
+  // replaces the manual btn.disabled toggles.
+  bindLoadingState("tools.enable", btn);
   btn.addEventListener("click", () => {
     void (async () => {
-      btn.disabled = true;
       const roll = new RollingOutput(out, "git-output-modal");
       out.classList.remove("hidden");
       roll.append(`Installing ${cli.name}…`);
       const d = await enableTool.dispatch({ section: cli.section, name: cli.name });
       if (d === null || d.error !== undefined) {
         roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
-        btn.disabled = false;
         return;
       }
       roll.append(d.output ?? "");
       const after = await getToolsStatus.dispatch();
       if (after !== null && after[cli.name] === true) {
         banner.remove();
-      } else {
-        btn.disabled = false;
       }
     })();
   });

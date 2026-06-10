@@ -20,7 +20,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePR, closePR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
+import { mergePR, closePR, createPR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
@@ -630,6 +630,10 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const newSubmit = submitBtn.cloneNode(true) as HTMLButtonElement;
   submitBtn.replaceWith(newSubmit);
   newSubmit.disabled = false;
+  // Disable the submit button while a create is in flight (replaces the
+  // former manual disabled toggle + double-submit guard). Disposed on
+  // dialog close so the per-open clone doesn't leak an effect.
+  const unbindCreatePR = bindLoadingState("git.create_pr", newSubmit);
   const newGenerate = generateBtn.cloneNode(true) as HTMLButtonElement;
   generateBtn.replaceWith(newGenerate);
   // The static close buttons (data-pr-close) keep their close handler
@@ -646,6 +650,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   dlg.addEventListener(
     "close",
     () => {
+      unbindCreatePR();
       generateAbort.abort();
     },
     { once: true },
@@ -698,27 +703,25 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   // Stage 2: review + submit.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   newSubmit.addEventListener("click", async () => {
-    newSubmit.disabled = true;
     if (status !== null) {
       status.textContent = "Opening PR…";
       status.className = "forge-status";
     }
-    const res = await apiPost<{ number?: number; error?: string }>(
-      `/api/forges/${encodeURIComponent(g.forge_id)}/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.name)}/prs`,
-      {
-        source_branch: headInput.value.trim(),
-        target_branch: baseInput.value.trim(),
-        title: titleInput.value.trim(),
-        body: bodyInput.value,
-        draft: draftInput.checked,
-      },
-    );
+    const res = await createPR.dispatch({
+      forge_id: g.forge_id,
+      owner: g.owner,
+      name: g.name,
+      source_branch: headInput.value.trim(),
+      target_branch: baseInput.value.trim(),
+      title: titleInput.value.trim(),
+      body: bodyInput.value,
+      draft: draftInput.checked,
+    });
     if (res === null) {
       if (status !== null) {
         status.textContent = "Network error.";
         status.className = "forge-status err";
       }
-      newSubmit.disabled = false;
       return;
     }
     if (res.error !== undefined && res.error !== "") {
@@ -726,7 +729,6 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
         status.textContent = res.error;
         status.className = "forge-status err";
       }
-      newSubmit.disabled = false;
       return;
     }
     dlg.close();
