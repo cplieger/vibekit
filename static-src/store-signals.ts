@@ -35,24 +35,15 @@ export const crewSigs = new SignalMap<Crew>();
 
 // --- Public accessors ---
 
-export function ensureStreamingSig(
-  messageID: string,
-  initial: string,
-): Signal<string> {
+export function ensureStreamingSig(messageID: string, initial: string): Signal<string> {
   return streamingTextSigs.ensure(messageID, initial);
 }
 
-export function ensureReasoningSig(
-  messageID: string,
-  initial: string,
-): Signal<string> {
+export function ensureReasoningSig(messageID: string, initial: string): Signal<string> {
   return streamingReasoningSigs.ensure(messageID, initial);
 }
 
-export function ensureToolCallSig(
-  toolID: string,
-  initial: ToolCall,
-): Signal<ToolCall> {
+export function ensureToolCallSig(toolID: string, initial: ToolCall): Signal<ToolCall> {
   return toolCallSigs.ensure(toolID, initial);
 }
 
