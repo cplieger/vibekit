@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cplieger/atomicfile"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -364,7 +365,7 @@ func (m *Manager) applyStagesLocked(stages []restoreStage) error {
 			}
 			continue
 		}
-		if renErr := os.Rename(st.tmp, st.abs); renErr != nil {
+		if renErr := atomicfile.Commit(st.tmp, st.abs); renErr != nil {
 			slog.Warn("checkpoint: restore phase-2 rename failed",
 				"chat_id", m.chatID, "path", st.path, "error", renErr)
 			m.cleanupStages(stages[i:])

@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cplieger/atomicfile"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -107,36 +108,16 @@ func (b *blobStore) putOnce(ctx context.Context, hash string, data []byte) (any,
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir blob parent: %w", errors.Join(ErrTransient, err))
 	}
-	tmp, err := os.CreateTemp(parent, "blob-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp blob: %w", errors.Join(ErrTransient, err))
-	}
-	cleanupTmp := true
-	defer func() {
-		if cleanupTmp {
-			_ = os.Remove(tmp.Name())
+	// atomicfile does temp + write + fsync + rename + parent-dir fsync and
+	// refuses a symlink target. Preserve the transient/permanent split: a
+	// temp-create failure is retryable (as the old CreateTemp path was);
+	// every other phase is a hard write failure.
+	if err := atomicfile.WriteFile(ctx, p, data, atomicfile.WithMode(0o600)); err != nil {
+		if we, ok := errors.AsType[*atomicfile.WriteError](err); ok && we.Phase == atomicfile.PhaseTempCreate {
+			return "", fmt.Errorf("create temp blob: %w", errors.Join(ErrTransient, err))
 		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
 		return "", fmt.Errorf("write blob: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("fsync blob: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("close blob: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
-		return "", fmt.Errorf("rename blob: %w", err)
-	}
-	cleanupTmp = false
-	syncDir(parent)
 	return hash, nil
 }
 
