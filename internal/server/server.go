@@ -148,9 +148,18 @@ func (s *Server) ListenAndServe() error {
 		return fmt.Errorf("build CSP: %w", err)
 	}
 
+	// REST Idempotency-Key dedup wraps the mux from the inside: it sits
+	// inside securityMiddleware (so only same-origin, CSRF-checked
+	// requests are deduped) and inside requestLogger (so replays are
+	// still access-logged). Its janitor goroutine is stopped via defer
+	// when ListenAndServe returns — both the errCh and signal paths
+	// below return, so the cache lives exactly as long as the server.
+	idem := newIdempotencyCache(idempotencyTTL)
+	defer idem.stop()
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           securityMiddleware(cspPolicy, requestLogger(mux)),
+		Handler:           securityMiddleware(cspPolicy, requestLogger(idem.middleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MiB
