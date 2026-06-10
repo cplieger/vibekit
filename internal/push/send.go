@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -38,7 +37,7 @@ type pushPayload struct {
 // truncated with a Warn breadcrumb so an accidentally-chatty caller
 // doesn't get silently rejected by the push vendor.
 func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind) {
-	metrics.PushSends.Inc()
+	slog.Debug("push: send", "kind", string(notifyType))
 	if total := len(title) + len(body); total > pushBodyCap {
 		slog.Warn("push: payload too large, truncating",
 			"bytes", total, "cap", pushBodyCap)

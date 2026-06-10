@@ -17,7 +17,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
-	"github.com/cplieger/vibekit/internal/metrics"
 	"github.com/cplieger/vibekit/internal/permissions"
 	"golang.org/x/sync/singleflight"
 )
@@ -137,7 +136,6 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	s.push.RegisterRoutes(mux)
-	mux.HandleFunc("/metrics", metrics.Handler())
 
 	// Compute the CSP once from the embedded index.html so the inline
 	// importmap's sha256 hash is always in sync with what the browser

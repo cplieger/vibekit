@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/metrics"
 )
 
 // sseController owns the SSE client set and replay ring buffer. It has
@@ -50,16 +49,18 @@ func (sc *sseController) emit(evt api.ServerEvent, data []byte) {
 func (sc *sseController) add(client *sseClient) {
 	sc.mu.Lock()
 	sc.clients[client] = struct{}{}
+	n := len(sc.clients)
 	sc.mu.Unlock()
-	metrics.SSEClients.Inc()
+	slog.Debug("sse client connected", "clients", n, "chat_filter", client.chatID)
 }
 
 // remove unregisters an SSE client.
 func (sc *sseController) remove(client *sseClient) {
 	sc.mu.Lock()
 	delete(sc.clients, client)
+	n := len(sc.clients)
 	sc.mu.Unlock()
-	metrics.SSEClients.Dec()
+	slog.Debug("sse client disconnected", "clients", n, "chat_filter", client.chatID)
 }
 
 // closeAll cancels all connected SSE clients (used during shutdown).
