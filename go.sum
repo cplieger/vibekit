@@ -10,6 +10,8 @@ github.com/cplieger/metrics v1.0.1 h1:R6uV8UDnsMB+XMuQsKnzVyVb47a1mSGqgZMmgwTSbJ
 github.com/cplieger/metrics v1.0.1/go.mod h1:Q+d/UoGECpuuyJ2runs5dU+H8p5ZVI+EwcjQtVZReaM=
 github.com/cplieger/metrics v1.0.2 h1:BwC1dLIUFnURKg5Yrb+EaTzlmcoXHcSDQflMIm1Ra+w=
 github.com/cplieger/metrics v1.0.2/go.mod h1:Q+d/UoGECpuuyJ2runs5dU+H8p5ZVI+EwcjQtVZReaM=
+github.com/cplieger/ssrf v1.0.2 h1:bF+VKwBolmJrH5UmPiYJdF5y9dWQChXBrbUGF1CDb68=
+github.com/cplieger/ssrf v1.0.2/go.mod h1:eCiJVzVWRqafzuk64RDRuGCZgmepWxAR/CC/5pXwmQc=
 github.com/cplieger/vterm v1.0.0 h1:lduitClXSBm+wbbtqsbhcUHiDpfSz80y5LKjUIhusgs=
 github.com/cplieger/vterm v1.0.0/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/cplieger/vterm v1.0.5 h1:Y1xg901zRaZHntGpJTt8owkahkc3kOUQ+bfN8eFHyRM=
