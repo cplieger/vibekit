@@ -100,15 +100,16 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	// and validates every resolved IP, plus a net.Dialer Control hook
 	// re-validates the actually-connected IP at socket creation. That
 	// closes the residual DNS-rebinding / suffix-subdomain-to-internal
-	// vectors a purely name-based check leaves open. Ports pinned to
-	// 443 and schemes to https: the allowlist already rejects explicit
-	// ports, so every legitimate vendor endpoint is default-443, and
-	// no current push vendor needs another port. SafeTransport carries
+	// vectors a purely name-based check leaves open. Ports are pinned to
+	// 443 — the dialer enforces this, and the allowlist already rejects
+	// explicit ports so every legitimate vendor endpoint is default-443.
+	// https is enforced by the allowlist and the redirect check, NOT the
+	// transport (SafeTransport's dialer never sees the URL scheme), so no
+	// scheme option is passed. SafeTransport carries
 	// no TLSClientConfig or idle-pool size via options, so those two
 	// original settings are applied to the returned *http.Transport.
 	pushTransport := ssrf.SafeTransport(
 		ssrf.WithAllowedPorts(443),
-		ssrf.WithAllowedSchemes("https"),
 		ssrf.WithLogger(slog.Default()),
 	)
 	pushTransport.MaxIdleConnsPerHost = 2
