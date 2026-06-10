@@ -1,12 +1,12 @@
 package hub
 
 import (
+	"log/slog"
 	"maps"
 	"sync"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/metrics"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -51,7 +51,7 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 	sb = &sharedBridge{bridge: bm.factory(), state: bridgeStarting}
 	bm.bridges[chatID] = sb
 	bm.mu.Unlock()
-	metrics.BridgeSpawns.Inc()
+	slog.Info("bridge spawned", "chat_id", chatID)
 	return sb, false
 }
 

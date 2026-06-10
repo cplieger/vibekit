@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
-
-	"github.com/cplieger/vibekit/internal/metrics"
 )
 
 // requestIDHeader is the canonical HTTP header carrying the per-request id.
@@ -39,7 +37,7 @@ func requestLogger(next http.Handler) http.Handler {
 		w.Header().Set(requestIDHeader, id)
 		ctx := context.WithValue(r.Context(), reqIDKey{}, id)
 
-		rw := metrics.NewStatusRecorder(w)
+		rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
@@ -47,12 +45,29 @@ func requestLogger(next http.Handler) http.Handler {
 		slog.InfoContext(ctx, "http",
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", rw.Status(),
+			"status", rw.status,
 			"duration_ms", dur.Milliseconds(),
 			"request_id", id,
 		)
-		metrics.RecordHTTP(r.Method, r.URL.Path, rw.Status(), dur)
 	})
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the response
+// status code for the access log above. Defaults to 200 (Go's implicit
+// status on the first Write) and records the first explicit WriteHeader.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.wroteHeader {
+		return
+	}
+	s.status = code
+	s.wroteHeader = true
+	s.ResponseWriter.WriteHeader(code)
 }
 
 func reqIDOrNew(inbound string) string {
