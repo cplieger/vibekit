@@ -163,9 +163,9 @@ func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) err
 		_ = os.Remove(tmp)
 		return fmt.Errorf("checkout: close stage %s: %w", relPath, cErr)
 	}
-	if rnErr := os.Rename(tmp, abs); rnErr != nil {
+	if rnErr := atomicfile.Commit(tmp, abs); rnErr != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: rename %s: %w", relPath, rnErr)
+		return fmt.Errorf("checkout: commit %s: %w", relPath, rnErr)
 	}
 	return nil
 }
