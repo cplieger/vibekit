@@ -36,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/atomicfile"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -141,18 +142,11 @@ func (s *Server) readManifest() (manifest map[string]any, path string, err error
 }
 
 func writeManifest(path string, m map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil { //nolint:gosec // user config file, not secrets
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.SaveBytes(path, append(data, '\n'), 0o644)
 }
 
 // entryAt returns a typed view of the entry at section.name within
