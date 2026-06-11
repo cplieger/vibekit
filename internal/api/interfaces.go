@@ -2,15 +2,16 @@
 // components. All cross-component calls go through these interfaces,
 // enabling testability (mock any component) and swappability.
 //
-// This package contains three concern groups:
+// This package contains two concern groups:
 //
 //  1. Domain types and interfaces — the contract surface (interfaces.go,
 //     domain_chat.go, events.go, commands.go, domain_rpc.go, mcp.go,
 //     push_types.go, methods.go, strings.go).
-//  2. HTTP response/request helpers (httputil.go, decode.go,
-//     fileio_serve.go) — WriteJSON, BadRequest, RequireMethod, etc.
-//  3. File I/O utilities (fileio.go) — SaveBytes, SaveJSON,
-//     CleanupStaleTemps.
+//  2. HTTP response/request helpers (httputil.go, decode.go) —
+//     WriteJSON, BadRequest, MethodNotAllowed, etc.
+//
+// Atomic file I/O (SaveBytes, bounded reads) lives in the external
+// cplieger/atomicfile package, not here.
 //
 // Implementation packages import api, never the reverse. Domain types
 // Tag, FileChange, and ConflictPayload live in checkpoint/types (a
