@@ -110,7 +110,6 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	// original settings are applied to the returned *http.Transport.
 	pushTransport := ssrf.SafeTransport(
 		ssrf.WithAllowedPorts(443),
-		ssrf.WithLogger(slog.Default()),
 	)
 	pushTransport.MaxIdleConnsPerHost = 2
 	pushTransport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
