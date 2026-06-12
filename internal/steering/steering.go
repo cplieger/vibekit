@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
@@ -163,12 +163,12 @@ func (g *Generator) Generate(ctx context.Context) {
 	// vibekit writes: this file lists the workspace layout and
 	// MCP server names which, while not secrets, are information
 	// that should stay scoped to the single user that runs
-	// kiro-cli. atomicfile.SaveBytes is the atomic temp+rename helper so
-	// a crash mid-write can't leave a truncated file. It also
-	// derives the parent-dir mode from the file mode (0o700 when
-	// the file has no group/world bits), so we don't MkdirAll
-	// explicitly — that would widen the dir to 0o755.
-	if wErr := atomicfile.SaveBytes(steeringFile, content, 0o600); wErr != nil {
+	// kiro-cli. atomicfile.WriteFile is the atomic temp+rename helper so
+	// a crash mid-write can't leave a truncated file. WithMkdirMode(0o700)
+	// auto-creates the parent dir narrowly (the file has no group/world
+	// bits), so we don't MkdirAll explicitly — that would widen it to 0o755.
+	if _, wErr := atomicfile.WriteFile(ctx, steeringFile, content,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); wErr != nil {
 		slog.Error("steering: write", "path", steeringFile, "error", wErr)
 		return
 	}

@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -48,7 +48,8 @@ func (s *Service) loadKeys() {
 		s.healthy = false
 		return
 	}
-	if saveErr := atomicfile.SaveBytes(s.keysPath(), data, 0o600); saveErr != nil {
+	if _, saveErr := atomicfile.WriteFile(context.Background(), s.keysPath(), data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); saveErr != nil {
 		slog.Warn("push: persist VAPID keys failed", "error", saveErr)
 	}
 	ecdsaKey, decErr := s.decodeVAPIDPrivateKey()
@@ -158,7 +159,8 @@ func (s *Service) writeSubsSnapshot(subs []api.PushSubscription) {
 		slog.Error("push: marshal subscriptions", "error", err)
 		return
 	}
-	if saveErr := atomicfile.SaveBytes(s.subsPath(), data, 0o600); saveErr != nil {
+	if _, saveErr := atomicfile.WriteFile(context.Background(), s.subsPath(), data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); saveErr != nil {
 		slog.Warn("push: persist subscriptions failed", "error", saveErr)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -113,7 +113,28 @@ func serveJSONPut(w http.ResponseWriter, r *http.Request, path, name string, mu 
 		api.BadRequest(w, "expected json object")
 		return
 	}
-	if err := atomicfile.SaveJSON(path, mu, body, "serveJSONFile:"+name, perm); err != nil {
+	// The caller now owns the mutex and marshaling (atomicfile no longer
+	// provides SaveJSON). Hold mu across marshal+write so concurrent PUTs to
+	// this same file serialize, then atomically temp+fsync+rename via
+	// WriteFile. WithMkdirMode mirrors SaveJSON's old auto-create of the
+	// parent dir, deriving its mode from the file perm (0o700 when the file
+	// has no group/world bits, else 0o755).
+	mu.Lock()
+	defer mu.Unlock()
+	data, err := json.MarshalIndent(body, "", "  ")
+	if err != nil {
+		slog.Error("serveJSONFile: marshal failed",
+			"route", name, "path", path, "error", err)
+		api.WriteJSONStatus(w, http.StatusInternalServerError,
+			api.ErrorJSON("save failed"))
+		return
+	}
+	dirPerm := os.FileMode(0o755)
+	if perm&0o077 == 0 {
+		dirPerm = 0o700
+	}
+	if _, err := atomicfile.WriteFile(r.Context(), path, data,
+		atomicfile.WithMode(perm), atomicfile.WithMkdirMode(dirPerm)); err != nil {
 		slog.Error("serveJSONFile: save failed",
 			"route", name, "path", path, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,

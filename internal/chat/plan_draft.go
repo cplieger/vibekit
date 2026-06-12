@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -91,7 +91,9 @@ func (s *Store) SetPlanDraft(ctx context.Context, chatID api.ChatID, content str
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return atomicfile.SaveBytes(draftPath, []byte(content), fileMode)
+	_, err := atomicfile.WriteFile(ctx, draftPath, []byte(content),
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	return err
 }
 
 // DeletePlanDraft removes the draft file for chatID. No-op if missing.

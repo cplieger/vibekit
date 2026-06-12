@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 )
 
 // UnmarshalJSON validates the transport field at the JSON parse boundary,
@@ -47,7 +47,8 @@ func (s *Store) persist(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("%w mcp.json: %w", ErrPersistMarshal, err)
 	}
-	if err := atomicfile.SaveBytes(s.path, data, 0o600); err != nil {
+	if _, err := atomicfile.WriteFile(ctx, s.path, data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
 	}
 	return nil

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 )
 
 // writeTeaConfig writes tea's per-host login entry.
@@ -229,7 +229,8 @@ func setupGitTea(ctx context.Context, host string) error {
 		out = append(out, l)
 	}
 	out = append(out, prefix)
-	if err := atomicfile.SaveBytes(credFile, []byte(strings.Join(out, "\n")+"\n"), 0o600); err != nil {
+	if _, err := atomicfile.WriteFile(ctx, credFile, []byte(strings.Join(out, "\n")+"\n"),
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write git-credentials: %w", err)
 	}
 	// Ensure git uses the store helper.

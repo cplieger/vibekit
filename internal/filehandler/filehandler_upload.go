@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -166,8 +166,9 @@ func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) 
 	// atomicfile writes to a temp sibling, fsyncs it, renames over dest, then
 	// fsyncs the parent dir — the durability step the old hand-rolled path
 	// omitted. It refuses a symlink dest (safer than replacing it) and removes
-	// the temp on any error, so dest is never left a partial write.
-	if werr := atomicfile.WriteReader(ctx, dest, cr, 0o600); werr != nil {
+	// the temp on any error, so dest is never left a partial write. The mode
+	// now rides in via WithMode.
+	if _, werr := atomicfile.WriteReader(ctx, dest, cr, atomicfile.WithMode(0o600)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil

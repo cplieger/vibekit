@@ -5,7 +5,7 @@ go 1.26.4
 require github.com/creack/pty v1.1.24
 
 require (
-	github.com/cplieger/atomicfile v1.2.0
+	github.com/cplieger/atomicfile/v2 v2.0.0
 	github.com/cplieger/ssrf v1.0.2
 	github.com/cplieger/vterm v1.0.10
 	github.com/cplieger/wiregen v1.1.1
