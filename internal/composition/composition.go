@@ -281,6 +281,8 @@ func sweepStaleTemps(configDir, workDir string) {
 		filepath.Join(configDir, "chats", archive.Subdir),
 		workDir,
 	} {
-		atomicfile.CleanupStaleTemps(dir, tempMaxAge)
+		if _, err := atomicfile.CleanupStaleTemps(dir, tempMaxAge); err != nil {
+			slog.Debug("stale temp cleanup failed", "dir", dir, "error", err)
+		}
 	}
 }
