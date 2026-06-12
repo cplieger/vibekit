@@ -14,9 +14,34 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile"
 	"golang.org/x/sync/errgroup"
 )
+
+// commitRename atomically renames an externally-staged temp file into place
+// and fsyncs the parent directory. The atomicfile library no longer exposes a
+// bare-rename primitive (it owns temp creation), and the restore/staging flow
+// produces the temp itself, so this mirrors the old atomicfile.Commit
+// semantics locally: a rename failure is fatal (the data did not land), but a
+// parent-dir fsync failure means the file is in place yet not guaranteed
+// durable across an immediate crash — log at Warn and return nil rather than
+// failing the commit.
+func commitRename(tmp, final string) error {
+	if err := os.Rename(tmp, final); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(final))
+	if err != nil {
+		slog.Warn("checkpoint: parent-dir open for fsync failed; rename not durable",
+			"path", final, "error", err)
+		return nil
+	}
+	defer d.Close()
+	if syncErr := d.Sync(); syncErr != nil {
+		slog.Warn("checkpoint: parent-dir fsync failed; rename not durable",
+			"path", final, "error", syncErr)
+	}
+	return nil
+}
 
 // RestorePreview returns the list of files that would be touched by
 // a Restore(tag) call. Used by the client to warn the user before
@@ -163,7 +188,7 @@ func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) err
 		_ = os.Remove(tmp)
 		return fmt.Errorf("checkout: close stage %s: %w", relPath, cErr)
 	}
-	if rnErr := atomicfile.Commit(tmp, abs); rnErr != nil {
+	if rnErr := commitRename(tmp, abs); rnErr != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("checkout: commit %s: %w", relPath, rnErr)
 	}
@@ -365,7 +390,7 @@ func (m *Manager) applyStagesLocked(stages []restoreStage) error {
 			}
 			continue
 		}
-		if renErr := atomicfile.Commit(st.tmp, st.abs); renErr != nil {
+		if renErr := commitRename(st.tmp, st.abs); renErr != nil {
 			slog.Warn("checkpoint: restore phase-2 rename failed",
 				"chat_id", m.chatID, "path", st.path, "error", renErr)
 			m.cleanupStages(stages[i:])

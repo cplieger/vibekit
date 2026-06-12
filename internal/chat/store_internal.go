@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -117,7 +117,10 @@ func (s *Store) load(chatID api.ChatID) (*api.Chat, error) {
 }
 
 // save atomically writes a chat file. The caller holds the per-chat
-// mutex, so the SaveJSON mutex is redundant — use SaveBytes directly.
+// mutex, so atomicfile's own locking is unnecessary — WriteFile is the
+// bare atomic temp+fsync+rename primitive. WithMkdirMode mirrors the old
+// SaveBytes behavior of auto-creating the parent dir (0o700: chat files
+// may carry secrets).
 func (s *Store) save(chat *api.Chat) error {
 	path, err := s.pathFor(api.ChatID(chat.ID))
 	if err != nil {
@@ -128,5 +131,7 @@ func (s *Store) save(chat *api.Chat) error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.SaveBytes(path, data, fileMode)
+	_, err = atomicfile.WriteFile(context.Background(), path, data,
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	return err
 }

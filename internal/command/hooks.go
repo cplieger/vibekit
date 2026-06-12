@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -98,7 +98,6 @@ func buildHookDoc(p *hookCreatePayload) map[string]any {
 
 // CmdCreateHook creates a hook file from chat context.
 func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	_ = ctx // reserved for future use
 	deps := d.Deps()
 	p, safeName, code, vErr := validateHookPayload(cmd)
 	if vErr != nil {
@@ -121,7 +120,8 @@ func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := atomicfile.SaveBytes(hookPath, data, 0o600); err != nil {
+	if _, err := atomicfile.WriteFile(ctx, hookPath, data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}

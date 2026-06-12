@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -146,7 +146,9 @@ func writeManifest(path string, m map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.SaveBytes(path, append(data, '\n'), 0o644)
+	_, err = atomicfile.WriteFile(context.Background(), path, append(data, '\n'),
+		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+	return err
 }
 
 // entryAt returns a typed view of the entry at section.name within

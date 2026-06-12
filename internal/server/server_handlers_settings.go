@@ -11,24 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/settings"
 )
-
-// durabilityOnly reports whether err is an atomicfile parent-directory fsync
-// failure (PhaseDirSync). When true the file was renamed into place — the
-// content is persisted — but the directory fsync that guarantees the rename
-// survives an immediate power loss did not complete. For settings writes the
-// persisted content is what the user cares about, so callers treat this as a
-// success (logging the durability gap) rather than returning HTTP 500 for a
-// write that actually landed on disk.
-func durabilityOnly(err error) bool {
-	var we *atomicfile.WriteError
-	return errors.As(err, &we) && we.Phase == atomicfile.PhaseDirSync
-}
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	path := s.steering.CustomPath()
@@ -63,17 +51,24 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		// Atomic write via temp+fsync+rename+dir-fsync (atomicfile.SaveBytes
-		// also creates the parent dir). Replaces a bare os.WriteFile
-		// that could leave a truncated file on a crash mid-write.
-		if err := atomicfile.SaveBytes(path, []byte(body.Content), 0o644); err != nil {
-			if !durabilityOnly(err) {
-				api.InternalError(w, err)
-				return
-			}
-			// Content is on disk; only the parent-dir fsync was unconfirmed.
+		// Atomic write via temp+fsync+rename+dir-fsync. WithMkdirMode
+		// auto-creates the parent dir (replacing the old SaveBytes
+		// behavior); WithMode keeps the 0o644 perm. Replaces a bare
+		// os.WriteFile that could leave a truncated file on a crash
+		// mid-write. A non-nil error means the content did NOT land —
+		// surface it as 500. A nil error with res.Durable==false means
+		// the content is on disk but the parent-dir fsync was
+		// unconfirmed; log and proceed (the library already logged the
+		// fsync failure at Warn).
+		res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
+			atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+		if err != nil {
+			api.InternalError(w, err)
+			return
+		}
+		if !res.Durable {
 			slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
-				"path", path, "error", err)
+				"path", path)
 		}
 		api.Ok(w)
 	default:
@@ -138,16 +133,20 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// Atomic write via temp+fsync+rename+dir-fsync. Replaces a bare
 		// os.WriteFile so a crash mid-write cannot truncate config.json
 		// to zero bytes (which would silently revert every preference to
-		// its consumer-side default on the next read).
-		if wErr := atomicfile.SaveBytes(path, append(pretty, '\n'), 0o644); wErr != nil {
-			if !durabilityOnly(wErr) {
-				api.InternalError(w, wErr)
-				return
-			}
-			// Config is on disk; only the parent-dir fsync was unconfirmed.
-			// Fall through so the broadcast and preference syncs still run.
+		// its consumer-side default on the next read). A non-nil error
+		// means the data did not land — surface 500. A nil error with
+		// res.Durable==false means the config is on disk but the
+		// parent-dir fsync was unconfirmed; fall through so the broadcast
+		// and preference syncs still run.
+		res, wErr := atomicfile.WriteFile(r.Context(), path, append(pretty, '\n'),
+			atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+		if wErr != nil {
+			api.InternalError(w, wErr)
+			return
+		}
+		if !res.Durable {
 			slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
-				"path", path, "error", wErr)
+				"path", path)
 		}
 		api.Ok(w)
 		s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))

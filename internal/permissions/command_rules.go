@@ -47,6 +47,7 @@
 package permissions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -60,7 +61,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 )
 
 // RuleMode is "allow" (auto-approve under safe_commands) or "deny"
@@ -334,5 +335,7 @@ func (r *CommandRules) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.SaveBytes(r.path(), data, 0o600)
+	_, err = atomicfile.WriteFile(context.Background(), r.path(), data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	return err
 }

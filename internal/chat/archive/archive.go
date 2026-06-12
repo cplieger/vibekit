@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
 )
@@ -300,7 +300,9 @@ func (s *Service) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, 
 	if err != nil {
 		return err
 	}
-	return atomicfile.SaveBytes(path, data, fileMode)
+	_, err = atomicfile.WriteFile(ctx, path, data,
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	return err
 }
 
 // DeleteArchived permanently removes a single archived chat file and its

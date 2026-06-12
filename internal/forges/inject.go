@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 )
 
 // configHomeOverride lets tests redirect the per-CLI config paths
@@ -102,5 +102,7 @@ func RemoveToken(_ context.Context, kind Kind, host string) error {
 
 // writeYAML writes content atomically with 0600 perms.
 func writeYAML(path, content string) error {
-	return atomicfile.SaveBytes(path, []byte(content), 0o600)
+	_, err := atomicfile.WriteFile(context.Background(), path, []byte(content),
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	return err
 }

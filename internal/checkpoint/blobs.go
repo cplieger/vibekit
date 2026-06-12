@@ -32,7 +32,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -112,7 +112,7 @@ func (b *blobStore) putOnce(ctx context.Context, hash string, data []byte) (any,
 	// refuses a symlink target. Preserve the transient/permanent split: a
 	// temp-create failure is retryable (as the old CreateTemp path was);
 	// every other phase is a hard write failure.
-	if err := atomicfile.WriteFile(ctx, p, data, atomicfile.WithMode(0o600)); err != nil {
+	if _, err := atomicfile.WriteFile(ctx, p, data, atomicfile.WithMode(0o600)); err != nil {
 		if we, ok := errors.AsType[*atomicfile.WriteError](err); ok && we.Phase == atomicfile.PhaseTempCreate {
 			return "", fmt.Errorf("create temp blob: %w", errors.Join(ErrTransient, err))
 		}
