@@ -8,12 +8,6 @@
       "followTag": "latest",
       "commitMessageSuffix": " [skip-build]",
       "ignoreUnstable": false
-    },
-    {
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "npm dev dependencies",
-      "schedule": ["before 6am on monday"]
     }
   ],
   "customDatasources": {
