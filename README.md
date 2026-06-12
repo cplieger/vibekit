@@ -4,7 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/cplieger/vibekit)](https://github.com/cplieger/vibekit/releases)
 [![Image Size](https://ghcr-badge.egpl.dev/cplieger/vibekit/size)](https://github.com/cplieger/vibekit/pkgs/container/vibekit)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
-![base: Debian](https://img.shields.io/badge/base-Debian_trixie-A81D33?logo=debian)
+![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibekit/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibekit)
 
 A browser-based front-end for the Kiro CLI — chat with an AI coding agent from any device, with shared sessions, a live terminal, an editor, and git/forge workflows.
@@ -43,7 +43,7 @@ services:
 
 ## Security
 
-Network-exposed: put it behind an authenticating reverse proxy — vibekit has its own password/OIDC auth, but it controls an agent with shell and filesystem access to `/workspace`. Web-push uses an SSRF-hardened transport. Debian `trixie-slim` base (a shell + the `kiro-cli` subprocess are required, so this is not distroless). Images are published with cosign signatures and SBOM attestations.
+Network-exposed: put it behind an authenticating reverse proxy — vibekit has its own password/OIDC auth, but it controls an agent with shell and filesystem access to `/workspace`. Web-push uses an SSRF-hardened transport. Debian base (a shell + the `kiro-cli` subprocess are required, so this is not distroless). Images are published with cosign signatures and SBOM attestations.
 
 ## License
 
