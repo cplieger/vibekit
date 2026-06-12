@@ -6,7 +6,6 @@
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian_trixie-A81D33?logo=debian)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibekit/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibekit)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
 A browser-based front-end for the Kiro CLI — chat with an AI coding agent from any device, with shared sessions, a live terminal, an editor, and git/forge workflows.
 
