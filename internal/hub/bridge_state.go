@@ -90,6 +90,10 @@ func (sb *sharedBridge) SessionID() api.SessionID {
 	return sb.bridge.SessionID()
 }
 
+func (sb *sharedBridge) SupportsDocuments() bool {
+	return sb.bridge.SupportsDocuments()
+}
+
 func (sb *sharedBridge) TryAcquireForPrompt() bool {
 	return sb.tryAcquireForPrompt()
 }

@@ -809,6 +809,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		wantMIME        string
 		attachments     []api.Attachment
 		wantLen         int
+		supportsDocs    bool
 	}{
 		{
 			name:         "TextOnly",
@@ -818,15 +819,27 @@ func TestBuildPromptBlocks(t *testing.T) {
 			wantContains: "hello",
 		},
 		{
-			name:        "DocumentAttachment",
+			name:        "DocumentAttachmentInlinedWhenSupported",
 			text:        "hi",
 			attachments: []api.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "doc.pdf"), []byte("%PDF-1.7 fake"), 0o644)
 			},
-			wantLen:  2,
-			wantType: "document",
-			wantMIME: "application/pdf",
+			supportsDocs: true,
+			wantLen:      2,
+			wantType:     "document",
+			wantMIME:     "application/pdf",
+		},
+		{
+			name:        "DocumentFallsBackToPathRefWhenUnsupported",
+			text:        "hi",
+			attachments: []api.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
+			setupFile: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "doc.pdf"), []byte("%PDF-1.7 fake"), 0o644)
+			},
+			wantLen:      2,
+			wantType:     "text",
+			wantContains: "doc.pdf",
 		},
 		{
 			name:        "OversizeDocumentFallsBackToText",
@@ -835,6 +848,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "big.pdf"), make([]byte, command.MaxDocumentBytes+1), 0o644)
 			},
+			supportsDocs: true,
 			wantLen:      2,
 			wantType:     "text",
 			wantContains: "too large",
@@ -843,6 +857,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			name:         "UnreadableDocumentFallsBackToText",
 			text:         "hi",
 			attachments:  []api.Attachment{{Name: "ghost.pdf", Path: "ghost.pdf"}},
+			supportsDocs: true,
 			wantLen:      2,
 			wantType:     "text",
 			wantContains: "unreadable",
@@ -876,7 +891,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
+			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir, tc.supportsDocs)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}

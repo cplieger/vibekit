@@ -107,6 +107,11 @@ type CommandBridge interface {
 	IsPrimed() bool
 	// SetPrimed marks the bridge as primed.
 	SetPrimed()
+	// SupportsDocuments reports whether the negotiated agent accepts
+	// inline document/embedded content blocks (promptCapabilities.
+	// embeddedContext). Gates whether attachments are sent as `document`
+	// blocks or as path references. See ACPBridge.SupportsDocuments.
+	SupportsDocuments() bool
 }
 
 // Broadcaster sends events to all connected SSE clients.
@@ -197,6 +202,12 @@ type ACPBridge interface {
 	// NotifCh yields incoming ACP notifications. Closes when the
 	// subprocess exits.
 	NotifCh() <-chan *RPCResponse
+	// SupportsDocuments reports whether the negotiated agent accepts
+	// inline document/embedded content blocks, derived from the
+	// initialize handshake's promptCapabilities.embeddedContext. When
+	// false (kiro-cli 2.7's acp), document attachments must be sent as
+	// path references instead of dropped `document` content blocks.
+	SupportsDocuments() bool
 }
 
 // ACPBridgeFactory creates new ACPBridge instances. The hub calls it

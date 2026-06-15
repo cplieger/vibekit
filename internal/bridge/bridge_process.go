@@ -96,7 +96,11 @@ func (b *Bridge) Stop() {
 // pure (no process side effects) so the arg shaping — including the
 // kiro-cli >=2.6 `--effort` flag and its validation — is unit-testable.
 func buildACPArgs(agent, model, effort string, extraArgs []string) []string {
-	args := []string{"acp"}
+	// Pin kiro-cli's agent engine to v2. kiro-cli 2.7 made v2 the `acp`
+	// default; pinning it explicitly insulates the bridge from a future
+	// default flip, since the engine determines which ACP methods the
+	// agent registers.
+	args := []string{"acp", "--agent-engine", "v2"}
 	args = append(args, extraArgs...)
 	if agent != "" {
 		args = append(args, "--agent", agent)

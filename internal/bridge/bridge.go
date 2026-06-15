@@ -4,6 +4,7 @@ package bridge
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,6 +60,7 @@ type Bridge struct {
 	notifCh      chan *api.RPCResponse
 	done         chan struct{}
 	models       atomic.Pointer[[]api.SessionModel]
+	promptCaps   atomic.Pointer[api.PromptCapabilities]
 	cmd          *exec.Cmd
 	lockMgr      *sessions.Manager
 	modelID      api.ModelID
@@ -176,7 +178,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// this capability is present (verified against kiro-cli 2.6.0, which
 	// gates forwarding on clientCapabilities.elicitation). Without it the
 	// agent has nowhere to surface the prompt and the tool call stalls.
-	_, err := b.Call(ctx, methodInitialize, map[string]any{
+	resp, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs":          map[string]any{"readTextFile": true, "writeTextFile": true},
@@ -190,9 +192,41 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
+	b.capturePromptCapabilities(resp)
 	// Developer-oriented intermediate signal; the user-facing
 	// "bridge started" breadcrumb in Start() is the authoritative
 	// "a bridge exists now" Info line.
 	slog.Debug("ACP initialize RPC completed", "version", version.Build)
 	return nil
+}
+
+// capturePromptCapabilities records the agent's advertised prompt
+// content-block capabilities from the initialize result, so the prompt
+// builder only sends block types the agent can consume (e.g. inline
+// document/embedded-context blocks). A decode failure or absent field
+// leaves the zero value (text-only), which is the safe default.
+func (b *Bridge) capturePromptCapabilities(resp *api.RPCResponse) {
+	if resp == nil || len(resp.Result) == 0 {
+		return
+	}
+	var init struct {
+		AgentCapabilities struct {
+			PromptCapabilities api.PromptCapabilities `json:"promptCapabilities"`
+		} `json:"agentCapabilities"`
+	}
+	if err := json.Unmarshal(resp.Result, &init); err != nil {
+		slog.Debug("initialize: could not decode promptCapabilities", "error", err)
+		return
+	}
+	caps := init.AgentCapabilities.PromptCapabilities
+	b.promptCaps.Store(&caps)
+}
+
+// SupportsDocuments reports whether the negotiated agent accepts inline
+// document/embedded content blocks (promptCapabilities.embeddedContext).
+// False until initialize completes, and for kiro-cli 2.7's acp, which
+// advertises embeddedContext:false.
+func (b *Bridge) SupportsDocuments() bool {
+	c := b.promptCaps.Load()
+	return c != nil && c.EmbeddedContext
 }
