@@ -24,7 +24,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # the same version string, so the URL resolves identically. See
 # .github/renovate.json for the followTag rule.
 # renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260527.2
+ARG TSGO_VERSION=7.0.0-dev.20260615.1
 # Arch-aware fetch: native per-arch runners build arm64 on real arm64
 # hardware, so the tsgo binary must match the build arch. dpkg reports
 # arm64/amd64; tsgo's npm platform package uses arm64/x64. A hardcoded x64
