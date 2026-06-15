@@ -271,6 +271,44 @@ export function checkpointTagForTurn(turnIndex: number, oldestTag: string): stri
   return candidate;
 }
 
+/**
+ * rewindConfirmText builds the confirmation shown before branching a new
+ * chat from a past turn. It surfaces what the user is rewinding from — the
+ * prompt preview plus the following assistant turn's tool-call and
+ * touched-file counts — mirroring kiro-cli 2.7's enriched /rewind preview,
+ * built from data vibekit already persists (no extra round-trip). All
+ * field reads are defensive so a sparse/legacy message never throws.
+ */
+function rewindConfirmText(m: Message, next: Message | undefined): string {
+  const promptRaw = (m.content ?? "").trim().replace(/\s+/g, " ");
+  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "…" : promptRaw;
+  const lines = ["Rewind from this turn?", ""];
+  if (prompt.length > 0) {
+    lines.push(`Prompt: "${prompt}"`);
+  }
+  if (next?.role === "assistant") {
+    const calls = next.tool_calls ?? [];
+    if (calls.length > 0) {
+      const files = [
+        ...new Set(
+          calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
+        ),
+      ];
+      const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
+      const filePart =
+        files.length > 0
+          ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""})`
+          : "";
+      lines.push(`This turn's response: ${toolPart}${filePart}.`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    "Creates a new chat branched from this point. File contents on disk are not affected (use Restore for that).",
+  );
+  return lines.join("\n");
+}
+
 /** Clear all per-message state, e.g. on chat switch when active session
  *  becomes undefined. The reconcile call after a real session arrives
  *  will rebuild from scratch. */
@@ -407,11 +445,7 @@ function buildUser(m: Message): HTMLElement {
       if (turnIdx < 0) {
         return;
       }
-      if (
-        !confirm(
-          "Rewind from this turn? Creates a new chat starting from this point. File contents on disk are not affected (use Restore for that).",
-        )
-      ) {
+      if (!confirm(rewindConfirmText(m, session.messages[turnIdx + 1]))) {
         return;
       }
       void send({

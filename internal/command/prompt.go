@@ -250,7 +250,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 // BuildPromptParams constructs the full session/prompt parameter map.
 func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir, sb.SupportsDocuments()),
 	})
 	kiroMeta := map[string]any{}
 	if p.ActiveFile != "" {

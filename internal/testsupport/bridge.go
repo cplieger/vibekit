@@ -23,3 +23,4 @@ func (*NopACPBridge) Modes() []api.SessionMode                                  
 func (*NopACPBridge) Models() []api.SessionModel                                  { return nil }
 func (*NopACPBridge) SetModel(context.Context, string) error                      { return nil }
 func (*NopACPBridge) NotifCh() <-chan *api.RPCResponse                            { return nil }
+func (*NopACPBridge) SupportsDocuments() bool                                     { return false }

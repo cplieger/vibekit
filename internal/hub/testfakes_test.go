@@ -63,6 +63,8 @@ func (b *fakeBridge) Notify(_ context.Context, _ string, _ any) error { return n
 
 func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error { return nil }
 
+func (b *fakeBridge) SupportsDocuments() bool { return false }
+
 func (b *fakeBridge) SessionID() api.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
