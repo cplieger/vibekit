@@ -25,12 +25,15 @@ func FuzzChatLogPath(f *testing.F) {
 			t.Errorf("chatLogPath(%q, %q) = %q, does not end with %q", configDir, chatID, path, FileEvents)
 		}
 
-		// Must be under configDir (after Clean) when configDir is non-empty.
+		// Must be under configDir when configDir is non-empty. Use
+		// filepath.Rel so a relative configDir (e.g. ".") is handled
+		// correctly: filepath.Join(".", ...) drops the leading "./", so a
+		// literal HasPrefix("./") check would spuriously fail even though
+		// the result is genuinely rooted under the current directory.
 		if configDir != "" {
-			cleaned := filepath.Clean(path)
-			prefix := filepath.Clean(configDir)
-			if !strings.HasPrefix(cleaned, prefix+"/") && cleaned != prefix {
-				t.Errorf("chatLogPath(%q, %q) = %q, not under configDir %q", configDir, chatID, cleaned, prefix)
+			rel, err := filepath.Rel(filepath.Clean(configDir), filepath.Clean(path))
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				t.Errorf("chatLogPath(%q, %q) = %q, not under configDir %q", configDir, chatID, path, configDir)
 			}
 		}
 	})
