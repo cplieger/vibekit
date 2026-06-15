@@ -291,7 +291,7 @@
     "solargraph": {
       "enabled": false,
       "auto_update": true,
-      "version": "0.59.2",
+      "version": "0.60.0",
       "update": {
         "method": "rubygems",
         "package": "solargraph"
