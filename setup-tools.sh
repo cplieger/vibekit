@@ -250,6 +250,15 @@ check_update() {
                 "https://api.github.com/repos/${repo}/releases/latest" \
                 | jq -r '.tag_name // empty') || true
             ;;
+        gitlab)
+            local gl_repo gl_enc
+            gl_repo=$(jq -r "${jq_path}.update.repo" "$MANIFEST")
+            # GitLab's REST API addresses projects by URL-encoded path.
+            gl_enc=$(printf '%s' "$gl_repo" | sed 's|/|%2F|g')
+            latest=$(curl -fsSL --connect-timeout 10 --max-time 15 \
+                "https://gitlab.com/api/v4/projects/${gl_enc}/releases" 2>/dev/null \
+                | jq -r '.[0].tag_name // empty') || true
+            ;;
         gomod)
             local mod
             mod=$(jq -r "${jq_path}.update.module" "$MANIFEST")

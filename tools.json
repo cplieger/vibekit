@@ -126,7 +126,7 @@
       "auto_update": true,
       "version": "v1.69.0",
       "update": {
-        "method": "github",
+        "method": "gitlab",
         "repo": "gitlab-org/cli"
       },
       "description": "GitLab CLI. Auto-installed when you add a GitLab account in Sources.",
