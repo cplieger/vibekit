@@ -2,10 +2,13 @@
 //
 // Agent terminals keep the last N bytes of output for replay on
 // reconnect. (The PTY shell migrated to vterm, which owns its own
-// buffer.) This type is UTF-8 boundary aware on read (advances past
-// partial multi-byte characters at the cut point).
+// buffer.) This type is UTF-8 boundary aware on read (drops any invalid
+// byte sequences left by a multi-byte character cut at the ring
+// boundary or by a partial write).
 
 package hub
+
+import "strings"
 
 // byteRing is a byte-limited circular buffer that keeps the most
 // recent bytes written. It implements io.Writer.
@@ -71,17 +74,14 @@ func (r *byteRing) Bytes() []byte {
 	return out
 }
 
-// String returns the buffer contents as a string, advancing past any
-// partial UTF-8 sequence at the start (so the output is always valid
-// UTF-8 when the input was valid UTF-8).
+// String returns the buffer contents as a string with any invalid
+// UTF-8 byte sequences dropped — a multi-byte character cut at the ring
+// boundary (leading continuation bytes) or by a partial write (trailing
+// incomplete sequence), as well as any interior corruption — so the
+// output is always valid UTF-8. This keeps JSON persistence and browser
+// terminal replay from choking on a fragment captured mid-character.
 func (r *byteRing) String() string {
-	b := r.Bytes()
-	// Skip leading continuation bytes (0x80..0xBF) that indicate a
-	// partial multi-byte character was cut at the ring boundary.
-	for len(b) > 0 && b[0]&0xC0 == 0x80 {
-		b = b[1:]
-	}
-	return string(b)
+	return strings.ToValidUTF8(string(r.Bytes()), "")
 }
 
 // Len returns the number of bytes currently stored.

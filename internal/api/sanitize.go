@@ -79,9 +79,16 @@ func isHiddenUnicode(r rune) bool {
 // can complete an escape sequence that the next StripANSI pass then
 // strips. Iterating guarantees the result is fully sanitized — no
 // residual escapes an attacker hid behind zero-width chars — and makes
-// the function idempotent. Each pass only removes runes, so length
-// strictly decreases until stable; it terminates in O(len(s)) passes.
-// Use on all tool output before persisting or echoing to clients.
+// the function idempotent.
+//
+// Termination: SanitizeUnicode normalizes any invalid UTF-8 byte to a
+// single U+FFFD rune (via strings.Map), so after the first pass the
+// string is valid UTF-8 and every subsequent pass only removes runes.
+// The rune count is therefore non-increasing and the fixed point is
+// reached in O(len(s)) passes. (Byte length is NOT monotone — an
+// invalid byte expands to a 3-byte U+FFFD on the first pass — so the
+// guarantee is stated in runes, not bytes.) The output is always valid
+// UTF-8, safe to persist to JSON chat files or echo to clients.
 func SanitizeOutput(s string) string {
 	for {
 		out := SanitizeUnicode(StripANSI(s))
