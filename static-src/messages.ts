@@ -286,7 +286,7 @@ function rewindConfirmText(m: Message, next: Message | undefined): string {
   if (prompt.length > 0) {
     lines.push(`Prompt: "${prompt}"`);
   }
-  if (next !== undefined && next.role === "assistant") {
+  if (next?.role === "assistant") {
     const calls = next.tool_calls ?? [];
     if (calls.length > 0) {
       const files = [
