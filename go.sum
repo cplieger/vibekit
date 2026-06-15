@@ -4,8 +4,8 @@ github.com/cplieger/atomicfile/v2 v2.0.0 h1:glcjhSnnILprGBU93H76bHX1pyO7xFqlBb8L
 github.com/cplieger/atomicfile/v2 v2.0.0/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
 github.com/cplieger/ssrf/v2 v2.0.1 h1:og86P3oMaRu3BsMx4qtylxvWRyq4leWEZP2pRWXNyAM=
 github.com/cplieger/ssrf/v2 v2.0.1/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
-github.com/cplieger/vterm v1.0.10 h1:fqx/dqB9M3iKVttuJVDNcMZl/8JWegfjov7HIiAAS1s=
-github.com/cplieger/vterm v1.0.10/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
+github.com/cplieger/vterm v1.1.0 h1:TwQ00WALtojIdfDayap+3YLTuoKJYSAMdUkZpGfleRg=
+github.com/cplieger/vterm v1.1.0/go.mod h1:EGWAJMGcw/SymtElxZdwMgDO4ugiZUhZGauuYv44pE8=
 github.com/cplieger/wiregen v1.1.1 h1:kxu+FLLpWFIXYoHhHFYoDKu259JORYIc4WWlQUTduZ0=
 github.com/cplieger/wiregen v1.1.1/go.mod h1:fHZFpRVvylIB5YEmv1VsoA2V19NTRx/VqdiMz+CPEQs=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
