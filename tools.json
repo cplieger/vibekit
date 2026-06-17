@@ -113,7 +113,7 @@
     "gh": {
       "enabled": false,
       "auto_update": true,
-      "version": "v2.94.0",
+      "version": "v2.95.0",
       "update": {
         "method": "github",
         "repo": "cli/cli"
