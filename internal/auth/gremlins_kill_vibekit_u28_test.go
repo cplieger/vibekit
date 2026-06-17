@@ -28,7 +28,7 @@ func gk_vibekit_u28_captureLogs(t *testing.T, level slog.Level, fn func()) []map
 	defer slog.SetDefault(prev)
 	fn()
 	var recs []map[string]any
-	for _, line := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte{'\n'}) {
 		if len(line) == 0 {
 			continue
 		}
@@ -192,7 +192,7 @@ func Test_gk_vibekit_u28_ScanLoginOutput_HasCodeLogAttribute(t *testing.T) {
 // loop run dry and reports the generic "no auth URL found" instead.
 func Test_gk_vibekit_u28_ScanLoginOutput_LineCapBoundaryExactlyMax(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < maxLoginLines; i++ {
+	for i := range maxLoginLines {
 		fmt.Fprintf(&b, "noise line %d\n", i)
 	}
 	ch := make(chan map[string]string, 1)

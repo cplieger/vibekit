@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -21,8 +22,8 @@ import (
 // messages so a test can assert whether a particular log line was (or was
 // not) produced by the code under test.
 type gk_vibekit_u8_logCapture struct {
-	mu   sync.Mutex
 	msgs []string
+	mu   sync.Mutex
 }
 
 func (h *gk_vibekit_u8_logCapture) Enabled(context.Context, slog.Level) bool { return true }
@@ -40,12 +41,7 @@ func (h *gk_vibekit_u8_logCapture) WithGroup(string) slog.Handler      { return 
 func (h *gk_vibekit_u8_logCapture) gk_vibekit_u8_has(msg string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, m := range h.msgs {
-		if m == msg {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.msgs, msg)
 }
 
 // gk_vibekit_u8_installCapture redirects slog to a capturing handler for
@@ -81,15 +77,15 @@ func Test_gk_vibekit_u8_capturePromptCapabilities_storesEmbeddedContext(t *testi
 
 func Test_gk_vibekit_u8_capturePromptCapabilities_leavesUnset(t *testing.T) {
 	cases := []struct {
-		name string
 		resp *api.RPCResponse
+		name string
 	}{
-		{"nil_response", nil},
-		{"empty_result", &api.RPCResponse{Result: nil}},
-		{"malformed_json", &api.RPCResponse{Result: json.RawMessage(`{not valid`)}},
+		{name: "nil_response", resp: nil},
+		{name: "empty_result", resp: &api.RPCResponse{Result: nil}},
+		{name: "malformed_json", resp: &api.RPCResponse{Result: json.RawMessage(`{not valid`)}},
 		{
-			"embedded_context_false",
-			&api.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":false}}}`)},
+			name: "embedded_context_false",
+			resp: &api.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":false}}}`)},
 		},
 	}
 	for _, tc := range cases {
@@ -112,7 +108,7 @@ func Test_gk_vibekit_u8_capturePromptCapabilities_leavesUnset(t *testing.T) {
 func Test_gk_vibekit_u8_parseErrTracker_windowStartSetAtBurst(t *testing.T) {
 	var tr parseErrTracker
 	var got parseErrAction
-	for i := 0; i < parseErrBurst+1; i++ {
+	for range parseErrBurst + 1 {
 		got = tr.Record()
 	}
 	if got != parseErrSuppress {

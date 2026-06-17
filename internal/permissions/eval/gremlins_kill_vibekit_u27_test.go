@@ -71,6 +71,7 @@ func TestGkVibekitU27_MatchWildcard_TrailingSuffix(t *testing.T) {
 //     wedges on the space and the no-progress guard truncates the result.
 //   - shell_fields.go:26 (`i == prev` no-progress guard): flipping to
 //     `i != prev` breaks after the first progressing iteration.
+//
 // In both cases a multi-token command collapses to its first token.
 func TestGkVibekitU27_ShellFields_MultipleTokens(t *testing.T) {
 	gk_vibekit_u27_assertFields(t, "a b", ShellFields("a b"), []string{"a", "b"})

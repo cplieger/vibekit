@@ -11,6 +11,7 @@ package push
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 
@@ -21,8 +22,8 @@ const gk_vibekit_u17_subject = "mailto:test@example.com"
 
 // gk_vibekit_u17_logRec is one captured slog record (message + flattened attrs).
 type gk_vibekit_u17_logRec struct {
-	msg   string
 	attrs map[string]any
+	msg   string
 }
 
 // gk_vibekit_u17_logCapture is a slog.Handler that records every log line so a
@@ -32,8 +33,8 @@ type gk_vibekit_u17_logRec struct {
 // logged host is the only observable distinguishing the original from the
 // mutant.
 type gk_vibekit_u17_logCapture struct {
-	mu   sync.Mutex
 	recs []gk_vibekit_u17_logRec
+	mu   sync.Mutex
 }
 
 func (c *gk_vibekit_u17_logCapture) Enabled(context.Context, slog.Level) bool { return true }
@@ -57,9 +58,9 @@ func (c *gk_vibekit_u17_logCapture) WithGroup(string) slog.Handler      { return
 func (c *gk_vibekit_u17_logCapture) find(msg string) (gk_vibekit_u17_logRec, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i := len(c.recs) - 1; i >= 0; i-- {
-		if c.recs[i].msg == msg {
-			return c.recs[i], true
+	for _, v := range slices.Backward(c.recs) {
+		if v.msg == msg {
+			return v, true
 		}
 	}
 	return gk_vibekit_u17_logRec{}, false

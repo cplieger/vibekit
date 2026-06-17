@@ -33,8 +33,8 @@ import (
 // gk_vibekit_u2_safeBuf is a mutex-guarded byte buffer so the capturing
 // slog handler is race-free under -race.
 type gk_vibekit_u2_safeBuf struct {
-	mu  sync.Mutex
 	buf bytes.Buffer
+	mu  sync.Mutex
 }
 
 func (b *gk_vibekit_u2_safeBuf) Write(p []byte) (int, error) {
@@ -280,8 +280,8 @@ func TestGkVibekitU2_RecoverPartials_NoErrorLogsOnSuccess(t *testing.T) {
 
 	got := logs.String()
 	for _, bad := range []string{
-		"partial recovery: append failed",      // 48 mutant signature
-		"partial recovery: append interrupted", // 58 mutant signature
+		"partial recovery: append failed",            // 48 mutant signature
+		"partial recovery: append interrupted",       // 58 mutant signature
 		"partial recovery: remove and rename failed", // 61 mutant signature
 	} {
 		if strings.Contains(got, bad) {

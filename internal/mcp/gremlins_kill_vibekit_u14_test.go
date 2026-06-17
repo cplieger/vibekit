@@ -149,10 +149,7 @@ func Test_gk_vibekit_u14_RegistryBodyExactCapAccepted(t *testing.T) {
 		}
 		remaining := maxRegistryBody
 		for remaining > 0 {
-			n := len(chunk)
-			if n > remaining {
-				n = remaining
-			}
+			n := min(len(chunk), remaining)
 			if _, err := w.Write(chunk[:n]); err != nil {
 				return
 			}
@@ -193,7 +190,7 @@ func Test_gk_vibekit_u14_DrainRegistryBodyLogsOnError(t *testing.T) {
 func Test_gk_vibekit_u14_EvictLockedExpiredLogs(t *testing.T) {
 	c := newRegistryCache(64)
 	old := time.Now().Add(-time.Hour)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		c.entries[fmt.Sprintf("gkexp%d", i)] = registryCacheEntry{insertedAt: old, body: []byte("x")}
 	}
 	buf, restore := gk_vibekit_u14_captureLogs(t)
@@ -218,7 +215,7 @@ func Test_gk_vibekit_u14_EvictLockedExpiredLogs(t *testing.T) {
 func Test_gk_vibekit_u14_EvictLockedAtCapLogs(t *testing.T) {
 	c := newRegistryCache(8)
 	now := time.Now()
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		c.entries[fmt.Sprintf("gkfresh%02d", i)] = registryCacheEntry{
 			insertedAt: now.Add(time.Duration(i) * time.Millisecond),
 			body:       []byte("x"),
@@ -245,7 +242,7 @@ func Test_gk_vibekit_u14_EvictLockedAtCapLogs(t *testing.T) {
 func Test_gk_vibekit_u14_EvictLockedUnderCapNoLog(t *testing.T) {
 	c := newRegistryCache(64)
 	now := time.Now()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		c.entries[fmt.Sprintf("gku%d", i)] = registryCacheEntry{insertedAt: now, body: []byte("x")}
 	}
 	buf, restore := gk_vibekit_u14_captureLogs(t)

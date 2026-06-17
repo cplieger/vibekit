@@ -34,9 +34,8 @@ func writeGLabConfig(host, token, username string) error {
 		Protocol: protoHTTPS,
 		APIHost:  host,
 	}
-	if cfg.Editor == "" {
-		cfg.Editor = "" // leave blank; glab uses $EDITOR
-	}
+	// Editor is left as loaded from the existing config; glab falls back
+	// to $EDITOR when it is blank, so there is nothing to set here.
 	return writeYAML(path, marshalGLabConfig(cfg))
 }
 

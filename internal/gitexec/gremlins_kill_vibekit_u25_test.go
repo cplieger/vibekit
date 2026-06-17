@@ -15,8 +15,8 @@ func Test_gk_vibekit_u25_firstSubcommand_skipsFlagValues(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		args []string
 		want string
+		args []string
 	}{
 		// "-c" consumes its value ("status"); the real subcommand is "commit".
 		// Kills 148:9 (a == "-c"): the negation returns "status".

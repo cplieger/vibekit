@@ -121,7 +121,7 @@ func Test_gk_vibekit_u23_CleanupStale_ScanTruncationBoundary(t *testing.T) {
 	buf := gk_vibekit_u23_captureSlog(t)
 
 	const total = cleanupMaxEntries + 1
-	for i := 0; i < total; i++ {
+	for i := range total {
 		p := filepath.Join(mgr.Dir(), fmt.Sprintf("gku23entry-%04d.txt", i))
 		if err := os.WriteFile(p, nil, 0o644); err != nil {
 			t.Fatalf("write entry %d: %v", i, err)

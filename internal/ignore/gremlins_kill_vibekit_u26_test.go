@@ -170,15 +170,15 @@ func Test_gk_vibekit_u26_segMatchBounded_doubleStarSplitStartExact(t *testing.T)
 	const k = 4000  // literal prefix segments before the "**"
 	const mm = 3000 // "Y" filler between the prefix and the trailing "X"
 	p := make([]string, 0, k+2)
-	for i := 0; i < k; i++ {
+	for range k {
 		p = append(p, "a")
 	}
 	p = append(p, "**", "X")
 	x := make([]string, 0, k+mm+1)
-	for i := 0; i < k; i++ {
+	for range k {
 		x = append(x, "a")
 	}
-	for i := 0; i < mm; i++ {
+	for range mm {
 		x = append(x, "Y")
 	}
 	x = append(x, "X")
@@ -201,7 +201,7 @@ func Test_gk_vibekit_u26_segMatchBounded_outerBudgetBoundary(t *testing.T) {
 	// comparison earlier -> false.
 	mm := (maxSegMatchSteps - 4) / 2
 	x := make([]string, 0, mm+1)
-	for i := 0; i < mm; i++ {
+	for range mm {
 		x = append(x, "Y")
 	}
 	x = append(x, "X")
