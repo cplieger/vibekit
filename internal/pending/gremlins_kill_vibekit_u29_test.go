@@ -14,7 +14,7 @@ import (
 // the target chat has zero per-chat ops so the per-chat cap check passes first.
 func Test_gk_vibekit_u29_AddTotalCapBoundary(t *testing.T) {
 	s := New()
-	for i := 0; i < MaxPendingTotal; i++ {
+	for i := range MaxPendingTotal {
 		s.ops[fmt.Sprintf("gk_vibekit_u29_dummy_%d", i)] = &op{}
 	}
 	_, _, err := s.Add(context.Background(), &AddParams{

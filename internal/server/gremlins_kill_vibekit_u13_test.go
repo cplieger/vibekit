@@ -57,7 +57,6 @@ func Test_gk_vibekit_u13_readManifestEmptyFileIsEmpty(t *testing.T) {
 	s, _ := gk_vibekit_u13_serverWithRawManifest(t, []byte{})
 
 	manifest, _, err := s.readManifest()
-
 	if err != nil {
 		t.Fatalf("readManifest(empty file) err = %v, want nil", err)
 	}
@@ -95,8 +94,8 @@ func Test_gk_vibekit_u13_handleToolDeleteNoDependentsProceeds(t *testing.T) {
 		t.Fatalf("handleToolDelete(no dependents) status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Disabled []string `json:"disabled"`
 		Code     string   `json:"code"`
+		Disabled []string `json:"disabled"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)

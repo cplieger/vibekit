@@ -25,14 +25,14 @@ import (
 // --- shared log-capture infrastructure -------------------------------------
 
 type gk_vibekit_u16_logRec struct {
-	level slog.Level
-	msg   string
 	attrs map[string]any
+	msg   string
+	level slog.Level
 }
 
 type gk_vibekit_u16_logCapture struct {
-	mu   sync.Mutex
 	recs []gk_vibekit_u16_logRec
+	mu   sync.Mutex
 }
 
 func (c *gk_vibekit_u16_logCapture) Enabled(context.Context, slog.Level) bool { return true }

@@ -144,12 +144,9 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	if limit < 1 {
-		limit = 1
-	}
-	if limit > maxSearchLimit {
-		limit = maxSearchLimit
-	}
+	// Clamp into [1, maxSearchLimit] with the min/max builtins (Go 1.21+)
+	// instead of hand-rolled if-guards: fewer branches, same result.
+	limit = min(max(limit, 1), maxSearchLimit)
 
 	body, cached, err := p.fetchSearch(r.Context(), q, limit)
 	if err != nil {

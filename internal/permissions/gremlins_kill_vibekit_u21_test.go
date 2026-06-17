@@ -25,8 +25,8 @@ import (
 // gk_vibekit_u21_logCapture is an in-memory slog.Handler that records
 // every emitted record at every level.
 type gk_vibekit_u21_logCapture struct {
-	mu      sync.Mutex
 	records []slog.Record
+	mu      sync.Mutex
 }
 
 func (h *gk_vibekit_u21_logCapture) Enabled(context.Context, slog.Level) bool { return true }
@@ -160,9 +160,9 @@ func TestGk_vibekit_u21_MigrateLegacyLogsMigrationComplete(t *testing.T) {
 func TestGk_vibekit_u21_EvaluateCommandPriorityTieBreak(t *testing.T) {
 	tests := []struct {
 		name        string
-		entries     []Rule
 		command     string
 		wantMode    RuleMode
+		entries     []Rule
 		wantMatched bool
 	}{
 		{

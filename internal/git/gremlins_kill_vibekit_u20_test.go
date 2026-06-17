@@ -544,7 +544,7 @@ func Test_gk_vibekit_u20_ParseGitStatusOutput_LenBoundary(t *testing.T) {
 
 func Test_gk_vibekit_u20_DiscoverRepos_EntryCapBoundary(t *testing.T) {
 	workDir := t.TempDir() // not a git repo
-	for i := 0; i < maxRepoEntries; i++ {
+	for i := range maxRepoEntries {
 		f := filepath.Join(workDir, fmt.Sprintf("e%05d", i))
 		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatal(err)

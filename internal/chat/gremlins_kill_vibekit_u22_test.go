@@ -44,7 +44,7 @@ func gk_vibekit_u22_createChat(t *testing.T, s *Store, id api.ChatID) {
 // gk_vibekit_u22_truncFile creates a (sparse) file of exactly size bytes.
 func gk_vibekit_u22_truncFile(t *testing.T, path string, size int64) {
 	t.Helper()
-	f, err := os.Create(path) //nolint:gosec // test-local path under t.TempDir()
+	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create %s: %v", path, err)
 	}
@@ -60,8 +60,8 @@ func gk_vibekit_u22_truncFile(t *testing.T, path string, size int64) {
 // --- slog capture (for log-only mutants) ---
 
 type gk_vibekit_u22_logRecord struct {
-	msg   string
 	attrs map[string]slog.Value
+	msg   string
 }
 
 type gk_vibekit_u22_capHandler struct {
@@ -221,7 +221,7 @@ func Test_gk_vibekit_u22_handleOne_limit500Boundary(t *testing.T) {
 	s := gk_vibekit_u22_newStore(t)
 	id := api.ChatID("gku22limit")
 	if err := s.Mutate(context.Background(), id, func(c *api.Chat, _ bool) bool {
-		for i := 0; i < 60; i++ {
+		for i := range 60 {
 			c.Messages = append(c.Messages, api.Message{
 				ID:      fmt.Sprintf("m%d", i),
 				Role:    api.RoleUser,

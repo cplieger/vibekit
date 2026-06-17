@@ -26,14 +26,12 @@ import (
 
 // --- helpers ---
 
-func gk_vibekit_u1_ptr(i int) *int { return &i }
-
 // gk_vibekit_u1_safeBuf is a mutex-guarded byte buffer so the capturing
 // slog handler (which may be written from background goroutines) and the
 // test's read are race-free under -race.
 type gk_vibekit_u1_safeBuf struct {
-	mu  sync.Mutex
 	buf bytes.Buffer
+	mu  sync.Mutex
 }
 
 func (b *gk_vibekit_u1_safeBuf) Write(p []byte) (int, error) {
@@ -64,8 +62,8 @@ func gk_vibekit_u1_captureLogs(t *testing.T) *gk_vibekit_u1_safeBuf {
 // behaving like a fakeBridge for every other method.
 type gk_vibekit_u1_recBridge struct {
 	*fakeBridge
-	recMu     sync.Mutex
 	lastStart api.StartOpts
+	recMu     sync.Mutex
 }
 
 func gk_vibekit_u1_newRecBridge() *gk_vibekit_u1_recBridge {
@@ -131,21 +129,21 @@ func TestGkVibekitU1_SliceByLines(t *testing.T) {
 		// 134:26 — with line==nil and a non-nil limit, the original
 		// must NOT early-return the full content; it narrows to `limit`
 		// lines. The mutant (limit!=nil) early-returns the full content.
-		{"limit_no_line_kills_134", "a\nb\nc\nd\n", nil, gk_vibekit_u1_ptr(2), "a\nb\n"},
+		{"limit_no_line_kills_134", "a\nb\nc\nd\n", nil, new(2), "a\nb\n"},
 		// 139:26 — boundary *line==0: original keeps start=0 (full);
 		// mutant (>=0) sets start=-1 and panics on the negative slice.
-		{"line_zero_kills_139", "a\nb\nc\n", gk_vibekit_u1_ptr(0), nil, "a\nb\nc\n"},
+		{"line_zero_kills_139", "a\nb\nc\n", new(0), nil, "a\nb\nc\n"},
 		// 152:28 — boundary *limit==0: original does not narrow (full);
 		// mutant (>=0) narrows end to start, returning "".
-		{"limit_zero_kills_152_28", "a\nb\nc\n", nil, gk_vibekit_u1_ptr(0), "a\nb\nc\n"},
+		{"limit_zero_kills_152_28", "a\nb\nc\n", nil, new(0), "a\nb\nc\n"},
 		// 152:47 — start>0 with limit beyond the remaining window: the
 		// original does not narrow; an ARITHMETIC `+` makes the
 		// comparison true and narrows end past len → panic.
-		{"limit_over_remaining_kills_152_47", "a\nb\nc\nd\ne\n", gk_vibekit_u1_ptr(3), gk_vibekit_u1_ptr(5), "c\nd\ne\n"},
+		{"limit_over_remaining_kills_152_47", "a\nb\nc\nd\ne\n", new(3), new(5), "c\nd\ne\n"},
 		// 152:47 — start>0 with limit inside the window: a sign-flip /
 		// modulo of end-start flips the comparison the other way and
 		// stops narrowing, returning extra lines.
-		{"narrow_midrange_kills_152_47", "a\nb\nc\nd\n", gk_vibekit_u1_ptr(2), gk_vibekit_u1_ptr(2), "b\nc\n"},
+		{"narrow_midrange_kills_152_47", "a\nb\nc\nd\n", new(2), new(2), "b\nc\n"},
 		// sanity: both nil returns the full content.
 		{"both_nil_full", "x\ny\n", nil, nil, "x\ny\n"},
 	}

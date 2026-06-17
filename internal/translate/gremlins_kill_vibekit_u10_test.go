@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ import (
 
 // --- prefixed test fixtures ---
 
-var gk_vibekit_u10_errBoom = errors.New("gk-vibekit-u10 boom")
+var errGkVibekitU10Boom = errors.New("gk-vibekit-u10 boom")
 
 // gk_vibekit_u10_lineRec is a recording LineRecorder counting RecordFromDiffs calls.
 type gk_vibekit_u10_lineRec struct {
@@ -54,10 +55,10 @@ type gk_vibekit_u10_mcpRec struct {
 	setKnownCalls int
 }
 
-func (*gk_vibekit_u10_mcpRec) RecordConnected(context.Context, string)         {}
-func (*gk_vibekit_u10_mcpRec) RecordOAuth(context.Context, string, string)     {}
+func (*gk_vibekit_u10_mcpRec) RecordConnected(context.Context, string)           {}
+func (*gk_vibekit_u10_mcpRec) RecordOAuth(context.Context, string, string)       {}
 func (*gk_vibekit_u10_mcpRec) RecordInitFailure(context.Context, string, string) {}
-func (*gk_vibekit_u10_mcpRec) SignalReady()                                    {}
+func (*gk_vibekit_u10_mcpRec) SignalReady()                                      {}
 func (r *gk_vibekit_u10_mcpRec) SetKnownTools(_ context.Context, _ string, _ []string) {
 	r.setKnownCalls++
 }
@@ -74,10 +75,10 @@ func (d *gk_vibekit_u10_mcpDeps) MCPRecorder() MCPRecorder { return d.rec }
 // configurable errors, so HandlePlan's persist branches are observable.
 type gk_vibekit_u10_recStore struct {
 	testsupport.NopChatStore
-	appendCalls int
-	mutateCalls int
 	appendErr   error
 	mutateErr   error
+	appendCalls int
+	mutateCalls int
 }
 
 func (s *gk_vibekit_u10_recStore) AppendMessage(_ context.Context, _ api.ChatID, _ *api.Message) error {
@@ -384,7 +385,7 @@ func TestGk_vibekit_u10_HandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 		var logbuf bytes.Buffer
 		restore := gk_vibekit_u10_captureSlog(&logbuf)
 		defer restore()
-		rec := &gk_vibekit_u10_recStore{appendErr: gk_vibekit_u10_errBoom}
+		rec := &gk_vibekit_u10_recStore{appendErr: errGkVibekitU10Boom}
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
@@ -517,7 +518,7 @@ func gk_vibekit_u10_primeToolCall(t *testing.T) (*Translator, *gk_vibekit_u10_li
 
 func gk_vibekit_u10_lastUpdate(t *testing.T, events *[]api.ServerEvent) (api.ToolCall, bool) {
 	t.Helper()
-	for i := len(*events) - 1; i >= 0; i-- {
+	for i := range slices.Backward(*events) {
 		if (*events)[i].Type == api.EventToolCallUpdate {
 			p, ok := (*events)[i].Payload.(api.ToolCallUpdatePayload)
 			if !ok {

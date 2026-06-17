@@ -34,8 +34,8 @@ import (
 // gk_vibekit_u11_lineRec records RecordFromDiffs invocations so the diff
 // gate in HandleToolCallUpdate is observable.
 type gk_vibekit_u11_lineRec struct {
-	calls     int
 	lastDiffs []api.ToolDiff
+	calls     int
 }
 
 func (r *gk_vibekit_u11_lineRec) RecordFromDiffs(_ api.ChatID, diffs []api.ToolDiff, _ int, _ string) {

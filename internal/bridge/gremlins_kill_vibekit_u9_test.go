@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -29,10 +30,10 @@ import (
 // bridge's stdin. It records whether (and what) was written, and can be
 // configured to fail every Write with a sentinel error.
 type gk_vibekit_u9_captureWriter struct {
-	mu      sync.Mutex
-	buf     bytes.Buffer
-	writes  int
 	failErr error
+	buf     bytes.Buffer
+	mu      sync.Mutex
+	writes  int
 }
 
 func (w *gk_vibekit_u9_captureWriter) Write(p []byte) (int, error) {
@@ -57,8 +58,8 @@ func (w *gk_vibekit_u9_captureWriter) gk_vibekit_u9_wrote() bool {
 // messages so a test can assert whether a particular log line was (or was
 // not) produced by the code under test.
 type gk_vibekit_u9_logCapture struct {
-	mu   sync.Mutex
 	msgs []string
+	mu   sync.Mutex
 }
 
 func (h *gk_vibekit_u9_logCapture) Enabled(context.Context, slog.Level) bool { return true }
@@ -76,12 +77,7 @@ func (h *gk_vibekit_u9_logCapture) WithGroup(string) slog.Handler      { return 
 func (h *gk_vibekit_u9_logCapture) gk_vibekit_u9_has(msg string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, m := range h.msgs {
-		if m == msg {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.msgs, msg)
 }
 
 // gk_vibekit_u9_installCapture redirects slog to a capturing handler for

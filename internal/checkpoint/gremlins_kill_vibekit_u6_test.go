@@ -227,7 +227,7 @@ func Test_gk_vibekit_u6_CountLineDeltaProductGateStrictGreater(t *testing.T) {
 // cancellation, and bails early returning (m,n).
 func Test_gk_vibekit_u6_CountLineDeltaCtxCheckCadence(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel()                      // already cancelled
 	buf := gk_vibekit_u6_lines(3) // 3x3 = 9 iters, far below 65536
 	added, removed := countLineDelta(ctx, buf, buf)
 	if added != 0 || removed != 0 {
