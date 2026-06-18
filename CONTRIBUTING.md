@@ -162,12 +162,12 @@ Otherwise, write an action.
 
 ## Toasts vs banners vs inline errors
 
-| Surface             | Use for                                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Toast (transient)   | User-initiated mutation failures. Errors stick until dismissed.                                                              |
+| Surface             | Use for                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Toast (transient)   | User-initiated mutation failures. Errors stick until dismissed.                                                                 |
 | Banner (persistent) | Critical state the user must see across navigation (rate limits, model unavailable, MCP unhealthy). Lives in `banner-stack.ts`. |
-| Inline form error   | Form validation. Surface near the field that failed.                                                                         |
-| Log only            | Background polls, SSE bus errors, infrastructure exceptions, fire-and-forget cleanup.                                        |
+| Inline form error   | Form validation. Surface near the field that failed.                                                                            |
+| Log only            | Background polls, SSE bus errors, infrastructure exceptions, fire-and-forget cleanup.                                           |
 
 Don't double-fire. If a banner is already up, set the action's `error` field to
 `false` to suppress the toast.
@@ -274,14 +274,14 @@ vibekit uses [Conventional Commits](https://www.conventionalcommits.org/);
 git-cliff parses them to generate release notes and drive the version bump (see
 `cliff.toml`). Write the subject as a public changelog line.
 
-| Prefix                                                            | Effect                          |
-| ----------------------------------------------------------------- | ------------------------------- |
-| `feat:`                                                           | new feature (Added)             |
-| `fix:`                                                            | bug fix (Fixed)                 |
-| `sec:`                                                            | security fix (Security)         |
-| `refactor:` / `perf:`                                             | Changed                         |
-| `chore:` `ci:` `docs:` `style:` `test:` `fuzz:` `lint:` `debug:`  | no release                      |
-| `chore(deps):`                                                    | Dependencies (releases)         |
+| Prefix                                                           | Effect                  |
+| ---------------------------------------------------------------- | ----------------------- |
+| `feat:`                                                          | new feature (Added)     |
+| `fix:`                                                           | bug fix (Fixed)         |
+| `sec:`                                                           | security fix (Security) |
+| `refactor:` / `perf:`                                            | Changed                 |
+| `chore:` `ci:` `docs:` `style:` `test:` `fuzz:` `lint:` `debug:` | no release              |
+| `chore(deps):`                                                   | Dependencies (releases) |
 
 The project is pre-1.0, so it stays within `0.x`: features bump the patch level
 and breaking changes bump the minor — no automatic `1.0`.
