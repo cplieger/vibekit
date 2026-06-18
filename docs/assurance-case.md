@@ -24,14 +24,14 @@ can reach vibekit."
 
 ## Threats and mitigations
 
-| Threat | Mitigation | Evidence |
-|---|---|---|
-| Cross-chat data access (one chat reading another's blobs) | chat-scoped blob access — `ReadBlob` returns 404 if the chat's event log doesn't reference the SHA | checkpoint/blob tests |
-| MCP secret mishandling | structured secret round-trip in the MCP layer; secrets not logged | `internal/mcp`, mcp tests |
-| Push-notification crypto errors | push payload crypto exercised under fuzz | `internal/push/crypto/crypto_fuzz_test.go` |
-| Malformed ACP / wire input | hardened decoders; large Go + property/fuzz suite (400+ test files, 150+ fuzz targets) | weekly fuzz + gremlins |
-| Stale/empty embedded UI shipped | CI image smoke test starts the container and asserts the health endpoint serves | image smoke test (CI docker job) |
-| Reaching vibekit without authorisation | network/auth boundary (LAN gate + reverse proxy) | deployment (homelab) |
+| Threat                                                    | Mitigation                                                                                         | Evidence                                   |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Cross-chat data access (one chat reading another's blobs) | chat-scoped blob access — `ReadBlob` returns 404 if the chat's event log doesn't reference the SHA | checkpoint/blob tests                      |
+| MCP secret mishandling                                    | structured secret round-trip in the MCP layer; secrets not logged                                  | `internal/mcp`, mcp tests                  |
+| Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto/crypto_fuzz_test.go` |
+| Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (400+ test files, 150+ fuzz targets)             | weekly fuzz + gremlins                     |
+| Stale/empty embedded UI shipped                           | CI image smoke test starts the container and asserts the health endpoint serves                    | image smoke test (CI docker job)           |
+| Reaching vibekit without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | deployment (homelab)                       |
 
 ## Residual risks (stated plainly)
 
