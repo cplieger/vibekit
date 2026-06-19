@@ -5,7 +5,10 @@ package hub
 import (
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -139,19 +142,32 @@ func TestSignalShellGroup_TargetsForegroundJob(t *testing.T) {
 		t.Fatalf("write to ptmx: %v", wErr)
 	}
 
-	// Step 4: wait for the foreground pgrp to differ from bash's PID.
+	// Step 4: wait for the foreground pgrp to flip to sleep's pgroup AND
+	// for that job to actually be running. bash calls tcsetpgrp on the
+	// child's pgroup *before* the forked child finishes execve("sleep").
+	// A SIGINT delivered in that fork->exec window lands on the
+	// not-yet-exec'd bash child — whose SIGINT disposition isn't SIG_DFL
+	// yet — so it's lost, sleep then runs the full 30s, and bash never
+	// reclaims the tty. Gating on the group leader's comm being "sleep"
+	// ensures we only signal a running job. Without this gate the test
+	// flakes on loaded CI runners where the window stretches past the
+	// signal (reproduced locally under single-core contention).
 	var sleepPGID int
-	if !waitFor(2*time.Second, func() bool {
+	if !waitFor(3*time.Second, func() bool {
 		pgid, err := tcgetpgrp(ptmx.Fd())
-		if err == nil && pgid > 0 && pgid != bashPID {
-			sleepPGID = pgid
-			return true
+		if err != nil || pgid <= 0 || pgid == bashPID {
+			return false
 		}
-		return false
+		if !foregroundJobIsSleep(pgid) {
+			return false
+		}
+		sleepPGID = pgid
+		return true
 	}) {
 		pgid, _ := tcgetpgrp(ptmx.Fd())
-		t.Fatalf("sleep never became foreground pgrp. "+
-			"pgid=%d bashPID=%d (job control may be off)", pgid, bashPID)
+		t.Fatalf("sleep never became the running foreground pgrp. "+
+			"pgid=%d bashPID=%d (job control may be off, or sleep never "+
+			"started)", pgid, bashPID)
 	}
 
 	// Step 5: send SIGINT through the production code path.
@@ -192,4 +208,20 @@ func waitFor(timeout time.Duration, cond func() bool) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return cond()
+}
+
+// foregroundJobIsSleep reports whether the foreground process-group
+// leader (whose pid equals pgid) is the running `sleep` binary. On
+// Linux /proc/<pid>/comm reflects the command name only once execve
+// completes, so this distinguishes a fully-running job from bash's
+// forked-but-not-yet-exec'd child during the fork->exec window. On
+// platforms without /proc it returns true, preserving the prior
+// "trust the pgrp flip" behavior; CI runs on Linux, where the gate is
+// effective.
+func foregroundJobIsSleep(pgid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pgid) + "/comm")
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(data)) == "sleep"
 }
