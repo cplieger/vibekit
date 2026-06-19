@@ -5,7 +5,10 @@
 package checkpoint
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -43,6 +46,29 @@ func chatsRoot(configDir string) string {
 }
 
 // chatLogPath returns the path to a specific chat's event log.
+//
+// chatID is confined to a single directory level under the chats
+// root: a malformed or hostile id containing ".." or path separators
+// must never let the returned path escape configDir/snapshots/chats
+// (CWE-22). Callers MkdirAll and RemoveAll filepath.Dir of this path
+// (eventLog.Append / eventLog.Wipe), so an un-sanitized id would be an
+// arbitrary-filesystem write/delete primitive.
 func chatLogPath(configDir, chatID string) string {
-	return filepath.Join(configDir, dirSnapshots, dirChats, chatID, FileEvents)
+	return filepath.Join(chatsRoot(configDir), safeChatID(chatID), FileEvents)
+}
+
+// safeChatID reduces an arbitrary chatID to a single path component
+// that cannot traverse out of the chats root. A legitimate
+// server-generated id (alphanumerics + '-') is returned unchanged; an
+// id that is empty, ".", "..", or contains a path separator is
+// replaced with a deterministic SHA-256 of the raw bytes so distinct
+// ids still map to distinct directories without escaping the root.
+func safeChatID(chatID string) string {
+	if chatID != "" && chatID != "." && chatID != ".." &&
+		!strings.ContainsRune(chatID, '/') &&
+		!strings.ContainsRune(chatID, filepath.Separator) {
+		return chatID
+	}
+	sum := sha256.Sum256([]byte(chatID))
+	return hex.EncodeToString(sum[:])
 }
