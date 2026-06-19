@@ -688,6 +688,7 @@ func TestSend_StatusCodePruning(t *testing.T) {
 
 			dir := t.TempDir()
 			s := New(context.Background(), dir, "mailto:test@example.com")
+			defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
