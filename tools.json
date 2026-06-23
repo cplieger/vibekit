@@ -124,7 +124,7 @@
     "glab": {
       "enabled": false,
       "auto_update": true,
-      "version": "v1.104.0",
+      "version": "v1.105.0",
       "update": {
         "method": "gitlab",
         "repo": "gitlab-org/cli"
