@@ -37,6 +37,7 @@ func NewEvent[T any](t EventType, chatID ChatID, payload T) ServerEvent {
 // construction sites.
 type StopReason string
 
+// StopReasonEndTurn and the following constants define the valid StopReason values for turn termination.
 const (
 	StopReasonEndTurn     StopReason = "end_turn"
 	StopReasonCancelled   StopReason = "cancelled"

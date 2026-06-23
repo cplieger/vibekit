@@ -10,6 +10,7 @@ package api
 // at construction sites and makes the valid set discoverable.
 type PendingChangeKind string
 
+// PendingKindCreate and the following constants define the valid PendingChangeKind values for supervised-mode file operations.
 const (
 	PendingKindCreate PendingChangeKind = "create"
 	PendingKindEdit   PendingChangeKind = "edit"
@@ -59,6 +60,7 @@ type PendingChangeAddedPayload struct {
 // construction sites and makes the valid set discoverable.
 type PendingAction string
 
+// PendingActionAccept and the following constants define the valid PendingAction values for resolving staged changes.
 const (
 	PendingActionAccept PendingAction = "accept"
 	PendingActionReject PendingAction = "reject"
@@ -98,6 +100,7 @@ type PendingChangesClearedPayload struct {
 // the valid set discoverable via IDE completion.
 type ClearReason string
 
+// ClearReasonTurnEnded and the following constants define the valid ClearReason values for pending-change and trust clearance.
 const (
 	ClearReasonTurnEnded    ClearReason = "turn_ended"
 	ClearReasonCancelled    ClearReason = "cancelled"

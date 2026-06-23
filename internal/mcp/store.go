@@ -58,6 +58,7 @@ var (
 // in API responses, so the wire surface is strictly stdio | http.
 type Transport string
 
+// TransportStdio and TransportHTTP define the valid Transport values for MCP server connections.
 const (
 	TransportStdio Transport = "stdio"
 	TransportHTTP  Transport = "http"

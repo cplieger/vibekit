@@ -16,7 +16,8 @@ const (
 	dirSnapshots = "snapshots"
 	dirBlobs     = "blobs"
 	dirChats     = "chats"
-	FileEvents   = "events.jsonl"
+	// FileEvents is the name of the per-chat append-only event log file.
+	FileEvents = "events.jsonl"
 
 	// contentCap bounds the bytes a single file read will load into
 	// memory for both snapshot (pre-write capture) and blob retrieval

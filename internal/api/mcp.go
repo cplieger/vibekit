@@ -88,6 +88,7 @@ type MCPSnapshotServer struct {
 // share a single typed enum with compile-time safety.
 type MCPServerState string
 
+// MCPStateIdle and the following constants define the valid MCPServerState lifecycle values.
 const (
 	MCPStateIdle      MCPServerState = "idle"       // configured but no bridge running
 	MCPStateConnected MCPServerState = "connected"  // kiro-cli reported server_initialized

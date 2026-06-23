@@ -1,3 +1,4 @@
+// Package git provides HTTP handlers and utilities for git operations and AI-assisted workflows.
 package git
 
 import (

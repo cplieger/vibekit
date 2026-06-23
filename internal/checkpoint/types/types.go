@@ -52,6 +52,7 @@ var ErrTagNotFound = errors.New("tag not found")
 // FileStatus is a typed string for diff result statuses.
 type FileStatus string
 
+// FileAdded and the following constants define the valid FileStatus diff result values.
 const (
 	FileAdded    FileStatus = "A"
 	FileModified FileStatus = "M"

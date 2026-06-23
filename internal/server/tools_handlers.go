@@ -1,3 +1,5 @@
+// Package server provides the HTTP server, middleware, and route registration for vibekit.
+//
 // Tools manifest CRUD beyond the existing /api/tools/install endpoint.
 //
 // Endpoints:

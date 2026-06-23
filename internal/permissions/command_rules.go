@@ -68,6 +68,7 @@ import (
 // (always prompt regardless of policy).
 type RuleMode string
 
+// RuleAllow and RuleDeny define the valid RuleMode values for command rules.
 const (
 	RuleAllow RuleMode = "allow"
 	RuleDeny  RuleMode = "deny"

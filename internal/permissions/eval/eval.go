@@ -8,6 +8,7 @@ import "strings"
 // ShellPolicy controls how shell commands are handled.
 type ShellPolicy string
 
+// PolicyNone and the following constants define the valid ShellPolicy values controlling shell command handling.
 const (
 	PolicyNone ShellPolicy = "no_commands"   // all shell commands rejected
 	PolicySafe ShellPolicy = "safe_commands" // read-only auto-approve, destructive prompt

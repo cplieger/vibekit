@@ -12,6 +12,7 @@ import (
 // Role identifies the speaker of a message.
 type Role string
 
+// RoleUser and the following constants define the valid Role values for a chat message.
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
@@ -21,6 +22,7 @@ const (
 // EventKind identifies subtypes of RoleEvent messages.
 type EventKind string
 
+// EventInterrupted and the following constants define the valid EventKind values for inline event messages.
 const (
 	EventInterrupted   EventKind = "interrupted"
 	EventCancelled     EventKind = "cancelled"
@@ -39,6 +41,7 @@ const (
 // dialogs and tool-card rendering.
 type ToolKind string
 
+// ToolKindExecute and the following constants define the valid ToolKind values for classifying tool invocations.
 const (
 	ToolKindExecute    ToolKind = "execute"
 	ToolKindShell      ToolKind = "shell"
@@ -61,6 +64,7 @@ const (
 // ToolStatus is the lifecycle state of a tool invocation.
 type ToolStatus string
 
+// ToolPending and the following constants define the ToolStatus lifecycle states for a tool invocation.
 const (
 	ToolPending    ToolStatus = "pending"
 	ToolInProgress ToolStatus = "in_progress"
@@ -73,6 +77,7 @@ const (
 // map and makes the protocol surface discoverable.
 type ACPUpdateKind string
 
+// ACPUpdateAgentChunk and the following constants define the valid ACPUpdateKind values for ACP session notifications.
 const (
 	ACPUpdateAgentChunk   ACPUpdateKind = "agent_message_chunk"
 	ACPUpdateThoughtChunk ACPUpdateKind = "agent_thought_chunk"
@@ -164,6 +169,7 @@ type ToolDiff struct {
 // PlanStatus is the lifecycle state of a plan entry.
 type PlanStatus string
 
+// PlanPending and the following constants define the PlanStatus lifecycle states for a plan entry.
 const (
 	PlanPending    PlanStatus = "pending"
 	PlanInProgress PlanStatus = "in_progress"
@@ -183,6 +189,7 @@ type PlanEntry struct {
 // kiro-cli types" — they are now first-class enum values.
 type CrewStatus string
 
+// CrewWorking and the following constants define the CrewStatus lifecycle states for a crew subagent.
 const (
 	CrewWorking    CrewStatus = "working"
 	CrewTerminated CrewStatus = "terminated"

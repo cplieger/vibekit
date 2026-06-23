@@ -60,9 +60,9 @@ const (
 	MethodMessageSend       = "message/send"
 )
 
-// ACP content-block type discriminator constants. The "text" value is
-// used across hub, command, and translate packages; declaring it here
-// provides a single source of truth so a protocol rename is one edit.
+// ContentTypeText is the ACP content-block type discriminator for plain text content.
+// Used across hub, command, and translate packages; declared here as a single source
+// of truth so a protocol rename is one edit.
 const ContentTypeText = "text"
 
 // ModelAuto is the sentinel model value meaning "keep current / use

@@ -1,3 +1,4 @@
+// Package composition wires all vibekit services together and manages application lifecycle.
 package composition
 
 import (

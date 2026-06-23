@@ -22,6 +22,7 @@ import (
 // Kind identifies a forge backend.
 type Kind string
 
+// KindGitHub and the following constants define the valid Kind values identifying forge backends.
 const (
 	KindGitHub   Kind = "github"
 	KindGitLab   Kind = "gitlab"
@@ -224,6 +225,7 @@ type Label struct {
 // ListState is a typed enum for PR/issue listing state filters.
 type ListState string
 
+// StateOpen and the following constants define the valid ListState filter values for PR and issue listings.
 const (
 	StateOpen   ListState = "open"
 	StateClosed ListState = "closed"
@@ -234,6 +236,7 @@ const (
 // MergeMethod is a typed enum for PR merge strategies.
 type MergeMethod string
 
+// MergeCommit and the following constants define the valid MergeMethod values for PR merge strategies.
 const (
 	MergeCommit MergeMethod = "merge"
 	MergeSquash MergeMethod = "squash"

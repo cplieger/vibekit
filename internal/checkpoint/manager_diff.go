@@ -16,6 +16,7 @@ import (
 // from the types sub-package for backward compatibility.
 type FileStatus = chktypes.FileStatus
 
+// FileAdded and the following constants re-export the FileStatus values from the types sub-package for backward compatibility.
 const (
 	FileAdded    = chktypes.FileAdded
 	FileModified = chktypes.FileModified

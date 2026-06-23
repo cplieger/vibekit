@@ -37,6 +37,7 @@ func NewHandler(workDir string, opts ...Option) *Handler {
 	return h
 }
 
+// RegisterRoutes installs the /api/git/* mux entries.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/repos", h.handleRepos)
 	mux.HandleFunc("/api/git/status", h.handleStatus)

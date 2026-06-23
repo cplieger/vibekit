@@ -39,6 +39,7 @@ import (
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
 type ForgeErrCode string
 
+// ForgeErrCLINotInstalled and the following constants define the ForgeErrCode values for machine-readable HTTP error responses.
 const (
 	ForgeErrCLINotInstalled ForgeErrCode = "cli_not_installed"
 	ForgeErrNotLoggedIn     ForgeErrCode = "not_logged_in"

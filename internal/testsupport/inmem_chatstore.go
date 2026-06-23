@@ -24,9 +24,13 @@ func NewInMemoryChatStore() *InMemoryChatStore {
 	return &InMemoryChatStore{chats: make(map[api.ChatID]*api.Chat)}
 }
 
+// SetBroadcaster sets the broadcaster used to fan out chat lifecycle events.
 func (s *InMemoryChatStore) SetBroadcaster(b api.Broadcaster) { s.bus = b }
-func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux)  {}
 
+// RegisterRoutes is a no-op; implements api.ChatStore.
+func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux) {}
+
+// Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *InMemoryChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,6 +42,7 @@ func (s *InMemoryChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bo
 	return &clone, true
 }
 
+// List returns headers for all stored chats.
 func (s *InMemoryChatStore) List(_ context.Context) []api.ChatHeader {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -48,6 +53,7 @@ func (s *InMemoryChatStore) List(_ context.Context) []api.ChatHeader {
 	return hs
 }
 
+// ChildrenOf returns the IDs of chats whose ParentChatID equals parentID.
 func (s *InMemoryChatStore) ChildrenOf(_ context.Context, parentID api.ChatID) []api.ChatID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -60,6 +66,7 @@ func (s *InMemoryChatStore) ChildrenOf(_ context.Context, parentID api.ChatID) [
 	return children
 }
 
+// BuildHistory returns the plain-text transcript for the chat with the given id.
 func (s *InMemoryChatStore) BuildHistory(_ context.Context, id api.ChatID) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,6 +85,7 @@ func (s *InMemoryChatStore) BuildHistory(_ context.Context, id api.ChatID) strin
 	return b.String()
 }
 
+// Mutate applies the mutate function to the chat with the given id, creating it if needed.
 func (s *InMemoryChatStore) Mutate(_ context.Context, id api.ChatID, mutate func(*api.Chat, bool) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,6 +111,7 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id api.ChatID, mutate func
 	return nil
 }
 
+// Delete removes the chat with the given id and broadcasts a chat_deleted event.
 func (s *InMemoryChatStore) Delete(_ context.Context, id api.ChatID) error {
 	s.mu.Lock()
 	delete(s.chats, id)
@@ -113,21 +122,31 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id api.ChatID) error {
 	return nil
 }
 
+// Archive removes the chat; delegates to Delete for test simplicity.
 func (s *InMemoryChatStore) Archive(_ context.Context, id api.ChatID) error {
 	return s.Delete(context.Background(), id)
 }
 
-func (s *InMemoryChatStore) ListArchived(_ context.Context) []api.ChatHeader       { return nil }
+// ListArchived returns nil; implements api.ChatStore.
+func (s *InMemoryChatStore) ListArchived(_ context.Context) []api.ChatHeader { return nil }
+
+// RestoreArchived is a no-op; implements api.ChatStore.
 func (s *InMemoryChatStore) RestoreArchived(_ context.Context, _ api.ChatID) error { return nil }
+
+// UpdateArchivedSummary is a no-op; implements api.ChatStore.
 func (s *InMemoryChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
 	return nil
 }
 
+// LoadArchived returns (nil, nil); implements api.ChatStore.
 func (s *InMemoryChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
 	return nil, nil
 }
+
+// DeleteArchived is a no-op; implements api.ChatStore.
 func (s *InMemoryChatStore) DeleteArchived(_ context.Context, _ api.ChatID) error { return nil }
 
+// AppendMessage appends a message to the stored chat and broadcasts message_appended.
 func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID api.ChatID, msg *api.Message) error {
 	return s.Mutate(context.Background(), chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
@@ -141,6 +160,7 @@ func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID api.ChatID, 
 	})
 }
 
+// UpdateMessage applies mutate to the message identified by msgID within the stored chat.
 func (s *InMemoryChatStore) UpdateMessage(_ context.Context, chatID api.ChatID, msgID string, mutate func(*api.Message)) error {
 	return s.Mutate(context.Background(), chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
