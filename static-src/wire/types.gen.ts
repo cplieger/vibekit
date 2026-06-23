@@ -629,6 +629,10 @@ export interface User {
   url?: string;
 }
 
+/**
+ * WhoamiResponse is the typed response from /api/whoami; see the block
+ * comment above for the full field semantics and security rationale.
+ */
 export interface WhoamiResponse {
   email?: string;
   auth?: string;
