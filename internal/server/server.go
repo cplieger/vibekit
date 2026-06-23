@@ -58,36 +58,70 @@ type Server struct {
 // Option configures a Server at construction time.
 type Option func(*Server)
 
-func WithSteering(g api.SteeringGenerator) Option  { return func(s *Server) { s.steering = g } }
-func WithHub(h api.Hub) Option                     { return func(s *Server) { s.hub = h } }
-func WithChats(c api.ChatStore) Option             { return func(s *Server) { s.chats = c } }
-func WithGit(g api.GitHandler) Option              { return func(s *Server) { s.git = g } }
-func WithGitAI(r api.RouteHandler) Option          { return func(s *Server) { s.gitAI = r } }
-func WithFiles(f api.FileHandler) Option           { return func(s *Server) { s.files = f } }
-func WithAuth(a api.AuthHandler) Option            { return func(s *Server) { s.auth = a } }
-func WithPush(p api.PushService) Option            { return func(s *Server) { s.push = p } }
-func WithMCPConfig(r api.RouteHandler) Option      { return func(s *Server) { s.mcpConfig = r } }
-func WithMCPStatus(r api.RouteHandler) Option      { return func(s *Server) { s.mcpStatus = r } }
-func WithMCPRegistry(r api.RouteHandler) Option    { return func(s *Server) { s.mcpRegistry = r } }
-func WithForges(r api.RouteHandler) Option         { return func(s *Server) { s.forges = r } }
+// WithSteering sets the steering generator used to produce environment.md for kiro-cli.
+func WithSteering(g api.SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
+
+// WithHub sets the hub that manages bridge processes and SSE broadcasts.
+func WithHub(h api.Hub) Option { return func(s *Server) { s.hub = h } }
+
+// WithChats sets the chat store used for reading and writing chat files.
+func WithChats(c api.ChatStore) Option { return func(s *Server) { s.chats = c } }
+
+// WithGit sets the git handler for non-AI git HTTP endpoints.
+func WithGit(g api.GitHandler) Option { return func(s *Server) { s.git = g } }
+
+// WithGitAI sets the route handler for AI-assisted git operations.
+func WithGitAI(r api.RouteHandler) Option { return func(s *Server) { s.gitAI = r } }
+
+// WithFiles sets the file handler for workspace file read/write endpoints.
+func WithFiles(f api.FileHandler) Option { return func(s *Server) { s.files = f } }
+
+// WithAuth sets the auth handler for login, logout, and whoami endpoints.
+func WithAuth(a api.AuthHandler) Option { return func(s *Server) { s.auth = a } }
+
+// WithPush sets the push service used for Web Push notification delivery.
+func WithPush(p api.PushService) Option { return func(s *Server) { s.push = p } }
+
+// WithMCPConfig sets the route handler for MCP server configuration endpoints.
+func WithMCPConfig(r api.RouteHandler) Option { return func(s *Server) { s.mcpConfig = r } }
+
+// WithMCPStatus sets the route handler for the MCP runtime status endpoint.
+func WithMCPStatus(r api.RouteHandler) Option { return func(s *Server) { s.mcpStatus = r } }
+
+// WithMCPRegistry sets the route handler for the MCP registry proxy endpoint.
+func WithMCPRegistry(r api.RouteHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
+
+// WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
+func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges = r } }
+
+// WithRules sets the command rules store for per-command allow/deny evaluation.
 func WithRules(r *permissions.CommandRules) Option { return func(s *Server) { s.rules = r } }
+
+// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks (rename, commit message, etc.).
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
 
+// WithStaticFS sets the embedded filesystem serving the compiled web UI.
 func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
 
+// WithCLIPath sets the path to the kiro-cli binary used for CLI sub-operations.
 func WithCLIPath(p string) Option {
 	return func(s *Server) {
 		s.cliPath = p
 		s.cliRunner = &execCLIRunner{cliPath: p}
 	}
 }
-func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
-func WithWorkDir(d string) Option   { return func(s *Server) { s.workDir = d } }
 
+// WithConfigDir sets the configuration directory path used for chat files and settings.
+func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
+
+// WithWorkDir sets the workspace directory served by the file handler and git endpoints.
+func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
+
+// New constructs a Server with the given options applied.
 func New(opts ...Option) *Server {
 	s := &Server{
 		cliTimeouts: defaultCLITimeouts(),

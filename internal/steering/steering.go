@@ -67,6 +67,7 @@ type Generator struct {
 	mu            sync.Mutex
 }
 
+// New returns a Generator that writes steering files for the given workDir and configDir.
 func New(workDir, configDir string) *Generator {
 	return &Generator{workDir: workDir, configDir: configDir}
 }
@@ -189,6 +190,7 @@ func readCappedFile(path string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
+// CustomPath returns the path to the custom.md steering file in the kiro home directory.
 func (g *Generator) CustomPath() string {
 	return workspace.KiroSteeringPath("custom.md")
 }

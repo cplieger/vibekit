@@ -1,3 +1,4 @@
+// Package fileutil provides small filesystem helper utilities used across vibekit packages.
 package fileutil
 
 import (

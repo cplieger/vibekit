@@ -86,6 +86,7 @@ type CheckpointRestoredPayload struct {
 // discoverable via IDE completion.
 type ErrorCode string
 
+// ErrCodeRecoveryFailed and the following constants define the valid ErrorCode values for SSE error events.
 const (
 	ErrCodeRecoveryFailed    ErrorCode = "recovery_failed"
 	ErrCodeBridgeStartFailed ErrorCode = "bridge_start_failed"

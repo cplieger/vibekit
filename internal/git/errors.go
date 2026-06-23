@@ -23,6 +23,7 @@ const (
 // context (e.g. branch name).
 type ErrorKind string
 
+// KindNoStaged and the following constants define the ErrorKind values for git handler errors.
 const (
 	KindNoStaged         ErrorKind = "no_staged_changes"
 	KindNoChanges        ErrorKind = "no_changes"

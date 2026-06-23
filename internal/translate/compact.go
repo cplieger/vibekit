@@ -12,6 +12,7 @@ import (
 // CompactionStatus is a typed string enum for compaction status values.
 type CompactionStatus string
 
+// CompactionStarted and the following constants define the valid CompactionStatus values for compaction lifecycle events.
 const (
 	CompactionStarted   CompactionStatus = "started"
 	CompactionCompleted CompactionStatus = "completed"

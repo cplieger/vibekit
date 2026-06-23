@@ -26,6 +26,8 @@ import (
 // consistent JSON envelope regardless of the failure mode.
 const msgWhoamiUnavailable = "whoami unavailable"
 
+// WhoamiResponse is the typed response from /api/whoami; see the block
+// comment above for the full field semantics and security rationale.
 type WhoamiResponse struct {
 	Email       string `json:"email,omitempty"`
 	Auth        string `json:"auth,omitempty"`

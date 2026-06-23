@@ -1,3 +1,4 @@
+// Package push manages Web Push subscriptions and delivers VAPID-signed notifications.
 package push
 
 // crypto.go: thin wrappers delegating to internal/push/crypto sub-package.

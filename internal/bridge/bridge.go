@@ -147,6 +147,7 @@ func (b *Bridge) Models() []api.SessionModel {
 	return nil
 }
 
+// NotifCh returns the channel of incoming ACP notifications from the bridge subprocess.
 func (b *Bridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
 
 // SetModel performs an in-session model swap via session/set_model.

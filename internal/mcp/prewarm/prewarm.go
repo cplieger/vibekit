@@ -53,6 +53,7 @@ var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 // State describes the phase of a prewarm install for UI surfacing.
 type State string
 
+// Installing and the following constants define the valid State values for a prewarm install lifecycle.
 const (
 	Installing State = "installing"
 	Done       State = "done"
@@ -173,6 +174,7 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Bytes returns the buffered content, up to Cap bytes (the most recent tail).
 func (r *RingBuffer) Bytes() []byte { return r.buf }
 
 func (p *Runner) installOne(ctx context.Context, pkg string) {

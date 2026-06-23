@@ -1,4 +1,4 @@
-// Shell subsystem — single global PTY session with server-side VT parsing.
+// Package hub shell subsystem provides a single global PTY session with server-side VT parsing.
 //
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows

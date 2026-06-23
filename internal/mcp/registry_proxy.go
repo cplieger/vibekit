@@ -408,6 +408,7 @@ type RegistryEnvVar struct {
 	Secret      bool   `json:"secret,omitempty"`
 }
 
+// RegistryHeader describes an HTTP header the user must configure before the remote server will run.
 type RegistryHeader struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`

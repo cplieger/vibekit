@@ -66,6 +66,8 @@ type saveRequest struct {
 	subs []api.PushSubscription
 }
 
+// New creates a Service, loads persisted subscriptions and preferences, and starts the write loop.
+// subject is the VAPID subject (mailto: or https: URI identifying the sender).
 func New(ctx context.Context, configDir, subject string) *Service {
 	ctx, cancel := context.WithCancel(ctx)
 	prefs := make(map[api.PushKind]bool, len(kindRegistry))
@@ -145,14 +147,17 @@ func (s *Service) Close() {
 	<-s.writeLoopDone
 }
 
+// PublicKey returns the VAPID public key used for push subscription registration.
 func (s *Service) PublicKey() string { return s.keys.PublicKey }
 
+// SetPreferences updates the per-kind notification enabled flags.
 func (s *Service) SetPreferences(prefs map[api.PushKind]bool) {
 	s.mu.Lock()
 	maps.Copy(s.prefs, prefs)
 	s.mu.Unlock()
 }
 
+// Subscribe registers a push subscription endpoint. Duplicate endpoints are silently overwritten.
 func (s *Service) Subscribe(sub api.PushSubscription) {
 	s.mu.Lock()
 	s.subs[sub.Endpoint] = sub
@@ -168,6 +173,7 @@ func (s *Service) Subscribe(sub api.PushSubscription) {
 	slog.Info("push: subscribed", "host", host)
 }
 
+// Unsubscribe removes the subscription for the given push endpoint.
 func (s *Service) Unsubscribe(endpoint string) {
 	s.mu.Lock()
 	delete(s.subs, endpoint)
@@ -175,6 +181,7 @@ func (s *Service) Unsubscribe(endpoint string) {
 	s.saveSubsAsync(s.ctx)
 }
 
+// HasSubscribers reports whether any push subscriptions are currently registered.
 func (s *Service) HasSubscribers() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -8,8 +8,17 @@ import "context"
 // testsupport in its test files).
 type NopMCPRecorder struct{}
 
-func (*NopMCPRecorder) RecordConnected(context.Context, string)           {}
-func (*NopMCPRecorder) RecordOAuth(context.Context, string, string)       {}
+// RecordConnected is a no-op; implements translate.MCPRecorder.
+func (*NopMCPRecorder) RecordConnected(context.Context, string) {}
+
+// RecordOAuth is a no-op; implements translate.MCPRecorder.
+func (*NopMCPRecorder) RecordOAuth(context.Context, string, string) {}
+
+// RecordInitFailure is a no-op; implements translate.MCPRecorder.
 func (*NopMCPRecorder) RecordInitFailure(context.Context, string, string) {}
-func (*NopMCPRecorder) SignalReady()                                      {}
-func (*NopMCPRecorder) SetKnownTools(context.Context, string, []string)   {}
+
+// SignalReady is a no-op; implements translate.MCPRecorder.
+func (*NopMCPRecorder) SignalReady() {}
+
+// SetKnownTools is a no-op; implements translate.MCPRecorder.
+func (*NopMCPRecorder) SetKnownTools(context.Context, string, []string) {}
