@@ -2,8 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/cplieger/atomicfile/v2 v2.0.4 h1:AVX0mDRZ0EsfBpvRGekiIfwkxSmOQ1l36GJjMyDczdc=
 github.com/cplieger/atomicfile/v2 v2.0.4/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
-github.com/cplieger/ssrf/v2 v2.0.3 h1:Fbav4infYPHdVPcz5rIazDEXkA9JlyYdPWIWbOo9YoQ=
-github.com/cplieger/ssrf/v2 v2.0.3/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
+github.com/cplieger/ssrf/v2 v2.0.4 h1:RwCSoj+L+RogQchCRuAsbuHIalp7hUrTjfe6aWIDfz0=
+github.com/cplieger/ssrf/v2 v2.0.4/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
 github.com/cplieger/vterm v1.1.7 h1:DyRiD5l2Q9IZBjMJo+YQ+bRb7LQySZfMlOWKF2OaIus=
 github.com/cplieger/vterm v1.1.7/go.mod h1:v6+toO4zgfSqi6QmwSxjxS+ysRnhfpSy2pXYVNz0eCs=
 github.com/cplieger/wiregen v1.2.1 h1:fsOKz/B1cSZwByrOQ2rvq0IKJOHo68GXoF3EwSpAANI=
