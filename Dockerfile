@@ -1,7 +1,7 @@
 # check=error=true
 
 # --- Builder stage: compile Go server and TypeScript ---
-FROM debian:trixie-slim@sha256:f3da28155e2e26086464eba22cd235b22200b7143e8f3e1811bf359e3114bf96 AS builder
+FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -137,7 +137,7 @@ RUN CGO_ENABLED=0 go build \
     -o /app/vibekit .
 
 # --- Final stage: minimal runtime ---
-FROM debian:trixie-slim@sha256:f3da28155e2e26086464eba22cd235b22200b7143e8f3e1811bf359e3114bf96
+FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
