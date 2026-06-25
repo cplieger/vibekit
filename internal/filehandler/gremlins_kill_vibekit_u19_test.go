@@ -341,9 +341,9 @@ func TestGk_vibekit_u19_DownloadAtExactMaxCopySize(t *testing.T) {
 
 // --- filehandler_upload.go ---
 
-// 171: writeOneUpload `werr != nil` after atomicfile.WriteReader
+// 171: writeOneUpload `werr != nil` after atomicfile.WriteReaderInRoot
 // (CONDITIONALS_NEGATION). A dest whose parent dir is missing makes
-// WriteReader fail; the original returns the error, the `== nil` mutant
+// WriteReaderInRoot fail; the original returns the error, the `== nil` mutant
 // swallows it and reports success.
 func TestGk_vibekit_u19_WriteOneUploadPropagatesError(t *testing.T) {
 	req := multipartUpload(t, "ignored", map[string][]byte{"a.txt": []byte("hi")})
@@ -354,8 +354,9 @@ func TestGk_vibekit_u19_WriteOneUploadPropagatesError(t *testing.T) {
 	if len(fhs) == 0 {
 		t.Fatal("no multipart file parsed")
 	}
-	dest := filepath.Join(t.TempDir(), "missing-dir", "x.txt") // parent does not exist
-	n, err := writeOneUpload(context.Background(), dest, fhs[0])
+	h, dir, _ := testDir(t)
+	dest := filepath.Join(dir, "missing-dir", "x.txt") // parent does not exist
+	n, err := h.writeOneUpload(context.Background(), dest, fhs[0])
 	if err == nil {
 		t.Fatalf("writeOneUpload(dest with missing parent) = (n=%d, nil), want non-nil error", n)
 	}
