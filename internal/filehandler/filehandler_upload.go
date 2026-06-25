@@ -73,7 +73,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "no files")
 		return
 	}
-	uploaded, totalBytes, err := writeUploads(r.Context(), resolvedDir, formFiles)
+	uploaded, totalBytes, err := h.writeUploads(r.Context(), resolvedDir, formFiles)
 	if err != nil {
 		if errors.Is(err, errInvalidFilename) {
 			api.BadRequest(w, err.Error())
@@ -101,7 +101,7 @@ var errInvalidFilename = errors.New("invalid filename")
 // is removed; files written earlier in the batch remain on disk (the
 // HTTP response conveys an error anyway). The context lets a client
 // disconnect abort the remaining files in a batch upload.
-func writeUploads(ctx context.Context, targetDir string, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
+func (h *Handler) writeUploads(ctx context.Context, targetDir string, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -125,7 +125,7 @@ func writeUploads(ctx context.Context, targetDir string, files []*multipart.File
 				"raw_name", fh.Filename, "dest", dest)
 			return uploaded, total, fmt.Errorf("%w: %q (protected)", errInvalidFilename, fh.Filename)
 		}
-		n, wErr := writeOneUpload(ctx, dest, fh)
+		n, wErr := h.writeOneUpload(ctx, dest, fh)
 		if wErr != nil {
 			return uploaded, total, wErr
 		}
@@ -135,13 +135,13 @@ func writeUploads(ctx context.Context, targetDir string, files []*multipart.File
 	return uploaded, total, nil
 }
 
-// writeOneUpload streams fh into a `.upload-*` sibling of dest, fsyncs,
-// then renames into place. On any error the temp file is removed so a
-// partial write never surfaces under the user's expected filename.
-// Returns the number of bytes written. ctx lets a client disconnect
-// abort the copy mid-stream (same guarantee actionCopy provides).
-// countingReader tallies bytes read so writeOneUpload can report the
-// uploaded size even though atomicfile.WriteReader performs the copy.
+// writeOneUpload streams fh into a temp file inside the handler's *os.Root,
+// fsyncs it, then renames it over dest — kernel-confined to the root like every
+// other write in this handler. On any error the temp is removed so a partial
+// write never surfaces under the user's expected filename. Returns the number
+// of bytes written. ctx lets a client disconnect abort the copy mid-stream
+// (the same guarantee actionCopy provides). countingReader tallies bytes read
+// so the uploaded size is reported even though atomicfile performs the copy.
 type countingReader struct {
 	r io.Reader
 	n int64
@@ -153,7 +153,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) (n int64, err error) {
+func (h *Handler) writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) (n int64, err error) {
 	src, err := fh.Open()
 	if err != nil {
 		return 0, err
@@ -163,12 +163,13 @@ func writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) 
 	// Cap the per-file copy (one malformed part can't blow past the global
 	// multipart budget) and abort at the next chunk boundary on context cancel.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: io.LimitReader(src, maxUploadSize)}}
-	// atomicfile writes to a temp sibling, fsyncs it, renames over dest, then
-	// fsyncs the parent dir — the durability step the old hand-rolled path
-	// omitted. It refuses a symlink dest (safer than replacing it) and removes
-	// the temp on any error, so dest is never left a partial write. The mode
-	// now rides in via WithMode.
-	if _, werr := atomicfile.WriteReader(ctx, dest, cr, atomicfile.WithMode(0o600)); werr != nil {
+	// WriteReaderInRoot stages a temp inside h.root, fsyncs it, renames over the
+	// root-relative dest, then fsyncs the parent dir — the durability step the
+	// old hand-rolled path omitted — while keeping the write kernel-confined to
+	// the root like the rest of this handler (a symlink planted in the tree
+	// cannot redirect it outside). It refuses a symlink dest and removes the
+	// temp on any error, so dest is never left a partial write.
+	if _, werr := atomicfile.WriteReaderInRoot(ctx, h.root, h.relPath(dest), cr, atomicfile.WithMode(0o600)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil

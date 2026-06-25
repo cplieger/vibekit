@@ -1634,7 +1634,7 @@ func TestAction_Rename_DestRunsResolvePath(t *testing.T) {
 }
 
 func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
-	dir := t.TempDir()
+	h, dir, _ := testDir(t)
 
 	// Build a multipart body with 3 files.
 	var buf bytes.Buffer
@@ -1669,7 +1669,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	uploaded, _, wErr := writeUploads(ctx, dir, files)
+	uploaded, _, wErr := h.writeUploads(ctx, dir, files)
 	if wErr == nil {
 		t.Fatal("expected error from cancelled context")
 	}
