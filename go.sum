@@ -6,8 +6,8 @@ github.com/cplieger/ssrf/v2 v2.0.4 h1:RwCSoj+L+RogQchCRuAsbuHIalp7hUrTjfe6aWIDfz
 github.com/cplieger/ssrf/v2 v2.0.4/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
 github.com/cplieger/vterm v1.1.7 h1:DyRiD5l2Q9IZBjMJo+YQ+bRb7LQySZfMlOWKF2OaIus=
 github.com/cplieger/vterm v1.1.7/go.mod h1:v6+toO4zgfSqi6QmwSxjxS+ysRnhfpSy2pXYVNz0eCs=
-github.com/cplieger/wiregen v1.2.1 h1:fsOKz/B1cSZwByrOQ2rvq0IKJOHo68GXoF3EwSpAANI=
-github.com/cplieger/wiregen v1.2.1/go.mod h1:fHZFpRVvylIB5YEmv1VsoA2V19NTRx/VqdiMz+CPEQs=
+github.com/cplieger/wiregen v1.2.2 h1:cx+Mg2uGtQUGIRQqLZ/2KV/nNKAaFwZs1LUs9PLSGoA=
+github.com/cplieger/wiregen v1.2.2/go.mod h1:+QB/vxQHDNwsoLEatwxbMdOdWiE78ri15wbwHnD3USg=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
