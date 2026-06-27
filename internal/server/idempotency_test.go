@@ -342,3 +342,93 @@ func TestIdempotentMethod(t *testing.T) {
 		}
 	}
 }
+
+// TestIdempotency_sweepDeletesEntryAtExactTTL verifies the sweep TTL boundary
+// is inclusive: an entry whose age is exactly the TTL is evicted. sweep takes
+// `now` as a parameter, so the boundary is deterministic. The sibling
+// TestIdempotency_sweepDropsExpiredKeepsInflightAndFresh uses ages well past
+// the TTL and so does not pin the boundary itself.
+func TestIdempotency_sweepDeletesEntryAtExactTTL(t *testing.T) {
+	c := &idempotencyCache{
+		entries: map[string]*idempotencyEntry{},
+		ttl:     100 * time.Millisecond,
+	}
+	now := time.Now()
+	c.entries["k"] = &idempotencyEntry{ts: now.Add(-c.ttl)} // age == ttl exactly
+
+	c.sweep(now)
+
+	if _, ok := c.entries["k"]; ok {
+		t.Errorf("sweep kept an entry aged exactly ttl; want deleted (inclusive boundary)")
+	}
+}
+
+// TestIdempotency_beginEvictsAtCapacity verifies that begin, called when the
+// cache is exactly at capacity, evicts the oldest completed entry before
+// adding the new key, so the map size stays at the cap and the oldest entry is
+// gone.
+func TestIdempotency_beginEvictsAtCapacity(t *testing.T) {
+	c := &idempotencyCache{
+		entries:    map[string]*idempotencyEntry{},
+		ttl:        time.Hour,
+		maxEntries: 2,
+	}
+	now := time.Now()
+	c.entries["old"] = &idempotencyEntry{ts: now.Add(-2 * time.Minute)}
+	c.entries["new"] = &idempotencyEntry{ts: now.Add(-1 * time.Minute)}
+
+	replay, inflight := c.begin("fresh")
+	if replay != nil || inflight {
+		t.Fatalf("begin(fresh) = (%v, %v), want (nil, false) for a new key", replay, inflight)
+	}
+	if got := len(c.entries); got != 2 {
+		t.Errorf("len(entries) after begin at capacity = %d, want 2 (oldest evicted, new added)", got)
+	}
+	if _, ok := c.entries["old"]; ok {
+		t.Errorf("oldest completed entry survived; want evicted at capacity")
+	}
+}
+
+// TestIdempotency_middlewareDoesNotCache500 verifies the cache-eligibility
+// boundary at status 500: a handler returning exactly 500 is treated as a
+// transient server error and is NOT cached, so the composite key is absent
+// from the cache afterward and a retry can re-run against a recovered backend.
+func TestIdempotency_middlewareDoesNotCache500(t *testing.T) {
+	c := &idempotencyCache{
+		entries:    map[string]*idempotencyEntry{},
+		ttl:        idempotencyTTL,
+		maxEntries: idempotencyMaxEntries,
+		maxBody:    idempotencyMaxBody,
+	}
+	h, _ := idemHandler(http.StatusInternalServerError, "application/json", `{"err":1}`)
+	mw := c.middleware(h)
+
+	rec := serveIdem(mw, idemReq(http.MethodPost, "/x", "k500"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("response status = %d, want 500", rec.Code)
+	}
+
+	ck := idempotencyCompositeKey(http.MethodPost, "/x", "k500")
+	if _, cached := c.entries[ck]; cached {
+		t.Errorf("a 500 response was cached; want aborted (status < 500 boundary)")
+	}
+}
+
+// TestIdempotency_writerBuffersExactlyAtLimit verifies the buffering boundary
+// is inclusive of the limit: writing exactly `limit` bytes from an empty
+// buffer does not overflow, so the full body is buffered (and thus cacheable).
+func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cw := &idempotencyWriter{ResponseWriter: rec, status: http.StatusOK, limit: 4}
+
+	n, err := cw.Write([]byte("abcd")) // exactly limit bytes
+	if err != nil || n != 4 {
+		t.Fatalf("Write(4 bytes) = (%d, %v), want (4, nil)", n, err)
+	}
+	if cw.overflow {
+		t.Errorf("writing exactly limit bytes set overflow=true; want false (inclusive boundary)")
+	}
+	if got := cw.buf.String(); got != "abcd" {
+		t.Errorf("buffered = %q, want %q", got, "abcd")
+	}
+}

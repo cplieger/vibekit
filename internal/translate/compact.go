@@ -60,40 +60,51 @@ func (t *Translator) HandleCompactionStatus(ctx context.Context, chatID api.Chat
 	case CompactionStarted:
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventCompactionStarted, chatID, api.CompactionStartedPayload{}))
 	case CompactionCompleted:
-		summary := ""
-		if p.Summary != nil {
-			summary = *p.Summary
-		}
-		evt := t.newEventMessage(api.EventCompacted, summary)
-		if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
-			slog.Error("compaction: append event", "chat_id", chatID, "error", err)
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
-			if !ex {
-				return false
-			}
-			c.CompactionWatermark = evt.ID
-			return true
-		}); err != nil {
-			slog.Error("compaction: set watermark", "chat_id", chatID, "error", err)
-		}
-		t.injectContextRecovery(ctx, chatID)
+		t.handleCompactionCompleted(ctx, chatID, p.Summary)
 	case CompactionFailed:
-		errMsg := p.Status.Error
-		if errMsg == "" {
-			errMsg = "compaction failed"
-		}
-		evt := t.newEventMessage(api.EventCompactFailed, errMsg)
-		if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
-			slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
-		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{Code: api.ErrCodeCompactionFailed, Message: errMsg}))
+		t.handleCompactionFailed(ctx, chatID, p.Status.Error)
 	default:
 		slog.Warn("compaction: unknown status type", "type", p.Status.Type, "chat_id", chatID)
 	}
+}
+
+// handleCompactionCompleted persists the compacted-summary event, records
+// the compaction watermark, and injects a context-recovery block.
+func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID api.ChatID, summaryPtr *string) {
+	summary := ""
+	if summaryPtr != nil {
+		summary = *summaryPtr
+	}
+	evt := t.newEventMessage(api.EventCompacted, summary)
+	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+		if !ex {
+			return false
+		}
+		c.CompactionWatermark = evt.ID
+		return true
+	}); err != nil {
+		slog.Error("compaction: set watermark", "chat_id", chatID, "error", err)
+	}
+	t.injectContextRecovery(ctx, chatID)
+}
+
+// handleCompactionFailed persists a compaction-failed event and broadcasts
+// a typed error to the client.
+func (t *Translator) handleCompactionFailed(ctx context.Context, chatID api.ChatID, errMsg string) {
+	if errMsg == "" {
+		errMsg = "compaction failed"
+	}
+	evt := t.newEventMessage(api.EventCompactFailed, errMsg)
+	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
+	}
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{Code: api.ErrCodeCompactionFailed, Message: errMsg}))
 }
 
 // injectContextRecovery sends a lightweight orientation block to the

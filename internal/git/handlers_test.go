@@ -1,9 +1,12 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/gitexec"
+	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
 )
 
@@ -1041,34 +1045,86 @@ func TestHandleRepos_IncludesDotWhenWorkDirIsRepo(t *testing.T) {
 
 // --- real git fixture tests ---
 
-// initFixtureRepo creates a minimal git repo at dir with one file + one
-// commit on "main". Skips the test if git isn't on PATH.
-func initFixtureRepo(t *testing.T, dir string) {
+// skipNoGit skips the test when the git binary isn't on PATH.
+func skipNoGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test",
-			"GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=test",
-			"GIT_COMMITTER_EMAIL=test@example.com",
-			"GIT_CONFIG_GLOBAL=/dev/null",
-			"GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+}
+
+// runGit runs a git command in dir with an isolated, deterministic
+// identity and config (no global/system gitconfig), failing the test on
+// a non-zero exit. Shared by the fixture builders below.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
-	run("init", "--initial-branch=main", "-q")
+}
+
+// initFixtureRepo creates a minimal git repo at dir with one file + one
+// commit on "main". Skips the test if git isn't on PATH.
+func initFixtureRepo(t *testing.T, dir string) {
+	t.Helper()
+	skipNoGit(t)
+	runGit(t, dir, "init", "--initial-branch=main", "-q")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	run("add", "README.md")
-	run("commit", "-q", "-m", "initial commit")
+	runGit(t, dir, "add", "README.md")
+	runGit(t, dir, "commit", "-q", "-m", "initial commit")
+}
+
+// writeCommit writes file with content in dir and commits it with msg.
+func writeCommit(t *testing.T, dir, file, content, msg string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", file)
+	runGit(t, dir, "commit", "-q", "-m", msg)
+}
+
+// captureLogs swaps the slog default to a buffer-backed debug handler for
+// the duration of the test and restores it on cleanup. Safe because the
+// git package's tests never run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// behindRepo builds a work tree whose HEAD is at C1 while origin/main has
+// been advanced to C2 (then fetched). The local "main" tracks
+// origin/main. Returns the work tree path.
+func behindRepo(t *testing.T) string {
+	t.Helper()
+	skipNoGit(t)
+	base := t.TempDir()
+	origin := filepath.Join(base, "origin")
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, origin) // origin main @ C1 ("initial commit")
+	runGit(t, base, "clone", "-q", origin, work)
+	writeCommit(t, origin, "README.md", "second\n", "second commit") // C2
+	runGit(t, work, "fetch", "-q", "origin")                         // origin/main -> C2
+	return work
 }
 
 func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
@@ -2139,4 +2195,450 @@ func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
 			rt.Fatalf("result has leading/trailing whitespace: %q", result)
 		}
 	})
+}
+
+// --- conditional boundary / branch regression guards ---
+// These pin observable behaviour at the exact edge of conditionals that
+// general-purpose tests leave ambiguous (off-by-one boundaries, negated
+// guards). Each asserts an output whose value depends on the precise
+// operator at the site under test.
+
+// A subject longer than 72 chars whose only space within subject[:69]
+// sits at exactly column 30: extractCommitMessage's strict ">30"
+// word-boundary rule treats column 30 as too early, so it breaks at
+// column 69 rather than at the space.
+func TestExtractCommitMessage_WordBreakBoundary(t *testing.T) {
+	input := strings.Repeat("A", 30) + " " + strings.Repeat("B", 45)
+	got := extractCommitMessage(input)
+	want := strings.Repeat("A", 30) + " " + strings.Repeat("B", 38) + "..."
+	if got != want {
+		t.Errorf("extractCommitMessage(boundary idx==30) = %q, want %q", got, want)
+	}
+}
+
+// writeGitError includes the detail field only when it is non-empty.
+func TestWriteGitError_DetailField(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeGitError(rec, KindShowFailed, "boundary-detail")
+	var m map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["error"] != string(KindShowFailed) {
+		t.Errorf("error = %q, want %q", m["error"], string(KindShowFailed))
+	}
+	if m["detail"] != "boundary-detail" {
+		t.Errorf("detail = %q, want %q", m["detail"], "boundary-detail")
+	}
+
+	rec2 := httptest.NewRecorder()
+	writeGitError(rec2, KindShowFailed, "")
+	var m2 map[string]string
+	if err := json.Unmarshal(rec2.Body.Bytes(), &m2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := m2["detail"]; ok {
+		t.Errorf("detail key present for empty detail; want it omitted")
+	}
+}
+
+// In a real repo, `git show HEAD:<missing>` exits 128 without "not a git
+// repository"; gitShowCmd classifies that as ErrPathNotInRef with empty
+// output rather than surfacing the raw exec error.
+func TestGitShowCmd_MissingPathInRealRepo(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	out, err := gitShowCmd(context.Background(), dir, refHEAD, "does-not-exist.txt")
+	if !errors.Is(err, ErrPathNotInRef) {
+		t.Errorf("err = %v, want ErrPathNotInRef", err)
+	}
+	if out != "" {
+		t.Errorf("out = %q, want empty for path-not-in-ref", out)
+	}
+}
+
+// PR number 10_000_000 is the exact accepted cap: handlePRFetch passes the
+// validation guard (failing only later at the remote lookup), so it must
+// not be rejected as an invalid number.
+func TestHandlePRFetch_NumberBoundary(t *testing.T) {
+	h := NewHandler(t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(`{"number":10000000}`))
+	rec := httptest.NewRecorder()
+	h.handlePRFetch(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Errorf("code = 400 at number==10_000_000; body = %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "invalid PR number") {
+		t.Errorf("boundary number rejected as invalid; body = %s", rec.Body.String())
+	}
+}
+
+// handleCommitMessage calls the prompter only when there are staged
+// changes: a clean repo reports no_staged_changes without invoking it; a
+// repo with a staged change generates a message.
+func TestHandleCommitMessage_StagedGate(t *testing.T) {
+	skipNoGit(t)
+
+	t.Run("clean_repo_reports_no_staged", func(t *testing.T) {
+		dir := t.TempDir()
+		initFixtureRepo(t, dir)
+		mp := &mockPrompter{result: "feat: gk commit"}
+		a := NewAIHandler(dir, mp)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
+		a.handleCommitMessage(rec, req)
+		if mp.called {
+			t.Errorf("prompter called on clean repo; want it skipped")
+		}
+		if !strings.Contains(rec.Body.String(), "no_staged_changes") {
+			t.Errorf("body = %q, want no_staged_changes", rec.Body.String())
+		}
+	})
+
+	t.Run("staged_repo_generates_message", func(t *testing.T) {
+		dir := t.TempDir()
+		initFixtureRepo(t, dir)
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "add", "README.md")
+		mp := &mockPrompter{result: "feat: gk commit"}
+		a := NewAIHandler(dir, mp)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
+		a.handleCommitMessage(rec, req)
+		if !mp.called {
+			t.Errorf("prompter not called on staged repo; want it invoked")
+		}
+		var resp map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if resp["output"] != "feat: gk commit" {
+			t.Errorf("output = %q, want %q; body = %s", resp["output"], "feat: gk commit", rec.Body.String())
+		}
+	})
+}
+
+// handlePRDescription proceeds (and calls the prompter) when
+// `git diff base...HEAD` is non-empty, without falling through to the
+// origin fallback.
+func TestHandlePRDescription_DiffGate(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	runGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeCommit(t, dir, "README.md", "changed\n", "feature commit")
+	mp := &mockPrompter{result: "My PR description"}
+	a := NewAIHandler(dir, mp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
+	a.handlePRDescription(rec, req)
+	if !mp.called {
+		t.Errorf("prompter not called with a non-empty base diff; want it invoked")
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["output"] != "My PR description" {
+		t.Errorf("output = %q, want %q; body = %s", resp["output"], "My PR description", rec.Body.String())
+	}
+}
+
+// When `git diff base...HEAD` is empty, handlePRDescription falls back to
+// `git diff origin/base...HEAD`; a non-empty fallback diff proceeds to
+// generate the description.
+func TestHandlePRDescription_FallbackDiffGate(t *testing.T) {
+	skipNoGit(t)
+	base := t.TempDir()
+	origin := filepath.Join(base, "origin")
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, origin)
+	runGit(t, base, "clone", "-q", origin, work)
+	writeCommit(t, work, "README.md", "changed\n", "work commit")
+	mp := &mockPrompter{result: "My PR description"}
+	a := NewAIHandler(work, mp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
+	a.handlePRDescription(rec, req)
+	if !mp.called {
+		t.Errorf("prompter not called with non-empty fallback diff; want it invoked")
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["output"] != "My PR description" {
+		t.Errorf("output = %q, want %q; body = %s", resp["output"], "My PR description", rec.Body.String())
+	}
+}
+
+// handleLog resolves the log ref to origin/<branch> when the upstream
+// verifies, so a work tree behind its origin still shows the origin
+// commits.
+func TestHandleLog_RefResolution(t *testing.T) {
+	work := behindRepo(t)
+	h := NewHandler(work)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/git/log", nil)
+	h.handleLog(rec, req)
+	var resp struct {
+		Entries []string `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Entries) != 2 {
+		t.Fatalf("entries = %v (len %d), want 2", resp.Entries, len(resp.Entries))
+	}
+	if !strings.Contains(strings.Join(resp.Entries, "\n"), "second commit") {
+		t.Errorf("entries %v missing 'second commit' (origin/main ref not used)", resp.Entries)
+	}
+}
+
+// handleLog logs a debug breadcrumb when `git remote get-url` fails (no
+// origin) and stays silent when it succeeds.
+func TestHandleLog_RemoteErrorLog(t *testing.T) {
+	t.Run("no_origin_logs_failure", func(t *testing.T) {
+		skipNoGit(t)
+		dir := t.TempDir()
+		initFixtureRepo(t, dir)
+		buf := captureLogs(t)
+		h := NewHandler(dir)
+		h.handleLog(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
+		if !strings.Contains(buf.String(), "git remote get-url failed during log") {
+			t.Errorf("expected debug log for a failed remote get-url")
+		}
+	})
+	t.Run("with_origin_no_failure_log", func(t *testing.T) {
+		skipNoGit(t)
+		dir := t.TempDir()
+		initFixtureRepo(t, dir)
+		runGit(t, dir, "remote", "add", "origin", "https://example.com/x.git")
+		buf := captureLogs(t)
+		h := NewHandler(dir)
+		h.handleLog(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
+		if strings.Contains(buf.String(), "git remote get-url failed during log") {
+			t.Errorf("unexpected failure log when remote get-url succeeds")
+		}
+	})
+}
+
+// handleRemove returns {"ok":true} (not an error body) after removing an
+// existing subdirectory.
+func TestHandleRemove_SuccessBody(t *testing.T) {
+	workDir := t.TempDir()
+	sub := filepath.Join(workDir, "to-remove")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(workDir)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/remove", strings.NewReader(`{"repo":"to-remove"}`))
+	h.handleRemove(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `"ok":true`) {
+		t.Errorf("body = %q, want ok:true on successful remove", body)
+	}
+	if strings.Contains(body, "remove failed") {
+		t.Errorf("body = %q contains 'remove failed' on a successful remove", body)
+	}
+	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+		t.Errorf("subdir still exists after remove: %v", err)
+	}
+}
+
+// handleStatus fetches from the remote only when ?quick is absent: the
+// default path attempts a fetch (logging its failure for a bogus remote);
+// ?quick=1 skips it.
+func TestHandleStatus_QuickControlsFetch(t *testing.T) {
+	mk := func(t *testing.T) string {
+		t.Helper()
+		skipNoGit(t)
+		dir := t.TempDir()
+		initFixtureRepo(t, dir)
+		runGit(t, dir, "remote", "add", "origin", "/nonexistent-remote")
+		return dir
+	}
+
+	t.Run("no_quick_fetches", func(t *testing.T) {
+		dir := mk(t)
+		buf := captureLogs(t)
+		h := NewHandler(dir)
+		h.handleStatus(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/status", nil))
+		if !strings.Contains(buf.String(), "git fetch during status failed") {
+			t.Errorf("expected a fetch attempt without the quick param")
+		}
+	})
+
+	t.Run("quick_skips_fetch", func(t *testing.T) {
+		dir := mk(t)
+		buf := captureLogs(t)
+		h := NewHandler(dir)
+		h.handleStatus(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/status?quick=1", nil))
+		if strings.Contains(buf.String(), "git fetch during status failed") {
+			t.Errorf("unexpected fetch with the quick param")
+		}
+	})
+}
+
+// collectStatus populates Remote from `git remote get-url origin` when a
+// remote is configured.
+func TestCollectStatus_RemoteSet(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	const url = "https://example.com/x.git"
+	runGit(t, dir, "remote", "add", "origin", url)
+	st := collectStatus(context.Background(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	if st.Remote != url {
+		t.Errorf("Remote = %q, want %q", st.Remote, url)
+	}
+}
+
+// collectStatus counts stash entries from `git stash list`.
+func TestCollectStatus_StashCount(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "stash")
+	st := collectStatus(context.Background(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	if st.Stashes != 1 {
+		t.Errorf("Stashes = %d, want 1", st.Stashes)
+	}
+}
+
+// collectStatus.HasGH reflects whether the gh CLI is on PATH.
+func TestCollectStatus_HasGH(t *testing.T) {
+	mkRepo := func(t *testing.T) string {
+		t.Helper()
+		repo := t.TempDir()
+		// A bare .git directory is enough for IsGitRepo (os.Stat-based);
+		// the gh lookup is reached regardless of git availability.
+		if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return repo
+	}
+
+	t.Run("gh_absent", func(t *testing.T) {
+		repo := mkRepo(t)
+		t.Setenv("PATH", t.TempDir()) // empty bin dir: gh not found
+		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		if st.HasGH {
+			t.Errorf("HasGH = true with gh absent")
+		}
+	})
+
+	t.Run("gh_present", func(t *testing.T) {
+		repo := mkRepo(t)
+		binDir := t.TempDir()
+		gh := filepath.Join(binDir, "gh")
+		if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", binDir)
+		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		if !st.HasGH {
+			t.Errorf("HasGH = false with gh present")
+		}
+	})
+}
+
+// parseGitStatusOutput processes a status line of exactly 3 bytes ("??x"),
+// yielding one entry with an empty path (a 3-byte line is the inclusive
+// lower bound for a parseable entry).
+func TestParseGitStatusOutput_LenBoundary(t *testing.T) {
+	got := parseGitStatusOutput([]byte("??x"))
+	if len(got) != 1 {
+		t.Fatalf("parseGitStatusOutput(\"??x\") len = %d, want 1", len(got))
+	}
+	if got[0].Status != "?" || got[0].Display != "Untracked" || got[0].Path != "" {
+		t.Errorf("entry = %+v, want {Path:\"\" Status:\"?\" Display:\"Untracked\"}", got[0])
+	}
+}
+
+// discoverRepos does not emit the cap warning at exactly maxRepoEntries
+// entries (the warning fires only strictly above the cap).
+func TestDiscoverRepos_EntryCapBoundary(t *testing.T) {
+	workDir := t.TempDir()
+	for i := range maxRepoEntries {
+		f := filepath.Join(workDir, fmt.Sprintf("e%05d", i))
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buf := captureLogs(t)
+	_ = discoverRepos(context.Background(), workDir)
+	if strings.Contains(buf.String(), "entry count exceeds cap") {
+		t.Errorf("cap warning fired at exactly maxRepoEntries")
+	}
+}
+
+// sanitizeRepoPaths accepts exactly maxRepoPaths paths and rejects one
+// more (maxRepoPaths itself is within the allowed count).
+func TestSanitizeRepoPaths_CountBoundary(t *testing.T) {
+	paths := make([]string, maxRepoPaths)
+	for i := range paths {
+		paths[i] = "f" + strconv.Itoa(i)
+	}
+	got, err := sanitizeRepoPaths(paths)
+	if err != nil {
+		t.Fatalf("err = %v at exactly maxRepoPaths", err)
+	}
+	if len(got) != maxRepoPaths {
+		t.Errorf("len(got) = %d, want %d", len(got), maxRepoPaths)
+	}
+	if _, err := sanitizeRepoPaths(make([]string, maxRepoPaths+1)); err == nil {
+		t.Errorf("expected an error for maxRepoPaths+1 paths")
+	}
+}
+
+// validateFilePath accepts a space (0x20, the boundary) but rejects
+// genuine control chars (< 0x20) and DEL (0x7f).
+func TestValidateFilePath_ControlCharBoundary(t *testing.T) {
+	if !validateFilePath("foo bar") {
+		t.Errorf("validateFilePath(\"foo bar\") = false, want true")
+	}
+	if validateFilePath("foo\x1fbar") {
+		t.Errorf("validateFilePath with a 0x1f control char = true, want false")
+	}
+	if validateFilePath("foo\x7fbar") {
+		t.Errorf("validateFilePath with 0x7f (DEL) = true, want false")
+	}
+}
+
+// getRecentCommits returns the commit subjects for a real repo and the
+// "No commit history available" sentinel for a non-repo directory.
+func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "f.txt")
+	runGit(t, dir, "commit", "-q", "-m", "seed commit subject")
+
+	got := getRecentCommits(context.Background(), dir, 10)
+	if !strings.Contains(got, "seed commit subject") {
+		t.Errorf("getRecentCommits(repo with a commit) = %q, want it to contain the commit subject", got)
+	}
+	if got == "No commit history available" {
+		t.Errorf("getRecentCommits(repo with a commit) returned the empty-history sentinel")
+	}
+
+	// A non-repo directory makes the git command error, so the sentinel
+	// is the correct result.
+	if got := getRecentCommits(context.Background(), t.TempDir(), 10); got != "No commit history available" {
+		t.Errorf("getRecentCommits(non-repo dir) = %q, want the sentinel", got)
+	}
 }

@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -189,45 +190,68 @@ func requiresOf(entry map[string]any) []string {
 // error; the manifest's requires graph is small and human-curated so
 // this should never trigger in practice.
 func resolveDeps(m map[string]any, section, name string) ([]string, error) {
-	visited := map[string]bool{}
-	visiting := map[string]bool{}
-	var order []string
-
-	var visit func(sec, n string) error
-	visit = func(sec, n string) error {
-		key := sec + "." + n
-		if visited[key] {
-			return nil
-		}
-		if visiting[key] {
-			return fmt.Errorf("requires cycle through %s", key)
-		}
-		visiting[key] = true
-		entry, ok := entryAt(m, sec, n)
-		if !ok {
-			return fmt.Errorf("requires unknown entry %s", key)
-		}
-		for _, req := range requiresOf(entry) {
-			parts := strings.SplitN(req, ".", 2)
-			if len(parts) != 2 {
-				return fmt.Errorf("invalid requires %q on %s", req, key)
-			}
-			if !allowedSections[parts[0]] {
-				return fmt.Errorf("invalid section %q in requires %q on %s", parts[0], req, key)
-			}
-			if err := visit(parts[0], parts[1]); err != nil {
-				return err
-			}
-		}
-		visiting[key] = false
-		visited[key] = true
-		order = append(order, key)
-		return nil
+	d := &depResolver{
+		m:        m,
+		visited:  map[string]bool{},
+		visiting: map[string]bool{},
 	}
-	if err := visit(section, name); err != nil {
+	if err := d.visit(section, name); err != nil {
 		return nil, err
 	}
-	return order, nil
+	return d.order, nil
+}
+
+// depResolver carries the mutable accounting for resolveDeps's recursive
+// walk: which entries are fully resolved (visited), which are on the current
+// DFS stack (visiting, for cycle detection), and the accumulated enable order.
+type depResolver struct {
+	m        map[string]any
+	visited  map[string]bool
+	visiting map[string]bool
+	order    []string
+}
+
+// visit resolves one section.name entry: it records the entry in the order
+// after all of its transitive requires have been resolved, and returns an
+// error on a cycle or an unknown entry.
+func (d *depResolver) visit(sec, n string) error {
+	key := sec + "." + n
+	if d.visited[key] {
+		return nil
+	}
+	if d.visiting[key] {
+		return fmt.Errorf("requires cycle through %s", key)
+	}
+	d.visiting[key] = true
+	entry, ok := entryAt(d.m, sec, n)
+	if !ok {
+		return fmt.Errorf("requires unknown entry %s", key)
+	}
+	if err := d.visitRequires(entry, key); err != nil {
+		return err
+	}
+	d.visiting[key] = false
+	d.visited[key] = true
+	d.order = append(d.order, key)
+	return nil
+}
+
+// visitRequires recurses into each dependency declared by entry's .requires,
+// validating the "section.name" shape and that the section is allowed.
+func (d *depResolver) visitRequires(entry map[string]any, key string) error {
+	for _, req := range requiresOf(entry) {
+		parts := strings.SplitN(req, ".", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid requires %q on %s", req, key)
+		}
+		if !allowedSections[parts[0]] {
+			return fmt.Errorf("invalid section %q in requires %q on %s", parts[0], req, key)
+		}
+		if err := d.visit(parts[0], parts[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // dependentsOf returns every enabled entry that lists section.name in
@@ -241,27 +265,33 @@ func dependentsOf(m map[string]any, section, name string) []string {
 		if !allowedSections[sec] {
 			continue
 		}
-		secMap, ok := secMapAny.(map[string]any)
+		out = append(out, dependentsInSection(secMapAny, sec, target)...)
+	}
+	return out
+}
+
+// dependentsInSection returns the "sec.name" keys of enabled entries within a
+// single section map that list target in their .requires.
+func dependentsInSection(secMapAny any, sec, target string) []string {
+	secMap, ok := secMapAny.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for n, eAny := range secMap {
+		e, ok := eAny.(map[string]any)
 		if !ok {
 			continue
 		}
-		for n, eAny := range secMap {
-			e, ok := eAny.(map[string]any)
-			if !ok {
-				continue
-			}
-			// enabled defaults to true when absent, matching
-			// setup-tools.sh's entry_enabled. A missing flag means the
-			// entry IS active, so it must be counted as a dependent —
-			// otherwise cascade-delete would silently orphan it.
-			if !boolField(e, "enabled", true) {
-				continue
-			}
-			for _, req := range requiresOf(e) {
-				if req == target {
-					out = append(out, sec+"."+n)
-				}
-			}
+		// enabled defaults to true when absent, matching
+		// setup-tools.sh's entry_enabled. A missing flag means the
+		// entry IS active, so it must be counted as a dependent —
+		// otherwise cascade-delete would silently orphan it.
+		if !boolField(e, "enabled", true) {
+			continue
+		}
+		if slices.Contains(requiresOf(e), target) {
+			out = append(out, sec+"."+n)
 		}
 	}
 	return out
@@ -375,24 +405,35 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 	}
 	if runErr != nil {
 		resp["error"] = runErr.Error()
-		// Roll back the target entry's enabled flag so the UI shows the
-		// Enable button again (otherwise the row renders as enabled+
-		// healthy despite no working binary). Deps stay enabled — they
-		// may have installed cleanly; the user can retry just this
-		// entry. Best-effort: a write failure here is logged into the
-		// response output; the original error is the user-visible one.
-		manifestMu.Lock()
-		if m, mp, mErr := s.readManifest(); mErr == nil {
-			if e, ok := entryAt(m, section, name); ok {
-				e["enabled"] = false
-				if wErr := writeManifest(mp, m); wErr != nil {
-					resp["output"] = out + "\n[rollback failed: " + wErr.Error() + "]"
-				}
-			}
-		}
-		manifestMu.Unlock()
+		resp["output"] = s.rollbackToolEnable(section, name, out)
 	}
 	api.WriteJSON(w, resp)
+}
+
+// rollbackToolEnable best-effort flips the target entry's enabled flag back to
+// false after a failed setup run, so the UI shows the Enable button again
+// rather than a row that looks enabled+healthy with no working binary.
+// Dependencies stay enabled — they may have installed cleanly and the user can
+// retry just this entry. Returns the output to surface: unchanged on success
+// (or if the manifest can't be re-read / the entry is gone), or annotated with
+// a "[rollback failed: ...]" note when the rewrite itself errors. The original
+// run error remains the user-visible one.
+func (s *Server) rollbackToolEnable(section, name, out string) string {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
+	m, mp, mErr := s.readManifest()
+	if mErr != nil {
+		return out
+	}
+	e, ok := entryAt(m, section, name)
+	if !ok {
+		return out
+	}
+	e["enabled"] = false
+	if wErr := writeManifest(mp, m); wErr != nil {
+		return out + "\n[rollback failed: " + wErr.Error() + "]"
+	}
+	return out
 }
 
 // handleToolDelete: DELETE /api/tools/{section}/{name}

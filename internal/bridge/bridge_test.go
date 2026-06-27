@@ -2,14 +2,20 @@ package bridge
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1222,5 +1228,477 @@ func BenchmarkBridgeRespond(b *testing.B) {
 		if err := br.Respond(ctx, 42, result, nil); err != nil {
 			b.Fatalf("Respond: %v", err)
 		}
+	}
+}
+
+// --- shared mutation-guard test doubles ---
+
+// logCapture is a slog.Handler that records emitted record messages so a
+// test can assert whether a particular log line was (or was not) produced
+// by the code under test.
+type logCapture struct {
+	msgs []string
+	mu   sync.Mutex
+}
+
+func (h *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *logCapture) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.msgs = append(h.msgs, r.Message)
+	return nil
+}
+
+func (h *logCapture) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *logCapture) WithGroup(string) slog.Handler      { return h }
+
+func (h *logCapture) has(msg string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Contains(h.msgs, msg)
+}
+
+// installCapture redirects slog to a capturing handler for the duration
+// of the test, restoring the previous default afterwards.
+func installCapture(t *testing.T) *logCapture {
+	t.Helper()
+	c := &logCapture{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(c))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return c
+}
+
+// captureWriter is an io.WriteCloser standing in for the bridge's stdin.
+// It records whether (and what) was written, and can be configured to
+// fail every Write with a sentinel error.
+type captureWriter struct {
+	failErr error
+	buf     bytes.Buffer
+	mu      sync.Mutex
+	writes  int
+}
+
+func (w *captureWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failErr != nil {
+		return 0, w.failErr
+	}
+	w.writes++
+	return w.buf.Write(p)
+}
+
+func (w *captureWriter) Close() error { return nil }
+
+func (w *captureWriter) wrote() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writes > 0
+}
+
+// errReader yields the configured error on the first Read. A non-EOF
+// error surfaces via bufio.Scanner.Err(); io.EOF terminates the scan
+// cleanly with a nil Err().
+type errReader struct{ failErr error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
+
+// readLoopBridge builds the minimal Bridge that readLoop needs.
+func readLoopBridge(r io.Reader) *Bridge {
+	return &Bridge{
+		stdout:  bufio.NewScanner(r),
+		pending: make(map[int64]chan *api.RPCResponse),
+		notifCh: make(chan *api.RPCResponse, 1),
+		done:    make(chan struct{}),
+	}
+}
+
+// runLoadSession drives loadSession against an injected RPC response: it
+// spawns loadSession, waits for the pending request to register, sends
+// resp on the matching pending channel, and returns loadSession's error.
+func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCResponse) error {
+	t.Helper()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pr.Close() })
+	b.stdin = pw
+
+	done := make(chan error, 1)
+	go func() {
+		done <- b.loadSession(context.Background(), "acp-session-xyz", fallback, nil)
+	}()
+
+	var ch chan *api.RPCResponse
+	deadline := time.Now().Add(time.Second)
+	for ch == nil {
+		b.pendingMu.Lock()
+		for id, v := range b.pending {
+			ch = v
+			delete(b.pending, id)
+		}
+		b.pendingMu.Unlock()
+		if ch == nil {
+			if time.Now().After(deadline) {
+				t.Fatal("loadSession never registered a pending request")
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	ch <- resp
+
+	select {
+	case e := <-done:
+		return e
+	case <-time.After(time.Second):
+		t.Fatal("loadSession did not return")
+		return nil
+	}
+}
+
+// --- bridge.go: capturePromptCapabilities / SupportsDocuments ---
+
+// A result carrying embeddedContext:true must be captured so
+// SupportsDocuments() flips to true.
+func TestCapturePromptCapabilities_StoresEmbeddedContext(t *testing.T) {
+	b := New("cli", "work")
+	if b.SupportsDocuments() {
+		t.Fatalf("SupportsDocuments() = true before capture, want false")
+	}
+	resp := &api.RPCResponse{
+		Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":true}}}`),
+	}
+	b.capturePromptCapabilities(resp)
+	if !b.SupportsDocuments() {
+		t.Errorf("SupportsDocuments() after capturing embeddedContext:true = false, want true")
+	}
+}
+
+// A nil, empty, malformed, or embeddedContext:false result leaves
+// SupportsDocuments() at its false default.
+func TestCapturePromptCapabilities_LeavesUnset(t *testing.T) {
+	cases := []struct {
+		resp *api.RPCResponse
+		name string
+	}{
+		{name: "nil_response", resp: nil},
+		{name: "empty_result", resp: &api.RPCResponse{Result: nil}},
+		{name: "malformed_json", resp: &api.RPCResponse{Result: json.RawMessage(`{not valid`)}},
+		{
+			name: "embedded_context_false",
+			resp: &api.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":false}}}`)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New("cli", "work")
+			b.capturePromptCapabilities(tc.resp)
+			if b.SupportsDocuments() {
+				t.Errorf("SupportsDocuments() = true for %s, want false", tc.name)
+			}
+		})
+	}
+}
+
+// --- bridge_parse_err.go: parseErrTracker.Record ---
+
+// The burst-th Record() sets the window start; the next call falls inside
+// the window and is suppressed.
+func TestParseErrTracker_WindowStartSetAtBurst(t *testing.T) {
+	var tr parseErrTracker
+	var got parseErrAction
+	for range parseErrBurst + 1 {
+		got = tr.Record()
+	}
+	if got != parseErrSuppress {
+		t.Errorf("Record() call #%d = %v, want parseErrSuppress (%v)", parseErrBurst+1, got, parseErrSuppress)
+	}
+}
+
+// --- bridge_process.go: Stop ---
+
+// Stop must not dereference a nil Process (an unstarted command).
+func TestStop_SkipsKillWhenProcessNil(t *testing.T) {
+	b := New("cli", "work")
+	b.cmd = exec.Command("sleep", "30") // never Start()ed -> Process is nil
+	b.Stop()                            // must return without panicking
+	if b.cmd == nil {
+		t.Fatal("b.cmd unexpectedly nil after Stop")
+	}
+}
+
+// Stop emits no "kill kiro-cli" error log when killing a live process
+// succeeds.
+func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep binary not available")
+	}
+	c := installCapture(t)
+
+	b := New("cli", "work")
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	b.cmd = cmd
+	t.Cleanup(func() {
+		if b.cmd != nil && b.cmd.Process != nil {
+			_ = b.cmd.Process.Kill()
+		}
+	})
+
+	b.Stop()
+
+	if c.has("kill kiro-cli") {
+		t.Errorf(`Stop emitted "kill kiro-cli" error log on a successful Kill, want none`)
+	}
+}
+
+// --- bridge_process.go: startProcess ---
+
+// startProcess substitutes context.Background() for a nil lifecycleCtx
+// (the state right after New), so it must not panic on a nil ctx.
+func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
+	b := New(bogus, t.TempDir())
+	t.Cleanup(b.Stop)
+	err := b.startProcess("", "", "", nil)
+	if err == nil {
+		t.Fatal("startProcess with a nonexistent binary returned nil error, want a start failure")
+	}
+}
+
+// startProcess assigns a 5s WaitDelay before the (failing) Start.
+func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
+	b := New(bogus, t.TempDir())
+	b.lifecycleCtx = context.Background()
+	t.Cleanup(b.Stop)
+	_ = b.startProcess("", "", "", nil)
+	if b.cmd == nil {
+		t.Fatal("b.cmd is nil; startProcess did not reach CommandContext")
+	}
+	if b.cmd.WaitDelay != 5*time.Second {
+		t.Errorf("b.cmd.WaitDelay = %v, want %v", b.cmd.WaitDelay, 5*time.Second)
+	}
+}
+
+// --- bridge_process.go: classifyStderrLevel ---
+
+// A structured JSON line maps to its declared level; an unknown or
+// missing level and plain text fall back to keyword classification.
+func TestClassifyStderrLevel(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want slog.Level
+	}{
+		{"json_warn", `{"level":"WARN"}`, slog.LevelWarn},
+		{"json_error", `{"level":"ERROR"}`, slog.LevelError},
+		{"json_debug", `{"level":"DEBUG"}`, slog.LevelDebug},
+		{"json_unknown_level_is_info", `{"level":"trace"}`, slog.LevelInfo},
+		{"json_without_level_field_is_info", `{"msg":"hello"}`, slog.LevelInfo},
+		{"plain_error_keyword_is_error", "error: boom", slog.LevelError},
+		{"plain_no_keyword_is_info", "all good here", slog.LevelInfo},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyStderrLevel(tc.line)
+			if got != tc.want {
+				t.Errorf("classifyStderrLevel(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+// --- bridge_process.go: matchesKeyword ---
+
+// matchesKeyword matches the keyword only at a real word boundary: a
+// preceding letter makes it a substring (no match); a non-letter before,
+// the string end, or a separator after, all count as boundaries.
+func TestMatchesKeyword(t *testing.T) {
+	const kw = "error"
+	cases := []struct {
+		name string
+		low  string
+		want bool
+	}{
+		{"keyword_at_start_then_separator", "error:", true},
+		{"preceded_by_letter_a_is_substring", "aerror", false},
+		{"preceded_by_letter_z_is_substring", "zerror", false},
+		{"preceded_by_dot_is_boundary", "..error", true},
+		{"preceded_by_brace_is_boundary", "a{error", true},
+		{"trailing_letter_no_match", ".errorx", false},
+		{"keyword_at_end_of_string", ".error", true},
+		{"trailing_colon_is_boundary", ".error:", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchesKeyword(tc.low, kw)
+			if got != tc.want {
+				t.Errorf("matchesKeyword(%q, %q) = %v, want %v", tc.low, kw, got, tc.want)
+			}
+		})
+	}
+}
+
+// Each of '[', ']', ' ' and '=' is a word-boundary separator after the
+// keyword.
+func TestMatchesKeyword_SeparatorChain(t *testing.T) {
+	const kw = "error"
+	cases := []struct {
+		name string
+		low  string
+		want bool
+	}{
+		{"open_bracket_is_boundary", "error[x", true},
+		{"close_bracket_is_boundary", "error]x", true},
+		{"space_is_boundary", "error x", true},
+		{"equals_is_boundary", "error=x", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesKeyword(tc.low, kw); got != tc.want {
+				t.Errorf("matchesKeyword(%q, %q) = %v, want %v", tc.low, kw, got, tc.want)
+			}
+		})
+	}
+}
+
+// --- bridge_rpc.go: readLoop end-of-scan error log ---
+
+// readLoop logs "ACP read" on a real (non-EOF) scanner error and reaps
+// the bridge.
+func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
+	c := installCapture(t)
+	b := readLoopBridge(errReader{failErr: errors.New("read boom")})
+
+	b.readLoop()
+	select {
+	case <-b.done:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not reap bridge (done not closed)")
+	}
+
+	if !c.has("ACP read") {
+		t.Errorf(`readLoop on a scanner error did not log "ACP read"; want it present`)
+	}
+}
+
+// readLoop logs nothing on a clean EOF.
+func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
+	c := installCapture(t)
+	b := readLoopBridge(errReader{failErr: io.EOF})
+
+	b.readLoop()
+	select {
+	case <-b.done:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not reap bridge (done not closed)")
+	}
+
+	if c.has("ACP read") {
+		t.Errorf(`readLoop on a clean EOF logged "ACP read"; want it absent`)
+	}
+}
+
+// --- bridge_rpc.go: Notify ---
+
+// Notify returns the context error and writes nothing when ctx is already
+// canceled.
+func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	w := &captureWriter{}
+	b.stdin = w
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := b.Notify(ctx, "session/update", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Notify(canceled ctx) err = %v, want context.Canceled", err)
+	}
+	if w.wrote() {
+		t.Errorf("Notify(canceled ctx) wrote to stdin; want no write")
+	}
+}
+
+// Notify marshals and writes a frame on the happy path.
+func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	w := &captureWriter{}
+	b.stdin = w
+
+	if err := b.Notify(context.Background(), "session/update", map[string]any{"k": "v"}); err != nil {
+		t.Fatalf("Notify(good ctx, valid params) err = %v, want nil", err)
+	}
+	if !w.wrote() {
+		t.Errorf("Notify(good ctx, valid params) wrote nothing; want a frame written to stdin")
+	}
+}
+
+// Notify returns the marshal error and writes nothing for unmarshalable
+// params.
+func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	w := &captureWriter{}
+	b.stdin = w
+
+	err := b.Notify(context.Background(), "session/update", map[string]any{"bad": make(chan int)})
+	if err == nil {
+		t.Errorf("Notify(unmarshalable params) err = nil, want a marshal error")
+	}
+	if w.wrote() {
+		t.Errorf("Notify(unmarshalable params) wrote to stdin; want no write")
+	}
+}
+
+// --- bridge_rpc.go: writeFrame ---
+
+// writeFrame surfaces the underlying writer's error verbatim.
+func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
+	sentinel := errors.New("write boom")
+	b := New("/nonexistent", "/work")
+	b.stdin = &captureWriter{failErr: sentinel}
+
+	err := b.writeFrame([]byte("hello\n"))
+	if err == nil {
+		t.Fatalf("writeFrame with a failing writer returned nil, want an error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("writeFrame err = %v, want the underlying write error %v", err, sentinel)
+	}
+}
+
+// --- bridge_session.go: loadSession ---
+
+// loadSession applies a well-formed result (the parsed model, not the
+// fallback).
+func TestLoadSession_AppliesParsedResult(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &api.RPCResponse{
+		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","models":{"currentModelId":"parsed-model","availableModels":[{"modelId":"parsed-model","name":"Parsed","description":"ok","rateMultiplier":1}]}}`),
+	}
+	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+	if got := b.ModelID(); got != "parsed-model" {
+		t.Errorf("loadSession ModelID() = %q, want %q (parsed result must be applied, not fallback)", got, "parsed-model")
+	}
+}
+
+// loadSession warns and falls back when the result can't be parsed.
+func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
+	c := installCapture(t)
+	b := New("/nonexistent", "/work")
+	resp := &api.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+	if !c.has("session/load: unparseable result, using fallback") {
+		t.Errorf("loadSession on an unparseable result did not log the fallback warn; want it present")
 	}
 }

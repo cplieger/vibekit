@@ -24,6 +24,7 @@ func TestValidatePromptPayload(t *testing.T) {
 		{"valid minimal", valid("hello", "msg-1", "", ""), 0, false},
 		{"valid with agent/model", valid("hi", "msg-2", "default", "claude"), 0, false},
 		{"empty text", valid("", "msg-1", "", ""), http.StatusBadRequest, true},
+		{"text at exact cap", valid(strings.Repeat("a", maxPromptBytes), "msg-1", "", ""), 0, false},
 		{"oversized text", valid(strings.Repeat("x", maxPromptBytes+1), "msg-1", "", ""), http.StatusRequestEntityTooLarge, true},
 		{"missing message_id", valid("hi", "", "", ""), http.StatusBadRequest, true},
 		{"invalid message_id", valid("hi", "msg id/bad", "", ""), http.StatusBadRequest, true},

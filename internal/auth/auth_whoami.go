@@ -140,33 +140,33 @@ func whoamiInfo(out []byte) (*WhoamiResponse, error) {
 	if raw == nil {
 		return resp, nil
 	}
-	// Email: prefer canonical lowercase; fall back to capital
-	// "Email" key seen in kiro-cli 2.0.1.
-	if email, ok := raw["email"].(string); ok && email != "" {
-		resp.Email = email
-	} else if email, ok := raw["Email"].(string); ok && email != "" {
-		resp.Email = email
-	}
-	// AccountType: accept snake_case (earlier CLI) and camelCase
-	// (kiro-cli 2.0.1+). Empty/non-string leaves Auth unset.
-	if at, ok := raw["account_type"].(string); ok && at != "" {
-		resp.AccountType = at
-	} else if at, ok := raw["accountType"].(string); ok && at != "" {
-		resp.AccountType = at
-	}
+	// Field names accept both snake_case (earlier CLI) and camelCase
+	// (kiro-cli 2.0.1+); the first non-empty string value wins, so a
+	// canonical key takes precedence over its alias. Email also accepts
+	// the capital "Email" key seen in kiro-cli 2.0.1. Empty / non-string
+	// account-type leaves Auth unset so the UI renders "not signed in".
+	resp.Email = firstNonEmptyString(raw, "email", "Email")
+	resp.AccountType = firstNonEmptyString(raw, "account_type", "accountType")
 	if resp.AccountType != "" {
 		resp.Auth = humanizeAccountType(resp.AccountType)
 	}
-	// startUrl: accept camelCase (kiro-cli 2.0.1) and snake_case.
-	if su, ok := raw["startUrl"].(string); ok && su != "" {
-		resp.StartURL = su
-	} else if su, ok := raw["start_url"].(string); ok && su != "" {
-		resp.StartURL = su
-	}
-	if reg, ok := raw["region"].(string); ok && reg != "" {
-		resp.Region = reg
-	}
+	resp.StartURL = firstNonEmptyString(raw, "startUrl", "start_url")
+	resp.Region = firstNonEmptyString(raw, "region")
 	return resp, nil
+}
+
+// firstNonEmptyString returns the first non-empty string value found among
+// keys in raw, in order, or "" when none maps to a non-empty string. Lets
+// whoamiInfo accept both snake_case and camelCase spellings of the same
+// kiro-cli field while preferring the canonical key, without repeating the
+// type-assert-and-empty-check pattern per field.
+func firstNonEmptyString(raw map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := raw[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // humanizeAccountType turns kiro-cli's enum values into the same

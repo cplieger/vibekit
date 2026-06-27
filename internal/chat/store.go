@@ -233,6 +233,22 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 		return fmt.Errorf("chat mutate: mutator reassigned id %q → %q", chatID, c.ID)
 	}
 	c.CreatedAt = originalCreatedAt
+	if err := validateChatUTF8(c); err != nil {
+		return err
+	}
+	if err := s.save(c); err != nil {
+		return err
+	}
+	s.broadcastMutation(ctx, chatID, c, exists)
+	slog.Debug("chat mutate", "chat_id", chatID, "existed", exists)
+	return nil
+}
+
+// validateChatUTF8 returns errInvalidUTF8 if the chat name or any message
+// content is not valid UTF-8 — content that would not round-trip through
+// the JSON storage format. Extracted from Mutate so the single write path
+// stays within the cognitive-complexity ceiling without changing behaviour.
+func validateChatUTF8(c *api.Chat) error {
 	if !utf8.ValidString(c.Name) {
 		return errInvalidUTF8
 	}
@@ -241,18 +257,22 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 			return errInvalidUTF8
 		}
 	}
-	if err := s.save(c); err != nil {
-		return err
-	}
-	if s.broadcast != nil {
-		if !exists {
-			s.broadcast.Broadcast(ctx, api.NewEvent(api.EventChatCreated, chatID, s.header(ctx, c)))
-		} else {
-			s.broadcast.Broadcast(ctx, api.NewEvent(api.EventChatUpdated, chatID, s.header(ctx, c)))
-		}
-	}
-	slog.Debug("chat mutate", "chat_id", chatID, "existed", exists)
 	return nil
+}
+
+// broadcastMutation emits the post-save lifecycle event for a successful
+// Mutate: chat_created for a freshly created chat (exists == false), or
+// chat_updated otherwise. No-op when no broadcaster is wired. The header
+// is computed once and reused for whichever event fires.
+func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api.Chat, exists bool) {
+	if s.broadcast == nil {
+		return
+	}
+	evt := api.EventChatUpdated
+	if !exists {
+		evt = api.EventChatCreated
+	}
+	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
 // Delete removes the chat file and broadcasts chat_deleted. No-op if the

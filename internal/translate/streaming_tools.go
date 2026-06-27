@@ -75,9 +75,22 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
+	output, diffs := t.parseToolUpdateContent(tu.Content)
+	buf := t.deps.BufferStore().GetOrInit(chatID)
+	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
+	if !ok || idx >= len(buf.ToolCalls) {
+		return
+	}
+	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, output, diffs, subSessionID)
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
+}
+
+// parseToolUpdateContent extracts the sanitized output delta and any
+// file diffs from a tool_call_update's content blocks. Diff paths are
+// normalized to workspace-relative form.
+func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) (output string, diffs []api.ToolDiff) {
 	var outputDelta strings.Builder
-	var diffs []api.ToolDiff
-	for _, item := range tu.Content {
+	for _, item := range items {
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
 			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
 			outputDelta.WriteByte('\n')
@@ -87,35 +100,38 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 			})
 		}
 	}
-	buf := t.deps.BufferStore().GetOrInit(chatID)
-	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
-	if !ok || idx >= len(buf.ToolCalls) {
-		return
-	}
+	return outputDelta.String(), diffs
+}
+
+// applyToolCallUpdate folds a parsed tool_call_update into the buffered
+// tool call at idx: status (emitting a working label on terminal
+// status), appended output, replaced locations, appended diffs (with
+// line tracking), and a first-seen subsession id.
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, output string, diffs []api.ToolDiff, subSessionID string) {
+	tc := &buf.ToolCalls[idx]
 	if tu.Status != "" {
-		buf.ToolCalls[idx].Status = tu.Status
+		tc.Status = tu.Status
 		if tu.Status == api.ToolCompleted || tu.Status == api.ToolFailed {
-			buf.ToolCalls[idx].DurationMs = buf.ComputeDuration(tu.ToolCallID)
+			tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 			t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
 				api.WorkingLabelPayload{Label: api.WorkingLabelThinking}))
 		}
 	}
-	if outputDelta.Len() > 0 {
-		buf.ToolCalls[idx].Output += outputDelta.String()
+	if output != "" {
+		tc.Output += output
 	}
 	if len(tu.Locations) > 0 {
-		buf.ToolCalls[idx].Locations = tu.Locations
+		tc.Locations = tu.Locations
 	}
 	if len(diffs) > 0 {
-		buf.ToolCalls[idx].Diffs = append(buf.ToolCalls[idx].Diffs, diffs...)
+		tc.Diffs = append(tc.Diffs, diffs...)
 		buf.TrackFileChanges(diffs, false)
 		turn := len(buf.ToolCalls)
-		t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(buf.ToolCalls[idx].Kind))
+		t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	if buf.ToolCalls[idx].SubSessionID == "" && subSessionID != "" {
-		buf.ToolCalls[idx].SubSessionID = subSessionID
+	if tc.SubSessionID == "" && subSessionID != "" {
+		tc.SubSessionID = subSessionID
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
 }
 
 // HandleExtSessionUpdate handles the extension channel for subagent

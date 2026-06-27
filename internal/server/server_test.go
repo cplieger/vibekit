@@ -94,6 +94,8 @@ func TestSafeKiroSettingValue(t *testing.T) {
 		{"15", "15"},
 		{"100", "100"},
 		{"0", "0"},
+		{"9", "9"},       // single digit '9' sits on the digit upper boundary
+		{"1234", "1234"}, // four digits is the inclusive max length
 		{"abc", ""},
 		{"12.5", ""},
 		{"", ""},
@@ -128,6 +130,9 @@ func TestParseKiroSettingOutput(t *testing.T) {
 		{"plain-value", "plain-value"},
 		// No leading paren: nothing to strip, bare text survives.
 		{"name (with parens) (global)", "name (with parens)"},
+		// A '(' at index 0 must not trigger a trim (that would return the
+		// empty string); the whole value survives untouched.
+		{"(foo)", "(foo)"},
 	}
 	for _, tt := range tests {
 		if got := parseKiroSettingOutput(tt.in); got != tt.want {
@@ -511,5 +516,85 @@ func TestHandleHealth_unready(t *testing.T) {
 	}
 	if got["reason"] == "" {
 		t.Errorf("unready response missing reason field")
+	}
+}
+
+// TestDefaultCLITimeouts pins the production timeout budget. The expectations
+// are whole-second / whole-minute magnitudes, so a wrong unit or arithmetic
+// slip in defaultCLITimeouts (e.g. 5*time.Second collapsing to a sub-second
+// duration) is caught.
+func TestDefaultCLITimeouts(t *testing.T) {
+	got := defaultCLITimeouts()
+	if s := got.Models.Seconds(); s != 5 {
+		t.Errorf("defaultCLITimeouts().Models = %v (%.0fs), want 5s", got.Models, s)
+	}
+	if s := got.Version.Seconds(); s != 2 {
+		t.Errorf("defaultCLITimeouts().Version = %v (%.0fs), want 2s", got.Version, s)
+	}
+	if s := got.Diagnostics.Seconds(); s != 20 {
+		t.Errorf("defaultCLITimeouts().Diagnostics = %v (%.0fs), want 20s", got.Diagnostics, s)
+	}
+	if s := got.Settings.Seconds(); s != 3 {
+		t.Errorf("defaultCLITimeouts().Settings = %v (%.0fs), want 3s", got.Settings, s)
+	}
+	if m := got.ToolsInstall.Minutes(); m != 10 {
+		t.Errorf("defaultCLITimeouts().ToolsInstall = %v (%.0fm), want 10m", got.ToolsInstall, m)
+	}
+}
+
+// TestSyncPushPreferences_permissionFalse verifies that an explicit
+// notify_permission=false in the patch turns the permission push preference
+// off. The sibling TestSyncPushPreferences only exercises the true case, which
+// can't distinguish "recorded false" from "left at the true default".
+func TestSyncPushPreferences_permissionFalse(t *testing.T) {
+	mp := &testPush{}
+	s := &Server{push: mp}
+
+	s.syncPushPreferences(map[string]json.RawMessage{
+		"notify_permission": json.RawMessage(`false`),
+	})
+
+	if mp.prefs[api.PushKindPermission] {
+		t.Errorf("syncPushPreferences(notify_permission=false) -> prefs[Permission] = true, want false")
+	}
+}
+
+// hasKiroConfigItem reports whether items contains an entry of the given Type
+// and Name. Used to assert that each scan stage actually contributed an item.
+func hasKiroConfigItem(items []kiroConfigItem, typ, name string) bool {
+	for _, it := range items {
+		if it.Type == typ && it.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestScanKiroDirFS_returnsAllSections verifies that a single scan over a
+// populated .kiro tree returns an item for every section it walks — steering
+// docs, skills, and agents — under a live (non-cancelled) context. A
+// regression that early-returned or skipped an append for any section would
+// drop that section's items.
+func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
+	mfs := fstest.MapFS{
+		"steering":            &fstest.MapFile{Mode: fs.ModeDir},
+		"steering/foo.md":     &fstest.MapFile{Data: []byte("---\ninclusion: manual\n---\n# Foo")},
+		"skills":              &fstest.MapFile{Mode: fs.ModeDir},
+		"skills/bar":          &fstest.MapFile{Mode: fs.ModeDir},
+		"skills/bar/SKILL.md": &fstest.MapFile{Data: []byte("# Bar")},
+		"agents":              &fstest.MapFile{Mode: fs.ModeDir},
+		"agents/baz.md":       &fstest.MapFile{Data: []byte("# Baz")},
+	}
+
+	items := scanKiroDirFS(context.Background(), mfs, "P/.kiro")
+
+	if !hasKiroConfigItem(items, "steering", "foo") {
+		t.Errorf("scanKiroDirFS missing steering item 'foo'; got %+v", items)
+	}
+	if !hasKiroConfigItem(items, "skill", "bar") {
+		t.Errorf("scanKiroDirFS missing skill item 'bar'; got %+v", items)
+	}
+	if !hasKiroConfigItem(items, "agent", "baz") {
+		t.Errorf("scanKiroDirFS missing agent item 'baz'; got %+v", items)
 	}
 }

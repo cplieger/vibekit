@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2920,4 +2921,402 @@ func BenchmarkChatStore_ParallelRead(b *testing.B) {
 			}
 		})
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Folded from the retired gremlins_kill_vibekit_u22 micro-file. Each test
+// pins a boundary / log / branch invariant named in its function name;
+// mutant-operator IDs and source line numbers were stripped.
+// ---------------------------------------------------------------------------
+
+// mustCreateChat creates an (empty) chat via the real Mutate create path so
+// existence checks downstream pass.
+func mustCreateChat(t *testing.T, s *Store, id api.ChatID) {
+	t.Helper()
+	if err := s.Mutate(context.Background(), id, func(_ *api.Chat, _ bool) bool { return true }); err != nil {
+		t.Fatalf("create chat %q: %v", id, err)
+	}
+}
+
+// truncToSize creates a (sparse) file of exactly size bytes at path.
+func truncToSize(t *testing.T, path string, size int64) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	if err := f.Truncate(size); err != nil {
+		_ = f.Close()
+		t.Fatalf("truncate %s to %d: %v", path, size, err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close %s: %v", path, err)
+	}
+}
+
+// logRecord is one captured slog record (its message and attributes).
+type logRecord struct {
+	attrs map[string]slog.Value
+	msg   string
+}
+
+// capHandler is a slog.Handler that records every log record for assertion.
+type capHandler struct {
+	mu   *sync.Mutex
+	recs *[]logRecord
+}
+
+func (h capHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h capHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := logRecord{msg: r.Message, attrs: make(map[string]slog.Value)}
+	r.Attrs(func(a slog.Attr) bool {
+		rec.attrs[a.Key] = a.Value
+		return true
+	})
+	h.mu.Lock()
+	*h.recs = append(*h.recs, rec)
+	h.mu.Unlock()
+	return nil
+}
+
+func (h capHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h capHandler) WithGroup(string) slog.Handler      { return h }
+
+// captureChatLogs redirects slog.Default for the test and returns a snapshot
+// accessor. Not parallel-safe; callers must not call t.Parallel().
+func captureChatLogs(t *testing.T) func() []logRecord {
+	t.Helper()
+	var mu sync.Mutex
+	recs := &[]logRecord{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(capHandler{mu: &mu, recs: recs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() []logRecord {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]logRecord, len(*recs))
+		copy(out, *recs)
+		return out
+	}
+}
+
+func hasLogMsg(recs []logRecord, msg string) bool {
+	for _, r := range recs {
+		if r.msg == msg {
+			return true
+		}
+	}
+	return false
+}
+
+func findLog(recs []logRecord, msg string) (logRecord, bool) {
+	for _, r := range recs {
+		if r.msg == msg {
+			return r, true
+		}
+	}
+	return logRecord{}, false
+}
+
+// TestStoreError_Error pins the Error() string for every Kind, with and
+// without a Detail, so a mutated branch or a swapped detail-conditional
+// surfaces. The TooLarge and IDInUse strings are user-facing (writeChatErr
+// surfaces ce.Error() verbatim for 413 / 409).
+func TestStoreError_Error(t *testing.T) {
+	cases := []struct {
+		err  *StoreError
+		name string
+		want string
+	}{
+		{&StoreError{Kind: ErrKindNotFound, Detail: "c1"}, "not found with detail", "chat not found: c1"},
+		{&StoreError{Kind: ErrKindNotFound}, "not found no detail", "chat not found"},
+		{&StoreError{Kind: ErrKindTombstoned, Detail: "c1"}, "tombstoned with detail", "chat recently deleted: c1"},
+		{&StoreError{Kind: ErrKindTombstoned}, "tombstoned no detail", "chat recently deleted"},
+		{&StoreError{Kind: ErrKindTooLarge, Detail: "5 bytes"}, "too large with detail", "plan draft too large: 5 bytes"},
+		{&StoreError{Kind: ErrKindTooLarge}, "too large no detail", "plan draft too large"},
+		{&StoreError{Kind: ErrKindIDInUse, Detail: "c1"}, "id in use with detail", "chat id in use: c1"},
+		{&StoreError{Kind: ErrKindIDInUse}, "id in use no detail", "chat id in use"},
+		{&StoreError{Kind: ErrorKind(0)}, "unknown kind falls through", "chat store error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("StoreError{Kind:%d, Detail:%q}.Error() = %q, want %q",
+					tc.err.Kind, tc.err.Detail, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadCappedFile_ExactMaxBoundary: a file of exactly maxChatFileBytes
+// reads back in full with no error (the cap is `size > max`, not `>=`).
+func TestReadCappedFile_ExactMaxBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exactmax.json")
+	truncToSize(t, path, maxChatFileBytes)
+
+	data, err := readCappedFile(path, "chat exactmax")
+	if err != nil {
+		t.Fatalf("readCappedFile(exactly maxChatFileBytes) error = %v, want nil", err)
+	}
+	if int64(len(data)) != maxChatFileBytes {
+		t.Errorf("readCappedFile len = %d, want %d", len(data), int64(maxChatFileBytes))
+	}
+}
+
+// TestGetPlanDraft_ExactMaxBoundary: a draft of exactly maxPlanDraftBytes
+// reads back in full with no error (the cap is `size > max`, not `>=`).
+func TestGetPlanDraft_ExactMaxBoundary(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("getmax")
+	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
+	truncToSize(t, draftPath, maxPlanDraftBytes)
+
+	got, err := s.GetPlanDraft(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetPlanDraft(exactly maxPlanDraftBytes) error = %v, want nil", err)
+	}
+	if len(got) != maxPlanDraftBytes {
+		t.Errorf("GetPlanDraft len = %d, want %d", len(got), maxPlanDraftBytes)
+	}
+}
+
+// TestSetPlanDraft_ExactMaxAccepted: content of exactly maxPlanDraftBytes
+// must be accepted (the cap is `len > max`, not `>=`).
+func TestSetPlanDraft_ExactMaxAccepted(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("setmax")
+	mustCreateChat(t, s, id)
+
+	content := strings.Repeat("a", maxPlanDraftBytes)
+	if err := s.SetPlanDraft(context.Background(), id, content); err != nil {
+		t.Fatalf("SetPlanDraft(len==maxPlanDraftBytes) error = %v, want nil (boundary must be accepted)", err)
+	}
+}
+
+// TestDeletePlanDraft_PropagatesNonEmptyDirRemoveError: a non-ENOENT
+// os.Remove error must propagate. A non-empty directory at the draft path
+// makes os.Remove fail with ENOTEMPTY — a root-safe injection (unlike the
+// EACCES variant in TestDeletePlanDraft_SurfacesNonENOENTRemoveError, which
+// skips under root).
+func TestDeletePlanDraft_PropagatesNonEmptyDirRemoveError(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("deldir")
+	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
+	if err := os.Mkdir(draftPath, 0o755); err != nil {
+		t.Fatalf("mkdir draft-as-dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(draftPath, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+
+	if err := s.DeletePlanDraft(context.Background(), id); err == nil {
+		t.Fatal("DeletePlanDraft returned nil; want non-nil for a non-empty-dir remove error")
+	}
+}
+
+// TestHandleOne_LimitUpperBoundaryHonored: limit=500 must be honored (the
+// clamp is `n <= 500`); a 60-message chat returns all 60, not the default 50.
+func TestHandleOne_LimitUpperBoundaryHonored(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("limitmax")
+	if err := s.Mutate(context.Background(), id, func(c *api.Chat, _ bool) bool {
+		for i := range 60 {
+			c.Messages = append(c.Messages, api.Message{
+				ID:      fmt.Sprintf("m%d", i),
+				Role:    api.RoleUser,
+				Content: "x",
+				Ts:      int64(i + 1),
+			})
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("seed chat: %v", err)
+	}
+
+	rt := NewRouter(s)
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"?limit=500", nil)
+	w := httptest.NewRecorder()
+	rt.handleOne(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Messages []api.Message `json:"messages"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Messages) != 60 {
+		t.Errorf("messages returned = %d, want 60 (limit=500 must be accepted)", len(resp.Messages))
+	}
+}
+
+// TestPutPlanDraft_LimitBodyEnvelopeBoundary: a body that fits the
+// maxPlanDraftBytes+4096 LimitBody cap (and whose content is under the
+// SetPlanDraft cap) must save and return 200 — pins the +4096 JSON-envelope
+// allowance.
+func TestPutPlanDraft_LimitBodyEnvelopeBoundary(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("putenv")
+	mustCreateChat(t, s, id)
+
+	content := strings.Repeat("a", 260000)
+	body := `{"content":"` + content + `"}` // 260014 bytes total
+	rt := NewRouter(s)
+	req := httptest.NewRequest(http.MethodPut, "/api/chats/"+string(id)+"/plan-draft", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	rt.handlePlanDraft(w, req, id)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (a %d-byte body must fit the max+4096 cap)", w.Code, len(body))
+	}
+}
+
+// TestPutPlanDraft_LogsExactBodyLimit: an oversized body trips the
+// "body too large" warn whose logged "limit" attribute must be exactly
+// maxPlanDraftBytes+4096 (266240), pinning the +4096 in the log call.
+func TestPutPlanDraft_LogsExactBodyLimit(t *testing.T) {
+	const wantLimit = int64(266240) // 256*1024 + 4096
+
+	snap := captureChatLogs(t)
+	s, _ := newTestStore(t)
+	id := api.ChatID("putlog")
+
+	content := strings.Repeat("a", 270000)
+	body := `{"content":"` + content + `"}` // 270014 bytes, exceeds the cap
+	rt := NewRouter(s)
+	req := httptest.NewRequest(http.MethodPut, "/api/chats/"+string(id)+"/plan-draft", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	rt.handlePlanDraft(w, req, id)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (body must exceed the read cap)", w.Code)
+	}
+	rec, ok := findLog(snap(), "chat plan_draft: body too large")
+	if !ok {
+		t.Fatal(`no "chat plan_draft: body too large" log record captured`)
+	}
+	lim, ok := rec.attrs["limit"]
+	if !ok {
+		t.Fatal(`log record has no "limit" attribute`)
+	}
+	if lim.Kind() != slog.KindInt64 {
+		t.Fatalf("limit attr kind = %v, want Int64", lim.Kind())
+	}
+	if lim.Int64() != wantLimit {
+		t.Errorf("logged limit = %d, want %d", lim.Int64(), wantLimit)
+	}
+}
+
+// TestNewStore_NoChmodWarnOnWritableDir: on a writable dir chmod succeeds,
+// so NewStore must NOT log "chat store: chmod" (that log is the chmod-error
+// branch).
+func TestNewStore_NoChmodWarnOnWritableDir(t *testing.T) {
+	snap := captureChatLogs(t)
+	if _, err := NewStore(t.TempDir()); err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if hasLogMsg(snap(), "chat store: chmod") {
+		t.Error(`NewStore logged "chat store: chmod" on a writable dir; the chmod-error branch is inverted`)
+	}
+}
+
+// TestDelete_NoDraftWarnOnCleanRemoval: when the draft removal succeeds,
+// Delete must NOT log "chat delete: plan-draft removal failed" (that log is
+// the removal-error branch).
+func TestDelete_NoDraftWarnOnCleanRemoval(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := api.ChatID("delclean")
+	mustCreateChat(t, s, id)
+	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
+	if err := os.WriteFile(draftPath, []byte("draft body"), 0o600); err != nil {
+		t.Fatalf("write draft: %v", err)
+	}
+
+	snap := captureChatLogs(t)
+	if err := s.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if hasLogMsg(snap(), "chat delete: plan-draft removal failed") {
+		t.Error(`Delete logged "chat delete: plan-draft removal failed" on a clean draft removal; the error branch is inverted`)
+	}
+}
+
+// TestHandleArchivedChats_ListIncludesArchived: with one archived chat the
+// GET handler returns a non-nil list passed through verbatim (pins the
+// `headers == nil` empty-slice guard against inversion).
+func TestHandleArchivedChats_ListIncludesArchived(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	id := api.ChatID("archlist")
+	mustCreateChat(t, s, id)
+	if err := s.Archive(ctx, id); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	rt := NewRouter(s)
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/archived", nil)
+	w := httptest.NewRecorder()
+	rt.handleArchivedChats(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Chats []api.ChatHeader `json:"chats"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Chats) != 1 {
+		t.Fatalf("archived chats = %d, want 1 (a non-nil list must pass through)", len(resp.Chats))
+	}
+	if resp.Chats[0].ID != string(id) {
+		t.Errorf("archived chat id = %q, want %q", resp.Chats[0].ID, id)
+	}
+}
+
+// TestMutate_RejectsInvalidUTF8 pins the write-path UTF-8 guard: content
+// that cannot round-trip through the JSON storage format (invalid UTF-8 in
+// the chat name or any message body) must abort the mutation with
+// errInvalidUTF8 before anything is persisted or broadcast. Covers the
+// validateChatUTF8 helper through the public Mutate API.
+func TestMutate_RejectsInvalidUTF8(t *testing.T) {
+	cases := []struct {
+		mutate func(c *api.Chat)
+		name   string
+	}{
+		{
+			name:   "invalid utf-8 in name",
+			mutate: func(c *api.Chat) { c.Name = "bad\xff\xfename" },
+		},
+		{
+			name: "invalid utf-8 in message content",
+			mutate: func(c *api.Chat) {
+				c.Messages = append(c.Messages, api.Message{ID: "m1", Role: api.RoleUser, Content: "ok\xffbad"})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, b := newTestStore(t)
+			err := s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				tc.mutate(c)
+				return true
+			})
+			if !errors.Is(err, errInvalidUTF8) {
+				t.Fatalf("Mutate = %v, want errInvalidUTF8", err)
+			}
+			if _, ok := s.Get(context.Background(), "c1"); ok {
+				t.Error("invalid-UTF8 chat was persisted; the mutation must abort before save")
+			}
+			if n := len(b.snapshot()); n != 0 {
+				t.Errorf("broadcast fired %d time(s) on a rejected mutation; want 0", n)
+			}
+		})
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
@@ -43,14 +44,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, f
 		st.Remote = gitexec.ScrubAuth(rem)
 	}
 	if doFetch {
-		fetchCtx, cancel := context.WithTimeout(ctx, timeouts.Fetch)
-		defer cancel()
-		_, _, _ = fetchFlight.Do(dir, func() (any, error) {
-			if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
-				slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(out))
-			}
-			return nil, nil
-		})
+		fetchStatus(ctx, dir, timeouts.Fetch, fetchFlight)
 	}
 
 	// Post-fetch queries are independent — run them concurrently.
@@ -61,17 +55,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, f
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		if ab, err := gitCmd(gctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
-			parts := strings.Fields(ab)
-			if len(parts) == 2 {
-				if n, aerr := strconv.Atoi(parts[0]); aerr == nil {
-					ahead = n
-				}
-				if n, berr := strconv.Atoi(parts[1]); berr == nil {
-					behind = n
-				}
-			}
-		}
+		ahead, behind = aheadBehind(gctx, dir)
 		return nil
 	})
 	g.Go(func() error {
@@ -79,9 +63,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, f
 		return nil
 	})
 	g.Go(func() error {
-		if out, err := gitCmd(gctx, dir, "stash", "list"); err == nil && out != "" {
-			stashes = strings.Count(out, "\n") + 1
-		}
+		stashes = countStashes(gctx, dir)
 		return nil
 	})
 	_ = g.Wait()
@@ -90,11 +72,62 @@ func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, f
 	st.Behind = behind
 	st.Files = files
 	st.Stashes = stashes
-	if _, err := exec.LookPath("gh"); err == nil {
-		st.HasGH = true
-	}
+	st.HasGH = hasGH()
 	st.HasDirty = len(st.Files) > 0
 	return st
+}
+
+// fetchStatus runs a best-effort `git fetch --quiet`, deduped per-dir via
+// the shared singleflight group. A failure is logged at debug and
+// otherwise ignored — a status read must not fail because the network is
+// down or the remote is unreachable.
+func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFlight *singleflight.Group) {
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_, _, _ = fetchFlight.Do(dir, func() (any, error) {
+		if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
+			slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(out))
+		}
+		return nil, nil
+	})
+}
+
+// aheadBehind reports how many commits HEAD is ahead of and behind its
+// upstream. Both are 0 when there is no upstream or the count can't be
+// parsed (rev-list is gated by gitexec, so a missing upstream yields an
+// error and the zero values).
+func aheadBehind(ctx context.Context, dir string) (ahead, behind int) {
+	ab, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
+	if err != nil {
+		return 0, 0
+	}
+	parts := strings.Fields(ab)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	if n, aerr := strconv.Atoi(parts[0]); aerr == nil {
+		ahead = n
+	}
+	if n, berr := strconv.Atoi(parts[1]); berr == nil {
+		behind = n
+	}
+	return ahead, behind
+}
+
+// countStashes returns the number of stash entries, or 0 on error or an
+// empty stash list.
+func countStashes(ctx context.Context, dir string) int {
+	out, err := gitCmd(ctx, dir, "stash", "list")
+	if err != nil || out == "" {
+		return 0
+	}
+	return strings.Count(out, "\n") + 1
+}
+
+// hasGH reports whether the gh CLI is available on PATH.
+func hasGH() bool {
+	_, err := exec.LookPath("gh")
+	return err == nil
 }
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {

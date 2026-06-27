@@ -44,6 +44,31 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// appendShellUserMessage persists the user's "!cmd" message and, on the
+// chat's first message, derives an initial chat name from the command text.
+// Returns whether the message was persisted (false when the chat record
+// doesn't exist) and whether an async rename should be triggered.
+func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted, triggerRename bool, err error) {
+	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			c.Name = api.DefaultChatName
+		}
+		c.Messages = append(c.Messages, *msg)
+		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
+			name := TruncateRunes(text, 80)
+			if name != text {
+				name += ellipsis
+			}
+			c.Name = name
+			triggerRename = true
+		}
+		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
+		persisted = true
+		return true
+	})
+	return persisted, triggerRename, err
+}
+
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
 func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	shellCmd := strings.TrimPrefix(p.Text, "!")
@@ -61,25 +86,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	var persisted bool
-	var triggerRename bool
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			c.Name = api.DefaultChatName
-		}
-		c.Messages = append(c.Messages, userMsg)
-		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
-			name := TruncateRunes(p.Text, 80)
-			if name != p.Text {
-				name += ellipsis
-			}
-			c.Name = name
-			triggerRename = true
-		}
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &userMsg))
-		persisted = true
-		return true
-	}); err != nil {
+	persisted, triggerRename, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
+	if err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}

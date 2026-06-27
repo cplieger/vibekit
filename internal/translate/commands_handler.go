@@ -56,21 +56,25 @@ func toAvailableCommands(in []map[string]any) []api.AvailableCommand {
 		if desc, ok := raw["description"].(string); ok {
 			ac.Description = desc
 		}
-		// Stash any other fields under Meta so the wire shape is lossless.
-		var meta map[string]any
-		for k, v := range raw {
-			if k == api.JSONKeyName || k == "description" {
-				continue
-			}
-			if meta == nil {
-				meta = make(map[string]any, len(raw))
-			}
-			meta[k] = v
-		}
-		if len(meta) > 0 {
-			ac.Meta = meta
-		}
+		ac.Meta = commandMeta(raw)
 		out = append(out, ac)
 	}
 	return out
+}
+
+// commandMeta collects every key except the typed "name"/"description"
+// fields into a passthrough map (nil when there are none), keeping the
+// wire shape lossless for forward compatibility.
+func commandMeta(raw map[string]any) map[string]any {
+	var meta map[string]any
+	for k, v := range raw {
+		if k == api.JSONKeyName || k == "description" {
+			continue
+		}
+		if meta == nil {
+			meta = make(map[string]any, len(raw))
+		}
+		meta[k] = v
+	}
+	return meta
 }
