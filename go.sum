@@ -1,7 +1,7 @@
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/atomicfile/v2 v2.1.0 h1:3J543S9CZl++erTGz7coQmIqeK2KtiQbkOAEZQgF2s0=
-github.com/cplieger/atomicfile/v2 v2.1.0/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
+github.com/cplieger/atomicfile/v2 v2.1.1 h1:P7dDVSMfADOgi2LzVn/r9UX0uKOw8bgxVULfENWqvBY=
+github.com/cplieger/atomicfile/v2 v2.1.1/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
 github.com/cplieger/ssrf/v2 v2.0.4 h1:RwCSoj+L+RogQchCRuAsbuHIalp7hUrTjfe6aWIDfz0=
 github.com/cplieger/ssrf/v2 v2.0.4/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
 github.com/cplieger/vterm v1.1.7 h1:DyRiD5l2Q9IZBjMJo+YQ+bRb7LQySZfMlOWKF2OaIus=
