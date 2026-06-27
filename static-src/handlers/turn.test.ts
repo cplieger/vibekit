@@ -1,54 +1,97 @@
 // @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
-// Table-driven tests for the ERROR_ROUTES classification table.
-// Verifies that all known error codes map to the expected routing triple
-// and that unknown codes fall through correctly.
-// Also: integration tests for pending_change_added guard, checkpoint_restored
-// emit, and turn_ended elapsed time formatting.
+// Tests for handlers/turn.ts: the ERROR_ROUTES classification table plus the
+// turn_ended and error SSE handlers.
+//
+// These drive the REAL handlers (via the bus capture) and the REAL store, and
+// assert observable outcomes: the rendered turn-summary text, the cleared
+// thinking flag, the drained queued prompt, and the error routing. Sibling
+// subsystems (notify, banner-stack, send-state, chat-commands, git) stay
+// mocked because a call into them is a command at the handler's boundary.
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect } from "vitest";
+import { vi, describe, it, expect, beforeEach } from "vitest";
+import { setSessions, setActive, get, enqueuePrompt } from "../store.js";
+import type { Session } from "../types.js";
 
-// Mock modules that have side effects requiring DOM elements at import time.
+// scroll.ts touches DOM elements at import; use the shared mock.
 vi.mock(
   "../scroll.js",
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
 vi.mock("../permission.js", () => ({ showPermissionDialog: vi.fn() }));
-vi.mock("../chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
+
+const mockSendPromptTo = vi.fn();
+vi.mock("../chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
+
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
+
+const mockSetLastError = vi.fn();
+const mockClearLastError = vi.fn();
 vi.mock("../send-state.js", () => ({
-  setLastError: vi.fn(),
-  clearLastError: vi.fn(),
+  setLastError: mockSetLastError,
+  clearLastError: mockClearLastError,
   setSSEStatus: vi.fn(),
 }));
+
 vi.mock("../notify.js", () => ({
   notifyIfHidden: vi.fn(),
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => false,
   isPermissionNeededEnabled: () => false,
+  NOTIFY_TITLE: "vibekit",
 }));
+
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
-vi.mock("../banner-stack.js", () => ({ showBanner: vi.fn(), onTurnEnded: vi.fn() }));
+
+const mockShowBanner = vi.fn();
+vi.mock("../banner-stack.js", () => ({ showBanner: mockShowBanner, onTurnEnded: vi.fn() }));
+
 vi.mock("../crew-card.js", () => ({ setSubagentPendingApproval: vi.fn() }));
 
-const mockSetThinking = vi.fn();
-const mockGetActiveId = vi.fn(() => "chat-1");
-const mockDequeuePrompt = vi.fn(() => undefined);
-const mockPeekQueuedAttachments = vi.fn(() => []);
-const mockGet = vi.fn(() => undefined);
+// Capture SSE handlers via shared helper.
+import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
+vi.mock("../bus.js", () => createBusMock());
 
-vi.mock("../store.js", () => ({
-  get: mockGet,
-  getActiveId: () => mockGetActiveId(),
-  setThinking: mockSetThinking,
-  setWorkingLabel: vi.fn(),
-  dequeuePrompt: mockDequeuePrompt,
-  peekQueuedAttachments: mockPeekQueuedAttachments,
-}));
-vi.mock("../transport.js", () => ({ send: vi.fn() }));
-
+// Import after mocks so turn.ts registers its handlers against the bus mock.
 const { ERROR_ROUTES } = await import("./turn.js");
+
+function makeSession(id: string, over: Partial<Session> = {}): Session {
+  return {
+    id,
+    name: "seeded",
+    agent: "",
+    model: "",
+    acp_session_id: "",
+    current_mode_id: "",
+    auto_approve_crew: false,
+    available_modes: [],
+    available_models: [],
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    messages: [],
+    message_count: 0,
+    has_more: false,
+    thinking: false,
+    working_label: "Thinking",
+    pending_changes: [],
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  setSessions([]);
+  // A messages container with one assistant message — the turn_ended handler
+  // appends the turn-summary as a sibling of the last assistant message.
+  document.body.innerHTML = '<div id="messages"><div class="message assistant"></div></div>';
+});
 
 describe("ERROR_ROUTES", () => {
   const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] = [
@@ -62,73 +105,112 @@ describe("ERROR_ROUTES", () => {
     ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
   ];
 
-  it.each(expectedRoutes)("routes %s correctly", (code, expected) => {
-    const route = ERROR_ROUTES[code as keyof typeof ERROR_ROUTES];
-    expect(route).toBeDefined();
-    expect(route!.surface).toBe(expected.surface);
-    expect(route!.level).toBe(expected.level);
-    expect(route!.dismissible).toBe(expected.dismissible);
+  it.each(expectedRoutes)("routes %s to the expected surface/level/dismissible", (code, expected) => {
+    expect(ERROR_ROUTES[code as keyof typeof ERROR_ROUTES]).toEqual(expected);
   });
 
-  it("has exactly 8 entries", () => {
-    expect(Object.keys(ERROR_ROUTES)).toHaveLength(8);
+  it("contains exactly the eight known error codes", () => {
+    expect(Object.keys(ERROR_ROUTES).sort()).toEqual(expectedRoutes.map(([c]) => c).sort());
   });
 
-  it("unknown codes fall through (not in table)", () => {
+  it("returns undefined for codes not in the table", () => {
     expect(ERROR_ROUTES["unknown_code" as keyof typeof ERROR_ROUTES]).toBeUndefined();
     expect(ERROR_ROUTES["" as keyof typeof ERROR_ROUTES]).toBeUndefined();
   });
+});
 
-  it("all entries have valid surface values", () => {
-    for (const [, route] of Object.entries(ERROR_ROUTES)) {
-      expect(["banner", "send-error"]).toContain(route.surface);
-    }
+describe("turn_ended turn summary rendering", () => {
+  // Drives the real handler and asserts the rendered summary text — the actual
+  // observable formatting, not a reimplementation of the Math.floor expression.
+  it.each<{ desc: string; payload: Record<string, unknown>; text: string }>([
+    { desc: "sub-minute elapsed uses one decimal second", payload: { elapsed_ms: 45500 }, text: "45.5s" },
+    { desc: "minute+ elapsed splits into m and s", payload: { elapsed_ms: 90000 }, text: "1m 30s" },
+    {
+      desc: "minute branch floors the seconds (no round-up to 60)",
+      payload: { elapsed_ms: 119999 },
+      text: "1m 59s",
+    },
+    {
+      desc: "credits and elapsed are joined",
+      payload: { credits_delta: 1.5, elapsed_ms: 2000 },
+      text: "Est. 1.50 credits · 2.0s",
+    },
+    { desc: "credits alone render without an elapsed segment", payload: { credits_delta: 0.5 }, text: "Est. 0.50 credits" },
+  ])("$desc", ({ payload, text }) => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", payload);
+    expect(document.querySelector(".turn-summary")?.textContent).toBe(text);
   });
 
-  it("all entries have valid level values", () => {
-    for (const [, route] of Object.entries(ERROR_ROUTES)) {
-      expect(["error", "warning"]).toContain(route.level);
-    }
+  it("renders no summary when there are neither credits nor elapsed time", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(document.querySelector(".turn-summary")).toBeNull();
+  });
+
+  it("renders a file-change banner summarising touched files", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", {
+      changed_files: {
+        "a.ts": { lines_added: 5, lines_removed: 2 },
+        "b.ts": { lines_added: 1, lines_removed: 0 },
+      },
+    });
+    expect(document.querySelector(".turn-file-changes")?.textContent).toBe("2 files changed · +6 · -2");
   });
 });
 
-describe("turn_ended elapsed time formatting", () => {
-  it("formats seconds with Math.floor (59999ms → 59s not 60s)", () => {
-    // 59999ms: floor((59999 % 60000) / 1000) = floor(59.999) = 59
-    const elapsed = 59999;
-    const s = Math.floor((elapsed % 60000) / 1000);
-    expect(s).toBe(59);
+describe("turn_ended side effects", () => {
+  it("clears the thinking flag on the chat", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(get("chat-1")?.thinking).toBe(false);
   });
 
-  it("formats minutes correctly (90000ms → 1m 30s)", () => {
-    const elapsed = 90000;
-    const m = Math.floor(elapsed / 60000);
-    const s = Math.floor((elapsed % 60000) / 1000);
-    expect(m).toBe(1);
-    expect(s).toBe(30);
+  it("drains a queued prompt by sending it", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    enqueuePrompt("chat-1", "next prompt");
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(mockSendPromptTo).toHaveBeenCalledWith("chat-1", "next prompt", expect.any(Object));
   });
 
-  it("sub-minute uses decimal seconds (45500ms → 45.5s)", () => {
-    const elapsed = 45500;
-    expect((elapsed / 1000).toFixed(1)).toBe("45.5");
-  });
-});
-
-describe("drainQueuedPromptWithAttachments integration", () => {
-  it("does not call sendPromptTo when queue is empty", async () => {
-    const { sendPromptTo } = await import("../chat-commands.js");
-    mockDequeuePrompt.mockReturnValueOnce(undefined);
-    mockPeekQueuedAttachments.mockReturnValueOnce([]);
-    // Trigger via the exported handler indirectly — we test the logic
-    // by verifying sendPromptTo is not called when dequeue returns undefined
-    expect(sendPromptTo).not.toHaveBeenCalled();
+  it("does not send anything when the queue is empty", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 });
 
-describe("error handler clears thinking", () => {
-  it("setThinking mock is wired correctly", () => {
-    mockSetThinking.mockClear();
-    mockSetThinking("test-chat", false);
-    expect(mockSetThinking).toHaveBeenCalledWith("test-chat", false);
+describe("error handler", () => {
+  it("clears thinking and routes a banner-class error to showBanner", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "rate_limit", message: "slow down" });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(mockShowBanner).toHaveBeenCalledWith("chat-1", "rate_limit", "slow down", "warning", true);
+    expect(mockSetLastError).not.toHaveBeenCalled();
+  });
+
+  it("routes a send-error-class error to setLastError", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "prompt_failed", message: "boom" });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(mockSetLastError).toHaveBeenCalledWith("prompt_failed: boom");
+    expect(mockShowBanner).not.toHaveBeenCalled();
+  });
+
+  it("falls through unknown codes to the send-button blocker", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(mockSetLastError).toHaveBeenCalledWith("mystery_code: huh");
   });
 });

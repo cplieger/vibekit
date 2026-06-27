@@ -45,33 +45,39 @@ describe("wire registry completeness", () => {
     }
   });
 
-  it("all registered events have corresponding decoder functions", () => {
-    const decoderFns = Object.keys(decoders).filter((k) => k.startsWith("decode"));
-    // decoders.gen.ts exports more decoders than are registered (some are
-    // used internally or for sub-types). The key invariant is that every
-    // registered event has a working decoder.
-    expect(decoderFns.length).toBeGreaterThan(0);
-    expect(registeredEvents.length).toBeGreaterThan(0);
+  it("every registered event maps to a real exported generated decoder", () => {
+    // Cross-check the registry wiring against the actual decoder module: each
+    // registered event must resolve (via lookupSSEDecoder) to one of the
+    // functions exported by decoders.gen.ts — not undefined, not an ad-hoc
+    // wrapper. Catches a registry that wires a stub, a stale name, or nothing.
+    const exportedDecoders = new Set<unknown>(
+      Object.values(decoders).filter((v) => typeof v === "function"),
+    );
+    for (const eventName of registeredEvents) {
+      const decoder = lookupSSEDecoder(eventName);
+      expect(
+        exportedDecoders.has(decoder),
+        `${eventName} does not resolve to a decoder exported by decoders.gen.ts`,
+      ).toBe(true);
+    }
   });
 
-  it("decoders do not throw on valid JSON-parsed input", () => {
-    fc.assert(
-      fc.property(fc.constantFrom(...registeredEvents), (eventName) => {
-        const decoder = lookupSSEDecoder(eventName);
-        expect(decoder).toBeDefined();
-        // Feed a minimal valid object — decoder should not throw TypeError
-        // for a plain object (it may return a partial result).
-        try {
-          decoder!({});
-        } catch (e) {
-          // TypeError is acceptable (validation), other errors are not.
-          if (!(e instanceof TypeError)) {
-            throw e;
-          }
-        }
-      }),
-      { numRuns: registeredEvents.length },
-    );
+  it("registered decoders reject the empty object with a TypeError (never another error class)", () => {
+    // Exhaustive over every registered event (a plain loop, not a sampled
+    // fc.constantFrom, so no event is skipped). An empty object is missing the
+    // required fields of most payloads; the decoder must reject it via the
+    // validators.ts failure mode (TypeError), not crash with some other error.
+    // Payloads with no required fields (turn_ended, whoami) decode {} fine —
+    // that's an accepted no-throw outcome, not a failure.
+    for (const eventName of registeredEvents) {
+      const decoder = lookupSSEDecoder(eventName);
+      expect(decoder, `missing decoder for ${eventName}`).toBeDefined();
+      try {
+        decoder?.({});
+      } catch (e) {
+        expect(e, `${eventName} threw a non-TypeError on {}`).toBeInstanceOf(TypeError);
+      }
+    }
   });
 
   it("JSON round-trip stability: stringify(decode(x)) is valid JSON", () => {

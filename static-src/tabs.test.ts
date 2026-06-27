@@ -23,7 +23,26 @@ vi.mock("./ui-state.js", () => ({
   load: vi.fn(() => ({ tab_order: [], active_view: "" })),
 }));
 vi.mock("./dom.js", () => ({
-  $: new Proxy({}, { get: () => document.createElement("div") }),
+  $: new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => {
+        // tabList must be a stable, document-attached element so the real
+        // renderDOM appends focusable role=tab nodes we can drive in the
+        // keyboard-navigation tests. Every other getter stays a throwaway.
+        if (prop === "tabList") {
+          let tl = document.getElementById("tab-list");
+          if (tl === null) {
+            tl = document.createElement("div");
+            tl.id = "tab-list";
+            document.body.appendChild(tl);
+          }
+          return tl;
+        }
+        return document.createElement("div");
+      },
+    },
+  ),
 }));
 vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),
@@ -203,6 +222,73 @@ describe("hasTab", () => {
     expect(hasTab("a")).toBe(true);
     closeTab("a");
     expect(hasTab("a")).toBe(false);
+  });
+});
+
+describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", () => {
+  // renderDOM is RAF-deferred; resolve after it has run so the real
+  // role=tab nodes (with attachTabInteraction's keydown handler) exist.
+  function flushRender(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
+  async function renderTabs(...ids: string[]): Promise<HTMLElement[]> {
+    for (const id of ids) {
+      openTab(makeTab(id));
+    }
+    await flushRender();
+    const list = document.getElementById("tab-list");
+    if (list === null) {
+      throw new Error("tab-list missing");
+    }
+    return [...list.querySelectorAll<HTMLElement>('[role="tab"]')];
+  }
+
+  it("ArrowRight moves focus to the next tab and wraps past the last", async () => {
+    const nodes = await renderTabs("a", "b", "c");
+    expect(nodes).toHaveLength(3);
+
+    nodes[0]!.focus();
+    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[1]);
+
+    nodes[2]!.focus();
+    nodes[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[0]);
+  });
+
+  it("ArrowLeft moves focus to the previous tab and wraps before the first", async () => {
+    const nodes = await renderTabs("a", "b", "c");
+
+    nodes[2]!.focus();
+    nodes[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[1]);
+
+    nodes[0]!.focus();
+    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[2]);
+  });
+
+  it("Home and End jump to the first and last tab", async () => {
+    const nodes = await renderTabs("a", "b", "c");
+
+    nodes[1]!.focus();
+    nodes[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[0]);
+
+    nodes[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[2]);
+  });
+
+  it("Enter activates the focused tab", async () => {
+    const nodes = await renderTabs("a", "b", "c");
+    // c is active (last opened); Enter on the first tab's node activates it.
+    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(getActiveTabId()).toBe("a");
   });
 });
 
