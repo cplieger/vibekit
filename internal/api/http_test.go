@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,8 +12,22 @@ import (
 	"testing"
 )
 
-// Tests for http.go: JSON writers, LimitBody, StripANSI, SanitizeUnicode,
-// SanitizeOutput, WriteRawJSON, FuzzDecodeJSON.
+// Tests for httputil.go: JSON writers, LimitBody, the LimitedWriter cap,
+// WriteRawJSON; plus sanitize.go's StripANSI/SanitizeUnicode/SanitizeOutput
+// and FuzzDecodeJSON.
+
+// captureSlog swaps the default slog logger for a buffer-backed text handler
+// (Debug level, so Warn/Error/Debug are all captured) and restores the previous
+// default on cleanup. Tests using it must not call t.Parallel: it mutates the
+// process-wide default logger.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	prev := slog.Default()
+	buf := &bytes.Buffer{}
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
 
 // --- StripANSI ---
 
@@ -365,7 +380,8 @@ func TestSanitizeOutput_strips_ansi_before_unicode(t *testing.T) {
 
 // --- WriteJSONStatus encode failure ---
 
-func TestWriteJSONStatus_encode_failure_does_not_panic(t *testing.T) {
+func TestWriteJSONStatus_encode_failure_logs_and_does_not_panic(t *testing.T) {
+	buf := captureSlog(t)
 	rec := httptest.NewRecorder()
 	defer func() {
 		if r := recover(); r != nil {
@@ -378,6 +394,18 @@ func TestWriteJSONStatus_encode_failure_does_not_panic(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	// The encode error after the status is committed is logged at Warn.
+	if !strings.Contains(buf.String(), "json encode failed after status committed") {
+		t.Errorf("encode failure: want warn log, got %q", buf.String())
+	}
+}
+
+func TestWriteJSONStatus_no_log_on_success(t *testing.T) {
+	buf := captureSlog(t)
+	WriteJSONStatus(httptest.NewRecorder(), http.StatusOK, map[string]string{"k": "v"})
+	if strings.Contains(buf.String(), "json encode failed") {
+		t.Errorf("clean encode: want no log, got %q", buf.String())
 	}
 }
 
@@ -427,13 +455,26 @@ func TestWriteRawJSON_passes_bytes_through_verbatim(t *testing.T) {
 	}
 }
 
-func TestWriteRawJSON_does_not_panic_when_writer_fails(t *testing.T) {
+func TestWriteRawJSON_write_failure_logs_and_does_not_panic(t *testing.T) {
+	buf := captureSlog(t)
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("WriteRawJSON panicked on writer error: %v", r)
 		}
 	}()
 	WriteRawJSON(&errWriter{}, []byte(`{"x":1}`))
+	// A best-effort write failure is logged at Debug.
+	if !strings.Contains(buf.String(), "raw json write failed") {
+		t.Errorf("write failure: want debug log, got %q", buf.String())
+	}
+}
+
+func TestWriteRawJSON_no_log_on_success(t *testing.T) {
+	buf := captureSlog(t)
+	WriteRawJSON(httptest.NewRecorder(), []byte(`{"k":1}`))
+	if strings.Contains(buf.String(), "raw json write failed") {
+		t.Errorf("clean write: want no log, got %q", buf.String())
+	}
 }
 
 // --- FuzzDecodeJSON ---
@@ -470,4 +511,64 @@ func FuzzDecodeJSON(f *testing.F) {
 			}
 		}
 	})
+}
+
+// --- InternalError log path ---
+
+func TestInternalError_logs_cause_when_nonnil(t *testing.T) {
+	buf := captureSlog(t)
+	rec := httptest.NewRecorder()
+	InternalError(rec, os.ErrPermission)
+	if !strings.Contains(buf.String(), "api: internal error") {
+		t.Errorf("InternalError(err): want error log, got %q", buf.String())
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("InternalError status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestInternalError_does_not_log_when_nil(t *testing.T) {
+	buf := captureSlog(t)
+	rec := httptest.NewRecorder()
+	InternalError(rec, nil)
+	if strings.Contains(buf.String(), "api: internal error") {
+		t.Errorf("InternalError(nil): want no error log, got %q", buf.String())
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("InternalError(nil) status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- LimitedWriter cap ---
+
+func TestLimitedWriter_zero_cap_drops_and_reports_full_length(t *testing.T) {
+	var sink bytes.Buffer
+	lw := &LimitedWriter{W: &sink, N: 0}
+	n, err := lw.Write([]byte("abc"))
+	if err != nil {
+		t.Fatalf("LimitedWriter{N:0}.Write err = %v, want nil", err)
+	}
+	// A non-positive cap drops the bytes but reports the full length so callers
+	// treating a short write as an error don't trip.
+	if n != 3 {
+		t.Errorf("LimitedWriter{N:0}.Write(%q) n = %d, want 3", "abc", n)
+	}
+	if sink.Len() != 0 {
+		t.Errorf("LimitedWriter{N:0} wrote %d bytes to sink, want 0", sink.Len())
+	}
+}
+
+func TestLimitedWriter_truncates_over_cap(t *testing.T) {
+	var sink bytes.Buffer
+	lw := &LimitedWriter{W: &sink, N: 2}
+	n, err := lw.Write([]byte("abcd"))
+	if err != nil {
+		t.Fatalf("LimitedWriter{N:2}.Write err = %v, want nil", err)
+	}
+	if n != 2 {
+		t.Errorf("LimitedWriter{N:2}.Write(%q) n = %d, want 2", "abcd", n)
+	}
+	if sink.String() != "ab" {
+		t.Errorf("LimitedWriter{N:2} sink = %q, want %q", sink.String(), "ab")
+	}
 }

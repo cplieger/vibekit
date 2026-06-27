@@ -33,6 +33,17 @@ func FuzzShellFields(f *testing.F) {
 				break
 			}
 		}
+
+		// Bounded output: tokens only ever hold input bytes (quote
+		// delimiters and whitespace separators are dropped), so the
+		// concatenated token length can never exceed the input length.
+		// This pins the no-progress guard that stops a corrupted or
+		// mutated scan from appending unboundedly (the gremlins-OOM
+		// memory-bomb class observed at shell_fields.go).
+		if len(joined) > len(s) {
+			t.Errorf("ShellFields(%q): total token bytes %d exceed input length %d",
+				s, len(joined), len(s))
+		}
 	})
 }
 

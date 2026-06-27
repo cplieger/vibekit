@@ -1,11 +1,13 @@
 package gc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 )
@@ -266,5 +268,204 @@ func (f *fakeBlobRefer) ReferencedBlobs(_ context.Context) []string {
 	return f.shas
 }
 
-// Ensure Coordinator.Stop doesn't leak goroutines.
-var _ sync.Locker = (*sync.Mutex)(nil) // compile-time check for sync import
+// --- Error / cancellation / boundary behavior (folded from per-source tests) ---
+
+// Start must lazily create the stop channel when the Coordinator was
+// constructed with a nil stopCh, otherwise Stop has nothing to close.
+func TestCoordinator_Start_CreatesStopChannelWhenNil(t *testing.T) {
+	gc := &Coordinator{
+		blobsDir: t.TempDir(),
+		chatsDir: t.TempDir(),
+		interval: time.Hour,
+		cached:   func() map[string]BlobRefer { return nil },
+		// stopCh deliberately left nil so the lazy-create branch must run.
+	}
+	gc.Start(context.Background())
+	gc.mu.Lock()
+	created := gc.stopCh != nil
+	gc.mu.Unlock()
+	gc.Stop()
+	if !created {
+		t.Errorf("Start() with nil stopCh left gc.stopCh nil; want it lazily created")
+	}
+}
+
+// RunOnceWithCounts must surface a collection error and report zero counts,
+// not silently treat the failed collection as a successful empty sweep.
+func TestRunOnceWithCounts_PropagatesCollectError(t *testing.T) {
+	t.Parallel()
+	gc := &Coordinator{
+		chatsDir: writeNonDirFile(t, "x"), // a file → ReadDir ENOTDIR → collect error
+		blobsDir: t.TempDir(),
+		cached:   func() map[string]BlobRefer { return nil },
+	}
+	removed, scanned, err := gc.RunOnceWithCounts(context.Background())
+	if err == nil {
+		t.Errorf("RunOnceWithCounts() with unreadable chatsDir: err = nil, want non-nil")
+	}
+	if removed != 0 || scanned != 0 {
+		t.Errorf("RunOnceWithCounts() on collect error = (removed=%d, scanned=%d), want (0, 0)", removed, scanned)
+	}
+}
+
+// A failed reference collection must skip the sweep entirely: sweeping with
+// an empty referenced-set would delete every blob. The planted old blob
+// must survive.
+func TestRunOnce_SkipsSweepOnCollectError(t *testing.T) {
+	t.Parallel()
+	blobsDir := t.TempDir()
+	hash := "ab" + strings.Repeat("0", 62)
+	plantBlob(t, blobsDir, hash, time.Now().Add(-10*time.Minute)) // old, unreferenced
+	gc := &Coordinator{
+		chatsDir: writeNonDirFile(t, "x"), // a file → collect error
+		blobsDir: blobsDir,
+		cached:   func() map[string]BlobRefer { return nil },
+	}
+	gc.RunOnce(context.Background())
+	assertBlobExists(t, blobsDir, hash)
+}
+
+// A sweep error that is not a cancellation is logged at the failure level.
+func TestRunOnce_LogsFailedOnSweepError(t *testing.T) {
+	// NOT parallel: captures the global slog default.
+	gc := &Coordinator{
+		chatsDir: t.TempDir(),             // empty → collect succeeds
+		blobsDir: writeNonDirFile(t, "x"), // a file → sweep error (ENOTDIR)
+		cached:   func() map[string]BlobRefer { return nil },
+	}
+	out := captureSlog(t, func() {
+		gc.RunOnce(context.Background())
+	})
+	if !strings.Contains(out, "blob GC failed") {
+		t.Errorf("runOnce on sweep error: log = %q, want it to contain %q", out, "blob GC failed")
+	}
+}
+
+// A sweep cut short by context cancellation logs the cancellation path, not
+// the generic failure path.
+func TestRunOnce_LogsCancelledOnContextCancel(t *testing.T) {
+	// NOT parallel: captures the global slog default.
+	blobsDir := t.TempDir()
+	hash := "cd" + strings.Repeat("1", 62)
+	plantBlob(t, blobsDir, hash, time.Now().Add(-10*time.Minute)) // creates the "cd" fanout dir
+	gc := &Coordinator{
+		chatsDir: t.TempDir(), // empty → collect returns without touching ctx
+		blobsDir: blobsDir,
+		cached:   func() map[string]BlobRefer { return nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled: sweepBlobs returns ctx error at the first fanout entry
+	out := captureSlog(t, func() {
+		gc.RunOnce(ctx)
+	})
+	if !strings.Contains(out, "cancelled during sweep") {
+		t.Errorf("runOnce on cancelled sweep: log = %q, want it to contain %q", out, "cancelled during sweep")
+	}
+}
+
+// When nothing is removed, the prefix directory is left in place: the
+// empty-dir cleanup only runs after a real removal.
+func TestSweepFanout_EmptyDirSurvivesWhenNothingRemoved(t *testing.T) {
+	t.Parallel()
+	prefixDir := filepath.Join(t.TempDir(), "ab")
+	if err := os.MkdirAll(prefixDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removed, scanned := sweepFanout(context.Background(), prefixDir, "ab", map[string]struct{}{})
+	if removed != 0 || scanned != 0 {
+		t.Fatalf("sweepFanout(empty dir) = (removed=%d, scanned=%d), want (0, 0)", removed, scanned)
+	}
+	if _, err := os.Stat(prefixDir); err != nil {
+		t.Errorf("sweepFanout with removed==0 removed the empty prefix dir %q (err=%v); it must survive", prefixDir, err)
+	}
+}
+
+// Removing the last blob in a prefix directory also removes the now-empty
+// directory.
+func TestSweepFanout_RemovesEmptiedDir(t *testing.T) {
+	t.Parallel()
+	blobsDir := t.TempDir()
+	hash := "ef" + strings.Repeat("2", 62)
+	plantBlob(t, blobsDir, hash, time.Now().Add(-10*time.Minute)) // old, unreferenced
+	prefixDir := filepath.Join(blobsDir, "ef")
+	removed, scanned := sweepFanout(context.Background(), prefixDir, "ef", map[string]struct{}{})
+	if removed != 1 || scanned != 1 {
+		t.Fatalf("sweepFanout(one removable blob) = (removed=%d, scanned=%d), want (1, 1)", removed, scanned)
+	}
+	if _, err := os.Stat(prefixDir); !os.IsNotExist(err) {
+		t.Errorf("sweepFanout emptied the dir but did not remove %q (stat err=%v); want it removed", prefixDir, err)
+	}
+}
+
+// An unreadable chat log must abort the whole collection so the sweep never
+// proceeds with an incomplete referenced-set and mass-deletes live blobs. An
+// oversized events.jsonl (past the size cap) is the trigger; the operator
+// breadcrumb must be logged.
+func TestCollectReferencedBlobs_AbortsOnUnreadableChatLog(t *testing.T) {
+	// NOT parallel: captures the global slog default.
+	chatsDir := t.TempDir()
+	chatDir := filepath.Join(chatsDir, "chat-bad")
+	if err := os.MkdirAll(chatDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Sparse file one byte past the cap: streamEventSHAs rejects it, which
+	// must propagate as a collection error rather than a silent skip.
+	f, err := os.Create(filepath.Join(chatDir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxEventLogBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	gc := &Coordinator{
+		chatsDir:   chatsDir,
+		eventsFile: "events.jsonl",
+		cached:     func() map[string]BlobRefer { return nil },
+	}
+	var refs map[string]struct{}
+	var collectErr error
+	out := captureSlog(t, func() {
+		refs, collectErr = gc.collectReferencedBlobs(context.Background(), nil)
+	})
+	if collectErr == nil {
+		t.Errorf("collectReferencedBlobs with an oversized chat log: err = nil, want non-nil (sweep must abort)")
+	}
+	if refs != nil {
+		t.Errorf("collectReferencedBlobs on error returned non-nil refs %v, want nil", refs)
+	}
+	if !strings.Contains(out, "blocked by unreadable chat log") {
+		t.Errorf("collectReferencedBlobs on unreadable log: log = %q, want the safety breadcrumb", out)
+	}
+}
+
+// captureSlog swaps the global slog default for a buffer-backed handler, runs
+// fn synchronously, restores the previous default, and returns the captured
+// text. Callers MUST NOT use t.Parallel(): the swap touches the process-global
+// slog default. Non-parallel tests run during the serial phase, so no
+// concurrent logging races the swap.
+func captureSlog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+	fn()
+	return buf.String()
+}
+
+// writeNonDirFile writes content to a fresh file under a temp dir and returns
+// the path. Used to make a non-directory path so os.ReadDir fails with
+// ENOTDIR (a non-IsNotExist error).
+func writeNonDirFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}

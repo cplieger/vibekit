@@ -59,3 +59,66 @@ func TestHasWriteOption_QuotedArgNotMatched(t *testing.T) {
 		t.Error("hasWriteOption failed to match quoted -o flag (still a flag to the program)")
 	}
 }
+
+func TestExtractBaseCommand_WhitespaceVariants(t *testing.T) {
+	// F4: base extraction must split on any IFS whitespace, not
+	// just a single space, so `cat\t/etc/passwd` and `cat  foo`
+	// both resolve to "cat" consistently.
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"ls", "ls"},
+		{"ls -la", "ls"},
+		{"  ls -la", "ls"},
+		{"ls\t-la", "ls"},
+		{"ls  -la", "ls"},
+		{"\tls", "ls"},
+	}
+	for _, tt := range cases {
+		got := eval.ExtractBaseCommand(tt.in)
+		if got != tt.want {
+			t.Errorf("ExtractBaseCommand(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestHasWriteOption_ComprehensiveMatrix(t *testing.T) {
+	cases := []struct {
+		command string
+		want    bool
+	}{
+		// TokenExact: --output
+		{"git diff --output /tmp/x HEAD", true},
+		{"git log --output /tmp/x", true},
+		// TokenPrefix: --output=
+		{"git diff --output=/tmp/x HEAD", true},
+		{"cat --out-file=/tmp/x foo", true},
+		{"cat --write=/tmp/x foo", true},
+		{"cat --write-file=/tmp/x foo", true},
+		// ShortPrefix: -o with trailing value
+		{"-o /tmp/x", true},
+		{"cat -o/tmp/x foo", true},
+		{"cat -o foo", true},
+		// ShortPrefix: -O
+		{"wget -O /tmp/x https://example.com", true},
+		{"wget -O/tmp/x https://example.com", true},
+		// -o exactly 2 chars alone
+		{"cat foo -o", true},
+		// False positives that must NOT match
+		{"git diff --output-format=json HEAD", false},
+		{"ls --only-dirs", false},
+		{"cat foo", false},
+		{"git diff HEAD", false},
+		{"ls -la", false},
+		{"echo hello", false},
+		// --output as substring of another flag
+		{"cmd --outputter=yes", false},
+	}
+	for _, tc := range cases {
+		got := eval.HasWriteOption(tc.command)
+		if got != tc.want {
+			t.Errorf("HasWriteOption(%q) = %v, want %v", tc.command, got, tc.want)
+		}
+	}
+}

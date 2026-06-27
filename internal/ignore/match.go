@@ -89,58 +89,95 @@ func matchAnchored(pSegs, xSegs []string) bool {
 	return false
 }
 
+// segWalkResult is the reason walkLiterals stopped advancing.
+type segWalkResult int
+
+const (
+	segMismatch   segWalkResult = iota // literal mismatch or path exhausted
+	segDoubleStar                      // stopped at a "**" segment
+	segComplete                        // consumed the whole pattern
+)
+
+// segFrame is one DFS position: pattern index pi against path index xi.
+type segFrame struct {
+	pi, xi int
+}
+
+// segMatcher carries segMatchBounded's bounded-backtracking state: the
+// explicit DFS stack of frames and the step counter that caps pathological
+// work on crafted "**" patterns.
+type segMatcher struct {
+	stack []segFrame
+	steps int
+}
+
+// tick spends one step of the budget and reports whether it is exhausted.
+func (m *segMatcher) tick() bool {
+	m.steps++
+	return m.steps > maxSegMatchSteps
+}
+
+// pushSplits enqueues one successor frame per possible "**" match length,
+// each advancing past the "**" at p[pi] to p[pi+1]. Frames are pushed in
+// reverse so the smallest xi (shortest "**" match) is tried first. Returns
+// true if the budget is exhausted mid-push (fail-open).
+func (m *segMatcher) pushSplits(x []string, pi, xi int) bool {
+	for j := len(x) - xi; j >= 0; j-- {
+		if m.tick() {
+			return true
+		}
+		m.stack = append(m.stack, segFrame{pi + 1, xi + j})
+	}
+	return false
+}
+
+// walkLiterals advances from (pi,xi) through literal/glob pattern segments
+// until it reaches a "**", a mismatch, or the end of the pattern. It spends
+// no budget; only the outer pop and the "**" expansion do.
+func walkLiterals(p, x []string, pi, xi int) (res segWalkResult, stopPi, stopXi int) {
+	for pi < len(p) {
+		if p[pi] == "**" {
+			return segDoubleStar, pi, xi
+		}
+		if xi >= len(x) {
+			return segMismatch, pi, xi
+		}
+		ok, err := filepath.Match(p[pi], x[xi])
+		if err != nil || !ok {
+			return segMismatch, pi, xi
+		}
+		pi++
+		xi++
+	}
+	return segComplete, pi, xi
+}
+
 // segMatchBounded is the iterative segment matcher with a bounded step
 // counter. Returns false (fail-open) when the step budget exhausts,
 // matching the matcher's overall fail-open philosophy.
 func segMatchBounded(p, x []string) bool {
-	type frame struct {
-		pi, xi int
-	}
-	stack := make([]frame, 0, 16)
-	stack = append(stack, frame{0, 0})
-	steps := 0
-	for len(stack) > 0 {
-		steps++
-		if steps > maxSegMatchSteps {
+	m := segMatcher{stack: make([]segFrame, 0, 16)}
+	m.stack = append(m.stack, segFrame{0, 0})
+	for len(m.stack) > 0 {
+		if m.tick() {
 			return false // fail-open on budget exhaustion
 		}
-		f := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+		f := m.stack[len(m.stack)-1]
+		m.stack = m.stack[:len(m.stack)-1]
 
-		pi, xi := f.pi, f.xi
-		matched := true
-		for pi < len(p) {
-			if p[pi] == "**" {
-				rest := p[pi+1:]
-				if len(rest) == 0 {
-					return true
-				}
-				// Push all possible split points onto the stack
-				// (reverse order so smallest xi is tried first).
-				for j := len(x) - xi; j >= 0; j-- {
-					steps++
-					if steps > maxSegMatchSteps {
-						return false
-					}
-					stack = append(stack, frame{pi + 1, xi + j})
-				}
-				matched = false
-				break
+		res, pi, xi := walkLiterals(p, x, f.pi, f.xi)
+		switch res {
+		case segComplete:
+			if xi == len(x) {
+				return true
 			}
-			if xi >= len(x) {
-				matched = false
-				break
+		case segDoubleStar:
+			if pi+1 >= len(p) {
+				return true // trailing "**" matches the rest
 			}
-			ok, err := filepath.Match(p[pi], x[xi])
-			if err != nil || !ok {
-				matched = false
-				break
+			if m.pushSplits(x, pi, xi) {
+				return false
 			}
-			pi++
-			xi++
-		}
-		if matched && pi == len(p) && xi == len(x) {
-			return true
 		}
 	}
 	return false

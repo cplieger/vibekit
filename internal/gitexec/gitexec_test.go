@@ -148,3 +148,100 @@ func splitEnvVar(s string) [2]string {
 	}
 	return [2]string{s[:i], s[i+1:]}
 }
+
+// firstSubcommand must skip the value argument that follows a -c/-C flag,
+// so the value is never mistaken for the git subcommand.
+func TestFirstSubcommand_skipsFlagValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		want string
+		args []string
+	}{
+		// "-c" consumes its value ("status"); the real subcommand is "commit".
+		{name: "dash_c_skips_value", args: []string{"-c", "status", "commit"}, want: "commit"},
+		// "-C" consumes its value ("somedir"); the real subcommand is "log".
+		{name: "dash_C_skips_value", args: []string{"-C", "somedir", "log"}, want: "log"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := firstSubcommand(tt.args); got != tt.want {
+				t.Errorf("firstSubcommand(%q) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+// ParseRemoteHost extracts the host from a well-formed https remote URL.
+func TestParseRemoteHost_extractsHostFromURL(t *testing.T) {
+	t.Parallel()
+	const in = "https://github.com/foo/bar.git"
+	if got := ParseRemoteHost(in); got != "github.com" {
+		t.Errorf("ParseRemoteHost(%q) = %q, want %q", in, got, "github.com")
+	}
+}
+
+// A URL that url.Parse rejects (a NUL control byte routes past the
+// scp-style branch into url.Parse, which errors) yields "" rather than
+// a panic on a nil *url.URL.
+func TestParseRemoteHost_parseErrorReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	const in = "http://ho\x00st.com"
+	if got := ParseRemoteHost(in); got != "" {
+		t.Errorf("ParseRemoteHost(%q) = %q, want empty", in, got)
+	}
+}
+
+// sanitizeHost returns "" when the host contains any control byte, DEL,
+// '@', ':' or '/'; a space (0x20) and an otherwise-clean host pass through.
+func TestSanitizeHost_rejectsForbiddenChars(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "control_low", in: "\x01", want: ""},
+		{name: "space_allowed", in: "a b", want: "a b"},
+		{name: "del_0x7f", in: "\x7f", want: ""},
+		{name: "at_sign", in: "@", want: ""},
+		{name: "colon", in: ":", want: ""},
+		{name: "slash", in: "/", want: ""},
+		{name: "clean_host", in: "github.com", want: "github.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := sanitizeHost(tt.in); got != tt.want {
+				t.Errorf("sanitizeHost(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// A leading '@' means an empty user, which ParseSCPStyle must reject.
+func TestParseSCPStyle_rejectsEmptyUser(t *testing.T) {
+	t.Parallel()
+	const in = "@host:path"
+	if _, _, ok := ParseSCPStyle(in); ok {
+		t.Errorf("ParseSCPStyle(%q) ok = true, want false (leading '@' = empty user)", in)
+	}
+}
+
+// ParseSCPStyle splits user@host:path, returning the host and path after
+// the '@' for a valid scp-style remote.
+func TestParseSCPStyle_extractsHostAfterAt(t *testing.T) {
+	t.Parallel()
+	const in = "git@github.com:foo"
+	host, path, ok := ParseSCPStyle(in)
+	if !ok {
+		t.Fatalf("ParseSCPStyle(%q) ok = false, want true", in)
+	}
+	if host != "github.com" {
+		t.Errorf("ParseSCPStyle(%q) host = %q, want %q", in, host, "github.com")
+	}
+	if path != "foo" {
+		t.Errorf("ParseSCPStyle(%q) path = %q, want %q", in, path, "foo")
+	}
+}

@@ -146,3 +146,16 @@ func TestNewMessageID_Uniqueness(t *testing.T) {
 		seen[id] = struct{}{}
 	}
 }
+
+func TestNewE_unknownEncodingReturnsError(t *testing.T) {
+	// NewE's contract differs from New: it returns the error gracefully
+	// rather than panicking. New(_, bad) panics (see TestNew_PanicOnBadEncoding);
+	// NewE(_, bad) must hand the caller ("", err) instead.
+	got, err := NewE(8, Encoding(99))
+	if err == nil {
+		t.Fatal("NewE(8, Encoding(99)) err = nil, want error for unknown encoding")
+	}
+	if got != "" {
+		t.Errorf("NewE(8, Encoding(99)) = %q, want empty string on error", got)
+	}
+}

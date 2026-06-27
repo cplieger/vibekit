@@ -93,30 +93,42 @@ func (c *Cache) Record(reqID string, result []byte) {
 	defer c.mu.Unlock()
 	now := time.Now()
 	if _, exists := c.entries[reqID]; !exists && len(c.entries) >= c.maxEntries {
-		evicted := false
-		for c.evictHeap.Len() > 0 {
-			oldest := heap.Pop(&c.evictHeap).(evictionItem) //nolint:errcheck // heap returns evictionItem
-			if _, ok := c.entries[oldest.key]; ok {
-				delete(c.entries, oldest.key)
-				evicted = true
-				break
-			}
-		}
-		if !evicted {
-			var oldestKey string
-			var oldestTS time.Time
-			for k, v := range c.entries {
-				if oldestKey == "" || v.Ts.Before(oldestTS) {
-					oldestKey, oldestTS = k, v.Ts
-				}
-			}
-			if oldestKey != "" {
-				delete(c.entries, oldestKey)
-			}
-		}
+		c.evictOldestLocked()
 	}
 	c.entries[reqID] = Entry{Ts: now, Result: result}
 	heap.Push(&c.evictHeap, evictionItem{key: reqID, ts: now})
+}
+
+// evictOldestLocked removes one entry to make room. The caller must hold c.mu.
+// It pops the min-heap in O(log n), skipping stale keys (already deleted), and
+// deletes the first live key it finds. If the heap drains without a hit it
+// falls back to an O(n) scan.
+func (c *Cache) evictOldestLocked() {
+	for c.evictHeap.Len() > 0 {
+		oldest := heap.Pop(&c.evictHeap).(evictionItem) //nolint:errcheck // heap returns evictionItem
+		if _, ok := c.entries[oldest.key]; ok {
+			delete(c.entries, oldest.key)
+			return
+		}
+	}
+	c.evictOldestByScanLocked()
+}
+
+// evictOldestByScanLocked deletes the entry with the oldest timestamp via a
+// linear scan. The caller must hold c.mu. Used as the fallback when the
+// eviction heap is empty (e.g. entries seeded directly, or the heap drained
+// of stale keys).
+func (c *Cache) evictOldestByScanLocked() {
+	var oldestKey string
+	var oldestTS time.Time
+	for k, v := range c.entries {
+		if oldestKey == "" || v.Ts.Before(oldestTS) {
+			oldestKey, oldestTS = k, v.Ts
+		}
+	}
+	if oldestKey != "" {
+		delete(c.entries, oldestKey)
+	}
 }
 
 // StartCleaner runs a periodic sweep that removes expired entries.

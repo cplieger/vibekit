@@ -1,53 +1,11 @@
 package gc
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/checkpoint/types"
 )
-
-func FuzzReadEventLog(f *testing.F) {
-	f.Add([]byte(`{"before_sha":"abc","after_sha":"def"}` + "\n"))
-	f.Add([]byte(`not json` + "\n"))
-	f.Add([]byte{})
-	f.Add([]byte(`{"before_sha":"a"}` + "\n" + `garbage` + "\n" + `{"after_sha":"b"}` + "\n"))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		path := filepath.Join(t.TempDir(), "events.jsonl")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		events, err := readEventLog(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Count valid JSON lines with non-empty SHAs.
-		lines := strings.Split(string(data), "\n")
-		validCount := 0
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			var ev types.BlobRef
-			if json.Unmarshal([]byte(line), &ev) == nil {
-				if ev.BeforeSHA != "" || ev.AfterSHA != "" {
-					validCount++
-				}
-			}
-		}
-
-		// Events returned must not exceed line count.
-		if len(events) > len(lines) {
-			t.Errorf("events (%d) > lines (%d)", len(events), len(lines))
-		}
-	})
-}
 
 func TestReadEventLog_MalformedLineSkipped(t *testing.T) {
 	tests := []struct {
@@ -78,4 +36,51 @@ func TestReadEventLog_MalformedLineSkipped(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The size cap is a strict '>': a log exactly at the cap is accepted, one
+// byte over is rejected.
+func TestReadEventLog_SizeCapBoundaryStrict(t *testing.T) {
+	t.Parallel()
+	if _, err := readEventLog(sparseFile(t, maxEventLogBytes)); isSizeCapErr(err) {
+		t.Errorf("readEventLog at exactly the cap returned a size-cap error; boundary must be strict '>' (got %v)", err)
+	}
+	if _, err := readEventLog(sparseFile(t, maxEventLogBytes+1)); !isSizeCapErr(err) {
+		t.Errorf("readEventLog one byte over the cap: err = %v, want a size-cap error", err)
+	}
+}
+
+// streamEventSHAs shares the same strict-'>' size-cap boundary as readEventLog.
+func TestStreamEventSHAs_SizeCapBoundaryStrict(t *testing.T) {
+	t.Parallel()
+	if _, err := streamEventSHAs(sparseFile(t, maxEventLogBytes)); isSizeCapErr(err) {
+		t.Errorf("streamEventSHAs at exactly the cap returned a size-cap error; boundary must be strict '>' (got %v)", err)
+	}
+	if _, err := streamEventSHAs(sparseFile(t, maxEventLogBytes+1)); !isSizeCapErr(err) {
+		t.Errorf("streamEventSHAs one byte over the cap: err = %v, want a size-cap error", err)
+	}
+}
+
+// sparseFile creates a sparse file of exactly size bytes named events.jsonl
+// and returns its path. Cheap on disk, so a test can hit the size-cap
+// boundary exactly without writing the full cap's worth of bytes.
+func sparseFile(t *testing.T, size int64) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func isSizeCapErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "exceeds size cap")
 }

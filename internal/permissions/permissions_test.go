@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -429,4 +430,129 @@ func isToolNameRune(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// --- Args / read log-effect coverage (folded from the u21 mutation set) ---
+//
+// These assert on operator-facing log lines because the behavior under
+// test (the rejected/dropped counts, the unknown-mode coercion path) has
+// no return value of its own — the log is the only observable effect.
+// They install an in-memory slog handler via captureLogs (helpers_test.go)
+// and so must not run in parallel.
+
+func TestArgs_NoRejectWarnWhenTrustToolsEmpty(t *testing.T) {
+	// trust-list mode with an empty trust_tools list downgrades to prompt
+	// silently — nothing was rejected, so no "all entries rejected" Warn.
+	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":[]}`)
+	logs := captureLogs(t)
+	_ = Args(context.Background(), dir)
+	if logs.has(slog.LevelWarn, "all trust_tools entries rejected") {
+		t.Error("unexpected 'entries rejected' Warn when trust_tools is empty")
+	}
+}
+
+func TestArgs_RejectWarnWhenAllTrustToolsInvalid(t *testing.T) {
+	// trust-list mode with a non-empty list whose entries are all invalid
+	// logs the "all entries rejected" Warn before downgrading to prompt.
+	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["bad name",":evil;"]}`)
+	logs := captureLogs(t)
+	_ = Args(context.Background(), dir)
+	if !logs.has(slog.LevelWarn, "all trust_tools entries rejected") {
+		t.Error("expected 'entries rejected' Warn when all trust_tools entries are invalid")
+	}
+}
+
+func TestArgs_DroppedDebugReportsRawMinusKept(t *testing.T) {
+	// With 3 raw entries and 1 invalid, the sanitiser keeps 2 and the Debug
+	// "dropped by sanitiser" line reports dropped == raw - kept == 1.
+	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["fsWrite","strReplace","bad name"]}`)
+	logs := captureLogs(t)
+	got := Args(context.Background(), dir)
+	if len(got) != 2 || got[0] != "--trust-tools" {
+		t.Fatalf("Args = %v, want [--trust-tools <list>]", got)
+	}
+	v, ok := logs.attrInt(slog.LevelDebug, "dropped by sanitiser", "dropped")
+	if !ok {
+		t.Fatal("expected Debug 'dropped by sanitiser' with an int 'dropped' attr")
+	}
+	if v != 1 {
+		t.Errorf("dropped attr = %d, want 1 (raw 3 - kept 2)", v)
+	}
+}
+
+func TestArgs_NoDroppedDebugWhenNothingDropped(t *testing.T) {
+	// With 2 raw entries, both valid, nothing is dropped and the Debug
+	// "dropped by sanitiser" line must not fire.
+	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["fsWrite","strReplace"]}`)
+	logs := captureLogs(t)
+	got := Args(context.Background(), dir)
+	if len(got) != 2 || got[0] != "--trust-tools" {
+		t.Fatalf("Args = %v, want [--trust-tools <list>]", got)
+	}
+	if logs.has(slog.LevelDebug, "dropped by sanitiser") {
+		t.Error("unexpected 'dropped by sanitiser' Debug when nothing was dropped")
+	}
+}
+
+func TestRead_CoercesUnknownModeToTrustAll(t *testing.T) {
+	// A present-but-invalid permission_mode is coerced to trust-all.
+	// Observed via read() directly because Args' own default branch also
+	// returns trust-all and would mask whether read() did the coercion.
+	dir := writeSettings(t, `{"permission_mode":"bogus"}`)
+	s := read(context.Background(), dir)
+	if s.Mode != modeTrustAll {
+		t.Errorf("read() Mode for unknown permission_mode = %q, want %q", s.Mode, modeTrustAll)
+	}
+}
+
+func TestRead_TrustToolsParseWarn(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantWarn bool
+	}{
+		{
+			// Valid array: unmarshal succeeds, so no parse Warn.
+			name:     "valid_array_no_warn",
+			body:     `{"permission_mode":"trust-list","trust_tools":["fsWrite"]}`,
+			wantWarn: false,
+		},
+		{
+			// Wrong JSON type: unmarshal fails, so read() logs a parse Warn.
+			name:     "wrong_type_warns",
+			body:     `{"permission_mode":"trust-list","trust_tools":"notarray"}`,
+			wantWarn: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := writeSettings(t, tt.body)
+			logs := captureLogs(t)
+			_ = read(context.Background(), dir)
+			if got := logs.has(slog.LevelWarn, "parse trust_tools"); got != tt.wantWarn {
+				t.Errorf("read() 'parse trust_tools' Warn = %v, want %v", got, tt.wantWarn)
+			}
+		})
+	}
+}
+
+func TestIsToolNameIdentStart_Boundaries(t *testing.T) {
+	// The inclusive ASCII range boundaries must all count as valid
+	// identifier-start runes: 'A', 'Z', '0', and '9'.
+	tests := []struct {
+		name string
+		r    rune
+	}{
+		{"upper_A_boundary", 'A'},
+		{"upper_Z_boundary", 'Z'},
+		{"digit_0_boundary", '0'},
+		{"digit_9_boundary", '9'},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !isToolNameIdentStart(tt.r) {
+				t.Errorf("isToolNameIdentStart(%q) = false, want true", tt.r)
+			}
+		})
+	}
 }
