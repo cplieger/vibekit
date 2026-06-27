@@ -94,70 +94,83 @@ func (c *teaConfig) removeLogin(name string) {
 	c.Logins = out
 }
 
+// teaParser accumulates a teaConfig while scanning config.yml line by line.
+type teaParser struct {
+	cfg      *teaConfig
+	current  *teaLogin
+	inLogins bool
+}
+
+// flush appends the in-progress login (if any) to the config.
+func (p *teaParser) flush() {
+	if p.current != nil {
+		p.cfg.Logins = append(p.cfg.Logins, *p.current)
+		p.current = nil
+	}
+}
+
+// parseLine folds a single config.yml line into the accumulating config.
+func (p *teaParser) parseLine(line string) {
+	if strings.TrimRight(line, " \t") == "" {
+		return
+	}
+	// A top-level key (no indent, not a list item) opens/closes the
+	// logins section and flushes any pending login.
+	if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "-") {
+		key := strings.TrimSuffix(strings.TrimSpace(line), ":")
+		p.inLogins = key == "logins"
+		p.flush()
+		return
+	}
+	if !p.inLogins {
+		return
+	}
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "- name:") {
+		p.flush()
+		p.current = &teaLogin{Name: strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:"))}
+		return
+	}
+	if p.current == nil {
+		return
+	}
+	key, val, ok := strings.Cut(trimmed, ":")
+	if !ok {
+		return
+	}
+	p.current.setField(strings.TrimSpace(key), strings.TrimSpace(val))
+}
+
+// setField assigns a parsed key/value onto a login entry.
+func (l *teaLogin) setField(key, val string) {
+	switch key {
+	case fieldURL:
+		l.URL = val
+	case "token":
+		l.Token = val
+	case fieldUser:
+		l.User = val
+	case "default":
+		l.Default = val == "true"
+	}
+}
+
 func loadTeaConfig(path string) (*teaConfig, error) {
-	cfg := &teaConfig{}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return cfg, nil
+			return &teaConfig{}, nil
 		}
 		return nil, err
 	}
 	// tea config has a top-level `logins:` array. Each entry is a
 	// 2-space-indented mapping with `- name:` markers.
-	var inLogins bool
-	var current *teaLogin
+	p := &teaParser{cfg: &teaConfig{}}
 	for line := range strings.SplitSeq(string(data), "\n") {
-		stripped := strings.TrimRight(line, " \t")
-		if stripped == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "-") {
-			key := strings.TrimSuffix(strings.TrimSpace(line), ":")
-			inLogins = key == "logins"
-			if current != nil {
-				cfg.Logins = append(cfg.Logins, *current)
-				current = nil
-			}
-			continue
-		}
-		if !inLogins {
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- name:") {
-			if current != nil {
-				cfg.Logins = append(cfg.Logins, *current)
-			}
-			current = &teaLogin{}
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:"))
-			current.Name = val
-			continue
-		}
-		if current == nil {
-			continue
-		}
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		switch key {
-		case fieldURL:
-			current.URL = val
-		case "token":
-			current.Token = val
-		case fieldUser:
-			current.User = val
-		case "default":
-			current.Default = val == "true"
-		}
+		p.parseLine(line)
 	}
-	if current != nil {
-		cfg.Logins = append(cfg.Logins, *current)
-	}
-	return cfg, nil
+	p.flush()
+	return p.cfg, nil
 }
 
 func marshalTeaConfig(cfg *teaConfig) string {

@@ -238,3 +238,40 @@ func TestStore_StartBackgroundTasksIsIdempotent(t *testing.T) {
 	s.StartBackgroundTasks(context.Background()) // second call should be a no-op
 	s.Stop()
 }
+
+// TestStoreAdvanceTurn_NoWarnOnSuccess pins that a successful delegated
+// AdvanceTurn is silent: the Store-level failure warn must fire only
+// when the underlying Manager call errors.
+func TestStoreAdvanceTurn_NoWarnOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	cfg := t.TempDir()
+	work := t.TempDir()
+	s := NewStore(cfg, work, nil)
+
+	has := captureLogs(t)
+	s.AdvanceTurn(ctx, "chat-a", 1)
+	if has("AdvanceTurn failed") {
+		t.Errorf("Store.AdvanceTurn logged 'AdvanceTurn failed' on success; that warn must fire only when the delegated call errors")
+	}
+}
+
+// TestWipe_NoFailureWarnOnSuccess pins that wiping an existing log is
+// silent: the wipe-failure warn must fire only when Wipe errors.
+func TestWipe_NoFailureWarnOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	cfg := t.TempDir()
+	work := t.TempDir()
+	blobs := newBlobStore(cfg)
+	log := newEventLog(cfg, "wp")
+	deps := &managerDeps{blobs: blobs, index: newCrossChatIndex()}
+	m := newManager("wp", work, log, deps)
+	if err := m.AdvanceTurn(ctx, 1); err != nil { // create the log on disk
+		t.Fatal(err)
+	}
+
+	has := captureLogs(t)
+	wipe(cfg, "wp")
+	if has("checkpoint: wipe failed") {
+		t.Errorf("wipe() logged 'wipe failed' on a successful wipe; that warn must fire only on wipe error")
+	}
+}

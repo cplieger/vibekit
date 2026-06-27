@@ -457,3 +457,212 @@ func BenchmarkRestore(b *testing.B) {
 		}
 	}
 }
+
+// TestCommitRename_PropagatesRenameError pins that a failing rename
+// (the source does not exist) is returned rather than swallowed.
+func TestCommitRename_PropagatesRenameError(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "does-not-exist")
+	final := filepath.Join(t.TempDir(), "final")
+	if err := commitRename(tmp, final); err == nil {
+		t.Errorf("commitRename(missing tmp, final) = nil, want the rename error")
+	}
+}
+
+// TestCommitRename_NoDurabilityWarnOnSuccess pins that the success path
+// emits neither durability warn: the parent-dir open and fsync warns
+// must fire only when those operations actually fail.
+func TestCommitRename_NoDurabilityWarnOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	// Precondition: directory fsync must succeed on this fs, else
+	// commitRename legitimately logs "parent-dir fsync failed".
+	probe, err := os.Open(dir)
+	if err != nil {
+		t.Skipf("cannot open temp dir: %v", err)
+	}
+	syncErr := probe.Sync()
+	_ = probe.Close()
+	if syncErr != nil {
+		t.Skipf("directory fsync unsupported on this fs: %v", syncErr)
+	}
+
+	tmp := filepath.Join(dir, "staged.tmp")
+	final := filepath.Join(dir, "final.txt")
+	if err := os.WriteFile(tmp, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	has := captureLogs(t)
+	if err := commitRename(tmp, final); err != nil {
+		t.Fatalf("commitRename(success path) = %v, want nil", err)
+	}
+	if has("parent-dir open for fsync failed") {
+		t.Errorf("commitRename success path logged 'parent-dir open for fsync failed'; the open-error warn must fire only when Open fails")
+	}
+	if has("parent-dir fsync failed") {
+		t.Errorf("commitRename success path logged 'parent-dir fsync failed'; the fsync-error warn must fire only when Sync fails")
+	}
+	if _, err := os.Stat(final); err != nil {
+		t.Errorf("commitRename did not move file into place: %v", err)
+	}
+}
+
+// TestRestoreLocked_CommitsAndReturnsWatermark pins the happy path:
+// restoreLocked returns the real watermark, clears the pending-restore
+// marker, restores file content, and logs no commit-failure.
+func TestRestoreLocked_CommitsAndReturnsWatermark(t *testing.T) {
+	ctx := context.Background()
+	m, work := newTestManager(t, "rl")
+	f := filepath.Join(work, "f.txt")
+	if err := os.WriteFile(f, []byte("v0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AdvanceTurn(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	tag1, err := m.Snapshot(ctx, "f.txt", nil, 7) // watermark = 7
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(f, []byte("v1"), 0o600)
+
+	has := captureLogs(t)
+	m.mu.Lock()
+	n, rErr := m.restoreLocked(ctx, string(tag1), false)
+	pr := m.state.pendingRestore
+	m.mu.Unlock()
+
+	if rErr != nil {
+		t.Fatalf("restoreLocked = %v, want nil", rErr)
+	}
+	if n != 7 {
+		t.Errorf("restoreLocked watermark = %d, want 7: a successful applyStagesLocked must return the real watermark", n)
+	}
+	if pr != "" {
+		t.Errorf("pendingRestore = %q, want cleared after a successful commit", pr)
+	}
+	if has("restore_committed append failed") {
+		t.Errorf("successful restoreLocked logged 'restore_committed append failed'; that warn must fire only on append error")
+	}
+	if got, _ := os.ReadFile(f); string(got) != "v0" {
+		t.Errorf("file after restoreLocked = %q, want v0", got)
+	}
+}
+
+// TestRestore_NoCommittedAppendWarnOnSuccess pins that a successful
+// public Restore logs no commit-failure breadcrumb.
+func TestRestore_NoCommittedAppendWarnOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	m, work := newTestManager(t, "rs")
+	f := filepath.Join(work, "f.txt")
+	if err := os.WriteFile(f, []byte("v0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AdvanceTurn(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	tag1, err := m.Snapshot(ctx, "f.txt", nil, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(f, []byte("v1"), 0o600)
+
+	has := captureLogs(t)
+	mc, err := m.Restore(ctx, tag1)
+	if err != nil {
+		t.Fatalf("Restore = %v, want nil", err)
+	}
+	if mc != 3 {
+		t.Errorf("Restore watermark = %d, want 3", mc)
+	}
+	if has("restore_committed append failed") {
+		t.Errorf("successful Restore logged 'restore_committed append failed'; that warn must fire only on append error")
+	}
+}
+
+// TestLogRestoreStartedLocked_AppliesEventOnSuccess pins that a
+// successful append applies the event into state, setting pendingRestore.
+func TestLogRestoreStartedLocked_AppliesEventOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t, "lrs")
+	if err := m.AdvanceTurn(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	err := m.logRestoreStartedLocked(ctx, "5", 7)
+	pr := m.state.pendingRestore
+	m.mu.Unlock()
+
+	if err != nil {
+		t.Fatalf("logRestoreStartedLocked = %v, want nil", err)
+	}
+	if pr != "5" {
+		t.Errorf("pendingRestore = %q, want %q: a successful append must apply the event into state", pr, "5")
+	}
+}
+
+// TestLogRestoreCommittedLocked_AppliesEventOnSuccess pins that a
+// successful append applies the event into state: latestTag is set and
+// the pending restore is cleared.
+func TestLogRestoreCommittedLocked_AppliesEventOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t, "lrc")
+	if err := m.AdvanceTurn(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	m.state.pendingRestore = "9" // simulate an open restore journal
+	err := m.logRestoreCommittedLocked(ctx, "5", 7)
+	lt := m.state.latestTag
+	pr := m.state.pendingRestore
+	m.mu.Unlock()
+
+	if err != nil {
+		t.Fatalf("logRestoreCommittedLocked = %v, want nil", err)
+	}
+	if lt != "5" {
+		t.Errorf("latestTag = %q, want %q: a successful append must apply the event into state", lt, "5")
+	}
+	if pr != "" {
+		t.Errorf("pendingRestore = %q, want cleared after restore_committed apply", pr)
+	}
+}
+
+// TestCleanupStages_NoWarnOnSuccessfulRemove pins that removing an
+// existing staged file is silent: the cleanup warn must fire only when
+// Remove fails.
+func TestCleanupStages_NoWarnOnSuccessfulRemove(t *testing.T) {
+	m, work := newTestManager(t, "cs")
+	tmp1 := filepath.Join(work, "f1.vibekit-restore-aaa")
+	if err := os.WriteFile(tmp1, []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	has := captureLogs(t)
+	m.cleanupStages([]restoreStage{
+		{path: "f1.txt", abs: filepath.Join(work, "f1.txt"), tmp: tmp1, existed: true},
+	})
+	if has("stage cleanup failed") {
+		t.Errorf("cleanupStages logged 'stage cleanup failed' on a successful Remove; that warn must fire only when Remove fails")
+	}
+	if _, err := os.Stat(tmp1); !os.IsNotExist(err) {
+		t.Errorf("staged temp not removed: stat err = %v", err)
+	}
+}
+
+// TestCleanup_NoWipeWarnOnSuccess pins that cleaning up a chat whose log
+// exists logs no wipe-failure: the warn must fire only when Wipe errors.
+func TestCleanup_NoWipeWarnOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestManager(t, "cl")
+	if err := m.AdvanceTurn(ctx, 1); err != nil { // create the log so Wipe succeeds
+		t.Fatal(err)
+	}
+
+	has := captureLogs(t)
+	m.Cleanup(ctx)
+	if has("cleanup wipe failed") {
+		t.Errorf("Cleanup logged 'cleanup wipe failed' on a successful wipe; that warn must fire only on wipe error")
+	}
+}

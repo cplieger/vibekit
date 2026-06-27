@@ -98,8 +98,6 @@ func (m *Manager) Get(id string) *ConfiguredForge {
 }
 
 // Refresh re-reads all CLI config files and rebuilds the forge list.
-//
-//nolint:gocyclo // intentional: complexity 20 reflects the per-CLI parse/extract pipeline (gh/glab/tea each have distinct config schemas with their own auth/host fallback rules); breaking it apart would scatter the scheme-specific logic across helpers without reducing total branches.
 func (m *Manager) Refresh(ctx context.Context) error {
 	root, err := configHome()
 	if err != nil {
@@ -107,74 +105,97 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	}
 	out := make(map[string]*ConfiguredForge)
 
-	// gh: ~/.config/gh/hosts.yml
-	if hosts, err := loadGHHosts(filepath.Join(root, "gh", "hosts.yml")); err == nil {
-		for host, entry := range hosts {
-			if entry.OAuthToken == "" {
-				continue
-			}
-			id := MakeID(KindGitHub, host)
-			out[id] = &ConfiguredForge{
-				ID:        id,
-				Kind:      KindGitHub,
-				Host:      host,
-				Username:  entry.User,
-				Connected: true,
-			}
-		}
-	}
-
+	addGHForges(filepath.Join(root, "gh", "hosts.yml"), out)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	// glab: ~/.config/glab-cli/config.yml
-	if cfg, err := loadGLabConfig(filepath.Join(root, "glab-cli", "config.yml")); err == nil {
-		for host, entry := range cfg.Hosts {
-			if entry.Token == "" {
-				continue
-			}
-			id := MakeID(KindGitLab, host)
-			out[id] = &ConfiguredForge{
-				ID:        id,
-				Kind:      KindGitLab,
-				Host:      host,
-				Username:  entry.User,
-				Connected: true,
-			}
-		}
-	}
-
+	addGLabForges(filepath.Join(root, "glab-cli", "config.yml"), out)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	addTeaForges(filepath.Join(root, "tea", "config.yml"), out)
 
-	// tea: ~/.config/tea/config.yml — both Gitea and Codeberg.
-	if cfg, err := loadTeaConfig(filepath.Join(root, "tea", "config.yml")); err == nil {
-		for _, login := range cfg.Logins {
-			if login.Token == "" {
-				continue
-			}
-			kind := KindGitea
-			if login.Name == KindCodeberg.DefaultHost() ||
-				login.URL == "https://"+KindCodeberg.DefaultHost() {
-				kind = KindCodeberg
-			}
-			id := MakeID(kind, login.Name)
-			out[id] = &ConfiguredForge{
-				ID:        id,
-				Kind:      kind,
-				Host:      login.Name,
-				Username:  login.User,
-				Connected: true,
-			}
+	m.mergeForges(out)
+	return nil
+}
+
+// addGHForges reads gh's hosts.yml and adds each authenticated host to out.
+// A read error leaves out unchanged (gh simply isn't configured).
+func addGHForges(path string, out map[string]*ConfiguredForge) {
+	hosts, err := loadGHHosts(path)
+	if err != nil {
+		return
+	}
+	for host, entry := range hosts {
+		if entry.OAuthToken == "" {
+			continue
+		}
+		id := MakeID(KindGitHub, host)
+		out[id] = &ConfiguredForge{
+			ID:        id,
+			Kind:      KindGitHub,
+			Host:      host,
+			Username:  entry.User,
+			Connected: true,
 		}
 	}
+}
 
+// addGLabForges reads glab's config.yml and adds each authenticated host to out.
+func addGLabForges(path string, out map[string]*ConfiguredForge) {
+	cfg, err := loadGLabConfig(path)
+	if err != nil {
+		return
+	}
+	for host, entry := range cfg.Hosts {
+		if entry.Token == "" {
+			continue
+		}
+		id := MakeID(KindGitLab, host)
+		out[id] = &ConfiguredForge{
+			ID:        id,
+			Kind:      KindGitLab,
+			Host:      host,
+			Username:  entry.User,
+			Connected: true,
+		}
+	}
+}
+
+// addTeaForges reads tea's config.yml and adds each authenticated login to
+// out, classifying a codeberg.org login as Codeberg and the rest as Gitea.
+func addTeaForges(path string, out map[string]*ConfiguredForge) {
+	cfg, err := loadTeaConfig(path)
+	if err != nil {
+		return
+	}
+	for _, login := range cfg.Logins {
+		if login.Token == "" {
+			continue
+		}
+		kind := KindGitea
+		if login.Name == KindCodeberg.DefaultHost() ||
+			login.URL == "https://"+KindCodeberg.DefaultHost() {
+			kind = KindCodeberg
+		}
+		id := MakeID(kind, login.Name)
+		out[id] = &ConfiguredForge{
+			ID:        id,
+			Kind:      kind,
+			Host:      login.Name,
+			Username:  login.User,
+			Connected: true,
+		}
+	}
+}
+
+// mergeForges swaps in the freshly-read forge set, preserving Email +
+// LastProbed across the refresh. Those fields are populated only by Probe
+// (from Whoami), not the CLI config files, so a raw replacement would lose
+// them every 30s on the cache TTL.
+func (m *Manager) mergeForges(out map[string]*ConfiguredForge) {
 	m.mu.Lock()
-	// Preserve Email + LastProbed across Refresh — they're populated
-	// only by Probe (from Whoami), not from the CLI config files. A
-	// raw replacement would lose them every 30s on the cache TTL.
+	defer m.mu.Unlock()
 	for id, f := range out {
 		if prev, ok := m.forges[id]; ok {
 			if prev.Email != "" && f.Email == "" {
@@ -187,8 +208,6 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	}
 	m.forges = out
 	m.cacheAt = time.Now()
-	m.mu.Unlock()
-	return nil
 }
 
 // Invalidate clears the cache so the next List/Get reloads.

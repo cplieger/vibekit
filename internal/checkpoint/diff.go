@@ -39,10 +39,23 @@ func countLineDelta(ctx context.Context, from, to []byte) (added, removed int) {
 	if n > lcsCellCap || m > lcsCellCap || int64(n)*int64(m) > lcsCellCap {
 		return m, n
 	}
-	// Two-row rolling LCS: only keep the current row and the
-	// previous row. Built from the bottom-right corner so the
-	// final answer lives in prev[0] after the loop completes.
-	// Memory: 2*(m+1) ints instead of (n+1)*(m+1).
+	common, cancelled := lcsRollingLength(ctx, fromLines, toLines)
+	if cancelled {
+		return m, n
+	}
+	return m - common, n - common
+}
+
+// lcsRollingLength returns the length of the longest common
+// subsequence of fromLines and toLines using a two-row rolling table
+// (memory O(min over the row width) instead of O(N*M)). Built from the
+// bottom-right corner so the answer lands in prev[0] after the loop.
+// The context is checked every 65536 inner iterations so a cancelled
+// context short-circuits a pathological diff; cancelled=true signals
+// the caller to fall back to "everything changed".
+func lcsRollingLength(ctx context.Context, fromLines, toLines []string) (common int, cancelled bool) {
+	n := len(fromLines)
+	m := len(toLines)
 	prev := make([]int, m+1)
 	curr := make([]int, m+1)
 	var iter int
@@ -54,18 +67,15 @@ func countLineDelta(ctx context.Context, from, to []byte) (added, removed int) {
 				curr[j] = max(prev[j], curr[j+1])
 			}
 			iter++
-			if iter&0xFFFF == 0 {
-				if ctx.Err() != nil {
-					return m, n
-				}
+			if iter&0xFFFF == 0 && ctx.Err() != nil {
+				return 0, true
 			}
 		}
 		prev, curr = curr, prev
 		// Zero out curr for the next iteration.
 		clear(curr)
 	}
-	common := prev[0]
-	return m - common, n - common
+	return prev[0], false
 }
 
 func bytesToLines(b []byte) []string {

@@ -74,70 +74,89 @@ type glabConfig struct {
 	Editor string
 }
 
+// glabParser accumulates a glabConfig while scanning config.yml line by line.
+type glabParser struct {
+	cfg         *glabConfig
+	currentHost string
+	inHosts     bool
+}
+
+// parseLine folds a single config.yml line into the accumulating config.
+func (p *glabParser) parseLine(line string) {
+	if strings.TrimRight(line, " \t") == "" {
+		return
+	}
+	// Top-level key.
+	if !strings.HasPrefix(line, " ") {
+		key := strings.TrimSuffix(strings.TrimSpace(line), ":")
+		if key == "hosts" {
+			p.inHosts = true
+			return
+		}
+		p.inHosts = false
+		p.currentHost = ""
+		return
+	}
+	if !p.inHosts {
+		return
+	}
+	// 4-space indent → host name; 8-space indent → host fields.
+	switch {
+	case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "        "):
+		p.beginHost(line)
+	case strings.HasPrefix(line, "        ") && p.currentHost != "":
+		p.setHostField(line)
+	}
+}
+
+// beginHost starts a new host subtree (or clears the current one for a
+// blank name).
+func (p *glabParser) beginHost(line string) {
+	name := strings.TrimSuffix(strings.TrimSpace(line), ":")
+	if name == "" {
+		p.currentHost = ""
+		return
+	}
+	p.currentHost = name
+	p.cfg.Hosts[name] = glabHostEntry{}
+}
+
+// setHostField assigns a parsed key/value onto the current host entry.
+func (p *glabParser) setHostField(line string) {
+	key, val, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return
+	}
+	key = strings.TrimSpace(key)
+	val = strings.TrimSpace(val)
+	entry := p.cfg.Hosts[p.currentHost]
+	switch key {
+	case "token":
+		entry.Token = val
+	case fieldUser:
+		entry.User = val
+	case "git_protocol":
+		entry.Protocol = val
+	case "api_host":
+		entry.APIHost = val
+	}
+	p.cfg.Hosts[p.currentHost] = entry
+}
+
 func loadGLabConfig(path string) (*glabConfig, error) {
-	cfg := &glabConfig{Hosts: make(map[string]glabHostEntry)}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return cfg, nil
+			return &glabConfig{Hosts: make(map[string]glabHostEntry)}, nil
 		}
 		return nil, err
 	}
 	// glab config.yml has a flat top-level + a hosts: subtree.
-	var inHosts bool
-	var currentHost string
+	p := &glabParser{cfg: &glabConfig{Hosts: make(map[string]glabHostEntry)}}
 	for line := range strings.SplitSeq(string(data), "\n") {
-		stripped := strings.TrimRight(line, " \t")
-		if stripped == "" {
-			continue
-		}
-		// Top-level key.
-		if !strings.HasPrefix(line, " ") {
-			key := strings.TrimSuffix(strings.TrimSpace(line), ":")
-			if key == "hosts" {
-				inHosts = true
-				continue
-			}
-			inHosts = false
-			currentHost = ""
-			continue
-		}
-		if !inHosts {
-			continue
-		}
-		// 4-space indent → host name; 8-space indent → host fields.
-		switch {
-		case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "        "):
-			name := strings.TrimSuffix(strings.TrimSpace(line), ":")
-			if name == "" {
-				currentHost = ""
-				continue
-			}
-			currentHost = name
-			cfg.Hosts[currentHost] = glabHostEntry{}
-		case strings.HasPrefix(line, "        ") && currentHost != "":
-			trimmed := strings.TrimSpace(line)
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
-			entry := cfg.Hosts[currentHost]
-			switch key {
-			case "token":
-				entry.Token = val
-			case fieldUser:
-				entry.User = val
-			case "git_protocol":
-				entry.Protocol = val
-			case "api_host":
-				entry.APIHost = val
-			}
-			cfg.Hosts[currentHost] = entry
-		}
+		p.parseLine(line)
 	}
-	return cfg, nil
+	return p.cfg, nil
 }
 
 func marshalGLabConfig(cfg *glabConfig) string {
@@ -148,24 +167,29 @@ func marshalGLabConfig(cfg *glabConfig) string {
 	if len(cfg.Hosts) > 0 {
 		b.WriteString("hosts:\n")
 		for host, e := range cfg.Hosts {
-			fmt.Fprintf(&b, "    %s:\n", host)
-			if e.Token != "" {
-				fmt.Fprintf(&b, "        token: %s\n", e.Token)
-			}
-			if e.User != "" {
-				fmt.Fprintf(&b, "        user: %s\n", e.User)
-			}
-			gp := e.Protocol
-			if gp == "" {
-				gp = protoHTTPS
-			}
-			fmt.Fprintf(&b, "        git_protocol: %s\n", gp)
-			if e.APIHost != "" {
-				fmt.Fprintf(&b, "        api_host: %s\n", e.APIHost)
-			}
+			writeGLabHost(&b, host, e)
 		}
 	}
 	return b.String()
+}
+
+// writeGLabHost renders one host subtree into b, matching glab's writer.
+func writeGLabHost(b *strings.Builder, host string, e glabHostEntry) {
+	fmt.Fprintf(b, "    %s:\n", host)
+	if e.Token != "" {
+		fmt.Fprintf(b, "        token: %s\n", e.Token)
+	}
+	if e.User != "" {
+		fmt.Fprintf(b, "        user: %s\n", e.User)
+	}
+	gp := e.Protocol
+	if gp == "" {
+		gp = protoHTTPS
+	}
+	fmt.Fprintf(b, "        git_protocol: %s\n", gp)
+	if e.APIHost != "" {
+		fmt.Fprintf(b, "        api_host: %s\n", e.APIHost)
+	}
 }
 
 func setupGitGLab(ctx context.Context, host string) error {

@@ -97,3 +97,24 @@ func FuzzNormalizePRState(f *testing.F) {
 		}
 	})
 }
+
+func FuzzNormalizeIssueState(f *testing.F) {
+	f.Add("open")
+	f.Add("CLOSED")
+	f.Add("close")
+	f.Add("opened")
+	f.Add("")
+	f.Add("random")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		result := normalizeIssueState(s)
+		if result != strings.ToLower(result) {
+			t.Fatalf("output not lowercase: %q", result)
+		}
+		// Idempotency check
+		if normalizeIssueState(result) != result {
+			t.Fatalf("not idempotent: normalizeIssueState(%q)=%q, normalizeIssueState(%q)=%q",
+				s, result, result, normalizeIssueState(result))
+		}
+	})
+}

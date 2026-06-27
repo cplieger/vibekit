@@ -1,8 +1,10 @@
 package fileutil
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -265,23 +269,41 @@ func (f *failWriteRecorder) Header() http.Header {
 func (*failWriteRecorder) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func (f *failWriteRecorder) WriteHeader(code int)    { f.status = code }
 
-func TestServeJSONFile_GET_write_failure_on_fallback_does_not_panic(t *testing.T) {
+// captureDebugLog redirects the default slog logger to a buffer at Debug
+// level for the duration of the test, restoring the previous logger on
+// cleanup. Returns the buffer so callers can assert on emitted records.
+func captureDebugLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// A failing ResponseWriter on the not-found fallback path must log the
+// write error (and never panic). Driving the branch through a writer
+// that always errors pins the `werr != nil` guard: a negated guard would
+// stay silent here.
+func TestServeJSONFile_GET_logs_when_fallback_write_fails(t *testing.T) {
+	logs := captureDebugLog(t)
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
+	path := filepath.Join(dir, "config.json") // does not exist -> fallback write path
 	mux := http.NewServeMux()
 	ServeJSONFile(mux, path, `{"fallback":true}`, 0o644)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := &failWriteRecorder{}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("serveJSONGet panicked on write failure: %v", r)
-		}
-	}()
-	mux.ServeHTTP(w, req)
+	mux.ServeHTTP(&failWriteRecorder{}, req)
+
+	if !strings.Contains(logs.String(), "serveJSONFile: fallback write failed") {
+		t.Errorf("fallback write failed but was not logged; log=%q", logs.String())
+	}
 }
 
-func TestServeJSONFile_GET_write_failure_on_data_does_not_panic(t *testing.T) {
+// A failing ResponseWriter on the file-data path must log the write
+// error (and never panic), pinning the data-write `werr != nil` guard.
+func TestServeJSONFile_GET_logs_when_data_write_fails(t *testing.T) {
+	logs := captureDebugLog(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(path, []byte(`{"persisted":true}`), 0o644); err != nil {
@@ -291,11 +313,49 @@ func TestServeJSONFile_GET_write_failure_on_data_does_not_panic(t *testing.T) {
 	ServeJSONFile(mux, path, `{}`, 0o644)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := &failWriteRecorder{}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("serveJSONGet panicked on persisted-data write failure: %v", r)
-		}
-	}()
-	mux.ServeHTTP(w, req)
+	mux.ServeHTTP(&failWriteRecorder{}, req)
+
+	if !strings.Contains(logs.String(), "serveJSONFile: write failed") {
+		t.Errorf("data write failed but was not logged; log=%q", logs.String())
+	}
+}
+
+// PUT auto-creates a missing parent directory, deriving its mode from the
+// file perm: 0700 when the file perm has no group/world bits, else 0755.
+// umask is forced to 0 so the created mode equals the chosen dirPerm exactly.
+func TestServeJSONFile_PUT_creates_parent_dir_with_derived_mode(t *testing.T) {
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+
+	cases := []struct {
+		name     string
+		perm     os.FileMode
+		wantMode os.FileMode
+	}{
+		{"perm0600_dir0700", 0o600, 0o700},
+		{"perm0644_dir0755", 0o644, 0o755},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			sub := filepath.Join(base, "created-"+tc.name)
+			path := filepath.Join(sub, "config.json")
+			req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(`{"a":1}`))
+			rec := httptest.NewRecorder()
+			var mu sync.Mutex
+
+			serveJSONPut(rec, req, path, "config", &mu, tc.perm)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("serveJSONPut code = %d, want 200; body=%q", rec.Code, rec.Body.String())
+			}
+			info, err := os.Stat(sub)
+			if err != nil {
+				t.Fatalf("stat created parent dir: %v", err)
+			}
+			if got := info.Mode().Perm(); got != tc.wantMode {
+				t.Errorf("created dir mode = %#o, want %#o (file perm=%#o)", got, tc.wantMode, tc.perm)
+			}
+		})
+	}
 }

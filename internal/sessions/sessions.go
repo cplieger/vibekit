@@ -143,12 +143,21 @@ func (m *Manager) CleanupStale(ctx context.Context) {
 	if err != nil {
 		return
 	}
-
-	// Collect valid lock entries up to the cap.
-	type lockEntry struct {
-		name string
+	names := collectLockNames(entries)
+	rl, rs := m.cleanupLockEntries(ctx, names)
+	if rl > 0 || rs > 0 {
+		slog.Info("startup: cleaned stale sessions",
+			"scanned", len(names),
+			"locks_removed", rl,
+			"empty_sessions_removed", rs)
 	}
-	var valid []lockEntry
+}
+
+// collectLockNames returns the names of the ".lock" entries in a
+// directory listing, bounded to cleanupMaxEntries so a pathological
+// sessions dir cannot pin startup behind a multi-thousand-entry walk.
+func collectLockNames(entries []os.DirEntry) []string {
+	var names []string
 	for i := range entries {
 		if i >= cleanupMaxEntries {
 			slog.Warn("startup: cleanup scan truncated",
@@ -156,16 +165,19 @@ func (m *Manager) CleanupStale(ctx context.Context) {
 			break
 		}
 		if filepath.Ext(entries[i].Name()) == ".lock" {
-			valid = append(valid, lockEntry{name: entries[i].Name()})
+			names = append(names, entries[i].Name())
 		}
 	}
+	return names
+}
 
-	var removedLocks, removedSessions atomic.Int32
-
-	// Bounded parallel processing.
+// cleanupLockEntries processes lock-file names with bounded parallelism
+// and returns the total locks and empty sessions removed.
+func (m *Manager) cleanupLockEntries(ctx context.Context, names []string) (removedLocks, removedSessions int32) {
+	var accLocks, accSessions atomic.Int32
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, cleanupWorkers)
-	for _, entry := range valid {
+	for _, name := range names {
 		if ctx.Err() != nil {
 			break
 		}
@@ -177,30 +189,24 @@ func (m *Manager) CleanupStale(ctx context.Context) {
 				return
 			}
 			locks, sessions, _ := m.cleanupOneEntry(ctx, name)
-			if locks > 0 {
-				if locks > math.MaxInt32 {
-					locks = math.MaxInt32
-				}
-				removedLocks.Add(int32(locks))
-			}
-			if sessions > 0 {
-				if sessions > math.MaxInt32 {
-					sessions = math.MaxInt32
-				}
-				removedSessions.Add(int32(sessions))
-			}
-		}(entry.name)
+			addClampedInt32(&accLocks, locks)
+			addClampedInt32(&accSessions, sessions)
+		}(name)
 	}
 	wg.Wait()
+	return accLocks.Load(), accSessions.Load()
+}
 
-	rl := removedLocks.Load()
-	rs := removedSessions.Load()
-	if rl > 0 || rs > 0 {
-		slog.Info("startup: cleaned stale sessions",
-			"scanned", len(valid),
-			"locks_removed", rl,
-			"empty_sessions_removed", rs)
+// addClampedInt32 adds n to dst when n is positive, clamping at
+// math.MaxInt32 to avoid an int32 overflow on a pathological count.
+func addClampedInt32(dst *atomic.Int32, n int) {
+	if n <= 0 {
+		return
 	}
+	if n > math.MaxInt32 {
+		n = math.MaxInt32
+	}
+	dst.Add(int32(n))
 }
 
 func (m *Manager) cleanupOneEntry(ctx context.Context, name string) (removedLocks, removedSessions int, counted bool) {

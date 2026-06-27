@@ -278,13 +278,48 @@ func (l *eventLog) Read(ctx context.Context) ([]event, error) {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 	defer f.Close()
-	var out []event
 	sc := bufio.NewScanner(f)
 	// 32 MiB ceiling per line — far above any healthy event
 	// shape, but generous enough that future fields can grow.
 	// When a line crosses this we fall through to the ErrTooLong
 	// handler below instead of aborting the entire replay.
 	sc.Buffer(make([]byte, 0, 64*1024), eventLogMaxLine)
+	out, ctxErr := l.scanEventLines(ctx, sc)
+	if ctxErr != nil {
+		return out, ctxErr
+	}
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			// A single 32 MiB+ line is indistinguishable
+			// from corruption in practice. Preserve the
+			// partial replay and let the caller proceed
+			// rather than abort the whole chat. Escalated
+			// to Error so Loki alerting picks up the
+			// truncation — the tail of this log is
+			// silently dropped on every subsequent
+			// process restart until the oversized line
+			// is removed, so operators need a loud signal.
+			slog.Error("checkpoint: event log truncated at oversized line",
+				"path", l.path, "cap", eventLogMaxLine,
+				"events_recovered", len(out))
+			return out, nil
+		}
+		return nil, fmt.Errorf("scan event log: %w", err)
+	}
+	l.warnIfLargeLog(len(out))
+	return out, nil
+}
+
+// scanEventLines consumes every line from sc, unmarshaling each into an
+// event. Blank lines and malformed entries are skipped (malformed
+// logged at warn) so one corrupt line from a crashed writer can't make
+// the whole chat unrecoverable. The context is checked every 1000
+// events so shutdown/disconnect short-circuits a long replay; on
+// cancellation the partial slice and the context error are returned. A
+// non-nil error is always the context error — scanner I/O errors
+// surface via sc.Err() to the caller.
+func (l *eventLog) scanEventLines(ctx context.Context, sc *bufio.Scanner) ([]event, error) {
+	var out []event
 	for sc.Scan() {
 		b := sc.Bytes()
 		if len(b) == 0 {
@@ -310,36 +345,21 @@ func (l *eventLog) Read(ctx context.Context) ([]event, error) {
 			}
 		}
 	}
-	if err := sc.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			// A single 32 MiB+ line is indistinguishable
-			// from corruption in practice. Preserve the
-			// partial replay and let the caller proceed
-			// rather than abort the whole chat. Escalated
-			// to Error so Loki alerting picks up the
-			// truncation — the tail of this log is
-			// silently dropped on every subsequent
-			// process restart until the oversized line
-			// is removed, so operators need a loud signal.
-			slog.Error("checkpoint: event log truncated at oversized line",
-				"path", l.path, "cap", eventLogMaxLine,
-				"events_recovered", len(out))
-			return out, nil
-		}
-		return nil, fmt.Errorf("scan event log: %w", err)
-	}
-	// Log-growth heuristic: warn once per path when an event log
-	// crosses 10k entries so operators have a breadcrumb if
-	// replays start feeling slow. Prior implementation logged on
-	// every Read call which was called multiple times per hour
-	// on hot chats and spammed Loki with duplicate alerts.
-	if len(out) > 10000 {
-		if _, seen := warnedLargeLogs.LoadOrStore(l.path, struct{}{}); !seen {
-			slog.Warn("checkpoint event log is large",
-				"path", l.path, "events", len(out))
-		}
-	}
 	return out, nil
+}
+
+// warnIfLargeLog emits a one-shot operator breadcrumb when an event log
+// crosses 10k entries so a slow replay has a trail. Latched per path
+// via warnedLargeLogs so a hot chat doesn't flood Loki with one warn
+// per Read call.
+func (l *eventLog) warnIfLargeLog(count int) {
+	if count <= 10000 {
+		return
+	}
+	if _, seen := warnedLargeLogs.LoadOrStore(l.path, struct{}{}); !seen {
+		slog.Warn("checkpoint event log is large",
+			"path", l.path, "events", count)
+	}
 }
 
 // Wipe removes the event log file and its parent directory. Called

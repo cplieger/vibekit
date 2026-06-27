@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -858,4 +859,119 @@ func FuzzReplay(f *testing.F) {
 			}
 		}
 	})
+}
+
+// writeRawEventLog writes raw JSONL content directly to an event
+// log's on-disk path, creating the parent dir. Used to stage a log
+// of a precise size/shape without going through Append.
+func writeRawEventLog(t *testing.T, l *eventLog, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.WriteFile(l.path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+}
+
+// repeatSnapshotJSONL returns n copies of a minimal valid event line.
+func repeatSnapshotJSONL(n int) string {
+	return strings.Repeat(`{"type":"snapshot","ts":1,"v":1}`+"\n", n)
+}
+
+// TestEventLogAppend_WritesWhenContextLive pins that Append writes the
+// event when the context is live: the leading ctx.Err() guard returns
+// early only on a cancelled context, so a live context must produce a
+// re-readable event.
+func TestEventLogAppend_WritesWhenContextLive(t *testing.T) {
+	ctx := context.Background()
+	l := newEventLog(t.TempDir(), "live")
+	if err := l.Append(ctx, &event{Kind: kindSnapshot, Tag: "0.0", Path: "f"}); err != nil {
+		t.Fatalf("Append(live ctx): %v", err)
+	}
+	got, err := l.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("after Append(live ctx) Read returned %d events, want 1: a live context must write the event", len(got))
+	}
+}
+
+// TestEventLogRead_ContextCheckAtThousandBoundary pins that Read checks
+// the context every 1000 events: with a cancelled context and 1500
+// events, the check fires at len==1000 and Read returns a non-nil error.
+func TestEventLogRead_ContextCheckAtThousandBoundary(t *testing.T) {
+	l := newEventLog(t.TempDir(), "big")
+	writeRawEventLog(t, l, repeatSnapshotJSONL(1500))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := l.Read(ctx)
+	if err == nil {
+		t.Errorf("Read(cancelled ctx, 1500 events) err = nil, want non-nil: the ctx check fires at the 1000-event boundary")
+	}
+}
+
+// TestEventLogRead_NoContextCheckBelowThousand pins that Read only
+// checks the context at 1000-event multiples: with a cancelled context
+// and just 5 events, no check fires, so Read returns all 5 with no error.
+func TestEventLogRead_NoContextCheckBelowThousand(t *testing.T) {
+	l := newEventLog(t.TempDir(), "small")
+	writeRawEventLog(t, l, repeatSnapshotJSONL(5))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := l.Read(ctx)
+	if err != nil {
+		t.Fatalf("Read(cancelled ctx, 5 events) err = %v, want nil: the ctx check fires only at 1000-event multiples", err)
+	}
+	if len(got) != 5 {
+		t.Errorf("Read returned %d events, want 5", len(got))
+	}
+}
+
+// TestEventLogRead_NoLargeLogWarnAtTenThousand pins the large-log warn
+// boundary: at exactly 10000 events Read must NOT warn (the threshold is
+// strictly greater than 10000), so the warn latch stays unset.
+func TestEventLogRead_NoLargeLogWarnAtTenThousand(t *testing.T) {
+	l := newEventLog(t.TempDir(), "exactly10k")
+	writeRawEventLog(t, l, repeatSnapshotJSONL(10000))
+	if _, err := l.Read(context.Background()); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if _, latched := warnedLargeLogs.Load(l.path); latched {
+		t.Errorf("Read(10000 events) latched the large-log warn; the warn must fire only when len > 10000")
+	}
+	warnedLargeLogs.Delete(l.path)
+}
+
+// TestEventLogRead_LargeLogWarnAboveTenThousand pins the other side of
+// the boundary: at 10001 events Read warns once and latches the path.
+func TestEventLogRead_LargeLogWarnAboveTenThousand(t *testing.T) {
+	l := newEventLog(t.TempDir(), "above10k")
+	writeRawEventLog(t, l, repeatSnapshotJSONL(10001))
+	if _, err := l.Read(context.Background()); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if _, latched := warnedLargeLogs.Load(l.path); !latched {
+		t.Errorf("Read(10001 events) did not latch the large-log warn; the warn must fire when len > 10000")
+	}
+	warnedLargeLogs.Delete(l.path)
+}
+
+// TestEventLogWipe_PropagatesRemoveError pins that Wipe returns a real
+// RemoveAll failure rather than swallowing it. Rooting the chat dir
+// under a regular file makes RemoveAll fail with ENOTDIR (not
+// IsNotExist), which Wipe must surface.
+func TestEventLogWipe_PropagatesRemoveError(t *testing.T) {
+	base := t.TempDir()
+	regular := filepath.Join(base, "afile")
+	if err := os.WriteFile(regular, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+	// Dir(l.path) = <base>/afile/chatdir; RemoveAll on it returns
+	// ENOTDIR because <base>/afile is not a directory.
+	l := &eventLog{path: filepath.Join(regular, "chatdir", "events.jsonl")}
+	if err := l.Wipe(); err == nil {
+		t.Errorf("Wipe() with an un-removable dir returned nil; it must surface a RemoveAll error that is not IsNotExist")
+	}
 }

@@ -89,3 +89,18 @@ func TestIsGitRepo(t *testing.T) {
 		})
 	}
 }
+
+// TestIsGitRepo_CancelledContext short-circuits to false when the context
+// is already cancelled, even though a .git entry exists: the context guard
+// must run before the filesystem stat.
+func TestIsGitRepo_CancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if IsGitRepo(ctx, dir) {
+		t.Error("IsGitRepo with cancelled context = true, want false (ctx guard must short-circuit the stat)")
+	}
+}

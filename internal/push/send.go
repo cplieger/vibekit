@@ -148,62 +148,16 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 	// Defense-in-depth: bound payload size before any allocation. The
 	// IETF web-push spec caps record size at 4096 bytes; pushBodyCap=3000
 	// is the project's pre-pad ceiling. This early check makes the
-	// `make([]byte, 2+len(payload))` allocation below provably bounded
-	// and silences CodeQL's go/allocation-size-overflow rule.
+	// `make([]byte, 2+len(payload))` allocation in encryptPayload
+	// provably bounded and silences CodeQL's go/allocation-size-overflow
+	// rule.
 	if len(payload) > pushBodyCap {
 		return 0, fmt.Errorf("payload too large: %d bytes (max %d)", len(payload), pushBodyCap)
 	}
-	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
-	if err != nil {
-		return 0, fmt.Errorf("decode p256dh: %w", err)
-	}
-	authSecret, err := base64.RawURLEncoding.DecodeString(sub.Keys.Auth)
-	if err != nil {
-		return 0, fmt.Errorf("decode auth: %w", err)
-	}
-	clientPub, err := ecdh.P256().NewPublicKey(clientPubBytes)
-	if err != nil {
-		return 0, fmt.Errorf("import client key: %w", err)
-	}
-	ephPriv, err := ecdh.P256().GenerateKey(rand.Reader)
+	body, err := encryptPayload(sub, payload)
 	if err != nil {
 		return 0, err
 	}
-	shared, err := ephPriv.ECDH(clientPub)
-	if err != nil {
-		return 0, err
-	}
-
-	salt := make([]byte, 16)
-	if _, saltErr := rand.Read(salt); saltErr != nil {
-		return 0, saltErr
-	}
-	cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPubBytes, ephPriv.PublicKey().Bytes(), salt)
-	if err != nil {
-		return 0, err
-	}
-
-	padded := make([]byte, 2+len(payload))
-	copy(padded[2:], payload)
-
-	block, err := aes.NewCipher(cek)
-	if err != nil {
-		return 0, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return 0, err
-	}
-	ciphertext := gcm.Seal(nil, nonce, padded, nil)
-
-	ephPubBytes := ephPriv.PublicKey().Bytes()
-	body := make([]byte, 0, 16+4+1+len(ephPubBytes)+len(ciphertext))
-	body = append(body, salt...)
-	body = binary.BigEndian.AppendUint32(body, 4096)
-	body = append(body, byte(len(ephPubBytes))) //nolint:gosec // G115: value bounded by protocol
-	body = append(body, ephPubBytes...)
-	body = append(body, ciphertext...)
-
 	vapidAuth, err := s.vapidHeader(sub.Endpoint)
 	if err != nil {
 		return 0, err
@@ -247,6 +201,65 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// encryptPayload performs RFC 8291 (aes128gcm) content encryption of
+// payload for the subscriber's keys and returns the wire body:
+// salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
+// The caller (push) bounds len(payload) to pushBodyCap before calling,
+// so the 2+len(payload) allocation below is provably small.
+func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
+	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
+	if err != nil {
+		return nil, fmt.Errorf("decode p256dh: %w", err)
+	}
+	authSecret, err := base64.RawURLEncoding.DecodeString(sub.Keys.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("decode auth: %w", err)
+	}
+	clientPub, err := ecdh.P256().NewPublicKey(clientPubBytes)
+	if err != nil {
+		return nil, fmt.Errorf("import client key: %w", err)
+	}
+	ephPriv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := ephPriv.ECDH(clientPub)
+	if err != nil {
+		return nil, err
+	}
+
+	salt := make([]byte, 16)
+	if _, saltErr := rand.Read(salt); saltErr != nil {
+		return nil, saltErr
+	}
+	cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPubBytes, ephPriv.PublicKey().Bytes(), salt)
+	if err != nil {
+		return nil, err
+	}
+
+	padded := make([]byte, 2+len(payload))
+	copy(padded[2:], payload)
+
+	block, err := aes.NewCipher(cek)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nil, nonce, padded, nil)
+
+	ephPubBytes := ephPriv.PublicKey().Bytes()
+	body := make([]byte, 0, 16+4+1+len(ephPubBytes)+len(ciphertext))
+	body = append(body, salt...)
+	body = binary.BigEndian.AppendUint32(body, 4096)
+	body = append(body, byte(len(ephPubBytes))) //nolint:gosec // G115: value bounded by protocol
+	body = append(body, ephPubBytes...)
+	body = append(body, ciphertext...)
+	return body, nil
 }
 
 func truncate(s string, n int) string {

@@ -1188,3 +1188,103 @@ func BenchmarkSnapshotContention(b *testing.B) {
 		})
 	})
 }
+
+// TestEnsureLoaded_FastPathPropagatesCachedError pins that a cached
+// load outcome carrying an error is returned by the fast path rather
+// than masked as success.
+func TestEnsureLoaded_FastPathPropagatesCachedError(t *testing.T) {
+	m, _ := newTestManager(t, "c")
+	sentinel := errors.New("cached load failure")
+	m.loadResult.Store(&loadOutcome{err: sentinel})
+	m.mu.Lock()
+	err := m.ensureLoaded(context.Background())
+	m.mu.Unlock()
+	if !errors.Is(err, sentinel) {
+		t.Errorf("ensureLoaded fast path = %v, want the cached error", err)
+	}
+}
+
+// TestEnsureLoaded_RecoveryPropagatesError pins that a recovery failure
+// during replay is surfaced: a dangling restore_started for a tag with
+// no matching snapshot makes the idempotent recovery restoreLocked fail
+// with ErrTagNotFound, which ensureLoaded must return.
+func TestEnsureLoaded_RecoveryPropagatesError(t *testing.T) {
+	cfg := t.TempDir()
+	work := t.TempDir()
+	l := newEventLog(cfg, "rec")
+	// restore_started for tag "9" with no matching snapshot leaves a
+	// pending restore on replay; recovery restoreLocked("9") then
+	// fails with ErrTagNotFound.
+	writeRawEventLog(t, l, `{"type":"restore_started","tag":"9","ts":1,"v":1}`+"\n")
+	m := newManager("rec", work, l, &managerDeps{blobs: newBlobStore(cfg), index: newCrossChatIndex()})
+	m.mu.Lock()
+	err := m.ensureLoaded(context.Background())
+	m.mu.Unlock()
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("ensureLoaded with a dangling restore_started for a missing tag = %v, want ErrTagNotFound", err)
+	}
+}
+
+// TestReadBeforeSHALocked_AllowsExactlyContentCap pins the size
+// boundary: a pre-write file of exactly contentCap bytes is at the cap,
+// not over it, so it is read and stored (non-empty sha) rather than
+// skipped.
+func TestReadBeforeSHALocked_AllowsExactlyContentCap(t *testing.T) {
+	m, work := newTestManager(t, "c")
+	abs := filepath.Join(work, "big.txt")
+	if err := os.WriteFile(abs, make([]byte, contentCap), 0o600); err != nil {
+		t.Fatalf("write cap-sized file: %v", err)
+	}
+	sha, err := m.readBeforeSHALocked(context.Background(), "big.txt", abs)
+	if err != nil {
+		t.Fatalf("readBeforeSHALocked: %v", err)
+	}
+	if sha == "" {
+		t.Errorf("readBeforeSHALocked(file of exactly contentCap bytes) = empty, want a non-empty sha: size==cap is not over the cap")
+	}
+}
+
+// TestDiff_SkipsUnchangedFile pins Diff's skip guard: a file that is
+// unchanged between two tags (same SHA, existed at both) must not appear
+// in the result at all.
+func TestDiff_SkipsUnchangedFile(t *testing.T) {
+	cfg := t.TempDir()
+	work := t.TempDir()
+	l := newEventLog(cfg, "c")
+	// Two snapshots of "f" sharing the same beforeSHA: Diff("1","2")
+	// computes fromSHA == toSHA, both existed, so the file is skipped.
+	writeRawEventLog(t, l,
+		`{"type":"snapshot","tag":"1","path":"f","before_sha":"sha_x","after_sha":"sha_y","turn":1,"ts":1,"v":1}`+"\n"+
+			`{"type":"snapshot","tag":"2","path":"f","before_sha":"sha_x","after_sha":"sha_z","turn":2,"ts":2,"v":1}`+"\n")
+	m := newManager("c", work, l, &managerDeps{blobs: newBlobStore(cfg), index: newCrossChatIndex()})
+	res, err := m.Diff(context.Background(), "1", "2")
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if len(res) != 0 {
+		t.Errorf("Diff over an unchanged file returned %d changes, want 0: same SHA and existed at both endpoints must be skipped", len(res))
+	}
+}
+
+// TestReferencedBlobs_ReturnsRefsWhenLoaded pins that ReferencedBlobs
+// returns the chat's blob SHAs once the log is loaded: a snapshot with
+// distinct before/after content yields exactly two referenced blobs.
+func TestReferencedBlobs_ReturnsRefsWhenLoaded(t *testing.T) {
+	ctx := context.Background()
+	m, work := newTestManager(t, "rb")
+	f := filepath.Join(work, "f.txt")
+	if err := os.WriteFile(f, []byte("before-content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AdvanceTurn(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Snapshot(ctx, "f.txt", []byte("after-content"), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	refs := m.ReferencedBlobs(ctx)
+	if len(refs) != 2 {
+		t.Errorf("ReferencedBlobs() returned %d SHAs, want 2 (beforeSHA + afterSHA)", len(refs))
+	}
+}

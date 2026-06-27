@@ -67,6 +67,39 @@ func TestBlockAccumulators(t *testing.T) {
 			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
 		}
 	})
+
+	t.Run("consecutive thinking deltas coalesce into one block", func(t *testing.T) {
+		buf := &Buffer{}
+		i0 := buf.AppendThinkingDelta("aaa")
+		i1 := buf.AppendThinkingDelta("bbb")
+		if i0 != 0 || i1 != 0 {
+			t.Errorf("expected both deltas to land on block 0, got %d / %d", i0, i1)
+		}
+		if got, want := len(buf.Blocks), 1; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[0].Thinking, "aaabbb"; got != want {
+			t.Errorf("Blocks[0].Thinking = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("thinking after a non-thinking block starts a new block", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendTextDelta("answer")
+		i := buf.AppendThinkingDelta("reasoning")
+		if i != 1 {
+			t.Errorf("thinking-after-text block index = %d, want 1", i)
+		}
+		if got, want := len(buf.Blocks), 2; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[1].Type, api.BlockThinking; got != want {
+			t.Errorf("Blocks[1].Type = %q, want %q", got, want)
+		}
+		if got, want := buf.Blocks[1].Thinking, "reasoning"; got != want {
+			t.Errorf("Blocks[1].Thinking = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestTrackFileChanges(t *testing.T) {
@@ -154,8 +187,10 @@ func TestComputeDuration(t *testing.T) {
 	// Record start, then compute.
 	buf.RecordToolStart("tool-1")
 	dur := buf.ComputeDuration("tool-1")
-	if dur < 0 {
-		t.Errorf("duration = %d, want >= 0", dur)
+	// Elapsed must be a small non-negative value. A `now + start` defect
+	// would yield roughly twice the epoch-milli count (trillions of ms).
+	if dur < 0 || dur > 60_000 {
+		t.Errorf("duration = %d, want within [0, 60000] ms", dur)
 	}
 	// Second call returns 0 (entry removed).
 	if got := buf.ComputeDuration("tool-1"); got != 0 {
@@ -172,5 +207,25 @@ func TestRecordToolStart(t *testing.T) {
 	}
 	if _, ok := buf.ToolStartTimes["tool-1"]; !ok {
 		t.Error("tool-1 not recorded")
+	}
+}
+
+// TestTrackFileChanges_LineCounts verifies per-file added/removed line
+// counts derive from the newline counts in the new and old text.
+func TestTrackFileChanges_LineCounts(t *testing.T) {
+	buf := &Buffer{}
+	buf.TrackFileChanges([]api.ToolDiff{
+		{Path: "f.go", NewText: "a\nb\nc", OldText: "x\ny\nz\nw"},
+	}, false)
+	fc := buf.ChangedFiles["f.go"]
+	if fc == nil {
+		t.Fatal(`ChangedFiles["f.go"] is nil`)
+	}
+	// "a\nb\nc" has 2 newlines; "x\ny\nz\nw" has 3.
+	if got, want := fc.LinesAdded, 2; got != want {
+		t.Errorf("LinesAdded = %d, want %d", got, want)
+	}
+	if got, want := fc.LinesRemoved, 3; got != want {
+		t.Errorf("LinesRemoved = %d, want %d", got, want)
 	}
 }

@@ -2,9 +2,11 @@ package filehandler
 
 import (
 	"archive/zip"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -15,7 +17,6 @@ const (
 	maxZipFiles = 10_000
 )
 
-//nolint:gocyclo // streaming zip writer threads many cases (security checks, recursion, flushing) into one handler; splitting hurts the linear-flow shape readers expect
 func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		api.MethodNotAllowed(w)
@@ -33,14 +34,9 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve all paths upfront before streaming (can't send error after headers).
-	type resolved struct{ abs, rel string }
-	var paths []resolved
-	for _, p := range req.Paths {
-		abs := resolveOrForbid(w, p)
-		if abs == "" {
-			return
-		}
-		paths = append(paths, resolved{abs, h.relPath(abs)})
+	paths, ok := h.resolveZipPaths(w, req.Paths)
+	if !ok {
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/zip")
@@ -50,65 +46,117 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	defer zw.Close()
 
 	flusher, _ := w.(http.Flusher)
-	ctx := r.Context()
-	var totalBytes int64
-	var fileCount int
-
-	var addFile func(rel, zipName string) bool
-	addFile = func(rel, zipName string) bool {
-		if ctx.Err() != nil || fileCount >= maxZipFiles || totalBytes >= maxZipBytes {
-			return false
-		}
-		f, err := h.root.Open(rel)
-		if err != nil {
-			slog.Warn("filehandler: zip open failed", "path", rel, "error", err)
-			return true // skip
-		}
-		defer f.Close()
-
-		info, err := f.Stat()
-		if err != nil {
-			slog.Warn("filehandler: zip stat failed", "path", rel, "error", err)
-			return true
-		}
-		if info.IsDir() {
-			entries, readErr := f.ReadDir(-1)
-			if readErr != nil {
-				slog.Warn("filehandler: zip readdir failed", "path", rel, "error", readErr)
-				return true
-			}
-			for _, e := range entries {
-				if !addFile(filepath.Join(rel, e.Name()), filepath.Join(zipName, e.Name())) {
-					return false
-				}
-			}
-			return true
-		}
-
-		fw, err := zw.Create(zipName)
-		if err != nil {
-			return false
-		}
-		n, _ := io.Copy(fw, f)
-		totalBytes += n
-		fileCount++
-		if flusher != nil {
-			flusher.Flush()
-		}
-		if totalBytes >= maxZipBytes {
-			slog.Warn("filehandler: zip size cap reached", "bytes", totalBytes)
-			return false
-		}
-		if fileCount >= maxZipFiles {
-			slog.Warn("filehandler: zip file cap reached", "count", fileCount)
-			return false
-		}
-		return true
-	}
-
+	z := &zipStream{h: h, zw: zw, flusher: flusher, ctx: r.Context()}
 	for _, p := range paths {
-		if !addFile(p.rel, filepath.Base(p.abs)) {
+		if !z.add(p.rel, filepath.Base(p.abs)) {
 			break
 		}
 	}
+}
+
+// zipPath pairs an absolute resolved path with its workspace-relative
+// form (the name os.Root operations expect).
+type zipPath struct{ abs, rel string }
+
+// resolveZipPaths resolves every requested path through the
+// path-containment guard BEFORE any bytes are written, so a rejection
+// can still surface as an HTTP 403 (headers aren't sent yet). Returns
+// ok=false once resolveOrForbid has written the rejection response.
+func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (paths []zipPath, ok bool) {
+	paths = make([]zipPath, 0, len(reqPaths))
+	for _, p := range reqPaths {
+		abs := resolveOrForbid(w, p)
+		if abs == "" {
+			return nil, false
+		}
+		paths = append(paths, zipPath{abs: abs, rel: h.relPath(abs)})
+	}
+	return paths, true
+}
+
+// zipStream carries the mutable accounting for one streaming-zip
+// response. Hoisting the directory walk onto named methods (instead of
+// a deeply-nested recursive closure) keeps handleDownloadZip's
+// control-flow flat; the size/count caps and the os.Root confinement
+// are unchanged.
+type zipStream struct {
+	h          *Handler
+	zw         *zip.Writer
+	flusher    http.Flusher
+	ctx        context.Context
+	totalBytes int64
+	fileCount  int
+}
+
+// capped reports whether streaming should stop: context cancelled, or
+// either the file-count or byte-size cap already reached.
+func (z *zipStream) capped() bool {
+	return z.ctx.Err() != nil || z.fileCount >= maxZipFiles || z.totalBytes >= maxZipBytes
+}
+
+// add writes one entry (file or directory, recursively) into the zip.
+// It returns false to stop the whole stream (caps hit, context
+// cancelled, or a fatal zip-writer error) and true to continue with
+// the next sibling. An unreadable entry is skipped (logged, true).
+func (z *zipStream) add(rel, zipName string) bool {
+	if z.capped() {
+		return false
+	}
+	f, err := z.h.root.Open(rel)
+	if err != nil {
+		slog.Warn("filehandler: zip open failed", "path", rel, "error", err)
+		return true // skip
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		slog.Warn("filehandler: zip stat failed", "path", rel, "error", err)
+		return true
+	}
+	if info.IsDir() {
+		return z.addDir(f, rel, zipName)
+	}
+	return z.writeFile(f, zipName)
+}
+
+// addDir recurses into every child of an open directory. A read
+// failure skips the directory (logged, true); a stop signal from any
+// child propagates as false.
+func (z *zipStream) addDir(f *os.File, rel, zipName string) bool {
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		slog.Warn("filehandler: zip readdir failed", "path", rel, "error", err)
+		return true
+	}
+	for _, e := range entries {
+		if !z.add(filepath.Join(rel, e.Name()), filepath.Join(zipName, e.Name())) {
+			return false
+		}
+	}
+	return true
+}
+
+// writeFile copies one regular file into the archive, updates the
+// running totals, flushes, and stops the stream once a cap is reached.
+func (z *zipStream) writeFile(f *os.File, zipName string) bool {
+	fw, err := z.zw.Create(zipName)
+	if err != nil {
+		return false
+	}
+	n, _ := io.Copy(fw, f)
+	z.totalBytes += n
+	z.fileCount++
+	if z.flusher != nil {
+		z.flusher.Flush()
+	}
+	if z.totalBytes >= maxZipBytes {
+		slog.Warn("filehandler: zip size cap reached", "bytes", z.totalBytes)
+		return false
+	}
+	if z.fileCount >= maxZipFiles {
+		slog.Warn("filehandler: zip file cap reached", "count", z.fileCount)
+		return false
+	}
+	return true
 }
