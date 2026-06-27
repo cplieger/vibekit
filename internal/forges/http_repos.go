@@ -63,33 +63,44 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 
 func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
 	if tail == "" {
-		switch r.Method {
-		case http.MethodGet:
-			state := ListState(r.URL.Query().Get("state"))
-			prs, err := p.ListPRs(r.Context(), repo, state)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, map[string]any{"prs": prs})
-		case http.MethodPost:
-			var params CreatePRParams
-			api.LimitBody(w, r, api.MaxJSONBody)
-			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-				api.BadRequest(w, "invalid json")
-				return
-			}
-			pr, err := p.CreatePR(r.Context(), repo, &params)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, pr)
-		default:
-			api.MethodNotAllowed(w)
-		}
+		h.handlePRCollection(w, r, p, repo)
 		return
 	}
+	h.handlePRAction(w, r, p, repo, tail)
+}
+
+// handlePRCollection serves the repo-level PR endpoints: list (GET) and
+// create (POST).
+func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
+	switch r.Method {
+	case http.MethodGet:
+		state := ListState(r.URL.Query().Get("state"))
+		prs, err := p.ListPRs(r.Context(), repo, state)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, map[string]any{"prs": prs})
+	case http.MethodPost:
+		var params CreatePRParams
+		api.LimitBody(w, r, api.MaxJSONBody)
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			api.BadRequest(w, "invalid json")
+			return
+		}
+		pr, err := p.CreatePR(r.Context(), repo, &params)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, pr)
+	default:
+		api.MethodNotAllowed(w)
+	}
+}
+
+// handlePRAction serves the per-PR action endpoints: merge and close.
+func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -125,33 +136,44 @@ func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p ForgeO
 
 func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
 	if tail == "" {
-		switch r.Method {
-		case http.MethodGet:
-			state := ListState(r.URL.Query().Get("state"))
-			issues, err := p.ListIssues(r.Context(), repo, state)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, map[string]any{"issues": issues})
-		case http.MethodPost:
-			var params CreateIssueParams
-			api.LimitBody(w, r, api.MaxJSONBody)
-			if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-				api.BadRequest(w, "invalid json")
-				return
-			}
-			issue, err := p.CreateIssue(r.Context(), repo, params)
-			if err != nil {
-				h.writeOpsError(w, err)
-				return
-			}
-			api.WriteJSON(w, issue)
-		default:
-			api.MethodNotAllowed(w)
-		}
+		h.handleIssueCollection(w, r, p, repo)
 		return
 	}
+	h.handleIssueAction(w, r, p, repo, tail)
+}
+
+// handleIssueCollection serves the repo-level issue endpoints: list (GET)
+// and create (POST).
+func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
+	switch r.Method {
+	case http.MethodGet:
+		state := ListState(r.URL.Query().Get("state"))
+		issues, err := p.ListIssues(r.Context(), repo, state)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, map[string]any{"issues": issues})
+	case http.MethodPost:
+		var params CreateIssueParams
+		api.LimitBody(w, r, api.MaxJSONBody)
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			api.BadRequest(w, "invalid json")
+			return
+		}
+		issue, err := p.CreateIssue(r.Context(), repo, params)
+		if err != nil {
+			h.writeOpsError(w, err)
+			return
+		}
+		api.WriteJSON(w, issue)
+	default:
+		api.MethodNotAllowed(w)
+	}
+}
+
+// handleIssueAction serves the per-issue action endpoints: close.
+func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {

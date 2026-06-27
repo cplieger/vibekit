@@ -356,3 +356,43 @@ func BenchmarkCrossChatIndex_ForgetChat(b *testing.B) {
 		})
 	}
 }
+
+// TestCrossChatIndex_TimestampTieKeepsIncumbent pins that on a
+// timestamp tie between two different chats the incumbent keeps the
+// slot (the newcomer must be strictly newer to take over).
+func TestCrossChatIndex_TimestampTieKeepsIncumbent(t *testing.T) {
+	idx := newCrossChatIndex()
+	idx.apply("A", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "aaa", TS: 100})
+	idx.apply("B", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "bbb", TS: 100}) // same ts, other chat
+	if got := idx.entries["P"].chatID; got != "A" {
+		t.Errorf("entries[P].chatID = %q, want %q: on a ts tie the incumbent chat keeps the slot", got, "A")
+	}
+}
+
+// TestCrossChatIndex_SameChatOverwritesRegardlessOfTimestamp pins that
+// a same-chat update always overwrites the incumbent, even when its
+// timestamp is older than the existing one.
+func TestCrossChatIndex_SameChatOverwritesRegardlessOfTimestamp(t *testing.T) {
+	idx := newCrossChatIndex()
+	idx.apply("A", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "first", TS: 100})
+	idx.apply("A", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "second", TS: 50}) // same chat, OLDER ts
+	if got := idx.entries["P"].expectedSHA; got != "second" {
+		t.Errorf("entries[P].expectedSHA = %q, want %q: same-chat updates overwrite regardless of ts", got, "second")
+	}
+}
+
+// TestCrossChatIndex_OwnershipTransferRemovesPriorOwner pins that when
+// a path's ownership transfers from chat A to chat B, A's byChat set
+// loses the path (and, being empty, is dropped) so the path isn't
+// owned by both chats.
+func TestCrossChatIndex_OwnershipTransferRemovesPriorOwner(t *testing.T) {
+	idx := newCrossChatIndex()
+	idx.apply("A", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "aaa", TS: 100})
+	idx.apply("B", &event{Kind: kindSnapshot, Path: "P", AfterSHA: "bbb", TS: 200}) // newer ts, other chat
+	if got := idx.entries["P"].chatID; got != "B" {
+		t.Fatalf("entries[P].chatID = %q, want B (transfer precondition)", got)
+	}
+	if n := len(idx.byChat["A"]); n != 0 {
+		t.Errorf("byChat[A] has %d paths after transfer to B, want 0: the prior owner's set must lose the path", n)
+	}
+}

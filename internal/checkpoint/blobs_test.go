@@ -292,3 +292,76 @@ func TestBlobStoreGetRejectsSymlink(t *testing.T) {
 		t.Errorf("symlink was unexpectedly removed: %v", err)
 	}
 }
+
+// TestBlobStore_GetAllowsExactlyContentCap pins the size boundary: a
+// blob of exactly contentCap bytes is at the cap, not over it, so Get
+// must return it rather than reject it as oversized.
+func TestBlobStore_GetAllowsExactlyContentCap(t *testing.T) {
+	ctx := context.Background()
+	b := newBlobStore(t.TempDir())
+	data := make([]byte, contentCap) // exactly at the cap (16 MiB)
+	h, err := b.Put(ctx, data)
+	if err != nil {
+		t.Fatalf("Put(contentCap bytes): %v", err)
+	}
+	got, err := b.Get(ctx, h)
+	if err != nil {
+		t.Fatalf("Get(blob of exactly contentCap bytes) = err %v, want nil (size==cap is not over the cap)", err)
+	}
+	if len(got) != contentCap {
+		t.Errorf("Get(cap-sized blob) returned %d bytes, want %d", len(got), contentCap)
+	}
+}
+
+// TestBlobStore_GetNoIntegrityWarnOnValidBlob pins the integrity check:
+// a blob whose content hashes to its own name is self-consistent, so
+// Get must not emit the integrity-failure log on a clean read.
+func TestBlobStore_GetNoIntegrityWarnOnValidBlob(t *testing.T) {
+	has := captureLogs(t)
+	ctx := context.Background()
+	b := newBlobStore(t.TempDir())
+	h, err := b.Put(ctx, []byte("valid-and-self-consistent"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if _, err := b.Get(ctx, h); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if has("integrity check FAILED") {
+		t.Errorf("Get(valid blob) emitted an integrity-FAILED log; the check must fire only when the content hash mismatches the name")
+	}
+}
+
+// TestSyncDir_NoLogWhenOpenFails pins that syncDir returns before
+// attempting a Sync when the directory can't be opened (e.g. it does
+// not exist), so it must not emit the "dir sync failed" breadcrumb.
+func TestSyncDir_NoLogWhenOpenFails(t *testing.T) {
+	has := captureLogs(t)
+	syncDir(filepath.Join(t.TempDir(), "definitely-does-not-exist"))
+	if has("dir sync failed") {
+		t.Errorf("syncDir(missing dir) emitted 'dir sync failed'; it must return before Sync when Open fails")
+	}
+}
+
+// TestSyncDir_NoLogOnSuccess pins that a successful directory fsync is
+// silent: syncDir logs only when Sync errors.
+func TestSyncDir_NoLogOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	// Precondition: directory fsync must succeed on this filesystem,
+	// otherwise syncDir would legitimately log and the assertion is moot.
+	probe, err := os.Open(dir)
+	if err != nil {
+		t.Skipf("cannot open temp dir: %v", err)
+	}
+	syncErr := probe.Sync()
+	_ = probe.Close()
+	if syncErr != nil {
+		t.Skipf("directory fsync unsupported on this fs: %v", syncErr)
+	}
+
+	has := captureLogs(t)
+	syncDir(dir)
+	if has("dir sync failed") {
+		t.Errorf("syncDir(valid dir, fsync ok) emitted 'dir sync failed'; it must log only when Sync errors")
+	}
+}

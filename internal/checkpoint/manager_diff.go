@@ -27,6 +27,17 @@ const (
 // types sub-package for backward compatibility.
 type FileChange = chktypes.FileChange
 
+// diffEntry is one file's pre-snapshotted (fromSHA, toSHA) tuple plus
+// its existence at each endpoint, captured under m.mu so the blob
+// reads and LCS computation can run without the lock.
+type diffEntry struct {
+	path      string
+	fromSHA   string
+	toSHA     string
+	fromExist bool
+	toExist   bool
+}
+
 // Diff returns per-file changes between two tags. Walks the event
 // log for every file touched in (from, to], compares the stored
 // blobs at the two endpoints, and returns a line-delta summary.
@@ -48,33 +59,50 @@ func (m *Manager) Diff(ctx context.Context, from, to Tag) ([]FileChange, error) 
 		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: to=%q", ErrTagNotFound, to)
 	}
-	// Normalize to ascending (from < to) so line counts are
-	// computed consistently. Note this flips semantic
-	// "from"/"to": a reverse query (to < from) returns the same
-	// Added/Removed counts but labels Status as if walking
-	// forward (Status "A" = "exists at normalized to, not at
-	// normalized from"), not as "undo of the forward diff".
-	// Callers that need direction-sensitive Status must order
-	// the tags themselves before calling Diff.
-	fromStr, toStr := string(from), string(to)
+	entries := m.collectDiffEntriesLocked(string(from), string(to))
+	m.mu.Unlock()
+
+	// Blob reads and LCS computation proceed without holding m.mu.
+	// Bounded-concurrency fan-out: each goroutine reads its two blobs
+	// and computes the line delta independently. The blob store is safe
+	// for concurrent reads (content-addressed, immutable after write).
+	out := make([]FileChange, len(entries))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for i, e := range entries {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			out[i] = m.computeFileChange(gctx, e)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return filterNonEmptyChanges(out), nil
+}
+
+// collectDiffEntriesLocked snapshots the (path, fromSHA, toSHA) tuples
+// for every file touched between from and to, skipping files unchanged
+// at both endpoints. Callers must hold m.mu; the state fields it reads
+// (tags, fileHistory, tagFiles) are append-only after replay so the
+// point-in-time read stays consistent once the lock is released.
+//
+// Normalizes to ascending (from < to) so line counts are computed
+// consistently. Note this flips semantic "from"/"to": a reverse query
+// (to < from) returns the same Added/Removed counts but labels Status
+// as if walking forward (Status "A" = "exists at normalized to, not at
+// normalized from"), not as "undo of the forward diff". Callers that
+// need direction-sensitive Status must order the tags themselves before
+// calling Diff.
+func (m *Manager) collectDiffEntriesLocked(from, to string) []diffEntry {
+	fromStr, toStr := from, to
 	if compareTags(fromStr, toStr) > 0 {
 		fromStr, toStr = toStr, fromStr
 	}
 	paths := m.state.filesTouchedBetween(fromStr, toStr)
-
-	// Snapshot the (path, fromSHA, toSHA) tuples under the lock,
-	// then release it before performing blob reads and LCS
-	// computation. The state fields Diff reads (tags, fileHistory,
-	// tagFiles) are append-only after replay and never mutated by
-	// concurrent operations in a way that invalidates a point-in-
-	// time read.
-	type diffEntry struct {
-		path      string
-		fromSHA   string
-		toSHA     string
-		fromExist bool
-		toExist   bool
-	}
 	entries := make([]diffEntry, 0, len(paths))
 	for _, p := range paths {
 		fromSHA, fromExisted := m.state.contentAtOrBeforeTag(p, fromStr)
@@ -90,47 +118,36 @@ func (m *Manager) Diff(ctx context.Context, from, to Tag) ([]FileChange, error) 
 			toExist:   toExisted,
 		})
 	}
-	m.mu.Unlock()
+	return entries
+}
 
-	// Blob reads and LCS computation proceed without holding m.mu.
-	// Bounded-concurrency fan-out: each goroutine reads its two blobs
-	// and computes the line delta independently. The blob store is safe
-	// for concurrent reads (content-addressed, immutable after write).
-	out := make([]FileChange, len(entries))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	for i, e := range entries {
-		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				return err
-			}
-			fc := FileChange{Path: e.path}
-			switch {
-			case !e.fromExist && e.toExist:
-				fc.Status = FileAdded
-			case e.fromExist && !e.toExist:
-				fc.Status = FileDeleted
-			default:
-				fc.Status = FileModified
-			}
-			fromData := m.safeGetBlob(gctx, e.fromSHA)
-			toData := m.safeGetBlob(gctx, e.toSHA)
-			added, removed := countLineDelta(gctx, fromData, toData)
-			fc.LinesAdded = added
-			fc.LinesRemoved = removed
-			out[i] = fc
-			return nil
-		})
+// computeFileChange reads the two endpoint blobs for one entry and
+// returns its FileChange (status + line delta). Runs without m.mu held;
+// the blob store is safe for concurrent reads.
+func (m *Manager) computeFileChange(ctx context.Context, e diffEntry) FileChange {
+	fc := FileChange{Path: e.path}
+	switch {
+	case !e.fromExist && e.toExist:
+		fc.Status = FileAdded
+	case e.fromExist && !e.toExist:
+		fc.Status = FileDeleted
+	default:
+		fc.Status = FileModified
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	// Filter out zero-value entries (shouldn't happen but defensive).
-	result := make([]FileChange, 0, len(out))
-	for _, fc := range out {
+	fromData := m.safeGetBlob(ctx, e.fromSHA)
+	toData := m.safeGetBlob(ctx, e.toSHA)
+	fc.LinesAdded, fc.LinesRemoved = countLineDelta(ctx, fromData, toData)
+	return fc
+}
+
+// filterNonEmptyChanges drops zero-value entries (a goroutine that
+// short-circuited on a cancelled context leaves an empty slot).
+func filterNonEmptyChanges(changes []FileChange) []FileChange {
+	result := make([]FileChange, 0, len(changes))
+	for _, fc := range changes {
 		if fc.Path != "" {
 			result = append(result, fc)
 		}
 	}
-	return result, nil
+	return result
 }

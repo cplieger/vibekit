@@ -340,3 +340,245 @@ func TestSanitizeEnv(t *testing.T) {
 		t.Errorf("USER dropped")
 	}
 }
+
+// setConfigHomeTemp points the per-CLI config root at a fresh temp dir
+// and restores the default when the test finishes.
+func setConfigHomeTemp(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	SetConfigHome(tmp)
+	t.Cleanup(func() { SetConfigHome("") })
+	return tmp
+}
+
+// TestTeaConfig_UpsertLoginReplacesMatchInPlace verifies that upserting a
+// login whose name matches an existing entry replaces that entry in place
+// and leaves the other logins untouched.
+func TestTeaConfig_UpsertLoginReplacesMatchInPlace(t *testing.T) {
+	c := &teaConfig{Logins: []teaLogin{
+		{Name: "github", URL: "https://github.com", Token: "tok-gh"},
+		{Name: "gitea", URL: "https://old.example.com", Token: "tok-old"},
+	}}
+
+	c.upsertLogin(teaLogin{Name: "gitea", URL: "https://new.example.com", Token: "tok-new"})
+
+	if len(c.Logins) != 2 {
+		t.Fatalf("upsertLogin(existing name) changed login count to %d, want 2: %+v", len(c.Logins), c.Logins)
+	}
+	if c.Logins[0] != (teaLogin{Name: "github", URL: "https://github.com", Token: "tok-gh"}) {
+		t.Errorf("first (non-matching) login was mutated: %+v", c.Logins[0])
+	}
+	if c.Logins[1] != (teaLogin{Name: "gitea", URL: "https://new.example.com", Token: "tok-new"}) {
+		t.Errorf("matching login not replaced in place: %+v", c.Logins[1])
+	}
+}
+
+// TestTeaConfig_UpsertLoginAppendsNewName verifies that upserting a
+// brand-new login name appends it and leaves existing logins intact.
+func TestTeaConfig_UpsertLoginAppendsNewName(t *testing.T) {
+	c := &teaConfig{Logins: []teaLogin{{Name: "github", URL: "https://github.com"}}}
+	c.upsertLogin(teaLogin{Name: "codeberg", URL: "https://codeberg.org"})
+	if len(c.Logins) != 2 || c.Logins[1].Name != "codeberg" {
+		t.Fatalf("upsertLogin(new name) = %+v, want [github, codeberg]", c.Logins)
+	}
+	if c.Logins[0].Name != "github" {
+		t.Errorf("existing login clobbered on append: %+v", c.Logins[0])
+	}
+}
+
+// TestRemoveToken_HostDefaulting verifies RemoveToken targets the kind's
+// default host when host is empty, and the exact host when one is given.
+func TestRemoveToken_HostDefaulting(t *testing.T) {
+	t.Run("empty_host_uses_default", func(t *testing.T) {
+		tmp := setConfigHomeTemp(t)
+		if err := writeGHHosts("github.com", "tok", "alice"); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		// host == "" defaults to github.com, so that entry is removed.
+		if err := RemoveToken(context.Background(), KindGitHub, ""); err != nil {
+			t.Fatalf("RemoveToken: %v", err)
+		}
+		hosts, err := loadGHHosts(filepath.Join(tmp, "gh", "hosts.yml"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if _, ok := hosts["github.com"]; ok {
+			t.Errorf("RemoveToken(KindGitHub, \"\") left github.com present: %+v", hosts)
+		}
+	})
+
+	t.Run("explicit_host_used_verbatim", func(t *testing.T) {
+		tmp := setConfigHomeTemp(t)
+		if err := writeGHHosts("github.com", "t1", "alice"); err != nil {
+			t.Fatalf("seed 1: %v", err)
+		}
+		if err := writeGHHosts("github.enterprise.example", "t2", "bob"); err != nil {
+			t.Fatalf("seed 2: %v", err)
+		}
+		// An explicit host is removed verbatim; the default host remains.
+		if err := RemoveToken(context.Background(), KindGitHub, "github.enterprise.example"); err != nil {
+			t.Fatalf("RemoveToken: %v", err)
+		}
+		hosts, err := loadGHHosts(filepath.Join(tmp, "gh", "hosts.yml"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if _, ok := hosts["github.enterprise.example"]; ok {
+			t.Errorf("explicit host github.enterprise.example should be removed: %+v", hosts)
+		}
+		if _, ok := hosts["github.com"]; !ok {
+			t.Errorf("github.com should remain after removing a different host: %+v", hosts)
+		}
+	})
+}
+
+// TestMakeID_HostDefaulting verifies MakeID fills in the kind's default
+// host for an empty host and uses an explicit host verbatim.
+func TestMakeID_HostDefaulting(t *testing.T) {
+	if got := MakeID(KindGitHub, ""); got != "github:github.com" {
+		t.Errorf("MakeID(KindGitHub, \"\") = %q, want %q", got, "github:github.com")
+	}
+	if got := MakeID(KindGitHub, "self.example"); got != "github:self.example" {
+		t.Errorf("MakeID(KindGitHub, %q) = %q, want %q", "self.example", got, "github:self.example")
+	}
+}
+
+// TestWriteGLabConfig_PreservesExistingHosts verifies a second writeGLabConfig
+// keeps the host stored by the first write (the loaded map is reused, never
+// wiped).
+func TestWriteGLabConfig_PreservesExistingHosts(t *testing.T) {
+	tmp := setConfigHomeTemp(t)
+	if err := writeGLabConfig("gitlab.com", "glpat-1", "alice"); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	if err := writeGLabConfig("self.example", "glpat-2", "bob"); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+	cfg, err := loadGLabConfig(filepath.Join(tmp, "glab-cli", "config.yml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := cfg.Hosts["gitlab.com"]; !ok {
+		t.Errorf("first host gitlab.com lost after second write: %+v", cfg.Hosts)
+	}
+	if _, ok := cfg.Hosts["self.example"]; !ok {
+		t.Errorf("second host self.example missing: %+v", cfg.Hosts)
+	}
+}
+
+// TestRemoveGLabHost_PerformsRemoval verifies removeGLabHost deletes the
+// named host while leaving the others in place.
+func TestRemoveGLabHost_PerformsRemoval(t *testing.T) {
+	tmp := setConfigHomeTemp(t)
+	if err := writeGLabConfig("gitlab.com", "glpat-1", "alice"); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	if err := writeGLabConfig("self.example", "glpat-2", "bob"); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+	if err := removeGLabHost("gitlab.com"); err != nil {
+		t.Fatalf("removeGLabHost: %v", err)
+	}
+	cfg, err := loadGLabConfig(filepath.Join(tmp, "glab-cli", "config.yml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := cfg.Hosts["gitlab.com"]; ok {
+		t.Errorf("removeGLabHost did not remove gitlab.com: %+v", cfg.Hosts)
+	}
+	if _, ok := cfg.Hosts["self.example"]; !ok {
+		t.Errorf("self.example should remain: %+v", cfg.Hosts)
+	}
+}
+
+// TestMarshalGLabConfig_EditorLine verifies the editor line is emitted only
+// when an editor is configured.
+func TestMarshalGLabConfig_EditorLine(t *testing.T) {
+	withEditor := marshalGLabConfig(&glabConfig{Editor: "vim", Hosts: map[string]glabHostEntry{}})
+	if !strings.Contains(withEditor, "editor: vim") {
+		t.Errorf("marshalGLabConfig(Editor=vim) = %q, want it to contain %q", withEditor, "editor: vim")
+	}
+	noEditor := marshalGLabConfig(&glabConfig{
+		Editor: "",
+		Hosts:  map[string]glabHostEntry{"gitlab.com": {Token: "t"}},
+	})
+	if strings.Contains(noEditor, "editor:") {
+		t.Errorf("marshalGLabConfig(Editor=\"\") = %q, want no editor line", noEditor)
+	}
+}
+
+// TestMarshalGLabConfig_HostsHeader verifies the hosts header is omitted when
+// there are no hosts and present when there is at least one.
+func TestMarshalGLabConfig_HostsHeader(t *testing.T) {
+	empty := marshalGLabConfig(&glabConfig{Hosts: map[string]glabHostEntry{}})
+	if strings.Contains(empty, "hosts:") {
+		t.Errorf("marshalGLabConfig(no hosts) = %q, want no hosts header", empty)
+	}
+	populated := marshalGLabConfig(&glabConfig{Hosts: map[string]glabHostEntry{"gitlab.com": {Token: "t"}}})
+	if !strings.Contains(populated, "hosts:") {
+		t.Errorf("marshalGLabConfig(one host) = %q, want hosts header", populated)
+	}
+}
+
+// TestMarshalGLabConfig_ProtocolDefault verifies an empty git protocol
+// defaults to https while a set protocol is preserved.
+func TestMarshalGLabConfig_ProtocolDefault(t *testing.T) {
+	ssh := marshalGLabConfig(&glabConfig{
+		Hosts: map[string]glabHostEntry{"gitlab.com": {Token: "t", Protocol: "ssh"}},
+	})
+	if !strings.Contains(ssh, "git_protocol: ssh") {
+		t.Errorf("marshalGLabConfig(Protocol=ssh) = %q, want it to preserve %q", ssh, "git_protocol: ssh")
+	}
+	def := marshalGLabConfig(&glabConfig{
+		Hosts: map[string]glabHostEntry{"gitlab.com": {Token: "t", Protocol: ""}},
+	})
+	if !strings.Contains(def, "git_protocol: https") {
+		t.Errorf("marshalGLabConfig(Protocol=\"\") = %q, want default %q", def, "git_protocol: https")
+	}
+}
+
+// TestRemoveTeaHost_PerformsRemoval verifies removeTeaHost deletes the named
+// login while leaving the others in place.
+func TestRemoveTeaHost_PerformsRemoval(t *testing.T) {
+	tmp := setConfigHomeTemp(t)
+	if err := writeTeaConfig("codeberg.org", "tok-1", "alice"); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	if err := writeTeaConfig("gitea.example", "tok-2", "bob"); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+	if err := removeTeaHost("codeberg.org"); err != nil {
+		t.Fatalf("removeTeaHost: %v", err)
+	}
+	cfg, err := loadTeaConfig(filepath.Join(tmp, "tea", "config.yml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, l := range cfg.Logins {
+		if l.Name == "codeberg.org" {
+			t.Errorf("removeTeaHost did not remove codeberg.org: %+v", cfg.Logins)
+		}
+	}
+	var hasGitea bool
+	for _, l := range cfg.Logins {
+		if l.Name == "gitea.example" {
+			hasGitea = true
+		}
+	}
+	if !hasGitea {
+		t.Errorf("gitea.example should remain: %+v", cfg.Logins)
+	}
+}
+
+// TestMarshalTeaConfig_LoginsHeader verifies the logins header is omitted when
+// there are no logins and present when there is at least one.
+func TestMarshalTeaConfig_LoginsHeader(t *testing.T) {
+	empty := marshalTeaConfig(&teaConfig{})
+	if strings.Contains(empty, "logins:") {
+		t.Errorf("marshalTeaConfig(no logins) = %q, want no logins header", empty)
+	}
+	populated := marshalTeaConfig(&teaConfig{Logins: []teaLogin{{Name: "codeberg.org", Token: "t"}}})
+	if !strings.Contains(populated, "logins:") {
+		t.Errorf("marshalTeaConfig(one login) = %q, want logins header", populated)
+	}
+}

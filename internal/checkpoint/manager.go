@@ -128,31 +128,12 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 		return nil
 	}
 
-	// Slow path: release m.mu, perform replay via singleflight.
+	// Slow path: release m.mu, perform replay via singleflight so
+	// concurrent callers coalesce on a single replay.
 	m.mu.Unlock()
-
 	result, err, _ := m.loadSF.Do("load", func() (any, error) {
-		// Check again — another goroutine may have completed.
-		if res := m.loadResult.Load(); res != nil {
-			return res, nil
-		}
-		events, readErr := m.log.Read(ctx)
-		if readErr != nil {
-			outcome := &loadOutcome{err: readErr}
-			m.loadResult.Store(outcome)
-			return outcome, nil
-		}
-		st := replay(events)
-		if m.index != nil {
-			for i := range events {
-				m.index.apply(m.chatID, &events[i])
-			}
-		}
-		outcome := &loadOutcome{state: st}
-		m.loadResult.Store(outcome)
-		return outcome, nil
+		return m.loadOnce(ctx), nil
 	})
-
 	// Re-acquire m.mu before returning (INVARIANT).
 	m.mu.Lock()
 
@@ -169,15 +150,55 @@ func (m *Manager) ensureLoaded(ctx context.Context) error {
 	}
 
 	// Recovery: if a dangling restore_started exists, re-run.
-	if m.state.pendingRestore != "" {
-		tag := m.state.pendingRestore
-		slog.Info("checkpoint: recovering interrupted restore",
-			"chat_id", m.chatID, "tag", tag)
-		if _, recErr := m.restoreLocked(ctx, tag, true); recErr != nil {
-			slog.Error("checkpoint: restore recovery failed",
-				"chat_id", m.chatID, "tag", tag, "error", recErr)
-			return recErr
+	return m.recoverPendingRestoreLocked(ctx)
+}
+
+// loadOnce performs the one-shot event-log replay shared by all
+// concurrent ensureLoaded callers via singleflight. It reads the log,
+// builds the derived state, and applies every event to the shared
+// cross-chat index, memoizing the outcome in m.loadResult so the fast
+// path can skip the replay. Always returns non-nil; a read failure is
+// carried in loadOutcome.err rather than returned, so the singleflight
+// wrapper never reports an error.
+func (m *Manager) loadOnce(ctx context.Context) *loadOutcome {
+	// Another goroutine may have completed the load between the
+	// caller's fast-path miss and this call.
+	if res := m.loadResult.Load(); res != nil {
+		return res
+	}
+	events, readErr := m.log.Read(ctx)
+	if readErr != nil {
+		outcome := &loadOutcome{err: readErr}
+		m.loadResult.Store(outcome)
+		return outcome
+	}
+	st := replay(events)
+	if m.index != nil {
+		for i := range events {
+			m.index.apply(m.chatID, &events[i])
 		}
+	}
+	outcome := &loadOutcome{state: st}
+	m.loadResult.Store(outcome)
+	return outcome
+}
+
+// recoverPendingRestoreLocked re-runs an interrupted restore when the
+// replayed state carries a dangling restore_started (no matching
+// restore_committed). Idempotent: already-renamed files are no-ops, so
+// a crash during recovery is safe to repeat. Caller must hold m.mu;
+// returns with m.mu held.
+func (m *Manager) recoverPendingRestoreLocked(ctx context.Context) error {
+	if m.state.pendingRestore == "" {
+		return nil
+	}
+	tag := m.state.pendingRestore
+	slog.Info("checkpoint: recovering interrupted restore",
+		"chat_id", m.chatID, "tag", tag)
+	if _, recErr := m.restoreLocked(ctx, tag, true); recErr != nil {
+		slog.Error("checkpoint: restore recovery failed",
+			"chat_id", m.chatID, "tag", tag, "error", recErr)
+		return recErr
 	}
 	return nil
 }

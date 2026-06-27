@@ -336,33 +336,11 @@ func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag stri
 			continue
 		}
 		g.Go(func() error {
-			data, getErr := m.blobs.Get(gctx, p.sha)
-			if getErr != nil {
-				return fmt.Errorf("restore: get blob %s for %s: %w", p.sha, p.path, getErr)
+			tmp, stageErr := m.stageOneBlob(gctx, p)
+			if stageErr != nil {
+				return stageErr
 			}
-			parentDir := filepath.Dir(p.abs)
-			if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
-				return fmt.Errorf("restore: mkdir for %s: %w", p.path, mkErr)
-			}
-			tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(p.abs)+RestoreStageSuffix)
-			if tErr != nil {
-				return fmt.Errorf("restore: create temp for %s: %w", p.path, tErr)
-			}
-			if _, wErr := tmpFile.Write(data); wErr != nil {
-				tmpFile.Close()
-				_ = os.Remove(tmpFile.Name())
-				return fmt.Errorf("restore: stage %s: %w", p.path, wErr)
-			}
-			if sErr := tmpFile.Sync(); sErr != nil {
-				tmpFile.Close()
-				_ = os.Remove(tmpFile.Name())
-				return fmt.Errorf("restore: fsync stage %s: %w", p.path, sErr)
-			}
-			if cErr := tmpFile.Close(); cErr != nil {
-				_ = os.Remove(tmpFile.Name())
-				return fmt.Errorf("restore: close stage %s: %w", p.path, cErr)
-			}
-			stages[i].tmp = tmpFile.Name()
+			stages[i].tmp = tmp
 			return nil
 		})
 	}
@@ -371,6 +349,41 @@ func (m *Manager) stageBlobReads(ctx context.Context, touched []string, tag stri
 		return nil, err
 	}
 	return stages, nil
+}
+
+// stageOneBlob reads plan.sha and writes it to a fresh temp file beside
+// plan.abs, returning the staged temp path. The random-suffix temp
+// (os.CreateTemp) closes the symlink-TOCTOU that a deterministic
+// staging path would open. On any failure the partial temp is removed
+// so a failed restore leaves no orphan .vibekit-restore-* siblings.
+func (m *Manager) stageOneBlob(ctx context.Context, plan restorePlan) (string, error) {
+	data, getErr := m.blobs.Get(ctx, plan.sha)
+	if getErr != nil {
+		return "", fmt.Errorf("restore: get blob %s for %s: %w", plan.sha, plan.path, getErr)
+	}
+	parentDir := filepath.Dir(plan.abs)
+	if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+		return "", fmt.Errorf("restore: mkdir for %s: %w", plan.path, mkErr)
+	}
+	tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(plan.abs)+RestoreStageSuffix)
+	if tErr != nil {
+		return "", fmt.Errorf("restore: create temp for %s: %w", plan.path, tErr)
+	}
+	if _, wErr := tmpFile.Write(data); wErr != nil {
+		tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("restore: stage %s: %w", plan.path, wErr)
+	}
+	if sErr := tmpFile.Sync(); sErr != nil {
+		tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("restore: fsync stage %s: %w", plan.path, sErr)
+	}
+	if cErr := tmpFile.Close(); cErr != nil {
+		_ = os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("restore: close stage %s: %w", plan.path, cErr)
+	}
+	return tmpFile.Name(), nil
 }
 
 // applyStagesLocked executes phase 2 of Restore. Callers hold m.mu.

@@ -1,6 +1,7 @@
 package filehandler
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1961,5 +1962,379 @@ func BenchmarkFileAction_Copy(b *testing.B) {
 				os.Remove(filepath.Join(dir, "dst.bin"))
 			}
 		})
+	}
+}
+
+// --- Boundary and error-propagation tests -----------------------------
+//
+// These pin observable outcomes at size boundaries (mkdir/touch/delete
+// depth guards, streamCopy/readFile/download size caps) and on error
+// paths (action functions must propagate the raw OS error, never
+// swallow it or return errHandled).
+
+// discardStatusRecorder captures the HTTP status code without buffering
+// the response body, so the maxCopySize download-boundary test never
+// allocates the served payload.
+type discardStatusRecorder struct {
+	hdr     http.Header
+	code    int
+	written bool
+}
+
+func (s *discardStatusRecorder) Header() http.Header {
+	if s.hdr == nil {
+		s.hdr = http.Header{}
+	}
+	return s.hdr
+}
+
+func (s *discardStatusRecorder) WriteHeader(code int) {
+	if !s.written {
+		s.code = code
+		s.written = true
+	}
+}
+
+func (s *discardStatusRecorder) Write(p []byte) (int, error) {
+	if !s.written {
+		s.code = http.StatusOK
+		s.written = true
+	}
+	return len(p), nil
+}
+
+// actionMkdir's depth guard rejects only paths with fewer than two
+// segments, so "/a/b" (exactly two slashes) is allowed and created.
+func TestAction_Mkdir_BoundaryAtTwoSegments(t *testing.T) {
+	h, dir, _ := testDir(t)
+	resolved := "/a/b" // count("/a/b") == 2
+	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err != nil {
+		t.Fatalf("actionMkdir(%q) = %v, want nil (a 2-segment path must be allowed to mkdir)", resolved, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "a", "b")); statErr != nil {
+		t.Errorf("actionMkdir(%q): expected dir created at <root>/a/b, stat err: %v", resolved, statErr)
+	}
+}
+
+// actionMkdir returns the raw MkdirAll error (MkdirAll under a regular
+// file is ENOTDIR) rather than swallowing it or returning errHandled.
+func TestAction_Mkdir_PropagatesError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved := "/afile/sub" // relPath "afile/sub"; "afile" is a file -> MkdirAll ENOTDIR
+	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err == nil {
+		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", resolved)
+	}
+	if errors.Is(err, errHandled) {
+		t.Fatalf("actionMkdir(%q) returned errHandled; expected the raw MkdirAll error", resolved)
+	}
+}
+
+// actionTouch shares the mkdir depth boundary: "/x/y" (two slashes) is
+// allowed and the file is created under an existing parent.
+func TestAction_Touch_BoundaryAtTwoSegments(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.Mkdir(filepath.Join(dir, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved := "/x/y" // count == 2; parent "x" exists so OpenFile can create
+	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err != nil {
+		t.Fatalf("actionTouch(%q) = %v, want nil (a 2-segment path must be allowed to touch)", resolved, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "x", "y")); statErr != nil {
+		t.Errorf("actionTouch(%q): expected file created at <root>/x/y, stat err: %v", resolved, statErr)
+	}
+}
+
+// actionTouch returns the raw OpenFile error (OpenFile under a regular
+// file is ENOTDIR) rather than swallowing it or closing a nil file.
+func TestAction_Touch_PropagatesOpenError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "pfile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved := "/pfile/child" // parent "pfile" is a file -> OpenFile ENOTDIR
+	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err == nil {
+		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", resolved)
+	}
+	if errors.Is(err, errHandled) {
+		t.Fatalf("actionTouch(%q) returned errHandled; expected the raw OpenFile error", resolved)
+	}
+}
+
+// actionDelete allows a 2-segment path ("/p/q") and removes the target;
+// the depth guard rejects only fewer-than-two-segment paths.
+func TestAction_Delete_BoundaryAtTwoSegments(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "p", "q"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved := "/p/q" // segments == 2
+	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err != nil {
+		t.Fatalf("actionDelete(%q) = %v, want nil (a 2-segment path must be deletable)", resolved, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "p", "q")); !os.IsNotExist(statErr) {
+		t.Errorf("actionDelete(%q): expected <root>/p/q removed, stat err = %v", resolved, statErr)
+	}
+}
+
+// actionDelete returns the raw RemoveAll error when the path traverses
+// an escaping symlink (os.Root refuses the operation).
+func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.Symlink("/etc", filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	resolved := filepath.Join(dir, "escape", "leaf") // traverses an escaping symlink
+	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	if err == nil {
+		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", resolved)
+	}
+	if errors.Is(err, errHandled) {
+		t.Fatalf("actionDelete(%q) returned errHandled; expected the raw RemoveAll error", resolved)
+	}
+}
+
+// actionRename surfaces the raw Rename error (renaming a missing source)
+// past every guard rather than returning errHandled.
+func TestAction_Rename_PropagatesError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	resolved := filepath.Join(dir, "ghost.txt") // source does not exist
+	err := actionRename(context.Background(), httptest.NewRecorder(),
+		fileAction{Name: "renamed.txt"}, resolved, h)
+	if err == nil {
+		t.Fatalf("actionRename(%q -> renamed.txt) = nil, want non-nil (renaming a missing source must error)", resolved)
+	}
+	if errors.Is(err, errHandled) {
+		t.Fatalf("actionRename returned errHandled; expected the raw Rename error (a guard fired before Rename)")
+	}
+}
+
+// actionMove surfaces the raw Rename error for a missing source, same
+// shape as rename.
+func TestAction_Move_PropagatesError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	resolved := filepath.Join(dir, "ghost.txt") // source does not exist
+	err := actionMove(context.Background(), httptest.NewRecorder(),
+		fileAction{Dest: filepath.Join(dir, "moved.txt")}, resolved, h)
+	if err == nil {
+		t.Fatalf("actionMove(%q) = nil, want non-nil (moving a missing source must error)", resolved)
+	}
+	if errors.Is(err, errHandled) {
+		t.Fatalf("actionMove returned errHandled; expected the raw Rename error")
+	}
+}
+
+// streamCopy copies a file whose size exactly equals the size limit
+// without an oversize error or truncation: the oversize guard and the
+// post-copy length check are both strictly-greater-than, and the
+// LimitReader reads limit+1 bytes.
+func TestStreamCopy_AtExactCap(t *testing.T) {
+	h, dir, _ := testDir(t)
+	src := []byte("0123456789") // size passed as the per-call limit below
+	if err := os.WriteFile(filepath.Join(dir, "in"), src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcPath := filepath.Join(dir, "in")
+	destPath := filepath.Join(dir, "out")
+
+	n, err := streamCopy(context.Background(), srcPath, destPath, int64(len(src)), h)
+	if err != nil {
+		t.Fatalf("streamCopy(size == cap) error = %v, want nil (a file exactly at the cap is not oversize)", err)
+	}
+	if n != int64(len(src)) {
+		t.Fatalf("streamCopy(size == cap) n = %d, want %d (the full file must be copied)", n, len(src))
+	}
+	got, readErr := os.ReadFile(destPath)
+	if readErr != nil {
+		t.Fatalf("reading copied dest: %v", readErr)
+	}
+	if !bytes.Equal(got, src) {
+		t.Errorf("streamCopy dest = %q, want %q (content must not be truncated)", got, src)
+	}
+}
+
+// streamCopy returns the rename error when the temp file cannot replace
+// the destination (renaming a file over a non-empty directory fails).
+func TestStreamCopy_PropagatesRenameError(t *testing.T) {
+	h, dir, _ := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "src"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "destdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "destdir", "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := streamCopy(context.Background(),
+		filepath.Join(dir, "src"), filepath.Join(dir, "destdir"), maxCopySize, h)
+	if err == nil {
+		t.Fatalf("streamCopy(dest is a non-empty dir) = (n=%d, nil), want non-nil error (rename over a directory must fail)", n)
+	}
+}
+
+// listEntries at root keeps visible files and filters dotfiles.
+func TestListEntries_FiltersDotfilesAtRoot(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "visible.txt"), []byte("v"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".hidden"), []byte("h"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := listEntries(context.Background(), entries, "/")
+	names := map[string]bool{}
+	for _, f := range got {
+		names[f.Name] = true
+	}
+	if !names["visible.txt"] {
+		t.Errorf("listEntries at root dropped %q; non-dotfiles must be kept", "visible.txt")
+	}
+	if names[".hidden"] {
+		t.Errorf("listEntries at root kept %q; dotfiles must be filtered", ".hidden")
+	}
+}
+
+// Reading a file whose size exactly equals maxFileSize returns 200 with
+// the full content: the size guard and the post-read length check are
+// both strictly-greater-than, and the LimitReader reads maxFileSize+1.
+func TestReadFile_AtExactMaxSize(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	content := bytes.Repeat([]byte("a"), maxFileSize) // exactly the cap; not binary
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/file?path="+prefix+"/big.txt")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET big.txt (size == maxFileSize) status = %d, want 200 (a file exactly at the cap is readable)", rec.Code)
+	}
+	var resp struct {
+		Content string `json:"content"`
+		Path    string `json:"path"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal read response: %v", err)
+	}
+	if len(resp.Content) != maxFileSize {
+		t.Errorf("read content length = %d, want %d (the full file must be returned, not truncated)",
+			len(resp.Content), maxFileSize)
+	}
+}
+
+// Downloading a file whose size exactly equals maxCopySize returns 200;
+// the download size guard is strictly-greater-than. A sparse file + a
+// discarding ResponseWriter keep this cheap.
+func TestHandleDownload_AtExactMaxCopySize(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	f, err := os.Create(filepath.Join(dir, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxCopySize); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/file/download?path="+prefix+"/big.bin", nil)
+	sw := &discardStatusRecorder{}
+	h.handleDownload(sw, req)
+	if sw.code != http.StatusOK {
+		t.Fatalf("download (size == maxCopySize) status = %d, want 200 (a file exactly at the cap is downloadable)", sw.code)
+	}
+}
+
+// writeOneUpload propagates the write error when the destination's
+// parent directory is missing.
+func TestWriteOneUpload_PropagatesError(t *testing.T) {
+	req := multipartUpload(t, "ignored", map[string][]byte{"a.txt": []byte("hi")})
+	if err := req.ParseMultipartForm(1 << 20); err != nil {
+		t.Fatal(err)
+	}
+	fhs := req.MultipartForm.File["files"]
+	if len(fhs) == 0 {
+		t.Fatal("no multipart file parsed")
+	}
+	h, dir, _ := testDir(t)
+	dest := filepath.Join(dir, "missing-dir", "x.txt") // parent does not exist
+	n, err := h.writeOneUpload(context.Background(), dest, fhs[0])
+	if err == nil {
+		t.Fatalf("writeOneUpload(dest with missing parent) = (n=%d, nil), want non-nil error", n)
+	}
+}
+
+// --- /api/files/download (POST zip stream) ---------------------------
+
+// handleDownloadZip streams a workspace dir/file selection as a zip:
+// top-level entries are named by their base, and a selected directory
+// recurses with the directory base as the zip-path prefix. Every path
+// is resolved through the workspace-containment guard before any bytes
+// are written.
+func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("bravo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"paths":["` + prefix + `/a.txt","` + prefix + `/sub"]}`
+	rec := postReq(t, h, "/api/files/download", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("Content-Type = %q, want application/zip", ct)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open zip entry %q: %v", f.Name, err)
+		}
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		got[f.Name] = string(data)
+	}
+	if got["a.txt"] != "alpha" {
+		t.Errorf("zip entry a.txt = %q, want %q", got["a.txt"], "alpha")
+	}
+	if want := filepath.Join("sub", "b.txt"); got[want] != "bravo" {
+		t.Errorf("zip entry %q = %q, want %q (directory must recurse)", want, got[want], "bravo")
+	}
+}
+
+// handleDownloadZip rejects a non-POST method and an empty path list
+// before streaming anything.
+func TestHandleDownloadZip_Rejects(t *testing.T) {
+	h, _, _ := testDir(t)
+
+	if rec := getReq(t, h, "/api/files/download"); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET status = %d, want 405", rec.Code)
+	}
+	if rec := postReq(t, h, "/api/files/download", `{"paths":[]}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("empty paths status = %d, want 400", rec.Code)
 	}
 }

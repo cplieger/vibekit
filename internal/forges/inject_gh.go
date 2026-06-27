@@ -68,6 +68,48 @@ type ghHostEntry struct {
 	GitProtocol string
 }
 
+// ghHostsParser accumulates gh's host map while scanning hosts.yml.
+type ghHostsParser struct {
+	hosts      map[string]ghHostEntry
+	current    string
+	hasCurrent bool
+}
+
+// parseLine folds a single hosts.yml line into the accumulating host map.
+func (p *ghHostsParser) parseLine(line string) {
+	// Top-level keys (host names) start at column 0 with a colon.
+	if !strings.HasPrefix(line, " ") && strings.HasSuffix(strings.TrimSpace(line), ":") {
+		p.current = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ":"))
+		p.hasCurrent = p.current != ""
+		if p.hasCurrent {
+			p.hosts[p.current] = ghHostEntry{}
+		}
+		return
+	}
+	if !p.hasCurrent {
+		return
+	}
+	key, val, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return
+	}
+	entry := p.hosts[p.current]
+	entry.setField(strings.TrimSpace(key), strings.TrimSpace(val))
+	p.hosts[p.current] = entry
+}
+
+// setField assigns a parsed key/value onto a host entry.
+func (e *ghHostEntry) setField(key, val string) {
+	switch key {
+	case "oauth_token":
+		e.OAuthToken = val
+	case fieldUser:
+		e.User = val
+	case "git_protocol":
+		e.GitProtocol = val
+	}
+}
+
 // loadGHHosts parses a gh hosts.yml file. We don't need a full YAML
 // parser — gh's format is a strict subset (host → flat key/value).
 // Returns an empty map for a missing file.
@@ -80,40 +122,9 @@ func loadGHHosts(path string) (map[string]ghHostEntry, error) {
 		}
 		return nil, err
 	}
-	var current string
-	var hasCurrent bool
+	p := &ghHostsParser{hosts: hosts}
 	for line := range strings.SplitSeq(string(data), "\n") {
-		// Top-level keys (host names) start at column 0 with a colon.
-		if !strings.HasPrefix(line, " ") && strings.HasSuffix(strings.TrimSpace(line), ":") {
-			current = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ":"))
-			if current == "" {
-				hasCurrent = false
-				continue
-			}
-			hasCurrent = true
-			hosts[current] = ghHostEntry{}
-			continue
-		}
-		if !hasCurrent {
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		if !strings.Contains(trimmed, ":") {
-			continue
-		}
-		parts := strings.SplitN(trimmed, ":", 2)
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		entry := hosts[current]
-		switch key {
-		case "oauth_token":
-			entry.OAuthToken = val
-		case fieldUser:
-			entry.User = val
-		case "git_protocol":
-			entry.GitProtocol = val
-		}
-		hosts[current] = entry
+		p.parseLine(line)
 	}
 	return hosts, nil
 }

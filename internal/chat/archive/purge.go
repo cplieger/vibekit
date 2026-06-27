@@ -13,6 +13,24 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
+// purgeEntry is an archived chat file's (id, full path) pair gathered
+// during a purge scan.
+type purgeEntry struct {
+	name string
+	path string
+}
+
+// purgeOutcome is the per-entry result of a purge attempt, aggregated
+// into the pass counts.
+type purgeOutcome int
+
+const (
+	purgeSkipped purgeOutcome = iota // already gone; counted as neither
+	purgeKept                        // newer than the cutoff
+	purgePurged                      // removed
+	purgeErr                         // stat/remove failed
+)
+
 // Purge deletes archived chats older than maxAge.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 	archiveDir := s.archivePath()
@@ -24,12 +42,40 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 		}
 		return
 	}
-	cutoff := time.Now().Add(-maxAge)
-
-	type purgeEntry struct {
-		name string
-		path string
+	valid := collectPurgeEntries(entries, archiveDir)
+	if len(valid) == 0 {
+		return
 	}
+
+	cutoff := time.Now().Add(-maxAge)
+	const maxWorkers = 8
+	var purgedCount, keptCount, errCount int32
+	var mu sync.Mutex
+	boundedParallel(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
+		var counter *int32
+		switch s.purgeOne(entry, cutoff) {
+		case purgePurged:
+			counter = &purgedCount
+		case purgeKept:
+			counter = &keptCount
+		case purgeErr:
+			counter = &errCount
+		case purgeSkipped:
+		}
+		if counter != nil {
+			mu.Lock()
+			*counter++
+			mu.Unlock()
+		}
+	})
+
+	logPurgeResult(int(purgedCount), int(keptCount), int(errCount), maxAge)
+}
+
+// collectPurgeEntries filters a directory listing down to valid chat
+// files eligible for purging (skips dirs, non-.json files, and files
+// whose trimmed name is not a valid chat id).
+func collectPurgeEntries(entries []os.DirEntry, archiveDir string) []purgeEntry {
 	var valid []purgeEntry
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), chatFileSuffix) {
@@ -41,71 +87,63 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 		}
 		valid = append(valid, purgeEntry{name: name, path: filepath.Join(archiveDir, e.Name())})
 	}
-	if len(valid) == 0 {
-		return
-	}
+	return valid
+}
 
-	const maxWorkers = 8
-	var purgedCount, keptCount, errCount int32
-	var mu sync.Mutex
-
-	boundedParallel(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
-		m := s.store.Lock(api.ChatID(entry.name))
-		m.Lock()
-		info, err := os.Stat(entry.path)
-		if err != nil {
-			m.Unlock()
-			if !errors.Is(err, os.ErrNotExist) {
-				mu.Lock()
-				errCount++
-				mu.Unlock()
-				slog.Warn("chat purge_archived: stat",
-					"name", entry.name, "error", err)
-			}
-			return
-		}
-		if !info.ModTime().Before(cutoff) {
-			m.Unlock()
-			mu.Lock()
-			keptCount++
-			mu.Unlock()
-			return
-		}
-		if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			m.Unlock()
-			mu.Lock()
-			errCount++
-			mu.Unlock()
-			slog.Warn("chat purge_archived: remove",
-				"chat_id", entry.name, "error", err)
-			return
-		}
-		draftPath := filepath.Join(archiveDir, entry.name+planDraftSuffix)
-		if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("chat purge_archived: remove plan-draft",
-				"chat_id", entry.name, "error", err)
-		}
+// purgeOne removes a single archived chat (and its plan draft) when its
+// mtime is older than cutoff. Holds the per-chat mutex across the
+// stat+remove so a concurrent restore/mutate can't race the delete.
+func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
+	m := s.store.Lock(api.ChatID(entry.name))
+	m.Lock()
+	info, err := os.Stat(entry.path)
+	if err != nil {
 		m.Unlock()
-		if s.onPurge != nil {
-			s.onPurge(api.ChatID(entry.name))
+		if errors.Is(err, os.ErrNotExist) {
+			return purgeSkipped
 		}
-		mu.Lock()
-		purgedCount++
-		mu.Unlock()
-	})
+		slog.Warn("chat purge_archived: stat", "name", entry.name, "error", err)
+		return purgeErr
+	}
+	if !info.ModTime().Before(cutoff) {
+		m.Unlock()
+		return purgeKept
+	}
+	if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.Unlock()
+		slog.Warn("chat purge_archived: remove", "chat_id", entry.name, "error", err)
+		return purgeErr
+	}
+	removePurgedPlanDraft(entry)
+	m.Unlock()
+	if s.onPurge != nil {
+		s.onPurge(api.ChatID(entry.name))
+	}
+	return purgePurged
+}
 
-	purged := int(purgedCount)
-	kept := int(keptCount)
-	errs := int(errCount)
+// removePurgedPlanDraft removes the companion plan-draft of a purged
+// chat. A missing draft is the normal case and not an error.
+func removePurgedPlanDraft(entry purgeEntry) {
+	draftPath := strings.TrimSuffix(entry.path, chatFileSuffix) + planDraftSuffix
+	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("chat purge_archived: remove plan-draft",
+			"chat_id", entry.name, "error", err)
+	}
+}
+
+// logPurgeResult emits the end-of-pass summary at Warn when any entry
+// errored, otherwise at Info.
+func logPurgeResult(purged, kept, errs int, maxAge time.Duration) {
 	if errs > 0 {
 		slog.Warn("chat purge_archived: pass complete with errors",
 			"purged", purged, "kept", kept, "errors", errs,
 			"max_age", maxAge)
-	} else {
-		slog.Info("chat purge_archived: pass complete",
-			"purged", purged, "kept", kept,
-			"max_age", maxAge)
+		return
 	}
+	slog.Info("chat purge_archived: pass complete",
+		"purged", purged, "kept", kept,
+		"max_age", maxAge)
 }
 
 // PurgeScheduler owns the archive-purge lifecycle. Uses a dedicated
@@ -180,40 +218,60 @@ func (p *PurgeScheduler) loop() {
 	for {
 		select {
 		case <-p.ctx.Done():
-			if timer != nil {
-				timer.Stop()
-			}
+			stopTimer(timer)
 			return
 		case <-p.stopCh:
-			if timer != nil {
-				timer.Stop()
-			}
+			stopTimer(timer)
 			return
 		case <-p.triggerCh:
 		case <-timerC:
 		}
-		retention := p.retention()
-		if retention > 0 {
-			purgeCtx, purgeCancel := context.WithTimeout(p.ctx, 5*time.Minute)
-			p.svc.Purge(purgeCtx, retention)
-			purgeCancel()
-		}
-		if timer != nil {
-			timer.Stop()
-		}
-		timer = nil
-		timerC = nil
-		if retention > 0 {
-			if oldest, ok := OldestArchiveMTime(p.ctx, p.svc.store.Dir()); ok {
-				const minWait = 5 * time.Second
-				deadline := oldest.Add(retention)
-				wait := max(time.Until(deadline), minWait)
-				slog.Debug("archive purge scheduled", "in", wait, "retention", retention)
-				timer = time.NewTimer(wait)
-				timerC = timer.C
-			}
-		}
+		stopTimer(timer)
+		timer, timerC = p.purgeAndReschedule()
 	}
+}
+
+// stopTimer stops t if it is non-nil. A no-op for the nil timer the loop
+// starts with.
+func stopTimer(t *time.Timer) {
+	if t != nil {
+		t.Stop()
+	}
+}
+
+// purgeAndReschedule runs one purge pass (when retention is positive)
+// and returns a freshly-armed timer for the next wake-up, or (nil, nil)
+// when nothing remains to schedule.
+func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan time.Time) {
+	retention := p.retention()
+	if retention > 0 {
+		purgeCtx, purgeCancel := context.WithTimeout(p.ctx, 5*time.Minute)
+		p.svc.Purge(purgeCtx, retention)
+		purgeCancel()
+	}
+	wait, ok := p.nextWait(retention)
+	if !ok {
+		return nil, nil
+	}
+	slog.Debug("archive purge scheduled", "in", wait, "retention", retention)
+	t := time.NewTimer(wait)
+	return t, t.C
+}
+
+// nextWait computes how long to sleep before the next purge: the oldest
+// archived file's age plus the retention window, floored at minWait.
+// Returns ok=false when retention is disabled or the archive is empty.
+func (p *PurgeScheduler) nextWait(retention time.Duration) (time.Duration, bool) {
+	if retention <= 0 {
+		return 0, false
+	}
+	oldest, ok := OldestArchiveMTime(p.ctx, p.svc.store.Dir())
+	if !ok {
+		return 0, false
+	}
+	const minWait = 5 * time.Second
+	deadline := oldest.Add(retention)
+	return max(time.Until(deadline), minWait), true
 }
 
 // OldestArchiveMTime returns the mtime of the oldest file in the

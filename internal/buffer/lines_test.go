@@ -97,3 +97,74 @@ func TestLineTracker_Get_UnknownFile(t *testing.T) {
 		t.Errorf("expected nil for unknown file, got %v", got)
 	}
 }
+
+// TestFileHeap_Less verifies the heap orders entries by ascending
+// lastTurn and that equal turns compare as not-less (strict <).
+func TestFileHeap_Less(t *testing.T) {
+	h := fileHeap{
+		{path: "a", lastTurn: 1},
+		{path: "b", lastTurn: 2},
+		{path: "c", lastTurn: 2},
+	}
+	if !h.Less(0, 1) {
+		t.Errorf("Less(0,1) [1 < 2] = false, want true")
+	}
+	if h.Less(1, 2) {
+		t.Errorf("Less(1,2) [2 < 2] = true, want false")
+	}
+	if h.Less(1, 0) {
+		t.Errorf("Less(1,0) [2 < 1] = true, want false")
+	}
+}
+
+// TestFileHeap_Pop verifies Pop removes the last entry, tombstones its
+// heap index to -1, and shrinks the heap by one.
+func TestFileHeap_Pop(t *testing.T) {
+	e0 := &fileHeapEntry{path: "a", lastTurn: 1, index: 0}
+	e1 := &fileHeapEntry{path: "b", lastTurn: 2, index: 1}
+	h := fileHeap{e0, e1}
+	popped, ok := h.Pop().(*fileHeapEntry)
+	if !ok {
+		t.Fatalf("Pop() returned %T, want *fileHeapEntry", popped)
+	}
+	if got, want := popped.index, -1; got != want {
+		t.Errorf("popped.index = %d, want %d", got, want)
+	}
+	if got, want := len(h), 1; got != want {
+		t.Fatalf("len(heap) after Pop = %d, want %d", got, want)
+	}
+	if h[0] != e0 {
+		t.Errorf("surviving entry path = %q, want %q", h[0].path, e0.path)
+	}
+}
+
+// TestLineTracker_RecordFromDiffs_LineCounts verifies the recorded range
+// spans line 1 to the newline-derived end line, with and without a
+// trailing newline.
+func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
+	tests := []struct {
+		name    string
+		newText string
+		wantEnd int
+	}{
+		{"no trailing newline", "a\nb\nc", 3}, // 2 newlines + 1
+		{"trailing newline", "a\nb\nc\n", 3},  // 3 newlines, no +1
+		{"single line no newline", "solo", 1}, // 0 newlines + 1
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lt := NewLineTracker()
+			lt.RecordFromDiffs("chat", []api.ToolDiff{{Path: "f.go", NewText: tt.newText}}, 5, "edit")
+			ranges := lt.Get("chat", "f.go")
+			if len(ranges) != 1 {
+				t.Fatalf("ranges = %d, want 1", len(ranges))
+			}
+			if got := ranges[0].StartLine; got != 1 {
+				t.Errorf("StartLine = %d, want 1", got)
+			}
+			if got := ranges[0].EndLine; got != tt.wantEnd {
+				t.Errorf("EndLine = %d, want %d", got, tt.wantEnd)
+			}
+		})
+	}
+}
