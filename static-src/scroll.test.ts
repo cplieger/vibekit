@@ -73,9 +73,8 @@ function appendMessages(n: number): void {
 function messageCount(): number {
   // The load-more indicator also carries the "message" class, so exclude it —
   // mirroring trimOldMessages' own `id !== "load-more-indicator"` filter.
-  return [...messagesEl.querySelectorAll(".message")].filter(
-    (e) => e.id !== "load-more-indicator",
-  ).length;
+  return [...messagesEl.querySelectorAll(".message")].filter((e) => e.id !== "load-more-indicator")
+    .length;
 }
 
 beforeEach(() => {

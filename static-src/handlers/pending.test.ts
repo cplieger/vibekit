@@ -98,11 +98,16 @@ describe("pending_change_added", () => {
 
 describe("pending_change_resolved", () => {
   it("removes the change from the store and emits pending:resolved", () => {
-    setSessions([makeSession("chat-1", { pending_changes: [makeChange({ tool_call_id: "tc1" })] })]);
+    setSessions([
+      makeSession("chat-1", { pending_changes: [makeChange({ tool_call_id: "tc1" })] }),
+    ]);
     fireSSE("pending_change_resolved", "chat-1", { tool_call_id: "tc1", action: "accept" });
     expect(get("chat-1")?.pending_changes).toEqual([]);
     expect(busEmissions).toEqual([
-      { event: "pending:resolved", payload: { chatID: "chat-1", toolCallID: "tc1", action: "accept" } },
+      {
+        event: "pending:resolved",
+        payload: { chatID: "chat-1", toolCallID: "tc1", action: "accept" },
+      },
     ]);
   });
 
@@ -130,7 +135,9 @@ describe("pending_changes_cleared", () => {
   });
 
   it("defaults the emitted reason to an empty string when missing", () => {
-    setSessions([makeSession("chat-1", { pending_changes: [makeChange({ tool_call_id: "tc1" })] })]);
+    setSessions([
+      makeSession("chat-1", { pending_changes: [makeChange({ tool_call_id: "tc1" })] }),
+    ]);
     fireSSE("pending_changes_cleared", "chat-1", {});
     expect(get("chat-1")?.pending_changes).toEqual([]);
     expect(busEmissions).toEqual([
