@@ -4,11 +4,14 @@ package hub
 // event inspection helpers, and message builders.
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -109,4 +112,40 @@ func newToolCallMsg(t *testing.T, id, title, status string) *api.RPCResponse {
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	}
+}
+
+// --- Log capture ---
+
+// logCapture is a mutex-guarded buffer that backs a slog handler so a
+// test can assert on (or assert the absence of) log output even when
+// logs are written from background goroutines.
+type logCapture struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (b *logCapture) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// String returns the captured output so far.
+func (b *logCapture) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// captureLogs swaps the default slog logger for one that writes JSON
+// into the returned buffer and restores the previous logger at test
+// end. Tests using it must NOT call t.Parallel — it mutates the global
+// slog default.
+func captureLogs(t *testing.T) *logCapture {
+	t.Helper()
+	out := &logCapture{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return out
 }

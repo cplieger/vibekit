@@ -65,67 +65,77 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 	// agent/model parameters don't coalesce onto the wrong bridge.
 	sfKey := string(chatID) + "\x00" + agentOverride + "\x00" + modelOverride
 	v, err, _ := bc.bridge.mgr.spawnSF.Do(sfKey, func() (any, error) {
-		// Double-check after winning the singleflight race.
-		sb, existed := bc.bridge.mgr.getOrInsert(chatID)
-		if existed {
-			return sb, nil
-		}
-
-		setupErr := func(err error) error {
-			bc.bridge.mgr.removeIfSame(chatID, sb)
-			sb.state = bridgeIdle
-			return err
-		}
-
-		chat, exists := bc.chatStore.Get(ctx, chatID)
-		if !exists {
-			return nil, setupErr(fmt.Errorf("chat %s not found", chatID))
-		}
-
-		agent := chat.Agent
-		if agentOverride != "" {
-			agent = agentOverride
-		}
-		model := chat.Model
-		if modelOverride != "" && modelOverride != modelAuto {
-			model = modelOverride
-		}
-
-		permArgs := bc.permArgsFn()
-
-		var mcpServers []map[string]any
-		if bc.mcpConfig != nil {
-			mcpServers = bc.mcpConfig.ACPServers(ctx)
-		}
-
-		if bc.preBridgeSpawn != nil {
-			bc.preBridgeSpawn(ctx)
-		}
-
-		if chat.ACPSessionID != "" {
-			if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, agent, model, permArgs, mcpServers) {
-				go bc.Forward(chatID, sb.bridge)
-				return sb, nil
-			}
-		}
-
-		if err := sb.bridge.Start(ctx, &api.StartOpts{Agent: agent, Model: model, Effort: bc.effortForModel(ctx, model), ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
-			return nil, setupErr(err)
-		}
-		bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
-
-		sb.primed = false
-		sb.state = bridgeIdle
-
-		go bc.Forward(chatID, sb.bridge)
-
-		return sb, nil
+		return bc.spawnBridge(ctx, chatID, agentOverride, modelOverride)
 	})
 	if err != nil {
 		return nil, err
 	}
 	b, _ := v.(*sharedBridge)
 	return b, nil
+}
+
+// spawnBridge creates (or returns the just-created) bridge for chatID.
+// It runs inside the singleflight so concurrent callers coalesce. It
+// resolves the agent/model (overrides beat the chat's stored values),
+// tries session/load when an ACP session id is stored, and otherwise
+// starts a fresh session/new. On any start failure it rolls the
+// half-registered bridge back out of the map and returns the error.
+func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID, agentOverride, modelOverride string) (*sharedBridge, error) {
+	// Double-check after winning the singleflight race.
+	sb, existed := bc.bridge.mgr.getOrInsert(chatID)
+	if existed {
+		return sb, nil
+	}
+
+	setupErr := func(err error) error {
+		bc.bridge.mgr.removeIfSame(chatID, sb)
+		sb.state = bridgeIdle
+		return err
+	}
+
+	chat, exists := bc.chatStore.Get(ctx, chatID)
+	if !exists {
+		return nil, setupErr(fmt.Errorf("chat %s not found", chatID))
+	}
+
+	agent := chat.Agent
+	if agentOverride != "" {
+		agent = agentOverride
+	}
+	model := chat.Model
+	if modelOverride != "" && modelOverride != modelAuto {
+		model = modelOverride
+	}
+
+	permArgs := bc.permArgsFn()
+
+	var mcpServers []map[string]any
+	if bc.mcpConfig != nil {
+		mcpServers = bc.mcpConfig.ACPServers(ctx)
+	}
+
+	if bc.preBridgeSpawn != nil {
+		bc.preBridgeSpawn(ctx)
+	}
+
+	if chat.ACPSessionID != "" {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, agent, model, permArgs, mcpServers) {
+			go bc.Forward(chatID, sb.bridge)
+			return sb, nil
+		}
+	}
+
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Agent: agent, Model: model, Effort: bc.effortForModel(ctx, model), ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
+		return nil, setupErr(err)
+	}
+	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
+
+	sb.primed = false
+	sb.state = bridgeIdle
+
+	go bc.Forward(chatID, sb.bridge)
+
+	return sb, nil
 }
 
 // tryLoadSession attempts session/load against the stored ACP session id.

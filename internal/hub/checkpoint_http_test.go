@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/checkpoint"
@@ -227,4 +228,32 @@ func sha256Sum(b []byte) [32]byte {
 
 func hexEncode(b []byte) string {
 	return hex.EncodeToString(b)
+}
+
+// A successful blob GET (httptest recorder never errors on Write) must
+// not log a write failure. Not parallel: captureLogs mutates the global
+// slog default.
+func TestCheckpointHTTP_BlobWrite_NoErrorLogOnSuccess(t *testing.T) {
+	h, s, _ := newCheckpointHub(t)
+	ctx := context.Background()
+	s.AdvanceTurn(ctx, "c1", 0)
+	if _, err := s.Snapshot(ctx, "c1", "f.txt", []byte("blobdata"), 1); err != nil {
+		t.Fatal(err)
+	}
+	sha := shaOfContent([]byte("blobdata"))
+
+	logs := captureLogs(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/checkpoints/c1/blob/"+sha, nil)
+	rec := httptest.NewRecorder()
+	h.handleCheckpoint(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("blob status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "blobdata" {
+		t.Fatalf("blob body = %q, want %q (success path not exercised)", rec.Body.String(), "blobdata")
+	}
+	if got := logs.String(); strings.Contains(got, "blob write failed") {
+		t.Errorf("unexpected blob-write error log on success: %s", got)
+	}
 }

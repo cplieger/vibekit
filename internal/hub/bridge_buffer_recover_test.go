@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -221,4 +222,41 @@ func TestRecoverPartials_NoConfigDir_IsNoOp(t *testing.T) {
 	h, _, _ := newTestHub() // configDir == ""
 	// Must not panic or touch the filesystem.
 	h.RecoverPartials()
+}
+
+// On the success path (store appends succeed, file removes cleanly)
+// RecoverPartials logs none of its three error messages. Not parallel:
+// captureLogs mutates the global slog default.
+func TestRecoverPartials_NoErrorLogsOnSuccess(t *testing.T) {
+	cfg := t.TempDir()
+	h, cs := newHubWithConfigDir(t, cfg)
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	writePartialFile(t, cfg, "c1", buffer.PartialSnapshot{
+		MessageID: "m",
+		Content:   "half-written content",
+		Ts:        1_700_000_000_000,
+	})
+
+	logs := captureLogs(t)
+	h.RecoverPartials()
+
+	got := logs.String()
+	for _, bad := range []string{
+		"partial recovery: append failed",
+		"partial recovery: append interrupted",
+		"partial recovery: remove and rename failed",
+	} {
+		if strings.Contains(got, bad) {
+			t.Errorf("unexpected error log on RecoverPartials success path: %q in %s", bad, got)
+		}
+	}
+
+	// Sanity: recovery actually ran (so the success branches were taken).
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 2 {
+		t.Fatalf("recovered messages = %d, want 2 (assistant + interrupted)", len(c.Messages))
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "chats", "c1.partial")); !os.IsNotExist(err) {
+		t.Errorf("partial file still present after recovery: err=%v", err)
+	}
 }

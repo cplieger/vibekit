@@ -171,6 +171,18 @@ func (ub *utilityBridge) Stop() {
 	}
 }
 
+// drainAndResetTimer stops t, drains its channel if it had already fired
+// (so a stale tick can't fire spuriously), then rearms it to d.
+func drainAndResetTimer(t *time.Timer, d time.Duration) {
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
+
 // drainResponse reads the prompt response and collects assistant
 // text from the forwarded response channel. Returns the concatenated text.
 //
@@ -220,13 +232,7 @@ func (ub *utilityBridge) drainResponse(ctx context.Context, resp *api.RPCRespons
 			}
 			text.WriteString(chunk.Content.Text)
 			// Reset the idle timer on every chunk we accepted.
-			if !idle.Stop() {
-				select {
-				case <-idle.C:
-				default:
-				}
-			}
-			idle.Reset(idleDebounce)
+			drainAndResetTimer(idle, idleDebounce)
 		case <-idle.C:
 			// No chunks for idleDebounce → all chunks drained.
 			return text.String(), nil

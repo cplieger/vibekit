@@ -97,22 +97,7 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 	lastID := parseLastEventID(r.Header.Get("Last-Event-ID"))
 
 	h.sse.ctrl.add(sc)
-	if lastID > 0 {
-		// Reconnect path: reload push notification preferences from
-		// disk so externally-edited config.json changes (e.g. via
-		// the settings UI while SSE was disconnected) take effect
-		// without a container restart. Deduplicated via singleflight
-		// so N simultaneous reconnects produce one disk read.
-		if h.push != nil {
-			h.push.ReloadPreferences(ctx)
-		}
-		for _, e := range h.sse.ctrl.replay.Replay(lastID, chatFilter) {
-			select {
-			case sc.ch <- e:
-			default:
-			}
-		}
-	}
+	h.replaySinceLastID(ctx, sc, lastID, chatFilter)
 
 	defer func() {
 		h.sse.ctrl.remove(sc)
@@ -120,56 +105,13 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastID)
 
-	// Initial handshake event. Carries the ring-buffer floor (oldest event
-	// ID still replayable) and head (newest), letting the client detect a
-	// replay gap: if its last-seen ID is below the floor, events were
-	// lost and it should refetch authoritative state.
-	floor, head := h.replayBounds()
-	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
-	connectedData, err := json.Marshal(connectedEvt)
-	if err != nil {
-		slog.Error("marshal connected event", "error", err)
+	// Send the connected handshake plus a replay of all pending
+	// per-client state (permissions, staged writes, per-turn trust).
+	// Returns false if the client disconnected mid-replay or the
+	// handshake failed to marshal.
+	if !h.streamInitialState(ctx, w, flusher, chatFilter) {
 		return
 	}
-	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", head, connectedData)
-	flusher.Flush()
-
-	// Replay any pending permissions that may have fallen out of the
-	// ring buffer. This ensures permission dialogs survive reconnects.
-	h.replayPendingPermissions(w, flusher, chatFilter)
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	// Replay every outstanding Supervised-mode staged op so the
-	// client rebuilds its pending pill and per-card Accept/Reject
-	// buttons exactly as they were before the disconnect.
-	h.replayPendingChanges(func(evt api.ServerEvent) {
-		if data, err := json.Marshal(evt); err == nil {
-			fmt.Fprintf(w, "data: %s\n\n", data)
-		}
-	}, chatFilter)
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	// Replay per-turn trust state. Without this, a reconnect mid-turn
-	// silently reverts the Supervised pill to plain "Supervised" even
-	// though the perTurnTrust flag is still active — the user would
-	// have no way to tell their trust decision was still in force.
-	h.replayPendingTrust(func(evt api.ServerEvent) {
-		if data, err := json.Marshal(evt); err == nil {
-			fmt.Fprintf(w, "data: %s\n\n", data)
-		}
-	}, chatFilter)
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	flusher.Flush()
 
 	keepalive := time.NewTicker(keepaliveInterval)
 	defer keepalive.Stop()
@@ -187,6 +129,83 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// replaySinceLastID replays buffered events newer than lastID to a
+// reconnecting client. A lastID of 0 (first connect or a header mangled
+// by a proxy) is a no-op. On reconnect it also reloads push preferences
+// from disk so settings edited while SSE was down take effect without a
+// restart (deduplicated via singleflight).
+func (h *Hub) replaySinceLastID(ctx context.Context, sc *sseClient, lastID uint64, chatFilter api.ChatID) {
+	if lastID == 0 {
+		return
+	}
+	if h.push != nil {
+		h.push.ReloadPreferences(ctx)
+	}
+	for _, e := range h.sse.ctrl.replay.Replay(lastID, chatFilter) {
+		select {
+		case sc.ch <- e:
+		default:
+		}
+	}
+}
+
+// streamInitialState writes the connected handshake and then replays the
+// client's outstanding state — pending permissions, staged Supervised
+// writes, and per-turn trust — so a reconnecting browser rebuilds its UI
+// exactly as it was. It returns false (caller should stop) when the
+// handshake fails to marshal or the connection is cancelled mid-replay.
+//
+// The handshake's ConnectedPayload carries the ring-buffer floor (oldest
+// replayable event ID) and head (newest) so the client can detect a
+// replay gap: a last-seen ID below the floor means events were lost and
+// it must refetch authoritative state.
+func (h *Hub) streamInitialState(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, chatFilter api.ChatID) bool {
+	floor, head := h.replayBounds()
+	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
+	connectedData, err := json.Marshal(connectedEvt)
+	if err != nil {
+		slog.Error("marshal connected event", "error", err)
+		return false
+	}
+	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", head, connectedData)
+	flusher.Flush()
+
+	// Replay any pending permissions that may have fallen out of the
+	// ring buffer. This ensures permission dialogs survive reconnects.
+	h.replayPendingPermissions(w, flusher, chatFilter)
+	if ctx.Err() != nil {
+		return false
+	}
+
+	// writeEvent serializes one event to the stream; shared by the
+	// staged-change and per-turn-trust replays below.
+	writeEvent := func(evt api.ServerEvent) {
+		if data, err := json.Marshal(evt); err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
+	}
+
+	// Replay every outstanding Supervised-mode staged op so the client
+	// rebuilds its pending pill and per-card Accept/Reject buttons
+	// exactly as they were before the disconnect.
+	h.replayPendingChanges(writeEvent, chatFilter)
+	if ctx.Err() != nil {
+		return false
+	}
+
+	// Replay per-turn trust state. Without this, a reconnect mid-turn
+	// silently reverts the Supervised pill to plain "Supervised" even
+	// though the perTurnTrust flag is still active — the user would have
+	// no way to tell their trust decision was still in force.
+	h.replayPendingTrust(writeEvent, chatFilter)
+	if ctx.Err() != nil {
+		return false
+	}
+
+	flusher.Flush()
+	return true
 }
 
 // replayBounds returns (floor, head) of the current replay buffer, both

@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // fsWriteParams is the wire-form payload respondFSWrite expects. Keep
@@ -441,3 +443,76 @@ func TestFSWrite_PerTurnTrustClearedRestoresStaging(t *testing.T) {
 // Appease the unused-import check for sync when future tests need it;
 // keeping the variable alive avoids toolchain noise during iteration.
 var _ = sync.Mutex{}
+
+// readStagedOld reads a file of exactly fsReadCap bytes successfully
+// (the guard is a strict `>`) and rejects one byte over the cap.
+func TestReadStagedOld_ExactCapBoundary(t *testing.T) {
+	dir := t.TempDir()
+
+	exact := filepath.Join(dir, "exact.bin")
+	if err := os.WriteFile(exact, bytes.Repeat([]byte("a"), fsReadCap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldText, kind, err := readStagedOld(exact)
+	if err != nil {
+		t.Fatalf("readStagedOld(exact cap) err = %v, want nil (boundary is strict >)", err)
+	}
+	if len(oldText) != fsReadCap {
+		t.Errorf("readStagedOld(exact cap) len = %d, want %d", len(oldText), fsReadCap)
+	}
+	if kind != pending.KindEdit {
+		t.Errorf("readStagedOld(exact cap) kind = %q, want %q", kind, pending.KindEdit)
+	}
+
+	over := filepath.Join(dir, "over.bin")
+	if err := os.WriteFile(over, bytes.Repeat([]byte("b"), fsReadCap+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readStagedOld(over); err == nil {
+		t.Errorf("readStagedOld(cap+1) err = nil, want a cap-exceeded error")
+	}
+}
+
+// A path that resolves cleanly keeps the normalized workspace-relative
+// path in the staged op rather than the raw request argument.
+func TestStageFSWrite_KeepsNormalizedRelOnSuccess(t *testing.T) {
+	h, cs, _ := hubWithWorkDir(t)
+	ctx := context.Background()
+	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.SupervisedMode = true
+		return true
+	})
+
+	msg := newFSWriteMsg(t, "./hello.txt", "x", "tc-staging")
+	done := make(chan struct{})
+	go func() {
+		h.respondFSWrite(ctx, "c1", msg)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.perm.pending.CountForChat("c1") == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap, ok := h.perm.pending.Get("tc-staging")
+	if !ok {
+		t.Fatal("staged op not found")
+	}
+	if snap.Path != "hello.txt" {
+		t.Errorf("staged Path = %q, want %q (normalized rel must be kept)", snap.Path, "hello.txt")
+	}
+
+	// Unblock the staging goroutine.
+	if _, err := h.perm.pending.Resolve(ctx, "tc-staging", api.PendingActionAccept); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("respondFSWrite still blocked after Resolve")
+	}
+}
