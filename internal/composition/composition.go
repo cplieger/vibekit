@@ -139,33 +139,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
-		fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		configured := forgesManager.List(fctx)
-		providers := make([]steering.ForgeProvider, 0, len(configured))
-		for i := range configured {
-			f := &configured[i]
-			p := steering.ForgeProvider{
-				Kind:  string(f.Kind),
-				Host:  f.Host,
-				User:  f.Username,
-				Email: f.Email,
-			}
-			// Best-effort: enumerate repos for this provider via the CLI.
-			if ops, opsErr := forgesPkg.New(f.Kind, f.Host); opsErr == nil {
-				repoCtx, repoCancel := context.WithTimeout(ctx, 5*time.Second)
-				if repos, listErr := ops.ListRepos(repoCtx); listErr == nil {
-					full := make([]string, 0, len(repos))
-					for j := range repos {
-						full = append(full, repos[j].FullName)
-					}
-					p.Repos = full
-				}
-				repoCancel()
-			}
-			providers = append(providers, p)
-		}
-		return steering.ForgeSnapshot{Providers: providers}
+		return forgeSnapshot(ctx, forgesManager)
 	})
 
 	static, err := fs.Sub(staticFS, "static")
@@ -255,7 +229,16 @@ func readCleanupPeriodDays(ctx context.Context, cliPath string) int {
 			"error", err, "cli_path", cliPath)
 		return 0
 	}
-	raw := strings.TrimSpace(string(out))
+	return parseCleanupPeriodDays(string(out))
+}
+
+// parseCleanupPeriodDays parses kiro-cli's `settings cleanup.periodDays`
+// output into a non-negative day count. kiro-cli appends a scope suffix
+// like " (global)" / " (local)" to a non-empty setting value, which is
+// stripped before parsing. Any unparseable or negative value yields 0
+// ("retention disabled"), matching the exec-failure fallback.
+func parseCleanupPeriodDays(out string) int {
+	raw := strings.TrimSpace(out)
 	if i := strings.LastIndexByte(raw, '('); i > 0 {
 		raw = strings.TrimSpace(raw[:i])
 	}
@@ -286,4 +269,49 @@ func sweepStaleTemps(configDir, workDir string) {
 			slog.Debug("stale temp cleanup failed", "dir", dir, "error", err)
 		}
 	}
+}
+
+// forgeSnapshot builds the steering forge snapshot: one provider per
+// configured forge, each enriched (best-effort) with its repo list.
+// It is the body of the steer.SetForgeSnapshot callback, extracted so
+// Build stays within the cognitive-complexity ceiling.
+func forgeSnapshot(ctx context.Context, forgesManager *forgesPkg.Manager) steering.ForgeSnapshot {
+	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	configured := forgesManager.List(fctx)
+	providers := make([]steering.ForgeProvider, 0, len(configured))
+	for i := range configured {
+		f := &configured[i]
+		providers = append(providers, steering.ForgeProvider{
+			Kind:  string(f.Kind),
+			Host:  f.Host,
+			User:  f.Username,
+			Email: f.Email,
+			Repos: repoNamesFor(ctx, f.Kind, f.Host),
+		})
+	}
+	return steering.ForgeSnapshot{Providers: providers}
+}
+
+// repoNamesFor returns the full names of every repo reachable for the
+// given forge, or nil if the provider can't be constructed or the
+// listing fails. Enrichment is best-effort: a forge whose repos can't
+// be listed is still surfaced, just without a repo list. A 5s timeout
+// bounds the CLI call.
+func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []string {
+	ops, err := forgesPkg.New(kind, host)
+	if err != nil {
+		return nil
+	}
+	repoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	repos, err := ops.ListRepos(repoCtx)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(repos))
+	for i := range repos {
+		names = append(names, repos[i].FullName)
+	}
+	return names
 }

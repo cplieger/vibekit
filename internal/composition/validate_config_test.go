@@ -35,7 +35,7 @@ func TestCheckExecutable_BareNameUsesLookPath(t *testing.T) {
 
 // TestCheckExecutable_PathStilStats verifies that paths containing a
 // slash skip LookPath and use os.Stat (for absolute or relative paths).
-func TestCheckExecutable_PathStilStats(t *testing.T) {
+func TestCheckExecutable_PathStillStats(t *testing.T) {
 	tmp := t.TempDir()
 	binPath := filepath.Join(tmp, "fakecli")
 	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -60,4 +60,22 @@ func TestCheckExecutable_PathStilStats(t *testing.T) {
 	if err := checkExecutable(tmp, "TEST_BIN"); err == nil {
 		t.Errorf("directory path should fail")
 	}
+}
+
+// TestCheckDirWritable verifies a writable directory passes the probe
+// and a missing directory is rejected.
+func TestCheckDirWritable(t *testing.T) {
+	t.Run("writable dir returns nil", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := checkDirWritable(dir, "TEST_DIR"); err != nil {
+			t.Errorf("checkDirWritable(writable dir) = %v, want nil", err)
+		}
+	})
+
+	t.Run("missing dir returns error", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "does-not-exist")
+		if err := checkDirWritable(dir, "TEST_DIR"); err == nil {
+			t.Error("checkDirWritable(missing dir) = nil, want error")
+		}
+	})
 }
