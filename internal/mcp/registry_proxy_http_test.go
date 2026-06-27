@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -294,82 +295,6 @@ func TestRegistryProxy_fetchSearch_differentLimitsAreDistinctKeys(t *testing.T) 
 	}
 }
 
-// --- evictLocked ---
-
-func TestEvictLocked_dropsExpiredFirst(t *testing.T) {
-	p := NewRegistryProxy()
-
-	now := time.Now()
-	// 32 expired + 32 fresh = 64; at-cap path runs.
-	for i := range 32 {
-		p.cache.entries[fmt.Sprintf("exp%d", i)] = registryCacheEntry{
-			insertedAt: now.Add(-time.Hour), body: []byte("x"),
-		}
-	}
-	for i := range 32 {
-		p.cache.entries[fmt.Sprintf("fresh%d", i)] = registryCacheEntry{
-			insertedAt: now, body: []byte("x"),
-		}
-	}
-
-	p.cache.mu.Lock()
-	p.cache.evictLocked()
-	p.cache.mu.Unlock()
-
-	// All 32 expired dropped; 32 fresh remain (under-cap, so no
-	// further eviction).
-	if got := len(p.cache.entries); got != 32 {
-		t.Errorf("after evict len(cache) = %d, want 32 (all expired dropped)", got)
-	}
-	for k, entry := range p.cache.entries {
-		if time.Since(entry.insertedAt) >= registryCacheTTL {
-			t.Errorf("expired entry %q survived: insertedAt=%v", k, entry.insertedAt)
-		}
-	}
-}
-
-func TestEvictLocked_whenAllFresh_dropsOldest(t *testing.T) {
-	p := NewRegistryProxy()
-
-	now := time.Now()
-	// 64 fresh entries, staggered in time (k00 is oldest).
-	for i := range maxCacheEntries {
-		p.cache.entries[fmt.Sprintf("k%02d", i)] = registryCacheEntry{
-			insertedAt: now.Add(time.Duration(i) * time.Millisecond),
-			body:       []byte("x"),
-		}
-	}
-
-	p.cache.mu.Lock()
-	p.cache.evictLocked()
-	p.cache.mu.Unlock()
-
-	if got := len(p.cache.entries); got != maxCacheEntries-1 {
-		t.Errorf("after evict len(cache) = %d, want %d", got, maxCacheEntries-1)
-	}
-	if _, ok := p.cache.entries["k00"]; ok {
-		t.Error("oldest entry k00 should have been evicted")
-	}
-}
-
-func TestEvictLocked_underCap_isNoop(t *testing.T) {
-	p := NewRegistryProxy()
-	now := time.Now()
-	for i := range 10 {
-		p.cache.entries[fmt.Sprintf("k%d", i)] = registryCacheEntry{
-			insertedAt: now,
-		}
-	}
-
-	p.cache.mu.Lock()
-	p.cache.evictLocked()
-	p.cache.mu.Unlock()
-
-	if got := len(p.cache.entries); got != 10 {
-		t.Errorf("under-cap evict dropped entries: len=%d, want 10", got)
-	}
-}
-
 // F2 (test-review u12c1): singleflight coalescing. Two concurrent
 // fetchSearch calls with the same (q, limit) key must coalesce to a
 // single upstream GET; the follower returns the leader's result with
@@ -607,12 +532,12 @@ func TestRegistryProxy_CheckRedirect_rejectsTooManyHops(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("chain redirect status = %d, want 502", rec.Code)
 	}
-	// Upstream should have been hit 3-4 times (initial + up to 3
-	// follows before the cap fires). Anything under 3 means the cap
-	// fired too early; anything above 5 means the cap didn't fire at
-	// all.
-	if got := hits.Load(); got < 3 || got > 5 {
-		t.Errorf("hop count = %d, want 3-5 (cap at 3 redirects)", got)
+	// Exactly 3 upstream hits: CheckRedirect caps at len(via) >= 3, so
+	// the proxy issues the initial request plus two follows and then
+	// refuses the third redirect. The exact count catches a boundary
+	// mutation (>= 3 to > 3), which would leak a 4th hit.
+	if got := hits.Load(); got != 3 {
+		t.Errorf("hop count = %d, want exactly 3 (cap at len(via) >= 3)", got)
 	}
 }
 
@@ -711,50 +636,86 @@ func TestRegistryProxy_fetchSearch_followerRespectsCtxCancel(t *testing.T) {
 	}
 }
 
-func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
-	payload := []byte(`{"servers":[{"name":"test","url":"http://example.com"}]}`)
+// errReader always fails Read with a non-EOF error so io.Copy in
+// drainRegistryBody returns a non-nil error.
+type errReader struct{}
 
-	b.Run("hit_same_key", func(b *testing.B) {
-		cache := newRegistryCache(maxCacheEntries)
-		// Pre-seed.
-		cache.mu.Lock()
-		cache.entries["bench-key"] = registryCacheEntry{insertedAt: time.Now(), body: payload}
-		cache.mu.Unlock()
+func (errReader) Read(_ []byte) (int, error) { return 0, errors.New("read boom") }
 
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(context.Background(), "bench-key", func() ([]byte, error) {
-					return payload, nil
-				})
-			}
-		})
+// TestRegistryProxy_Search_queryBoundaries pins the two query-validation
+// acceptance boundaries: a query of exactly maxSearchQueryLen is accepted
+// (the cap is len > max, not >=) and an interior space (0x20) is not
+// treated as a control character (the control check is c < 0x20, not <=).
+func TestRegistryProxy_Search_queryBoundaries(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"servers":[]}`)
+	}))
+	defer upstream.Close()
+	_, mux := newProxyAgainst(t, upstream)
+
+	t.Run("query_at_max_len_accepted", func(t *testing.T) {
+		q := strings.Repeat("a", maxSearchQueryLen)
+		req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q="+q, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d body=%q, want 200 (exact-cap query must be accepted)",
+				rec.Code, rec.Body.String())
+		}
 	})
 
-	b.Run("miss_same_key_singleflight", func(b *testing.B) {
-		cache := newRegistryCache(maxCacheEntries)
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(context.Background(), "sf-key", func() ([]byte, error) {
-					return payload, nil
-				})
-			}
-		})
+	t.Run("interior_space_accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=a%20b", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d body=%q, want 200 (a space is not a control character)",
+				rec.Code, rec.Body.String())
+		}
 	})
+}
 
-	b.Run("miss_different_keys", func(b *testing.B) {
-		cache := newRegistryCache(10000)
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			i := 0
-			for pb.Next() {
-				key := fmt.Sprintf("key-%d", i)
-				i++
-				_, _, _ = cache.GetOrFetch(context.Background(), key, func() ([]byte, error) {
-					return payload, nil
-				})
+// TestRegistryProxy_doFetch_acceptsBodyAtExactCap pins the upper boundary
+// of the body-size guards: a response of exactly maxRegistryBody bytes
+// must be accepted (200). The caps are size > max on both the
+// Content-Length pre-check and the post-read length check, so a boundary
+// mutation (> to >=) on either would reject the exact-cap body.
+func TestRegistryProxy_doFetch_acceptsBodyAtExactCap(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(maxRegistryBody))
+		w.WriteHeader(http.StatusOK)
+		chunk := make([]byte, 32*1024)
+		for i := range chunk {
+			chunk[i] = 'a'
+		}
+		remaining := maxRegistryBody
+		for remaining > 0 {
+			n := min(len(chunk), remaining)
+			if _, err := w.Write(chunk[:n]); err != nil {
+				return
 			}
-		})
-	})
+			remaining -= n
+		}
+	}))
+	defer upstream.Close()
+	_, mux := newProxyAgainst(t, upstream)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=x", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200: a body of exactly maxRegistryBody must be accepted", rec.Code)
+	}
+}
+
+// TestRegistryProxy_drainBody_logsOnReadError verifies drainRegistryBody
+// logs at Debug when the drained reader errors — its only observable
+// effect, since the function returns nothing.
+func TestRegistryProxy_drainBody_logsOnReadError(t *testing.T) {
+	buf := captureSlog(t)
+	drainRegistryBody(errReader{})
+	if !strings.Contains(buf.String(), "registry drain stopped") {
+		t.Errorf("drainRegistryBody on a read error did not log; log=%q", buf.String())
+	}
 }

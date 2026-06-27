@@ -627,6 +627,7 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	buf := captureSlog(t)
 	s, err := New(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
@@ -652,6 +653,15 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	if !found {
 		t.Errorf("expected mcp.json.corrupt.<ts> sibling, got: %v", entries)
 	}
+	// The rename succeeded, so load logs the Warn "moved aside" and not
+	// the Error "preserve corrupt" — pins the rErr != nil branch selection.
+	log := buf.String()
+	if !strings.Contains(log, "moved aside") {
+		t.Errorf("corrupt file renamed but 'moved aside' not logged; log=%q", log)
+	}
+	if strings.Contains(log, "preserve corrupt mcp.json failed") {
+		t.Errorf("rename succeeded but 'preserve corrupt' error logged; log=%q", log)
+	}
 }
 
 // Regression: load() must re-enforce 0600 when the file arrives with
@@ -662,7 +672,12 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"servers":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Force 0644 regardless of umask so the tighten path actually runs.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
+	buf := captureSlog(t)
 	if _, err := New(context.Background(), dir, nil); err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -672,6 +687,11 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("load did not tighten perms: got %v, want 0600", info.Mode().Perm())
+	}
+	// The chmod succeeded, so no perms-failure warning is logged. Pins
+	// the chErr != nil guard against a negation that would warn on success.
+	if strings.Contains(buf.String(), "tighten mcp.json perms failed") {
+		t.Errorf("chmod succeeded but warn logged; log=%q", buf.String())
 	}
 }
 

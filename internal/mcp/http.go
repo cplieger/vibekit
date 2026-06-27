@@ -59,51 +59,74 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		got := s.Get(r.Context(), id)
-		if got == nil {
-			api.NotFound(w, "server not found")
-			return
-		}
-		api.WriteJSON(w, got)
+		s.getOne(w, r, id)
 	case http.MethodPut:
-		var in Server
-		if !decodeJSONBody(w, r, &in) {
-			return
-		}
-		updated, err := s.Update(r.Context(), id, &in)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		api.WriteJSON(w, updated)
+		s.putOne(w, r, id)
 	case http.MethodPatch:
-		var patch struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if !decodeJSONBody(w, r, &patch) {
-			return
-		}
-		if patch.Enabled == nil {
-			slog.Debug("mcp: http patch missing enabled field",
-				"path", r.URL.Path)
-			api.BadRequest(w, "enabled required")
-			return
-		}
-		updated, err := s.SetEnabled(r.Context(), id, *patch.Enabled)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		api.WriteJSON(w, updated)
+		s.patchOne(w, r, id)
 	case http.MethodDelete:
-		if err := s.Delete(r.Context(), id); err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		api.Ok(w)
+		s.deleteOne(w, r, id)
 	default:
 		api.MethodNotAllowed(w)
 	}
+}
+
+// getOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
+func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+	got := s.Get(r.Context(), id)
+	if got == nil {
+		api.NotFound(w, "server not found")
+		return
+	}
+	api.WriteJSON(w, got)
+}
+
+// putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
+// secret values), or map the store error to its status via writeErr.
+func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+	var in Server
+	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	updated, err := s.Update(r.Context(), id, &in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	api.WriteJSON(w, updated)
+}
+
+// patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
+// missing enabled field is a 400; otherwise toggle and return the record.
+func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+	var patch struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decodeJSONBody(w, r, &patch) {
+		return
+	}
+	if patch.Enabled == nil {
+		slog.Debug("mcp: http patch missing enabled field",
+			"path", r.URL.Path)
+		api.BadRequest(w, "enabled required")
+		return
+	}
+	updated, err := s.SetEnabled(r.Context(), id, *patch.Enabled)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	api.WriteJSON(w, updated)
+}
+
+// deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
+// to its status via writeErr.
+func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+	if err := s.Delete(r.Context(), id); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	api.Ok(w)
 }
 
 // decodeJSONBody delegates to api.DecodeJSON for backward compatibility
