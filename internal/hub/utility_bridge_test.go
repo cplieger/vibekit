@@ -268,3 +268,53 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 		}
 	})
 }
+
+// newTestUtilBridge builds a utilityBridge whose factory hands out a
+// fresh fakeBridge on each call (so a recycle visibly swaps the
+// instance) and whose model catalog is empty.
+func newTestUtilBridge() *utilityBridge {
+	return newUtilityBridge(
+		context.Background(),
+		func() api.ACPBridge { return newFakeBridge() },
+		func() []api.SessionModel { return nil },
+	)
+}
+
+// At the prompt cap (promptCount == maxUtilityPrompts) with the bridge
+// already started, the next UtilityPrompt recycles: reset() stops the
+// old bridge and zeroes the counter, start() swaps in a fresh bridge,
+// then the increment lands at 1.
+func TestUtilityPrompt_RecyclesAtPromptCap(t *testing.T) {
+	ub := newTestUtilBridge()
+	br0 := newFakeBridge()
+	ub.bridge = br0
+	ub.started = true
+	ub.promptCount = maxUtilityPrompts // exact boundary
+	defer ub.Stop()
+
+	if _, err := ub.UtilityPrompt(context.Background(), "p"); err != nil {
+		t.Fatalf("UtilityPrompt error = %v, want nil", err)
+	}
+
+	if ub.bridge == br0 {
+		t.Errorf("UtilityPrompt at the prompt cap did not recycle the bridge")
+	}
+	if ub.promptCount != 1 {
+		t.Errorf("promptCount after recycle = %d, want 1", ub.promptCount)
+	}
+}
+
+// A fresh bridge (started=false) skips the recycle branch; after one
+// prompt the counter is 1.
+func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
+	ub := newTestUtilBridge()
+	defer ub.Stop()
+
+	if _, err := ub.UtilityPrompt(context.Background(), "p"); err != nil {
+		t.Fatalf("UtilityPrompt error = %v, want nil", err)
+	}
+
+	if ub.promptCount != 1 {
+		t.Errorf("promptCount after one prompt = %d, want 1", ub.promptCount)
+	}
+}

@@ -31,6 +31,8 @@ func TestPostprocessSummary_tableDriven(t *testing.T) {
 			strings.Repeat("a", summaryMaxChars-1) + "…",
 		},
 		{"strip_then_trim_inner_whitespace", `"  padded  "`, "padded"},
+		{"empty_quotes_stripped", `""`, ""},
+		{"exact_cap_unchanged", strings.Repeat("a", summaryMaxChars), strings.Repeat("a", summaryMaxChars)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,5 +299,21 @@ func TestLoadArchived_missingReturnsErrNotExist(t *testing.T) {
 	s := newMemArchiveStore()
 	if _, err := s.LoadArchived("nope"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("err = %v, want os.ErrNotExist", err)
+	}
+}
+
+// buildSummaryPrompt numbers messages starting at 1 (1-based), so a
+// single assistant message is "message 1", never "message -1".
+func TestBuildSummaryPrompt_numbersMessagesFromOne(t *testing.T) {
+	c := &api.Chat{
+		Name:     "Topic",
+		Messages: []api.Message{{Role: api.RoleAssistant, Content: "did the thing"}},
+	}
+	got := buildSummaryPrompt(c)
+	if !strings.Contains(got, "-- message 1 --") {
+		t.Errorf("buildSummaryPrompt missing %q in:\n%s", "-- message 1 --", got)
+	}
+	if strings.Contains(got, "-- message -1 --") {
+		t.Errorf("buildSummaryPrompt contains a negative message index in:\n%s", got)
 	}
 }

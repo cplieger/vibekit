@@ -97,6 +97,29 @@ func (at *agentTerminals) drainAll() {
 	at.mu.Unlock()
 }
 
+// release removes terminalID from both maps and returns the removed
+// terminal (nil, false if it wasn't present). It does not kill the
+// process — callers do that outside the lock.
+func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	term, ok := at.terms[terminalID]
+	if !ok {
+		return nil, false
+	}
+	delete(at.terms, terminalID)
+	if term.chatID != "" {
+		ids := at.byChatID[term.chatID]
+		for i, id := range ids {
+			if id == terminalID {
+				at.byChatID[term.chatID] = append(ids[:i], ids[i+1:]...)
+				break
+			}
+		}
+	}
+	return term, true
+}
+
 // handleTerminalRequest dispatches terminal/* ACP requests.
 func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, method string, msg *api.RPCResponse) {
 	switch method {
@@ -188,43 +211,12 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 
 	// Stream stdout + stderr into the ring buffer.
 	h.lifecycle.inflight.Go(func() {
-		multi := io.MultiReader(stdout, stderr)
-		buf := getPumpBuf()
-		defer pumpBufPool.Put(buf) //nolint:staticcheck // returned after loop exits
-		for {
-			n, readErr := multi.Read(buf)
-			if n > 0 {
-				term.mu.Lock()
-				term.output.Write(buf[:n])
-				term.mu.Unlock()
-				// Broadcast output to SSE clients for the agent terminal tab.
-				h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
-					TerminalID: termID,
-					Data:       string(buf[:n]),
-				}))
-			}
-			if readErr != nil {
-				break
-			}
-		}
+		h.pumpTerminalOutput(term, termID, chatID, io.MultiReader(stdout, stderr))
 	})
 
 	// Wait for exit in background.
 	h.lifecycle.inflight.Go(func() {
-		err := cmd.Wait()
-		stop()   // unregister the AfterFunc
-		cancel() // release context resources
-		term.mu.Lock()
-		if err != nil {
-			term.exitErr = err
-			term.exitCode = cmd.ProcessState.ExitCode()
-		}
-		term.mu.Unlock()
-		close(term.done)
-		h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalExited, chatID, api.TerminalExitedPayload{
-			TerminalID: termID,
-			ExitCode:   term.exitCode,
-		}))
+		h.awaitTerminalExit(term, termID, chatID, cmd, stop, cancel)
 	})
 
 	h.agentTerms.mu.Lock()
@@ -239,6 +231,51 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		Args:       params.Args,
 	}))
 	respondOK(ctx, h, chatID, msg, map[string]string{"terminalId": termID})
+}
+
+// pumpTerminalOutput streams a terminal's combined stdout/stderr into
+// its ring buffer and broadcasts each chunk to SSE clients until the
+// reader hits EOF or an error.
+func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.ChatID, r io.Reader) {
+	buf := getPumpBuf()
+	defer pumpBufPool.Put(buf) //nolint:staticcheck // returned after loop exits
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			term.mu.Lock()
+			term.output.Write(buf[:n])
+			term.mu.Unlock()
+			// Broadcast output to SSE clients for the agent terminal tab.
+			h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
+				TerminalID: termID,
+				Data:       string(buf[:n]),
+			}))
+		}
+		if readErr != nil {
+			break
+		}
+	}
+}
+
+// awaitTerminalExit blocks on cmd.Wait, records the exit status on the
+// terminal, releases the per-terminal context resources (stop
+// unregisters the shutdown AfterFunc, cancel releases the command
+// context), closes term.done, and broadcasts terminal_exited.
+func (h *Hub) awaitTerminalExit(term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd, stop func() bool, cancel context.CancelFunc) {
+	err := cmd.Wait()
+	stop()   // unregister the AfterFunc
+	cancel() // release context resources
+	term.mu.Lock()
+	if err != nil {
+		term.exitErr = err
+		term.exitCode = cmd.ProcessState.ExitCode()
+	}
+	term.mu.Unlock()
+	close(term.done)
+	h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalExited, chatID, api.TerminalExitedPayload{
+		TerminalID: termID,
+		ExitCode:   term.exitCode,
+	}))
 }
 
 func (h *Hub) termOutput(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
@@ -286,21 +323,7 @@ func (h *Hub) termRelease(ctx context.Context, _ api.ChatID, msg *api.RPCRespons
 	if parseRequest(msg, &params) != nil {
 		return
 	}
-	h.agentTerms.mu.Lock()
-	term, ok := h.agentTerms.terms[params.TerminalID]
-	if ok {
-		delete(h.agentTerms.terms, params.TerminalID)
-		if term.chatID != "" {
-			ids := h.agentTerms.byChatID[term.chatID]
-			for i, id := range ids {
-				if id == params.TerminalID {
-					h.agentTerms.byChatID[term.chatID] = append(ids[:i], ids[i+1:]...)
-					break
-				}
-			}
-		}
-	}
-	h.agentTerms.mu.Unlock()
+	term, ok := h.agentTerms.release(params.TerminalID)
 	if ok && term.cmd.Process != nil {
 		if err := term.cmd.Process.Kill(); err != nil {
 			slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)

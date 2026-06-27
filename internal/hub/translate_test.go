@@ -3,8 +3,11 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
@@ -501,4 +504,147 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 		// Must not panic.
 		h.translateACPEvent("fuzz", msg)
 	})
+}
+
+// --- Request routing (folded mutant-killing coverage) ---
+
+// An fs/* request (ID != nil) is routed to the FS handler, which
+// responds back through the bridge.
+func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "r.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, br := hubForFSTest(t, work)
+	id := int64(7106)
+	msg := &api.RPCResponse{
+		ID:     &id,
+		Method: api.MethodFSRead,
+		Params: mustJSON(t, map[string]any{"path": "r.txt"}),
+	}
+	h.translateACPEvent("c1", msg)
+	select {
+	case <-br.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fs/read request was not routed to the FS handler")
+	}
+}
+
+// A terminal/* request (ID != nil) is routed to the terminal handler,
+// which responds back through the bridge.
+func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	// Pre-register a terminal owned by "c1" so termOutput resolves it
+	// and responds through the registered respondingBridge.
+	h.agentTerms.mu.Lock()
+	h.agentTerms.terms["term-1"] = &agentTerminal{
+		done:   make(chan struct{}),
+		output: newByteRing(64),
+		chatID: "c1",
+	}
+	h.agentTerms.mu.Unlock()
+
+	id := int64(7110)
+	msg := &api.RPCResponse{
+		ID:     &id,
+		Method: methodTermOutput,
+		Params: mustJSON(t, map[string]any{"terminalId": "term-1"}),
+	}
+	h.translateACPEvent("c1", msg)
+	select {
+	case <-br.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("terminal/output request was not routed to the terminal handler")
+	}
+}
+
+// --- Subagent attribution in handleSessionUpdate ---
+
+// registerParentSession registers a bridge for chatID whose SessionID
+// is parentSession, so h.parentACPSession(chatID) returns it.
+func registerParentSession(t *testing.T, h *Hub, chatID api.ChatID, parentSession string) {
+	t.Helper()
+	sb, _ := h.bridge.mgr.getOrInsert(chatID)
+	br := newFakeBridge()
+	br.sessionID = parentSession
+	sb.bridge = br
+	sb.state = bridgeIdle
+}
+
+// captureSubSession installs a capturing sub-handler for the
+// agent_message_chunk kind, drives handleSessionUpdate with a
+// notification carrying sessionID, and returns the subSessionID the
+// dispatcher computed plus whether the handler ran (false => sub
+// dispatch returned early).
+func captureSubSession(t *testing.T, h *Hub, chatID api.ChatID, sessionID string) (got string, called bool) {
+	t.Helper()
+	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
+		api.ACPUpdateAgentChunk: func(_ context.Context, _ api.ChatID, _ json.RawMessage, sub string) {
+			got = sub
+			called = true
+		},
+	}
+	update := mustJSON(t, map[string]any{
+		"sessionUpdate": string(api.ACPUpdateAgentChunk),
+		"content":       map[string]any{"type": "text", "text": "x"},
+	})
+	params := mustJSON(t, map[string]any{
+		"sessionId": sessionID,
+		"update":    update,
+	})
+	msg := &api.RPCResponse{Method: "session/update", Params: params}
+	h.handleSessionUpdate(context.Background(), chatID, msg)
+	return got, called
+}
+
+// subSessionID is the notification's sessionId only when it is
+// non-empty AND a parent session exists AND they differ; otherwise the
+// update is attributed to the parent (subSessionID == "").
+func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
+	cases := []struct {
+		name       string
+		chatID     api.ChatID
+		registerPS string // parent session to register; "" => no bridge (parent == "")
+		sessionID  string
+		want       string
+	}{
+		{
+			name:       "subagent_when_session_nonempty_parent_set_and_differs",
+			chatID:     "chat-sub",
+			registerPS: "parent-A",
+			sessionID:  "sub-B",
+			want:       "sub-B",
+		},
+		{
+			name:       "parent_when_session_equals_parent",
+			chatID:     "chat-match",
+			registerPS: "same",
+			sessionID:  "same",
+			want:       "",
+		},
+		{
+			name:       "parent_when_no_parent_bridge",
+			chatID:     "chat-noparent",
+			registerPS: "",
+			sessionID:  "sub-C",
+			want:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			defer h.Shutdown()
+			if tc.registerPS != "" {
+				registerParentSession(t, h, tc.chatID, tc.registerPS)
+			}
+			got, called := captureSubSession(t, h, tc.chatID, tc.sessionID)
+			if !called {
+				t.Fatalf("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
+			}
+			if got != tc.want {
+				t.Errorf("handleSessionUpdate subSessionID = %q, want %q (parent=%q, sessionID=%q)",
+					got, tc.want, tc.registerPS, tc.sessionID)
+			}
+		})
+	}
 }

@@ -141,8 +141,11 @@ func TestSliceByLines_Table(t *testing.T) {
 	t.Parallel()
 	line2 := 2
 	line99 := 99
+	line0 := 0
 	limitMax := math.MaxInt
 	limit100 := 100
+	limit0 := 0
+	limit2 := 2
 
 	cases := []struct {
 		name    string
@@ -155,6 +158,10 @@ func TestSliceByLines_Table(t *testing.T) {
 		{"start beyond end returns empty", "a\nb\n", &line99, nil, ""},
 		{"limit larger than remaining returns tail", "a\nb\nc\n", &line2, &limit100, "b\nc\n"},
 		{"integer overflow does not panic", "a\nb\nc\n", &line2, &limitMax, "b\nc\n"},
+		{"line zero keeps full content", "a\nb\nc\n", &line0, nil, "a\nb\nc\n"},
+		{"limit zero does not narrow", "a\nb\nc\n", nil, &limit0, "a\nb\nc\n"},
+		{"limit without line narrows from start", "a\nb\nc\nd\n", nil, &limit2, "a\nb\n"},
+		{"midrange narrow within window", "a\nb\nc\nd\n", &line2, &limit2, "b\nc\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,4 +197,20 @@ func FuzzSliceByLines(f *testing.F) {
 			t.Errorf("output %q is not a substring of content %q", got, content)
 		}
 	})
+}
+
+// TestFsErrorIsRoutine pins the routine-vs-real classification used to
+// decide whether an fs error is worth logging: only the sentinel
+// errIgnored is routine; nil and real errors are not.
+func TestFsErrorIsRoutine(t *testing.T) {
+	t.Parallel()
+	if got := fsErrorIsRoutine(errIgnored); !got {
+		t.Errorf("fsErrorIsRoutine(errIgnored) = %v, want true", got)
+	}
+	if got := fsErrorIsRoutine(nil); got {
+		t.Errorf("fsErrorIsRoutine(nil) = %v, want false", got)
+	}
+	if got := fsErrorIsRoutine(context.Canceled); got {
+		t.Errorf("fsErrorIsRoutine(context.Canceled) = %v, want false", got)
+	}
 }

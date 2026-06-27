@@ -4,6 +4,7 @@ package hub
 // handlers and the shared resolveInsideWorkDir boundary check.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -390,5 +392,129 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 	<-br.done
 	if br.response.err != nil {
 		t.Errorf("unexpected error: %v", br.response.err)
+	}
+}
+
+// --- Folded mutant-killing coverage (read/write boundary + respond) ---
+
+// A read of a missing file must respond with a graceful not-found error
+// rather than dereferencing the nil FileInfo from the failed stat.
+func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	id := int64(901)
+	msg := &api.RPCResponse{
+		ID:     &id,
+		Method: api.MethodFSRead,
+		Params: mustJSON(t, map[string]any{"path": "ghost.txt"}),
+	}
+	h.respondFSRead(context.Background(), "c1", msg)
+	<-br.done
+	if br.response.err == nil {
+		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
+	}
+}
+
+// A file of exactly fsReadCap bytes reads successfully: the size guard
+// is a strict `>`, so size==cap is allowed.
+func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
+	work := t.TempDir()
+	data := bytes.Repeat([]byte("a"), fsReadCap)
+	if err := os.WriteFile(filepath.Join(work, "exact.txt"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, br := hubForFSTest(t, work)
+	id := int64(902)
+	msg := &api.RPCResponse{
+		ID:     &id,
+		Method: api.MethodFSRead,
+		Params: mustJSON(t, map[string]any{"path": "exact.txt"}),
+	}
+	h.respondFSRead(context.Background(), "c1", msg)
+	<-br.done
+	if br.response.err != nil {
+		t.Fatalf("respondFSRead(exact cap) err = %v, want nil (boundary is strict >)", br.response.err)
+	}
+	res, ok := br.response.result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T, want map[string]any", br.response.result)
+	}
+	content, _ := res["content"].(string)
+	if len(content) != fsReadCap {
+		t.Errorf("content length = %d, want %d", len(content), fsReadCap)
+	}
+}
+
+// respondFSWrite reports the write error when the target can't be
+// written (a directory at the target path) and otherwise responds with
+// the success result map.
+func TestRespondFSWrite_ErrCheck(t *testing.T) {
+	t.Run("write_failure_reports_error", func(t *testing.T) {
+		work := t.TempDir()
+		if err := os.Mkdir(filepath.Join(work, "dir-target"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		h, br := hubForFSTest(t, work)
+		id := int64(8137)
+		msg := &api.RPCResponse{
+			ID:     &id,
+			Method: api.MethodFSWrite,
+			Params: mustJSON(t, map[string]any{"path": "dir-target", "content": "x"}),
+		}
+		h.respondFSWrite(context.Background(), "c1", msg)
+		select {
+		case <-br.done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("respondFSWrite did not respond")
+		}
+		br.respMu.Lock()
+		gotErr := br.response.err
+		br.respMu.Unlock()
+		if gotErr == nil {
+			t.Errorf("respondFSWrite(dir target) response.err = nil, want non-nil")
+		}
+	})
+
+	t.Run("write_success_reports_result_map", func(t *testing.T) {
+		work := t.TempDir()
+		h, br := hubForFSTest(t, work)
+		id := int64(8138)
+		msg := &api.RPCResponse{
+			ID:     &id,
+			Method: api.MethodFSWrite,
+			Params: mustJSON(t, map[string]any{"path": "ok.txt", "content": "hello"}),
+		}
+		h.respondFSWrite(context.Background(), "c1", msg)
+		select {
+		case <-br.done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("respondFSWrite did not respond")
+		}
+		br.respMu.Lock()
+		gotErr := br.response.err
+		gotRes := br.response.result
+		br.respMu.Unlock()
+		if gotErr != nil {
+			t.Fatalf("respondFSWrite(success) response.err = %v, want nil", gotErr)
+		}
+		if _, ok := gotRes.(map[string]any); !ok {
+			t.Errorf("respondFSWrite(success) result = %T, want map[string]any", gotRes)
+		}
+		data, rErr := os.ReadFile(filepath.Join(work, "ok.txt"))
+		if rErr != nil || string(data) != "hello" {
+			t.Errorf("file content = %q, err=%v, want %q", string(data), rErr, "hello")
+		}
+	})
+}
+
+// respondBridge stays log-silent when the bridge Respond succeeds.
+func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
+	h, _ := hubForFSTest(t, t.TempDir())
+	id := int64(903)
+	msg := &api.RPCResponse{ID: &id, Method: api.MethodFSRead, Params: mustJSON(t, map[string]any{})}
+
+	logs := captureLogs(t)
+	h.respondBridge(context.Background(), "c1", msg, map[string]any{"ok": true}, nil)
+	if got := logs.String(); strings.Contains(got, "fs response write failed") {
+		t.Errorf("unexpected respond-failure error log on success: %s", got)
 	}
 }

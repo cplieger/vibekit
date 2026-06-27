@@ -143,3 +143,50 @@ func FuzzByteRing_WriteRead(f *testing.F) {
 		}
 	})
 }
+
+// drainAll clears the terminal maps even when a registered terminal has
+// already exited (its done channel is closed).
+func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
+	at := newAgentTerminals()
+	done := make(chan struct{})
+	close(done) // already exited
+	at.terms["t1"] = &agentTerminal{done: done}
+	at.byChatID["c1"] = []string{"t1"}
+
+	at.drainAll()
+
+	at.mu.Lock()
+	n := len(at.terms)
+	at.mu.Unlock()
+	if n != 0 {
+		t.Errorf("drainAll() left %d terminals, want 0", n)
+	}
+}
+
+// release removes only the named terminal from both maps (dropping just
+// its id from the chat's slice) and reports (nil,false) for an unknown id.
+func TestAgentTerminals_Release(t *testing.T) {
+	at := newAgentTerminals()
+	at.terms["t1"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
+	at.terms["t2"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
+	at.byChatID["c1"] = []string{"t1", "t2"}
+
+	term, ok := at.release("t1")
+	if !ok || term == nil || term.chatID != "c1" {
+		t.Fatalf("release(t1) = %v, %v; want the t1 terminal, true", term, ok)
+	}
+	if _, exists := at.terms["t1"]; exists {
+		t.Errorf("t1 still present in terms after release")
+	}
+	if got := at.byChatID["c1"]; len(got) != 1 || got[0] != "t2" {
+		t.Errorf("byChatID[c1] = %v, want [t2] (only t1 should be dropped)", got)
+	}
+
+	// Unknown id: no removal, returns (nil, false).
+	if gotTerm, gotOK := at.release("nope"); gotOK || gotTerm != nil {
+		t.Errorf("release(unknown) = %v, %v; want nil, false", gotTerm, gotOK)
+	}
+	if len(at.terms) != 1 {
+		t.Errorf("terms size = %d, want 1", len(at.terms))
+	}
+}
