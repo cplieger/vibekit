@@ -66,7 +66,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 # imports it, and the app imports it directly; both resolve it via the
 # importmap at runtime (/vendor/cplieger-reactive/index.js).
 # renovate: datasource=npm depName=@cplieger/reactive
-ARG CPLIEGER_REACTIVE_VERSION=1.2.0
+ARG CPLIEGER_REACTIVE_VERSION=1.2.1
 RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
