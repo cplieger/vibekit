@@ -320,3 +320,192 @@ func TestHandleToolEnableRollsBackOnFailure(t *testing.T) {
 		t.Fatalf("enabled not rolled back on failure: %v", gh["enabled"])
 	}
 }
+
+// serverWithRawManifest writes raw bytes (NOT a JSON-marshaled map) into
+// <configDir>/tools.json so callers can produce a genuinely empty (0-byte)
+// manifest file, then returns a Server pointed at it.
+func serverWithRawManifest(t *testing.T, raw []byte) (*Server, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tools.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write raw manifest: %v", err)
+	}
+	return New(WithConfigDir(dir)), path
+}
+
+// manifestWithDependent returns a manifest where lsp.pyright (enabled)
+// requires runtimes.node, so deleting runtimes.node has exactly one enabled
+// dependent.
+func manifestWithDependent() map[string]any {
+	return map[string]any{
+		"runtimes": map[string]any{
+			"node": map[string]any{"enabled": true, "version": "v20"},
+		},
+		"lsp": map[string]any{
+			"pyright": map[string]any{
+				"enabled":  true,
+				"version":  "1.1",
+				"requires": []any{"runtimes.node"},
+			},
+		},
+	}
+}
+
+// TestValidToolName_lengthBoundary pins the inclusive 80-byte upper bound:
+// an 80-character name is accepted and an 81-character name is rejected.
+func TestValidToolName_lengthBoundary(t *testing.T) {
+	if !validToolName(strings.Repeat("a", 80)) {
+		t.Errorf("validToolName(80 chars) = false, want true (len==80 upper boundary)")
+	}
+	if validToolName(strings.Repeat("a", 81)) {
+		t.Errorf("validToolName(81 chars) = true, want false (just past upper boundary)")
+	}
+}
+
+// TestReadManifestEmptyFileIsEmpty verifies that an empty (0-byte) tools.json
+// parses to an empty, non-nil manifest with no error: the read path skips
+// json.Unmarshal when there are no bytes, so a freshly-created empty file is
+// treated as "no tools yet" rather than an "unexpected end of JSON" error.
+func TestReadManifestEmptyFileIsEmpty(t *testing.T) {
+	s, _ := serverWithRawManifest(t, []byte{})
+
+	manifest, _, err := s.readManifest()
+	if err != nil {
+		t.Fatalf("readManifest(empty file) err = %v, want nil", err)
+	}
+	if manifest == nil {
+		t.Fatalf("readManifest(empty file) manifest = nil, want empty non-nil map")
+	}
+	if len(manifest) != 0 {
+		t.Fatalf("readManifest(empty file) len = %d, want 0", len(manifest))
+	}
+}
+
+// TestHandleToolDeleteNoDependentsProceeds verifies that deleting an entry
+// with no enabled dependents proceeds to the cascade clear (200) rather than
+// returning the 409 "has_dependents" conflict reserved for blocked deletes.
+func TestHandleToolDeleteNoDependentsProceeds(t *testing.T) {
+	// No bash on PATH: the cascade clear loop's bash exec fails and is
+	// ignored, so the 200 response is produced without running any script.
+	t.Setenv("PATH", t.TempDir())
+
+	s, _ := newToolsTestServer(t, map[string]any{
+		"binary": map[string]any{
+			"gh": map[string]any{"enabled": true, "version": "v2.93.0"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodDelete, "/api/tools/binary/gh", nil)
+	req.SetPathValue("section", "binary")
+	req.SetPathValue("name", "gh")
+	rec := httptest.NewRecorder()
+
+	s.handleToolDelete(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleToolDelete(no dependents) status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Code     string   `json:"code"`
+		Disabled []string `json:"disabled"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Code == "has_dependents" {
+		t.Fatalf("dependent-free delete returned has_dependents conflict: %s", rec.Body.String())
+	}
+	if len(resp.Disabled) != 1 || resp.Disabled[0] != "binary.gh" {
+		t.Fatalf("disabled = %v, want [binary.gh]", resp.Disabled)
+	}
+}
+
+// TestHandleToolDeleteUnknownLengthBodySkipped verifies that a DELETE whose
+// body has unknown length (ContentLength == -1, e.g. chunked transfer) does
+// NOT have its {"force":true} body decoded: force stays false and a delete
+// with an enabled dependent returns 409. Only a positively-sized body is read.
+func TestHandleToolDeleteUnknownLengthBodySkipped(t *testing.T) {
+	s, _ := newToolsTestServer(t, manifestWithDependent())
+	req := httptest.NewRequest(http.MethodDelete, "/api/tools/runtimes/node",
+		strings.NewReader(`{"force":true}`))
+	req.SetPathValue("section", "runtimes")
+	req.SetPathValue("name", "node")
+	req.ContentLength = -1 // unknown length: body decode is skipped
+	rec := httptest.NewRecorder()
+
+	s.handleToolDelete(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("handleToolDelete(unknown-length force body) status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Code != "has_dependents" {
+		t.Fatalf("code = %q, want has_dependents", resp.Code)
+	}
+}
+
+// TestHandleToolDeleteZeroLengthBodySkipped verifies that a DELETE with
+// ContentLength == 0 is treated as "no body": the {"force":true} payload is
+// not decoded, force stays false, and a delete with an enabled dependent
+// returns 409.
+func TestHandleToolDeleteZeroLengthBodySkipped(t *testing.T) {
+	s, _ := newToolsTestServer(t, manifestWithDependent())
+	req := httptest.NewRequest(http.MethodDelete, "/api/tools/runtimes/node",
+		strings.NewReader(`{"force":true}`))
+	req.SetPathValue("section", "runtimes")
+	req.SetPathValue("name", "node")
+	req.ContentLength = 0 // zero length: treated as no body, decode skipped
+	rec := httptest.NewRecorder()
+
+	s.handleToolDelete(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("handleToolDelete(zero-length force body) status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Code != "has_dependents" {
+		t.Fatalf("code = %q, want has_dependents", resp.Code)
+	}
+}
+
+// TestHandleToolStatusPresenceBooleans verifies that handleToolStatus reports
+// true exactly for binaries resolvable on PATH and false for absent ones. With
+// PATH restricted to a temp dir holding only a fake "node", node reports
+// present and an absent binary like "go" reports absent.
+func TestHandleToolStatusPresenceBooleans(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake node: %v", err)
+	}
+	t.Setenv("PATH", dir) // only "node" resolves; "go" does not
+
+	s := New()
+	req := httptest.NewRequest(http.MethodGet, "/api/tools/status", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleToolStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleToolStatus status = %d, want 200", rec.Code)
+	}
+	var out map[string]bool
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out["node"] != true {
+		t.Errorf("status[node] = %v, want true (fake node on PATH)", out["node"])
+	}
+	if out["go"] != false {
+		t.Errorf("status[go] = %v, want false (go absent from restricted PATH)", out["go"])
+	}
+}

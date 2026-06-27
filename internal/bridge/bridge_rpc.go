@@ -31,75 +31,21 @@ func (b *Bridge) sendNotif(msg *api.RPCResponse) {
 }
 
 func (b *Bridge) readLoop() {
-	defer func() {
-		// Unblock any in-flight Call waiters so a dead worker does not
-		// permanently wedge the bridge. Using bridgeExitedResp's
-		// pointer identity lets Call translate the signal to
-		// errBridgeExited without string comparison, unifying the
-		// drain path and the done-channel race-guard on the same
-		// sentinel.
-		b.pendingMu.Lock()
-		for id, ch := range b.pending {
-			select {
-			case ch <- bridgeExitedResp:
-			default:
-			}
-			delete(b.pending, id)
-		}
-		b.pendingMu.Unlock()
-		close(b.notifCh)
-	}()
+	defer b.drainPendingAndClose()
 	var tracker parseErrTracker
 	for b.stdout.Scan() {
 		line := b.stdout.Bytes()
 		var msg api.RPCResponse
 		if err := json.Unmarshal(line, &msg); err != nil {
-			switch tracker.Record() {
-			case parseErrLog:
-				slog.Error("ACP parse", "error", err, "line_len", len(line))
-			case parseErrSummarize:
-				slog.Error("ACP parse storm",
-					"count", tracker.SummaryCount(),
-					"window_s", int(parseErrWindow/time.Second))
-			case parseErrCircuitBreak:
-				slog.Error("ACP parse: consecutive-error ceiling reached; reaping bridge",
-					"consecutive", tracker.consecutive)
-				go b.Stop()
+			if b.recordParseError(&tracker, len(line), err) {
 				return
 			}
 			continue
 		}
 		tracker.Reset()
-		switch {
-		case msg.ID != nil && msg.Method == "":
-			// Response to one of our requests.
-			b.pendingMu.Lock()
-			ch, ok := b.pending[*msg.ID]
-			if ok {
-				delete(b.pending, *msg.ID)
-			}
-			b.pendingMu.Unlock()
-			if ok {
-				ch <- &msg
-			}
-		case msg.ID != nil:
-			// Request FROM kiro-cli (fs/read_text_file, terminal/*);
-			// the hub will eventually call Respond(*msg.ID, ...).
-			b.sendNotif(&msg)
-		case msg.Method != "":
-			// Server-sent notification (session/update, etc.).
-			slog.Debug("ACP notification", "method", msg.Method)
-			b.sendNotif(&msg)
-		}
+		b.dispatch(&msg)
 	}
-	if err := b.stdout.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			slog.Error("ACP read: JSON line exceeds scanner cap; reaping bridge",
-				"cap", scannerLineCap)
-		} else {
-			slog.Error("ACP read", "error", err)
-		}
-	}
+	b.logScanError()
 	// Reap the subprocess and unblock any Call waiters that
 	// arrived between the drain and this point. Async because
 	// Stop waits for cmd.Wait, which is downstream of this
@@ -107,6 +53,89 @@ func (b *Bridge) readLoop() {
 	// which we are). Fires on both clean EOF and error exits
 	// so the kiro-cli process entry does not leak as a zombie.
 	go b.Stop()
+}
+
+// drainPendingAndClose unblocks any in-flight Call waiters so a dead
+// worker does not permanently wedge the bridge, then closes notifCh.
+// Using bridgeExitedResp's pointer identity lets Call translate the
+// signal to errBridgeExited without string comparison, unifying the
+// drain path and the done-channel race-guard on the same sentinel.
+// Runs as readLoop's deferred cleanup.
+func (b *Bridge) drainPendingAndClose() {
+	b.pendingMu.Lock()
+	for id, ch := range b.pending {
+		select {
+		case ch <- bridgeExitedResp:
+		default:
+		}
+		delete(b.pending, id)
+	}
+	b.pendingMu.Unlock()
+	close(b.notifCh)
+}
+
+// recordParseError feeds an unmarshal failure to the parse-error tracker
+// and emits the appropriate log line. It returns true when the
+// consecutive-error circuit breaker has tripped, signalling readLoop to
+// reap the bridge and return.
+func (b *Bridge) recordParseError(tracker *parseErrTracker, lineLen int, err error) bool {
+	switch tracker.Record() {
+	case parseErrLog:
+		slog.Error("ACP parse", "error", err, "line_len", lineLen)
+	case parseErrSummarize:
+		slog.Error("ACP parse storm",
+			"count", tracker.SummaryCount(),
+			"window_s", int(parseErrWindow/time.Second))
+	case parseErrCircuitBreak:
+		slog.Error("ACP parse: consecutive-error ceiling reached; reaping bridge",
+			"consecutive", tracker.consecutive)
+		go b.Stop()
+		return true
+	}
+	return false
+}
+
+// dispatch routes a successfully-decoded frame: a response to one of our
+// requests is handed to the waiting Call; a request from kiro-cli or a
+// server-sent notification is forwarded on notifCh.
+func (b *Bridge) dispatch(msg *api.RPCResponse) {
+	switch {
+	case msg.ID != nil && msg.Method == "":
+		// Response to one of our requests.
+		b.pendingMu.Lock()
+		ch, ok := b.pending[*msg.ID]
+		if ok {
+			delete(b.pending, *msg.ID)
+		}
+		b.pendingMu.Unlock()
+		if ok {
+			ch <- msg
+		}
+	case msg.ID != nil:
+		// Request FROM kiro-cli (fs/read_text_file, terminal/*);
+		// the hub will eventually call Respond(*msg.ID, ...).
+		b.sendNotif(msg)
+	case msg.Method != "":
+		// Server-sent notification (session/update, etc.).
+		slog.Debug("ACP notification", "method", msg.Method)
+		b.sendNotif(msg)
+	}
+}
+
+// logScanError reports a scanner failure after the read loop ends. A
+// clean EOF leaves Err() nil and logs nothing; an oversized line gets a
+// distinct message naming the scanner cap.
+func (b *Bridge) logScanError() {
+	err := b.stdout.Err()
+	if err == nil {
+		return
+	}
+	if errors.Is(err, bufio.ErrTooLong) {
+		slog.Error("ACP read: JSON line exceeds scanner cap; reaping bridge",
+			"cap", scannerLineCap)
+		return
+	}
+	slog.Error("ACP read", "error", err)
 }
 
 // deregisterPending removes a pending request from the map. Used by

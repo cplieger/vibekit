@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {
@@ -47,6 +49,11 @@ func TestDispatcher_InvalidJSON(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 400", w.Code)
 	}
+	// A decode failure must surface as "invalid json", not fall through
+	// to a zero-value command that dispatches to the unknown-command body.
+	if got := w.Body.String(); !strings.Contains(got, "invalid json") {
+		t.Errorf("body = %q, want it to contain %q", got, "invalid json")
+	}
 }
 
 func TestDispatcher_InvalidRequestID(t *testing.T) {
@@ -68,6 +75,11 @@ func TestDispatcher_InvalidChatID(t *testing.T) {
 	d.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 400", w.Code)
+	}
+	// A non-empty but invalid chat_id must be rejected with the
+	// invalid-chat-id message, not allowed through to dispatch.
+	if got := w.Body.String(); !strings.Contains(got, api.ErrMsgInvalidChatID) {
+		t.Errorf("body = %q, want it to contain %q", got, api.ErrMsgInvalidChatID)
 	}
 }
 

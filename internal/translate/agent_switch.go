@@ -25,16 +25,7 @@ func (t *Translator) HandleAgentSwitched(ctx context.Context, chatID api.ChatID,
 			if !ex {
 				return false
 			}
-			changed := false
-			if c.Agent != p.AgentName {
-				c.Agent = p.AgentName
-				changed = true
-			}
-			if p.Model != "" && c.Model != p.Model {
-				c.Model = p.Model
-				changed = true
-			}
-			return changed
+			return applyAgentSwitch(c, p.AgentName, p.Model)
 		}); err != nil {
 			slog.Error("agent_switched: persist", "error", err)
 		}
@@ -43,4 +34,19 @@ func (t *Translator) HandleAgentSwitched(ctx context.Context, chatID api.ChatID,
 	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("agent_switched: append event", "chat_id", chatID, "error", err)
 	}
+}
+
+// applyAgentSwitch updates the chat's agent (and model when the
+// notification carries one), returning whether anything changed.
+func applyAgentSwitch(c *api.Chat, agentName, model string) bool {
+	changed := false
+	if c.Agent != agentName {
+		c.Agent = agentName
+		changed = true
+	}
+	if model != "" && c.Model != model {
+		c.Model = model
+		changed = true
+	}
+	return changed
 }

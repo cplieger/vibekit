@@ -96,31 +96,47 @@ func (t *Translator) lookupCrewMessage(ctx context.Context, chatID api.ChatID, g
 		return "", nil
 	}
 
+	// In-memory cache hit.
 	if cached, ok := t.crewCache.lookup(chatID, groupKey); ok {
-		for i := range chat.Messages {
-			m := &chat.Messages[i]
-			if m.ID == cached && m.Crew != nil {
-				return cached, MarshalCrew(m.Crew)
-			}
+		if crew := findCrewMessageByID(chat.Messages, cached); crew != nil {
+			return cached, MarshalCrew(crew)
 		}
 	}
-	// Try the persisted index (warm after restart without history walk).
-	if chat.CrewMessageIDs != nil {
-		if indexed, exists := chat.CrewMessageIDs[groupKey]; exists {
-			for i := range chat.Messages {
-				m := &chat.Messages[i]
-				if m.ID == indexed && m.Crew != nil {
-					t.crewCache.remember(chatID, groupKey, indexed)
-					return indexed, MarshalCrew(m.Crew)
-				}
-			}
+	// Persisted index (warm after restart without a history walk).
+	if indexed, ok := indexedCrewID(chat, groupKey); ok {
+		if crew := findCrewMessageByID(chat.Messages, indexed); crew != nil {
+			t.crewCache.remember(chatID, groupKey, indexed)
+			return indexed, MarshalCrew(crew)
 		}
 	}
+	// Fall back to a bounded reverse history walk.
 	id, digest = t.walkCrewHistoryFromChat(chat, groupKey)
 	if id != "" {
 		t.crewCache.remember(chatID, groupKey, id)
 	}
 	return id, digest
+}
+
+// findCrewMessageByID returns the Crew payload of the crew-bearing
+// message with the given ID, or nil if no such message exists.
+func findCrewMessageByID(messages []api.Message, id string) *api.Crew {
+	for i := range messages {
+		m := &messages[i]
+		if m.ID == id && m.Crew != nil {
+			return m.Crew
+		}
+	}
+	return nil
+}
+
+// indexedCrewID returns the message ID recorded for groupKey in the
+// chat's persisted crew index, reporting false when absent.
+func indexedCrewID(chat *api.Chat, groupKey string) (string, bool) {
+	if chat.CrewMessageIDs == nil {
+		return "", false
+	}
+	id, ok := chat.CrewMessageIDs[groupKey]
+	return id, ok
 }
 
 // maxCrewScanDepth caps the reverse history scan to avoid O(n) worst

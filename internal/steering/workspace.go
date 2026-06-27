@@ -93,26 +93,37 @@ func writeRepoEntry(b *strings.Builder, workDir, r string) {
 	}
 	agents := findRepoAgents(repoDir)
 	if len(agents) > 0 {
-		fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", r)
-		for _, a := range agents {
-			fmt.Fprintf(b, " `%s`", a.Name)
-		}
-		b.WriteString("\n")
+		writeRepoAgents(b, r, agents)
 	}
 	hooks := findRepoHooks(repoDir)
 	if len(hooks) > 0 {
-		fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", r)
-		for _, h := range hooks {
-			trigger := h.Trigger
-			if trigger == "" {
-				trigger = "unknown"
-			}
-			fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
-			if h.Command != "" {
-				fmt.Fprintf(b, " → `%s`", h.Command)
-			}
-			b.WriteString("\n")
+		writeRepoHooks(b, r, hooks)
+	}
+}
+
+// writeRepoAgents renders the custom-agents inventory line for a repo.
+func writeRepoAgents(b *strings.Builder, repo string, agents []AgentEntry) {
+	fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", repo)
+	for _, a := range agents {
+		fmt.Fprintf(b, " `%s`", a.Name)
+	}
+	b.WriteString("\n")
+}
+
+// writeRepoHooks renders the hooks inventory for a repo, one bullet per
+// hook with its trigger label and (when present) a command preview.
+func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
+	fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", repo)
+	for _, h := range hooks {
+		trigger := h.Trigger
+		if trigger == "" {
+			trigger = "unknown"
 		}
+		fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
+		if h.Command != "" {
+			fmt.Fprintf(b, " → `%s`", h.Command)
+		}
+		b.WriteString("\n")
 	}
 }
 
@@ -168,37 +179,53 @@ func readGitBranch(repoDir string) string {
 func hostFromGitURL(url string) string {
 	url = strings.TrimSpace(url)
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-		rest := strings.SplitN(url, "://", 2)[1]
-		// Strip credentials if present (https://user:pwd@host/...).
-		// Use first @ only if it appears before the first /.
-		slash := strings.Index(rest, "/")
-		if at := strings.Index(rest, "@"); at >= 0 && (slash < 0 || at < slash) {
-			rest = rest[at+1:]
-		}
-		if i := strings.Index(rest, "/"); i > 0 {
-			host := rest[:i]
-			if strings.ContainsAny(host, "@/") {
-				return ""
-			}
-			return host
-		}
-		if strings.ContainsAny(rest, "@/") {
+		return hostFromHTTPURL(url)
+	}
+	return hostFromSCPURL(url)
+}
+
+// hostFromHTTPURL extracts the host from an http(s):// git URL, stripping
+// any user[:pass]@ credentials that appear before the first path slash.
+// Returns "" when the resulting host still carries an "@" or "/".
+func hostFromHTTPURL(url string) string {
+	rest := strings.SplitN(url, "://", 2)[1]
+	// Strip credentials if present (https://user:pwd@host/...).
+	// Use the first @ only if it appears before the first /.
+	slash := strings.Index(rest, "/")
+	if at := strings.Index(rest, "@"); at >= 0 && (slash < 0 || at < slash) {
+		rest = rest[at+1:]
+	}
+	if i := strings.Index(rest, "/"); i > 0 {
+		host := rest[:i]
+		if strings.ContainsAny(host, "@/") {
 			return ""
 		}
-		return rest
+		return host
 	}
-	if i := strings.Index(url, "@"); i > 0 {
-		// scp-style: git@host:owner/repo
-		rest := url[i+1:]
-		if j := strings.Index(rest, ":"); j > 0 {
-			host := rest[:j]
-			if strings.ContainsAny(host, "@/") {
-				return ""
-			}
-			return host
-		}
+	if strings.ContainsAny(rest, "@/") {
+		return ""
 	}
-	return ""
+	return rest
+}
+
+// hostFromSCPURL extracts the host from an scp-style git@host:path URL.
+// Returns "" for any other shape (no "@", a leading "@", or no ":"
+// separator), and for a host that still contains an "@" or "/".
+func hostFromSCPURL(url string) string {
+	at := strings.Index(url, "@")
+	if at <= 0 {
+		return ""
+	}
+	rest := url[at+1:]
+	colon := strings.Index(rest, ":")
+	if colon <= 0 {
+		return ""
+	}
+	host := rest[:colon]
+	if strings.ContainsAny(host, "@/") {
+		return ""
+	}
+	return host
 }
 
 // kindFromHost maps a git host to its forge kind. Uses suffix

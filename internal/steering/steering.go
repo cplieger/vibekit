@@ -277,34 +277,41 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 	fmt.Fprintf(w, "- GitLab: `glab mr|issue|release|ci`\n")
 	fmt.Fprintf(w, "- Gitea / Codeberg: `tea pulls|issues|releases`\n\n")
 	fmt.Fprintf(w, "All CLIs are pre-authenticated; no `gh auth login` or token setup needed.\n\n")
-	for _, p := range snap.Providers {
-		user := p.User
-		if user == "" {
-			user = "(authenticated)"
-		}
-		fmt.Fprintf(w, "### %s (%s)\n\n", p.Kind, p.Host)
-		if p.Email != "" {
-			fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, p.Email)
-		} else {
-			fmt.Fprintf(w, "- Authenticated as: %s\n", user)
-		}
-		cli := forgeCLI(p.Kind)
-		if cli != "" {
-			fmt.Fprintf(w, "- CLI: `%s`\n", cli)
-		}
-		fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", p.Host)
-		if len(p.Repos) > 0 {
-			fmt.Fprintf(w, "- Accessible repositories:\n")
-			n := min(len(p.Repos), 20)
-			for _, r := range p.Repos[:n] {
-				fmt.Fprintf(w, "  - %s\n", r)
-			}
-			if len(p.Repos) > 20 {
-				fmt.Fprintf(w, "  - … and %d more\n", len(p.Repos)-20)
-			}
-		}
-		fmt.Fprintln(w)
+	for i := range snap.Providers {
+		writeForgeProvider(w, &snap.Providers[i])
 	}
+}
+
+// writeForgeProvider renders one connected forge: its auth line, CLI tool,
+// clone hint, and (capped) accessible-repository list. p is taken by
+// pointer to avoid copying the ~88-byte ForgeProvider value.
+func writeForgeProvider(w io.Writer, p *ForgeProvider) {
+	user := p.User
+	if user == "" {
+		user = "(authenticated)"
+	}
+	fmt.Fprintf(w, "### %s (%s)\n\n", p.Kind, p.Host)
+	if p.Email != "" {
+		fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, p.Email)
+	} else {
+		fmt.Fprintf(w, "- Authenticated as: %s\n", user)
+	}
+	cli := forgeCLI(p.Kind)
+	if cli != "" {
+		fmt.Fprintf(w, "- CLI: `%s`\n", cli)
+	}
+	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", p.Host)
+	if len(p.Repos) > 0 {
+		fmt.Fprintf(w, "- Accessible repositories:\n")
+		n := min(len(p.Repos), 20)
+		for _, r := range p.Repos[:n] {
+			fmt.Fprintf(w, "  - %s\n", r)
+		}
+		if len(p.Repos) > 20 {
+			fmt.Fprintf(w, "  - … and %d more\n", len(p.Repos)-20)
+		}
+	}
+	fmt.Fprintln(w)
 }
 
 // forgeCLI returns the CLI tool for the kind. Mirrors forges.Kind.CLI()

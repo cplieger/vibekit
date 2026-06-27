@@ -107,48 +107,15 @@ func buildPRPrompt(log, diff string) string {
 // Formats bullet-point bodies. Caps subject line at 72 chars.
 func extractCommitMessage(raw string) string {
 	msg := strings.TrimSpace(raw)
-
 	// Strip markdown fences (including language-tagged variants like
 	// ```go / ```markdown / ```diff).
 	msg = api.StripCodeFence(msg)
-
-	// Strip "COMMIT MESSAGE:" prefix (case-insensitive); iterate so a stacked
-	// "COMMIT MESSAGE:COMMIT MESSAGE:..." also gets fully stripped (idempotent).
-	const commitPrefix = "COMMIT MESSAGE:"
-	for {
-		msg = strings.TrimSpace(msg)
-		if len(msg) >= len(commitPrefix) && strings.EqualFold(msg[:len(commitPrefix)], commitPrefix) {
-			msg = msg[len(commitPrefix):]
-		} else {
-			break
-		}
-	}
-
-	// Strip surrounding quotes (iteratively, trimming between layers so an
-	// interior space like `""" "` cannot halt stripping; keeps it idempotent).
-	for {
-		msg = strings.TrimSpace(msg)
-		if len(msg) >= 2 && ((msg[0] == '"' && msg[len(msg)-1] == '"') ||
-			(msg[0] == '\'' && msg[len(msg)-1] == '\'')) {
-			msg = msg[1 : len(msg)-1]
-		} else {
-			break
-		}
-	}
+	msg = stripCommitPrefix(msg)
+	msg = stripSurroundingQuotes(msg)
 
 	// Split into subject and body.
 	lines := strings.SplitN(msg, "\n", 2)
-	subject := strings.TrimSpace(lines[0])
-
-	// Cap subject at 72 chars. Prefer breaking at a word boundary past
-	// column 30 so short subjects aren't silently truncated mid-word.
-	if len(subject) > 72 {
-		if idx := strings.LastIndex(subject[:69], " "); idx > 30 {
-			subject = subject[:idx] + "..."
-		} else {
-			subject = subject[:69] + "..."
-		}
-	}
+	subject := capSubject(strings.TrimSpace(lines[0]))
 
 	if len(lines) < 2 {
 		return subject
@@ -160,4 +127,47 @@ func extractCommitMessage(raw string) string {
 	}
 
 	return subject + "\n\n" + body
+}
+
+// stripCommitPrefix removes any number of leading case-insensitive
+// "COMMIT MESSAGE:" markers, trimming whitespace between layers so a
+// stacked "COMMIT MESSAGE:COMMIT MESSAGE:..." is fully stripped (idempotent).
+func stripCommitPrefix(msg string) string {
+	const commitPrefix = "COMMIT MESSAGE:"
+	for {
+		msg = strings.TrimSpace(msg)
+		if len(msg) >= len(commitPrefix) && strings.EqualFold(msg[:len(commitPrefix)], commitPrefix) {
+			msg = msg[len(commitPrefix):]
+		} else {
+			return msg
+		}
+	}
+}
+
+// stripSurroundingQuotes removes matched surrounding single or double
+// quotes iteratively, trimming whitespace between layers so an interior
+// space like `""" "` cannot halt stripping. Idempotent.
+func stripSurroundingQuotes(msg string) string {
+	for {
+		msg = strings.TrimSpace(msg)
+		if len(msg) >= 2 && ((msg[0] == '"' && msg[len(msg)-1] == '"') ||
+			(msg[0] == '\'' && msg[len(msg)-1] == '\'')) {
+			msg = msg[1 : len(msg)-1]
+		} else {
+			return msg
+		}
+	}
+}
+
+// capSubject caps the subject line at 72 chars. It prefers breaking at a
+// word boundary past column 30 so short subjects aren't silently
+// truncated mid-word.
+func capSubject(subject string) string {
+	if len(subject) <= 72 {
+		return subject
+	}
+	if idx := strings.LastIndex(subject[:69], " "); idx > 30 {
+		return subject[:idx] + "..."
+	}
+	return subject[:69] + "..."
 }

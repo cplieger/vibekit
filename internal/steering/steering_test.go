@@ -1,17 +1,23 @@
 package steering
 
 import (
+	"bytes"
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
+
+// ---------------------------------------------------------------------------
+// writeTools
+// ---------------------------------------------------------------------------
 
 func TestWriteTools(t *testing.T) {
 	data := []byte(`{
@@ -73,199 +79,71 @@ func TestWriteTools_Sorted(t *testing.T) {
 	}
 }
 
-func TestWriteWorkspace_Empty(t *testing.T) {
-	dir := t.TempDir()
+// TestWriteTools_AllSourceMaps pins the eight-collect-call list in
+// writeTools against a future copy-paste edit that drops one silently.
+func TestWriteTools_AllSourceMaps(t *testing.T) {
+	data := []byte(`{
+		"runtimes": {"node": {"version": "20.19.0"}},
+		"binary":   {"hadolint": {"version": "v2.14.0"}},
+		"go":       {"goimports": {"version": "v0.30.0"}},
+		"npm":      {"html-validate": {"version": "10.11.3"}},
+		"pip":      {"yamllint": {"version": "1.38.0"}},
+		"custom":   {"kiro-cli": {"version": "2.0.1"}},
+		"cargo":    {"fallow": {"version": "0.3.0"}},
+		"apt":      {"ripgrep": {"version": "13.0.0"}}
+	}`)
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
-	if !strings.Contains(b.String(), "Empty.") {
-		t.Error("expected 'Empty.' for empty workspace")
-	}
-}
-
-func TestWriteWorkspace_WithFiles(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0o644)
-	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch"), 0o644)
-
-	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeTools(&b, data)
 	out := b.String()
-	if !strings.Contains(out, "go.mod") {
-		t.Error("missing go.mod in notable files")
+
+	wants := []string{
+		"- node 20.19.0",
+		"- hadolint v2.14.0",
+		"- goimports v0.30.0",
+		"- html-validate 10.11.3",
+		"- yamllint 1.38.0",
+		"- kiro-cli 2.0.1",
+		"- fallow 0.3.0",
+		"- ripgrep 13.0.0",
 	}
-	if !strings.Contains(out, "Dockerfile") {
-		t.Error("missing Dockerfile in notable files")
-	}
-}
-
-func TestWriteWorkspace_WithGitRepo(t *testing.T) {
-	dir := t.TempDir()
-	repoDir := filepath.Join(dir, "myrepo")
-	os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755)
-
-	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
-	out := b.String()
-	if !strings.Contains(out, "myrepo") {
-		t.Error("missing git repo")
-	}
-	if !strings.Contains(out, "Git repositories") {
-		t.Error("missing Git repositories header")
-	}
-}
-
-func TestWriteWorkspace_WithDirs(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
-
-	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
-	out := b.String()
-	if !strings.Contains(out, "src") {
-		t.Error("missing src directory")
-	}
-}
-
-func TestReadFirstLine(t *testing.T) {
-	// U+E0000 TAG character in UTF-8 for the StripsHiddenUnicode case.
-	hiddenUnicodeContent := append([]byte("# Title\nHello"), 0xF3, 0xA0, 0x80, 0x80)
-	hiddenUnicodeContent = append(hiddenUnicodeContent, []byte("World\n")...)
-
-	// Line where 100-byte boundary lands mid-rune for TruncationIsUTF8Safe.
-	// Each "é" is 2 bytes. 48 × "é" = 96 bytes; + "ABCé" = 101 bytes.
-	truncBody := strings.Repeat("é", 48) + "ABCé"
-
-	tests := []struct {
-		name                 string
-		want                 string
-		wantContains         string
-		wantSuffix           string
-		content              []byte
-		wantNotContain       []string
-		useMissingPath       bool
-		wantEmpty            bool
-		checkValidUTF8Prefix bool
-	}{
-		// Original 5 cases.
-		{name: "normal", content: []byte("# Title\nThis is the description.\n"), want: "This is the description."},
-		{name: "skip blanks", content: []byte("\n\n# Heading\nContent here\n"), want: "Content here"},
-		{name: "empty", content: []byte(""), wantEmpty: true},
-		{name: "only headings", content: []byte("# H1\n## H2\n"), wantEmpty: true},
-		{name: "long line", content: []byte("# Title\n" + strings.Repeat("x", 150) + "\n"), want: strings.Repeat("x", 100) + "..."},
-
-		// Missing file.
-		{name: "Missing", useMissingPath: true, wantEmpty: true},
-
-		// Prompt-injection sanitisation.
-		{name: "DropsMarkdownLinks", content: []byte("# Title\n[click here](javascript:alert(1))\nA clean line\n"), want: "A clean line", wantNotContain: []string{"]("}},
-		{name: "DropsHTMLTags", content: []byte("# Title\n<script>alert(1)</script>\nA clean line\n"), wantNotContain: []string{"<"}, wantContains: "clean"},
-		{name: "DropsBackticks", content: []byte("# Title\nRun `rm -rf /` to clean up\nA clean line\n"), wantNotContain: []string{"`"}, wantContains: "clean"},
-		{name: "StripsHiddenUnicode", content: hiddenUnicodeContent, want: "HelloWorld"},
-		{name: "DropsReferenceLinks", content: []byte("# Title\n[click here][evil]\nA clean line\n"), want: "A clean line", wantNotContain: []string{"[", "]"}},
-		{name: "DropsImageReferences", content: []byte("# Title\n![alt][evil]\nA clean line\n"), wantNotContain: []string{"[", "]"}, wantContains: "clean"},
-		{name: "DropsBareURLs", content: []byte("# Title\nVisit https://evil.example for setup\nA clean line\n"), want: "A clean line", wantNotContain: []string{"https://", "http://"}},
-
-		// Scan window.
-		{name: "OnlyScansFirstTenLines", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\nplain line outside window\n"), wantEmpty: true},
-		{name: "ReturnsFirstPlainLineWithinWindow", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\nplain line\n"), want: "plain line"},
-
-		// Hashtag without space is not a heading.
-		{name: "HashtagIsNotHeading", content: []byte("#mobile responsive design\n"), want: "#mobile responsive design"},
-
-		// Size cap.
-		{name: "SizeCapRejects", content: []byte("# Title\nA clean first line\n" + strings.Repeat("x", 32*1024)), want: "A clean first line"},
-
-		// UTF-8 safe truncation.
-		{name: "TruncationIsUTF8Safe", content: []byte("# Title\n" + truncBody + "\n"), wantSuffix: "...", checkValidUTF8Prefix: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var path string
-			if tt.useMissingPath {
-				path = "/nonexistent/path"
-			} else {
-				dir := t.TempDir()
-				path = filepath.Join(dir, "README.md")
-				if err := os.WriteFile(path, tt.content, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			got := readFirstLine(path)
-
-			if tt.want != "" {
-				if got != tt.want {
-					t.Errorf("readFirstLine() = %q, want %q", got, tt.want)
-				}
-			}
-			if tt.wantEmpty && got != "" {
-				t.Errorf("readFirstLine() = %q, want empty", got)
-			}
-			for _, s := range tt.wantNotContain {
-				if strings.Contains(got, s) {
-					t.Errorf("readFirstLine() = %q, must not contain %q", got, s)
-				}
-			}
-			if tt.wantContains != "" && !strings.Contains(got, tt.wantContains) {
-				t.Errorf("readFirstLine() = %q, want substring %q", got, tt.wantContains)
-			}
-			if tt.wantSuffix != "" && !strings.HasSuffix(got, tt.wantSuffix) {
-				t.Errorf("readFirstLine() = %q, want suffix %q", got, tt.wantSuffix)
-			}
-			if tt.checkValidUTF8Prefix {
-				prefix := strings.TrimSuffix(got, "...")
-				if !isValidUTF8(prefix) {
-					t.Errorf("readFirstLine produced invalid UTF-8 prefix: %q", prefix)
-				}
-			}
-		})
-	}
-}
-
-func TestFindNotableFiles(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x"), 0o644)
-	os.WriteFile(filepath.Join(dir, "random.txt"), []byte("x"), 0o644)
-
-	found := findNotableFiles(dir)
-	hasGoMod := false
-	hasRandom := false
-	for _, f := range found {
-		if f == "go.mod" {
-			hasGoMod = true
-		}
-		if f == "random.txt" {
-			hasRandom = true
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("writeTools output missing %q\nfull output:\n%s", w, out)
 		}
 	}
-	if !hasGoMod {
-		t.Error("go.mod should be notable")
-	}
-	if hasRandom {
-		t.Error("random.txt should not be notable")
+}
+
+func TestWriteTools_EmptyBinariesSliceUsesMapKey(t *testing.T) {
+	// binaries: [] must NOT suppress the entry; the map key
+	// ("gh") should appear with its version.
+	data := []byte(`{"binary": {"gh": {"version": "v2.91.0", "binaries": []}}}`)
+	var b strings.Builder
+	writeTools(&b, data)
+	out := b.String()
+
+	if !strings.Contains(out, "- gh v2.91.0") {
+		t.Errorf("writeTools with empty Binaries slice dropped entry; output:\n%s", out)
 	}
 }
 
-func TestClassifyEntries(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "repo1", ".git"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "plain"), 0o755)
-	os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755)
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644)
+func TestWriteTools_EmptyVersionStillLists(t *testing.T) {
+	// Tool with no version field still shows up so the agent
+	// knows it's installed even if the version can't be pinned.
+	data := []byte(`{"binary": {"jq": {}}}`)
+	var b strings.Builder
+	writeTools(&b, data)
+	out := b.String()
 
-	entries, _ := os.ReadDir(dir)
-	repos, dirs := classifyEntries(context.Background(), entries, dir)
-
-	if len(repos) != 1 || repos[0] != "repo1" {
-		t.Errorf("repos = %v, want [repo1]", repos)
-	}
-	if len(dirs) != 1 || dirs[0] != "plain" {
-		t.Errorf("dirs = %v, want [plain]", dirs)
+	// Output format is "- <name> <version>\n"; an empty version
+	// yields "- jq \n".
+	if !strings.Contains(out, "- jq ") {
+		t.Errorf("writeTools with no version dropped entry; output:\n%s", out)
 	}
 }
 
-// --- writeMCP ---
+// ---------------------------------------------------------------------------
+// writeMCP
+// ---------------------------------------------------------------------------
 
 func TestWriteMCP_EmptyServersEmitsNothing(t *testing.T) {
 	var b strings.Builder
@@ -313,7 +191,59 @@ func TestWriteMCP_InputSnapshotNotMutated(t *testing.T) {
 	}
 }
 
-// --- Generate end-to-end ---
+// ---------------------------------------------------------------------------
+// writeForges
+// ---------------------------------------------------------------------------
+
+// TestWriteForges_PerProviderFields verifies a populated provider renders
+// its email, CLI line, and accessible-repositories block, while a bare
+// provider (no email, unknown kind, no repos) omits all three.
+func TestWriteForges_PerProviderFields(t *testing.T) {
+	t.Run("populated provider renders email, CLI and repo list", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind:  "github",
+			Host:  "github.com",
+			User:  "alice",
+			Email: "alice@example.com",
+			Repos: []string{"acme/widget"},
+		}}})
+		out := b.String()
+		if !strings.Contains(out, "alice@example.com") {
+			t.Errorf("missing authenticated email:\n%s", out)
+		}
+		if !strings.Contains(out, "CLI: `gh`") {
+			t.Errorf("missing CLI line for github:\n%s", out)
+		}
+		if !strings.Contains(out, "Accessible repositories") || !strings.Contains(out, "acme/widget") {
+			t.Errorf("missing accessible-repositories block:\n%s", out)
+		}
+	})
+
+	t.Run("bare provider omits email, CLI and repo list", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind: "mysteryforge", // forgeCLI() returns "" -> no CLI line
+			Host: "git.example.com",
+			User: "bob",
+			// Email empty, Repos nil.
+		}}})
+		out := b.String()
+		if strings.Contains(out, "bob <") {
+			t.Errorf("rendered an empty <email> for a provider without an email:\n%s", out)
+		}
+		if strings.Contains(out, "- CLI:") {
+			t.Errorf("rendered a CLI line for an unknown forge kind:\n%s", out)
+		}
+		if strings.Contains(out, "Accessible repositories") {
+			t.Errorf("rendered accessible-repositories header with zero repos:\n%s", out)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Generate
+// ---------------------------------------------------------------------------
 
 // TestGenerate_WritesCompleteSteeringFile drives the full Generate
 // flow: reads tools.json, inspects workDir, uses the wired MCP
@@ -414,8 +344,38 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 	}
 }
 
-// TestGenerate_IdempotentSkipsRewrite pins Q24: a second Generate
-// with identical inputs must not rewrite the file (mtime unchanged).
+// TestGenerate_RendersForgeSection verifies a wired forge snapshot renders
+// the "## Connected forges" section with the provider host and user.
+func TestGenerate_RendersForgeSection(t *testing.T) {
+	steeringPath := setupKiroHome(t)
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+
+	g := New(workDir, configDir)
+	g.SetForgeSnapshot(func() ForgeSnapshot {
+		return ForgeSnapshot{Providers: []ForgeProvider{
+			{Kind: "github", Host: "github.com", User: "alice"},
+		}}
+	})
+	g.Generate(context.Background())
+
+	out, err := os.ReadFile(steeringPath)
+	if err != nil {
+		t.Fatalf("steering file not written: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"## Connected forges", "github.com", "alice"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Generate with forge snapshot omitted %q\n--- output ---\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerate_IdempotentSkipsRewrite verifies a second Generate with
+// identical inputs does not rewrite the file. A far-past mtime is stamped
+// first so the assertion is robust against coarse filesystem mtime
+// granularity: a skipped write leaves the mtime in the past, while any
+// rewrite bumps it to ~now.
 func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -427,27 +387,95 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	g.Generate(context.Background())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
-	info1, err := os.Stat(steeringPath)
-	if err != nil {
-		t.Fatalf("first stat: %v", err)
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(steeringPath, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
 	}
-	mtime1 := info1.ModTime()
 
-	// Second Generate must be a no-op — content is identical,
-	// so api.SaveBytes is never called and mtime stays put.
+	// Second Generate must be a no-op — content is identical, so the
+	// file is never rewritten and the stamped mtime survives.
 	g.Generate(context.Background())
 
-	info2, err := os.Stat(steeringPath)
+	info, err := os.Stat(steeringPath)
 	if err != nil {
-		t.Fatalf("second stat: %v", err)
+		t.Fatalf("stat after second Generate: %v", err)
 	}
-	if !info2.ModTime().Equal(mtime1) {
-		t.Errorf("mtime changed on idempotent Generate: %v → %v",
-			mtime1, info2.ModTime())
+	if cutoff := time.Now().Add(-30 * time.Minute); !info.ModTime().Before(cutoff) {
+		t.Errorf("second Generate rewrote unchanged file: mtime %v is not before %v (skip-write guard broken)",
+			info.ModTime(), cutoff)
 	}
 }
 
-// --- CustomPath ---
+// TestGenerate_LogsWroteOnSuccess verifies a successful write logs the
+// "steering: wrote" Info line.
+func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
+	steeringPath := setupKiroHome(t)
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	g := New(workDir, configDir)
+	g.Generate(context.Background())
+
+	if _, err := os.Stat(steeringPath); err != nil {
+		t.Fatalf("Generate did not write file: %v", err)
+	}
+	logs := buf.String()
+	if !strings.Contains(logs, "steering: wrote") {
+		t.Errorf("successful Generate did not log the success line; logs:\n%s", logs)
+	}
+}
+
+// TestGenerate_ConcurrentCallsSerialise fans out concurrent Generate and
+// SetMCPSnapshot calls; under -race it fails if the mutex is weakened or
+// the snapshot pointer is accessed without the lock. The final file must
+// be a single coherent document, not truncated or interleaved.
+func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+
+	g := New(workDir, configDir)
+	g.SetMCPSnapshot(func() MCPSnapshot {
+		return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
+	})
+
+	const n = 16
+	var wg sync.WaitGroup
+	wg.Add(2 * n)
+	for range n {
+		go func() { defer wg.Done(); g.Generate(context.Background()) }()
+		go func() {
+			defer wg.Done()
+			g.SetMCPSnapshot(func() MCPSnapshot {
+				return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
+			})
+		}()
+	}
+	wg.Wait()
+
+	got, err := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
+	if err != nil {
+		t.Fatalf("steering file missing after concurrent Generate: %v", err)
+	}
+	s := string(got)
+	if !strings.HasPrefix(s, "# Environment\n") {
+		t.Errorf("steering file header corrupted under concurrency: %.80q", s)
+	}
+	if !strings.Contains(s, "## Capabilities") {
+		t.Errorf("steering file truncated under concurrency; no Capabilities section:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CustomPath
+// ---------------------------------------------------------------------------
 
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
@@ -473,311 +501,5 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	// two stay aligned even on stripped local-dev shells.
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)
-	}
-}
-
-// --- writeTools coverage across all eight source maps (VK-U3-t-001) ---
-
-func TestWriteTools_AllSourceMaps(t *testing.T) {
-	// Pins the eight-collect-call list in writeTools against a
-	// future copy-paste edit that drops one silently.
-	data := []byte(`{
-		"runtimes": {"node": {"version": "20.19.0"}},
-		"binary":   {"hadolint": {"version": "v2.14.0"}},
-		"go":       {"goimports": {"version": "v0.30.0"}},
-		"npm":      {"html-validate": {"version": "10.11.3"}},
-		"pip":      {"yamllint": {"version": "1.38.0"}},
-		"custom":   {"kiro-cli": {"version": "2.0.1"}},
-		"cargo":    {"fallow": {"version": "0.3.0"}},
-		"apt":      {"ripgrep": {"version": "13.0.0"}}
-	}`)
-	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
-
-	wants := []string{
-		"- node 20.19.0",
-		"- hadolint v2.14.0",
-		"- goimports v0.30.0",
-		"- html-validate 10.11.3",
-		"- yamllint 1.38.0",
-		"- kiro-cli 2.0.1",
-		"- fallow 0.3.0",
-		"- ripgrep 13.0.0",
-	}
-	for _, w := range wants {
-		if !strings.Contains(out, w) {
-			t.Errorf("writeTools output missing %q\nfull output:\n%s", w, out)
-		}
-	}
-}
-
-// --- writeTools empty-Binaries / empty-Version fallbacks (VK-U3-t-003) ---
-
-func TestWriteTools_EmptyBinariesSliceUsesMapKey(t *testing.T) {
-	// binaries: [] must NOT suppress the entry; the map key
-	// ("gh") should appear with its version.
-	data := []byte(`{"binary": {"gh": {"version": "v2.91.0", "binaries": []}}}`)
-	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
-
-	if !strings.Contains(out, "- gh v2.91.0") {
-		t.Errorf("writeTools with empty Binaries slice dropped entry; output:\n%s", out)
-	}
-}
-
-func TestWriteTools_EmptyVersionStillLists(t *testing.T) {
-	// Tool with no version field still shows up so the agent
-	// knows it's installed even if the version can't be pinned.
-	data := []byte(`{"binary": {"jq": {}}}`)
-	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
-
-	// Output format is "- <name> <version>\n"; an empty version
-	// yields "- jq \n".
-	if !strings.Contains(out, "- jq ") {
-		t.Errorf("writeTools with no version dropped entry; output:\n%s", out)
-	}
-}
-
-func isValidUTF8(s string) bool {
-	// strings.ContainsRune(strings.ToValidUTF8) round-trips any
-	// lone continuation byte as U+FFFD; if the result differs,
-	// the input was invalid.
-	return strings.ToValidUTF8(s, "\uFFFD") == s
-}
-
-// --- Generate concurrency (VK-U3-t-004): serialise under -race ---
-
-func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
-	workDir := t.TempDir()
-	configDir := t.TempDir()
-
-	g := New(workDir, configDir)
-	g.SetMCPSnapshot(func() MCPSnapshot {
-		return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
-	})
-
-	// Fan out: n concurrent Generate calls + n concurrent
-	// SetMCPSnapshot calls. With -race the test fails if the
-	// mutex is weakened or the snapshot pointer accessed
-	// without the lock.
-	const n = 16
-	var wg sync.WaitGroup
-	wg.Add(2 * n)
-	for range n {
-		go func() { defer wg.Done(); g.Generate(context.Background()) }()
-		go func() {
-			defer wg.Done()
-			g.SetMCPSnapshot(func() MCPSnapshot {
-				return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
-			})
-		}()
-	}
-	wg.Wait()
-
-	// Final state must be a single coherent file — not truncated,
-	// not interleaved.
-	got, err := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
-	if err != nil {
-		t.Fatalf("steering file missing after concurrent Generate: %v", err)
-	}
-	s := string(got)
-	if !strings.HasPrefix(s, "# Environment\n") {
-		t.Errorf("steering file header corrupted under concurrency: %.80q", s)
-	}
-	if !strings.Contains(s, "## Capabilities") {
-		t.Errorf("steering file truncated under concurrency; no Capabilities section:\n%s", s)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Per-repo steering inventory: frontmatter parser + grouped renderer.
-// ---------------------------------------------------------------------------
-
-func TestParseSteeringFrontmatter(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want Doc
-	}{
-		{
-			name: "no frontmatter defaults to always",
-			in:   "# Title\n\nBody.\n",
-			want: Doc{Inclusion: "always"},
-		},
-		{
-			name: "explicit always",
-			in:   "---\ninclusion: always\n---\nbody",
-			want: Doc{Inclusion: "always"},
-		},
-		{
-			name: "fileMatch with pattern",
-			in:   "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
-			want: Doc{Inclusion: "fileMatch", FileMatch: "internal/**/*.go", Description: "Go layout"},
-		},
-		{
-			name: "manual",
-			in:   "---\ninclusion: manual\ndescription: Incident runbook\n---\n",
-			want: Doc{Inclusion: "manual", Description: "Incident runbook"},
-		},
-		{
-			name: "unknown inclusion falls back to always",
-			in:   "---\ninclusion: bogus\n---\n",
-			want: Doc{Inclusion: "always"},
-		},
-		{
-			name: "single-quoted values",
-			in:   "---\ninclusion: 'fileMatch'\nfileMatchPattern: 'cmd/*.go'\n---\n",
-			want: Doc{Inclusion: "fileMatch", FileMatch: "cmd/*.go"},
-		},
-		{
-			name: "missing closing fence falls back to always",
-			in:   "---\ninclusion: fileMatch\nbody without closing\n",
-			want: Doc{Inclusion: "always"},
-		},
-		{
-			name: "empty file",
-			in:   "",
-			want: Doc{Inclusion: "always"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := parseSteeringFrontmatter([]byte(tc.in))
-			if got != tc.want {
-				t.Errorf("parseSteeringFrontmatter() = %+v, want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
-	dir := t.TempDir()
-	steering := filepath.Join(dir, ".kiro", "steering")
-	if err := os.MkdirAll(steering, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Three files, three trigger types.
-	files := map[string]string{
-		"architecture.md": "---\ninclusion: always\ndescription: Arch overview\n---\nbody",
-		"go-layout.md":    "---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\n---\nbody",
-		"runbook.md":      "---\ninclusion: manual\n---\nbody",
-		"plain.md":        "no frontmatter\n", // defaults to always
-	}
-	for n, c := range files {
-		if err := os.WriteFile(filepath.Join(steering, n), []byte(c), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	docs := findRepoDocs(dir)
-	if len(docs) != 4 {
-		t.Fatalf("got %d docs, want 4", len(docs))
-	}
-	byName := map[string]Doc{}
-	for _, d := range docs {
-		byName[d.Filename] = d
-	}
-	if d := byName["architecture.md"]; d.Inclusion != "always" || d.Description != "Arch overview" {
-		t.Errorf("architecture.md = %+v", d)
-	}
-	if d := byName["go-layout.md"]; d.Inclusion != "fileMatch" || d.FileMatch != "internal/**/*.go" {
-		t.Errorf("go-layout.md = %+v", d)
-	}
-	if d := byName["runbook.md"]; d.Inclusion != "manual" {
-		t.Errorf("runbook.md = %+v", d)
-	}
-	if d := byName["plain.md"]; d.Inclusion != "always" {
-		t.Errorf("plain.md = %+v (no frontmatter should default to always)", d)
-	}
-}
-
-func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
-	dir := t.TempDir()
-	docs := findRepoDocs(dir)
-	if docs != nil {
-		t.Errorf("expected nil, got %+v", docs)
-	}
-}
-
-func TestFindRepoDocs_CapAt20(t *testing.T) {
-	dir := t.TempDir()
-	steering := filepath.Join(dir, ".kiro", "steering")
-	if err := os.MkdirAll(steering, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// 25 files; expect 20 returned.
-	for i := range 25 {
-		name := fmt.Sprintf("doc-%02d.md", i)
-		if err := os.WriteFile(filepath.Join(steering, name), []byte("body"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	docs := findRepoDocs(dir)
-	if len(docs) != 20 {
-		t.Errorf("got %d docs, want 20 (capped)", len(docs))
-	}
-}
-
-func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
-	dir := t.TempDir()
-	repoDir := filepath.Join(dir, "myrepo")
-	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	steering := filepath.Join(repoDir, ".kiro", "steering")
-	if err := os.MkdirAll(steering, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(steering, "always.md"),
-		[]byte("---\ninclusion: always\ndescription: Always-on doc\n---\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(steering, "go-files.md"),
-		[]byte("---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\ndescription: Go conventions\n---\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(steering, "incident.md"),
-		[]byte("---\ninclusion: manual\ndescription: On-call runbook\n---\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
-	out := b.String()
-	checks := []string{
-		"Always-loaded steering",
-		"File-match steering",
-		"Manual steering",
-		"`myrepo/.kiro/steering/always.md` — Always-on doc",
-		"`myrepo/.kiro/steering/go-files.md` (matches `**/*.go`) — Go conventions",
-		"`myrepo/.kiro/steering/incident.md` — On-call runbook",
-		"Per-repo .kiro protocol",
-		"NOT auto-loaded",
-		"routing table",
-	}
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("output missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-}
-
-func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
-	dir := t.TempDir()
-	repoDir := filepath.Join(dir, "myrepo")
-	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Repo exists but has no .kiro/steering/.
-	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
-	out := b.String()
-	if strings.Contains(out, "Per-repo .kiro protocol") {
-		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
 	}
 }

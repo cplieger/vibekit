@@ -36,15 +36,21 @@ type hookCreatePayload struct {
 	Patterns    string `json:"patterns,omitempty"`
 }
 
+// hookFieldsExceedLimit reports whether any CmdCreateHook string field
+// exceeds the per-field MaxHookField cap.
+func hookFieldsExceedLimit(p *hookCreatePayload) bool {
+	return len(p.Name) > MaxHookField || len(p.Description) > MaxHookField ||
+		len(p.EventType) > MaxHookField || len(p.ActionType) > MaxHookField ||
+		len(p.Prompt) > MaxHookField || len(p.Command) > MaxHookField ||
+		len(p.Patterns) > MaxHookField
+}
+
 // validateHookPayload decodes + validates a CmdCreateHook payload.
 func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
 		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
-	if len(p.Name) > MaxHookField || len(p.Description) > MaxHookField ||
-		len(p.EventType) > MaxHookField || len(p.ActionType) > MaxHookField ||
-		len(p.Prompt) > MaxHookField || len(p.Command) > MaxHookField ||
-		len(p.Patterns) > MaxHookField {
+	if hookFieldsExceedLimit(&p) {
 		return p, "", http.StatusRequestEntityTooLarge,
 			errors.New("hook field too large")
 	}

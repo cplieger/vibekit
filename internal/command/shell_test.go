@@ -49,6 +49,18 @@ func TestShellCappedBuffer(t *testing.T) {
 			wantTrunc: true,
 		},
 		{
+			// An empty write when the buffer is exactly full must still
+			// mark Truncated (remaining == 0 takes the cap-reached branch,
+			// not the len(p) <= remaining fast path).
+			name: "empty write at exactly-full buffer",
+			writes: [][]byte{
+				bytes.Repeat([]byte("x"), ShellOutputCap),
+				{},
+			},
+			wantLen:   ShellOutputCap,
+			wantTrunc: true,
+		},
+		{
 			name:      "empty write",
 			writes:    [][]byte{{}},
 			wantLen:   0,
