@@ -5,21 +5,32 @@ import (
 	"time"
 )
 
-func FuzzEnvDuration(f *testing.F) {
-	f.Add("")
-	f.Add("5s")
-	f.Add("100ms")
-	f.Add("invalid")
-	f.Add("0")
-	f.Add("-1h")
-	f.Add("999999h")
+// TestEnvDuration pins envDuration's three branches: a valid value is
+// parsed (not the fallback), an unparseable value falls back (not the
+// zero duration a failed parse would otherwise yield), and an
+// empty/unset value falls back.
+func TestEnvDuration(t *testing.T) {
+	const key = "VIBEKIT_ENVDURATION_TEST"
+	const fallback = 10 * time.Second
 
-	f.Fuzz(func(t *testing.T, input string) {
-		fallback := 30 * time.Second
-		result := envDuration("FUZZ_TEST_KEY_UNUSED", fallback)
-		// With no env var set, must return fallback.
-		if result != fallback {
-			t.Fatalf("envDuration with unset key = %v, want %v", result, fallback)
+	t.Run("valid value parses, not fallback", func(t *testing.T) {
+		t.Setenv(key, "5s")
+		if got := envDuration(key, fallback); got != 5*time.Second {
+			t.Errorf("envDuration(%q) = %v, want %v", "5s", got, 5*time.Second)
+		}
+	})
+
+	t.Run("unparseable value returns fallback, not zero", func(t *testing.T) {
+		t.Setenv(key, "not-a-duration")
+		if got := envDuration(key, fallback); got != fallback {
+			t.Errorf("envDuration(%q) = %v, want fallback %v", "not-a-duration", got, fallback)
+		}
+	})
+
+	t.Run("empty value returns fallback", func(t *testing.T) {
+		t.Setenv(key, "")
+		if got := envDuration(key, fallback); got != fallback {
+			t.Errorf("envDuration(empty) = %v, want fallback %v", got, fallback)
 		}
 	})
 }
