@@ -105,9 +105,12 @@ describe("ERROR_ROUTES", () => {
     ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
   ];
 
-  it.each(expectedRoutes)("routes %s to the expected surface/level/dismissible", (code, expected) => {
-    expect(ERROR_ROUTES[code as keyof typeof ERROR_ROUTES]).toEqual(expected);
-  });
+  it.each(expectedRoutes)(
+    "routes %s to the expected surface/level/dismissible",
+    (code, expected) => {
+      expect(ERROR_ROUTES[code as keyof typeof ERROR_ROUTES]).toEqual(expected);
+    },
+  );
 
   it("contains exactly the eight known error codes", () => {
     expect(Object.keys(ERROR_ROUTES).sort()).toEqual(expectedRoutes.map(([c]) => c).sort());
@@ -123,7 +126,11 @@ describe("turn_ended turn summary rendering", () => {
   // Drives the real handler and asserts the rendered summary text — the actual
   // observable formatting, not a reimplementation of the Math.floor expression.
   it.each<{ desc: string; payload: Record<string, unknown>; text: string }>([
-    { desc: "sub-minute elapsed uses one decimal second", payload: { elapsed_ms: 45500 }, text: "45.5s" },
+    {
+      desc: "sub-minute elapsed uses one decimal second",
+      payload: { elapsed_ms: 45500 },
+      text: "45.5s",
+    },
     { desc: "minute+ elapsed splits into m and s", payload: { elapsed_ms: 90000 }, text: "1m 30s" },
     {
       desc: "minute branch floors the seconds (no round-up to 60)",
@@ -135,7 +142,11 @@ describe("turn_ended turn summary rendering", () => {
       payload: { credits_delta: 1.5, elapsed_ms: 2000 },
       text: "Est. 1.50 credits · 2.0s",
     },
-    { desc: "credits alone render without an elapsed segment", payload: { credits_delta: 0.5 }, text: "Est. 0.50 credits" },
+    {
+      desc: "credits alone render without an elapsed segment",
+      payload: { credits_delta: 0.5 },
+      text: "Est. 0.50 credits",
+    },
   ])("$desc", ({ payload, text }) => {
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
@@ -159,7 +170,9 @@ describe("turn_ended turn summary rendering", () => {
         "b.ts": { lines_added: 1, lines_removed: 0 },
       },
     });
-    expect(document.querySelector(".turn-file-changes")?.textContent).toBe("2 files changed · +6 · -2");
+    expect(document.querySelector(".turn-file-changes")?.textContent).toBe(
+      "2 files changed · +6 · -2",
+    );
   });
 });
 
@@ -193,7 +206,13 @@ describe("error handler", () => {
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "rate_limit", message: "slow down" });
     expect(get("chat-1")?.thinking).toBe(false);
-    expect(mockShowBanner).toHaveBeenCalledWith("chat-1", "rate_limit", "slow down", "warning", true);
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      "chat-1",
+      "rate_limit",
+      "slow down",
+      "warning",
+      true,
+    );
     expect(mockSetLastError).not.toHaveBeenCalled();
   });
 
