@@ -66,3 +66,20 @@ func TestNewID_UniqueOver10k(t *testing.T) {
 		seen[string(id)] = struct{}{}
 	}
 }
+
+// TestParseServerID_LengthBoundary pins the 32-char length cap: an id of
+// exactly 32 chars is accepted (the cap is len > 32, not >=) and a
+// 33-char id is rejected.
+func TestParseServerID_LengthBoundary(t *testing.T) {
+	atMax := strings.Repeat("a", 32)
+	id, err := ParseServerID(atMax)
+	if err != nil {
+		t.Errorf("ParseServerID(32 chars) = err %v, want nil", err)
+	}
+	if string(id) != atMax {
+		t.Errorf("ParseServerID(32 chars) id = %q, want %q", string(id), atMax)
+	}
+	if _, err := ParseServerID(strings.Repeat("a", 33)); err == nil {
+		t.Error("ParseServerID(33 chars) = nil, want too-long error")
+	}
+}

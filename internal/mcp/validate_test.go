@@ -545,3 +545,129 @@ func FuzzValidate(f *testing.F) {
 		}
 	})
 }
+
+// TestValidate_AcceptsValuesAtCap pins the upper boundary of every
+// length/count cap Validate enforces: a value of exactly the cap must be
+// accepted (the checks are len > cap, not >=). A boundary mutation
+// (> to >=) on any of these would reject the at-cap value.
+func TestValidate_AcceptsValuesAtCap(t *testing.T) {
+	const urlPrefix = "https://x.example/"
+	urlAtMax := urlPrefix + strings.Repeat("a", urlMax-len(urlPrefix))
+
+	cases := []struct {
+		srv  *Server
+		name string
+	}{
+		{
+			name: "disabled_tools_at_max_count",
+			srv:  &Server{Transport: TransportStdio, Name: "ok", Command: "bash", DisabledTools: make([]string, maxDisabledTools)},
+		},
+		{
+			name: "disabled_tool_at_max_len",
+			srv:  &Server{Transport: TransportStdio, Name: "ok", Command: "bash", DisabledTools: []string{strings.Repeat("a", disabledToolMax)}},
+		},
+		{
+			name: "command_at_max_len",
+			srv:  &Server{Transport: TransportStdio, Name: "ok", Command: strings.Repeat("a", commandMax)},
+		},
+		{
+			name: "args_at_max_count",
+			srv:  &Server{Transport: TransportStdio, Name: "ok", Command: "bash", Args: make([]string, maxArgs)},
+		},
+		{
+			name: "arg_at_max_len",
+			srv:  &Server{Transport: TransportStdio, Name: "ok", Command: "bash", Args: []string{strings.Repeat("a", argMax)}},
+		},
+		{
+			name: "url_at_max_len",
+			srv:  &Server{Transport: TransportHTTP, Name: "ok", URL: urlAtMax},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := Validate(tc.srv); err != nil {
+				t.Errorf("Validate(%s) = %v, want nil (at-cap value must be accepted)", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestValidate_OAuthClientIDLengthBoundary pins the oauth_client_id cap
+// in validateRemote: a client id of exactly oauthClientIDMax bytes is
+// accepted and one byte over is rejected with "oauth_client_id too long".
+func TestValidate_OAuthClientIDLengthBoundary(t *testing.T) {
+	atMax := &Server{
+		Transport:     TransportHTTP,
+		Name:          "ok",
+		URL:           "https://x.example/mcp",
+		OAuthClientID: strings.Repeat("a", oauthClientIDMax),
+	}
+	if err := Validate(atMax); err != nil {
+		t.Errorf("Validate(OAuthClientID len=%d) = %v, want nil", oauthClientIDMax, err)
+	}
+
+	over := &Server{
+		Transport:     TransportHTTP,
+		Name:          "ok",
+		URL:           "https://x.example/mcp",
+		OAuthClientID: strings.Repeat("a", oauthClientIDMax+1),
+	}
+	err := Validate(over)
+	if err == nil {
+		t.Fatalf("Validate(OAuthClientID len=%d) = nil, want too-long error", oauthClientIDMax+1)
+	}
+	if !strings.Contains(err.Error(), "oauth_client_id too long") {
+		t.Errorf("Validate(OAuthClientID over cap) = %q, want substring %q",
+			err.Error(), "oauth_client_id too long")
+	}
+}
+
+// TestValidateKeyPairs_entryCountBoundary pins the entry-count cap in
+// validateKeyPairs: exactly maxEntries pairs are accepted and one over
+// is rejected with "too many entries". Called directly so the boundary
+// is pinned by the maxEntries parameter, not a package-level cap.
+func TestValidateKeyPairs_entryCountBoundary(t *testing.T) {
+	const maxEntries = 2
+	const maxValue = 1024
+
+	atMax := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}}
+	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
+		t.Errorf("validateKeyPairs(%d pairs, max %d) = %v, want nil", len(atMax), maxEntries, err)
+	}
+
+	over := []KeyPair{{Name: "Ga", Value: "v"}, {Name: "Gb", Value: "v"}, {Name: "Gc", Value: "v"}}
+	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
+	if err == nil {
+		t.Fatalf("validateKeyPairs(%d pairs, max %d) = nil, want too-many-entries error",
+			len(over), maxEntries)
+	}
+	if !strings.Contains(err.Error(), "too many entries") {
+		t.Errorf("validateKeyPairs(%d pairs) = %q, want substring %q",
+			len(over), err.Error(), "too many entries")
+	}
+}
+
+// TestValidateKeyPairs_valueLengthBoundary pins the per-value length cap
+// in validateKeyPairs: a value of exactly maxValue bytes is accepted and
+// one byte over is rejected with "value too long". maxEntries is kept
+// above the pair count so the entry-count check passes first.
+func TestValidateKeyPairs_valueLengthBoundary(t *testing.T) {
+	const maxEntries = 8
+	const maxValue = 4
+
+	atMax := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue)}}
+	if err := validateKeyPairs("env", atMax, maxEntries, maxValue, false); err != nil {
+		t.Errorf("validateKeyPairs(value len=%d, max %d) = %v, want nil", maxValue, maxValue, err)
+	}
+
+	over := []KeyPair{{Name: "Gk", Value: strings.Repeat("v", maxValue+1)}}
+	err := validateKeyPairs("env", over, maxEntries, maxValue, false)
+	if err == nil {
+		t.Fatalf("validateKeyPairs(value len=%d, max %d) = nil, want value-too-long error",
+			maxValue+1, maxValue)
+	}
+	if !strings.Contains(err.Error(), "value too long") {
+		t.Errorf("validateKeyPairs(value len=%d) = %q, want substring %q",
+			maxValue+1, err.Error(), "value too long")
+	}
+}

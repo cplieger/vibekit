@@ -440,109 +440,152 @@ var supportedRemoteTypes = map[string]Transport{
 	"sse":             TransportHTTP,
 }
 
+// registryWireResponse mirrors the upstream registry v0.1 search
+// response. Only the fields vibekit surfaces are decoded; everything
+// else (schema URLs, timestamps, OIDC metadata) is ignored. Named
+// (vs an inline anonymous struct) so the per-package / per-remote
+// mapping can be factored into convertRegistryPackage / convertRegistryRemote.
+type registryWireResponse struct {
+	Servers []struct {
+		Server registryWireServer `json:"server"`
+	} `json:"servers"`
+}
+
+type registryWireServer struct {
+	Name        string `json:"name"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Repository  struct {
+		URL string `json:"url"`
+	} `json:"repository"`
+	Packages []registryWirePackage `json:"packages"`
+	Remotes  []registryWireRemote  `json:"remotes"`
+}
+
+type registryWirePackage struct {
+	RegistryType string `json:"registryType"`
+	Identifier   string `json:"identifier"`
+	Version      string `json:"version"`
+	Transport    struct {
+		Type string `json:"type"`
+	} `json:"transport"`
+	EnvironmentVariables []registryWireEnvVar `json:"environmentVariables"`
+}
+
+type registryWireEnvVar struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Format      string `json:"format"`
+	IsRequired  bool   `json:"isRequired"`
+	IsSecret    bool   `json:"isSecret"`
+}
+
+type registryWireRemote struct {
+	Type    string               `json:"type"`
+	URL     string               `json:"url"`
+	Headers []registryWireHeader `json:"headers"`
+}
+
+type registryWireHeader struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Value       string `json:"value"`
+	IsRequired  bool   `json:"isRequired"`
+	IsSecret    bool   `json:"isSecret"`
+}
+
 func normaliseRegistryResponse(body []byte) []RegistryEntry {
-	var raw struct {
-		Servers []struct {
-			Server struct {
-				Name        string `json:"name"`
-				Title       string `json:"title"`
-				Description string `json:"description"`
-				Version     string `json:"version"`
-				Repository  struct {
-					URL string `json:"url"`
-				} `json:"repository"`
-				Packages []struct {
-					RegistryType string `json:"registryType"`
-					Identifier   string `json:"identifier"`
-					Version      string `json:"version"`
-					Transport    struct {
-						Type string `json:"type"`
-					} `json:"transport"`
-					EnvironmentVariables []struct {
-						Name        string `json:"name"`
-						Description string `json:"description"`
-						Format      string `json:"format"`
-						IsRequired  bool   `json:"isRequired"`
-						IsSecret    bool   `json:"isSecret"`
-					} `json:"environmentVariables"`
-				} `json:"packages"`
-				Remotes []struct {
-					Type    string `json:"type"`
-					URL     string `json:"url"`
-					Headers []struct {
-						Name        string `json:"name"`
-						Description string `json:"description"`
-						Value       string `json:"value"`
-						IsRequired  bool   `json:"isRequired"`
-						IsSecret    bool   `json:"isSecret"`
-					} `json:"headers"`
-				} `json:"remotes"`
-			} `json:"server"`
-		} `json:"servers"`
-	}
+	var raw registryWireResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return []RegistryEntry{}
 	}
 	out := make([]RegistryEntry, 0, len(raw.Servers))
 	for i := range raw.Servers {
-		srv := &raw.Servers[i].Server
-		entry := RegistryEntry{
-			Name:        srv.Name,
-			Title:       srv.Title,
-			Description: srv.Description,
-			Version:     srv.Version,
-			Repository:  srv.Repository.URL,
+		if entry, ok := buildRegistryEntry(&raw.Servers[i].Server); ok {
+			out = append(out, entry)
 		}
-		for j := range srv.Packages {
-			pkg := &srv.Packages[j]
-			if !supportedPackageRegistries[pkg.RegistryType] {
-				continue
-			}
-			if !supportedPackageTransports[pkg.Transport.Type] {
-				continue
-			}
-			pe := RegistryPackage{
-				RegistryType: pkg.RegistryType,
-				Identifier:   pkg.Identifier,
-				Version:      pkg.Version,
-			}
-			for k := range pkg.EnvironmentVariables {
-				env := &pkg.EnvironmentVariables[k]
-				pe.EnvVars = append(pe.EnvVars, RegistryEnvVar{
-					Name:        env.Name,
-					Description: env.Description,
-					Format:      env.Format,
-					Required:    env.IsRequired,
-					Secret:      env.IsSecret,
-				})
-			}
-			entry.Packages = append(entry.Packages, pe)
-		}
-		for j := range srv.Remotes {
-			rem := &srv.Remotes[j]
-			transport, ok := supportedRemoteTypes[rem.Type]
-			if !ok {
-				continue
-			}
-			re := RegistryRemote{Type: string(transport), URL: rem.URL}
-			for k := range rem.Headers {
-				h := &rem.Headers[k]
-				re.Headers = append(re.Headers, RegistryHeader{
-					Name:        h.Name,
-					Description: h.Description,
-					Value:       h.Value,
-					Required:    h.IsRequired,
-					Secret:      h.IsSecret,
-				})
-			}
-			entry.Remotes = append(entry.Remotes, re)
-		}
-		// Skip entries with zero usable install paths. Common for schema-
-		// only publications or packages using registries we don't support.
-		if len(entry.Packages) == 0 && len(entry.Remotes) == 0 {
-			continue
-		}
-		out = append(out, entry)
 	}
 	return out
+}
+
+// buildRegistryEntry maps one upstream server record to a browser-facing
+// RegistryEntry. The bool is false when the server exposes zero usable
+// install paths (no supported package and no supported remote), in which
+// case the caller skips it — common for schema-only publications or
+// packages using registries vibekit doesn't support.
+func buildRegistryEntry(srv *registryWireServer) (RegistryEntry, bool) {
+	entry := RegistryEntry{
+		Name:        srv.Name,
+		Title:       srv.Title,
+		Description: srv.Description,
+		Version:     srv.Version,
+		Repository:  srv.Repository.URL,
+	}
+	for j := range srv.Packages {
+		if pe, ok := convertRegistryPackage(&srv.Packages[j]); ok {
+			entry.Packages = append(entry.Packages, pe)
+		}
+	}
+	for j := range srv.Remotes {
+		if re, ok := convertRegistryRemote(&srv.Remotes[j]); ok {
+			entry.Remotes = append(entry.Remotes, re)
+		}
+	}
+	if len(entry.Packages) == 0 && len(entry.Remotes) == 0 {
+		return RegistryEntry{}, false
+	}
+	return entry, true
+}
+
+// convertRegistryPackage maps one upstream package to the browser-facing
+// RegistryPackage. The bool is false when the package uses a registry or
+// transport vibekit can't install (npm-only, stdio/default-only), in
+// which case the caller skips it.
+func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
+	if !supportedPackageRegistries[pkg.RegistryType] {
+		return RegistryPackage{}, false
+	}
+	if !supportedPackageTransports[pkg.Transport.Type] {
+		return RegistryPackage{}, false
+	}
+	pe := RegistryPackage{
+		RegistryType: pkg.RegistryType,
+		Identifier:   pkg.Identifier,
+		Version:      pkg.Version,
+	}
+	for k := range pkg.EnvironmentVariables {
+		env := &pkg.EnvironmentVariables[k]
+		pe.EnvVars = append(pe.EnvVars, RegistryEnvVar{
+			Name:        env.Name,
+			Description: env.Description,
+			Format:      env.Format,
+			Required:    env.IsRequired,
+			Secret:      env.IsSecret,
+		})
+	}
+	return pe, true
+}
+
+// convertRegistryRemote maps one upstream remote to the browser-facing
+// RegistryRemote, normalising the transport type via supportedRemoteTypes
+// (e.g. streamable-http to http). The bool is false when the remote type
+// isn't one vibekit surfaces, in which case the caller skips it.
+func convertRegistryRemote(rem *registryWireRemote) (RegistryRemote, bool) {
+	transport, ok := supportedRemoteTypes[rem.Type]
+	if !ok {
+		return RegistryRemote{}, false
+	}
+	re := RegistryRemote{Type: string(transport), URL: rem.URL}
+	for k := range rem.Headers {
+		h := &rem.Headers[k]
+		re.Headers = append(re.Headers, RegistryHeader{
+			Name:        h.Name,
+			Description: h.Description,
+			Value:       h.Value,
+			Required:    h.IsRequired,
+			Secret:      h.IsSecret,
+		})
+	}
+	return re, true
 }
