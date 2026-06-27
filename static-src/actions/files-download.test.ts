@@ -22,10 +22,17 @@ afterEach(() => {
 });
 
 describe("downloadFiles action", () => {
-  it("is registered as files.download and not retryable", () => {
-    // The action object exposes its name via the registry when dispatched.
-    expect(downloadFiles).toBeDefined();
-    expect(typeof downloadFiles.dispatch).toBe("function");
+  it("makes a single fetch attempt on network error (no retry config, no auto-retry)", async () => {
+    // downloadFiles is `retryable: retryNetwork` but has NO `retry` config,
+    // so a network error is classified retryable yet never auto-retried
+    // (contrast createFile/cloneRepo, which carry RETRY_STANDARD and fire
+    // multiple attempts). One attempt, then null.
+    const fetchSpy = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")));
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await downloadFiles.dispatch({ paths: ["a.txt"] });
+    expect(result).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(recentLog()[0]?.status).toBe("error");
   });
 
   it("dispatches a POST to /api/files/download and triggers blob download", async () => {

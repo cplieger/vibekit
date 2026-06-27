@@ -1,7 +1,9 @@
 // Property-based tests for the 44 generated wire decoders in decoders.gen.ts.
 //
 // Two invariants per decoder:
-// 1. Valid-shape inputs (generated from the type schema) decode without throwing.
+// 1. Round-trip identity: a valid-shape input (generated from the type schema)
+//    decodes to a value deep-equal to the input — no field dropped, renamed,
+//    or coerced.
 // 2. Arbitrary unknown inputs (fc.anything()) either produce a valid result OR
 //    throw TypeError — never silently corrupt data or throw non-TypeError.
 //
@@ -82,6 +84,14 @@ function optField<T>(arb: fc.Arbitrary<T>): fc.Arbitrary<T | undefined> {
   return fc.option(arb, { nil: undefined });
 }
 
+// Dictionary-key guard for the round-trip identity test. Excludes "__proto__":
+// JSON.parse materializes a "__proto__" key as an own property, but the
+// generated decoders' decodeRecord does `out[k] = v`, and `out["__proto__"] =
+// obj` sets the prototype rather than an own key — so the field silently
+// vanishes from the decoded object and breaks deep-equality. Real wire payloads
+// never key a map on "__proto__" (see QUESTIONS for the validators.ts note).
+const notProto = (k: string): boolean => k !== "__proto__";
+
 // --- Shape arbitraries for each decoder ---
 
 const usageArb = fc.record({
@@ -119,7 +129,7 @@ const sessionModeArb = fc.record({
 const availableCommandArb = fc.record({
   name: fc.string({ minLength: 1 }),
   description: optField(fc.string()),
-  meta: optField(fc.dictionary(fc.string({ minLength: 1 }), fc.anything())),
+  meta: optField(fc.dictionary(fc.string({ minLength: 1 }).filter(notProto), fc.anything())),
 });
 
 const chatDeletedPayloadArb = fc.record({ id: fc.string({ minLength: 1 }) });
@@ -377,7 +387,7 @@ const elicitationRequestSchemaArb = fc.record({
   type: optField(fc.string()),
   title: optField(fc.string()),
   description: optField(fc.string()),
-  properties: optField(fc.dictionary(fc.string(), elicitationPropertySchemaArb)),
+  properties: optField(fc.dictionary(fc.string().filter(notProto), elicitationPropertySchemaArb)),
   required: optField(fc.array(fc.string())),
 });
 
@@ -432,7 +442,9 @@ const toolCallUpdatePayloadArb = fc.record({
 });
 
 const turnEndedPayloadArb = fc.record({
-  changed_files: optField(fc.dictionary(fc.string({ minLength: 1 }), fileChangeArb)),
+  changed_files: optField(
+    fc.dictionary(fc.string({ minLength: 1 }).filter(notProto), fileChangeArb),
+  ),
   stop_reason: optField(stopReasonArb),
   credits_delta: optField(posFloat),
   elapsed_ms: optField(posFloat),
@@ -610,15 +622,21 @@ const decoderRegistry: {
 // --- Property tests ---
 
 describe("wire/decoders property tests", () => {
-  describe("valid-shape inputs decode without throwing", () => {
+  // Round-trip identity: decoding a valid JSON-shaped value preserves every
+  // field verbatim. Strictly stronger than the old "result is defined" check —
+  // a decoder that silently dropped a field, renamed one, or coerced a value
+  // would pass "toBeDefined" but fail here. This is the highest-leverage
+  // property for a generated codec (Wlaschin's round-trip). `toEqual` treats an
+  // absent key and an `undefined`-valued key as equal, which matches the
+  // JSON.parse(JSON.stringify(...)) normalization applied to the input first
+  // (JSON drops `undefined`-valued optional fields).
+  describe("valid-shape inputs round-trip without loss", () => {
     for (const { name, decoder, arb } of decoderRegistry) {
       it(name, () => {
         fc.assert(
           fc.property(arb, (input) => {
-            // Strip undefined values to match JSON round-trip (JSON.parse drops undefined)
-            const json = JSON.parse(JSON.stringify(input));
-            const result = decoder(json);
-            expect(result).toBeDefined();
+            const json: unknown = JSON.parse(JSON.stringify(input));
+            expect(decoder(json)).toEqual(json);
           }),
         );
       });
