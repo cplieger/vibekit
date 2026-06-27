@@ -89,43 +89,42 @@ const (
 	EventWorkingLabel          EventType = "working_label"
 )
 
+// labelRunning is the working label shared by the running-process kinds
+// (shell/execute commands, plain commands, and MCP tool calls).
+const labelRunning = "Running"
+
+// workingLabelByKind maps each tool kind with a fixed working label to that
+// label. Kinds whose label depends on runtime data (ToolKindExecute and
+// ToolKindShell incorporate the title) are handled in WorkingLabelForKind
+// directly; ToolKindOther and any unrecognized kind fall back to
+// WorkingLabelThinking. Keep this in sync with the ToolKind constants.
+var workingLabelByKind = map[ToolKind]string{
+	ToolKindRead:       "Reading",
+	ToolKindSearch:     "Searching",
+	ToolKindFetch:      "Fetching",
+	ToolKindEdit:       "Writing",
+	ToolKindWrite:      "Writing",
+	ToolKindThink:      "Reasoning",
+	ToolKindDelete:     "Deleting",
+	ToolKindMove:       "Moving",
+	ToolKindCommand:    labelRunning,
+	ToolKindBrowser:    "Browsing",
+	ToolKindSwitchMode: "Switching",
+	ToolKindMCP:        labelRunning,
+	ToolKindHook:       "Running hook",
+}
+
 // WorkingLabelForKind maps a tool kind to a human-readable label.
 // Matches ASAI's VV() function from the frontend reducer.
 func WorkingLabelForKind(kind ToolKind, title string) string {
-	const labelRunning = "Running"
-	//exhaustive:enforce
-	switch kind {
-	case ToolKindExecute, ToolKindShell:
+	if kind == ToolKindExecute || kind == ToolKindShell {
 		if title != "" {
 			return labelRunning + " " + title
 		}
 		return labelRunning
-	case ToolKindRead:
-		return "Reading"
-	case ToolKindSearch:
-		return "Searching"
-	case ToolKindFetch:
-		return "Fetching"
-	case ToolKindEdit, ToolKindWrite:
-		return "Writing"
-	case ToolKindThink:
-		return "Reasoning"
-	case ToolKindDelete:
-		return "Deleting"
-	case ToolKindMove:
-		return "Moving"
-	case ToolKindCommand:
-		return labelRunning
-	case ToolKindBrowser:
-		return "Browsing"
-	case ToolKindSwitchMode:
-		return "Switching"
-	case ToolKindMCP:
-		return labelRunning
-	case ToolKindHook:
-		return "Running hook"
-	case ToolKindOther:
-		return WorkingLabelThinking
+	}
+	if label, ok := workingLabelByKind[kind]; ok {
+		return label
 	}
 	return WorkingLabelThinking
 }

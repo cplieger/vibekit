@@ -209,23 +209,7 @@ func sweepFanout(ctx context.Context, dir, prefix string, referenced map[string]
 			continue
 		}
 		scanned++
-		hash := prefix + entry.Name()
-		if _, keep := referenced[hash]; keep {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			if !os.IsNotExist(err) {
-				slog.Debug("checkpoint gc: entry info failed",
-					"dir", dir, "name", entry.Name(),
-					"error", err)
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		if !olderThanGCMinAge(info) {
+		if !blobIsOrphan(dir, prefix, entry, referenced) {
 			continue
 		}
 		full := filepath.Join(dir, entry.Name())
@@ -237,11 +221,40 @@ func sweepFanout(ctx context.Context, dir, prefix string, referenced map[string]
 		removed++
 	}
 	if removed > 0 {
-		if after, rerr := os.ReadDir(dir); rerr == nil && len(after) == 0 {
-			_ = os.Remove(dir)
-		}
+		removeDirIfEmpty(dir)
 	}
 	return removed, scanned
+}
+
+// blobIsOrphan reports whether the entry is an unreferenced, regular blob old
+// enough to collect. Referenced blobs, unreadable entries, non-regular files,
+// and blobs younger than BlobGCMinAge are all kept (reported false).
+func blobIsOrphan(dir, prefix string, entry os.DirEntry, referenced map[string]struct{}) bool {
+	hash := prefix + entry.Name()
+	if _, keep := referenced[hash]; keep {
+		return false
+	}
+	info, err := entry.Info()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Debug("checkpoint gc: entry info failed",
+				"dir", dir, "name", entry.Name(),
+				"error", err)
+		}
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	return olderThanGCMinAge(info)
+}
+
+// removeDirIfEmpty removes dir if a re-read shows it now holds no entries.
+// Best-effort: a read error or a non-empty dir leaves it in place.
+func removeDirIfEmpty(dir string) {
+	if after, rerr := os.ReadDir(dir); rerr == nil && len(after) == 0 {
+		_ = os.Remove(dir)
+	}
 }
 
 // BlobGCMinAge is the minimum age a blob must have before it's
@@ -262,22 +275,9 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 	}
 	referenced := make(map[string]struct{}, max(int(gc.lastRefCount.Load()), 1024))
 
-	var uncached []string
-	for _, e := range entries {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		if !e.IsDir() {
-			continue
-		}
-		chatID := e.Name()
-		if m, ok := cached[chatID]; ok {
-			for _, sha := range m.ReferencedBlobs(ctx) {
-				referenced[sha] = struct{}{}
-			}
-			continue
-		}
-		uncached = append(uncached, chatID)
+	uncached, err := gc.mergeCachedRefs(ctx, entries, cached, referenced)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(uncached) > 0 {
@@ -292,6 +292,32 @@ func (gc *Coordinator) collectReferencedBlobs(ctx context.Context, cached map[st
 
 	gc.lastRefCount.Store(int64(len(referenced)))
 	return referenced, nil
+}
+
+// mergeCachedRefs walks the chat directory entries: for chats present in the
+// cached-manager map it merges their referenced SHAs into referenced directly,
+// and it returns the IDs of chats with no cached manager (which the caller
+// resolves by reading their event logs). Honours context cancellation.
+func (gc *Coordinator) mergeCachedRefs(ctx context.Context, entries []os.DirEntry, cached map[string]BlobRefer, referenced map[string]struct{}) ([]string, error) {
+	var uncached []string
+	for _, e := range entries {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if !e.IsDir() {
+			continue
+		}
+		chatID := e.Name()
+		m, ok := cached[chatID]
+		if !ok {
+			uncached = append(uncached, chatID)
+			continue
+		}
+		for _, sha := range m.ReferencedBlobs(ctx) {
+			referenced[sha] = struct{}{}
+		}
+	}
+	return uncached, nil
 }
 
 func (gc *Coordinator) collectUncachedBlobs(ctx context.Context, chatIDs []string) ([]string, error) {

@@ -70,3 +70,34 @@ func bytesEqual(a, b []byte) bool {
 	}
 	return true
 }
+
+// FuzzDeriveKeyNonce feeds arbitrary byte inputs: clientPub and authSecret
+// originate from the browser's push subscription, so they are external,
+// attacker-influenced input. Invariants: never panics; on success the CEK
+// is 16 bytes (AES-128-GCM) and the nonce is 12 bytes (GCM); and the
+// derivation is deterministic for identical inputs.
+func FuzzDeriveKeyNonce(f *testing.F) {
+	f.Add(make([]byte, 32), make([]byte, 16), make([]byte, 65), make([]byte, 65), make([]byte, 16))
+	f.Add([]byte("shared"), []byte("auth"), []byte("client"), []byte("server"), []byte("salt"))
+	f.Add([]byte{}, []byte{}, []byte{}, []byte{}, []byte{})
+
+	f.Fuzz(func(t *testing.T, shared, authSecret, clientPub, serverPub, salt []byte) {
+		cek, nonce, err := DeriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		if err != nil {
+			return
+		}
+		if len(cek) != 16 {
+			t.Fatalf("len(cek) = %d, want 16", len(cek))
+		}
+		if len(nonce) != 12 {
+			t.Fatalf("len(nonce) = %d, want 12", len(nonce))
+		}
+		cek2, nonce2, err := DeriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		if err != nil {
+			t.Fatalf("second DeriveKeyNonce errored: %v", err)
+		}
+		if !bytesEqual(cek, cek2) || !bytesEqual(nonce, nonce2) {
+			t.Fatal("DeriveKeyNonce not deterministic for identical inputs")
+		}
+	})
+}

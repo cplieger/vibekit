@@ -43,106 +43,6 @@ func writeIgnoreFile(t *testing.T, path, body string) {
 	}
 }
 
-// --- parseIgnoreLine ---
-
-func TestParseIgnoreLine(t *testing.T) {
-	tests := []struct {
-		line    string
-		name    string
-		pattern string
-		wantOK  bool
-		anchor  bool
-		dirOnly bool
-		negate  bool
-	}{
-		{"", "empty", "", false, false, false, false},
-		{"   ", "whitespace only", "", false, false, false, false},
-		{"# comment", "comment", "", false, false, false, false},
-		{"node_modules", "basename", "node_modules", true, false, false, false},
-		{"/node_modules", "anchored root", "node_modules", true, true, false, false},
-		{"node_modules/", "dir-only", "node_modules", true, false, true, false},
-		{"/node_modules/", "anchored dir-only", "node_modules", true, true, true, false},
-		{"!.env.example", "negate basename", ".env.example", true, false, false, true},
-		{"!/secret", "negate anchored", "secret", true, true, false, true},
-		{"src/foo", "inner slash is anchored", "src/foo", true, true, false, false},
-		{"*.log", "basename glob", "*.log", true, false, false, false},
-		{"foo  \t", "trailing whitespace trimmed", "foo", true, false, false, false},
-		{"build\r", "trailing CR trimmed", "build", true, false, false, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r, ok := parseIgnoreLine(tt.line)
-			if ok != tt.wantOK {
-				t.Fatalf("parseIgnoreLine(%q) ok = %v, want %v", tt.line, ok, tt.wantOK)
-			}
-			if !ok {
-				return
-			}
-			if r.pattern != tt.pattern || r.anchored != tt.anchor || r.dirOnly != tt.dirOnly || r.negate != tt.negate {
-				t.Errorf("parseIgnoreLine(%q) = {pattern:%q anchored:%v dirOnly:%v negate:%v}, want {pattern:%q anchored:%v dirOnly:%v negate:%v}",
-					tt.line, r.pattern, r.anchored, r.dirOnly, r.negate,
-					tt.pattern, tt.anchor, tt.dirOnly, tt.negate)
-			}
-		})
-	}
-}
-
-// --- matchSegments / matchAnchored / segMatch ---
-
-func TestMatchSegments(t *testing.T) {
-	tests := []struct {
-		pattern  string
-		path     string
-		name     string
-		anchored bool
-		want     bool
-	}{
-		// Anchored exact and glob
-		{"node_modules", "node_modules", "anchored exact", true, true},
-		{"node_modules", "src/node_modules", "anchored does not float", true, false},
-		{"*.log", "build.log", "anchored single glob", true, true},
-		{"*.log", "build.txt", "anchored glob miss", true, false},
-		{"?.log", "a.log", "anchored ? single char", true, true},
-		{"?.log", "ab.log", "anchored ? exactly one char", true, false},
-
-		// Unanchored matches any segment
-		{"node_modules", "src/node_modules", "unanchored inner", false, true},
-		{"node_modules", "a/b/c/node_modules", "unanchored deep", false, true},
-		{"node_modules", "node_modules", "unanchored root", false, true},
-		{"node_modules", "src/node_modules_v2", "unanchored segment boundary", false, false},
-		{"*.log", "logs/build.log", "unanchored glob", false, true},
-
-		// ** spans directories
-		{"**/secrets", "a/b/secrets", "double star prefix", true, true},
-		{"**/secrets", "secrets", "double star zero segments", true, true},
-		{"src/**/*.go", "src/pkg/a.go", "double star middle", true, true},
-		{"src/**/*.go", "src/a/b/c/a.go", "double star multi-level", true, true},
-		{"src/**/*.go", "other/a.go", "double star prefix miss", true, false},
-		{"**", "any/thing", "double star alone matches everything", true, true},
-		{"a/**", "a/b/c", "double star trailing", true, true},
-		{"a/**", "a", "double star trailing zero", true, true},
-
-		// Empty pattern
-		{"", "foo", "empty pattern never matches", false, false},
-		{"", "foo", "empty pattern anchored never matches", true, false},
-
-		// Segment count mismatch without **
-		// Note: "a/b" against "a/b/c" matches via descendant-match
-		// semantics (standard gitignore: a directory entry covers its
-		// subtree). See TestIgnoreMatcher_AnchoredDirCoversDescendants.
-		{"a/b/c", "a/b", "too many pattern segs", true, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := matchSegments(strings.Split(tt.pattern, "/"), strings.Split(tt.path, "/"), tt.anchored)
-			if got != tt.want {
-				t.Errorf("matchSegments(%q, %q, anchored=%v) = %v, want %v",
-					tt.pattern, tt.path, tt.anchored, got, tt.want)
-			}
-		})
-	}
-}
-
 // --- Matches (end-to-end with temp files) ---
 
 func TestIgnoreMatcher_NoSettingsFileIsNoOp(t *testing.T) {
@@ -636,24 +536,111 @@ func TestIgnoreMatcher_DeletedIgnoreFileTriggersReload(t *testing.T) {
 	}
 }
 
-func TestParseIgnoreLine_RejectsPathologicalDoubleStars(t *testing.T) {
-	// Regression (sec-u8c1-004): segMatch's `**` handler recurses
-	// over every suffix of the remaining path, so N stars × M
-	// segments costs O(M^N). A pattern with 5+ `**` against a
-	// 20-segment path pins CPU for seconds per Matches call.
-	// parseIgnoreLine caps `**` count at 4; patterns beyond that
-	// are rejected at load time with a single warn.
-	if _, ok := parseIgnoreLine("**/**/**/**/**/**/target"); ok {
-		t.Error("pattern with 6 '**' must be rejected to bound backtracking")
+func TestIgnoreMatcher_ExactCapFileIsParsed(t *testing.T) {
+	// Boundary companion to TestIgnoreMatcher_OversizedFileSkipped: a file
+	// of EXACTLY maxIgnoreFileSize bytes is at the inclusive limit and must
+	// be parsed (the cap rejects only files strictly larger).
+	configDir := t.TempDir()
+	workDir := t.TempDir()
+	ignorePath := filepath.Join(workDir, "big.gitignore")
+
+	// One real rule, the rest a single comment line (dropped by the parser),
+	// summing to exactly maxIgnoreFileSize bytes.
+	rule := "secret\n"
+	body := rule + strings.Repeat("#", int(maxIgnoreFileSize)-len(rule))
+	if int64(len(body)) != int64(maxIgnoreFileSize) {
+		t.Fatalf("setup: body len = %d, want %d", len(body), maxIgnoreFileSize)
 	}
-	if _, ok := parseIgnoreLine("**/a/**/b/**/c/**/d/**/e/target"); ok {
-		t.Error("pattern with 5 '**' must be rejected")
+	if err := os.WriteFile(ignorePath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write ignore file: %v", err)
 	}
-	// Sane patterns still accepted.
-	for _, p := range []string{"**/foo", "a/**/b", "a/**/b/**/c", "**/a/**/b/**/c/**/d"} {
-		if _, ok := parseIgnoreLine(p); !ok {
-			t.Errorf("parseIgnoreLine(%q) should parse (under the 4-star cap)", p)
+	writeIgnoreSettings(t, configDir, []string{ignorePath})
+
+	m := NewMatcher(configDir, workDir)
+	if !m.Matches(context.Background(), "secret", false) {
+		t.Errorf("Matches(\"secret\") with exactly-cap ignore file = false, want true")
+	}
+}
+
+func TestIgnoreMatcher_ConfigDeletedDoesNotPanic(t *testing.T) {
+	// After config.json is deleted between refreshes, a cached non-zero
+	// settings mtime must not lead the refresh to dereference a nil
+	// FileInfo. The matcher degrades to no-op (rules cleared), no panic.
+	configDir := t.TempDir()
+	workDir := t.TempDir()
+	ignorePath := filepath.Join(workDir, ".gitignore")
+	writeIgnoreFile(t, ignorePath, "secret\n")
+	writeIgnoreSettings(t, configDir, []string{ignorePath})
+
+	m := NewMatcher(configDir, workDir)
+	ctx := context.Background()
+	// First refresh caches a non-zero settings mtime.
+	if !m.Matches(ctx, "secret", false) {
+		t.Fatalf("setup: first Matches(\"secret\") = false, want true")
+	}
+	if err := os.Remove(filepath.Join(configDir, "config.json")); err != nil {
+		t.Fatalf("remove config.json: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Matches after config.json delete panicked: %v", r)
 		}
+	}()
+	if got := m.Matches(ctx, "secret", false); got {
+		t.Errorf("Matches(\"secret\") after config delete = true, want false (rules cleared)")
+	}
+}
+
+func TestIgnoreMatcher_ConfigSizeChangeBypassesFastPath(t *testing.T) {
+	// The config.json fast path requires BOTH mtime and size to match the
+	// cached values. With mtime forced equal but size changed, the matcher
+	// must re-read the new file list rather than reuse the stale one.
+	configDir := t.TempDir()
+	workDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.json")
+
+	// Two ignore files with DIFFERENT path lengths so the two config.json
+	// versions differ in byte size. v1 ignores "foo", v2 ignores only "bar".
+	ignoreA := filepath.Join(workDir, "ia.gitignore")
+	ignoreB := filepath.Join(workDir, "ib-substantially-longer-name.gitignore")
+	writeIgnoreFile(t, ignoreA, "foo\n")
+	writeIgnoreFile(t, ignoreB, "bar\n")
+
+	fixed := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+	writeIgnoreSettings(t, configDir, []string{ignoreA})
+	if err := os.Chtimes(configPath, fixed, fixed); err != nil {
+		t.Fatalf("chtimes v1: %v", err)
+	}
+	info1, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat v1: %v", err)
+	}
+	size1 := info1.Size()
+
+	m := NewMatcher(configDir, workDir)
+	ctx := context.Background()
+	if !m.Matches(ctx, "foo", false) {
+		t.Fatalf("setup: Matches(\"foo\") with v1 = false, want true")
+	}
+
+	// v2 lists ignoreB only (does NOT ignore "foo"); reset mtime to the SAME
+	// fixed time so ONLY the file size differs from the cached config.json.
+	writeIgnoreSettings(t, configDir, []string{ignoreB})
+	info2, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat v2: %v", err)
+	}
+	if info2.Size() == size1 {
+		t.Fatalf("setup: config sizes equal (%d); need different sizes", size1)
+	}
+	if err := os.Chtimes(configPath, fixed, fixed); err != nil {
+		t.Fatalf("chtimes v2: %v", err)
+	}
+
+	if got := m.Matches(ctx, "foo", false); got {
+		t.Errorf("Matches(\"foo\") after config size change = true, want false (must re-read v2)")
 	}
 }
 

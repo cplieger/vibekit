@@ -1,4 +1,4 @@
-// Gitignore-style agent read filter.
+// Package ignore is a gitignore-style agent read filter.
 //
 // Users can point vibekit at one or more ignore files (.gitignore,
 // .kiroignore, etc.). Any read path that matches the combined
@@ -41,7 +41,6 @@
 // logged at slog.Warn so transient failures are visible in Loki. A
 // persistently broken config.json surfaces as a one-time warn plus
 // all-permissive matches until fixed.
-
 package ignore
 
 import (
@@ -133,25 +132,33 @@ func (m *Matcher) Matches(ctx context.Context, rel string, isDir bool) bool {
 	// Walk rules in order; later matches override earlier ones.
 	ignored := false
 	for _, r := range rules {
+		var matched bool
 		if r.dirOnly {
-			if isDir && matchSegments(r.segments, pathSegs, r.anchored) {
-				ignored = !r.negate
-				continue
-			}
-			for d := len(pathSegs) - 1; d >= 1; d-- {
-				if matchSegments(r.segments, pathSegs[:d], r.anchored) {
-					ignored = !r.negate
-					break
-				}
-			}
-			continue
+			matched = dirRuleMatches(r, pathSegs, isDir)
+		} else {
+			matched = matchSegments(r.segments, pathSegs, r.anchored)
 		}
-		if !matchSegments(r.segments, pathSegs, r.anchored) {
-			continue
+		if matched {
+			ignored = !r.negate
 		}
-		ignored = !r.negate
 	}
 	return ignored
+}
+
+// dirRuleMatches reports whether a directory-only rule applies to a path.
+// It matches when the path itself is a directory matching the pattern, or
+// when any ancestor directory matches — so ignoring a directory covers
+// every file beneath it (standard gitignore semantics).
+func dirRuleMatches(r rule, pathSegs []string, isDir bool) bool {
+	if isDir && matchSegments(r.segments, pathSegs, r.anchored) {
+		return true
+	}
+	for d := len(pathSegs) - 1; d >= 1; d-- {
+		if matchSegments(r.segments, pathSegs[:d], r.anchored) {
+			return true
+		}
+	}
+	return false
 }
 
 // refresh re-reads the file list from config.json and re-parses
@@ -228,29 +235,7 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 	}
 
 	// I/O phase: read and parse all ignore files (no lock held).
-	newRules := make([]rule, 0, len(cachedLastMTimes)*4)
-	newMTimes := make(map[string]time.Time, len(files))
-	for _, f := range files {
-		info, err := os.Stat(f)
-		if err != nil {
-			continue
-		}
-		if info.Size() > maxIgnoreFileSize {
-			slog.Warn("permissions: ignore file exceeds cap, skipping",
-				"path", f, "size", info.Size(), "cap", maxIgnoreFileSize)
-			continue
-		}
-		newMTimes[f] = info.ModTime()
-		data, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if r, ok := parseIgnoreLine(line); ok {
-				newRules = append(newRules, r)
-			}
-		}
-	}
+	newRules, newMTimes := loadRules(files, len(cachedLastMTimes))
 
 	// Pointer-swap phase: brief lock to install new state.
 	m.mu.Lock()
@@ -261,6 +246,38 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 	m.settingsMTime = newSettingsMTime
 	m.settingsSize = newSettingsSize
 	m.mu.Unlock()
+}
+
+// loadRules stats, size-checks, reads, and parses every listed ignore file,
+// returning the combined rule set and the per-file mtimes used for change
+// detection on the next refresh. Unreadable or oversized files are skipped
+// (fail-open). sizeHint pre-sizes the rule slice from the previous load's
+// tracked-file count.
+func loadRules(files []string, sizeHint int) (rules []rule, mtimes map[string]time.Time) {
+	rules = make([]rule, 0, sizeHint*4)
+	mtimes = make(map[string]time.Time, len(files))
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if info.Size() > maxIgnoreFileSize {
+			slog.Warn("permissions: ignore file exceeds cap, skipping",
+				"path", f, "size", info.Size(), "cap", maxIgnoreFileSize)
+			continue
+		}
+		mtimes[f] = info.ModTime()
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if r, ok := parseIgnoreLine(line); ok {
+				rules = append(rules, r)
+			}
+		}
+	}
+	return rules, mtimes
 }
 
 // readSettingFiles pulls the agent_ignore_files list out of

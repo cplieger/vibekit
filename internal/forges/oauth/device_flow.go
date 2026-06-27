@@ -70,6 +70,13 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("device flow: github status %d: %s", resp.StatusCode, body)
 	}
+	return parseDeviceFlowResponse(body)
+}
+
+// parseDeviceFlowResponse decodes a GitHub device-flow start response body
+// into a DeviceFlowResponse, surfacing an embedded OAuth error as a Go
+// error. This is the pure, testable core of StartGitHubDeviceFlow.
+func parseDeviceFlowResponse(body []byte) (*DeviceFlowResponse, error) {
 	var raw struct {
 		UserCode        string `json:"user_code"`
 		VerificationURI string `json:"verification_uri"`
@@ -119,6 +126,14 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return interpretPollResponse(body)
+}
+
+// interpretPollResponse maps a GitHub device-flow token-poll response body
+// to a PollResult. This is the pure, testable core of PollGitHubDeviceFlow:
+// the OAuth error code drives the status, and an empty access_token on an
+// otherwise-successful response is treated as an error, never "complete".
+func interpretPollResponse(body []byte) (PollResult, error) {
 	var raw struct {
 		AccessToken      string `json:"access_token"`
 		Error            string `json:"error"`

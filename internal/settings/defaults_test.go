@@ -1,7 +1,10 @@
 package settings
 
 import (
+	"bytes"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -96,4 +99,45 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 			t.Errorf("KnownKeys missing %q (declared in static-src/persist.ts AppSettings)", k)
 		}
 	}
+}
+
+// captureSlog installs a Debug-level slog handler writing to a buffer and
+// restores the previous default logger on cleanup.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent pins the side-effect the
+// return-value table test can't see: WarnUnknownKeys emits a single slog.Warn
+// iff at least one key is unknown, and stays silent when every key is known.
+// The warn is the operator-facing signal for config drift.
+func TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent(t *testing.T) {
+	const msg = "settings: unknown keys in write"
+
+	t.Run("all_known_no_warn", func(t *testing.T) {
+		buf := captureSlog(t)
+		got := WarnUnknownKeys([]string{KeyAutoUpdate, KeyDebugLogs}, "test-src")
+		if len(got) != 0 {
+			t.Errorf("WarnUnknownKeys(all known) = %v, want empty", got)
+		}
+		if strings.Contains(buf.String(), msg) {
+			t.Errorf("warned with zero unknown keys; log=%q", buf.String())
+		}
+	})
+
+	t.Run("one_unknown_warns", func(t *testing.T) {
+		buf := captureSlog(t)
+		got := WarnUnknownKeys([]string{"bogus_key"}, "test-src")
+		if len(got) != 1 || got[0] != "bogus_key" {
+			t.Errorf("WarnUnknownKeys(one unknown) = %v, want [bogus_key]", got)
+		}
+		if !strings.Contains(buf.String(), msg) {
+			t.Errorf("did not warn for an unknown key; log=%q", buf.String())
+		}
+	})
 }

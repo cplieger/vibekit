@@ -2,9 +2,11 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestReadBytes_MissingFile(t *testing.T) {
@@ -156,5 +158,98 @@ func writeSettings(t *testing.T, dir string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), content, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestField_GenInvalidationAfterDeleteRecreate verifies the parsed-map cache
+// is invalidated across a read -> delete -> recreate sequence: the second
+// read must see the new file contents, not a stale cached parse.
+func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+
+	if err := os.WriteFile(path, []byte(`{"k":"AAA"}`), 0o600); err != nil {
+		t.Fatalf("write A: %v", err)
+	}
+	if v, ok := Field[string](ctx, dir, "k", "test"); !ok || v != "AAA" {
+		t.Fatalf("read A = (%q,%v), want (AAA,true)", v, ok)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, ok := Field[string](ctx, dir, "k", "test"); ok {
+		t.Fatalf("read after delete ok = true, want false")
+	}
+	if err := os.WriteFile(path, []byte(`{"k":"BBB"}`), 0o600); err != nil {
+		t.Fatalf("write B: %v", err)
+	}
+	v, ok := Field[string](ctx, dir, "k", "test")
+	if !ok || v != "BBB" {
+		t.Errorf("read after recreate = (%q,%v), want (BBB,true) — stale parse cache", v, ok)
+	}
+}
+
+// TestReadBytes_SizeChangeBypassesMtimeCache verifies that a same-mtime but
+// different-size config.json is treated as a cache MISS and re-read. The
+// mtime is pinned to a fixed whole second so only the size differs.
+func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+	fixed := time.Unix(1700000000, 0)
+
+	const c1 = `{"k":"a"}`      // 9 bytes
+	const c2 = `{"k":"abcdef"}` // 14 bytes
+
+	if err := os.WriteFile(path, []byte(c1), 0o600); err != nil {
+		t.Fatalf("write c1: %v", err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatalf("chtimes c1: %v", err)
+	}
+	if d1, err := ReadBytes(ctx, dir); err != nil || string(d1) != c1 {
+		t.Fatalf("first ReadBytes = (%q,%v), want (%q,nil)", d1, err, c1)
+	}
+
+	if err := os.WriteFile(path, []byte(c2), 0o600); err != nil {
+		t.Fatalf("write c2: %v", err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatalf("chtimes c2: %v", err)
+	}
+	d2, err := ReadBytes(ctx, dir)
+	if err != nil {
+		t.Fatalf("second ReadBytes err = %v", err)
+	}
+	if string(d2) != c2 {
+		t.Errorf("second ReadBytes = %q, want %q (stale size-cache hit)", d2, c2)
+	}
+}
+
+// TestParsedMap_CacheReuse verifies parsedMap returns the cached map on a
+// second identical call rather than re-parsing. Reuse is detected by mutating
+// the first returned map and observing the mutation on the second call (a
+// re-parse would not carry it).
+func TestParsedMap_CacheReuse(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+	if err := os.WriteFile(path, []byte(`{"x":"1"}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m1, err := parsedMap(ctx, dir)
+	if err != nil || m1 == nil {
+		t.Fatalf("first parsedMap = (%v,%v)", m1, err)
+	}
+	m1["sentinel"] = json.RawMessage(`true`)
+
+	m2, err := parsedMap(ctx, dir)
+	if err != nil {
+		t.Fatalf("second parsedMap err = %v", err)
+	}
+	if _, ok := m2["sentinel"]; !ok {
+		t.Error("parsedMap re-parsed instead of returning the cached map (cache-hit gate broken)")
 	}
 }

@@ -36,6 +36,36 @@ func FuzzResolveInside(f *testing.F) {
 	})
 }
 
+func FuzzResolveInsideAbs(f *testing.F) {
+	f.Add("/workspace", "file.txt")
+	f.Add("/workspace", "../escape")
+	f.Add("/workspace", "/workspace/sub/file")
+	f.Add("/workspace", "")
+	f.Add("/", "etc/passwd")
+	f.Add("/workspace", "a/../../../etc/passwd")
+	f.Add("/tmp", "\x00inject")
+
+	f.Fuzz(func(t *testing.T, absWork, p string) {
+		// The function's contract requires absWork to be absolute.
+		if !filepath.IsAbs(absWork) {
+			return
+		}
+		result, err := ResolveInsideAbs(absWork, p)
+		if err != nil {
+			return
+		}
+		if !filepath.IsAbs(result) {
+			t.Fatalf("result %q is not absolute", result)
+		}
+		if result != filepath.Clean(result) {
+			t.Fatalf("result %q is not clean", result)
+		}
+		if err := AssertInside(result, absWork); err != nil {
+			t.Fatalf("result %q escapes absWork %q: %v", result, absWork, err)
+		}
+	})
+}
+
 func FuzzAssertInside(f *testing.F) {
 	f.Add("../escape")
 	f.Add("../../etc")
@@ -59,29 +89,6 @@ func FuzzAssertInside(f *testing.F) {
 		}
 		if got == ".." || strings.HasPrefix(got, ".."+string(filepath.Separator)) {
 			t.Fatalf("AssertInside accepted escaping path: rel=%q", got)
-		}
-	})
-}
-
-func BenchmarkResolveInside(b *testing.B) {
-	workDir := b.TempDir()
-
-	b.Run("relative", func(b *testing.B) {
-		for range b.N {
-			_, _ = ResolveInside(workDir, "src/main.go")
-		}
-	})
-
-	b.Run("absolute_inside", func(b *testing.B) {
-		abs := filepath.Join(workDir, "deep", "nested", "file.txt")
-		for range b.N {
-			_, _ = ResolveInside(workDir, abs)
-		}
-	})
-
-	b.Run("missing_parent", func(b *testing.B) {
-		for range b.N {
-			_, _ = ResolveInside(workDir, "nonexistent/dir/file.txt")
 		}
 	})
 }
