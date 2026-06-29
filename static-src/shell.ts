@@ -1,20 +1,20 @@
 // ---------------------------------------------------------------------------
 // Shell panel: server-side VT terminal connected via WebSocket.
 //
-// The engine is the shared @cplieger/vterm library. The Go server
-// (internal/hub/shell.go → vterm/terminal) maintains a VT500 screen
+// The engine is the shared @cplieger/web-terminal-engine library. The Go server
+// (internal/hub/shell.go → web-terminal-engine/terminal) maintains a VT500 screen
 // buffer and sends only changed rows as compact binary frames; the
-// browser renders a DOM cell grid via vterm's render module. The
+// browser renders a DOM cell grid via the engine's render module. The
 // client → server socket lifecycle (reconnect backoff + resume/inputAck
-// reliability) lives in vterm's connection module — this file only wires
+// reliability) lives in the engine's connection module — this file only wires
 // vibekit-specific UI (sticky-Ctrl, mobile key toolbar, tap-to-focus).
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
-import { render, keyboard, scroll, connection } from "@cplieger/vterm";
-import type { ServerMessage } from "@cplieger/vterm";
+import { render, keyboard, scroll, connection } from "@cplieger/web-terminal-engine";
+import type { ServerMessage } from "@cplieger/web-terminal-engine";
 
 const { mapKeyboardEvent, bracketTextForPaste } = keyboard;
 
@@ -163,6 +163,12 @@ export function initShellPanel(): void {
   connection.init({
     wsPath: SHELL_WS_PATH,
     computeSize: render.computeSize,
+    // Resume by absolute line index: on reconnect (iOS sleep/wake, network
+    // blip) the server replays only the rows printed while the tab was away,
+    // backfilled by absolute line index with no duplicates, instead of a full
+    // retained replay (-1).
+    getHaveThrough: render.getHighestIndex,
+    onResumeBounds: render.noteResumeBounds,
     onMessage(msg: ServerMessage) {
       switch (msg.type) {
         case "screen":

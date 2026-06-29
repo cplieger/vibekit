@@ -3,8 +3,8 @@
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows
 // over a WebSocket at /api/shell/ws using a compact binary wire protocol
-// (see github.com/cplieger/vterm/terminal). The server maintains a VT500
-// screen buffer (github.com/cplieger/vterm/vt) and sends only changed rows
+// (see github.com/cplieger/web-terminal-engine/terminal). The server maintains a VT500
+// screen buffer (github.com/cplieger/web-terminal-engine/vt) and sends only changed rows
 // to the client on each flush tick — dramatically reducing bandwidth vs.
 // raw-byte streaming, and enabling a lightweight DOM-based renderer on the
 // client (no xterm.js dependency).
@@ -28,7 +28,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/vterm/terminal"
+	"github.com/cplieger/web-terminal-engine/terminal"
 )
 
 // ShellManager wraps the terminal.Handler to provide the same interface

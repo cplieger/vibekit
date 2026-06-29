@@ -29,3 +29,7 @@ static/style.css
 
 # Kiro skill artifacts (code-review, refactor, steering-maintenance, judgement)
 **/.steering-maintenance/
+
+# Local-dev workspace file (resolves the unpublished engine from ../vterm)
+go.work
+go.work.sum

@@ -98,14 +98,28 @@
 .shell-terminal {
   flex: 1;
   min-height: 0;
-  /* Scrollable history: the DOM renderer (term-render.ts) keeps frozen
-     scrollback rows above the live zone. overflow:hidden was a leftover
-     from the previous terminal viewport. overflow-anchor:none lets the JS own
-     the scroll position (pin-to-bottom when following; manual anchor when
-     the user scrolls up). */
+  /* Scrollable history. The vterm renderer (absolute-index store) keeps every
+     line as a real row in one natively-scrolled column; the scroll controller
+     (vterm scroll.ts) is the single owner of scrollTop — it pins to the bottom
+     only while the user is following and otherwise leaves position alone. New
+     output appends at the tail (the model never inserts above the viewport),
+     so native scroll anchoring is safe to leave on and steadies the read
+     position on the rare insert-above. */
   overflow: hidden auto;
-  overflow-anchor: none;
+  overflow-anchor: auto;
   padding: var(--sp-1) 0;
+}
+
+/* "earlier output trimmed" marker (vterm renderer inserts .term-trim-marker
+   as the first row when history older than the buffer holds was evicted —
+   client cap or a server-reported resume gap). */
+.term-trim-marker {
+  color: var(--c-text-secondary);
+  font-size: 0.6875rem;
+  text-align: center;
+  padding: 2px 0;
+  opacity: 0.7;
+  user-select: none;
 }
 
 .shell-panel:where(.collapsed) .shell-resize {
