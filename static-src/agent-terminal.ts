@@ -9,7 +9,7 @@
 // These are NOT full terminal emulators (no input, no ANSI parsing
 // needed for most agent commands). Plain <pre> with monospace font and
 // auto-scroll. If ANSI rendering is needed later, swap <pre> for the
-// vterm read-only renderer.
+// web-terminal read-only renderer.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
