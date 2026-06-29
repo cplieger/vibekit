@@ -20,7 +20,7 @@ Vibekit is a Go web server that drives `kiro-cli` over the Agent Client Protocol
 
 - **Multi-device chat** — open the same conversation on phone and desktop; both stay in sync via SSE fan-out. One JSON file per chat, atomic writes, full history.
 - **Streaming with reasoning** — token-by-token markdown rendering with a collapsible "thinking" block, batched for smoothness.
-- **Live terminal** — a real PTY shell in the browser (powered by [`@cplieger/vterm`](https://github.com/cplieger/vterm)) plus per-agent command terminals.
+- **Live terminal** — a real PTY shell in the browser (powered by [`@cplieger/web-terminal-engine`](https://github.com/cplieger/web-terminal-engine)) plus per-agent command terminals.
 - **Editor + diff + conflict views** — read/edit workspace files, view tool-call diffs, resolve merge conflicts inline.
 - **Checkpoints** — a content-addressed per-file snapshot system with two-phase atomic restore and cross-chat conflict detection (independent of git).
 - **Supervised mode** — a per-chat write-gate that stages every agent file write for per-hunk accept/reject/merge before it touches disk.
