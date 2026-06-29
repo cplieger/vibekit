@@ -30,6 +30,6 @@
   "dependencies": {
     "@cplieger/actions": "2.0.3",
     "@cplieger/reactive": "1.2.1",
-    "@cplieger/web-terminal": "0.1.0"
+    "@cplieger/web-terminal-engine": "0.1.0"
   }
 }

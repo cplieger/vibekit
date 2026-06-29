@@ -1,7 +1,7 @@
 // Shared circular byte buffer for subprocess output replay.
 //
 // Agent terminals keep the last N bytes of output for replay on
-// reconnect. (The PTY shell migrated to web-terminal, which owns its own
+// reconnect. (The PTY shell migrated to web-terminal-engine, which owns its own
 // buffer.) This type is UTF-8 boundary aware on read (drops any invalid
 // byte sequences left by a multi-byte character cut at the ring
 // boundary or by a partial write).

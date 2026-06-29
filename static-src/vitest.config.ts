@@ -127,7 +127,7 @@ export default defineConfig({
         // events (no simulated network I/O). The XHR lifecycle is
         // untestable; the pure path-construction logic is minimal.
         "upload.ts",
-        // shell.ts: web-terminal DOM terminal — uses canvas 2d text
+        // shell.ts: web-terminal-engine DOM terminal — uses canvas 2d text
         // measurement and a live WebSocket. happy-dom provides
         // neither a real canvas context nor simulated socket I/O.
         "shell.ts",

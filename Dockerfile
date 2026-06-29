@@ -52,7 +52,7 @@ RUN mkdir -p static/vendor && \
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes
 # TS only (no precompiled JS) — same pattern as @cplieger/reactive and
-# @cplieger/web-terminal, matching how local TS files in static-src/ are
+# @cplieger/web-terminal-engine, matching how local TS files in static-src/ are
 # treated. Extracted to static-src/node_modules/@cplieger/actions/ so
 # tsgo's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
@@ -71,14 +71,14 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
-# Fetch @cplieger/web-terminal TS source (same TS-only pattern). shell.ts
+# Fetch @cplieger/web-terminal-engine TS source (same TS-only pattern). shell.ts
 # imports render/keyboard/scroll/connection from it; resolved via the importmap
-# at runtime (/vendor/cplieger-web-terminal/index.js).
-# renovate: datasource=npm depName=@cplieger/web-terminal
-ARG CPLIEGER_WEB_TERMINAL_VERSION=0.1.0
-RUN mkdir -p static-src/node_modules/@cplieger/web-terminal && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal/-/web-terminal-${CPLIEGER_WEB_TERMINAL_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/web-terminal --strip-components=1
+# at runtime (/vendor/cplieger-web-terminal-engine/index.js).
+# renovate: datasource=npm depName=@cplieger/web-terminal-engine
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=0.1.0
+RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
 
 # Compile TypeScript then build Go (static files embedded via go:embed).
 # BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
@@ -116,11 +116,11 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
-        --outDir static/vendor/cplieger-web-terminal \
-        --rootDir static-src/node_modules/@cplieger/web-terminal/src \
+        --outDir static/vendor/cplieger-web-terminal-engine \
+        --rootDir static-src/node_modules/@cplieger/web-terminal-engine/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/web-terminal/src/*.ts
+        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file

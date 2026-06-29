@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Shell panel: server-side VT terminal connected via WebSocket.
 //
-// The engine is the shared @cplieger/web-terminal library. The Go server
-// (internal/hub/shell.go → web-terminal/terminal) maintains a VT500 screen
+// The engine is the shared @cplieger/web-terminal-engine library. The Go server
+// (internal/hub/shell.go → web-terminal-engine/terminal) maintains a VT500 screen
 // buffer and sends only changed rows as compact binary frames; the
 // browser renders a DOM cell grid via the engine's render module. The
 // client → server socket lifecycle (reconnect backoff + resume/inputAck
@@ -13,8 +13,8 @@
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
-import { render, keyboard, scroll, connection } from "@cplieger/web-terminal";
-import type { ServerMessage } from "@cplieger/web-terminal";
+import { render, keyboard, scroll, connection } from "@cplieger/web-terminal-engine";
+import type { ServerMessage } from "@cplieger/web-terminal-engine";
 
 const { mapKeyboardEvent, bracketTextForPaste } = keyboard;
 
