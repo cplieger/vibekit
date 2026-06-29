@@ -57,7 +57,7 @@ RUN mkdir -p static/vendor && \
 # tsgo's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=2.0.3
+ARG CPLIEGER_ACTIONS_VERSION=2.0.4
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
@@ -75,7 +75,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # imports render/keyboard/scroll/connection from it; resolved via the importmap
 # at runtime (/vendor/cplieger-web-terminal-engine/index.js).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=0.1.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=1.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
