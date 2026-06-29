@@ -164,10 +164,11 @@ export function initShellPanel(): void {
     wsPath: SHELL_WS_PATH,
     computeSize: render.computeSize,
     // Resume by absolute line index: on reconnect (iOS sleep/wake, network
-    // blip) the server replays only the rows printed while we were away,
-    // backfilled exactly and without duplicates. Without this the shell
-    // falls back to a full retained replay (-1) — correct but heavier.
+    // blip) the server replays only the rows printed while the tab was away,
+    // backfilled by absolute line index with no duplicates, instead of a full
+    // retained replay (-1).
     getHaveThrough: render.getHighestIndex,
+    onResumeBounds: render.noteResumeBounds,
     onMessage(msg: ServerMessage) {
       switch (msg.type) {
         case "screen":
