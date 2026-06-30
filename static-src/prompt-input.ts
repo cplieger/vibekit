@@ -24,10 +24,7 @@ type Submit = (text: string) => void;
 type Cancel = () => void;
 
 export type SendState =
-  | { kind: "idle" }
-  | { kind: "busy" }
-  | { kind: "queued" }
-  | { kind: "blocked"; reason: string };
+  { kind: "idle" } | { kind: "busy" } | { kind: "queued" } | { kind: "blocked"; reason: string };
 
 type SendKind = SendState["kind"];
 
