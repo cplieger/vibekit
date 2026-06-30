@@ -4,7 +4,8 @@
 // URL scheme:
 //   /                             default chat (last active, or empty state)
 //   /chat/{id}                    specific conversation
-//   /git                          git panel
+//   /git                          git panel (Changes tab — canonical)
+//   /git/{tab}                    git panel sub-tab (prs | sources; changes omits the segment)
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
 //   /history                      archived chats (full-page view)
@@ -25,12 +26,18 @@
 
 export type SettingsTab = "general" | "tools" | "permissions" | "instructions" | "git";
 
+// The git view's three sub-tabs. "changes" is the canonical default (its URL
+// omits the segment: /git, not /git/changes), mirroring how SettingsTab's
+// "general" maps to /settings.
+export type GitTab = "changes" | "prs" | "sources";
+
 interface RouteChat {
   kind: "chat";
   id: string;
 }
 interface RouteGit {
   kind: "git";
+  tab: GitTab;
 }
 interface RouteFiles {
   kind: "files";
@@ -72,7 +79,7 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
   switch (head) {
     case "git":
-      return { kind: "git" };
+      return { kind: "git", tab: parseGitTab(segments[1]) };
 
     case "history":
       return { kind: "history" };
@@ -130,6 +137,18 @@ function parseSettingsTab(seg: string | undefined): SettingsTab {
   }
 }
 
+// parseGitTab normalises an unknown / missing sub-tab segment to "changes"
+// (the canonical default), mirroring parseSettingsTab.
+function parseGitTab(seg: string | undefined): GitTab {
+  switch (seg) {
+    case "prs":
+    case "sources":
+      return seg;
+    default:
+      return "changes";
+  }
+}
+
 function parseHashLine(hash: string): number | undefined {
   const m = /^#L(\d+)/.exec(hash);
   if (m === null) {
@@ -147,7 +166,8 @@ export function buildPath(route: Route): string {
     case "chat":
       return route.id === "" ? "/" : `/chat/${encodeURIComponent(route.id)}`;
     case "git":
-      return "/git";
+      // Changes is the canonical default; omit the tab segment.
+      return route.tab === "changes" ? "/git" : `/git/${route.tab}`;
     case "history":
       return "/history";
     case "files":

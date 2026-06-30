@@ -7,6 +7,7 @@
 import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitPanel, loadGitRepos } from "./git.js";
+import { getGitTab } from "./git-tabs.js";
 import { restoreFileBrowser } from "./files.js";
 import { restoreEditorTabs } from "./editor-core.js";
 import { restoreShell } from "./shell.js";
@@ -147,7 +148,9 @@ export function initUI(): void {
   // accounts UI inside that Sources tab.)
 
   $.gitBtn.addEventListener("click", () => {
-    toggleGitView(loadGitRepos);
+    // Open to whichever sub-tab is currently active (defaults to "changes"
+    // on first open) so the URL the tab pushes matches the visible panel.
+    toggleGitView(getGitTab(), loadGitRepos);
   });
   initGitPanel();
 }

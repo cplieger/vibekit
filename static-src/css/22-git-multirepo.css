@@ -131,6 +131,15 @@
   border-radius: var(--r);
   background: var(--c-bg-primary);
   overflow: hidden;
+  /* The mount (.git-multirepo-mount) is a flex column with a bounded
+   * height (flex: 1; min-height: 0). Combined with this section's
+   * `overflow: hidden` — which zeroes a flex item's automatic minimum
+   * size — the default flex-shrink:1 lets the browser compress every
+   * row to fit the viewport, clipping their content and starving
+   * #git-view of any overflow to scroll. Pinning flex-shrink:0 keeps
+   * each row at its natural height so the list overflows and #git-view
+   * scrolls. */
+  flex-shrink: 0;
 }
 
 .git-repo-section-header {

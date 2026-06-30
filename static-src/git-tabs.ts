@@ -5,8 +5,14 @@
 
 import { signal, subscribe } from "@cplieger/reactive";
 import { wireArrowNav } from "./arrow-nav.js";
+import { pushRoute } from "./router.js";
+import type { GitTab } from "./router.js";
+import { setGitTab as setGitTabRoute } from "./tabs.js";
 
-export type GitTab = "changes" | "prs" | "sources";
+// GitTab lives in router.ts (the URL source of truth, alongside SettingsTab);
+// re-exported here so existing `import { GitTab } from "./git-tabs.js"` callers
+// keep working.
+export type { GitTab };
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
 
@@ -23,17 +29,30 @@ export function onGitTabChange(fn: Listener): () => void {
   return subscribe(activeTab, fn);
 }
 
-/** Switch to a tab. No-op if already active. */
+/** Switch to a tab. No-op if already active. Updates the URL (pushState)
+ *  and the git view tab's route so the Pull requests / Sources sub-tabs are
+ *  deep-linkable and back/forward navigable, mirroring settings-tabs.ts. */
 export function setGitTab(tab: GitTab): void {
   if (tab === activeTab.peek()) {
     return;
   }
+  setGitTabRoute(tab);
+  pushRoute({ kind: "git", tab });
   activeTab.value = tab;
 }
 
 /** Current active tab. */
 export function getGitTab(): GitTab {
   return activeTab.peek();
+}
+
+/** Externally force the active sub-tab WITHOUT pushing a URL — used by the
+ *  router when back/forward navigation lands on a /git/<tab> URL. Mirrors
+ *  forceSettingsTab. Safe to call before the git view tab exists (the
+ *  TabSpec route sync is a no-op then; openTab sets the route directly). */
+export function forceGitTab(tab: GitTab): void {
+  setGitTabRoute(tab);
+  activeTab.value = tab;
 }
 
 /** Wire the static tab buttons + panel visibility. Idempotent (only

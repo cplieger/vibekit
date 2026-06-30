@@ -1,12 +1,17 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // git-tabs is a deduped signal + subscribe store (mirrors settings-tabs.ts).
-// The core contract is pure signal behavior, so no DOM is needed: we exercise
-// onGitTabChange / setGitTab / getGitTab directly. A fresh module per test
-// resets the activeTab signal to its "changes" default and stops subscriber
-// registrations from leaking across tests.
+// The core contract is pure signal behavior, but setGitTab now also pushes a
+// URL (pushState) and syncs the git tab's route, so the suite runs under
+// happy-dom for window.location / history. A fresh module per test resets the
+// activeTab signal to its "changes" default and stops subscriber registrations
+// from leaking across tests.
 beforeEach(() => {
   vi.resetModules();
+  // Reset the shared happy-dom location so URL assertions start from a known
+  // state (resetModules clears module state, not the global location).
+  history.replaceState(null, "", "/");
 });
 
 describe("git-tabs store", () => {
@@ -49,6 +54,19 @@ describe("git-tabs store", () => {
     expect(fn).not.toHaveBeenCalled();
     expect(getGitTab()).toBe("changes");
     dispose();
+  });
+
+  it("setGitTab pushes the matching URL; changes maps to the canonical /git", async () => {
+    const { setGitTab } = await import("./git-tabs.js");
+
+    setGitTab("prs");
+    expect(location.pathname).toBe("/git/prs");
+
+    setGitTab("sources");
+    expect(location.pathname).toBe("/git/sources");
+
+    setGitTab("changes");
+    expect(location.pathname).toBe("/git");
   });
 });
 

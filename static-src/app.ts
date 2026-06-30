@@ -58,6 +58,7 @@ import { initKeyboardShortcuts } from "./keys.js";
 import { loadToolsList } from "./tools.js";
 import { loadKiroConfig } from "./kiro-config.js";
 import { forceSettingsTab } from "./settings-tabs.js";
+import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
 import { restoreLastModel } from "./session-context.js";
 import {
@@ -502,12 +503,13 @@ function applyRoute(route: Route): void {
       });
       break;
     case "git":
+      forceGitTab(route.tab);
       openTab({
         id: "__git__",
         name: "Source Control",
         kind: "git",
         view: TAB_VIEWS.git,
-        route: { kind: "git" },
+        route: { kind: "git", tab: route.tab },
         onShow: loadGitRepos,
       });
       break;

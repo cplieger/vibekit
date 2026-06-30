@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { pushRoute } from "./router.js";
-import type { Route, SettingsTab } from "./router.js";
+import type { Route, SettingsTab, GitTab } from "./router.js";
 import {
   ICON_CLOSE,
   ICON_TAB_CHAT,
@@ -20,6 +20,7 @@ import {
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
 } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
 import { signal, effect, el } from "@cplieger/reactive";
@@ -76,14 +77,6 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
 };
-
-/** Parse an SVG string into a DOM node via DOMParser.
- *  Used instead of innerHTML to avoid XSS surface in the tab rendering path. */
-const svgParser = new DOMParser();
-function iconEl(svg: string): Node {
-  const doc = svgParser.parseFromString(svg, "image/svg+xml");
-  return document.importNode(doc.documentElement, true);
-}
 
 // --- Store ---
 
@@ -690,13 +683,28 @@ export function setSettingsTab(tab: SettingsTab): void {
   }
 }
 
-export function toggleGitView(onShow: () => void): void {
+/** Switch the git view's sub-tab route. No-op if the git view isn't open.
+ *  Mirrors setSettingsTab: keeps the __git__ TabSpec route in sync so every
+ *  emit (and thus showView → pushRoute) reflects the active sub-tab rather
+ *  than resetting the URL to /git. */
+export function setGitTab(tab: GitTab): void {
+  const spec = state.tabs.find((t) => t.id === TAB_GIT);
+  if (spec === undefined) {
+    return;
+  }
+  spec.route = { kind: "git", tab };
+  if (state.active === TAB_GIT) {
+    emit();
+  }
+}
+
+export function toggleGitView(tab: GitTab = "changes", onShow?: () => void): void {
   toggleSingleton({
     id: TAB_GIT,
     name: "Source Control",
     kind: "git",
     view: TAB_VIEWS.git,
-    route: { kind: "git" },
+    route: { kind: "git", tab },
     onShow,
   });
 }
