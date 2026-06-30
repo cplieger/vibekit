@@ -38,24 +38,39 @@ func (r *byteRing) Write(p []byte) {
 
 	capacity := len(r.buf)
 	if n >= capacity {
-		// Data larger than buffer: keep only the tail.
+		// Input fills or overfills the buffer: keep only the trailing
+		// `capacity` bytes. Data is evicted only when the input is strictly
+		// larger than the buffer (its own leading bytes are dropped) or the
+		// buffer already held bytes that this write overwrites. An
+		// exactly-capacity write into an empty buffer loses nothing.
+		if n > capacity || r.full || r.pos > 0 {
+			r.truncated = true
+		}
 		copy(r.buf, p[n-capacity:])
 		r.pos = 0
 		r.full = true
-		r.truncated = true
 		return
 	}
 
+	// Writing into an already-full ring overwrites the oldest bytes.
+	if r.full {
+		r.truncated = true
+	}
 	for len(p) > 0 {
 		space := capacity - r.pos
 		copied := copy(r.buf[r.pos:], p[:min(len(p), space)])
 		r.pos += copied
+		p = p[copied:]
 		if r.pos >= capacity {
 			r.pos = 0
 			r.full = true
-			r.truncated = true
+			// Bytes still left after the buffer fills overwrite the oldest
+			// data — that is an eviction. Filling to exactly capacity with
+			// nothing left over evicts nothing.
+			if len(p) > 0 {
+				r.truncated = true
+			}
 		}
-		p = p[copied:]
 	}
 }
 
