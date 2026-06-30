@@ -121,6 +121,7 @@ var allowedSubcommands = map[string]struct{}{
 	"rebase":       {},
 	"remote":       {},
 	"reset":        {},
+	"rev-list":     {},
 	"rev-parse":    {},
 	"show":         {},
 	"show-ref":     {},
