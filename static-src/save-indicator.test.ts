@@ -23,12 +23,15 @@ vi.mock("./dom.js", () => ({
   $: { settingsSaveStatus: document.createElement("div") },
 }));
 
-vi.mock("./icons.js", () => ({
+vi.mock("./icon-el.js", () => ({
   iconEl: (path: string) => {
     const el = document.createElement("span");
     el.dataset["icon"] = path;
     return el;
   },
+}));
+
+vi.mock("./icons.js", () => ({
   ICON_SAVE_OK: "ok",
   ICON_SAVE_FAIL: "fail",
 }));

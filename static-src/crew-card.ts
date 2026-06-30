@@ -22,7 +22,8 @@ import { isToolActive } from "./tool-schema.js";
 import { getActiveId } from "./store.js";
 import { sendMessage } from "./actions/crew.js";
 import { bindLoadingState } from "./actions/index.js";
-import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14, iconEl } from "./icons.js";
+import { ICON_SPINNER_14, ICON_CHECK_14, ICON_ERROR_14, ICON_PENDING_14 } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { formatToolActivity } from "./format-tool-activity.js";
 import { reconcile } from "./reconcile.js";
 

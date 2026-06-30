@@ -12,7 +12,8 @@
 import type { ToolStatus, ToolLocation, ToolDiff } from "./types.js";
 import { escText } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
-import { fileIcon, toolIcon, iconEl, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { openFile, openFileDiff } from "./editor-openers.js";
 import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";

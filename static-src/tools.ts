@@ -9,7 +9,8 @@
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
-import { ICON_EDIT, ICON_TRASH, ICON_PIN, ICON_PIN_FILLED, iconEl } from "./icons.js";
+import { ICON_EDIT, ICON_TRASH, ICON_PIN, ICON_PIN_FILLED } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import {
   installTools,
   saveTools,
@@ -610,7 +611,7 @@ async function seedUnconfiguredMCP(name: string, install: string): Promise<void>
  * Pin icon reflecting auto_update state. Filled pin = pinned
  * (auto_update off); outline pin = tracking upstream (auto_update on).
  */
-function autoUpdateIcon(autoUpdate: boolean): HTMLElement {
+function autoUpdateIcon(autoUpdate: boolean): Element {
   return iconEl(autoUpdate ? ICON_PIN : ICON_PIN_FILLED);
 }
 

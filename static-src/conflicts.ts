@@ -24,7 +24,8 @@
 import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
 import { escText } from "./strings.js";
-import { ICON_WARN_12, iconEl } from "./icons.js";
+import { ICON_WARN_12 } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { registerConflictChipRenderer } from "./messages-shared.js";
 import { openConflictDiff as openConflictDiffAction, loadConflicts } from "./actions/conflicts.js";
 import { bindLoadingState } from "./actions/index.js";

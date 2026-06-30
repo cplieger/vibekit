@@ -123,10 +123,7 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
   };
 };
 
-// --- iconEl helper (template-based SVG cloning) -----------------------
-
 import { iconEl } from "./icon-el.js";
-export { iconEl };
 
 // --- Module state -----------------------------------------------------
 
