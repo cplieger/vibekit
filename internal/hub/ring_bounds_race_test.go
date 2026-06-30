@@ -59,8 +59,10 @@ func TestByteRing_StringDropsPartialUTF8Leader(t *testing.T) {
 	}
 }
 
-// TestByteRing_ExactCapacityWrite verifies the edge case where written
-// data is exactly equal to capacity.
+// TestByteRing_ExactCapacityWrite verifies the edge case where a single
+// write is exactly equal to capacity: the buffer becomes full but nothing
+// was evicted, so Truncated() must stay false. Only a write that overflows
+// the buffer (total bytes > capacity) reports truncation.
 func TestByteRing_ExactCapacityWrite(t *testing.T) {
 	const cap = 8
 	r := newByteRing(cap)
@@ -74,8 +76,38 @@ func TestByteRing_ExactCapacityWrite(t *testing.T) {
 	if string(got) != "12345678" {
 		t.Fatalf("Bytes() = %q, want %q", got, "12345678")
 	}
+	if r.Truncated() {
+		t.Fatal("Truncated() = true after an exact-capacity write; nothing was evicted")
+	}
+
+	// One more byte overflows the buffer and must report truncation.
+	r.Write([]byte("9"))
 	if !r.Truncated() {
-		t.Fatal("expected Truncated() = true after exact-capacity write")
+		t.Fatal("Truncated() = false after writing past capacity; data was evicted")
+	}
+}
+
+// TestByteRing_ExactCapacityAcrossWrites verifies that filling the buffer to
+// exactly capacity over several writes (the wrap-on-fill path) also evicts
+// nothing, so Truncated() stays false until a later write actually overflows.
+func TestByteRing_ExactCapacityAcrossWrites(t *testing.T) {
+	const cap = 8
+	r := newByteRing(cap)
+	r.Write([]byte("1234"))
+	r.Write([]byte("5678")) // fills to exactly cap; pos wraps but nothing dropped
+	if r.Len() != cap {
+		t.Fatalf("Len() = %d, want %d", r.Len(), cap)
+	}
+	if string(r.Bytes()) != "12345678" {
+		t.Fatalf("Bytes() = %q, want %q", r.Bytes(), "12345678")
+	}
+	if r.Truncated() {
+		t.Fatal("Truncated() = true after filling to exactly capacity across writes; nothing was evicted")
+	}
+	// The next byte overwrites the oldest data.
+	r.Write([]byte("9"))
+	if !r.Truncated() {
+		t.Fatal("Truncated() = false after overwriting the full buffer; data was evicted")
 	}
 }
 
