@@ -1,9 +1,10 @@
+# Example compose for vibekit. See the README for all configuration options and hardening.
 services:
   vibekit:
     image: ghcr.io/cplieger/vibekit:latest
     container_name: vibekit
     restart: unless-stopped
-    user: "0:0" # required for config file permissions
+    user: "1000:1000"  # match your host user
 
     environment:
       TZ: "Europe/Paris"
