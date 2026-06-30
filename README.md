@@ -34,13 +34,23 @@ Vibekit is a Go web server that drives `kiro-cli` over the Agent Client Protocol
 services:
   vibekit:
     image: ghcr.io/cplieger/vibekit:latest
+    user: "1000:1000"  # match your host user
     ports:
-      - "8080:8080"
+      - "9847:9847"
     volumes:
       - ./config:/config        # chats, kiro-cli auth/state, tools
       - ./workspace:/workspace  # your repos
     restart: unless-stopped
 ```
+
+Before the first start, create and own the bind-mount directories, since the container runs as `user: "1000:1000"`. The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create config directories`:
+
+```bash
+mkdir -p /opt/appdata/vibekit/config /opt/appdata/vibekit/workspace
+chown -R 1000:1000 /opt/appdata/vibekit
+```
+
+To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
 
 `kiro-cli` is downloaded and pinned on first boot (it is not redistributed in the image, per the AWS Customer Agreement). On first launch, authenticate `kiro-cli` and start chatting.
 
