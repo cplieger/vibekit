@@ -16,7 +16,6 @@ vi.mock("./icons.js", () => ({
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
   ICON_ALERT: "",
-  iconEl: () => document.createElement("span"),
 }));
 vi.mock("./ui-state.js", () => ({
   save: vi.fn(),

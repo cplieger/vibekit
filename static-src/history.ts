@@ -11,7 +11,8 @@
 import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { ICON_TRASH, iconEl } from "./icons.js";
+import { ICON_TRASH } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { el } from "@cplieger/reactive";

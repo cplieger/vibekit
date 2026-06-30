@@ -9,7 +9,8 @@
 
 import { el } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { iconEl, ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
+import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { subscribeToActions, pendingCount } from "./actions/index.js";
 
 function spinnerNode(): HTMLDivElement {

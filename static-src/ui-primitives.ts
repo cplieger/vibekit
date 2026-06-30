@@ -2,7 +2,8 @@
 // patterns across permissions-ui.ts, mcp-panels.ts, and future modules.
 
 import { el } from "@cplieger/reactive";
-import { ICON_CLOSE, iconEl } from "./icons.js";
+import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 // ---------------------------------------------------------------------------
 // Chip — removable tag with optional badge and code styling.

@@ -4,7 +4,6 @@
 // All icons use fill='currentColor' to inherit the parent text color.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
 import type { ToolKind } from "./types.js";
 import { extToIconKey } from "./file-extensions.js";
 
@@ -289,25 +288,6 @@ export const FILE_ICONS: Record<string, string> = {
   sass: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18 17.3c-1.1.7-2.4 1.5-3.5 2.2.4.9.4 1.8.1 2.7-.5 1.6-1.7 2.5-3.2 2.7-.4.1-.8 0-1.1-.1-.4-.1-.6-.4-.7-.7-.4-.9-.3-1.7.3-2.4.4-.4.8-.9 1.3-1.2.5-.4 1.2-.7 1.8-1.1.1-.1.2-.1.4-.2-.3-.2-.4-.4-.6-.4-.8-.5-1.6-1.1-2.3-1.8-.4-.4-.8-.8-1.1-1.3-.9-.7-1-1.7-.5-2.6.4-1 1.1-1.8 1.8-2.5 1.6-1.4 3.4-2.4 5.4-3.1 1.4-.5 2.8-.7 4.2-.5.4.2 1 .3 1.4.5 1.5.6 2.1 1.8 1.6 3.4-.4 1.3-1.2 2.4-2.4 3.1-1.6 1-3.2 1.4-5.1 1.1-.6-.1-1.1-.4-1.6-.9-.1-.2-.2-.4-.3-.5 0 0 0-.1.1-.2 0 0 .1 0 .2.1.8.8 1.7.9 2.6.7 1.7-.3 3.2-.9 4.3-2.2.4-.5.8-1.1 1-1.8.2-.8-.2-1.4-.9-1.8-.8-.4-1.6-.4-2.4-.3-2 .3-3.8 1.1-5.4 2.1-.9.5-1.7 1.1-2.3 1.9-.3.4-.5.8-.7 1.2-.3.8-.2 1.6.4 2.2.4.4.8.8 1.2 1.1.6.5 1.3 1.1 1.9 1.6.1 0 .2.1.3 0 .3-.2.5-.3.8-.4.9-.5 1.8-.9 2.8-1.1 0 .4.1.4.2.5 0-.1 0-.1 0 0zm-4.3 2.5c-.9.5-1.6 1-2.3 1.7-.4.4-.6.8-.7 1.3-.1.6.3.9.9.8.8-.2 1.4-.7 1.8-1.3.5-.8.5-1.5.3-2.5z"/></svg>',
   less: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
 };
-
-// --- Shared icon template-cache helper ---
-// Parses an SVG string once into a template element and returns a clone
-// on subsequent calls. Eliminates repeated innerHTML parsing at icon-
-// injection sites and is CSP-safe.
-
-const iconTemplateCache = new Map<string, HTMLElement>();
-
-/** Clone a cached DOM node from an SVG string. First call parses; subsequent
- *  calls return cloneNode(true). */
-export function iconEl(svgStr: string): HTMLElement {
-  let tpl = iconTemplateCache.get(svgStr);
-  if (tpl === undefined) {
-    tpl = el("span", { className: "icon-wrap" });
-    tpl.innerHTML = svgStr;
-    iconTemplateCache.set(svgStr, tpl);
-  }
-  return tpl.cloneNode(true) as HTMLElement;
-}
 
 /** Map exact filename to icon key. */
 const NAME_ICON: Record<string, string> = {

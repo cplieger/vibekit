@@ -7,7 +7,8 @@
 
 import { el } from "@cplieger/reactive";
 import { highlightByLang, normalizeLang } from "./highlight.js";
-import { ICON_COPY, ICON_PLAY, iconEl } from "./icons.js";
+import { ICON_COPY, ICON_PLAY } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
 

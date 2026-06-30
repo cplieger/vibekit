@@ -4,7 +4,8 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X, iconEl } from "./icons.js";
+import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { getActiveId } from "./store.js";
 import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";

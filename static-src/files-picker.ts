@@ -9,7 +9,8 @@
 // ---------------------------------------------------------------------------
 
 import { closeModal, openModal } from "./modals.js";
-import { fileIcon, FILE_ICONS, iconEl } from "./icons.js";
+import { fileIcon, FILE_ICONS } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import {
   fetchDir,
   joinPath,
