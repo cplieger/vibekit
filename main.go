@@ -10,6 +10,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	// Embed the IANA tz database so TZ (default Europe/Paris) is honored regardless
+	// of the base image's zoneinfo; without it, on a base that ships no
+	// /usr/share/zoneinfo, time.Local silently falls back to UTC.
+	_ "time/tzdata"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
@@ -26,11 +30,6 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/steering"
 	"github.com/cplieger/vibekit/internal/workspace"
-
-	// Embed the IANA tz database so TZ (default Europe/Paris) is honored regardless
-	// of the base image's zoneinfo; without it, on a base that ships no
-	// /usr/share/zoneinfo, time.Local silently falls back to UTC.
-	_ "time/tzdata"
 )
 
 // Compile-time interface satisfaction checks.
