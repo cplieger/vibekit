@@ -1127,6 +1127,23 @@ func behindRepo(t *testing.T) string {
 	return work
 }
 
+// aheadBehind must report real upstream divergence. The counts come from
+// `git rev-list --left-right --count HEAD...@{upstream}`, so rev-list has to
+// be permitted by the gitexec allowlist; if it is dropped, the command is
+// rigged to fail and the counts silently collapse to 0/0 (a dead ahead/behind
+// indicator in the git panel).
+func TestAheadBehind_ReportsUpstreamDivergence(t *testing.T) {
+	work := behindRepo(t) // HEAD at C1, origin/main at C2 -> behind 1, ahead 0
+	if ahead, behind := aheadBehind(context.Background(), work); ahead != 0 || behind != 1 {
+		t.Fatalf("aheadBehind on a behind-by-one work tree = (%d, %d), want (0, 1)", ahead, behind)
+	}
+	// A local commit on top of C1 leaves the work tree both ahead and behind.
+	writeCommit(t, work, "local.txt", "local\n", "local commit")
+	if ahead, behind := aheadBehind(context.Background(), work); ahead != 1 || behind != 1 {
+		t.Fatalf("aheadBehind after a local commit = (%d, %d), want (1, 1)", ahead, behind)
+	}
+}
+
 func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	workDir := t.TempDir()
 	h := NewHandler(workDir)
@@ -2640,5 +2657,159 @@ func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
 	// is the correct result.
 	if got := getRecentCommits(context.Background(), t.TempDir(), 10); got != "No commit history available" {
 		t.Errorf("getRecentCommits(non-repo dir) = %q, want the sentinel", got)
+	}
+}
+
+// capturePrompter records the prompt it was handed so a test can assert
+// on the text the AI git handlers build (the diff body, the commit-log
+// section). It always succeeds.
+type capturePrompter struct {
+	prompt string
+	result string
+}
+
+func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string) (string, error) {
+	c.prompt = prompt
+	return c.result, nil
+}
+
+// handleCommitMessage feeds the AI the full staged diff (unified-diff
+// hunk bodies), not the `--stat` summary and not a size-truncated stub:
+// the prompt must carry the actual changed line and a hunk header.
+func TestHandleCommitMessage_PromptCarriesFullStagedDiff(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nUNIQUE_DIFF_MARKER_LINE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "README.md")
+
+	cp := &capturePrompter{result: "feat: x"}
+	a := NewAIHandler(dir, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/commit-message", strings.NewReader(`{}`))
+	a.handleCommitMessage(rec, req)
+
+	if !strings.Contains(cp.prompt, "UNIQUE_DIFF_MARKER_LINE") {
+		t.Errorf("commit prompt missing the staged diff body; prompt:\n%s", cp.prompt)
+	}
+	if !strings.Contains(cp.prompt, "@@") {
+		t.Errorf("commit prompt missing unified-diff hunk header (got the --stat summary instead of the full diff?); prompt:\n%s", cp.prompt)
+	}
+}
+
+// handlePRDescription caps the branch diff at 12 KB but must still feed
+// the AI the actual diff content for normal-sized branches; a cap that
+// collapses to zero would truncate everything down to the size-stub
+// suffix.
+func TestHandlePRDescription_PromptCarriesBranchDiff(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	runGit(t, dir, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nPR_DIFF_MARKER_LINE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "README.md")
+	runGit(t, dir, "commit", "-q", "-m", "feature change")
+
+	cp := &capturePrompter{result: "desc"}
+	a := NewAIHandler(dir, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
+	a.handlePRDescription(rec, req)
+
+	if !strings.Contains(cp.prompt, "PR_DIFF_MARKER_LINE") {
+		t.Errorf("PR prompt missing the branch diff body; prompt:\n%s", cp.prompt)
+	}
+}
+
+// handlePRDescription uses the local `base..HEAD` commit log verbatim
+// when it is non-empty; it must NOT fall through to the
+// `origin/base..HEAD` fallback. When local main is ahead of origin/main,
+// the fallback would wrongly fold in commits that aren't part of this
+// branch's own history.
+func TestHandlePRDescription_UsesLocalLogWhenNonEmpty(t *testing.T) {
+	skipNoGit(t)
+	base := t.TempDir()
+	origin := filepath.Join(base, "origin")
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, origin)                   // origin main @ C1
+	runGit(t, base, "clone", "-q", origin, work) // work main @ C1, origin/main @ C1
+	// Advance local main beyond origin/main with a recognizable commit.
+	writeCommit(t, work, "main.txt", "m\n", "MAIN_ONLY_COMMIT") // work main @ C2
+	// Branch off and add the feature commit (HEAD @ C3).
+	runGit(t, work, "checkout", "-q", "-b", "feature")
+	writeCommit(t, work, "feat.txt", "f\n", "FEATURE_ONLY_COMMIT")
+
+	cp := &capturePrompter{result: "desc"}
+	a := NewAIHandler(work, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
+	a.handlePRDescription(rec, req)
+
+	if !strings.Contains(cp.prompt, "FEATURE_ONLY_COMMIT") {
+		t.Fatalf("PR prompt log missing the branch's own commit; prompt:\n%s", cp.prompt)
+	}
+	if strings.Contains(cp.prompt, "MAIN_ONLY_COMMIT") {
+		t.Errorf("PR prompt log folded in origin/main fallback commits; the non-empty local log should win; prompt:\n%s", cp.prompt)
+	}
+}
+
+// When the local `base..HEAD` log is empty (HEAD == base), the handler
+// falls back to `origin/base..HEAD` so a freshly-pushed-from-clone
+// branch still gets a commit list in its PR description.
+func TestHandlePRDescription_FallsBackToOriginLogWhenLocalEmpty(t *testing.T) {
+	skipNoGit(t)
+	base := t.TempDir()
+	origin := filepath.Join(base, "origin")
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, origin)
+	runGit(t, base, "clone", "-q", origin, work)
+	// Commit on work's main (HEAD == main): `main..HEAD` is empty, but
+	// `origin/main..HEAD` carries this commit.
+	writeCommit(t, work, "README.md", "changed\n", "FALLBACK_LOG_COMMIT")
+
+	cp := &capturePrompter{result: "desc"}
+	a := NewAIHandler(work, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-description", strings.NewReader(`{}`))
+	a.handlePRDescription(rec, req)
+
+	if !strings.Contains(cp.prompt, "FALLBACK_LOG_COMMIT") {
+		t.Errorf("PR prompt log missing the origin-fallback commit; prompt:\n%s", cp.prompt)
+	}
+}
+
+// handlePRFetch proceeds to the fetch when `git remote get-url origin`
+// succeeds; an unreachable origin must surface as an error envelope, not
+// a success response that echoes the origin URL back as output.
+func TestHandlePRFetch_UnreachableOriginReportsError(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	runGit(t, dir, "remote", "add", "origin", "/nonexistent-origin-path")
+
+	h := NewHandler(dir)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(`{"number":42}`))
+	h.handlePRFetch(rec, req)
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
+	}
+	if _, isError := resp["error"]; !isError {
+		t.Errorf("pr-fetch against an unreachable origin returned %v, want an error envelope", resp)
+	}
+	if out, ok := resp["output"]; ok {
+		t.Errorf("pr-fetch returned success output %q; a successful origin lookup must not short-circuit to echoing the URL", out)
 	}
 }
