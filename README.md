@@ -1,6 +1,6 @@
 # vibekit
 
-[![Image Size](https://ghcr-badge.egpl.dev/cplieger/vibekit/size)](https://github.com/cplieger/vibekit/pkgs/container/vibekit)
+[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/size.json)](https://github.com/cplieger/vibekit/pkgs/container/vibekit)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cplieger/vibekit)](https://goreportcard.com/report/github.com/cplieger/vibekit)
