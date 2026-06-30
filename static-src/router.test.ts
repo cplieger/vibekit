@@ -29,7 +29,31 @@ describe("parseRoute (table-driven)", () => {
       hash: "",
       expected: { kind: "chat", id: "" },
     },
-    { name: "/git", pathname: "/git", hash: "", expected: { kind: "git" } },
+    { name: "/git", pathname: "/git", hash: "", expected: { kind: "git", tab: "changes" } },
+    {
+      name: "/git/prs",
+      pathname: "/git/prs",
+      hash: "",
+      expected: { kind: "git", tab: "prs" },
+    },
+    {
+      name: "/git/sources",
+      pathname: "/git/sources",
+      hash: "",
+      expected: { kind: "git", tab: "sources" },
+    },
+    {
+      name: "/git/changes (explicit) → changes",
+      pathname: "/git/changes",
+      hash: "",
+      expected: { kind: "git", tab: "changes" },
+    },
+    {
+      name: "/git/unknown → changes",
+      pathname: "/git/bogus",
+      hash: "",
+      expected: { kind: "git", tab: "changes" },
+    },
     { name: "/history", pathname: "/history", hash: "", expected: { kind: "history" } },
     {
       name: "/files → workspace root",
@@ -133,7 +157,12 @@ describe("parseRoute (table-driven)", () => {
       hash: "",
       expected: { kind: "chat", id: "" },
     },
-    { name: "trailing slashes stripped", pathname: "/git///", hash: "", expected: { kind: "git" } },
+    {
+      name: "trailing slashes stripped",
+      pathname: "/git///",
+      hash: "",
+      expected: { kind: "git", tab: "changes" },
+    },
   ];
 
   it.each(cases)("$name", ({ pathname, hash, expected }) => {
@@ -155,8 +184,12 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       .string({ minLength: 1, maxLength: 30 })
       .filter((s) => !s.includes("/") && !s.includes("#"))
       .map((id): Route => ({ kind: "chat", id })),
-    // git
-    fc.constant<Route>({ kind: "git" }),
+    // git (all three sub-tabs round-trip: changes→/git, prs→/git/prs, …)
+    fc.constantFrom<Route>(
+      { kind: "git", tab: "changes" },
+      { kind: "git", tab: "prs" },
+      { kind: "git", tab: "sources" },
+    ),
     // history
     fc.constant<Route>({ kind: "history" }),
     // files with path "." (root)
