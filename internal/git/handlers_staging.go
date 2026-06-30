@@ -20,7 +20,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	if !fileutil.IsGitRepo(ctx, dir) {
-		api.WriteJSON(w, gitStatusResp{IsRepo: false})
+		api.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
 		return
 	}
 	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
@@ -34,7 +34,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 // fetching N repos in parallel would be costly + noisy).
 func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
 	if !fileutil.IsGitRepo(ctx, dir) {
-		return gitStatusResp{IsRepo: false}
+		return gitStatusResp{IsRepo: false, Files: []gitFile{}}
 	}
 	st := gitStatusResp{IsRepo: true}
 	if b, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil {
@@ -70,6 +70,14 @@ func collectStatus(ctx context.Context, dir string, timeouts gitexec.Timeouts, f
 
 	st.Ahead = ahead
 	st.Behind = behind
+	// Never let Files marshal to JSON null: the wire contract (and the
+	// client's GitRepoStatus.files) is a non-nullable array. parseGitStatus
+	// returns nil for a clean repo or on error, and a nil slice marshals to
+	// `null`, which makes the Changes tab's `for (const f of r.files)` throw
+	// "r.files is not iterable" and blanks the whole git page.
+	if files == nil {
+		files = []gitFile{}
+	}
 	st.Files = files
 	st.Stashes = stashes
 	st.HasGH = hasGH()

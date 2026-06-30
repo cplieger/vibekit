@@ -19,6 +19,17 @@ const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "applic
 // from "./api-client.js" unchanged.
 export { API_TIMEOUT_MS, withTimeout };
 
+/** True when a rejected fetch was a deliberate cancellation — a caller
+ *  aborted an in-flight request via AbortController.abort() (e.g. the git
+ *  Changes tab supersedes a refresh, or a CancellableSlot rotates). Those
+ *  are expected, not failures, so they shouldn't be logged as
+ *  "api: fetch failed". A timeout aborts with name "TimeoutError" (via
+ *  AbortSignal.timeout) and a network error is a TypeError — both fall
+ *  through this check and are still logged. */
+function isAbortCancellation(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
 /** Internal fetch wrapper shared by apiGet/apiPost/apiDelete.
  *  Applies a timeout signal (via withTimeout), logs failures centrally,
  *  and returns null on any non-2xx or network error — callers never see
@@ -48,7 +59,9 @@ async function request<T>(
     }
     return (await r.json()) as T;
   } catch (e) {
-    console.warn("api: fetch failed", method, path, e);
+    if (!isAbortCancellation(e)) {
+      console.warn("api: fetch failed", method, path, e);
+    }
     return null;
   }
 }
@@ -75,7 +88,9 @@ export async function apiDelete(path: string, signal?: AbortSignal): Promise<boo
     }
     return true;
   } catch (e) {
-    console.warn("api: fetch failed", "DELETE", path, e);
+    if (!isAbortCancellation(e)) {
+      console.warn("api: fetch failed", "DELETE", path, e);
+    }
     return false;
   }
 }
@@ -139,7 +154,9 @@ async function requestTyped<T>(
       return { ok: false, status: r.status, data: null, error: `response shape mismatch: ${msg}` };
     }
   } catch (e) {
-    console.warn("api: fetch failed", method, path, e);
+    if (!isAbortCancellation(e)) {
+      console.warn("api: fetch failed", method, path, e);
+    }
     return {
       ok: false,
       status: 0,
@@ -209,7 +226,9 @@ async function requestWithError<T>(
     }
     return { ok: true, status: r.status, data: parsed as T, error: "" };
   } catch (e) {
-    console.warn("api: fetch failed", method, path, e);
+    if (!isAbortCancellation(e)) {
+      console.warn("api: fetch failed", method, path, e);
+    }
     return {
       ok: false,
       status: 0,

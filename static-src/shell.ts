@@ -13,6 +13,7 @@
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
+import * as uiState from "./ui-state.js";
 import { render, keyboard, scroll, connection } from "@cplieger/web-terminal-engine";
 import type { ServerMessage } from "@cplieger/web-terminal-engine";
 
@@ -136,6 +137,26 @@ export function initShellPanel(): void {
     connection.sendBinary(encoder.encode(`${cmd}\n`));
   });
 
+  // Panel open/close + header controls. The toolbar shell button, the
+  // header close (X), clear, and kill buttons were all wired in the
+  // pre-engine shell.ts and dropped in the web-terminal-engine migration —
+  // without these the shell button "did nothing" (never opened the slider).
+  $.shellBtn.addEventListener("click", () => {
+    setShellOpen(!shellOpen);
+  });
+  $.shellToggleBtn.addEventListener("click", () => {
+    setShellOpen(false);
+  });
+  // Clear scrollback: reset the engine's local screen + scrollback store.
+  $.shellClearBtn.addEventListener("click", () => {
+    render.resetScrollback();
+  });
+  // The engine exposes no dedicated "kill" control message, so send Ctrl+C
+  // (SIGINT) — the terminal-native way to interrupt the foreground process.
+  $.shellKillBtn.addEventListener("click", () => {
+    connection.sendBinary(encoder.encode("\x03"));
+  });
+
   // Set up the vterm connection (client → server socket lifecycle).
   connection.init({
     wsPath: SHELL_WS_PATH,
@@ -187,13 +208,49 @@ export function initShellPanel(): void {
   });
 }
 
+// --- Panel open / close ---
+
+let shellOpen = false;
+
+/** Open or close the shell slider.
+ *
+ *  Open: remove `shell-closed` (CSS slides the panel up), mark the toolbar
+ *  button active, connect the WebSocket (the engine's connection module is
+ *  idempotent and the server PTY persists across reconnects), then re-measure
+ *  and focus. Close: hide the panel; the PTY keeps running server-side so
+ *  reopening resumes the same session. State is persisted per-device in
+ *  ui-state so a reload restores it (see restoreShell). */
+function setShellOpen(open: boolean): void {
+  shellOpen = open;
+  if (open) {
+    // Capture the chat scroll-area height before the panel steals vertical
+    // space, so the same content stays in view once it opens.
+    const prevHeight = getScrollEl().clientHeight;
+    $.shellPanel.classList.remove("shell-closed", "collapsed");
+    $.shellBtn.classList.add("active");
+    connection.connect();
+    requestAnimationFrame(() => {
+      sendResize();
+      shellContainer.focus({ preventScroll: true });
+      const shrunk = prevHeight - getScrollEl().clientHeight;
+      if (shrunk > 0) {
+        getScrollEl().scrollTop += shrunk;
+      }
+    });
+  } else {
+    $.shellPanel.classList.add("shell-closed");
+    $.shellBtn.classList.remove("active");
+  }
+  uiState.save({ shell_open: open });
+}
+
 /**
- * Restore the shell panel when the shell tab becomes visible.
- * Activates the WS connection and focuses the container.
+ * Restore the shell panel on page load when ui-state had it open. Runs the
+ * full open path (CSS + connect + focus), not just a bare connect — the
+ * earlier version only connected the socket and left the panel hidden.
  */
 export function restoreShell(): void {
-  connection.connect();
-  shellContainer.focus();
+  setShellOpen(true);
 }
 
 // --- Sticky Ctrl modifier ---
@@ -241,7 +298,3 @@ function sendResize(): void {
   }
   connection.sendResize();
 }
-
-// Suppress unused-import lint for getScrollEl (used by other modules
-// that import from shell.ts for side effects).
-void getScrollEl;
