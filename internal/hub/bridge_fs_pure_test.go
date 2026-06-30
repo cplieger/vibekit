@@ -214,3 +214,22 @@ func TestFsErrorIsRoutine(t *testing.T) {
 		t.Errorf("fsErrorIsRoutine(context.Canceled) = %v, want false", got)
 	}
 }
+
+// TestSliceByLines_offsetLimitOvershootReturnsTail pins the read-window
+// offset arithmetic. When the window starts past line 1 (start > 0) and the
+// requested limit is larger than the number of lines that remain, the result
+// must be the clamped tail of the file, never an over-read. The window end is
+// narrowed to start+limit only while limit is smaller than the remaining-line
+// count (end-start); flipping that subtraction to addition (end+start) pushes
+// end past the slice length and panics instead of returning the tail. The
+// existing table covers limit==remaining and limit>>remaining; this pins the
+// just-past-remaining point where the sign of the offset math is observable.
+func TestSliceByLines_offsetLimitOvershootReturnsTail(t *testing.T) {
+	t.Parallel()
+	line, limit := 2, 4 // start at line 2; only 2 lines remain in a 3-line file
+	got := sliceByLines("a\nb\nc\n", &line, &limit)
+	if got != "b\nc\n" {
+		t.Errorf("sliceByLines(\"a\\nb\\nc\\n\", line=2, limit=4) = %q, want %q (tail, no over-read)",
+			got, "b\nc\n")
+	}
+}

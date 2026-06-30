@@ -349,3 +349,112 @@ func recvWithin(t *testing.T, ch <-chan api.ChatID, d time.Duration) api.ChatID 
 		return ""
 	}
 }
+
+// TestPurge_SkipsVanishedEntryWithoutAborting verifies a directory entry
+// that is listed by ReadDir but fails to stat (it vanished between the
+// scan and the per-file stat — a dangling symlink reproduces this
+// deterministically) is treated as "skipped": Purge neither counts nor
+// removes it, must not panic on it, and still purges the genuinely-old
+// chats alongside it.
+func TestPurge_SkipsVanishedEntryWithoutAborting(t *testing.T) {
+	var rec purgeRecorder
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+
+	// A dangling symlink with a valid chat-id .json name: ReadDir lists
+	// it, but os.Stat (which follows the link) fails with ErrNotExist —
+	// exactly the "entry disappeared mid-scan" path purgeOne must skip.
+	vanished := filepath.Join(archiveDir, "vanished.json")
+	if err := os.Symlink(filepath.Join(archiveDir, "no-such-target.json"), vanished); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	realOld := writeArchivedChat(t, archiveDir, "realold", 48*time.Hour)
+
+	svc.Purge(context.Background(), 24*time.Hour)
+
+	if exists(t, realOld) {
+		t.Errorf("a genuinely-old chat was not purged when a vanished sibling entry was present: %s", realOld)
+	}
+	if got := rec.sorted(); !slices.Equal(got, []string{"realold"}) {
+		t.Errorf("onPurge fired for %v, want [realold] (the vanished entry must be skipped, not counted)", got)
+	}
+}
+
+// TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge verifies the
+// reschedule cycle does not run a purge when retention is 0 ("keep
+// forever"). Exercises purgeAndReschedule directly so the assertion is
+// deterministic (no goroutine/stop race): a retention of 0 must skip the
+// Purge call entirely, leaving even ancient archived chats in place.
+func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
+	var rec purgeRecorder
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	chatPath := writeArchivedChat(t, archiveDir, "keepforever", 9000*time.Hour)
+
+	sched := NewPurgeScheduler(context.Background(), svc,
+		func() time.Duration { return 0 })
+	timer, _ := sched.purgeAndReschedule()
+	if timer != nil {
+		timer.Stop()
+	}
+
+	if !exists(t, chatPath) {
+		t.Errorf("retention 0 purged an archived chat during reschedule: %s", chatPath)
+	}
+	if got := rec.sorted(); len(got) != 0 {
+		t.Errorf("retention 0 fired onPurge for %v, want nothing purged", got)
+	}
+}
+
+// TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse verifies nextWait
+// reports "nothing to schedule" (ok=false) when retention is 0, even with
+// a non-empty archive. Retention 0 means keep-forever, so the scheduler
+// must not arm a timer.
+func TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse(t *testing.T) {
+	svc, _, archiveDir := newArchiveTestService(t)
+	writeArchivedChat(t, archiveDir, "present", 1*time.Hour)
+
+	sched := NewPurgeScheduler(context.Background(), svc,
+		func() time.Duration { return 24 * time.Hour })
+
+	if _, ok := sched.nextWait(0); ok {
+		t.Error("nextWait(0) ok = true, want false: retention 0 disables scheduling")
+	}
+}
+
+// TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue verifies that
+// with a positive retention and a non-empty archive nextWait schedules a
+// wake-up (ok=true). The complement of the zero-retention case: a
+// positive retention must arm the next purge.
+func TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue(t *testing.T) {
+	svc, _, archiveDir := newArchiveTestService(t)
+	writeArchivedChat(t, archiveDir, "present", 1*time.Hour)
+
+	sched := NewPurgeScheduler(context.Background(), svc,
+		func() time.Duration { return 24 * time.Hour })
+
+	if _, ok := sched.nextWait(24 * time.Hour); !ok {
+		t.Error("nextWait(24h) ok = false, want true: a non-empty archive with positive retention must schedule a wake-up")
+	}
+}
+
+// TestPurgeScheduler_NextWaitFloorsAtMinWait verifies that when the oldest
+// archived file's retention deadline is already well in the past, nextWait
+// floors the returned delay at the 5s minimum rather than a non-positive
+// value (which would busy-spin the scheduler goroutine).
+func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
+	svc, _, archiveDir := newArchiveTestService(t)
+	// Oldest file is 100h old; with a 1h retention its deadline is ~99h
+	// in the past, so time.Until(deadline) is strongly negative and the
+	// result must clamp to the minWait floor.
+	writeArchivedChat(t, archiveDir, "ancient", 100*time.Hour)
+
+	sched := NewPurgeScheduler(context.Background(), svc,
+		func() time.Duration { return 1 * time.Hour })
+
+	wait, ok := sched.nextWait(1 * time.Hour)
+	if !ok {
+		t.Fatal("nextWait ok = false, want true for a non-empty archive")
+	}
+	if wait != 5*time.Second {
+		t.Errorf("nextWait floored to %v, want 5s: a deadline in the past must clamp to minWait, not 0", wait)
+	}
+}

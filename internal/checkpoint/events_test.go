@@ -975,3 +975,56 @@ func TestEventLogWipe_PropagatesRemoveError(t *testing.T) {
 		t.Errorf("Wipe() with an un-removable dir returned nil; it must surface a RemoveAll error that is not IsNotExist")
 	}
 }
+
+// TestEventLogAppend_CancelledContextReturnsError pins the complement of
+// TestEventLogAppend_WritesWhenContextLive: when the context is already
+// cancelled, Append must surface a non-nil error (the post-write ctx.Err()
+// guard fires) rather than reporting success. Without that guard a caller
+// cancelling mid-snapshot would believe the durable write completed.
+func TestEventLogAppend_CancelledContextReturnsError(t *testing.T) {
+	l := newEventLog(t.TempDir(), "cancelled")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := l.Append(ctx, &event{Kind: kindSnapshot, Tag: "0.0", Path: "f"})
+	if err == nil {
+		t.Error("Append(cancelled ctx) = nil, want non-nil: a cancelled context must be surfaced, not reported as a clean append")
+	}
+}
+
+// ctxErrAfterN is a context whose Err() reports "live" (nil) for its
+// first `after` calls and context.Canceled thereafter. Append checks the
+// context twice — once before the write and once after — with no other
+// Err() calls in between, so after=1 makes the context live at the
+// pre-write guard and cancelled at the post-write guard. This is the
+// deterministic way to drive a cancellation that arrives *during* the
+// write rather than before it.
+type ctxErrAfterN struct {
+	context.Context
+	calls int
+	after int
+}
+
+func (c *ctxErrAfterN) Err() error {
+	c.calls++
+	if c.calls > c.after {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestEventLogAppend_PostWriteContextCancellationSurfaces pins the second
+// (post-write) context guard in Append: when the context is live as the
+// write begins but cancelled by the time the write completes, Append must
+// return that cancellation rather than report a clean append. Without the
+// post-write re-check, a cancellation arriving mid-write would be
+// swallowed and the caller would believe the durable write succeeded.
+func TestEventLogAppend_PostWriteContextCancellationSurfaces(t *testing.T) {
+	l := newEventLog(t.TempDir(), "midflight")
+	ctx := &ctxErrAfterN{Context: context.Background(), after: 1}
+
+	err := l.Append(ctx, &event{Kind: kindSnapshot, Tag: "0.0", Path: "f"})
+	if err == nil {
+		t.Error("Append = nil when the context was cancelled during the write; the post-write ctx guard must surface the cancellation")
+	}
+}

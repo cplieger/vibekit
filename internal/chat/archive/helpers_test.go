@@ -22,6 +22,11 @@ type fakeStore struct {
 	locks       map[api.ChatID]*sync.Mutex
 	markedDel   []api.ChatID
 	clearedTomb []api.ChatID
+	// loadResult, when non-nil, makes Load succeed with this chat
+	// (default: Load returns an error). bc, when non-nil, is returned
+	// by Broadcast (default: nil, i.e. no broadcaster).
+	loadResult *api.Chat
+	bc         api.Broadcaster
 }
 
 func newFakeStore(dir string) *fakeStore {
@@ -48,6 +53,9 @@ func (f *fakeStore) PathFor(chatID api.ChatID) (string, error) {
 }
 
 func (f *fakeStore) Load(api.ChatID) (*api.Chat, error) {
+	if f.loadResult != nil {
+		return f.loadResult, nil
+	}
 	return nil, errors.New("fakeStore: Load not implemented")
 }
 
@@ -67,7 +75,7 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 	f.mu.Unlock()
 }
 
-func (f *fakeStore) Broadcast() api.Broadcaster { return nil }
+func (f *fakeStore) Broadcast() api.Broadcaster { return f.bc }
 
 func (f *fakeStore) OldestCheckpoint() func(context.Context, api.ChatID) string { return nil }
 
@@ -154,4 +162,42 @@ func exists(t *testing.T, path string) bool {
 	}
 	t.Fatalf("stat %s: %v", path, err)
 	return false
+}
+
+// recordingBroadcaster is an api.Broadcaster that records every event it
+// receives so a test can assert which SSE events a Service operation
+// emitted. Safe for concurrent use.
+type recordingBroadcaster struct {
+	mu     sync.Mutex
+	events []api.ServerEvent
+}
+
+func (b *recordingBroadcaster) Broadcast(_ context.Context, evt api.ServerEvent) {
+	b.mu.Lock()
+	b.events = append(b.events, evt)
+	b.mu.Unlock()
+}
+
+// hasType reports whether an event of type t was recorded.
+func (b *recordingBroadcaster) hasType(t api.EventType) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.events {
+		if b.events[i].Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// recordedTypes returns the recorded event types in receipt order (for
+// failure messages).
+func (b *recordingBroadcaster) recordedTypes() []api.EventType {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]api.EventType, len(b.events))
+	for i := range b.events {
+		out[i] = b.events[i].Type
+	}
+	return out
 }

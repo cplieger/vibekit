@@ -1702,3 +1702,19 @@ func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 		t.Errorf("loadSession on an unparseable result did not log the fallback warn; want it present")
 	}
 }
+
+// loadSession with an unparseable result must fill an empty model from
+// the provided fallback. The `b.modelID == ""` gate in loadSession is
+// what applies the fallback on the parse-failure path;
+// TestLoadSession_WarnsOnUnparseableResult only checks the warn log, so
+// this pins the model that actually ends up applied.
+func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &api.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+	if got := b.ModelID(); got != "fb-model" {
+		t.Errorf("loadSession ModelID() = %q, want %q (an empty model must be filled from the fallback on an unparseable result)", got, "fb-model")
+	}
+}

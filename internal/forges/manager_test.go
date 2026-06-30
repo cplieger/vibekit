@@ -93,3 +93,42 @@ func TestManagerList_SkipsTokenlessEntries(t *testing.T) {
 		t.Errorf("github.com with a token should be listed: %+v", list)
 	}
 }
+
+// TestManagerList_SortsByKindThenHost pins List's ordering contract: forges
+// are ordered by Kind first, then Host as a tiebreaker. Two GitHub hosts
+// exercise the same-kind Host tiebreaker; a GitLab login whose host name sorts
+// before both GitHub hosts proves the primary sort key is Kind, not Host. A
+// comparator that sorted by Host alone, reversed the Kind ordering, or
+// reversed the Host tiebreaker would each reorder the result observably.
+func TestManagerList_SortsByKindThenHost(t *testing.T) {
+	setConfigHomeTemp(t)
+	if err := writeGHHosts("bbb.example", "t1", "alice"); err != nil {
+		t.Fatalf("seed gh bbb: %v", err)
+	}
+	if err := writeGHHosts("ccc.example", "t2", "bob"); err != nil {
+		t.Fatalf("seed gh ccc: %v", err)
+	}
+	if err := writeGLabConfig("aaa.example", "t3", "carol"); err != nil {
+		t.Fatalf("seed glab aaa: %v", err)
+	}
+
+	list := NewManager().List(context.Background())
+
+	got := make([]string, len(list))
+	for i, f := range list {
+		got[i] = string(f.Kind) + "|" + f.Host
+	}
+	want := []string{
+		"github|bbb.example", // Kind primary: all github before gitlab...
+		"github|ccc.example", // ...Host secondary: bbb before ccc
+		"gitlab|aaa.example", // gitlab last despite its host sorting first
+	}
+	if len(got) != len(want) {
+		t.Fatalf("List() returned %d forges, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("List()[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}

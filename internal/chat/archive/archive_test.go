@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // TestArchive_MovesActiveToArchive verifies Archive relocates the chat
@@ -153,5 +155,50 @@ func TestDeleteArchived_RejectsInvalidChatID(t *testing.T) {
 	svc, _, _ := newArchiveTestService(t)
 	if err := svc.DeleteArchived(context.Background(), ".."); err == nil {
 		t.Fatal("DeleteArchived(invalid id) = nil, want error")
+	}
+}
+
+// TestRestoreArchived_BroadcastsChatCreated verifies a successful restore
+// (the reloaded chat is readable) broadcasts a chat_created event so every
+// connected client re-adds the entry to the sidebar without a manual
+// refresh. The broadcast is gated on the post-restore reload succeeding;
+// if that guard is inverted, a healthy restore would go un-broadcast.
+func TestRestoreArchived_BroadcastsChatCreated(t *testing.T) {
+	svc, store, archiveDir := newArchiveTestService(t)
+	rec := &recordingBroadcaster{}
+	store.bc = rec
+	store.loadResult = &api.Chat{ID: "chatB"} // reload after restore succeeds
+
+	writeArchivedChat(t, archiveDir, "chatB", 0)
+
+	if err := svc.RestoreArchived(context.Background(), "chatB"); err != nil {
+		t.Fatalf("RestoreArchived: %v", err)
+	}
+
+	if !rec.hasType(api.EventChatCreated) {
+		t.Errorf("restore did not broadcast %q (events seen: %v); a successful reload must announce the restored chat",
+			api.EventChatCreated, rec.recordedTypes())
+	}
+}
+
+// TestRestoreArchived_NoBroadcastWhenReloadFails verifies the complement:
+// when the post-restore reload fails, no chat_created is broadcast (the
+// store has nothing valid to announce). Pins both sides of the reload
+// guard so it can't be loosened to broadcast on a failed reload.
+func TestRestoreArchived_NoBroadcastWhenReloadFails(t *testing.T) {
+	svc, store, archiveDir := newArchiveTestService(t)
+	rec := &recordingBroadcaster{}
+	store.bc = rec
+	// loadResult left nil: Load returns an error after the rename.
+
+	writeArchivedChat(t, archiveDir, "chatC", 0)
+
+	if err := svc.RestoreArchived(context.Background(), "chatC"); err != nil {
+		t.Fatalf("RestoreArchived: %v", err)
+	}
+
+	if rec.hasType(api.EventChatCreated) {
+		t.Errorf("restore broadcast %q despite a failed reload (events seen: %v)",
+			api.EventChatCreated, rec.recordedTypes())
 	}
 }

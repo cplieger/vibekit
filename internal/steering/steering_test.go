@@ -3,6 +3,7 @@ package steering
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -502,4 +503,47 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)
 	}
+}
+
+// TestWriteForges_RepoListTruncatesAtTwenty pins the "… and N more"
+// overflow line on the accessible-repositories block. A provider with
+// exactly 20 repos lists them all with no overflow line; 21 repos lists
+// the first 20 and a single "… and 1 more" line. This guards the
+// `len(p.Repos) > 20` boundary: a `>=` slip would print "… and 0 more"
+// at exactly 20, and a flipped `<=` would drop the overflow line for
+// genuinely-overflowing lists.
+func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
+	mkRepos := func(n int) []string {
+		repos := make([]string, n)
+		for i := range repos {
+			repos[i] = fmt.Sprintf("acme/repo-%02d", i)
+		}
+		return repos
+	}
+	t.Run("exactly twenty repos: no overflow line", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind: "github", Host: "github.com", User: "alice", Repos: mkRepos(20),
+		}}})
+		out := b.String()
+		if strings.Contains(out, "… and") {
+			t.Errorf("20 repos rendered an overflow line, want none:\n%s", out)
+		}
+		if !strings.Contains(out, "acme/repo-19") {
+			t.Errorf("20 repos: the 20th repo must still be listed:\n%s", out)
+		}
+	})
+	t.Run("twenty-one repos: twenty listed plus one summarised", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind: "github", Host: "github.com", User: "alice", Repos: mkRepos(21),
+		}}})
+		out := b.String()
+		if !strings.Contains(out, "… and 1 more") {
+			t.Errorf("21 repos: want an \"… and 1 more\" overflow line:\n%s", out)
+		}
+		if strings.Contains(out, "acme/repo-20") {
+			t.Errorf("21 repos: the 21st repo must be summarised, not listed inline:\n%s", out)
+		}
+	})
 }
