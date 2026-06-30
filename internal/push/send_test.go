@@ -222,17 +222,21 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 		t.Error("subscriber was pruned after successful oversize send")
 	}
 
-	// Verify truncation logic directly: title + truncated body should
-	// be within pushBodyCap.
-	room := max(pushBodyCap-len(title)-3, 0)
-	truncated := truncate(body, room)
-	total := len(title) + len(truncated)
-	if total > pushBodyCap {
-		t.Errorf("truncated payload size = %d, exceeds cap %d", total, pushBodyCap)
+	// Verify the real invariant: after truncation the *marshaled* payload
+	// (JSON envelope + escaping included) fits within pushBodyCap, so push()
+	// delivers it instead of rejecting an oversize record. Sizing on the raw
+	// title+body length — as this code once did — left the ~22-byte envelope
+	// over the cap and the notification was silently dropped.
+	gotTitle, gotBody, truncated := fitToCap(title, body)
+	if !truncated {
+		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if !strings.HasSuffix(truncated, "...") {
+	if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+		t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
+	}
+	if !strings.HasSuffix(gotBody, "...") {
 		t.Errorf("truncated body should end with '...', got suffix %q",
-			truncated[max(len(truncated)-10, 0):])
+			gotBody[max(len(gotBody)-10, 0):])
 	}
 
 	_ = receivedPayload // used for documentation; encrypted payload can't be inspected
@@ -272,15 +276,17 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		}
 	})
 
-	t.Run("boundary_equal_does_not_warn", func(t *testing.T) {
-		// total=3000 exactly equals pushBodyCap, so it is not oversize.
+	t.Run("marshaled_at_cap_does_not_warn", func(t *testing.T) {
+		// The marshaled payload size is what matters: the ~22-byte JSON
+		// envelope counts toward the cap. title=978 + body=2000 marshals to
+		// exactly pushBodyCap (3000), which is not over, so Send must not warn.
 		s := New(context.Background(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := installLogCapture(t)
-		s.Send(context.Background(), strings.Repeat("a", 1000), strings.Repeat("b", 2000),
+		s.Send(context.Background(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
 			api.PushKindAgentFinished)
 		if capLog.has(warnMsg) {
-			t.Errorf("Send warned %q at exactly pushBodyCap total; want no warn", warnMsg)
+			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
 	})
 }
@@ -425,5 +431,39 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("push err = %v; want context.Canceled (merged cancelled service ctx)", err)
+	}
+}
+
+// TestEncryptPayload_buildsRFC8291WireBody pins the aes128gcm body
+// assembly: a valid subscription yields salt(16) || rs=4096(4) ||
+// idlen(1) || ephemeral P-256 key(65) || ciphertext(2-byte pad +
+// payload + 16-byte GCM tag). Every error gate on the success path
+// (ephemeral keygen, ECDH, salt read, key/nonce derivation, AES cipher,
+// GCM) must be skipped for valid input, so a gate inverted to return on
+// the happy path yields a nil/short body and fails the length + header
+// checks below.
+func TestEncryptPayload_buildsRFC8291WireBody(t *testing.T) {
+	sub := pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/wire")
+	payload := []byte(`{"title":"t","body":"hello"}`)
+
+	body, err := encryptPayload(sub, payload)
+	if err != nil {
+		t.Fatalf("encryptPayload err = %v, want nil for a valid subscription", err)
+	}
+
+	const ephLen = 65 // P-256 uncompressed point: 0x04 || X(32) || Y(32)
+	const gcmTag = 16
+	// salt(16) + rs(4) + idlen(1) + ephemeral key + (2-byte pad + payload + tag)
+	wantLen := 16 + 4 + 1 + ephLen + (2 + len(payload) + gcmTag)
+	if len(body) != wantLen {
+		t.Fatalf("len(body) = %d, want %d (salt+rs+idlen+ephKey+ciphertext)", len(body), wantLen)
+	}
+	// rs (record size) field is bytes 16..20, big-endian 4096 = 0x00001000.
+	if body[16] != 0x00 || body[17] != 0x00 || body[18] != 0x10 || body[19] != 0x00 {
+		t.Errorf("record-size header = % x, want 00 00 10 00 (4096)", body[16:20])
+	}
+	// idlen byte (offset 20) is the ephemeral public-key length.
+	if body[20] != ephLen {
+		t.Errorf("ephemeral key length byte = %d, want %d", body[20], ephLen)
 	}
 }

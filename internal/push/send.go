@@ -38,12 +38,16 @@ type pushPayload struct {
 // doesn't get silently rejected by the push vendor.
 func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind) {
 	slog.Debug("push: send", "kind", string(notifyType))
-	if total := len(title) + len(body); total > pushBodyCap {
+	// Trim against the *marshaled* size, not the raw title+body length. The
+	// JSON envelope (~22 bytes for {"title":...,"body":...}) plus any
+	// character escaping count toward pushBodyCap, so a naive title+body
+	// check leaves the encoded payload over the cap and push() rejects —
+	// drops — it. fitToCap guarantees the marshaled payload fits, so an
+	// oversize notification is delivered truncated instead of vanishing.
+	if t, b, truncated := fitToCap(title, body); truncated {
 		slog.Warn("push: payload too large, truncating",
-			"bytes", total, "cap", pushBodyCap)
-		// Leave room for ellipsis + the full title.
-		room := max(pushBodyCap-len(title)-3, 0)
-		body = truncate(body, room)
+			"bytes", len(title)+len(body), "cap", pushBodyCap)
+		title, body = t, b
 	}
 	subs := s.preflightSend(notifyType)
 	if subs == nil {
@@ -267,6 +271,41 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// fitToCap trims the body — then, only if an empty body still overflows, the
+// title — until the marshaled pushPayload is at most pushBodyCap bytes, and
+// reports whether anything was trimmed. Sizing against the marshaled form
+// (JSON envelope + escaping included) is what keeps the encoded payload under
+// the vendor's record limit; push() rejects anything larger, so without this
+// an oversize notification is dropped rather than delivered truncated. The
+// loop terminates: each iteration strictly shortens the field being trimmed,
+// and an empty title+body marshals well under the cap.
+func fitToCap(title, body string) (fitTitle, fitBody string, truncated bool) {
+	if marshaledLen(title, body) <= pushBodyCap {
+		return title, body, false
+	}
+	for marshaledLen(title, body) > pushBodyCap {
+		over := marshaledLen(title, body) - pushBodyCap
+		switch {
+		case len(body) > over+len("..."):
+			body = truncate(body, len(body)-over-len("..."))
+		case body != "":
+			body = "" // too small to absorb the overflow; drop it
+		case len(title) > over+len("..."):
+			title = truncate(title, len(title)-over-len("..."))
+		default:
+			title = "" // pathological: cap below the JSON envelope size
+		}
+	}
+	return title, body, true
+}
+
+// marshaledLen is the byte length of the JSON-encoded notification payload.
+// Marshaling two strings cannot fail, so the error is intentionally dropped.
+func marshaledLen(title, body string) int {
+	p, _ := json.Marshal(pushPayload{Title: title, Body: body})
+	return len(p)
 }
 
 // mergeCtx returns a context derived from primary that is also
