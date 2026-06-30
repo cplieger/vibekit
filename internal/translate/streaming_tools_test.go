@@ -350,3 +350,56 @@ func TestRelPath(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleToolCall_IsNewFileFlag pins the isNew computation that feeds
+// TrackFileChanges: a tool call is treated as a new-file creation only
+// when it is BOTH an edit kind AND pending status
+// (tc.Kind == edit && tc.Status == pending). The verdict is observable
+// on buf.ChangedFiles[path].IsNewFile. A pending edit marks the diffed
+// file new; a completed edit (same kind, different status) does not.
+func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
+	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
+		deps, _, _ := newLineCaptureDeps()
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+		chatID := api.ChatID("c1")
+		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-new",
+			"title":      "writeFile",
+			"kind":       "edit",
+			"status":     "pending",
+			"content": []map[string]any{
+				{"type": "diff", "path": "new.go", "oldText": "", "newText": "package x\n"},
+			},
+		}), "")
+		buf := deps.bufStore.GetOrInit(chatID)
+		fc, ok := buf.ChangedFiles["new.go"]
+		if !ok {
+			t.Fatal("ChangedFiles[new.go] missing; the diff was not tracked")
+		}
+		if !fc.IsNewFile {
+			t.Errorf("IsNewFile = false, want true (a pending edit must be marked a new-file creation)")
+		}
+	})
+	t.Run("CompletedEditIsNotNewFile", func(t *testing.T) {
+		deps, _, _ := newLineCaptureDeps()
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+		chatID := api.ChatID("c2")
+		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-existing",
+			"title":      "writeFile",
+			"kind":       "edit",
+			"status":     "completed",
+			"content": []map[string]any{
+				{"type": "diff", "path": "existing.go", "oldText": "a\n", "newText": "b\n"},
+			},
+		}), "")
+		buf := deps.bufStore.GetOrInit(chatID)
+		fc, ok := buf.ChangedFiles["existing.go"]
+		if !ok {
+			t.Fatal("ChangedFiles[existing.go] missing; the diff was not tracked")
+		}
+		if fc.IsNewFile {
+			t.Errorf("IsNewFile = true, want false (a completed edit is not a new-file creation)")
+		}
+	})
+}
