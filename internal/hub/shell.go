@@ -28,7 +28,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/web-terminal-engine/terminal"
+	"github.com/cplieger/web-terminal-engine/v2/terminal"
 )
 
 // ShellManager wraps the terminal.Handler to provide the same interface
