@@ -50,8 +50,8 @@ type Server struct {
 	installing    atomic.Bool
 	// ready flips to true once the listener binds and srv.Serve is
 	// running; flips back to false on shutdown signal so /api/health
-	// reports unready during drain. Same semantic across the homelab's
-	// custom Go apps (subflux, plex-exporter, vibecli).
+	// reports unready during drain. Same semantic across the cplieger
+	// Go apps (subflux, plex-exporter, vibecli).
 	ready atomic.Bool
 }
 
@@ -244,7 +244,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // handleHealth returns the liveness+readiness status. Emits the
-// canonical JSON envelope shared across the homelab's custom Go apps
+// canonical JSON envelope shared across the cplieger Go apps
 // (vibekit, vibecli, subflux, registry-stats, plex-exporter): 200 with
 // {"status":"ok"} when the listener is bound and serving; 503 with
 // {"status":"unready",...} during startup or graceful shutdown drain.

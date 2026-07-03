@@ -1,6 +1,6 @@
 # Security assurance case — vibekit
 
-This extends the fleet-wide
+This extends the shared
 [default assurance case](https://github.com/cplieger/.github/blob/main/assurance-case.md)
 with the threat model specific to `vibekit`. Read that first. vibekit is
 **alpha**; this case is honest about that and the [roadmap](../ROADMAP.md)
@@ -17,7 +17,7 @@ it and keeping per-chat data isolated, not about sandboxing the agent.
 ## Security model
 
 vibekit is a **trusted-operator tool behind a network/auth boundary**, not a
-public multi-tenant service. In the homelab it is reachable only on the internal
+public multi-tenant service. In a self-hosted deployment it is reachable only on the internal
 network (LAN-gated, behind the reverse proxy). The agent's ability to run
 commands is the product, not a vulnerability; the boundary is "only the operator
 can reach vibekit."
@@ -31,7 +31,7 @@ can reach vibekit."
 | Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto/crypto_fuzz_test.go` |
 | Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (400+ test files, 150+ fuzz targets)             | weekly fuzz + gremlins                     |
 | Stale/empty embedded UI shipped                           | CI image smoke test starts the container and asserts the health endpoint serves                    | image smoke test (CI docker job)           |
-| Reaching vibekit without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | deployment (homelab)                       |
+| Reaching vibekit without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | self-hosted deployment                     |
 
 ## Residual risks (stated plainly)
 
