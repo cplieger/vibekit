@@ -119,26 +119,8 @@ The framework is the published `@cplieger/actions` package; vibekit's action
 _definitions_ live in `static-src/actions/*.ts`, and `actions/index.ts`
 re-exports the package surface.
 
-```ts
-// actions/files.ts
-export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
-  name: "files.rename",
-  scope: (args) => "file:" + args.dir + "/" + args.original,
-  idempotencyKey: (args) => `files.rename:${args.dir}/${args.original}->${args.newName}`,
-  request: ({ dir, original, newName }) => ({
-    method: "POST",
-    path: "/api/files/action",
-    body: { action: "rename", path: joinPath(dir, original), name: newName },
-  }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: (args) => `Couldn't rename "${truncate(args.original)}"`,
-});
-
-// callsite
-const ok = await renameFile.dispatch({ dir, original, newName });
-if (ok === null) return; // failed; toast already fired
-```
+See the [`@cplieger/actions`](https://github.com/cplieger/actions) package docs
+for the full action-definition API and a worked `files.rename` example.
 
 The framework handles, depending on the definition:
 
@@ -287,8 +269,8 @@ The project is pre-1.0, so it stays within `0.x`: features bump the patch level
 and breaking changes bump the minor — no automatic `1.0`.
 
 Feature work goes on a dedicated branch named after the change (for example
-`feat/actions` or `style/git-empty-states`). Open a pull request against `main`;
-direct pushes to `main` are reserved. Keep changes focused, run the checks
+`feat/actions` or `style/git-empty-states`). Changes land via a pull request
+against `main`. Keep changes focused, run the checks
 above, and let CI (`.github/workflows/ci.yaml`) confirm the full battery.
 
 ## Conduct and security
