@@ -2,7 +2,7 @@
 
 Vibekit is **alpha** (currently `v0.x`). The core feature set is in place; the
 focus now is hardening and polish, not new scope. This document supersedes the
-[default fleet roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
+[default shared roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
 for this repository.
 
 ## Current focus (alpha → stable)

@@ -161,7 +161,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cancel)
 	cmd := exec.CommandContext(ctx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
 	// Graceful shutdown: SIGTERM on context cancel, escalate to SIGKILL
-	// after 2s. Matches the homelab Go apps' consistent subprocess
+	// after 2s. Matches the cplieger Go apps' consistent subprocess
 	// management pattern (fclones, bridge, subflux/ffmpeg).
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
