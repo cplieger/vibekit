@@ -14,7 +14,7 @@ import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
 import * as uiState from "./ui-state.js";
-import { render, keyboard, scroll, connection } from "@cplieger/web-terminal-engine";
+import { render, keyboard, scroll, connection, modes } from "@cplieger/web-terminal-engine";
 import type { ServerMessage } from "@cplieger/web-terminal-engine";
 
 const { mapKeyboardEvent, bracketTextForPaste } = keyboard;
@@ -273,7 +273,11 @@ function onKeyDown(e: KeyboardEvent): void {
   if (target !== shellContainer && target !== $.termInput) {
     return;
   }
-  const result = mapKeyboardEvent(e);
+  // v2's mapKeyboardEvent takes the active session's DECCKM/DECKPAM state
+  // explicitly rather than reading it off module-global mutation; vibekit's
+  // shell panel is a single global PTY session, so the engine's own `modes`
+  // namespace (which structurally satisfies KeyboardModes) is the right arg.
+  const result = mapKeyboardEvent(e, modes);
   if (result.kind === "send") {
     e.preventDefault();
     connection.sendBinary(encoder.encode(result.bytes));
