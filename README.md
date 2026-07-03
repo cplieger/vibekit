@@ -3,7 +3,6 @@
 [![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/size.json)](https://github.com/cplieger/vibekit/pkgs/container/vibekit)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian)
-[![Go Report Card](https://goreportcard.com/badge/github.com/cplieger/vibekit)](https://goreportcard.com/report/github.com/cplieger/vibekit)
 [![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/coverage.json)](https://github.com/cplieger/vibekit/actions/workflows/coverage.yml)
 [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/mutation.json)](https://github.com/cplieger/vibekit/issues?q=label%3Agremlins-tracker)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13224/badge)](https://www.bestpractices.dev/projects/13224)
@@ -57,6 +56,12 @@ To skip managing host ownership, run as root instead with `user: "0:0"` (less se
 ## Security
 
 Network-exposed: put it behind an authenticating reverse proxy — vibekit has its own password/OIDC auth, but it controls an agent with shell and filesystem access to `/workspace`. Web-push uses an SSRF-hardened transport. Debian base (a shell + the `kiro-cli` subprocess are required, so this is not distroless). Images are published with cosign signatures and SBOM attestations.
+
+## Disclaimer
+
+This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.
+
+This project was built with AI-assisted tooling using [Claude Opus](https://www.anthropic.com/claude) and [Kiro](https://kiro.dev). The human maintainer defines architecture, supervises implementation, and makes all final decisions.
 
 ## License
 
