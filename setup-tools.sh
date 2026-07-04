@@ -139,6 +139,7 @@ expand() {
     cmd="${cmd//\$\{RUNTIMES\}/$RUNTIMES}"
     cmd="${cmd//\$\{GOBIN\}/$GOBIN}"
     cmd="${cmd//\$\{HOME\}/$HOME}"
+    cmd="${cmd//\$\{ARTIFACT\}/${ARTIFACT:-}}"
     cmd="${cmd//\$\{ARCH_X64_OR_ARM64\}/$ARCH_X64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_AMD64_OR_ARM64\}/$ARCH_AMD64_OR_ARM64}"
     cmd="${cmd//\$\{ARCH_X86_64_OR_AARCH64\}/$ARCH_X86_64_OR_AARCH64}"
@@ -420,16 +421,41 @@ requires_satisfied() {
 
 # Run an install command captured from the manifest, with placeholders
 # expanded. Used by sections that store install scripts inline.
+# Optional download-then-verify. If the entry provides a "url" (the artifact to
+# fetch) AND a per-arch "sha256" ({"amd64":..,"arm64":..}), the artifact is
+# downloaded to a temp file, its sha256 is checked, and the install command
+# extracts from ${ARTIFACT} (the verified file) instead of re-fetching. Entries
+# without BOTH fields install exactly as before. Verification is opt-in per
+# entry: a missing checksum never fails.
 run_install() {
     local jq_path="$1" version="$2" install_field="${3:-install}"
-    local install_cmd
+    local install_cmd url sha256 ARTIFACT="" rc actual
     install_cmd=$(jq -r "${jq_path}.${install_field}" "$MANIFEST")
     if [ "$install_cmd" = "null" ] || [ -z "$install_cmd" ]; then
         printf "    error: no install command\n"
         FAILURES=$((FAILURES + 1))
         return 1
     fi
-    eval "$(expand "$install_cmd" "$version")" || { FAILURES=$((FAILURES + 1)); return 1; }
+    url=$(jq -r "${jq_path}.url // empty" "$MANIFEST")
+    sha256=$(jq -r --arg a "$ARCH_AMD64_OR_ARM64" "${jq_path}.sha256[\$a] // empty" "$MANIFEST")
+    if [ -n "$url" ] && [ -n "$sha256" ]; then
+        ARTIFACT=$(mktemp)
+        if ! curl -fsSL --connect-timeout 20 --max-time "${INSTALL_TIMEOUT:-600}" -o "$ARTIFACT" "$(expand "$url" "$version")"; then
+            printf "    error: download failed\n"
+            rm -f "$ARTIFACT"; FAILURES=$((FAILURES + 1)); return 1
+        fi
+        actual=$(sha256sum "$ARTIFACT" | awk '{print $1}')
+        if [ "$actual" != "$sha256" ]; then
+            printf "    error: sha256 mismatch (want %s, got %s)\n" "$sha256" "$actual"
+            rm -f "$ARTIFACT"; FAILURES=$((FAILURES + 1)); return 1
+        fi
+        printf "    sha256 verified\n"
+    fi
+    eval "$(expand "$install_cmd" "$version")"
+    rc=$?
+    [ -n "$ARTIFACT" ] && rm -f "$ARTIFACT"
+    if [ "$rc" -ne 0 ]; then FAILURES=$((FAILURES + 1)); return 1; fi
+    return 0
 }
 
 # --- Process each section: update then install ---
