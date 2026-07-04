@@ -29,7 +29,7 @@ import type { ModelInfo } from "./types.js";
 
 /** Canonical effort levels with display labels. Single source of truth
  *  for the UI renderer and persistence layer. */
-export const EFFORT_LEVELS = [
+const EFFORT_LEVELS = [
   { id: "low", label: "low" },
   { id: "medium", label: "medium" },
   { id: "high", label: "high" },

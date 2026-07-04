@@ -54,7 +54,7 @@ import { explainError as explainErrorAction } from "./actions/messages.js";
 import { initMessageActions, clearActionBindings } from "./messages-actions.js";
 import { clearCrews } from "./crew-card.js";
 import { send } from "./transport.js";
-import { toolSpec, toolEls, disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
+import { toolSpec, disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildEvent,
@@ -70,7 +70,6 @@ import { attachTurnActions, initTurnActionCallbacks } from "./messages-turn-acti
 // ---------------------------------------------------------------------------
 
 export { getScrollEl, scrollToBottom, setLoadMore };
-export type { BoundaryKind } from "./messages-events.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -1064,9 +1063,3 @@ async function explainError(errorText: string, toolTitle: string): Promise<strin
 // ---------------------------------------------------------------------------
 // Permission DOM hook (called by permission.ts for tool approval UI)
 // ---------------------------------------------------------------------------
-
-/** Permission.ts calls this to find a tool card by id and attach the
- *  approve/deny prompt UI. Returns the tool card element or undefined. */
-export function findToolCard(id: string): HTMLDivElement | undefined {
-  return toolEls.get(id);
-}

@@ -1464,20 +1464,15 @@
   margin: 0;
 }
 
-/* Row below a section header: action pills on the left, an auxiliary
- * toggle (e.g. auto-update) pushed to the right via margin-auto. Used
- * on the Tools tab so controls sit under the header/description, not
- * beside it. */
+/* Row below a section header holding the Tools tab's action pills
+ * (Update, Add), so controls sit under the header/description rather
+ * than beside it. */
 .section-actions-row {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   flex-wrap: wrap;
   margin-block: var(--sp-2);
-}
-
-.section-actions-toggle {
-  margin-inline: auto 0;
 }
 
 /* Mobile: swap pill bar for the native select. */

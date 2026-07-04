@@ -13,7 +13,6 @@ import type { EffortLevel } from "./model-switcher.js";
 export type PermissionMode = "prompt" | "trust-list" | "trust-all";
 
 export interface AppSettings {
-  auto_update?: boolean;
   last_model?: string;
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;

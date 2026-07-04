@@ -42,7 +42,7 @@ import type {
 // --- Typed SSE surface ---
 
 /** Typed payload for subagent activity events from kiro-cli. */
-export interface SubagentActivityEvent {
+interface SubagentActivityEvent {
   readonly label?: string;
   readonly title?: string;
   readonly tool_name?: string;
@@ -199,7 +199,7 @@ export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
 import type { PendingChange } from "./types.js";
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
-export interface BusPayloads {
+interface BusPayloads {
   readonly [BUS_TURN_IDLE]: string; // chatID
   readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
   readonly [BUS_KEYS_ESCAPE]: undefined;

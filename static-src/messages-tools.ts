@@ -45,12 +45,12 @@ import { addEditActions } from "./messages-actions.js";
 // ---------------------------------------------------------------------------
 
 /** Tool-call DOM elements, keyed on tool_call.id. */
-export const toolEls = new Map<string, HTMLDivElement>();
+const toolEls = new Map<string, HTMLDivElement>();
 
 /** Per-tool-call effect cleanups. Disposed on unmount or chat-switch. */
 const toolEffects = new Map<string, () => void>();
 
-export function disposeToolEffect(id: string): void {
+function disposeToolEffect(id: string): void {
   const fn = toolEffects.get(id);
   if (fn !== undefined) {
     fn();
@@ -205,11 +205,6 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
 // ---------------------------------------------------------------------------
 // Public helpers (used by messages.ts reconcile)
 // ---------------------------------------------------------------------------
-
-/** Build a tool call element (delegates to toolSpec.mount). */
-export function buildToolCall(tc: ToolCall): HTMLElement {
-  return toolSpec.mount(tc);
-}
 
 /** Update a tool call element (delegates to toolSpec.update). */
 export function updateToolCall(el: HTMLElement, tc: ToolCall): void {

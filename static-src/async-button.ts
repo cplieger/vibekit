@@ -13,4 +13,3 @@
 // ---------------------------------------------------------------------------
 
 export { withAsyncFeedback } from "@cplieger/actions";
-export type { AsyncFeedbackOptions } from "@cplieger/actions";

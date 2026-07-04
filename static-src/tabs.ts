@@ -44,7 +44,7 @@ export const TAB_VIEWS = {
   history: "#history-view",
 } as const;
 
-export type TabKind = keyof typeof TAB_VIEWS;
+type TabKind = keyof typeof TAB_VIEWS;
 
 /** Everything needed to render and route a tab. */
 export interface TabSpec {
@@ -286,11 +286,6 @@ export function getActiveTabId(): string {
  *  without DOM scraping. */
 export function getOpenTabIDs(): string[] {
   return state.tabs.map((t) => t.id);
-}
-
-// --- Activation listener ---
-export function setOnActivate(fn: (id: string) => void): void {
-  callbacks.onActivate = fn;
 }
 
 // --- Empty-state timer ---

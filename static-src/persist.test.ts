@@ -41,7 +41,7 @@ describe("patchSettings debounce coalescing", () => {
   });
 
   it("coalesces multiple rapid calls into a single PATCH with merged body", async () => {
-    patchSettings({ auto_update: true });
+    patchSettings({ notifications_enabled: true });
     patchSettings({ debug_logs: true });
     patchSettings({ last_model: "claude" });
 
@@ -53,7 +53,7 @@ describe("patchSettings debounce coalescing", () => {
     expect(url).toBe("/api/settings");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body as string)).toEqual({
-      auto_update: true,
+      notifications_enabled: true,
       debug_logs: true,
       last_model: "claude",
     });
@@ -84,7 +84,7 @@ describe("patchSettings debounce coalescing", () => {
       // patches in this one.
       __testResetTracking();
       // Generate random patches.
-      const keys = ["auto_update", "debug_logs", "last_model"] as const;
+      const keys = ["notifications_enabled", "debug_logs", "last_model"] as const;
       const patches: Record<string, unknown>[] = [];
       const count = 1 + Math.floor(Math.random() * 5);
       for (let i = 0; i < count; i++) {

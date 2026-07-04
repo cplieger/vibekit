@@ -29,7 +29,7 @@ const MaxBytes = 1 << 20
 const filename = "config.json"
 
 // Filename is the on-disk basename of vibekit's primary config file
-// (vibekit-managed settings — auto_update, debug_logs, agent_ignore_files,
+// (vibekit-managed settings — debug_logs, agent_ignore_files,
 // shell_policy, etc.). Distinct from kiro-cli's config.json which lives
 // under $KIRO_HOME/settings/. Exported so callers across the codebase
 // (tests, server handler, ignore reader) reference the same canonical

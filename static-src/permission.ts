@@ -215,6 +215,6 @@ function buildAlwaysAllowRow(
   ) as HTMLDetailsElement;
 }
 
-export function hidePermission(): void {
+function hidePermission(): void {
   approvalEl.close();
 }

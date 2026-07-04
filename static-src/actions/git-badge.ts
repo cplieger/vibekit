@@ -8,7 +8,7 @@ import type { GitRepoStatusBadge } from "../git-types.js";
 import type { ConfiguredForge } from "../wire/types.gen.js";
 
 /** Single source of truth for the /api/forges endpoint path. */
-export const API_PATH_FORGES = "/api/forges" as const;
+const API_PATH_FORGES = "/api/forges" as const;
 
 // --- Response types (derived from git-types.ts) ---
 

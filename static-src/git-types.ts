@@ -61,7 +61,7 @@ export interface GitRepoGroup {
 
 // --- Status label utilities (single source of truth) ---
 
-export const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
+const GIT_STATUS_LABELS: Readonly<Record<string, string>> = {
   M: "Modified",
   A: "Added",
   D: "Deleted",

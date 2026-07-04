@@ -7,7 +7,7 @@
 // them once and place lines into old/new columns.
 // ---------------------------------------------------------------------------
 
-export type DiffKind = "add" | "del" | "ctx";
+type DiffKind = "add" | "del" | "ctx";
 
 export interface DiffLine {
   kind: DiffKind;

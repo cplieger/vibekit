@@ -16,7 +16,7 @@ import { registerCleanup } from "./actions/index.js";
 export const NOTIFY_TITLE = "Vibekit";
 
 /** Application name used in document.title (tab title). */
-export const DOC_TITLE_BASE = "Vibekit for Kiro";
+const DOC_TITLE_BASE = "Vibekit for Kiro";
 
 type PushState =
   | { kind: "idle" }

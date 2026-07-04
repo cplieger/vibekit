@@ -160,9 +160,6 @@ class Elements {
   get steeringInput(): HTMLTextAreaElement {
     return byId("steering-input");
   }
-  get autoUpdateToggle(): HTMLInputElement {
-    return byId("auto-update-toggle");
-  }
   get toolUpdateBtn(): HTMLButtonElement {
     return byId("tool-update-btn");
   }

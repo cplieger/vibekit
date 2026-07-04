@@ -8,7 +8,6 @@
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { patchSettings } from "./persist.js";
 import { ICON_EDIT, ICON_TRASH, ICON_PIN, ICON_PIN_FILLED } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
@@ -185,10 +184,6 @@ class ToolsManager {
     const toolOutput = new RollingOutput($.toolUpdateOutput, "git-output-modal");
     $.toolUpdateBtn.addEventListener("click", () => void this.runToolsInstall(toolOutput));
     bindLoadingState("tools.install", $.toolUpdateBtn);
-
-    $.autoUpdateToggle.addEventListener("change", () => {
-      void patchSettings({ auto_update: $.autoUpdateToggle.checked }, $.autoUpdateToggle);
-    });
 
     f.save.addEventListener("click", () => {
       this.saveToolFromModal();
