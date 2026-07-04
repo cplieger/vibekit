@@ -17,7 +17,7 @@ import { el } from "@cplieger/reactive";
 // --- Types ---
 
 /** Derived from the action's wire type — single source of truth. */
-export type RegistryEntry = RegistrySearchResult["servers"][number];
+type RegistryEntry = RegistrySearchResult["servers"][number];
 
 /** Callback to switch the modal to a different panel mode. */
 export type SwitchModeFn = (
@@ -27,7 +27,7 @@ export type SwitchModeFn = (
   fields: InstallField[],
 ) => void;
 
-export interface InstallField {
+interface InstallField {
   name: string;
   description?: string | undefined;
   required?: boolean | undefined;

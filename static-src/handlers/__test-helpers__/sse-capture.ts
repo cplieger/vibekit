@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
-export type SSEHandler = (chatID: string, payload: unknown) => void;
-export const sseHandlers = new Map<string, SSEHandler>();
+type SSEHandler = (chatID: string, payload: unknown) => void;
+const sseHandlers = new Map<string, SSEHandler>();
 
 export function fireSSE(event: string, chatID: string, payload: unknown): void {
   const handler = sseHandlers.get(event);

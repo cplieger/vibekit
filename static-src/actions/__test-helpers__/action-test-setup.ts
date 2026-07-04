@@ -5,7 +5,6 @@
  * NOTE: vi.mock() calls must remain at the top of each test file (Vitest hoisting).
  * Use the exported factory functions as the mock implementation argument.
  */
-import { vi } from "vitest";
 import { configure, configureTransport } from "@cplieger/actions";
 import { resetActionFramework as resetFramework } from "@cplieger/actions/testing";
 import type { TransportSendResult } from "@cplieger/actions";
@@ -35,11 +34,3 @@ export function resetActionFramework(): void {
     return r as TransportSendResult;
   });
 }
-
-/** Canonical toast mock factory for vi.mock("../toast.js", mockToast) */
-export const mockToast = () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  showToast: vi.fn(),
-});

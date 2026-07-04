@@ -10,12 +10,10 @@
   ],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
   "ignore": ["wire/*.gen.ts"],
+  "paths": {
+    "ansi_up": ["./test-stubs/ansi_up.ts"]
+  },
   "ignoreDependencies": [
-    "eslint",
-    "prettier",
-    "typescript-eslint",
-    "@eslint/js",
-    "@vitest/coverage-v8",
     "html-validate",
     "stylelint",
     "stylelint-config-standard"
@@ -55,6 +53,8 @@
     "config": ["tsconfig.json", "tsconfig.sw.json", "tsconfig.node.json"]
   },
   "ignoreIssues": {
-    "smd.ts": ["exports", "types", "enumMembers", "namespaceMembers", "duplicates"]
+    "smd.ts": ["exports", "types", "enumMembers", "namespaceMembers", "duplicates"],
+    "actions/index.ts": ["exports", "types"],
+    "types.ts": ["types"]
   }
 }

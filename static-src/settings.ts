@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Settings panel UI. Global preferences (last_model, notifications,
-// auto_update) live in server-side /api/settings; per-device state lives in
+// Settings panel UI. Global preferences (last_model, notifications)
+// live in server-side /api/settings; per-device state lives in
 // ui-state.ts.
 // ---------------------------------------------------------------------------
 
@@ -106,9 +106,6 @@ export function restoreAll(s: AppSettings): void {
   if (ui.editor_files.length > 0) {
     restoreEditorTabs(ui.editor_files);
   }
-
-  const autoUpdateToggle = $.autoUpdateToggle;
-  autoUpdateToggle.checked = s.auto_update !== false;
 
   restoreNotifications(s);
   applyTheme(ui.theme ?? getSystemTheme());

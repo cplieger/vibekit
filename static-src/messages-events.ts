@@ -14,7 +14,7 @@ import { updateCrew as updateCrewInternal, buildCrewCardForReplay } from "./crew
 // Event render strategy (exhaustive over EventKind via satisfies)
 // ---------------------------------------------------------------------------
 
-export type BoundaryKind = "switched" | "compacted" | "failed" | "agent";
+type BoundaryKind = "switched" | "compacted" | "failed" | "agent";
 
 type EventRenderStrategy =
   | {

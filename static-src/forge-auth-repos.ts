@@ -128,7 +128,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
   return actions;
 }
 
-export async function cloneRepo(repo: Repo, deps: RepoDeps): Promise<void> {
+async function cloneRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   const url = repo.clone_url ?? "";
   if (url === "") {
     throw new Error("no clone URL");
@@ -205,7 +205,7 @@ export async function deleteAllForAccount(
   }
 }
 
-export async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
+async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   const ok = await confirmDialog(
     `Delete the local copy of ${repo.name}? The remote stays intact; you can re-clone later.`,
     "Delete",

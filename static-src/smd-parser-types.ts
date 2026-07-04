@@ -14,7 +14,7 @@
 // --- Token enum (matches smd.js constants) ---
 
 /** All valid token values. Derive the Token type from this object. */
-export const TOKENS = {
+const TOKENS = {
   DOCUMENT: 1,
   PARAGRAPH: 2,
   HEADING_1: 3,
@@ -95,7 +95,7 @@ export const {
 // --- Attr enum ---
 
 /** All valid attribute values. */
-export const ATTRS = {
+const ATTRS = {
   HREF: 1,
   SRC: 2,
   LANG: 4,

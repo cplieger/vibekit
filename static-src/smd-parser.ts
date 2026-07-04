@@ -47,10 +47,9 @@ export {
   HEADING_4,
   HEADING_5,
   HEADING_6,
-  TOKEN_ARRAY_CAP,
 } from "./smd-parser-types.js";
 
-export type { Token, Attr, Renderer, Parser } from "./smd-parser-types.js";
+export type { Renderer, Parser } from "./smd-parser-types.js";
 
 import type { Parser, Token, Renderer } from "./smd-parser-types.js";
 import {

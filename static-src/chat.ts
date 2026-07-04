@@ -109,7 +109,7 @@ function archiveChat(id: string): void {
   // SSE chat_deleted will fire later but removeChat is a no-op (already gone).
 }
 
-export function activateChatView(id: string): void {
+function activateChatView(id: string): void {
   setActive(id);
   hideModelPicker();
   clearAttachments();

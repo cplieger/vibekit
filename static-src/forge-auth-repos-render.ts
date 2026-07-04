@@ -104,7 +104,7 @@ export function updateAccountReposDetails(
   reconcile(list, sortRepos(repos, deps), deps.repoSpec);
 }
 
-export function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
+function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
   // Cloned first, then alpha by full_name. Stable for surgical
   // updates: a single repo flipping cloned-state moves between
   // groups, but the rest stay put. Reconcile preserves identity

@@ -4,7 +4,7 @@
 export type ToastLevel = "info" | "success" | "error";
 
 export const MAX_VISIBLE = 3;
-export const MAX_QUEUE = 20;
+const MAX_QUEUE = 20;
 const DURATION_DEFAULT_MS = 4000;
 const DURATION_ERROR_MS = 0; // sticky
 

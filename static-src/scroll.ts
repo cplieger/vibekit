@@ -279,9 +279,6 @@ export function getScrollEl(): HTMLElement {
   return getInstance().scrollEl;
 }
 
-export function suppressScroll(ms: number): void {
-  getInstance().suppressScroll(ms);
-}
 export function setUserScrolledUp(v: boolean): void {
   getInstance().setUserScrolledUp(v);
 }

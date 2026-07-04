@@ -89,7 +89,7 @@ const planEntrySpec: ReconcileSpec<PlanEntry> = {
   },
 };
 
-export function reconcilePlanEntries(list: HTMLDivElement, entries: readonly PlanEntry[]): void {
+function reconcilePlanEntries(list: HTMLDivElement, entries: readonly PlanEntry[]): void {
   reconcile(list, entries, planEntrySpec);
 }
 
@@ -99,7 +99,7 @@ export function buildPlanRow(e: PlanEntry): HTMLDivElement {
   return row;
 }
 
-export function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
+function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
   const icon = e.status === "completed" ? "✅" : e.status === "in_progress" ? "🔄" : "⬜";
   row.replaceChildren(
     `${icon} ${e.content}`,

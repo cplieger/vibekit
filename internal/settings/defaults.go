@@ -15,7 +15,6 @@ import "log/slog"
 // reference these instead of bare string literals to prevent drift.
 const (
 	KeyAgentIgnoreFiles     = "agent_ignore_files"
-	KeyAutoUpdate           = "auto_update"
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyModelEffort          = "model_effort"
@@ -29,21 +28,20 @@ const (
 )
 
 // DefaultSettings returns the canonical defaults the GET /api/settings
-// handler emits when config.json is missing or unreadable. Keep this
-// aligned with the frontend's `AppSettings` interface in
-// `static-src/persist.ts`; new top-level preferences should land in
-// both places (and in KnownKeys below).
+// handler emits when config.json is missing or unreadable. It is
+// currently empty: every preference has a consumer-side default, so a
+// fresh install receives {} and the frontend applies its own per-field
+// defaults. A server-emitted default belongs here only when the
+// GET-when-missing wire shape must carry it (add it to KnownKeys too).
 //
-// Per-key consumer-side defaults still live near their consumers
-// (e.g. ignore.go's "[.kiroignore]" default for agent_ignore_files,
+// Per-key consumer-side defaults live near their consumers (e.g.
+// ignore.go's "[.kiroignore]" default for agent_ignore_files,
 // logctl.go's false for debug_logs) because the consumer knows the
 // fail-mode policy. This function is for the wire shape the GET
 // endpoint returns when no file exists yet, not the in-process
 // fallback every consumer applies.
 func DefaultSettings() map[string]any {
-	return map[string]any{
-		"auto_update": true,
-	}
+	return map[string]any{}
 }
 
 // KnownKeys is the set of vibekit-managed config.json keys. PATCH
@@ -58,7 +56,6 @@ func DefaultSettings() map[string]any {
 // are not part of this set.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:     {},
-	KeyAutoUpdate:           {},
 	KeyDebugLogs:            {},
 	KeyLastModel:            {},
 	KeyModelEffort:          {},

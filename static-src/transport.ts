@@ -180,7 +180,7 @@ interface GapInfo {
 const HIDDEN_ABORT_MS = 30_000;
 
 /** Default timeout for bridge command channel (long-running agent turns). */
-export const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
+const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // TransportController: owns all SSE connection state as instance fields.
