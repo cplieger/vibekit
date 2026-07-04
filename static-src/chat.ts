@@ -33,6 +33,7 @@ import {
   TAB_VIEWS,
 } from "./tabs.js";
 import { chatSkeleton } from "./skeleton.js";
+import { deferSkeleton } from "./skeleton-timing.js";
 import { showModelPicker, hideModelPicker } from "./picker.js";
 import { mountChatView, setLoadMore, scrollToBottom } from "./messages.js";
 import { addAttachment, clearAttachments } from "./attachments.js";
@@ -135,12 +136,19 @@ function activateChatView(id: string): void {
   if (session.message_count === 0 && session.messages.length === 0) {
     showModelPicker(session.model, applyLocalModel, session.agent);
   } else {
-    // Hydrate messages from the server, then render.
-
-    const skel = chatSkeleton();
-    $.messages.appendChild(skel);
+    // Hydrate messages from the server, then render. Defer the skeleton by
+    // 150ms so a fast (cached) open never flashes it: deferSkeleton appends it
+    // only if the load is still running at 150ms, and the cancel() call on
+    // completion clears the pending timer and removes it if it was shown.
+    const cancelSkeleton = deferSkeleton(() => {
+      const skel = chatSkeleton();
+      $.messages.appendChild(skel);
+      return () => {
+        skel.remove();
+      };
+    });
     void loadMessages(id).then((ok) => {
-      skel.remove();
+      cancelSkeleton();
       if (getActiveId() !== id) {
         return;
       }
