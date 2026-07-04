@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { wireArrowNav } from "./arrow-nav.js";
 
 export interface ContextMenuItem {
   label: string;
@@ -36,6 +37,11 @@ export function showContextMenu(
   }
 
   document.body.appendChild(menu);
+
+  // Roving-tabindex arrow-key navigation (Up/Down/Home/End, Enter/Space to
+  // activate) makes the menu fully keyboard-operable per the WAI-ARIA menu
+  // pattern; complements the initial focus below.
+  wireArrowNav(menu, ".tab-context-item");
 
   // Focus first item for keyboard accessibility.
   const first = menu.querySelector<HTMLButtonElement>("button");
