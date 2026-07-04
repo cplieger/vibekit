@@ -14,6 +14,14 @@
     "  shims         {n:c}  wrapper scripts created in $BIN as 'exec <c>'",
     "  uninstall     str    optional cleanup override (otherwise section default)",
     "  probe         str    custom 'is installed' file path",
+    "  url + sha256  opt    optional integrity check: setup-tools.sh fetches url",
+    "                       to a temp file, verifies the per-arch sha256",
+    "                       ({amd64,arm64}), then install extracts from",
+    "                       ${ARTIFACT}. See golangci-lint. Opt-in; a missing",
+    "                       checksum never fails. PIN the entry too",
+    "                       (auto_update:false): a sha256 matches ONE artifact,",
+    "                       so auto_update bumping the version would break the",
+    "                       digest match.",
     "",
     "kiro-cli is downloaded separately by entrypoint.sh (licensing).",
     "git, jq, curl, ca-certificates, openssh-client, unzip, xz-utils are baked",
@@ -152,8 +160,13 @@
         "repo": "golangci/golangci-lint"
       },
       "requires": ["runtimes.go"],
-      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters: `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central cplieger/ci .golangci.yaml (no separate gofumpt/gci binaries needed). Requires runtimes.go. Pinned (auto_update:false) to match the CI version in go-ci.yaml; bump both together. ~15 MB.",
-      "install": "curl -fsSL https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz | tar -xz -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
+      "description": "Go meta-linter + formatter runner. Bundles gofumpt and gci (plus gofmt/goimports) as built-in formatters: `golangci-lint fmt` applies them and `golangci-lint run` enforces them, matching the central cplieger/ci .golangci.yaml (no separate gofumpt/gci binaries needed). Requires runtimes.go. Pinned (auto_update:false) to match the CI version in go-ci.yaml; bump both together. ~15 MB. Worked example of the optional integrity check: 'url'+'sha256' make setup-tools.sh fetch to a temp file, verify the digest, then extract from ${ARTIFACT}.",
+      "url": "https://github.com/golangci/golangci-lint/releases/download/${VERSION}/golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}.tar.gz",
+      "sha256": {
+        "amd64": "8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553",
+        "arm64": "44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a"
+      },
+      "install": "tar -xzf ${ARTIFACT} -C ${BIN} --strip-components=1 golangci-lint-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}/golangci-lint"
     }
   },
   "go": {},
