@@ -109,27 +109,6 @@ describe("a11y: keyboard navigation on picker grid", () => {
   });
 });
 
-describe("a11y: focus management", () => {
-  it("overflow menu returns focus to trigger on close", async () => {
-    const { openOverflowMenu, closeOverflowMenu } = await import("./overflow-menu.js");
-    const trigger = document.createElement("button");
-    trigger.textContent = "Menu";
-    document.body.appendChild(trigger);
-    trigger.focus();
-
-    openOverflowMenu(trigger, [{ id: "a", label: "Action A", onSelect: vi.fn() }]);
-
-    // Focus moved to menu item
-    const menuItem = document.querySelector(".overflow-menu-item")!;
-    expect(menuItem).not.toBeNull();
-
-    closeOverflowMenu();
-
-    expect(document.activeElement).toBe(trigger);
-    document.body.removeChild(trigger);
-  });
-});
-
 describe("a11y: aria-expanded on popover triggers", () => {
   it("supervised-pill sets aria-expanded on expand/collapse", async () => {
     vi.resetModules();

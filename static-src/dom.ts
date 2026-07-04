@@ -393,15 +393,6 @@ class Elements {
   get gitPushBtn(): HTMLButtonElement {
     return byId("git-push-btn");
   }
-  get gitPullBtn(): HTMLButtonElement {
-    return byId("git-pull-btn");
-  }
-  get gitOverflowBtn(): HTMLButtonElement {
-    return byId("git-overflow-btn");
-  }
-  get gitAiMsgBtn(): HTMLButtonElement {
-    return byId("git-ai-msg-btn");
-  }
   get gitCreateBranchBtn(): HTMLButtonElement {
     return byId("git-create-branch-btn");
   }
