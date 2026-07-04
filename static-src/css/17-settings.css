@@ -1459,56 +1459,6 @@
   margin-block-start: var(--sp-2);
 }
 
-/* --- Overflow menu (popover) --- */
-
-.overflow-menu {
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  min-width: 12rem;
-  padding: var(--sp-1);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  box-shadow: 0 6px 18px color-mix(in srgb, #000 25%, transparent);
-}
-
-.overflow-menu-item {
-  display: flex;
-  align-items: center;
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-sm);
-  color: var(--c-text-primary);
-  background: transparent;
-  border: none;
-  border-radius: calc(var(--r) - 2px);
-  text-align: start;
-  cursor: pointer;
-}
-
-.overflow-menu-item:hover:not([aria-disabled="true"]) {
-  background: var(--c-bg-hover);
-}
-
-.overflow-menu-item:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -1px;
-}
-
-.overflow-menu-item[aria-disabled="true"],
-.overflow-menu-item:disabled {
-  color: var(--c-text-tertiary);
-  cursor: default;
-}
-
-.overflow-menu-item-danger:not([aria-disabled="true"]) {
-  color: var(--c-danger, #e66666);
-}
-
-.overflow-menu-item-danger:hover:not([aria-disabled="true"]) {
-  background: color-mix(in srgb, var(--c-danger, #e66666) 10%, transparent);
-}
-
 .action-bar-inline {
   padding: 0;
   margin: 0;
