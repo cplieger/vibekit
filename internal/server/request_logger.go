@@ -70,6 +70,17 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap returns the wrapped ResponseWriter so http.ResponseController can
+// reach the underlying Flusher/Hijacker through this middleware. The
+// web-terminal-engine SSE/terminal handlers flush via http.NewResponseController,
+// which walks the Unwrap chain; without this method a wrapped stream could not
+// find its flusher. The long-lived paths in requestLogger are still skipped
+// deliberately (their open-time access log carries no useful latency), not
+// because the recorder is unsafe for them.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
 func reqIDOrNew(inbound string) string {
 	if validReqID(inbound) {
 		return inbound
