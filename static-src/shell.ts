@@ -134,7 +134,7 @@ export function initShellPanel(): void {
 
   // Wire the "run in shell" callback for code blocks.
   setShellRunCallback((cmd: string) => {
-    connection.sendBinary(encoder.encode(`${cmd}\n`));
+    sendInput(encoder.encode(`${cmd}\n`));
   });
 
   // Panel open/close + header controls. The toolbar shell button, the
@@ -154,7 +154,7 @@ export function initShellPanel(): void {
   // The engine exposes no dedicated "kill" control message, so send Ctrl+C
   // (SIGINT) — the terminal-native way to interrupt the foreground process.
   $.shellKillBtn.addEventListener("click", () => {
-    connection.sendBinary(encoder.encode("\x03"));
+    sendInput(encoder.encode("\x03"));
   });
 
   // Set up the vterm connection (client → server socket lifecycle).
@@ -264,8 +264,23 @@ export function restoreShell(): void {
 // straight off it.
 let toolbarCtrl!: keyboard.MobileToolbarController;
 
+// sendInput is the single funnel for genuine user input (typed keys, paste,
+// mobile-toolbar keys, the code-block "run" action, the kill button). Beyond
+// delivering the bytes it applies the classic-terminal scroll behavior
+// (GNOME/xterm): user input re-engages follow and instantly snaps the viewport
+// to the input line, so typing while scrolled up in scrollback jumps to the
+// bottom. Program output never scrolls a held view (the engine's follow/hold
+// job is unchanged), so reading scrollback while output streams is preserved.
+// Instant (not a smooth scroll) so it isn't janky per keystroke; a no-op on the
+// alt screen (no scrollback) and when already following. No mouse tracking is
+// wired here; if it ever is, its motion bytes must NOT go through sendInput.
+function sendInput(bytes: Uint8Array): void {
+  connection.sendBinary(bytes);
+  scroll.scrollToBottom();
+}
+
 function sendSeq(seq: string): void {
-  connection.sendBinary(encoder.encode(seq));
+  sendInput(encoder.encode(seq));
 }
 
 function onKeyDown(e: KeyboardEvent): void {
@@ -280,7 +295,7 @@ function onKeyDown(e: KeyboardEvent): void {
   const result = mapKeyboardEvent(e, modes);
   if (result.kind === "send") {
     e.preventDefault();
-    connection.sendBinary(encoder.encode(result.bytes));
+    sendInput(encoder.encode(result.bytes));
   }
   // "scroll-up"/"scroll-down"/"ignore" — let the browser handle or ignore.
 }
@@ -290,7 +305,7 @@ function onPaste(e: ClipboardEvent): void {
   const text = e.clipboardData?.getData("text");
   if (text) {
     const prepared = bracketTextForPaste(text);
-    connection.sendBinary(encoder.encode(prepared));
+    sendInput(encoder.encode(prepared));
   }
 }
 
