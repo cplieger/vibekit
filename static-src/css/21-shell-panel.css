@@ -166,14 +166,22 @@
   background: color-mix(in srgb, var(--c-red) 15%, transparent);
 }
 
-/* Terminal link detection: URLs in PTY output are wrapped in <a class="term-link">
-   by term-render.ts's linkifySpans. Style them subtly so they're discoverable
-   without disrupting the terminal aesthetic. */
+/* Terminal link detection. OSC 8 hyperlinks (base .term-link) underline on HOVER
+   only: an app can attach one OSC 8 link to a whole padded/bordered region (e.g.
+   a markdown link whose URL wraps inside a table cell, where the link stays open
+   across the cell padding + borders), so a persistent underline would bleed
+   across the cell/row. Auto-detected bare URLs (.term-autolink, wrapped by
+   term-render.ts's linkifySpans) are tightly scoped and keep a subtle persistent
+   underline for discoverability. */
 .term-link {
   color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.term-autolink {
   text-decoration: underline dotted;
   text-decoration-color: var(--c-text-tertiary);
-  cursor: pointer;
 }
 
 .term-link:hover {
