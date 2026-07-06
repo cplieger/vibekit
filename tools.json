@@ -95,7 +95,7 @@
     "uv": {
       "enabled": false,
       "auto_update": true,
-      "version": "0.11.26",
+      "version": "0.11.27",
       "update": {
         "method": "github",
         "repo": "astral-sh/uv"
