@@ -97,16 +97,13 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # the CSS-bundle step below (via a MANIFEST entry), then skinned by
 # static-src/css/04-uip-skin.css.
 #
-# RELEASE-GATED: the theme adoption (static-src/theme.ts's createTheme storage
-# adapter + the index.html themeInitSnippetFromJSON anti-FOUC snippet) requires
-# @cplieger/ui-primitives >= 2.1.0, which is unreleased. The pin below stays at
-# 2.0.0 so the build resolves, but the vendored theme.js is then the 2.0.0 build
-# (no storage adapter) — so the deployed theme controller (and this build) are
-# red until 2.1.0 ships. When it does, bump BOTH this ARG and
-# static-src/package.json's @cplieger/ui-primitives pin to 2.1.0. Verified
-# locally via a node_modules overlay of the unreleased source.
+# The theme adoption (static-src/theme.ts's createTheme storage adapter + the
+# index.html themeInitSnippetFromJSON anti-FOUC snippet) needs
+# @cplieger/ui-primitives >= 2.1.0, which ships the createTheme storage-adapter
+# API. This ARG and static-src/package.json's @cplieger/ui-primitives pin both
+# track 2.1.0.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
-ARG CPLIEGER_UI_PRIMITIVES_VERSION=2.0.0
+ARG CPLIEGER_UI_PRIMITIVES_VERSION=2.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
