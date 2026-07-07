@@ -183,12 +183,12 @@ func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	return true
 }
 
-// DecodeBody applies LimitBody, decodes JSON into v, and returns true
-// on success. On failure it writes a 400 response with errMsg and
+// DecodeBody caps + decodes exactly one JSON value into v via
+// webhttp.DecodeJSONInto (rejecting trailing data), returning true on success.
+// On any decode failure it writes vibekit's bare {"error":errMsg} 400 and
 // returns false.
 func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bool {
-	LimitBody(w, r, MaxJSONBody)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if err := webhttp.DecodeJSONInto(w, r, v, MaxJSONBody); err != nil {
 		BadRequest(w, errMsg)
 		return false
 	}
