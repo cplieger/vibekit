@@ -8,6 +8,7 @@ require (
 	github.com/cplieger/atomicfile/v2 v2.1.1
 	github.com/cplieger/ssrf/v2 v2.0.5
 	github.com/cplieger/web-terminal-engine/v2 v2.2.1
+	github.com/cplieger/webhttp v1.2.0
 	github.com/cplieger/wiregen v1.3.0
 	golang.org/x/sync v0.21.0
 	pgregory.net/rapid v1.3.0

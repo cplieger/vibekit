@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
 	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -182,20 +183,29 @@ func (s *Server) ListenAndServe() error {
 
 	// REST Idempotency-Key dedup wraps the mux from the inside: it sits
 	// inside securityMiddleware (so only same-origin, CSRF-checked
-	// requests are deduped) and inside requestLogger (so replays are
+	// requests are deduped) and inside the access logger (so replays are
 	// still access-logged). Its janitor goroutine is stopped via defer
 	// when ListenAndServe returns — both the errCh and signal paths
 	// below return, so the cache lives exactly as long as the server.
 	idem := newIdempotencyCache(idempotencyTTL)
 	defer idem.stop()
 
-	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           securityMiddleware(cspPolicy, requestLogger(idem.middleware(mux))),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1 MiB
-	}
+	// Middleware, outermost first: request-id access logging (webhttp.Logging,
+	// skipping the long-lived SSE/WebSocket streams so they don't log a single
+	// open-forever line), then panic recovery, then the security layer (dynamic
+	// CSP + stdlib CSRF), then the REST idempotency-dedup, then the mux.
+	// webhttp.NewServer's defaults match the former hand-rolled server exactly
+	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
+	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
+	// responses).
+	handler := webhttp.Chain(mux,
+		webhttp.Logging(webhttp.WithSkipPaths("/api/events", "/api/shell/ws")),
+		webhttp.Recoverer(),
+		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, next) },
+		idem.middleware,
+	)
+	srv := webhttp.NewServer(handler)
+	srv.Addr = ":" + port
 
 	// Bind listener up front so port-in-use surfaces synchronously
 	// (rather than appearing in errCh after the goroutine launches).
