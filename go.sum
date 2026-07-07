@@ -6,6 +6,8 @@ github.com/cplieger/ssrf/v2 v2.0.5 h1:rbKc6pw02BO3vyFzY7HBaWVy5aZkutYkJB1a8lbnDI
 github.com/cplieger/ssrf/v2 v2.0.5/go.mod h1:duZRnvl1FAdozPbF48iZbMkwYZU5XtT/1rUfdcG7EZs=
 github.com/cplieger/web-terminal-engine/v2 v2.2.1 h1:OuCdUaczxIALfo0ofFCMjdsJzUrmDXD5PAx5BwuAg7s=
 github.com/cplieger/web-terminal-engine/v2 v2.2.1/go.mod h1:k6qPeKK0NXywNRqV+dRrqDUB/6OByX3Gy5e3MU++4Ho=
+github.com/cplieger/webhttp v1.2.0 h1:eYOvBubDVcWTOiPPfJlLErxweCi99h6aqd7xfyZzN+Y=
+github.com/cplieger/webhttp v1.2.0/go.mod h1:LQLE9eJNI6RztoQoXsRGUpa+RlaWXE3HnL7q3rdWPsE=
 github.com/cplieger/wiregen v1.3.0 h1:NVCvsq8GVsOPJbypo1C3eE/lYjmlNCXYco+wBqN9Tro=
 github.com/cplieger/wiregen v1.3.0/go.mod h1:+QB/vxQHDNwsoLEatwxbMdOdWiE78ri15wbwHnD3USg=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

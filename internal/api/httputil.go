@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/cplieger/webhttp"
 )
 
 // JSONKeyError is the standard JSON error response key.
@@ -41,35 +43,32 @@ const MaxJSONBody = 1024 * 1024
 const MsgInternalError = "internal error"
 
 // LimitBody wraps r.Body with MaxBytesReader to prevent oversized requests.
+// It delegates to webhttp.LimitBody so the body-cap mechanism is shared fleet-wide.
 func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	webhttp.LimitBody(w, r, maxBytes)
 }
 
 // --- JSON response writers ---
+//
+// The mechanism (headers, status, encode) is webhttp's; vibekit's error
+// taxonomy (the bare {"error":…} named helpers below) is layered on top.
 
 // JSONHeaders sets the standard JSON response headers (Content-Type
 // and X-Content-Type-Options). Exported for use by internal/fileutil.
 func JSONHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", MIMETypeJSON)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	webhttp.JSONHeaders(w)
 }
 
 // WriteJSON encodes v as JSON with status 200.
 func WriteJSON(w http.ResponseWriter, v any) {
-	WriteJSONStatus(w, http.StatusOK, v)
+	webhttp.WriteJSON(w, v)
 }
 
-// WriteJSONStatus encodes v with the given status code. Encode failures
-// after the status has already been committed almost always indicate a
-// non-marshalable value in v (a programmer bug), so they're logged at
-// Warn so Loki picks them up.
+// WriteJSONStatus sets the JSON headers, writes the status code, and encodes v.
+// An encode failure after the status is committed is logged at Warn (by
+// webhttp) rather than returned, since the response line is already on the wire.
 func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
-	JSONHeaders(w)
-	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Warn("api: json encode failed after status committed",
-			"code", code, "error", err)
-	}
+	webhttp.WriteJSONStatus(w, code, v)
 }
 
 // WriteRawJSON writes pre-marshalled JSON bytes with the standard
