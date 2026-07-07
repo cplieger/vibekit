@@ -229,11 +229,14 @@
   fill: #609926;
 }
 
-.git-repo-section.expanded > .git-repo-section-header {
+/* createDisclosure sets aria-expanded on the trigger — the header button in the
+ * Changes tab, the dedicated toggle button in the PRs tab — which replaces the
+ * old .git-repo-section.expanded class hook (that class is no longer toggled). */
+.git-repo-section-header[aria-expanded="true"] {
   border-bottom-color: var(--c-border);
 }
 
-.git-repo-section.expanded > .git-repo-section-header-row {
+.git-repo-section-header-row:has(.git-repo-section-header-toggle[aria-expanded="true"]) {
   border-bottom: 1px solid var(--c-border);
 }
 
@@ -247,7 +250,8 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
-.git-repo-section.expanded .git-repo-section-chevron {
+.git-repo-section-header[aria-expanded="true"] .git-repo-section-chevron,
+.git-repo-section-header-toggle[aria-expanded="true"] .git-repo-section-chevron {
   transform: rotate(90deg);
 }
 
@@ -366,15 +370,17 @@
   margin-inline-start: var(--sp-1);
 }
 
-.git-repo-section-body {
-  display: none;
-  padding: var(--sp-3) var(--sp-4);
+/* The body is the disclosure region. createDisclosure adds .uip-disclosure-region
+ * (overflow:hidden + the height transition), drives the inline height 0<->auto,
+ * and toggles aria-hidden/inert — so the body needs no display toggle and no
+ * padding of its own (padding on the collapsing region would leave a residual
+ * sliver at height:0 under box-sizing:border-box). The visual padding + flex
+ * layout live on the inner wrapper so they collapse with the height. */
+.git-repo-section-body-inner {
+  display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-}
-
-.git-repo-section.expanded > .git-repo-section-body {
-  display: flex;
+  padding: var(--sp-3) var(--sp-4);
 }
 
 .git-repo-row-clean,
