@@ -23,6 +23,7 @@ import {
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
+import { viewTransition as uipViewTransition } from "@cplieger/ui-primitives/view-transition";
 import { signal, effect, el } from "@cplieger/reactive";
 import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
@@ -87,7 +88,6 @@ interface Callbacks {
 
 interface Internal {
   emptyTimer: ReturnType<typeof setTimeout> | null;
-  vtPending: Promise<void> | null;
   renderQueued: boolean;
 }
 
@@ -98,7 +98,7 @@ interface State {
 
 const state: State = { tabs: [], active: "" };
 const callbacks: Callbacks = { onActivate: null, onEmpty: null };
-const internal: Internal = { emptyTimer: null, vtPending: null, renderQueued: false };
+const internal: Internal = { emptyTimer: null, renderQueued: false };
 
 /** Reactive version counter. Effects subscribed via `tabsEffect()` re-run
  *  on every emit(). State is mutated in place; this counter is the
@@ -393,34 +393,12 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
   }
 }
 
-// Queued view transition: wraps DOM swaps in startViewTransition so
-// tab switches get a cross-fade. Queue prevents overlapping jank.
+// Queued view transition: wraps DOM swaps so tab switches cross-fade without
+// overlapping jank. Delegates to @cplieger/ui-primitives' viewTransition, which
+// owns the feature-detection + serialization queue (identical semantics to the
+// old local copy); kept as a void-returning wrapper so callers stay unchanged.
 function viewTransition(fn: () => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (!document.startViewTransition) {
-    fn();
-    return;
-  }
-  const run = (): void => {
-    const t = document.startViewTransition(fn);
-    // Chain catch on the stored promise so its rejection is handled
-    // even if `t.finished` rejects (browsers can skip transitions).
-    internal.vtPending = t.finished
-      .then(() => {
-        internal.vtPending = null;
-      })
-      .catch(() => {
-        internal.vtPending = null;
-      });
-    t.ready.catch(() => {
-      /* noop */
-    });
-  };
-  if (internal.vtPending !== null) {
-    void internal.vtPending.then(run);
-  } else {
-    run();
-  }
+  void uipViewTransition(fn);
 }
 
 function showView(tab: TabSpec): void {
@@ -754,7 +732,6 @@ export function _resetForTest(): void {
     clearTimeout(internal.emptyTimer);
   }
   internal.emptyTimer = null;
-  internal.vtPending = null;
   internal.renderQueued = false;
   // Dispose existing module effects and re-register so tests observe
   // the same side-effects (persistence, view sync, DOM render) as

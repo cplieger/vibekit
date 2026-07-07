@@ -8,6 +8,8 @@
 // their own modules but use this helper instead of redefining it.
 // ---------------------------------------------------------------------------
 
+import { viewTransition } from "@cplieger/ui-primitives/view-transition";
+
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
@@ -535,20 +537,12 @@ export const $ = new Elements();
 
 // --- View Transition helper ---
 
-/** Wrap a DOM swap in a view transition if the browser supports it.
- *  Falls back to calling `fn()` directly. Catches ready/finished
- *  rejections (expected when the transition is skipped). */
+/** Wrap a DOM swap in a queued, feature-detected view transition. Delegates to
+ *  @cplieger/ui-primitives' `viewTransition`, which owns the feature detection
+ *  and a serialization queue so overlapping swaps don't clash (an improvement
+ *  over the old fire-and-forget local copy). Kept as a void-returning wrapper
+ *  on the historical name so call sites (settings-tabs, files) and their test
+ *  mocks are unchanged. */
 export function maybeViewTransition(fn: () => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- not available in all browsers
-  if (document.startViewTransition) {
-    const t = document.startViewTransition(fn);
-    t.ready.catch(() => {
-      /* noop */
-    });
-    t.finished.catch(() => {
-      /* noop */
-    });
-  } else {
-    fn();
-  }
+  void viewTransition(fn);
 }

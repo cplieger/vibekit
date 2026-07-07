@@ -1,119 +1,108 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import type * as ToastModule from "./toast.js";
+import { info, success, error, showToast, _resetForTest } from "./toast.js";
 
-// Each test re-imports the module to reset its module-level state.
+// toast.ts delegates to @cplieger/ui-primitives' default toaster; these tests
+// exercise the vibekit wrapper (info/success/error/showToast) against the
+// library's DOM contract (.uip-toast + .uip-toast--<level>, the announce()
+// live region for a11y) and behavior (auto-dismiss, queue, pause, retry).
+//
+// The library singleton lives for the module's lifetime, so we reset its state
+// via _resetForTest() between tests rather than resetModules() (which would
+// leave the module-level Escape listener stranded).
 beforeEach(() => {
-  document.body.innerHTML = "";
+  _resetForTest();
   vi.useFakeTimers();
-  vi.resetModules();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  _resetForTest();
 });
 
 function getStack(): HTMLElement | null {
-  return document.querySelector(".vk-toast-stack");
+  return document.querySelector(".uip-toast-stack");
 }
 
 function toasts(): NodeListOf<Element> {
-  return document.querySelectorAll(".vk-toast");
+  return document.querySelectorAll(".uip-toast");
 }
 
-async function loadToast(): Promise<typeof ToastModule> {
-  return await import("./toast.js");
-}
-
-// Force the entry-frame requestAnimationFrame to fire synchronously.
+// Force the entry-frame requestAnimationFrame to fire so is-entering → is-shown.
 function flushRaf(): void {
-  // happy-dom resolves rAFs after a microtask + 16ms timer; advance
-  // a frame to be safe.
   vi.advanceTimersByTime(20);
 }
 
-// endTransitions helper removed — was unused. If needed in future,
-// dispatch transitionend on each .vk-toast element.
-
 describe("toast — basic rendering", () => {
-  it("info creates a toast with vk-toast-info class", async () => {
-    const { info } = await loadToast();
+  it("info creates a toast with uip-toast--info modifier", () => {
     info("hello");
-    const t = document.querySelector(".vk-toast");
+    const t = document.querySelector(".uip-toast");
     expect(t).not.toBeNull();
-    expect(t?.classList.contains("vk-toast-info")).toBe(true);
+    expect(t?.classList.contains("uip-toast--info")).toBe(true);
     expect(t?.textContent).toContain("hello");
   });
 
-  it("success creates a toast with vk-toast-success class", async () => {
-    const { success } = await loadToast();
+  it("success creates a toast with uip-toast--success modifier", () => {
     success("ok");
-    const t = document.querySelector(".vk-toast");
-    expect(t?.classList.contains("vk-toast-success")).toBe(true);
+    const t = document.querySelector(".uip-toast");
+    expect(t?.classList.contains("uip-toast--success")).toBe(true);
   });
 
-  it("error creates a toast with vk-toast-error class + role=alert", async () => {
-    const { error } = await loadToast();
+  it("error creates a toast with uip-toast--error modifier", () => {
     error("boom");
-    const t = document.querySelector(".vk-toast");
-    expect(t?.classList.contains("vk-toast-error")).toBe(true);
-    expect(t?.getAttribute("role")).toBe("alert");
+    const t = document.querySelector(".uip-toast");
+    expect(t?.classList.contains("uip-toast--error")).toBe(true);
   });
 
-  it("stack has role=status + aria-live=polite", async () => {
-    const { info } = await loadToast();
-    info("hi");
-    const stack = getStack();
-    expect(stack?.getAttribute("role")).toBe("status");
-    expect(stack?.getAttribute("aria-live")).toBe("polite");
+  it("announces via a shared live region (assertive for errors)", () => {
+    // The library decouples announcement from the visual stack: the stack
+    // carries no role/aria-live, and errors announce through the assertive
+    // live region created by announce().
+    error("boom");
+    expect(getStack()?.getAttribute("aria-live")).toBeNull();
+    expect(getStack()?.getAttribute("role")).toBeNull();
+    expect(document.querySelector('[aria-live="assertive"]')).not.toBeNull();
   });
 
-  it("info/success include a progress bar; error does not", async () => {
-    const { info, success, error, _resetForTest } = await loadToast();
+  it("info/success include a progress bar; error does not", () => {
     info("a");
-    expect(toasts()[0]?.querySelector(".vk-toast-progress")).not.toBeNull();
+    expect(toasts()[0]?.querySelector(".uip-toast-progress")).not.toBeNull();
     _resetForTest();
     success("b");
-    expect(toasts()[0]?.querySelector(".vk-toast-progress")).not.toBeNull();
+    expect(toasts()[0]?.querySelector(".uip-toast-progress")).not.toBeNull();
     _resetForTest();
     error("c");
-    expect(toasts()[0]?.querySelector(".vk-toast-progress")).toBeNull();
+    expect(toasts()[0]?.querySelector(".uip-toast-progress")).toBeNull();
   });
 
-  it("toast text uses textContent, not HTML", async () => {
-    const { info } = await loadToast();
+  it("toast text uses textContent, not HTML", () => {
     info("<script>alert(1)</script>");
-    const msg = document.querySelector(".vk-toast-msg");
-    // textContent of the rendered text equals the literal string.
+    const msg = document.querySelector(".uip-toast-msg");
     expect(msg?.textContent).toBe("<script>alert(1)</script>");
-    // No actual <script> tag was created.
-    expect(document.querySelector(".vk-toast script")).toBeNull();
+    expect(document.querySelector(".uip-toast script")).toBeNull();
   });
 });
 
 describe("toast — auto-dismiss", () => {
-  it("auto-dismisses info after 4s", async () => {
-    const { info } = await loadToast();
+  it("auto-dismisses info after 4s", () => {
     info("hi");
     flushRaf();
     expect(toasts().length).toBe(1);
     vi.advanceTimersByTime(4000);
-    // Trigger the cleanup fallback (transitionend may not fire in jsdom-ish env).
+    // Trigger the leave fallback (transitionend may not fire in happy-dom).
     vi.advanceTimersByTime(500);
     expect(toasts().length).toBe(0);
   });
 
-  it("error does not auto-dismiss (sticky)", async () => {
-    const { error } = await loadToast();
+  it("error does not auto-dismiss (sticky)", () => {
     error("fail");
     flushRaf();
     vi.advanceTimersByTime(60000);
     expect(toasts().length).toBe(1);
   });
 
-  it("showToast accepts an explicit duration", async () => {
-    const { showToast } = await loadToast();
+  it("showToast accepts an explicit duration", () => {
     showToast("slow", "info", 10000);
     flushRaf();
     vi.advanceTimersByTime(4000);
@@ -122,8 +111,7 @@ describe("toast — auto-dismiss", () => {
     expect(toasts().length).toBe(0);
   });
 
-  it("showToast(msg, 'error') with no duration is sticky", async () => {
-    const { showToast } = await loadToast();
+  it("showToast(msg, 'error') with no duration is sticky", () => {
     showToast("explicit", "error");
     flushRaf();
     vi.advanceTimersByTime(60000);
@@ -132,8 +120,7 @@ describe("toast — auto-dismiss", () => {
 });
 
 describe("toast — dismissal", () => {
-  it("click dismisses the toast", async () => {
-    const { info } = await loadToast();
+  it("click dismisses the toast", () => {
     info("hi");
     flushRaf();
     const t = toasts()[0] as HTMLElement;
@@ -142,8 +129,7 @@ describe("toast — dismissal", () => {
     expect(toasts().length).toBe(0);
   });
 
-  it("Escape dismisses the most recent toast (LIFO)", async () => {
-    const { info } = await loadToast();
+  it("Escape dismisses the most recent toast (LIFO)", () => {
     info("a");
     info("b");
     flushRaf();
@@ -154,8 +140,7 @@ describe("toast — dismissal", () => {
     expect(toasts()[0]?.textContent).toContain("a");
   });
 
-  it("returns a manual dismiss function", async () => {
-    const { info } = await loadToast();
+  it("returns a manual dismiss function", () => {
     const close = info("hi");
     flushRaf();
     expect(toasts().length).toBe(1);
@@ -164,8 +149,7 @@ describe("toast — dismissal", () => {
     expect(toasts().length).toBe(0);
   });
 
-  it("returned dismiss is idempotent", async () => {
-    const { info } = await loadToast();
+  it("returned dismiss is idempotent", () => {
     const close = info("hi");
     flushRaf();
     close();
@@ -177,8 +161,7 @@ describe("toast — dismissal", () => {
 });
 
 describe("toast — pause on hover/focus", () => {
-  it("mouseenter pauses the timer; mouseleave resumes", async () => {
-    const { info } = await loadToast();
+  it("mouseenter pauses the timer; mouseleave resumes", () => {
     info("hi");
     flushRaf();
     const t = toasts()[0] as HTMLElement;
@@ -187,13 +170,12 @@ describe("toast — pause on hover/focus", () => {
     vi.advanceTimersByTime(60000); // long pause
     expect(toasts().length).toBe(1); // still visible
     t.dispatchEvent(new MouseEvent("mouseleave"));
-    vi.advanceTimersByTime(2100); // remaining ~2s + cleanup margin
-    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(2100); // remaining ~2s
+    vi.advanceTimersByTime(500); // leave fallback
     expect(toasts().length).toBe(0);
   });
 
-  it("focusin pauses; focusout resumes", async () => {
-    const { info } = await loadToast();
+  it("focusin pauses; focusout resumes", () => {
     info("hi");
     flushRaf();
     const t = toasts()[0] as HTMLElement;
@@ -209,15 +191,13 @@ describe("toast — pause on hover/focus", () => {
 });
 
 describe("toast — queue + max-visible", () => {
-  it("queues 4th toast when 3 are visible", async () => {
-    const { info } = await loadToast();
+  it("queues 4th toast when 3 are visible", () => {
     info("1");
     info("2");
     info("3");
     info("4");
     flushRaf();
     expect(toasts().length).toBe(3);
-    // The visible ones are the first 3.
     const texts = [...toasts()].map((t) => t.textContent);
     expect(texts.some((x) => x?.includes("1"))).toBe(true);
     expect(texts.some((x) => x?.includes("2"))).toBe(true);
@@ -225,8 +205,7 @@ describe("toast — queue + max-visible", () => {
     expect(texts.some((x) => x?.includes("4"))).toBe(false);
   });
 
-  it("promotes queued toast on dismiss", async () => {
-    const { info } = await loadToast();
+  it("promotes queued toast on dismiss", () => {
     info("1");
     info("2");
     info("3");
@@ -241,8 +220,7 @@ describe("toast — queue + max-visible", () => {
     expect(texts.some((x) => x?.includes("4"))).toBe(true);
   });
 
-  it("dismissing a queued toast (before mount) removes it from queue", async () => {
-    const { info } = await loadToast();
+  it("dismissing a queued toast (before mount) removes it from queue", () => {
     info("1");
     info("2");
     info("3");
@@ -259,80 +237,70 @@ describe("toast — queue + max-visible", () => {
 });
 
 describe("toast — accessibility attributes", () => {
-  it("toast is keyboard-focusable (tabindex=0)", async () => {
-    const { info } = await loadToast();
+  it("toast is keyboard-focusable (tabindex=0)", () => {
     info("hi");
-    const t = document.querySelector(".vk-toast");
+    const t = document.querySelector(".uip-toast");
     expect(t?.getAttribute("tabindex")).toBe("0");
   });
 
-  it("progress bar is aria-hidden", async () => {
-    const { info } = await loadToast();
+  it("progress bar is aria-hidden", () => {
     info("hi");
-    const bar = document.querySelector(".vk-toast-progress");
+    const bar = document.querySelector(".uip-toast-progress");
     expect(bar?.getAttribute("aria-hidden")).toBe("true");
   });
 });
 
 describe("toast — retry button", () => {
-  it("error() with retry renders a button + attaches handler", async () => {
-    const { error } = await loadToast();
+  it("error() with retry renders a button + attaches handler", () => {
     const onClick = vi.fn();
     error("Failed", { onClick });
     flushRaf();
-    const btn = document.querySelector(".vk-toast-retry");
+    const btn = document.querySelector(".uip-toast-retry");
     expect(btn).not.toBeNull();
     expect(btn?.textContent).toBe("Retry");
   });
 
-  it("custom retry label is rendered", async () => {
-    const { error } = await loadToast();
+  it("custom retry label is rendered", () => {
     error("Failed", { label: "Try again", onClick: vi.fn() });
     flushRaf();
-    expect(document.querySelector(".vk-toast-retry")?.textContent).toBe("Try again");
+    expect(document.querySelector(".uip-toast-retry")?.textContent).toBe("Try again");
   });
 
-  it("clicking retry invokes onClick and dismisses the toast", async () => {
-    const { error } = await loadToast();
+  it("clicking retry invokes onClick and dismisses the toast", () => {
     const onClick = vi.fn();
     error("Failed", { onClick });
     flushRaf();
-    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
+    const btn = document.querySelector(".uip-toast-retry") as HTMLButtonElement;
     btn.click();
     expect(onClick).toHaveBeenCalledOnce();
     vi.advanceTimersByTime(500);
     expect(toasts().length).toBe(0);
   });
 
-  it("retry click does not also trigger toast click-to-dismiss handler", async () => {
-    const { error } = await loadToast();
+  it("retry click does not also trigger toast click-to-dismiss handler", () => {
     const onClick = vi.fn();
     error("Failed", { onClick });
     flushRaf();
-    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
-    // The button click stops propagation so the toast's own click
-    // handler doesn't fire (which would be a double-dismiss).
+    const btn = document.querySelector(".uip-toast-retry") as HTMLButtonElement;
     btn.click();
     expect(onClick).toHaveBeenCalledOnce();
   });
 
-  it("error without retry config does not render the button", async () => {
-    const { error } = await loadToast();
+  it("error without retry config does not render the button", () => {
     error("No retry");
     flushRaf();
-    expect(document.querySelector(".vk-toast-retry")).toBeNull();
+    expect(document.querySelector(".uip-toast-retry")).toBeNull();
   });
 
-  it("a throwing onClick handler is logged but does not crash", async () => {
+  it("a throwing onClick handler is logged but does not crash", () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const { error } = await loadToast();
     error("Failed", {
       onClick: () => {
         throw new Error("oops");
       },
     });
     flushRaf();
-    const btn = document.querySelector(".vk-toast-retry") as HTMLButtonElement;
+    const btn = document.querySelector(".uip-toast-retry") as HTMLButtonElement;
     btn.click();
     expect(consoleErr).toHaveBeenCalled();
     consoleErr.mockRestore();

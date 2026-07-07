@@ -1,146 +1,33 @@
 // ---------------------------------------------------------------------------
-// Confirm dialog: reusable confirmation for destructive actions.
-// Uses the native <dialog> element with focus trap and @starting-style.
+// Confirm dialog — adopted from @cplieger/ui-primitives.
+//
+// The hand-rolled native-<dialog> confirmation was replaced by the library's
+// `confirm`, wrapped here to preserve vibekit's positional signature
+// `confirm(message, confirmLabel?, variant?)` so the ~dozen call sites
+// (editor-core, files, tools, git-*, forge-auth, mcp-ui, tabs, …) are
+// unchanged.
+//
+// Behavior is preserved: a reused native <dialog> via showModal() (platform
+// focus trap + focus restore), Escape / backdrop / preemption-by-a-newer-call
+// all resolve `false`, and the destructive variant upgrades to
+// role="alertdialog" and focuses Cancel so a keyboard user can't confirm by
+// accident. Visuals live in the .uip-confirm skin (css/04-uip-skin.css), ported
+// 1:1 from the old .vk-confirm-dialog (buttons reproduce .btn-small +
+// .confirm-allow / .confirm-danger).
 //
 // Usage:
 //   const ok = await confirm("Delete this file?", "Delete", "destructive");
 //   if (ok) doDelete();
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { confirm as uipConfirm } from "@cplieger/ui-primitives/confirm";
 
-import { trapFocus } from "./focus-trap.js";
-
-let dialogEl: HTMLDialogElement | null = null;
-let prevResolve: ((v: boolean) => void) | null = null;
-let prevAC: AbortController | null = null;
-let prevRelease: (() => void) | null = null;
-
-function ensureDialog(): HTMLDialogElement {
-  if (dialogEl !== null) {
-    return dialogEl;
-  }
-  // The <dialog> element gets implicit role="dialog". For destructive
-  // variants we upgrade to role="alertdialog" at show-time so AT
-  // announces the message with the urgency it deserves.
-  const msgP = el("p", { className: "vk-confirm-msg", id: "vk-confirm-msg" });
-
-  const cancelButton = el(
-    "button",
-    { type: "button", className: "vk-confirm-cancel btn-small" },
-    "Cancel",
-  );
-
-  const okButton = el(
-    "button",
-    { type: "button", className: "vk-confirm-ok btn-small confirm-danger" },
-    "Confirm",
-  );
-
-  const actionsDiv = el("div", { className: "vk-confirm-actions" }, cancelButton, okButton);
-
-  // aria-labelledby links the dialog accname to the message paragraph
-  // so SR users hear the message when the dialog opens.
-  dialogEl = el(
-    "dialog",
-    { className: "vk-confirm-dialog", "aria-labelledby": "vk-confirm-msg" },
-    msgP,
-    actionsDiv,
-  ) as HTMLDialogElement;
-  document.body.appendChild(dialogEl);
-  return dialogEl;
-}
-
-/** Show a confirmation dialog. Returns true if the user confirms. */
+/** Show a confirmation dialog. Resolves true if the user confirms, false on
+ *  cancel / Escape / backdrop click / preemption by a later confirm(). */
 export function confirm(
   message: string,
   confirmLabel = "Confirm",
   variant: "destructive" | "normal" = "normal",
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    const d = ensureDialog();
-    const msg = d.querySelector(".vk-confirm-msg")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const okBtn = d.querySelector(".vk-confirm-ok")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const cancelBtn = d.querySelector<HTMLButtonElement>(".vk-confirm-cancel")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-
-    // Upgrade to alertdialog for destructive prompts so screen readers
-    // treat them as urgent / interruptive.
-    if (variant === "destructive") {
-      d.setAttribute("role", "alertdialog");
-    } else {
-      d.removeAttribute("role");
-    }
-
-    msg.textContent = message;
-    okBtn.textContent = confirmLabel;
-    okBtn.className =
-      variant === "destructive"
-        ? "vk-confirm-ok btn-small confirm-danger"
-        : "vk-confirm-ok btn-small confirm-allow";
-
-    // Preempt any prior confirmation — treat as cancelled.
-    if (prevRelease) {
-      prevRelease();
-      prevRelease = null;
-    }
-    if (prevResolve) {
-      prevResolve(false);
-      prevResolve = null;
-    }
-    if (prevAC) {
-      prevAC.abort();
-      prevAC = null;
-    }
-
-    if (d.open) {
-      d.close();
-    }
-    d.showModal();
-    const release = trapFocus(d);
-    // WAI-ARIA alertdialog: focus the least-destructive action so
-    // keyboard users don't accidentally confirm a dangerous operation.
-    if (variant === "destructive") {
-      cancelBtn.focus();
-    }
-    const ac = new AbortController();
-    const { signal } = ac;
-    prevResolve = resolve;
-    prevAC = ac;
-    prevRelease = release;
-
-    function close(result: boolean): void {
-      ac.abort();
-      release();
-      d.close();
-      prevResolve = null;
-      prevAC = null;
-      prevRelease = null;
-      resolve(result);
-    }
-
-    okBtn.addEventListener(
-      "click",
-      () => {
-        close(true);
-      },
-      { signal },
-    );
-    cancelBtn.addEventListener(
-      "click",
-      () => {
-        close(false);
-      },
-      { signal },
-    );
-    d.addEventListener(
-      "keydown",
-      (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          close(false);
-        }
-      },
-      { signal },
-    );
-  });
+  return uipConfirm(message, { confirmLabel, variant });
 }

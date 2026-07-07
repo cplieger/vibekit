@@ -1,0 +1,255 @@
+/* ==========================================================================
+   @cplieger/ui-primitives — vibekit SKIN.
+   ==========================================================================
+
+   The headless base stylesheet (css/ui-primitives.css, vendored from
+   @cplieger/ui-primitives and concatenated into the bundle immediately BEFORE
+   this file — see css/MANIFEST) ships STRUCTURE + MOTION only, keyed off
+   --uip-* custom properties. This file supplies the SKIN: it (1) maps every
+   --uip-* motion/duration/easing + z-index onto vibekit's existing
+   --dur-* / --ease-* vocabulary and z-index ladder so the animation system stays
+   IDENTICAL, and (2) styles the .uip-* classes with the exact colors, borders,
+   radii, and shadows the hand-rolled toast/tooltip/confirm/context-menu used.
+
+   Both the base and this skin are UNLAYERED (outside vibekit's @layer cascade),
+   so this file's .uip-* rules sit above the base by source order — which is why
+   the toast bottom-right override, the tooltip enter fade, etc. win. Reduced
+   motion is handled globally by 40-a11y.css (`* { transition-duration: 0.01ms
+   !important }`), which neutralizes these transitions the same near-zero way
+   the library's own reduced-motion block does. */
+
+:root {
+  /* --- z-index ladder: preserve vibekit's exact stacking (modal < popover <
+     toast < tooltip). These reproduce the pre-adoption values 1:1 so nothing
+     changes visually: .tab-context-menu was 999, .vk-toast-stack was 1000,
+     .vk-tooltip was 99999. Native <dialog> confirms sit in the top layer (no
+     z-index needed). */
+  --uip-z-popover: 999;
+  --uip-z-toast: 1000;
+  --uip-z-tooltip: 99999;
+
+  /* --- toast motion: .vk-toast used `transition: opacity/transform
+     var(--dur-standard) var(--ease-enter)` for BOTH enter and leave; the
+     progress bar shrank `linear` over the duration (set inline by the lib). */
+  --uip-toast-gap: var(--sp-2);
+  --uip-toast-max-width: min(24rem, calc(100vw - 2 * var(--sp-4)));
+  --uip-toast-enter-duration: var(--dur-standard);
+  --uip-toast-enter-easing: var(--ease-enter);
+  --uip-toast-leave-duration: var(--dur-standard);
+  --uip-toast-leave-easing: var(--ease-enter);
+  --uip-toast-easing: linear;
+  --uip-toast-progress-size: 2px;
+
+  /* --- tooltip motion: .vk-tooltip faded IN via the vk-fade-in keyframe (see
+     .uip-tooltip below) and faded OUT via `transition: opacity 80ms
+     var(--ease-exit)`. */
+  --uip-tooltip-fade-duration: 80ms;
+  --uip-tooltip-fade-easing: var(--ease-exit);
+
+  /* --- dialog / confirm: vibekit's confirm closed instantly; the library's
+     lifecycle fades out on `is-leaving`, mapped here to vibekit's standard exit
+     motion so the vocabulary stays consistent. Backdrop dim matches the old
+     .vk-confirm-dialog::backdrop. */
+  --uip-dialog-leave-duration: var(--dur-exit);
+  --uip-dialog-leave-easing: var(--ease-exit);
+  --uip-backdrop: oklch(0% 0 0deg / 50%);
+
+  /* --- popover (context menu): the old .tab-context-menu appeared instantly;
+     the library's optional enter fade is mapped to vibekit's micro motion. */
+  --uip-popover-enter-duration: var(--dur-micro);
+  --uip-popover-enter-easing: var(--ease-enter);
+
+  /* --- modal / disclosure motion mapping (forward-looking; kept in vibekit's
+     vocabulary should those primitives be adopted next). */
+  --uip-modal-backdrop: oklch(0% 0 0deg / 50%);
+  --uip-modal-leave-duration: var(--dur-exit);
+  --uip-modal-leave-easing: var(--ease-exit);
+  --uip-disclosure-duration: var(--dur-standard);
+  --uip-disclosure-easing: var(--ease-standard);
+}
+
+/* ==========================================================================
+   Toast — ephemeral notifications. Skin ports the old .vk-toast look; the
+   base owns the enter/leave lifecycle (is-entering/is-shown/is-leaving) and
+   the progress-bar countdown. Position is bottom-right, newest nearest the
+   corner (column-reverse), overriding the base's top-right default.
+   ========================================================================== */
+
+.uip-toast-stack {
+  inset-block: auto max(var(--sp-4), env(safe-area-inset-bottom, 0px));
+  inset-inline: auto max(var(--sp-4), env(safe-area-inset-right, 0px));
+  flex-direction: column-reverse; /* newest at the bottom, by the corner */
+}
+
+.uip-toast {
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, #000 25%, transparent);
+  overflow-wrap: break-word;
+
+  /* Enter from below (slide up), matching the old bottom-anchored stack; the
+     base's default was translateY(-8px) for a top stack. */
+  transform: translateY(0.5rem);
+
+  /* Info/default progress bar tints with the text color. */
+  --uip-toast-progress-color: color-mix(in srgb, var(--c-text-primary) 30%, transparent);
+}
+
+.uip-toast.is-leaving {
+  transform: translateX(0.5rem);
+}
+
+.uip-toast:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
+.uip-toast--error {
+  background: var(--c-red);
+  color: #fff;
+  border-color: transparent;
+
+  --uip-toast-progress-color: color-mix(in srgb, #fff 50%, transparent);
+}
+
+/* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
+.uip-toast--success {
+  background: var(--c-green);
+  color: #fff;
+  border-color: transparent;
+
+  --uip-toast-progress-color: color-mix(in srgb, #fff 50%, transparent);
+}
+
+.uip-toast-msg {
+  position: relative; /* sit above the progress bar so text is never clipped */
+  z-index: 1;
+}
+
+.uip-toast-retry {
+  margin-inline-start: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentcolor 60%, transparent);
+  border-radius: var(--r);
+  color: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background var(--dur-micro);
+
+  &:hover {
+    background: color-mix(in srgb, currentcolor 18%, transparent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* ==========================================================================
+   Tooltip — ports the old .vk-tooltip look. The base owns positioning (fixed,
+   flip/clamp) + the leave fade; the enter fade reuses vibekit's vk-fade-in.
+   ========================================================================== */
+
+.uip-tooltip {
+  background: oklch(20% 0.02 283deg);
+  color: oklch(90% 0.01 283deg);
+  font-size: var(--fs-xs);
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 20rem;
+  box-shadow: 0 2px 8px oklch(0% 0 0deg / 40%);
+  animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
+}
+
+/* ==========================================================================
+   Confirm — ports the old .vk-confirm-dialog look. The base owns the native
+   <dialog> leave fade + backdrop; buttons reproduce .btn-small +
+   .confirm-allow / .confirm-danger.
+   ========================================================================== */
+
+.uip-confirm {
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-4);
+  max-width: 24rem;
+  box-shadow: 0 0.5rem 2rem oklch(0% 0 0deg / 50%);
+}
+
+.uip-confirm-title {
+  margin-block: 0 var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.uip-confirm-msg {
+  margin-block-end: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.uip-confirm-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+}
+
+/* Confirm buttons reproduce .btn-small (neutral ghost). */
+.uip-confirm-ok,
+.uip-confirm-cancel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--btn-h);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-micro);
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+    color: var(--c-text-primary);
+  }
+}
+
+/* Non-destructive OK = .confirm-allow (green outline). */
+.uip-confirm-ok:not(.is-destructive) {
+  border-color: var(--c-green);
+  color: var(--c-green);
+
+  &:hover {
+    background: color-mix(in srgb, var(--c-green) 15%, transparent);
+  }
+}
+
+/* Destructive OK = .confirm-danger (red outline). */
+.uip-confirm-ok.is-destructive {
+  border-color: var(--c-red);
+  color: var(--c-red);
+
+  &:hover {
+    background: color-mix(in srgb, var(--c-red) 15%, transparent);
+  }
+}
+
+/* ==========================================================================
+   Popover — the tab context menu keeps its existing .tab-context-menu skin
+   (see 12-tabs.css); the base supplies fixed positioning + the z-index (mapped
+   to 999 above) + the optional enter fade. No extra popover skin is required.
+   ========================================================================== */
