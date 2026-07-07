@@ -830,258 +830,244 @@
   </div>
 
   <!-- Login modal -->
-  <div id="login-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-logo">
-        <svg width="32" height="38" viewBox="-2 -2 44 52" fill="none"><path d="M7.58762 37.203C2.62272 48.1978 13.1975 50.9578 20.9974 44.5229C23.2923 51.7378 31.8872 46.3529 34.9771 40.758C41.772 28.4282 39.027 15.8585 38.322 13.2635C33.4921 -4.42116 9.34259 -4.45116 5.18767 13.3535C4.21269 16.4734 4.19769 20.0134 3.6577 23.6883C3.3877 25.5483 3.17771 26.7332 2.47272 28.6832C2.05273 29.8082 1.49774 30.7982 0.597756 32.4781C-0.782218 35.0881 -0.197229 40.113 6.94263 37.503L7.61762 37.203H7.58762Z" fill="white" stroke="#9046FF" stroke-width="2"/><path d="M21.9284 20.928C19.9484 20.928 19.6484 18.5581 19.6484 17.1481C19.6484 15.8731 19.8734 14.8681 20.3084 14.2231C20.6834 13.6532 21.2384 13.3682 21.9284 13.3682C22.6184 13.3682 23.2184 13.6532 23.6384 14.2381C24.1184 14.8981 24.3733 15.9031 24.3733 17.1481C24.3733 19.518 23.4584 20.928 21.9434 20.928H21.9284Z" fill="#1e1e2e"/><path d="M30.0729 20.928C28.093 20.928 27.793 18.5581 27.793 17.1481C27.793 15.8731 28.018 14.8681 28.453 14.2231C28.8279 13.6532 29.3829 13.3682 30.0729 13.3682C30.7629 13.3682 31.3629 13.6532 31.7829 14.2381C32.2629 14.8981 32.5179 15.9031 32.5179 17.1481C32.5179 19.518 31.6029 20.928 30.0879 20.928H30.0729Z" fill="#1e1e2e"/></svg>
-        <span>Vibekit <span class="logo-subtitle">for Kiro</span></span>
-      </div>
-      <p class="modal-subtitle">Sign in to start chatting</p>
-      <div class="modal-actions">
-        <button type="button" id="modal-login-free" class="modal-btn"><span>Sign in</span><span class="modal-btn-sub">Builder ID, Google, or GitHub</span></button>
-        <button type="button" id="modal-login-sso" class="modal-btn"><span>Sign in with SSO</span><span class="modal-btn-sub">Identity Center / Enterprise</span></button>
-      </div>
-      <div id="modal-sso-form" class="hidden">
-        <input id="modal-provider" class="modal-input" type="url" aria-label="Start URL" placeholder="Start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start)">
-        <input id="modal-region" class="modal-input" type="text" aria-label="Region" placeholder="Region (e.g. us-east-1)">
-        <button type="button" id="modal-sso-submit" class="modal-btn modal-btn-accent">Connect</button>
-      </div>
-      <div id="modal-status" class="modal-status"></div>
+  <div id="login-modal" class="hidden" data-modal>
+    <div class="modal-logo">
+      <svg width="32" height="38" viewBox="-2 -2 44 52" fill="none"><path d="M7.58762 37.203C2.62272 48.1978 13.1975 50.9578 20.9974 44.5229C23.2923 51.7378 31.8872 46.3529 34.9771 40.758C41.772 28.4282 39.027 15.8585 38.322 13.2635C33.4921 -4.42116 9.34259 -4.45116 5.18767 13.3535C4.21269 16.4734 4.19769 20.0134 3.6577 23.6883C3.3877 25.5483 3.17771 26.7332 2.47272 28.6832C2.05273 29.8082 1.49774 30.7982 0.597756 32.4781C-0.782218 35.0881 -0.197229 40.113 6.94263 37.503L7.61762 37.203H7.58762Z" fill="white" stroke="#9046FF" stroke-width="2"/><path d="M21.9284 20.928C19.9484 20.928 19.6484 18.5581 19.6484 17.1481C19.6484 15.8731 19.8734 14.8681 20.3084 14.2231C20.6834 13.6532 21.2384 13.3682 21.9284 13.3682C22.6184 13.3682 23.2184 13.6532 23.6384 14.2381C24.1184 14.8981 24.3733 15.9031 24.3733 17.1481C24.3733 19.518 23.4584 20.928 21.9434 20.928H21.9284Z" fill="#1e1e2e"/><path d="M30.0729 20.928C28.093 20.928 27.793 18.5581 27.793 17.1481C27.793 15.8731 28.018 14.8681 28.453 14.2231C28.8279 13.6532 29.3829 13.3682 30.0729 13.3682C30.7629 13.3682 31.3629 13.6532 31.7829 14.2381C32.2629 14.8981 32.5179 15.9031 32.5179 17.1481C32.5179 19.518 31.6029 20.928 30.0879 20.928H30.0729Z" fill="#1e1e2e"/></svg>
+      <span>Vibekit <span class="logo-subtitle">for Kiro</span></span>
     </div>
+    <p id="login-modal-title" class="modal-subtitle">Sign in to start chatting</p>
+    <div class="modal-actions">
+      <button type="button" id="modal-login-free" class="modal-btn"><span>Sign in</span><span class="modal-btn-sub">Builder ID, Google, or GitHub</span></button>
+      <button type="button" id="modal-login-sso" class="modal-btn"><span>Sign in with SSO</span><span class="modal-btn-sub">Identity Center / Enterprise</span></button>
+    </div>
+    <div id="modal-sso-form" class="hidden">
+      <input id="modal-provider" class="modal-input" type="url" aria-label="Start URL" placeholder="Start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start)">
+      <input id="modal-region" class="modal-input" type="text" aria-label="Region" placeholder="Region (e.g. us-east-1)">
+      <button type="button" id="modal-sso-submit" class="modal-btn modal-btn-accent">Connect</button>
+    </div>
+    <div id="modal-status" class="modal-status"></div>
   </div>
 
   <!-- Tool edit/add modal -->
-  <div id="tool-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-header-row">
-        <span id="tool-modal-title" class="modal-title">Add tool</span>
-        <button type="button" id="tool-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div class="tool-form">
-        <label class="tool-form-label">Install method
-          <select id="tool-cat" class="tool-form-select">
-            <option value="go">Go install</option>
-            <option value="npm">npm package</option>
-            <option value="pip">pip package</option>
-            <option value="cargo">Cargo (Rust)</option>
-            <option value="apt">System package (apt)</option>
-            <option value="binary">Binary download</option>
-            <option value="runtimes">Runtime</option>
-            <option value="custom">Custom script</option>
-            <option value="mcp">MCP server</option>
-          </select>
-          <span id="tool-cat-hint" class="tool-form-hint"></span>
-        </label>
-        <label class="tool-form-label">Name <input id="tool-name" class="tool-form-input" type="text" placeholder="e.g. ripgrep"></label>
-        <label class="tool-form-label" id="tool-version-label">Version
-          <input id="tool-version" class="tool-form-input" type="text" placeholder="e.g. v14.1.0">
-          <span id="tool-version-hint" class="tool-form-hint"></span>
-        </label>
-        <label class="tool-form-label" id="tool-package-label">Package path
-          <input id="tool-package" class="tool-form-input" type="text" placeholder="e.g. github.com/user/tool@${VERSION}">
-          <span id="tool-package-hint" class="tool-form-hint"></span>
-        </label>
-        <label class="tool-form-label" id="tool-install-label">Install command
-          <input id="tool-install" class="tool-form-input" type="text" placeholder="e.g. curl -fsSL ... | tar -xz -C ${BIN}">
-          <span id="tool-install-hint" class="tool-form-hint"></span>
-        </label>
-        <label class="tool-form-label" id="tool-binaries-label">Binaries
-          <input id="tool-binaries" class="tool-form-input" type="text" placeholder="Comma-separated binary names">
-          <span class="tool-form-hint">Names of binaries this tool installs (for update detection).</span>
-        </label>
-        <button type="button" id="tool-modal-save" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          Save
-        </button>
-      </div>
+  <div id="tool-modal" class="hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="tool-modal-title" class="modal-title">Add tool</span>
+      <button type="button" id="tool-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="tool-form">
+      <label class="tool-form-label">Install method
+        <select id="tool-cat" class="tool-form-select">
+          <option value="go">Go install</option>
+          <option value="npm">npm package</option>
+          <option value="pip">pip package</option>
+          <option value="cargo">Cargo (Rust)</option>
+          <option value="apt">System package (apt)</option>
+          <option value="binary">Binary download</option>
+          <option value="runtimes">Runtime</option>
+          <option value="custom">Custom script</option>
+          <option value="mcp">MCP server</option>
+        </select>
+        <span id="tool-cat-hint" class="tool-form-hint"></span>
+      </label>
+      <label class="tool-form-label">Name <input id="tool-name" class="tool-form-input" type="text" placeholder="e.g. ripgrep"></label>
+      <label class="tool-form-label" id="tool-version-label">Version
+        <input id="tool-version" class="tool-form-input" type="text" placeholder="e.g. v14.1.0">
+        <span id="tool-version-hint" class="tool-form-hint"></span>
+      </label>
+      <label class="tool-form-label" id="tool-package-label">Package path
+        <input id="tool-package" class="tool-form-input" type="text" placeholder="e.g. github.com/user/tool@${VERSION}">
+        <span id="tool-package-hint" class="tool-form-hint"></span>
+      </label>
+      <label class="tool-form-label" id="tool-install-label">Install command
+        <input id="tool-install" class="tool-form-input" type="text" placeholder="e.g. curl -fsSL ... | tar -xz -C ${BIN}">
+        <span id="tool-install-hint" class="tool-form-hint"></span>
+      </label>
+      <label class="tool-form-label" id="tool-binaries-label">Binaries
+        <input id="tool-binaries" class="tool-form-input" type="text" placeholder="Comma-separated binary names">
+        <span class="tool-form-hint">Names of binaries this tool installs (for update detection).</span>
+      </label>
+      <button type="button" id="tool-modal-save" class="btn-save">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
     </div>
   </div>
 
   <!-- MCP connect / edit modal -->
-  <div id="mcp-modal" class="modal-overlay hidden">
-    <div class="modal-card mcp-modal-card">
-      <div class="modal-header-row">
-        <span id="mcp-modal-title" class="modal-title">Connect integration</span>
-        <button type="button" id="mcp-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  <div id="mcp-modal" class="mcp-modal-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="mcp-modal-title" class="modal-title">Connect integration</span>
+      <button type="button" id="mcp-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
+      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="remote">Remote URL</button>
+      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="npm">npm package</button>
+      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Raw JSON</button>
+    </nav>
+
+    <!-- Search panel: queries the official MCP registry via proxy -->
+    <div class="mcp-mode-panel hidden" data-mcp-mode="search">
+      <p class="mcp-mode-hint">Search the official MCP registry for published integrations. Click "Use" on a result to fill out a form below with the required fields.</p>
+      <div class="mcp-search-row">
+        <input id="mcp-search-input" class="tool-form-input" type="search" aria-label="Search the MCP registry" placeholder="Search: github, linear, postgres, notion…" autocomplete="off">
+        <button type="button" id="mcp-search-btn" class="action-pill" data-tooltip="Search" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
       </div>
-      <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
-        <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="remote">Remote URL</button>
-        <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="npm">npm package</button>
-        <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Raw JSON</button>
-      </nav>
+      <div id="mcp-search-results" class="mcp-search-results"></div>
+    </div>
 
-      <!-- Search panel: queries the official MCP registry via proxy -->
-      <div class="mcp-mode-panel hidden" data-mcp-mode="search">
-        <p class="mcp-mode-hint">Search the official MCP registry for published integrations. Click "Use" on a result to fill out a form below with the required fields.</p>
-        <div class="mcp-search-row">
-          <input id="mcp-search-input" class="tool-form-input" type="search" aria-label="Search the MCP registry" placeholder="Search: github, linear, postgres, notion…" autocomplete="off">
-          <button type="button" id="mcp-search-btn" class="action-pill" data-tooltip="Search" aria-label="Search">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          </button>
-        </div>
-        <div id="mcp-search-results" class="mcp-search-results"></div>
-      </div>
-
-      <!-- Remote URL panel: HTTP (kiro-cli falls back to HTTP+SSE per the 2025-03-26 MCP spec) -->
-      <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
-        <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP. kiro-cli speaks Streamable HTTP and automatically falls back to HTTP+SSE for legacy servers (2025-03-26 MCP spec). Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
-        <label class="tool-form-label">Name
-          <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
-          <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
-        </label>
-        <label class="tool-form-label">URL
-          <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
-        </label>
-        <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
-          <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
-          <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
-        </label>
-        <div class="mcp-form-section">
-          <div class="mcp-form-section-head">
-            <span class="tool-form-label-text">Headers</span>
-            <button type="button" id="mcp-remote-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </div>
-          <div id="mcp-remote-headers" class="mcp-pair-list"></div>
-          <p class="tool-form-hint">Authorization, API keys, etc. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
-        </div>
-        <p id="mcp-remote-error" class="section-hint mcp-form-error hidden"></p>
-        <button type="button" id="mcp-remote-save" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          Save
-        </button>
-      </div>
-
-      <!-- npm panel: stdio via `npx -y <pkg>` -->
-      <div class="mcp-mode-panel hidden" data-mcp-mode="npm">
-        <p class="mcp-mode-hint">Run a published MCP server as a local subprocess via <code>npx -y</code>. Works for the entire <code>@modelcontextprotocol/server-*</code> family and most community servers.</p>
-        <label class="tool-form-label">Name
-          <input id="mcp-npm-name" class="tool-form-input" type="text" placeholder="e.g. github">
-          <span class="tool-form-hint">Short identifier used in tool names.</span>
-        </label>
-        <label class="tool-form-label">Package
-          <input id="mcp-npm-pkg" class="tool-form-input" type="text" placeholder="@modelcontextprotocol/server-github">
-          <span class="tool-form-hint">npm package identifier. We run it as <code>npx -y &lt;package&gt;</code>.</span>
-        </label>
-        <label class="toggle-inline">
-          <span class="toggle">
-            <input type="checkbox" id="mcp-npm-prewarm" checked>
-            <span class="toggle-slider"></span>
-          </span>
-          <span class="section-option-label">Pre-install on container start</span>
-        </label>
-        <p class="tool-form-hint">Recommended on. The first chat after a container start pays no npm cold-start cost.</p>
-        <div class="mcp-form-section">
-          <div class="mcp-form-section-head">
-            <span class="tool-form-label-text">Environment variables</span>
-            <button type="button" id="mcp-npm-add-env" class="action-pill" data-tooltip="Add variable" aria-label="Add variable">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </div>
-          <div id="mcp-npm-env" class="mcp-pair-list"></div>
-          <p class="tool-form-hint">API keys and configuration the server reads from its environment. Stored locally with 0600 perms.</p>
-        </div>
-        <p id="mcp-npm-error" class="section-hint mcp-form-error hidden"></p>
-        <button type="button" id="mcp-npm-save" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          Save
-        </button>
-      </div>
-
-      <!-- Raw JSON panel: stdio escape hatch -->
-      <div class="mcp-mode-panel hidden" data-mcp-mode="raw">
-        <p class="mcp-mode-hint">Escape hatch for custom binaries or docker commands. Paste a stdio server config as JSON. Env values are secrets; they stay on the server with 0600 perms.</p>
-        <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON"></textarea>
-        <p id="mcp-raw-error" class="section-hint mcp-raw-error hidden"></p>
-        <button type="button" id="mcp-raw-save" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          Save
-        </button>
-      </div>
-
-      <!-- Disabled tools: shared across all modes, only visible on edit -->
-      <div id="mcp-disabled-tools" class="mcp-form-section hidden">
+    <!-- Remote URL panel: HTTP (kiro-cli falls back to HTTP+SSE per the 2025-03-26 MCP spec) -->
+    <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
+      <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP. kiro-cli speaks Streamable HTTP and automatically falls back to HTTP+SSE for legacy servers (2025-03-26 MCP spec). Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
+      <label class="tool-form-label">Name
+        <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
+        <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
+      </label>
+      <label class="tool-form-label">URL
+        <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
+      </label>
+      <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
+        <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
+        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
+      </label>
+      <div class="mcp-form-section">
         <div class="mcp-form-section-head">
-          <span class="tool-form-label-text">Disabled tools</span>
-        </div>
-        <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>create_issue</code>).</p>
-        <div id="mcp-disabled-chips" class="chip-list"></div>
-        <div class="chip-adder">
-          <input id="mcp-disabled-input" class="chip-input" type="text" placeholder="e.g. create_issue" aria-label="Add disabled tool">
-          <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="tool-form-label-text">Headers</span>
+          <button type="button" id="mcp-remote-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
+        <div id="mcp-remote-headers" class="mcp-pair-list"></div>
+        <p class="tool-form-hint">Authorization, API keys, etc. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
+      </div>
+      <p id="mcp-remote-error" class="section-hint mcp-form-error hidden"></p>
+      <button type="button" id="mcp-remote-save" class="btn-save">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
+    </div>
+
+    <!-- npm panel: stdio via `npx -y <pkg>` -->
+    <div class="mcp-mode-panel hidden" data-mcp-mode="npm">
+      <p class="mcp-mode-hint">Run a published MCP server as a local subprocess via <code>npx -y</code>. Works for the entire <code>@modelcontextprotocol/server-*</code> family and most community servers.</p>
+      <label class="tool-form-label">Name
+        <input id="mcp-npm-name" class="tool-form-input" type="text" placeholder="e.g. github">
+        <span class="tool-form-hint">Short identifier used in tool names.</span>
+      </label>
+      <label class="tool-form-label">Package
+        <input id="mcp-npm-pkg" class="tool-form-input" type="text" placeholder="@modelcontextprotocol/server-github">
+        <span class="tool-form-hint">npm package identifier. We run it as <code>npx -y &lt;package&gt;</code>.</span>
+      </label>
+      <label class="toggle-inline">
+        <span class="toggle">
+          <input type="checkbox" id="mcp-npm-prewarm" checked>
+          <span class="toggle-slider"></span>
+        </span>
+        <span class="section-option-label">Pre-install on container start</span>
+      </label>
+      <p class="tool-form-hint">Recommended on. The first chat after a container start pays no npm cold-start cost.</p>
+      <div class="mcp-form-section">
+        <div class="mcp-form-section-head">
+          <span class="tool-form-label-text">Environment variables</span>
+          <button type="button" id="mcp-npm-add-env" class="action-pill" data-tooltip="Add variable" aria-label="Add variable">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="mcp-npm-env" class="mcp-pair-list"></div>
+        <p class="tool-form-hint">API keys and configuration the server reads from its environment. Stored locally with 0600 perms.</p>
+      </div>
+      <p id="mcp-npm-error" class="section-hint mcp-form-error hidden"></p>
+      <button type="button" id="mcp-npm-save" class="btn-save">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
+    </div>
+
+    <!-- Raw JSON panel: stdio escape hatch -->
+    <div class="mcp-mode-panel hidden" data-mcp-mode="raw">
+      <p class="mcp-mode-hint">Escape hatch for custom binaries or docker commands. Paste a stdio server config as JSON. Env values are secrets; they stay on the server with 0600 perms.</p>
+      <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON"></textarea>
+      <p id="mcp-raw-error" class="section-hint mcp-raw-error hidden"></p>
+      <button type="button" id="mcp-raw-save" class="btn-save">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
+    </div>
+
+    <!-- Disabled tools: shared across all modes, only visible on edit -->
+    <div id="mcp-disabled-tools" class="mcp-form-section hidden">
+      <div class="mcp-form-section-head">
+        <span class="tool-form-label-text">Disabled tools</span>
+      </div>
+      <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>create_issue</code>).</p>
+      <div id="mcp-disabled-chips" class="chip-list"></div>
+      <div class="chip-adder">
+        <input id="mcp-disabled-input" class="chip-input" type="text" placeholder="e.g. create_issue" aria-label="Add disabled tool">
+        <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
       </div>
     </div>
   </div>
 
   <!-- Git output popup -->
-  <div id="git-output-modal" class="modal-overlay hidden">
-    <div class="modal-card subagent-modal-card">
-      <div class="modal-header-row">
-        <span class="modal-title">Command output</span>
-        <button type="button" id="git-output-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <pre id="git-output-modal-body" class="subagent-modal-body"></pre>
+  <div id="git-output-modal" class="subagent-modal-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="git-output-modal-title" class="modal-title">Command output</span>
+      <button type="button" id="git-output-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
+    <pre id="git-output-modal-body" class="subagent-modal-body"></pre>
   </div>
 
   <!-- Git branch selector modal -->
-  <div id="git-branch-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-header-row">
-        <span class="modal-title">Switch branch</span>
-        <button type="button" id="git-branch-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div class="git-branch-create-row">
-        <input id="git-new-branch" class="tool-form-input" type="text" aria-label="New branch name" placeholder="New branch name">
-        <button type="button" id="git-create-branch-btn" class="btn-small">Create</button>
-      </div>
-      <div id="git-branch-list" class="git-file-list git-file-list-scroll"></div>
+  <div id="git-branch-modal" class="hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="git-branch-modal-title" class="modal-title">Switch branch</span>
+      <button type="button" id="git-branch-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
+    <div class="git-branch-create-row">
+      <input id="git-new-branch" class="tool-form-input" type="text" aria-label="New branch name" placeholder="New branch name">
+      <button type="button" id="git-create-branch-btn" class="btn-small">Create</button>
+    </div>
+    <div id="git-branch-list" class="git-file-list git-file-list-scroll"></div>
   </div>
 
   <!-- Subagent output modal -->
-  <div id="subagent-modal" class="modal-overlay hidden">
-    <div class="modal-card subagent-modal-card">
-      <div class="modal-header-row">
-        <span id="subagent-modal-title" class="modal-title">subagent</span>
-        <button type="button" id="subagent-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <pre id="subagent-modal-body" class="subagent-modal-body"></pre>
+  <div id="subagent-modal" class="subagent-modal-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="subagent-modal-title" class="modal-title">subagent</span>
+      <button type="button" id="subagent-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
+    <pre id="subagent-modal-body" class="subagent-modal-body"></pre>
   </div>
 
   <!-- File picker popup (slim file browser for upload target selection) -->
-  <div id="filepicker-modal" class="modal-overlay hidden">
-    <div class="modal-card filepicker-card">
-      <div class="modal-header-row">
-        <span class="modal-title">Choose upload folder</span>
-        <button type="button" id="filepicker-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div id="filepicker-list" class="filepicker-list"></div>
-      <div class="filepicker-footer">
-        <input id="filepicker-path" class="fb-path" type="text" value="/" readonly aria-label="Upload path">
-        <button type="button" id="filepicker-upload" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Upload
-        </button>
-        <button type="button" id="filepicker-attach" class="btn-save" disabled>Attach</button>
-      </div>
+  <div id="filepicker-modal" class="filepicker-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="filepicker-modal-title" class="modal-title">Choose upload folder</span>
+      <button type="button" id="filepicker-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="filepicker-list" class="filepicker-list"></div>
+    <div class="filepicker-footer">
+      <input id="filepicker-path" class="fb-path" type="text" value="/" readonly aria-label="Upload path">
+      <button type="button" id="filepicker-upload" class="btn-save">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload
+      </button>
+      <button type="button" id="filepicker-attach" class="btn-save" disabled>Attach</button>
     </div>
   </div>
 
@@ -1098,6 +1084,7 @@
         "@cplieger/ui-primitives/confirm": "/vendor/cplieger-ui-primitives/confirm.js",
         "@cplieger/ui-primitives/popover": "/vendor/cplieger-ui-primitives/popover.js",
         "@cplieger/ui-primitives/focus-trap": "/vendor/cplieger-ui-primitives/focus-trap.js",
+        "@cplieger/ui-primitives/modal": "/vendor/cplieger-ui-primitives/modal.js",
         "@cplieger/ui-primitives/theme": "/vendor/cplieger-ui-primitives/theme.js",
         "@cplieger/ui-primitives/view-transition": "/vendor/cplieger-ui-primitives/view-transition.js",
         "@cplieger/ui-primitives/announce": "/vendor/cplieger-ui-primitives/announce.js"

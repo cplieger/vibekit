@@ -565,7 +565,7 @@ h3.section-title {
   gap: var(--sp-3);
 }
 
-[id="tool-modal"] .modal-card {
+[id="tool-modal"] {
   width: 30rem;
 }
 

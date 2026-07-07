@@ -2,57 +2,11 @@
    Login Modal
    ========================================================================== */
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 500;
-  background: oklch(0% 0 0deg / 75%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 1;
-  transition:
-    opacity var(--dur-standard),
-    display var(--dur-standard) allow-discrete;
-}
-
-.modal-overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.modal-card {
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: var(--sp-5);
-  width: 21.25rem;
-  max-width: 90vw;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  opacity: 1;
-  transform: scale(1) translateY(0);
-  transition:
-    opacity var(--dur-enter),
-    transform var(--dur-enter);
-
-  @starting-style {
-    opacity: 0;
-    transform: scale(0.95) translateY(0.5rem);
-  }
-}
-
-:where(.modal-overlay.hidden) .modal-card {
-  opacity: 0;
-  transform: scale(0.95) translateY(0.5rem);
-}
-
-@media (width >= 48rem) {
-  .modal-card {
-    width: 30rem;
-  }
-}
+/* The modal shell (.modal-overlay backdrop + .modal-card panel + its entry
+   animation) moved onto the createModal native <dialog>: see the Modal section
+   of 04-uip-skin.css (.uip-modal / .uip-modal-dialog). Only the login-specific
+   content skin (logo, subtitle, actions, SSO form, status) and the shared
+   header-row / title used by every modal remain here. */
 
 .modal-logo {
   display: flex;
@@ -146,11 +100,6 @@
   white-space: pre-wrap;
   word-break: break-all;
   min-height: 1.2em;
-}
-
-/* Settings view */
-.modal-card-wide {
-  width: 27.5rem;
 }
 
 .modal-header-row {

@@ -59,9 +59,13 @@
   --uip-popover-enter-duration: var(--dur-micro);
   --uip-popover-enter-easing: var(--ease-enter);
 
-  /* --- modal / disclosure motion mapping (forward-looking; kept in vibekit's
-     vocabulary should those primitives be adopted next). */
-  --uip-modal-backdrop: oklch(0% 0 0deg / 50%);
+  /* --- modal motion + dim: the createModal native <dialog> replaces the
+     hand-rolled .modal-overlay/.modal-card system. The ::backdrop reproduces the
+     old overlay dim (75% black); the leave fade maps to vibekit's exit motion
+     (the enter is a CSS keyframe on .uip-modal[open], see the Modal section
+     below, since createModal's JS open is instant). Disclosure vars are
+     forward-looking (that primitive isn't adopted yet). */
+  --uip-modal-backdrop: oklch(0% 0 0deg / 75%);
   --uip-modal-leave-duration: var(--dur-exit);
   --uip-modal-leave-easing: var(--ease-exit);
   --uip-disclosure-duration: var(--dur-standard);
@@ -253,3 +257,73 @@
    (see 12-tabs.css); the base supplies fixed positioning + the z-index (mapped
    to 999 above) + the optional enter fade. No extra popover skin is required.
    ========================================================================== */
+
+/* ==========================================================================
+   Modal — the createModal native <dialog>. Ports the old .modal-overlay
+   (backdrop dim + centering) and .modal-card (panel look + entry animation)
+   onto .uip-modal / .uip-modal-dialog. The platform owns the top layer, focus
+   containment, background inerting, Escape, and focus-return-to-opener;
+   createModal adds ARIA wiring, drag-safe backdrop dismiss, the is-leaving
+   fade-out, and an iOS-safe scroll-lock. Per-modal panel sizing lives beside
+   each feature (.mcp-modal-card in 60-mcp, .subagent-modal-card in 14-tools,
+   .filepicker-card in 19-files, #tool-modal in 18-pages) and overrides the base
+   below by source order.
+   ========================================================================== */
+
+/* The <dialog> is a transparent, unpadded wrapper: strip the UA chrome so only
+   the inner .uip-modal-dialog panel shows. Centering is the base's margin:auto
+   (which also sidesteps the Safari <dialog> height bug the old overlay flex
+   centering worked around); the dim ::backdrop reads --uip-modal-backdrop. */
+.uip-modal {
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* Panel look, ported 1:1 from the old .modal-card. Per-modal card classes
+   override width / max-block-size / gap by source order (they load after). */
+.uip-modal-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: 21.25rem;
+  max-width: 90vw;
+  padding: var(--sp-5);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+}
+
+@media (width >= 48rem) {
+  .uip-modal-dialog {
+    width: 30rem;
+  }
+}
+
+/* Entry animation. createModal opens instantly (no JS enter), so reproduce the
+   old .modal-card @starting-style entrance purely in CSS: the panel scales +
+   rises + fades in, the backdrop fades in. The exit rides the library base's
+   .is-leaving opacity fade (mapped to --dur-exit/--ease-exit above), so no exit
+   rule is needed here. Reduced motion is neutralised globally by 40-a11y.css. */
+.uip-modal[open] {
+  animation: vk-modal-in var(--dur-enter) var(--ease-enter);
+}
+
+.uip-modal[open]::backdrop {
+  animation: vk-modal-backdrop-in var(--dur-enter) var(--ease-enter);
+}
+
+@keyframes vk-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(0.5rem);
+  }
+}
+
+@keyframes vk-modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}

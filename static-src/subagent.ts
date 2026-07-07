@@ -20,7 +20,7 @@ import { isToolDone } from "./tool-schema.js";
 import { humanName } from "./strings.js";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
-import { openModal } from "./modals.js";
+import { openModal, closeModal, isModalOpen } from "./modals.js";
 import { el } from "@cplieger/reactive";
 
 /** Number of trailing sentences shown in the sub-agent preview card. */
@@ -65,7 +65,7 @@ export function appendToSubAgent(text: string): void {
   if (preview !== null) {
     preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
   }
-  if (!$.subagentModal.classList.contains("hidden")) {
+  if (isModalOpen($.subagentModal)) {
     const body = $.subagentModalBody;
     if (body.textContent !== acc) {
       body.textContent = acc;
@@ -155,7 +155,7 @@ export function updateSubAgentCard(
       preview.textContent = lastSentences(acc, PREVIEW_SENTENCES);
     }
   }
-  if (!$.subagentModal.classList.contains("hidden")) {
+  if (isModalOpen($.subagentModal)) {
     const body = $.subagentModalBody;
     const cur = transcripts.get(id) ?? "";
     if (body.textContent !== cur) {
@@ -168,7 +168,7 @@ export function updateSubAgentCard(
 }
 
 export function resetSubAgents(): void {
-  $.subagentModal.classList.add("hidden");
+  closeModal($.subagentModal);
   els.clear();
   transcripts.clear();
   activeId = "";
