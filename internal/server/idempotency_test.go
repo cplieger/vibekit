@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cplieger/webhttp"
 )
 
 // idemHandler returns a handler that counts invocations and writes the
@@ -419,7 +421,7 @@ func TestIdempotency_middlewareDoesNotCache500(t *testing.T) {
 // buffer does not overflow, so the full body is buffered (and thus cacheable).
 func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
 	rec := httptest.NewRecorder()
-	cw := &idempotencyWriter{ResponseWriter: rec, status: http.StatusOK, limit: 4}
+	cw := &idempotencyWriter{rec: webhttp.NewStatusRecorder(rec), limit: 4}
 
 	n, err := cw.Write([]byte("abcd")) // exactly limit bytes
 	if err != nil || n != 4 {

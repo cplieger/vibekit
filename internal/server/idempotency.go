@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp"
 )
 
 // idempotencyHeader is the request header carrying the client's
@@ -285,7 +286,7 @@ func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 
 		// We own the in-flight marker. Guarantee it is resolved even if
 		// the handler panics (the defer runs during unwind).
-		cw := &idempotencyWriter{ResponseWriter: w, status: http.StatusOK, limit: c.maxBody}
+		cw := &idempotencyWriter{rec: webhttp.NewStatusRecorder(w), limit: c.maxBody}
 		settled := false
 		defer func() {
 			if !settled {
@@ -299,8 +300,8 @@ func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 		// cap. 5xx is transient → leave the key clear so a retry can
 		// re-execute; an over-cap body was already written through, just
 		// don't pin it in memory.
-		if cw.status < 500 && !cw.overflow {
-			c.complete(ck, cw.status, cw.Header().Get("Content-Type"), cw.buf.Bytes())
+		if cw.rec.Status() < 500 && !cw.overflow {
+			c.complete(ck, cw.rec.Status(), cw.Header().Get("Content-Type"), cw.buf.Bytes())
 		} else {
 			c.abort(ck)
 		}
@@ -308,9 +309,10 @@ func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 }
 
 // writeIdempotentReplay writes a cached response. securityMiddleware
-// (outermost) already set X-Content-Type-Options/Referrer-Policy on the
-// header before this runs, so only the per-response Content-Type needs
-// restoring here.
+// wraps the idempotency layer from outside, so it already set the
+// baseline security headers (X-Content-Type-Options / Referrer-Policy /
+// X-Frame-Options) on the response before this runs; only the
+// per-response Content-Type needs restoring here.
 func writeIdempotentReplay(w http.ResponseWriter, e *idempotencyEntry) {
 	if e.ct != "" {
 		w.Header().Set("Content-Type", e.ct)
@@ -319,37 +321,32 @@ func writeIdempotentReplay(w http.ResponseWriter, e *idempotencyEntry) {
 	_, _ = w.Write(e.body)
 }
 
-// idempotencyWriter writes through to the real ResponseWriter while
-// buffering the response (status + body) for caching. Uses the standard
-// embed + WriteHeader-guard status-recorder idiom, adding a capped body
-// buffer. Once the
-// buffer would exceed limit it sets overflow and stops buffering (the
-// client still receives the full stream); an overflowed response is
-// not cached.
+// idempotencyWriter writes through to the client while buffering the
+// response (status + body) for caching. Status capture and the
+// first-WriteHeader-wins guard are delegated to a shared
+// webhttp.StatusRecorder rather than hand-rolled; this writer layers the
+// capped body buffer on top. It implements only http.ResponseWriter
+// (Header/WriteHeader/Write) and deliberately NOT Flusher/Hijacker/
+// ReaderFrom, so every response byte flows through Write and into the
+// capture buffer — the recorder's zero-copy ReadFrom would otherwise
+// stream straight to the client and bypass the buffer. Once the buffer
+// would exceed limit it sets overflow and stops buffering (the client
+// still receives the full stream); an overflowed response is not cached.
 type idempotencyWriter struct {
-	http.ResponseWriter
-	buf         bytes.Buffer
-	status      int
-	limit       int
-	wroteHeader bool
-	overflow    bool
+	rec      *webhttp.StatusRecorder
+	buf      bytes.Buffer
+	limit    int
+	overflow bool
 }
 
-func (cw *idempotencyWriter) WriteHeader(code int) {
-	if !cw.wroteHeader {
-		cw.status = code
-		cw.wroteHeader = true
-	}
-	cw.ResponseWriter.WriteHeader(code)
-}
+func (cw *idempotencyWriter) Header() http.Header { return cw.rec.Header() }
+
+func (cw *idempotencyWriter) WriteHeader(code int) { cw.rec.WriteHeader(code) }
 
 func (cw *idempotencyWriter) Write(p []byte) (int, error) {
-	if !cw.wroteHeader {
-		cw.WriteHeader(http.StatusOK)
-	}
-	// Write through to the client first (streaming correctness), then
-	// buffer what was actually written, up to the cap.
-	n, err := cw.ResponseWriter.Write(p)
+	// Write through to the client first (streaming correctness) via the
+	// recorder, then buffer what was actually written, up to the cap.
+	n, err := cw.rec.Write(p)
 	if !cw.overflow {
 		if cw.buf.Len()+n > cw.limit {
 			cw.overflow = true
