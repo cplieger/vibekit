@@ -1,30 +1,51 @@
 // ---------------------------------------------------------------------------
-// Theme toggle (dark / light). Persisted per-device in localStorage via
-// ui-state.ts.
+// Theme toggle (dark / light). The preference is persisted per-device inside
+// the `vibekit.ui-state` localStorage blob (managed by ui-state.ts) and applied
+// to <html data-theme="…"> so the CSS in 01-tokens.css can key off it.
+//
+// The controller is @cplieger/ui-primitives' createTheme: it owns the
+// resolve-and-apply lifecycle and the OS-preference follow, while vibekit
+// supplies a storage adapter that keeps the preference inside its existing
+// ui-state blob (read-modify-write of the `theme` field; sibling fields — tab
+// order, active view, shell state — are left untouched). The UX stays strictly
+// 2-state (dark / light): the toggle flips between the two concrete themes and
+// never selects "system". An unset field reads as "system", so first paint
+// falls back to the OS preference exactly as before.
+//
+// requires @cplieger/ui-primitives >= 2.1.0 (createTheme storage adapter +
+// themeInitSnippetFromJSON); verified locally via node_modules overlay until
+// released.
 // ---------------------------------------------------------------------------
 
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
+import { LS_UI_STATE_KEY } from "./ls-keys.js";
+import { createTheme } from "@cplieger/ui-primitives/theme";
+import type { ThemeController, ThemeStorage } from "@cplieger/ui-primitives/theme";
 
-export type ThemeChoice = "dark" | "light";
+type ThemeChoice = "dark" | "light";
 
+// Persistence adapter: the theme preference lives in the `theme` field of the
+// vibekit.ui-state blob, NOT a bare localStorage key. get() returns that field
+// ("dark" | "light" | null); set() does a read-modify-write via uiState.save()
+// so every sibling field is preserved. A null field (never chosen) reads as
+// "unset" → createTheme treats it as "system" and resolves the OS preference,
+// matching the pre-paint anti-FOUC snippet in index.html. Because the toggle is
+// 2-state, set() only ever receives "dark" / "light".
+const uiStateThemeStorage: ThemeStorage = {
+  get: () => uiState.load().theme,
+  set: (value) => {
+    uiState.save({ theme: value === "light" ? "light" : "dark" });
+  },
+};
+
+let controller: ThemeController | null = null;
+
+// The concrete theme currently reflected by the toggle icon. updateIcon()
+// animates the transition FROM the icon on screen TO the icon for `current`, so
+// it is set to the newly-resolved value immediately before each call (via the
+// controller's onChange).
 let current: ThemeChoice = "dark";
-
-export function applyTheme(choice: ThemeChoice): void {
-  current = choice;
-  document.documentElement.dataset["theme"] = choice;
-  updateIcon();
-}
-
-export function getSystemTheme(): ThemeChoice {
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
-function toggleTheme(): void {
-  const next: ThemeChoice = current === "dark" ? "light" : "dark";
-  applyTheme(next);
-  uiState.save({ theme: next });
-}
 
 function updateIcon(): void {
   const btn = $.themeBtn;
@@ -87,7 +108,24 @@ function updateIcon(): void {
   );
 }
 
-/** Wire up the theme toggle button. Call once during UI init. */
+/** Create the theme controller (applies the persisted / OS theme immediately)
+ *  and wire up the toggle button. Call once during UI init. */
 export function initThemeToggle(): void {
-  $.themeBtn.addEventListener("click", toggleTheme);
+  controller = createTheme({
+    storageKey: LS_UI_STATE_KEY,
+    storage: uiStateThemeStorage,
+    attribute: "data-theme",
+    onChange: (resolved) => {
+      current = resolved;
+      updateIcon();
+    },
+  });
+
+  $.themeBtn.addEventListener("click", () => {
+    if (controller === null) {
+      return;
+    }
+    // Strictly 2-state: flip between the two concrete themes; never "system".
+    controller.set(controller.resolved() === "dark" ? "light" : "dark");
+  });
 }
