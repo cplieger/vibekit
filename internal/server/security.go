@@ -21,10 +21,13 @@ import (
 )
 
 // cspTemplate is the CSP applied to every response, with a single %s
-// placeholder for the inline-importmap sha256 hash. The hash is
-// computed at Server construction from the embedded index.html, so
-// edits to the importmap (including pure-whitespace prettier reformats)
-// "just work" without anyone hand-updating a constant.
+// placeholder for the space-joined sha256 hashes of the two inline <head>
+// scripts: the ES-module importmap and the anti-FOUC theme-init IIFE
+// (@cplieger/ui-primitives' themeInitSnippetFromJSON output, marked with
+// data-theme-init). Both hashes are computed at Server construction from the
+// embedded index.html, so edits to either block "just work" without anyone
+// hand-updating a constant — and script-src stays locked to 'self' + those
+// exact hashes (never 'unsafe-inline').
 //
 // Other directives, briefly:
 //
@@ -48,23 +51,44 @@ const cspTemplate = "default-src 'self'; " +
 // opening and closing tags. DOTALL so the JSON body can be multi-line.
 var importMapRe = regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
 
-// importMapHashToken returns a CSP-quoted sha256 token for the inline
-// importmap block in the given HTML. Caller hands the result straight
-// into cspTemplate. Returns an error if the block is missing.
-func importMapHashToken(html []byte) (string, error) {
-	m := importMapRe.FindSubmatch(html)
+// themeInitRe extracts the inline anti-FOUC theme-init script (the one marked
+// with the data-theme-init attribute). Its body is the verbatim output of
+// @cplieger/ui-primitives' themeInitSnippetFromJSON("vibekit.ui-state",
+// "theme"); hashing it lets script-src stay 'self' + specific hashes without
+// 'unsafe-inline'. DOTALL for symmetry with importMapRe.
+var themeInitRe = regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
+
+// inlineHashToken returns a CSP-quoted sha256 token for the inline <script>
+// body matched by re (which must capture the script's text content in group 1).
+// Caller hands the result straight into cspTemplate. Returns an error if the
+// block is missing, so startup fails loudly rather than serving a CSP that
+// would silently block a required inline script.
+func inlineHashToken(html []byte, re *regexp.Regexp, what string) (string, error) {
+	m := re.FindSubmatch(html)
 	if m == nil {
-		return "", errors.New("no <script type=\"importmap\"> block in index.html")
+		return "", fmt.Errorf("no %s block in index.html", what)
 	}
 	sum := sha256.Sum256(m[1])
 	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'", nil
 }
 
-// buildCSPPolicy reads index.html from staticFS, hashes the inline
-// importmap, and assembles the full CSP string. Called once at Server
-// construction. If anything goes wrong (file missing, regex miss), we
-// return an error so startup fails loudly rather than serve a CSP that
-// would block the browser's import-map and silently break ES module loading.
+// importMapHashToken returns the CSP token for the inline importmap block.
+func importMapHashToken(html []byte) (string, error) {
+	return inlineHashToken(html, importMapRe, `<script type="importmap">`)
+}
+
+// themeInitHashToken returns the CSP token for the inline anti-FOUC theme-init
+// block.
+func themeInitHashToken(html []byte) (string, error) {
+	return inlineHashToken(html, themeInitRe, `<script data-theme-init>`)
+}
+
+// buildCSPPolicy reads index.html from staticFS, hashes both inline <head>
+// scripts (the importmap and the anti-FOUC theme-init), and assembles the full
+// CSP string. Called once at Server construction. If anything goes wrong (file
+// missing, either regex miss), we return an error so startup fails loudly
+// rather than serve a CSP that would block the import-map (breaking ES module
+// loading) or the theme-init (flashing the wrong theme).
 func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if staticFS == nil {
 		return "", errors.New("buildCSPPolicy: nil staticFS")
@@ -73,11 +97,16 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	hash, err := importMapHashToken(html)
+	importMapHash, err := importMapHashToken(html)
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: %w", err)
 	}
-	return fmt.Sprintf(cspTemplate, hash), nil
+	themeInitHash, err := themeInitHashToken(html)
+	if err != nil {
+		return "", fmt.Errorf("buildCSPPolicy: %w", err)
+	}
+	// script-src 'self' <importmap-hash> <theme-init-hash>
+	return fmt.Sprintf(cspTemplate, importMapHash+" "+themeInitHash), nil
 }
 
 // fallbackCSPPolicy assembles a CSP without an importmap hash — used

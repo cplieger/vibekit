@@ -151,21 +151,69 @@ func TestImportMapHashToken_Missing(t *testing.T) {
 }
 
 // TestBuildCSPPolicy: against a synthetic FS, the produced CSP contains
-// the expected sha256 token derived from the importmap content. Covers
-// the whole startup path used by ListenAndServe.
+// the expected sha256 tokens derived from BOTH inline <head> scripts (the
+// importmap and the anti-FOUC theme-init). Covers the whole startup path
+// used by ListenAndServe.
 func TestBuildCSPPolicy(t *testing.T) {
 	importMap := `{"imports":{"x":"/y.mjs"}}`
-	html := []byte(`<html><script type="importmap">` + importMap + `</script></html>`)
+	themeInit := `(function(){document.documentElement.setAttribute("data-theme","dark");})();`
+	html := []byte(`<html><script type="importmap">` + importMap + `</script>` +
+		`<script data-theme-init>` + themeInit + `</script></html>`)
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
 
 	policy, err := buildCSPPolicy(staticFS)
 	if err != nil {
 		t.Fatalf("buildCSPPolicy: %v", err)
 	}
-	sum := sha256.Sum256([]byte(importMap))
+	for _, body := range []string{importMap, themeInit} {
+		sum := sha256.Sum256([]byte(body))
+		want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		if !strings.Contains(policy, want) {
+			t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
+		}
+	}
+}
+
+// TestBuildCSPPolicy_MissingThemeInit: index.html with an importmap but no
+// theme-init block fails construction — a required inline script would
+// otherwise be blocked by the CSP at runtime.
+func TestBuildCSPPolicy_MissingThemeInit(t *testing.T) {
+	html := []byte(`<html><script type="importmap">{"imports":{}}</script></html>`)
+	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
+	if _, err := buildCSPPolicy(staticFS); err == nil {
+		t.Error("expected error when theme-init block is missing, got nil")
+	}
+}
+
+// TestThemeInitHashToken: extracts the inline theme-init script from the real
+// embedded HTML and confirms the produced sha256 token matches a manual
+// recomputation. Guards the parsing + hashing logic, not any hardcoded literal.
+func TestThemeInitHashToken(t *testing.T) {
+	html, err := os.ReadFile(filepath.Join("..", "..", "static", "index.html"))
+	if err != nil {
+		t.Fatalf("read static/index.html: %v", err)
+	}
+	got, err := themeInitHashToken(html)
+	if err != nil {
+		t.Fatalf("themeInitHashToken: %v", err)
+	}
+	re := regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
+	m := re.FindSubmatch(html)
+	if m == nil {
+		t.Fatal("no theme-init block in test fixture")
+	}
+	sum := sha256.Sum256(m[1])
 	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if !strings.Contains(policy, want) {
-		t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
+	if got != want {
+		t.Errorf("themeInitHashToken = %q, want %q", got, want)
+	}
+}
+
+// TestThemeInitHashToken_Missing: HTML without a theme-init block returns an
+// error rather than a misleading empty hash.
+func TestThemeInitHashToken_Missing(t *testing.T) {
+	if _, err := themeInitHashToken([]byte("<html><body>no theme init here</body></html>")); err == nil {
+		t.Error("expected error for HTML with no theme-init block, got nil")
 	}
 }
 

@@ -13,7 +13,18 @@
   <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167.png">
   <link rel="manifest" href="/manifest.json">
   <title>Vibekit for Kiro</title>
-  <script src="/theme-init.js"></script>
+  <!-- Anti-FOUC theme init: applies <html data-theme> before stylesheets parse.
+       Verbatim output of @cplieger/ui-primitives themeInitSnippetFromJSON(
+       "vibekit.ui-state", "theme") — reads the theme field of the
+       vibekit.ui-state localStorage blob, JSON-parses it, and applies the
+       resolved theme (OS fallback when the field is absent or "system"). Kept
+       byte-identical to the library by theme-init-snippet.test.ts and hashed
+       into the CSP by internal/server/security.go (the data-theme-init marker).
+       requires @cplieger/ui-primitives >= 2.1.0 (createTheme storage adapter +
+       themeInitSnippetFromJSON); verified locally via node_modules overlay until
+       released. -->
+  <!-- prettier-ignore -->
+  <script data-theme-init>(function(){try{var raw=localStorage.getItem("vibekit.ui-state");var o=raw?JSON.parse(raw):null;var c=o&&typeof o==="object"?o["theme"]:null;if(c!=="light"&&c!=="dark"&&c!=="system"){c="system";}var r=c==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):c;document.documentElement.setAttribute("data-theme",r);}catch(e){document.documentElement.setAttribute("data-theme",window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}})();</script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -1086,6 +1097,7 @@
         "@cplieger/ui-primitives/confirm": "/vendor/cplieger-ui-primitives/confirm.js",
         "@cplieger/ui-primitives/popover": "/vendor/cplieger-ui-primitives/popover.js",
         "@cplieger/ui-primitives/focus-trap": "/vendor/cplieger-ui-primitives/focus-trap.js",
+        "@cplieger/ui-primitives/theme": "/vendor/cplieger-ui-primitives/theme.js",
         "@cplieger/ui-primitives/view-transition": "/vendor/cplieger-ui-primitives/view-transition.js",
         "@cplieger/ui-primitives/announce": "/vendor/cplieger-ui-primitives/announce.js"
       }
