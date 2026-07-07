@@ -20,6 +20,7 @@ import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { escAttr as escapeHTML } from "./strings.js";
 import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
 
@@ -390,82 +391,90 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   }
 
   const section = el("section", { className: "git-repo-section", "data-repo": r.repo });
-  if (expandedDefault) {
-    section.classList.add("expanded");
-  }
 
-  // Header
+  // Header — the disclosure trigger. A native <button>, so createDisclosure
+  // handles Enter/Space through the native click; no extra keydown wiring.
   const header = el("button", {
     type: "button",
     className: "git-repo-section-header",
-    "aria-expanded": expandedDefault ? "true" : "false",
   });
   header.innerHTML = renderHeaderHTML(r);
-  header.addEventListener("click", (ev) => {
-    // If the click target is inside a branch chip, route to the
-    // branch switcher instead of toggling the section. The chip
-    // intercepts at the bubbling phase before this listener.
-    const target = ev.target as HTMLElement | null;
-    const chip = target?.closest<HTMLElement>("[data-branch-trigger]");
-    if (chip !== null && chip !== undefined && header.contains(chip)) {
+
+  // Preserve the branch-chip interception: a click on the branch chip must open
+  // the branch switcher, NOT toggle the section. createDisclosure adds its own
+  // (bubble-phase) click listener to the trigger, so a dedicated listener on the
+  // chip that stops propagation makes the chip win — the disclosure's click
+  // never fires for chip clicks.
+  const branchChip = header.querySelector<HTMLElement>("[data-branch-trigger]");
+  if (branchChip !== null) {
+    branchChip.addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       void import("./git-branch-switcher.js")
         .then(({ openBranchSwitcher }) => {
-          openBranchSwitcher(r.repo, chip);
+          openBranchSwitcher(r.repo, branchChip);
         })
         .catch(() => {
           /* noop */
         });
-      return;
-    }
-    const open = section.classList.toggle("expanded");
-    header.setAttribute("aria-expanded", open ? "true" : "false");
-    // Bug 3: Record user's explicit toggle so re-renders respect it.
-    if (open) {
-      userExpandedRepos.add(r.repo);
-      userCollapsedRepos.delete(r.repo);
-    } else {
-      userCollapsedRepos.add(r.repo);
-      userExpandedRepos.delete(r.repo);
-    }
-  });
+    });
+  }
   section.appendChild(header);
 
-  // Body (the part that toggles)
+  // Body — the collapsing disclosure region. createDisclosure owns the collapse
+  // (inline height 0<->auto, the .uip-disclosure-region clip, aria-hidden/inert);
+  // the visual padding + flex layout live on the inner wrapper so they collapse
+  // with the height (no residual sliver when closed).
   const body = el("div", { className: "git-repo-section-body" });
+  const inner = el("div", { className: "git-repo-section-body-inner" });
+  body.appendChild(inner);
+
+  // onToggle persists the user's explicit toggle so re-renders respect it —
+  // exactly the bookkeeping the old click handler did.
+  createDisclosure(header, body, {
+    open: expandedDefault,
+    onToggle: (open) => {
+      if (open) {
+        userExpandedRepos.add(r.repo);
+        userCollapsedRepos.delete(r.repo);
+      } else {
+        userCollapsedRepos.add(r.repo);
+        userExpandedRepos.delete(r.repo);
+      }
+    },
+  });
 
   if (!r.is_repo) {
-    body.append(el("div", { className: "git-repo-row-error" }, "Not a git repository."));
+    inner.append(el("div", { className: "git-repo-row-error" }, "Not a git repository."));
     section.appendChild(body);
     return section;
   }
 
   // Action bar
-  body.appendChild(renderActionBar(r));
+  inner.appendChild(renderActionBar(r));
 
   // Open-PR hint after a successful push (transient).
   if (recentlyPushed.has(r.repo) && isFeatureBranch(r.branch)) {
-    body.appendChild(renderOpenPRHint(r));
+    inner.appendChild(renderOpenPRHint(r));
   }
 
   // File list (staged first, then unstaged)
   if (filteredFiles.length === 0 && !r.has_dirty) {
-    body.appendChild(el("div", { className: "git-repo-row-clean" }, "Clean."));
+    inner.appendChild(el("div", { className: "git-repo-row-clean" }, "Clean."));
   } else if (filteredFiles.length === 0) {
-    body.appendChild(el("div", { className: "git-repo-row-empty" }, "No paths match the filter."));
+    inner.appendChild(el("div", { className: "git-repo-row-empty" }, "No paths match the filter."));
   } else {
-    body.appendChild(renderFileList(r, filteredFiles));
+    inner.appendChild(renderFileList(r, filteredFiles));
   }
 
   // Commit area (only if there are staged files)
   const stagedCount = r.files.filter((f) => f.staged).length;
   if (stagedCount > 0) {
-    body.appendChild(renderCommitArea(r, commitDeps()));
+    inner.appendChild(renderCommitArea(r, commitDeps()));
   }
 
   // Recent commits sub-section (collapsed by default; expand → fetch).
-  body.appendChild(renderRecentCommits(r, commitDeps()));
+  inner.appendChild(renderRecentCommits(r, commitDeps()));
 
   section.appendChild(body);
   return section;
@@ -483,9 +492,10 @@ function renderHeaderHTML(r: RepoStatus): string {
       : "";
   const branch = escapeHTML(r.branch || "(detached)");
   // The branch chip is a span (not a nested button — buttons can't
-  // be inside a button per HTML spec) but the section header captures
-  // the click and routes it through openBranchSwitcher when the
-  // target was inside the chip.
+  // be inside a button per HTML spec); a dedicated click listener on
+  // the chip (wired in renderRepoSection) stops propagation and routes
+  // to openBranchSwitcher, so the disclosure trigger's click never fires
+  // for chip clicks.
   return `
     <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}

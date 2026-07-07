@@ -27,6 +27,7 @@ import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { iconEl } from "./icon-el.js";
 
 // --- Types ---
@@ -292,9 +293,16 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   if (body === null) {
     return;
   }
+  // Content lives on the disclosure region's inner wrapper (the region itself
+  // is owned by createDisclosure — never replaceChildren() it, that would drop
+  // the wrapper and break the collapse). Mutate the inner wrapper instead.
+  const inner = body.querySelector<HTMLElement>(":scope > .git-repo-section-body-inner");
+  if (inner === null) {
+    return;
+  }
 
   // Drop any non-keyed placeholders (error / empty rows) before reconcile.
-  for (const child of [...body.children]) {
+  for (const child of [...inner.children]) {
     if (
       (child as HTMLElement).getAttribute("data-reconcile-key") === null &&
       !child.classList.contains("git-pr-list")
@@ -304,8 +312,8 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   }
 
   if (g.error !== undefined && g.error !== "") {
-    body.replaceChildren();
-    body.appendChild(
+    inner.replaceChildren();
+    inner.appendChild(
       el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
     );
     return;
@@ -318,8 +326,8 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
       : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
 
   if (filtered.length === 0) {
-    body.replaceChildren();
-    body.appendChild(
+    inner.replaceChildren();
+    inner.appendChild(
       el(
         "div",
         { className: "git-repo-row-empty" },
@@ -329,10 +337,10 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
     return;
   }
 
-  let list = body.querySelector<HTMLElement>(":scope > .git-pr-list");
+  let list = inner.querySelector<HTMLElement>(":scope > .git-pr-list");
   if (list === null) {
     list = el("ul", { className: "git-pr-list" });
-    body.replaceChildren(list);
+    inner.replaceChildren(list);
   }
   reconcile(list, filtered, {
     key: (pr: PR) => `${g.forge_id}:${pr.number}`,
@@ -356,12 +364,9 @@ function renderGroup(g: RepoGroup): HTMLElement {
   const expandedDefault = g.prs.length > 0 || filterText !== "";
 
   const section = el("section", { className: "git-repo-section", "data-repo": g.full_name });
-  if (expandedDefault) {
-    section.classList.add("expanded");
-  }
 
   // Header is a flex container that hosts: chevron + forge icon +
-  // name + count (left side, click-to-toggle), and a right-aligned
+  // name + count (left side, the disclosure trigger), and a right-aligned
   // [+ New PR] button. The button's stopPropagation keeps the
   // toggle from firing when the user clicks New PR.
   const header = el("div", { className: "git-repo-section-header git-repo-section-header-row" });
@@ -369,7 +374,6 @@ function renderGroup(g: RepoGroup): HTMLElement {
   const toggle = el("button", {
     type: "button",
     className: "git-repo-section-header-toggle",
-    "aria-expanded": expandedDefault ? "true" : "false",
   });
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
@@ -386,10 +390,6 @@ function renderGroup(g: RepoGroup): HTMLElement {
     el("span", { className: "git-repo-section-name" }, g.full_name),
     el("span", { className: "git-repo-section-meta" }, countText),
   );
-  toggle.addEventListener("click", () => {
-    const open = section.classList.toggle("expanded");
-    toggle.setAttribute("aria-expanded", open ? "true" : "false");
-  });
   header.appendChild(toggle);
 
   const newBtn = el("button", { type: "button", className: "btn-small btn-primary" }, "+ New PR");
@@ -401,14 +401,21 @@ function renderGroup(g: RepoGroup): HTMLElement {
 
   section.appendChild(header);
 
+  // Body — the collapsing disclosure region (same pattern as the Changes tab).
+  // The dedicated toggle button is the trigger; the + New PR button is a
+  // sibling that already stopPropagation()s, so it stays unaffected. Content
+  // lives on the inner wrapper so its padding collapses with the height.
   const body = el("div", { className: "git-repo-section-body" });
+  const inner = el("div", { className: "git-repo-section-body-inner" });
+  body.appendChild(inner);
+  createDisclosure(toggle, body, { open: expandedDefault });
 
   if (g.error !== undefined && g.error !== "") {
-    body.appendChild(
+    inner.appendChild(
       el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
     );
   } else if (g.prs.length === 0) {
-    body.appendChild(
+    inner.appendChild(
       el(
         "div",
         { className: "git-repo-row-empty" },
@@ -425,7 +432,7 @@ function renderGroup(g: RepoGroup): HTMLElement {
     for (const pr of filtered) {
       list.appendChild(renderPRRow(g, pr));
     }
-    body.appendChild(list);
+    inner.appendChild(list);
   }
 
   section.appendChild(body);
