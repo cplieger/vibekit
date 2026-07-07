@@ -1,11 +1,12 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/cplieger/webhttp"
 )
 
 // DecodeJSON is the shared three-step JSON decode prelude: check
@@ -21,8 +22,10 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		BadRequest(w, "expected "+MIMETypeJSON)
 		return false
 	}
-	LimitBody(w, r, MaxJSONBody)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	// Cap + decode + reject-trailing is webhttp.DecodeJSONInto (shared with the
+	// fleet); vibekit keeps its Content-Type gate, the 413/400 split, and its
+	// bare {"error":…} envelope on top — DecodeJSONInto writes nothing itself.
+	if err := webhttp.DecodeJSONInto(w, r, v, MaxJSONBody); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("api: decode body too large",
 				"method", r.Method, "path", r.URL.Path,
