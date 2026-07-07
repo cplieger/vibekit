@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { openDialog } from "@cplieger/ui-primitives/dialog";
 import type { ElicitationNeededPayload, ElicitationPropertySchema } from "./types.js";
 import { $ } from "./dom.js";
 import { trapFocus } from "./focus-trap.js";
@@ -129,7 +130,7 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
     finish("cancel");
   };
 
-  dialogEl.showModal();
+  openDialog(dialogEl);
   releaseFocus = trapFocus(dialogEl);
 }
 
