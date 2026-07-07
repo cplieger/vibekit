@@ -88,7 +88,7 @@ function collapse<T>(r: FetchResult<T>, method: string, path: string): T | null 
 
 /** GET `path` and return parsed JSON, or null on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
-  return collapse(await fx.requestRaw<T>("GET", path, reqOpts({}, signal)), "GET", path);
+  return collapse(await fx.apiGetRaw<T>(path, reqOpts({}, signal)), "GET", path);
 }
 
 /** POST `body` as JSON to `path`, return parsed JSON response or null. */
@@ -97,12 +97,12 @@ export async function apiPost<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  return collapse(await fx.requestRaw<T>("POST", path, reqOpts({ body }, signal)), "POST", path);
+  return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({}, signal)), "POST", path);
 }
 
 /** DELETE `path`. Returns true on success, false on failure. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
-  const r = await fx.requestRaw<unknown>("DELETE", path, reqOpts({}, signal));
+  const r = await fx.apiDeleteRaw<unknown>(path, reqOpts({}, signal));
   if (r.ok) {
     return true;
   }
@@ -137,7 +137,7 @@ export async function apiGetTyped<T>(
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  return collapse(await fx.requestRaw<T>("GET", path, reqOpts({ decoder }, signal)), "GET", path);
+  return collapse(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)), "GET", path);
 }
 
 /** POST variant of apiGetTyped: validates the 2xx response body via the
@@ -148,11 +148,7 @@ export async function apiPostTyped<T>(
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  return collapse(
-    await fx.requestRaw<T>("POST", path, reqOpts({ body, decoder }, signal)),
-    "POST",
-    path,
-  );
+  return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
 }
 
 /** PUT variant that surfaces error details. Use when the UI must show the
@@ -164,7 +160,7 @@ export async function apiPutOrError<T>(
   body: unknown,
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
-  const r = await fx.requestRaw<T>("PUT", path, reqOpts({ body }, signal));
+  const r = await fx.apiPutRaw<T>(path, body, reqOpts({}, signal));
   if (r.ok) {
     return { ok: true, status: r.status, data: r.data ?? null, error: "" };
   }

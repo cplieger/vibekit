@@ -26,6 +26,7 @@ import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { iconEl } from "./icon-el.js";
 
 // --- Types ---
@@ -587,11 +588,26 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
   openNewPRDialog(group, sourceBranch);
 }
 
+// PR-create dialog controller, adopted from @cplieger/ui-primitives/dialog:
+// bundles open + drag-safe backdrop dismissal + the fade-out close lifecycle
+// (the shared .uip-dialog skin, which vibekit maps to --dur-exit/--ease-exit)
+// that this native <dialog> otherwise hand-wires. Created once and reused
+// across opens so the backdrop/Escape listeners aren't stacked. Unlike the
+// permission/elicitation prompts (kept non-backdrop-dismissable — an
+// accidental dismiss there means an accidental deny), this is a re-openable
+// form, so backdrop + Escape dismissal are enabled.
+let prDialogCtl: DialogController | null = null;
+function prDialogController(dlg: HTMLDialogElement): DialogController {
+  prDialogCtl ??= createDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
+  return prDialogCtl;
+}
+
 function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
   if (dlg === null) {
     return;
   }
+  const dialogCtl = prDialogController(dlg);
 
   const baseInput = document.getElementById("pr-base") as HTMLInputElement | null;
   const headInput = document.getElementById("pr-head") as HTMLInputElement | null;
@@ -642,7 +658,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     const fresh = btn.cloneNode(true) as HTMLButtonElement;
     btn.replaceWith(fresh);
     fresh.addEventListener("click", () => {
-      dlg.close();
+      dialogCtl.close();
     });
   }
 
@@ -731,13 +747,13 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
       }
       return;
     }
-    dlg.close();
+    dialogCtl.close();
     await refreshPRs().catch(() => {
       /* noop */
     });
   });
 
-  dlg.showModal();
+  dialogCtl.open();
   // Kick off the AI generation immediately so it overlaps with the
   // user picking up the form. Errors are non-fatal — they just leave
   // the title/body blank for the user to fill manually.

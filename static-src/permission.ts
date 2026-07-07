@@ -8,6 +8,7 @@
 
 import type { PermissionOption } from "./types.js";
 import { el } from "@cplieger/reactive";
+import { openDialog } from "@cplieger/ui-primitives/dialog";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
@@ -102,7 +103,7 @@ export function showPermissionDialog(
     }
   }
 
-  approvalEl.showModal();
+  openDialog(approvalEl);
   scroll();
 }
 
