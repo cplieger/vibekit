@@ -16,6 +16,8 @@ import (
 	"io/fs"
 	"net/http"
 	"regexp"
+
+	"github.com/cplieger/webhttp"
 )
 
 // cspTemplate is the CSP applied to every response, with a single %s
@@ -87,20 +89,23 @@ func fallbackCSPPolicy() string {
 	return fmt.Sprintf(cspTemplate, "'unsafe-inline'")
 }
 
-// securityMiddleware applies CSP headers and wraps the handler with
-// http.NewCrossOriginProtection (Go 1.25+ stdlib). The CSRF protection
-// allows GET/HEAD/OPTIONS unconditionally and rejects state-changing
-// cross-origin requests with 403 Forbidden via the stdlib's default
-// deny handler. CSP/nosniff/Referrer-Policy are set on every response
-// (including the 403) so the deny path stays consistent with the rest
-// of the surface.
+// securityMiddleware sets the response security-header baseline via
+// webhttp.SecurityHeaders and wraps the handler with
+// http.NewCrossOriginProtection (Go 1.25+ stdlib) for CSRF, a concern
+// webhttp does not ship so it stays app-side. SecurityHeaders sets
+// X-Content-Type-Options: nosniff, X-Frame-Options: DENY (aligned with
+// the CSP's frame-ancestors 'none'), Referrer-Policy pinned to vibekit's
+// existing same-origin, and the dynamic CSP passed through WithCSP. The
+// CSRF protection allows GET/HEAD/OPTIONS unconditionally and rejects
+// state-changing cross-origin requests with 403 Forbidden via the
+// stdlib's default deny handler. Because SecurityHeaders wraps the CSRF
+// handler from the outside, the baseline headers are set on every
+// response (including the 403) so the deny path stays consistent with
+// the rest of the surface.
 func securityMiddleware(cspPolicy string, next http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
-	csrfWrapped := csrf.Handler(next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", cspPolicy)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "same-origin")
-		csrfWrapped.ServeHTTP(w, r)
-	})
+	return webhttp.SecurityHeaders(
+		webhttp.WithCSP(cspPolicy),
+		webhttp.WithReferrerPolicy("same-origin"),
+	)(csrf.Handler(next))
 }

@@ -87,31 +87,34 @@ func WriteRawJSON(w http.ResponseWriter, data []byte) {
 //
 // Use these in handlers instead of hand-crafting JSON strings with
 // http.Error. Consistent shape across every package: {"error": "msg"}
-// with the correct status code + Content-Type.
+// with the correct status code + Content-Type. Each helper layers
+// vibekit's bare error taxonomy on webhttp.ErrorResponse; the Code and
+// RequestID envelope fields are left empty (omitempty), so the wire
+// shape stays the bare {"error": "msg"} vibekit clients expect.
 
 // BadRequest writes a 400 with {"error": msg}.
 func BadRequest(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusBadRequest, map[string]string{JSONKeyError: msg})
+	WriteJSONStatus(w, http.StatusBadRequest, webhttp.ErrorResponse{Error: msg})
 }
 
 // Forbidden writes a 403 with {"error": msg}.
 func Forbidden(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusForbidden, map[string]string{JSONKeyError: msg})
+	WriteJSONStatus(w, http.StatusForbidden, webhttp.ErrorResponse{Error: msg})
 }
 
 // NotFound writes a 404 with {"error": msg}.
 func NotFound(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusNotFound, map[string]string{JSONKeyError: msg})
+	WriteJSONStatus(w, http.StatusNotFound, webhttp.ErrorResponse{Error: msg})
 }
 
 // Conflict writes a 409 with {"error": msg}.
 func Conflict(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusConflict, map[string]string{JSONKeyError: msg})
+	WriteJSONStatus(w, http.StatusConflict, webhttp.ErrorResponse{Error: msg})
 }
 
 // MethodNotAllowed writes a 405 with a standard message.
 func MethodNotAllowed(w http.ResponseWriter) {
-	WriteJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{JSONKeyError: "method not allowed"})
+	WriteJSONStatus(w, http.StatusMethodNotAllowed, webhttp.ErrorResponse{Error: "method not allowed"})
 }
 
 // InternalError writes a 500 with {"error": "internal error"} and logs
@@ -121,7 +124,7 @@ func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
 		slog.Error("api: internal error", "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: MsgInternalError})
+	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: MsgInternalError})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message
@@ -132,13 +135,13 @@ func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
 		slog.Error("api: server error", "client_msg", clientMsg, "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, map[string]string{JSONKeyError: clientMsg})
+	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
 }
 
 // Ok writes a 200 with {"ok": true} — the standard "action succeeded"
 // response used by the handful of endpoints that don't return data.
 func Ok(w http.ResponseWriter) {
-	WriteJSON(w, map[string]bool{"ok": true})
+	webhttp.Ok(w)
 }
 
 // --- Capped I/O writers ---
