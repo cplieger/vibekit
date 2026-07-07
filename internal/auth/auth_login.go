@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp"
 )
 
 // validateProvider rejects anything that isn't a well-formed HTTPS URL.
@@ -127,11 +128,14 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Audit trail: record every /api/login POST so operators can
-	// distinguish browser-initiated login from unexpected LAN
-	// activity in Loki. Single-user, LAN-trusted deployment, so
-	// cardinality on remote_addr + user_agent is bounded.
+	// distinguish browser-initiated login from unexpected activity in
+	// Loki. client_ip is the spoof-safe resolved client host from
+	// webhttp.ClientIP: the unspoofable socket peer when directly
+	// exposed, or the real client from a trusted X-Forwarded-For when
+	// TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
+	// client_ip + user_agent is bounded.
 	slog.Info("login: request received",
-		"remote_addr", r.RemoteAddr,
+		"client_ip", webhttp.ClientIP(r, h.trusted...),
 		"user_agent", r.Header.Get("User-Agent"))
 	select {
 	case h.loginSem <- struct{}{}:

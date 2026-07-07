@@ -46,9 +46,9 @@ type App struct {
 
 // Build constructs all services and wires them together. staticFS is
 // the embedded filesystem containing the compiled web UI. cfg is
-// passed by pointer to avoid copying the 112-byte Config struct at
-// every invocation (it's only ever built once from the environment,
-// then mutated is forbidden — callers must treat it as read-only).
+// passed by pointer to avoid copying the Config struct at every
+// invocation (it's only ever built once from the environment, then
+// mutated is forbidden — callers must treat it as read-only).
 func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Instance guard: prevent two vibekit processes from running against
 	// the same configDir (which would corrupt chat files). Uses flock so
@@ -135,7 +135,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	authHandler := auth.NewHandler(cfg.CLIPath, auth.WithConfig(cfg.AuthConfig))
+	authHandler := auth.NewHandler(cfg.CLIPath,
+		auth.WithConfig(cfg.AuthConfig),
+		auth.WithTrustedProxies(cfg.TrustedProxies))
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
@@ -184,6 +186,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithCLIPath(cfg.CLIPath),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithWorkDir(cfg.WorkDir),
+		server.WithTrustedProxies(cfg.TrustedProxies),
 	)
 
 	return &App{

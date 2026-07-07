@@ -57,6 +57,20 @@ To skip managing host ownership, run as root instead with `user: "0:0"` (less se
 
 Network-exposed: put it behind an authenticating reverse proxy — vibekit has its own password/OIDC auth, but it controls an agent with shell and filesystem access to `/workspace`. Web-push uses an SSRF-hardened transport. Debian base (a shell + the `kiro-cli` subprocess are required, so this is not distroless). Images are published with cosign signatures and SBOM attestations.
 
+### Client IP logging (`TRUSTED_PROXIES`)
+
+The access log and the login/logout audit logs record a `client_ip`. How that address is resolved depends on how you expose vibekit:
+
+- **Directly exposed** (no reverse proxy in front): leave `TRUSTED_PROXIES` unset. `client_ip` is the address of the connecting socket, which cannot be forged at this layer. Any `X-Forwarded-For` header a client sends is ignored.
+- **Behind a reverse proxy**: set `TRUSTED_PROXIES` to your proxy's address range so `client_ip` shows the real client instead of the proxy's own address. It is a comma-separated list of CIDRs (bare IPs are accepted as single hosts), for example:
+
+  ```yaml
+  environment:
+    TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
+  ```
+
+`X-Forwarded-For` is honored **only** when the connecting peer falls inside `TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
+
 ## Disclaimer
 
 This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.

@@ -46,9 +46,14 @@ type Server struct {
 	cliPath       string
 	configDir     string
 	workDir       string
-	cliTimeouts   cliTimeouts
-	settingsMu    sync.Mutex
-	installing    atomic.Bool
+	// trustedProxies is the reverse-proxy network set passed to
+	// webhttp.WithClientIP so the access log's client_ip resolves the
+	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
+	// log the unspoofable socket peer.
+	trustedProxies []*net.IPNet
+	cliTimeouts    cliTimeouts
+	settingsMu     sync.Mutex
+	installing     atomic.Bool
 	// ready flips to true once the listener binds and srv.Serve is
 	// running; flips back to false on shutdown signal so /api/health
 	// reports unready during drain. Same semantic across the cplieger
@@ -121,6 +126,14 @@ func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d }
 
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
+
+// WithTrustedProxies sets the reverse-proxy networks trusted when
+// resolving the access-log client_ip via webhttp.WithClientIP. Empty/nil
+// trusts nothing, so the unspoofable socket-peer host is logged (the
+// spoof-safe default for a directly-exposed deployment).
+func WithTrustedProxies(trusted []*net.IPNet) Option {
+	return func(s *Server) { s.trustedProxies = trusted }
+}
 
 // New constructs a Server with the given options applied.
 func New(opts ...Option) *Server {
@@ -198,8 +211,18 @@ func (s *Server) ListenAndServe() error {
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
 	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
 	// responses).
+	//
+	// webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
+	// with no trusted proxies it is the unspoofable socket peer; when
+	// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
+	// resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
+	// streaming paths. Requires webhttp >= v1.2.0 (WithClientIP); local build
+	// via go.work replace until released (go.mod still pins v1.1.1).
 	handler := webhttp.Chain(mux,
-		webhttp.Logging(webhttp.WithSkipPaths("/api/events", "/api/shell/ws")),
+		webhttp.Logging(
+			webhttp.WithSkipPaths("/api/events", "/api/shell/ws"),
+			webhttp.WithClientIP(s.trustedProxies...),
+		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, next) },
 		idem.middleware,
