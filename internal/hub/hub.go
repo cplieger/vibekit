@@ -524,7 +524,7 @@ func (h *Hub) cullIdleBridgesOnce() {
 	toClose := h.bridge.mgr.selectIdle(timeout)
 	for _, c := range h.bridge.mgr.closeAndStop(toClose) {
 		slog.Info("culled idle bridge", "chat_id", c.chatID,
-			"idle_since", c.sb.lastActiveAt.Format(time.RFC3339))
+			"idle_since", c.sb.lastActiveAt.UTC().Format(time.RFC3339))
 	}
 	// Utility bridge lives behind its own mutex; coordinate via
 	// ub.mu to avoid racing an in-flight UtilityPrompt. A slow call
