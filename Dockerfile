@@ -80,6 +80,19 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
 
+# Fetch @cplieger/ui-primitives TS source (same TS-only pattern). The app's
+# headless UI modules (toast, tooltip, confirm, popover, focus-trap,
+# view-transition, announce) import its per-primitive subpaths; resolved via
+# the importmap at runtime (/vendor/cplieger-ui-primitives/...). Its base
+# stylesheet (css/ui-primitives.css) is concatenated into static/style.css by
+# the CSS-bundle step below (via a MANIFEST entry), then skinned by
+# static-src/css/04-uip-skin.css.
+# renovate: datasource=npm depName=@cplieger/ui-primitives
+ARG CPLIEGER_UI_PRIMITIVES_VERSION=2.0.0
+RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
+
 # Compile TypeScript then build Go (static files embedded via go:embed).
 # BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
 # running binary can report what tag it was built from. Defaults to "dev"
@@ -120,7 +133,17 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --rootDir static-src/node_modules/@cplieger/web-terminal-engine/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts
+        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-ui-primitives \
+        --rootDir static-src/node_modules/@cplieger/ui-primitives/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/ui-primitives/src/*.ts \
+        static-src/node_modules/@cplieger/ui-primitives/src/toast/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file

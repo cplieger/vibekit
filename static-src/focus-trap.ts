@@ -1,61 +1,15 @@
 // ---------------------------------------------------------------------------
-// Focus trap: keeps Tab cycling within a container. Used for modal dialogs
-// (permission dialog, confirm dialog) per WAI-ARIA dialog pattern.
+// Focus trap — adopted from @cplieger/ui-primitives.
 //
-// Usage:
-//   const release = trapFocus(dialogEl);
-//   // ... dialog is open ...
-//   release(); // restore focus to the element that was focused before
+// The hand-rolled Tab-cycle implementation was replaced by the library's
+// `trapFocus`, which has the same `trapFocus(container) => release` contract
+// (release restores the previously-focused element) but adds initialFocus /
+// returnFocus options, a fail-closed path when nothing is focusable, and
+// position:fixed-aware visibility detection (getClientRects + checkVisibility
+// instead of offsetParent).
+//
+// Kept as a thin re-export so the existing `./focus-trap.js` import path
+// (modals.ts, elicitation.ts) is unchanged.
 // ---------------------------------------------------------------------------
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-/** Trap focus within `container`. Returns a release function that
- *  restores focus to the previously-focused element. */
-export function trapFocus(container: HTMLElement): () => void {
-  const previousFocus = document.activeElement as HTMLElement | null;
-
-  function getFocusable(): HTMLElement[] {
-    return [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-      (el) => el.offsetParent !== null, // visible
-    );
-  }
-
-  // Focus the first focusable element.
-  const items = getFocusable();
-  if (items.length > 0) {
-    items[0]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  }
-
-  function onKeyDown(e: KeyboardEvent): void {
-    if (e.key !== "Tab") {
-      return;
-    }
-    const focusable = getFocusable();
-    if (focusable.length === 0) {
-      return;
-    }
-    const first = focusable[0]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const last = focusable[focusable.length - 1]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-
-    if (e.shiftKey) {
-      if (document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else {
-      if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  }
-
-  container.addEventListener("keydown", onKeyDown);
-
-  return (): void => {
-    container.removeEventListener("keydown", onKeyDown);
-    previousFocus?.focus();
-  };
-}
+export { trapFocus } from "@cplieger/ui-primitives/focus-trap";

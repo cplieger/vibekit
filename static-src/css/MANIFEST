@@ -10,6 +10,11 @@
 #   60-61  MCP integrations (live in implicit outer layer, post-mobile)
 00-header.css
 01-tokens.css
+# @cplieger/ui-primitives headless base (structure + motion), then vibekit's
+# skin. Both unlayered so the skin's .uip-* rules win by source order. The base
+# is the vendored package stylesheet (resolved via ../node_modules at build).
+../node_modules/@cplieger/ui-primitives/css/ui-primitives.css
+04-uip-skin.css
 02-reset.css
 03-base.css
 10-shell-app.css

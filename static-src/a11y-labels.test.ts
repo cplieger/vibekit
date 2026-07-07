@@ -14,15 +14,21 @@ describe("a11y: missing labels", () => {
     expect(cb.getAttribute("aria-label")).toBe("Task item");
   });
 
-  it("toast element has aria-label with level and message", async () => {
-    const { showToast } = await import("./toast.js");
+  it("toast is announced via the shared live region and is self-describing", async () => {
+    const { showToast, _resetForTest } = await import("./toast.js");
     const dismiss = showToast("File saved", "success", 5000);
-    const toast = document.querySelector(".vk-toast-success")!;
+    const toast = document.querySelector(".uip-toast--success")!;
     expect(toast).not.toBeNull();
-    expect(toast.getAttribute("aria-label")).toBe(
-      "success notification: File saved. Click to dismiss.",
-    );
+    // The library decouples announcement from the visual node: the toast is
+    // keyboard-focusable with a visually-hidden dismiss hint, and the message
+    // is announced through the shared polite live region rather than an
+    // aria-label on the node (which would double-announce / nest live regions).
+    expect(toast.getAttribute("tabindex")).toBe("0");
+    expect(toast.querySelector(".uip-visually-hidden")?.textContent).toBe("Click to dismiss.");
+    expect(toast.querySelector(".uip-toast-msg")?.textContent).toBe("File saved");
+    expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
     dismiss();
+    _resetForTest();
   });
 
   it("banner stack container has aria-label and aria-live", async () => {
@@ -319,24 +325,25 @@ describe("a11y: confirm dialog focus management", () => {
   it("destructive variant focuses cancel button", async () => {
     const { confirm } = await import("./confirm.js");
     const p = confirm("Delete everything?", "Delete", "destructive");
-    const dialog = document.querySelector(".vk-confirm-dialog")!;
+    const dialog = document.querySelector(".uip-confirm")!;
     expect(dialog).not.toBeNull();
-    const cancelBtn = dialog.querySelector<HTMLElement>(".vk-confirm-cancel")!;
+    const cancelBtn = dialog.querySelector<HTMLElement>(".uip-confirm-cancel")!;
     expect(document.activeElement).toBe(cancelBtn);
     // Close the dialog to resolve the promise
     cancelBtn.click();
     expect(await p).toBe(false);
   });
 
-  it("normal variant focuses first focusable (cancel button is first)", async () => {
+  it("normal variant focuses the confirm button", async () => {
     const { confirm } = await import("./confirm.js");
     const p = confirm("Continue?", "OK", "normal");
-    const dialog = document.querySelector(".vk-confirm-dialog")!;
-    const cancelBtn = dialog.querySelector<HTMLElement>(".vk-confirm-cancel")!;
-    // trapFocus focuses first focusable which is cancel (it comes first in DOM)
-    expect(document.activeElement).toBe(cancelBtn);
-    cancelBtn.click();
-    await p;
+    const dialog = document.querySelector(".uip-confirm")!;
+    const okBtn = dialog.querySelector<HTMLElement>(".uip-confirm-ok")!;
+    // The library focuses the primary (confirm) action for non-destructive
+    // prompts; destructive prompts focus Cancel instead (see the test above).
+    expect(document.activeElement).toBe(okBtn);
+    okBtn.click();
+    expect(await p).toBe(true);
   });
 });
 
