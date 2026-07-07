@@ -11,9 +11,9 @@
 
 import { el, bindList, effect } from "@cplieger/reactive";
 
-import { $, byId } from "./dom.js";
+import { $ } from "./dom.js";
 import { onSSE } from "./bus.js";
-import { closeModal, openModal } from "./modals.js";
+import { onModalClose, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
 import {
@@ -371,23 +371,12 @@ async function openEditModal(id: string): Promise<void> {
 export function initMCP(): void {
   buildSectionScaffold();
 
-  const close = byId<HTMLButtonElement>("mcp-modal-close");
-  close.addEventListener("click", () => {
-    cleanupModal();
-    closeModal($.mcpModal);
-  });
-
-  // Hook into Escape and overlay-dismiss paths: closeModal toggles the
-  // 'hidden' class on the modal element. Watch for that transition and call
-  // cleanupModal regardless of which path closed the modal (idempotent).
-  const observer = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      if (m.attributeName === "class" && $.mcpModal.classList.contains("hidden")) {
-        cleanupModal();
-      }
-    }
-  });
-  observer.observe($.mcpModal, { attributes: true, attributeFilter: ["class"] });
+  // The modal's Close button is wired generically by initAllModals; the
+  // add/edit-form cleanup must run on EVERY close path (Close button, backdrop
+  // drag-safe click, Escape), so hang it off the controller's onClose. This
+  // replaces the old MutationObserver that watched for the `.hidden` class the
+  // overlay system toggled (the native <dialog> no longer uses it).
+  onModalClose($.mcpModal, cleanupModal);
 
   // Runtime status / config changes flow through the per-server signals; the
   // row effects re-render reactively (no explicit re-render call needed).

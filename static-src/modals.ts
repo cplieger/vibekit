@@ -1,68 +1,106 @@
 // ---------------------------------------------------------------------------
-// Shared modal utilities (close, overlay dismiss, confirm dialog, login)
+// Shared modal system — built on @cplieger/ui-primitives' createModal
+// (native <dialog>).
+//
+// Each modal's content element is pre-authored in index.html (id="X-modal",
+// data-modal); createModal wraps it in a <dialog class="uip-modal"> appended to
+// <body>. The platform then owns focus containment, the top layer, background
+// inerting, Escape, nested stacking, and focus-return-to-opener; createModal
+// adds ARIA wiring (auto aria-labelledby from a `-title` descendant), drag-safe
+// backdrop dismiss, the shared `is-leaving` fade-out, and an iOS-safe
+// ref-counted background scroll-lock.
+//
+// The old overlay-<div> system (initAllModals querying `.modal-overlay`, a
+// hand-rolled focus trap via a `modalTraps` WeakMap, `setupOverlayClose`
+// mousedown/mouseup dismissal, and openModal/closeModal toggling a `.hidden`
+// class) was removed in this rewrite — every one of those is now native or
+// provided by createModal.
 // ---------------------------------------------------------------------------
 
+import { createModal, type ModalController } from "@cplieger/ui-primitives/modal";
 import { el } from "@cplieger/reactive";
-import { pollUntil } from "./actions/index.js";
+import { pollUntil, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { isSafeUrl } from "./utils-url.js";
-import { registerCleanup } from "./actions/index.js";
-import { trapFocus } from "./focus-trap.js";
 
-/** Active focus-trap release functions keyed by modal element. */
-const modalTraps = new WeakMap<HTMLElement, () => void>();
+/** Pre-authored modal content element -> its createModal controller. */
+const controllers = new Map<HTMLElement, ModalController>();
+/** Open-order stack of content elements; closeTopModal closes the topmost. */
+const openStack: HTMLElement[] = [];
+/** Per-modal callbacks run after the modal finishes closing (via any path). */
+const closeCallbacks = new Map<HTMLElement, Set<() => void>>();
 
-export function closeModal(modal: HTMLDivElement): void {
-  if (modal === $.loginModal) {
-    loginPollAbort?.abort();
-    loginPollAbort = null;
-    loginPollUnregister?.();
-    loginPollUnregister = null;
+/** Register a callback fired after `modal` finishes closing via ANY path
+ *  (Close button, backdrop, Escape, or a programmatic close). Used for teardown
+ *  that must run regardless of how the modal was dismissed — the login
+ *  poll-abort and the MCP add/edit-form cleanup. Safe to call before the modal
+ *  is initialised; the callback set is consulted at close time. */
+export function onModalClose(modal: HTMLDivElement, fn: () => void): void {
+  let set = closeCallbacks.get(modal);
+  if (set === undefined) {
+    set = new Set();
+    closeCallbacks.set(modal, set);
   }
-  const release = modalTraps.get(modal);
-  if (release) {
-    release();
-    modalTraps.delete(modal);
-  }
-  modal.classList.add("hidden");
+  set.add(fn);
 }
 
-function setupOverlayClose(modal: HTMLDivElement): void {
-  let downOnOverlay = false;
-  modal.addEventListener("mousedown", (e: Event) => {
-    downOnOverlay = e.target === modal;
-  });
-  modal.addEventListener("mouseup", (e: Event) => {
-    if (downOnOverlay && e.target === modal) {
-      closeModal(modal);
+/** Runs once a modal has finished its fade-out: drop it from the open stack and
+ *  fire any registered close callbacks. Wired as each controller's onClose. */
+function handleModalClosed(content: HTMLElement): void {
+  const i = openStack.lastIndexOf(content);
+  if (i !== -1) {
+    openStack.splice(i, 1);
+  }
+  const cbs = closeCallbacks.get(content);
+  if (cbs !== undefined) {
+    for (const fn of cbs) {
+      fn();
     }
-    downOnOverlay = false;
-  });
+  }
 }
 
-/** Auto-wire all modals: close button + overlay dismiss.
- *  Call once at startup. Finds all .modal-overlay elements and wires
- *  their close buttons (any child with [data-close] or .icon-btn in
- *  .modal-header-row) and overlay click-to-dismiss. */
+/** Lazily create (or fetch) the controller for a pre-authored modal content
+ *  element. Idempotent: the controller is created once and reused, so an
+ *  openModal call that races ahead of initAllModals still works. */
+function ensureModal(content: HTMLElement): ModalController {
+  const existing = controllers.get(content);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const ctrl = createModal(content, {
+    onClose: () => {
+      handleModalClosed(content);
+    },
+  });
+  // The content is authored with `.hidden` (display:none) so it can't flash in
+  // <body> before createModal wraps it in a closed <dialog>. The <dialog> now
+  // owns visibility, so drop the class.
+  content.classList.remove("hidden");
+  controllers.set(content, ctrl);
+  wireCloseButtons(content, ctrl);
+  return ctrl;
+}
+
+/** Wire any plain Close buttons (`.modal-header-row .icon-btn[aria-label=Close]`)
+ *  to the controller's close(). The login modal has none; the platform +
+ *  backdrop + Escape still dismiss it. */
+function wireCloseButtons(content: HTMLElement, ctrl: ModalController): void {
+  for (const btn of content.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
+    btn.addEventListener("click", () => {
+      ctrl.close();
+    });
+  }
+}
+
+/** Auto-wire all pre-authored modals. Call once at startup. Each `[data-modal]`
+ *  element becomes a createModal-managed <dialog>. openModal also lazily
+ *  initialises its target, so this is a proactive convenience rather than a
+ *  hard prerequisite. */
 export function initAllModals(): void {
-  for (const overlay of document.querySelectorAll(".modal-overlay")) {
-    const modal = overlay as HTMLDivElement;
-    modal.setAttribute("aria-modal", "true");
-    modal.setAttribute("role", "dialog");
-    // Link dialog to its title for screen reader announcement.
-    const titleEl = modal.querySelector("[id$='-modal-title'], [id$='-title']");
-    if (titleEl !== null && titleEl.id !== "") {
-      modal.setAttribute("aria-labelledby", titleEl.id);
-    }
-    setupOverlayClose(modal);
-    // Wire close buttons: any button inside .modal-header-row that has aria-label="Close".
-    for (const btn of modal.querySelectorAll('.modal-header-row .icon-btn[aria-label="Close"]')) {
-      btn.addEventListener("click", () => {
-        closeModal(modal);
-      });
-    }
+  for (const content of document.querySelectorAll<HTMLElement>("[data-modal]")) {
+    ensureModal(content);
   }
 }
 
@@ -115,45 +153,77 @@ export class RollingOutput {
   }
 }
 
-/** Close the topmost visible modal. Returns true if a modal was closed. */
-export function closeTopModal(): boolean {
-  const modals = document.querySelectorAll(".modal-overlay:not(.hidden)");
-  if (modals.length === 0) {
-    return false;
+/** Open a modal by its content element. Preserves the historical signature so
+ *  callers passing `$.mcpModal` / `byId("filepicker-modal")` are unchanged. */
+export function openModal(modal: HTMLDivElement): void {
+  const ctrl = ensureModal(modal);
+  if (!openStack.includes(modal)) {
+    openStack.push(modal);
   }
-  const last = modals[modals.length - 1] as HTMLDivElement;
-  closeModal(last);
-  return true;
+  ctrl.open();
 }
 
-/** Open a modal with focus trap. Prefer this over raw classList manipulation. */
-export function openModal(modal: HTMLDivElement): void {
-  modal.classList.remove("hidden");
-  const release = trapFocus(modal);
-  modalTraps.set(modal, release);
+/** Close a modal by its content element. No-op if it was never opened. */
+export function closeModal(modal: HTMLDivElement): void {
+  controllers.get(modal)?.close();
+}
+
+/** Whether a modal is currently open (and not already fading out). */
+export function isModalOpen(modal: HTMLDivElement): boolean {
+  return controllers.get(modal)?.isOpen ?? false;
+}
+
+/** Close the topmost OPEN modal. Returns true if one was closed. Kept working
+ *  so keys.ts's Escape handler is unchanged. The controller's doClose is
+ *  idempotent, so this coexists safely with the platform's own Escape handling
+ *  — if both fire, the second close is a no-op (no double fade-out, one onClose). */
+export function closeTopModal(): boolean {
+  for (let i = openStack.length - 1; i >= 0; i--) {
+    const content = openStack[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const ctrl = controllers.get(content);
+    if (ctrl?.isOpen === true) {
+      ctrl.close();
+      return true;
+    }
+  }
+  return false;
 }
 
 // showConfirm removed — use confirm() from "./confirm.js" instead.
 // The static #confirm-modal element in index.html has also been
 // removed; confirm.ts creates its own <dialog> on demand.
 
+// --- Login modal ------------------------------------------------------------
+
 /** Active login-poll abort controller; aborted when the modal is dismissed. */
 let loginPollAbort: AbortController | null = null;
 let loginPollUnregister: (() => void) | null = null;
+
+/** Abort any in-flight login whoami poll. Wired as the login controller's
+ *  onClose (via onModalClose) so ANY dismissal path — Close-less backdrop
+ *  click, Escape, or the programmatic close on success — stops the poll. */
+function abortLoginPoll(): void {
+  loginPollAbort?.abort();
+  loginPollAbort = null;
+  loginPollUnregister?.();
+  loginPollUnregister = null;
+}
 
 export function showLoginModal(): void {
   openModal($.loginModal);
 }
 
 export function hideLoginModal(): void {
-  loginPollAbort?.abort();
-  loginPollAbort = null;
-  loginPollUnregister?.();
-  loginPollUnregister = null;
-  $.loginModal.classList.add("hidden");
+  closeModal($.loginModal);
 }
 
 export function initLoginModal(onLoggedIn: () => void): void {
+  // Abort the whoami poll on every login-modal close path. The login modal has
+  // no Close button, so dismissal is backdrop / Escape / the programmatic close
+  // on success — all funnel through the controller's onClose. This must not
+  // regress: a dismissed login must never leave a detached poll running.
+  onModalClose($.loginModal, abortLoginPoll);
+
   const freeBtn = byId<HTMLButtonElement>("modal-login-free");
   const ssoBtn = byId<HTMLButtonElement>("modal-login-sso");
   const ssoForm = byId<HTMLDivElement>("modal-sso-form");

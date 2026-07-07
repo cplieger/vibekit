@@ -3,11 +3,6 @@
   display: none !important;
 } /* stylelint-disable-line declaration-no-important */
 
-/* Modals use opacity+pointer-events for exit animation instead of display:none */
-.modal-overlay.hidden {
-  display: flex !important;
-} /* stylelint-disable-line declaration-no-important */
-
 /* Initial loading screen: shown until auth state is resolved. */
 [id="app-loading"] {
   position: fixed;
@@ -65,7 +60,7 @@
 }
 
 @media (forced-colors: active) {
-  .modal-card,
+  .uip-modal-dialog,
   .popup,
   .tool-call,
   .subagent-call {

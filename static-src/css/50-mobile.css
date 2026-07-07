@@ -86,7 +86,7 @@
     }
 
     /* Modals: full-width on small screens */
-    .modal-card {
+    .uip-modal-dialog {
       width: calc(100vw - 2 * var(--sp-4));
       max-height: 85vh;
       overflow-y: auto;
