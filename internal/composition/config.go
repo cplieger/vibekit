@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/webhttp"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -47,52 +48,28 @@ func ConfigFromEnv() Config {
 
 // parseTrustedProxies parses a comma-separated list of trusted
 // reverse-proxy networks into the []*net.IPNet form webhttp.ClientIP /
-// webhttp.WithClientIP expect. Each entry is a CIDR ("10.0.0.0/8",
+// webhttp.WithClientIP expect. The per-entry parsing is delegated to the
+// shared webhttp.ParseCIDRs: each entry is a CIDR ("10.0.0.0/8",
 // "2001:db8::/32") or a bare IP ("192.0.2.10"), which is treated as a
 // single-host network (/32 or /128) so an operator can list a proxy's
-// address without remembering the mask. Surrounding whitespace is
-// trimmed and empty entries are skipped, so an unset or empty
-// TRUSTED_PROXIES yields nil: trust nothing, i.e. log the unspoofable
-// socket peer — the spoof-safe default for a directly-exposed deployment.
+// address without remembering the mask; surrounding whitespace is trimmed
+// and empty entries are skipped, so an unset or empty TRUSTED_PROXIES
+// yields nil: trust nothing, i.e. log the unspoofable socket peer — the
+// spoof-safe default for a directly-exposed deployment.
 //
-// A malformed entry is logged and skipped rather than aborting startup.
-// This deliberately fails SAFE (fall back to the socket peer) rather
-// than fail OPEN (blindly trust a forwarded header): a typo in the
-// deployment config must never turn a spoofable header into the logged
-// client IP.
+// This is the LENIENT caller of ParseCIDRs: malformed entries are logged
+// and skipped, and the valid subset is used, rather than aborting startup.
+// It deliberately fails SAFE (fall back to the socket peer for the bad
+// entries) rather than fail OPEN (blindly trust a forwarded header): a
+// typo in the deployment config must never turn a spoofable header into
+// the logged client IP, and must never disable proxy awareness entirely.
 func parseTrustedProxies(raw string) []*net.IPNet {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	nets := make([]*net.IPNet, 0, len(parts))
-	for _, part := range parts {
-		entry := strings.TrimSpace(part)
-		if entry == "" {
-			continue
-		}
-		if _, ipnet, err := net.ParseCIDR(entry); err == nil {
-			nets = append(nets, ipnet)
-			continue
-		}
-		if ip := net.ParseIP(entry); ip != nil {
-			nets = append(nets, hostNet(ip))
-			continue
-		}
-		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entry (want CIDR or IP)",
-			"entry", entry)
+	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
+	if len(invalid) > 0 {
+		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
+			"entries", invalid)
 	}
 	return nets
-}
-
-// hostNet returns a single-host network for ip: a /32 for IPv4 or a
-// /128 for IPv6, so a bare IP in TRUSTED_PROXIES matches only itself.
-func hostNet(ip net.IP) *net.IPNet {
-	if v4 := ip.To4(); v4 != nil {
-		return &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}
-	}
-	return &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 }
 
 func envOr(key, fallback string) string {
