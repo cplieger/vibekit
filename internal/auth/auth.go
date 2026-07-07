@@ -7,6 +7,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -97,7 +98,11 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 type Handler struct {
 	loginSem chan struct{}
 	cliPath  string
-	cfg      Config
+	// trusted is the reverse-proxy network set passed to
+	// webhttp.ClientIP when recording the client IP in the login/logout
+	// audit logs. Nil (unconfigured) = log the unspoofable socket peer.
+	trusted []*net.IPNet
+	cfg     Config
 }
 
 // Option configures a Handler at construction time.
@@ -110,6 +115,15 @@ type Option func(*Handler)
 // and ensures tests exercise the same wiring production uses.
 func WithConfig(cfg Config) Option {
 	return func(h *Handler) { h.cfg = cfg }
+}
+
+// WithTrustedProxies sets the reverse-proxy networks trusted when
+// resolving the client IP for the login/logout audit logs via
+// webhttp.ClientIP. Empty/nil trusts nothing, so the unspoofable
+// socket-peer host is logged (the spoof-safe default for a
+// directly-exposed deployment).
+func WithTrustedProxies(trusted []*net.IPNet) Option {
+	return func(h *Handler) { h.trusted = trusted }
 }
 
 // NewHandler returns an auth handler that shells out to the kiro-cli

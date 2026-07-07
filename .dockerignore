@@ -5,3 +5,10 @@ node_modules
 static-src/node_modules
 *.md
 LICENSE
+# Local-dev Go workspace: its `replace` directives point at sibling
+# working-tree checkouts (../webhttp, ../web-terminal-engine) that don't
+# exist in the build context, so a stray go.work would break the
+# in-container `go build`. CI builds from a fresh clone where these are
+# gitignored; excluding them here protects a local `docker build` too.
+go.work
+go.work.sum

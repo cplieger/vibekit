@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp"
 )
 
 // handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin
@@ -29,10 +30,11 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Audit trail: record every /api/logout POST. See handleLogin
-	// for the rationale; whoami is intentionally skipped because
-	// it fires on every page load and SSE reconnect.
+	// for the rationale (client_ip is the spoof-safe resolved client
+	// host from webhttp.ClientIP); whoami is intentionally skipped
+	// because it fires on every page load and SSE reconnect.
 	slog.Info("logout: request received",
-		"remote_addr", r.RemoteAddr,
+		"client_ip", webhttp.ClientIP(r, h.trusted...),
 		"user_agent", r.Header.Get("User-Agent"))
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
