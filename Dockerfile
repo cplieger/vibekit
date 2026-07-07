@@ -62,6 +62,15 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
 
+# Fetch @cplieger/fetch TS source (same TS-only pattern). api-client.ts imports
+# createFetch/requestRaw from it; resolved via the importmap at runtime
+# (/vendor/cplieger-fetch/index.js).
+# renovate: datasource=npm depName=@cplieger/fetch
+ARG CPLIEGER_FETCH_VERSION=1.1.0
+RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
+
 # Fetch @cplieger/reactive TS source (same TS-only pattern). @cplieger/actions
 # imports it, and the app imports it directly; both resolve it via the
 # importmap at runtime (/vendor/cplieger-reactive/index.js).
@@ -152,7 +161,16 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --skipLibCheck \
         --strict \
         static-src/node_modules/@cplieger/ui-primitives/src/*.ts \
-        static-src/node_modules/@cplieger/ui-primitives/src/toast/*.ts
+        static-src/node_modules/@cplieger/ui-primitives/src/toast/*.ts && \
+    /tmp/package/lib/tsgo \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-fetch \
+        --rootDir static-src/node_modules/@cplieger/fetch/src \
+        --skipLibCheck \
+        --strict \
+        static-src/node_modules/@cplieger/fetch/src/*.ts
 
 # Concatenate per-feature CSS splits into the served bundle.
 # Behavior: skip blank lines and #-comments, cat each listed file

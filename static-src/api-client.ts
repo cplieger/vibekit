@@ -1,106 +1,127 @@
 // ---------------------------------------------------------------------------
 // Thin API client: one shared shape for every REST-style fetch call.
-// Each helper returns `null` on failure; callers narrow and decide.
-// Errors are logged centrally via console.warn so devtools has a
-// consistent audit trail.
+// Each helper returns `null` on failure (apiDelete returns `false`); callers
+// narrow and decide. Errors are logged centrally via console.warn so devtools
+// has a consistent audit trail.
 //
-// NOT used for the POST /api/command envelope — that's a different
-// contract (request_id dedup, typed SendResult with status codes)
-// served by transport.ts's `send()` function. Keep the two separate.
+// The request/response core is @cplieger/fetch. This module is a thin adapter
+// that (1) pins vibekit's fetch config on an isolated createFetch instance,
+// (2) maps @cplieger/fetch's non-throwing ApiResult envelope onto vibekit's
+// historical null/false-collapsing convention, and (3) centralizes the
+// console.warn / console.error logging. The public surface (apiGet / apiPost /
+// apiDelete / apiGetTyped / apiPostTyped / apiPutOrError + CancellableSlot +
+// fetchKiroSetting) is unchanged, so the call sites don't move.
+//
+// NOT used for the POST /api/command envelope — that's a different contract
+// (request_id dedup, typed SendResult with status codes) served by
+// transport.ts's `send()` function. Keep the two separate.
 // ---------------------------------------------------------------------------
 
-import { API_TIMEOUT_MS, withTimeout } from "@cplieger/actions";
+import {
+  createFetch,
+  type ApiErr,
+  type ApiResult as FetchResult,
+  type RequestOptions,
+} from "@cplieger/fetch";
 
-const JSON_HEADERS: Readonly<Record<string, string>> = { "Content-Type": "application/json" };
+// API_TIMEOUT_MS and withTimeout come from @cplieger/actions (byte-identical to
+// @cplieger/fetch's own copies). Re-exported here so existing consumers (e.g.
+// editor-openers.ts) keep importing them from "./api-client.js" unchanged.
+export { API_TIMEOUT_MS, withTimeout } from "@cplieger/actions";
 
-// API_TIMEOUT_MS and withTimeout are provided by @cplieger/actions
-// (byte-identical to the former local copies). Re-exported here so
-// existing consumers (e.g. editor-openers.ts) keep importing them
-// from "./api-client.js" unchanged.
-export { API_TIMEOUT_MS, withTimeout };
+// Re-export the local Decoder<T> type so callers don't need a second import.
+export type { Decoder } from "./validators.js";
+import type { Decoder } from "./validators.js";
 
-/** True when a rejected fetch was a deliberate cancellation — a caller
- *  aborted an in-flight request via AbortController.abort() (e.g. the git
- *  Changes tab supersedes a refresh, or a CancellableSlot rotates). Those
- *  are expected, not failures, so they shouldn't be logged as
- *  "api: fetch failed". A timeout aborts with name "TimeoutError" (via
- *  AbortSignal.timeout) and a network error is a TypeError — both fall
- *  through this check and are still logged. */
-function isAbortCancellation(e: unknown): boolean {
-  return e instanceof DOMException && e.name === "AbortError";
+// vibekit's own isolated fetch layer. `credentials: "same-origin"` is the
+// browser default the hand-rolled core relied on; every call targets an
+// absolute same-origin path (e.g. "/api/whoami"), so there's no baseUrl and no
+// prepareHeaders hook — the client sends no CSRF token, and the server enforces
+// an Origin check instead (internal/server/security.go). An isolated
+// createFetch instance keeps this config off the module-global default so
+// nothing else can mutate vibekit's fetch layer.
+const fx = createFetch({ credentials: "same-origin" });
+
+/** Build fetch RequestOptions, attaching `signal` only when defined —
+ *  exactOptionalPropertyTypes forbids an explicit `signal: undefined`. */
+function reqOpts<T>(base: RequestOptions<T>, signal: AbortSignal | undefined): RequestOptions<T> {
+  return signal ? { ...base, signal } : base;
 }
 
-/** Internal fetch wrapper shared by apiGet/apiPost/apiDelete.
- *  Applies a timeout signal (via withTimeout), logs failures centrally,
- *  and returns null on any non-2xx or network error — callers never see
- *  exceptions. DELETE and 204 responses return null since there's no
- *  body to parse. */
-async function request<T>(
-  method: string,
+/** Central failure logging for the collapsing helpers, mapping @cplieger/fetch's
+ *  error envelope onto the log shapes the hand-rolled core used:
+ *   - a deliberate caller abort (code "cancelled", status 0) is expected and
+ *     never logged — a caller aborted an in-flight request via
+ *     AbortController.abort() (e.g. the git Changes tab supersedes a refresh,
+ *     or a CancellableSlot rotates);
+ *   - a network error / timeout / client-side build failure (status 0) logs
+ *     "api: fetch failed";
+ *   - a 2xx body that failed JSON.parse or a decoder shape check (code
+ *     "decode") logs "api: decode failed";
+ *   - a real non-2xx HTTP response logs "api: non-ok". */
+function logApiError(r: ApiErr, method: string, path: string): void {
+  if (r.status === 0) {
+    if (r.code === "cancelled") {
+      return;
+    }
+    console.warn("api: fetch failed", method, path, r.error);
+    return;
+  }
+  if (r.code === "decode") {
+    console.error("api: decode failed:", method, path, r.error);
+    return;
+  }
+  console.warn("api: non-ok", method, path, r.status);
+}
+
+/** Collapse a @cplieger/fetch envelope to `data | null`, logging failures
+ *  centrally. A 204 / empty-body response (data === undefined) collapses to
+ *  null; a JSON `null` / `0` / `false` / `""` body is real data and passes
+ *  through unchanged. */
+function collapse<T>(r: FetchResult<T>, method: string, path: string): T | null {
+  if (r.ok) {
+    return r.data ?? null;
+  }
+  logApiError(r, method, path);
+  return null;
+}
+
+/** GET `path` and return parsed JSON, or null on failure. */
+export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
+  return collapse(await fx.requestRaw<T>("GET", path, reqOpts({}, signal)), "GET", path);
+}
+
+/** POST `body` as JSON to `path`, return parsed JSON response or null. */
+export async function apiPost<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  try {
-    const init: RequestInit = { method };
-    if (body !== undefined) {
-      init.headers = JSON_HEADERS;
-      init.body = JSON.stringify(body);
-    }
-    init.signal = withTimeout(signal, API_TIMEOUT_MS);
-    const r = await fetch(path, init);
-    if (!r.ok) {
-      console.warn("api: non-ok", method, path, r.status);
-      return null;
-    }
-    // No body (DELETE or empty 204): return null.
-    if (method === "DELETE" || r.status === 204) {
-      return null;
-    }
-    return (await r.json()) as T;
-  } catch (e) {
-    if (!isAbortCancellation(e)) {
-      console.warn("api: fetch failed", method, path, e);
-    }
-    return null;
-  }
-}
-
-/** GET `path` and return parsed JSON, or null on failure. */
-export function apiGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
-  return request<T>("GET", path, undefined, signal);
-}
-
-/** POST `body` as JSON to `path`, return parsed JSON response or null. */
-export function apiPost<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T | null> {
-  return request<T>("POST", path, body, signal);
+  return collapse(await fx.requestRaw<T>("POST", path, reqOpts({ body }, signal)), "POST", path);
 }
 
 /** DELETE `path`. Returns true on success, false on failure. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
-  try {
-    const init: RequestInit = { method: "DELETE" };
-    init.signal = withTimeout(signal, API_TIMEOUT_MS);
-    const r = await fetch(path, init);
-    if (!r.ok) {
-      console.warn("api: non-ok", "DELETE", path, r.status);
-      return false;
-    }
+  const r = await fx.requestRaw<unknown>("DELETE", path, reqOpts({}, signal));
+  if (r.ok) {
     return true;
-  } catch (e) {
-    if (!isAbortCancellation(e)) {
-      console.warn("api: fetch failed", "DELETE", path, e);
-    }
-    return false;
   }
+  // The hand-rolled core never read the DELETE body, so a 2xx that carries a
+  // non-JSON body (surfaced by @cplieger/fetch as a decode error) still counts
+  // as success — only 4xx/5xx and transport failures are real failures.
+  if (r.status >= 200 && r.status < 300) {
+    return true;
+  }
+  logApiError(r, "DELETE", path);
+  return false;
 }
 
-/** Result shape for apiPostOrError / apiPutOrError: on 2xx `ok` is true
- *  and `data` is the parsed body; on 4xx/5xx `ok` is false, `status`
- *  is the HTTP status, and `error` is the parsed "error" field from
- *  the server's JSON body (empty string if the body didn't include one).
- *  Used by forms that need to surface specific failure reasons (400
- *  validation errors, 409 conflicts) inline instead of silently failing. */
+/** Result shape for apiPutOrError: on 2xx `ok` is true and `data` is the
+ *  parsed body; on 4xx/5xx `ok` is false, `status` is the HTTP status, and
+ *  `error` is the parsed "error" field from the server's JSON body (empty
+ *  string if the body didn't include one). Used by forms that need to surface
+ *  specific failure reasons (400 validation errors, 409 conflicts) inline
+ *  instead of silently failing. */
 interface ApiResult<T> {
   ok: boolean;
   status: number;
@@ -108,144 +129,47 @@ interface ApiResult<T> {
   error: string;
 }
 
-// --- Typed decoder hook ---
-//
-// Re-export the Decoder<T> type from validators.ts so callers don't
-// need a second import. The typed helper below runs a decoder on the
-// parsed JSON before returning; on decoder throw, the error is logged
-// and the helper returns null.
-
-export type { Decoder } from "./validators.js";
-import type { Decoder } from "./validators.js";
-
-/** Fetch + decode variant: runs the response through a Decoder<T>
- *  after parsing JSON. Returns a full ApiResult envelope so callers
- *  can distinguish network errors (status 0), HTTP errors (4xx/5xx),
- *  and decoder failures (shape mismatch) without try/catch. Used by
- *  apiGetTyped for type-safe API consumption. */
-async function requestTyped<T>(
-  method: string,
-  path: string,
-  decoder: Decoder<T>,
-  body?: unknown,
-  signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  try {
-    const init: RequestInit = { method };
-    if (body !== undefined) {
-      init.headers = JSON_HEADERS;
-      init.body = JSON.stringify(body);
-    }
-    init.signal = withTimeout(signal, API_TIMEOUT_MS);
-    const r = await fetch(path, init);
-    if (!r.ok) {
-      console.warn("api: non-ok", method, path, r.status);
-      return { ok: false, status: r.status, data: null, error: `HTTP ${String(r.status)}` };
-    }
-    if (method === "DELETE" || r.status === 204) {
-      return { ok: true, status: r.status, data: null, error: "" };
-    }
-    const parsed: unknown = await r.json();
-    try {
-      return { ok: true, status: r.status, data: decoder(parsed), error: "" };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("api: decode failed:", method, path, msg);
-      return { ok: false, status: r.status, data: null, error: `response shape mismatch: ${msg}` };
-    }
-  } catch (e) {
-    if (!isAbortCancellation(e)) {
-      console.warn("api: fetch failed", method, path, e);
-    }
-    return {
-      ok: false,
-      status: 0,
-      data: null,
-      error: e instanceof Error ? e.message : "network error",
-    };
-  }
-}
-
-/** GET `path`, validate the response with `decoder`, return the typed
- *  value or null on non-2xx, network error, or decoder failure.
- *  Failures are logged centrally; callers that need the error message
- *  (e.g. to show the user "response shape mismatch") should use
- *  `apiGetTypedRaw`. */
+/** GET `path`, validate the response with `decoder`, return the typed value or
+ *  null on non-2xx, network error, or decoder failure. Failures are logged
+ *  centrally. */
 export async function apiGetTyped<T>(
   path: string,
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  const r = await requestTyped<T>("GET", path, decoder, undefined, signal);
-  return r.data;
+  return collapse(await fx.requestRaw<T>("GET", path, reqOpts({ decoder }, signal)), "GET", path);
 }
 
 /** POST variant of apiGetTyped: validates the 2xx response body via the
- *  generated decoder, returning null on non-2xx / network / decode failure. */
+ *  provided decoder, returning null on non-2xx / network / decode failure. */
 export async function apiPostTyped<T>(
   path: string,
   body: unknown,
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  const r = await requestTyped<T>("POST", path, decoder, body, signal);
-  return r.data;
+  return collapse(
+    await fx.requestRaw<T>("POST", path, reqOpts({ body, decoder }, signal)),
+    "POST",
+    path,
+  );
 }
 
-import { hasErrorString } from "./actions/index.js";
-
-/** Fetch variant that extracts the server's `error` field from non-2xx
- *  JSON responses. Used by apiPutOrError for forms that need to surface
- *  specific server validation messages (400, 409) inline. */
-async function requestWithError<T>(
-  method: string,
+/** PUT variant that surfaces error details. Use when the UI must show the
+ *  server's validation message; otherwise prefer apiAction. On a non-2xx the
+ *  `error` field carries the server's JSON "error" message (or "HTTP <status>"
+ *  when the body didn't include one), matching the old hand-rolled behavior. */
+export async function apiPutOrError<T>(
   path: string,
   body: unknown,
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
-  try {
-    const r = await fetch(path, {
-      method,
-      headers: JSON_HEADERS,
-      body: JSON.stringify(body),
-      signal: withTimeout(signal, API_TIMEOUT_MS),
-    });
-    const raw = await r.text();
-    let parsed: unknown = null;
-    if (raw !== "") {
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        /* non-JSON body */
-      }
-    }
-    if (!r.ok) {
-      const err = hasErrorString(parsed) ? parsed.error : `HTTP ${String(r.status)}`;
-      console.warn("api: non-ok", method, path, r.status, err);
-      return { ok: false, status: r.status, data: null, error: err };
-    }
-    return { ok: true, status: r.status, data: parsed as T, error: "" };
-  } catch (e) {
-    if (!isAbortCancellation(e)) {
-      console.warn("api: fetch failed", method, path, e);
-    }
-    return {
-      ok: false,
-      status: 0,
-      data: null,
-      error: e instanceof Error ? e.message : "network error",
-    };
+  const r = await fx.requestRaw<T>("PUT", path, reqOpts({ body }, signal));
+  if (r.ok) {
+    return { ok: true, status: r.status, data: r.data ?? null, error: "" };
   }
-}
-
-/** PUT variant that surfaces error details. Use when the UI must show
- *  the server's validation message; otherwise prefer apiAction. */
-export function apiPutOrError<T>(
-  path: string,
-  body: unknown,
-  signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  return requestWithError<T>("PUT", path, body, signal);
+  logApiError(r, "PUT", path);
+  return { ok: false, status: r.status, data: null, error: r.error };
 }
 
 // --- CancellableSlot: reusable abort-controller lifecycle helper ---
