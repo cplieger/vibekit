@@ -31,7 +31,7 @@
     "node": {
       "enabled": false,
       "auto_update": true,
-      "version": "v26.4.0",
+      "version": "v26.5.0",
       "update": {
         "method": "github",
         "repo": "nodejs/node"
