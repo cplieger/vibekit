@@ -103,6 +103,9 @@ These rules exist because breaking them caused real bugs. Preserve them.
   success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
   `w.Write([]byte(...))`). Use `Ok`, `WriteJSON`, `BadRequest`, `NotFound`,
   `Conflict`, `InternalError`, and the rest.
+- **Logs are UTC.** A `utcTimeAttr` slog `ReplaceAttr` (in `internal/logctl`)
+  forces every record's timestamp to UTC, so the container needs no `TZ` and
+  the binary embeds no `time/tzdata`.
 - **Only `transport.ts` / `sw.ts` / `upload.ts` / `api-client.ts` call
   `fetch()`.** All other modules use the `api-client.ts` helpers.
 - **Cross-module DOM access goes through `dom.ts` `$`.** Don't reach for
