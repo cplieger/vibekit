@@ -11,9 +11,12 @@ set -uo pipefail
 
 FAILS=0
 pass() { printf "  ok  - %s\n" "$1"; }
-fail() { printf "  NOT ok - %s\n" "$1"; FAILS=$((FAILS + 1)); }
+fail() {
+  printf "  NOT ok - %s\n" "$1"
+  FAILS=$((FAILS + 1))
+}
 assert_eq() {
-    if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (got '$2', want '$3')"; fi
+  if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (got '$2', want '$3')"; fi
 }
 
 WORK=$(mktemp -d)
@@ -23,7 +26,7 @@ export VK_TOOLS_DIR="$WORK/tools"
 export VK_MANIFEST="$WORK/tools.json"
 mkdir -p "$VK_TOOLS_DIR/bin"
 
-cat > "$VK_MANIFEST" <<'JSON'
+cat >"$VK_MANIFEST" <<'JSON'
 {
   "runtimes": {
     "node": { "enabled": true, "auto_update": true, "version": "v20.19.5" },
@@ -52,8 +55,8 @@ out=$(expand 'v=${VERSION} np=${VERSION_NOPFX} bin=${BIN}' "v1.2.3")
 assert_eq "expand VERSION/NOPFX/BIN" "$out" "v=v1.2.3 np=1.2.3 bin=$VK_TOOLS_DIR/bin"
 
 case "$(uname -m)" in
-    aarch64|arm64) want_arch="arm64" ;;
-    *) want_arch="x64" ;;
+  aarch64 | arm64) want_arch="arm64" ;;
+  *) want_arch="x64" ;;
 esac
 # shellcheck disable=SC2016 # literal ${...} is intentional
 out=$(expand 'a=${ARCH_X64_OR_ARM64}' "v1")
@@ -73,9 +76,9 @@ if entry_auto_update '.lsp["tsgo"]'; then pass "tsgo auto_update default on"; el
 
 # --- requires_satisfied: gopls requires runtimes.go which is disabled ---
 if requires_satisfied '.lsp["gopls"]' >/dev/null; then
-    fail "gopls requires should NOT be satisfied (go disabled)"
+  fail "gopls requires should NOT be satisfied (go disabled)"
 else
-    pass "gopls requires unsatisfied (go disabled)"
+  pass "gopls requires unsatisfied (go disabled)"
 fi
 # tsgo has no requires -> satisfied.
 if requires_satisfied '.lsp["tsgo"]' >/dev/null; then pass "tsgo requires satisfied"; else fail "tsgo requires"; fi
@@ -85,9 +88,9 @@ write_shims '.lsp["tsgo"]' >/dev/null
 shim="$VK_TOOLS_DIR/bin/typescript-language-server"
 if [ -x "$shim" ]; then pass "shim created + executable"; else fail "shim missing"; fi
 if grep -q 'exec /x/tsgo --lsp --stdio' "$shim" 2>/dev/null; then
-    pass "shim body correct"
+  pass "shim body correct"
 else
-    fail "shim body wrong"
+  fail "shim body wrong"
 fi
 
 # --- clear_tool removes binary + shims ---
@@ -97,7 +100,7 @@ if [ ! -e "$VK_TOOLS_DIR/bin/tsgo" ]; then pass "clear_tool removed binary"; els
 if [ ! -e "$shim" ]; then pass "clear_tool removed shim"; else fail "shim remains"; fi
 
 # --- clear_tool with custom uninstall override ---
-cat > "$VK_MANIFEST" <<'JSON'
+cat >"$VK_MANIFEST" <<'JSON'
 { "lsp": { "jdtls": {
   "enabled": true, "version": "1.40.0", "method": "binary",
   "uninstall": "rm -rf ${TOOLS}/lib/jdtls ${BIN}/jdtls"
@@ -107,16 +110,16 @@ mkdir -p "$VK_TOOLS_DIR/lib/jdtls"
 touch "$VK_TOOLS_DIR/bin/jdtls"
 clear_tool lsp jdtls
 if [ ! -e "$VK_TOOLS_DIR/lib/jdtls" ] && [ ! -e "$VK_TOOLS_DIR/bin/jdtls" ]; then
-    pass "custom uninstall override ran"
+  pass "custom uninstall override ran"
 else
-    fail "custom uninstall left files"
+  fail "custom uninstall left files"
 fi
 
 echo ""
 if [ "$FAILS" -eq 0 ]; then
-    echo "All setup-tools.sh helper tests passed."
-    exit 0
+  echo "All setup-tools.sh helper tests passed."
+  exit 0
 else
-    echo "$FAILS test(s) failed."
-    exit 1
+  echo "$FAILS test(s) failed."
+  exit 1
 fi
