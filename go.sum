@@ -8,8 +8,8 @@ github.com/cplieger/web-terminal-engine/v2 v2.3.0 h1:f1FDgYY65xIKMbcNLqupGTeCBAb
 github.com/cplieger/web-terminal-engine/v2 v2.3.0/go.mod h1:k6qPeKK0NXywNRqV+dRrqDUB/6OByX3Gy5e3MU++4Ho=
 github.com/cplieger/webhttp v1.2.0 h1:eYOvBubDVcWTOiPPfJlLErxweCi99h6aqd7xfyZzN+Y=
 github.com/cplieger/webhttp v1.2.0/go.mod h1:LQLE9eJNI6RztoQoXsRGUpa+RlaWXE3HnL7q3rdWPsE=
-github.com/cplieger/wiregen v1.3.0 h1:NVCvsq8GVsOPJbypo1C3eE/lYjmlNCXYco+wBqN9Tro=
-github.com/cplieger/wiregen v1.3.0/go.mod h1:+QB/vxQHDNwsoLEatwxbMdOdWiE78ri15wbwHnD3USg=
+github.com/cplieger/wiregen v1.3.1 h1:jsdJLYEZeMDoyG8W9RhEx+U+2EIMPkxJnBUSc/25KrY=
+github.com/cplieger/wiregen v1.3.1/go.mod h1:MIoERZq7aIOuZCYDf/8b0zMaoz3TzcuYjWVqDf7y1L8=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=

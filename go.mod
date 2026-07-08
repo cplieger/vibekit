@@ -9,7 +9,7 @@ require (
 	github.com/cplieger/ssrf/v2 v2.0.5
 	github.com/cplieger/web-terminal-engine/v2 v2.3.0
 	github.com/cplieger/webhttp v1.2.0
-	github.com/cplieger/wiregen v1.3.0
+	github.com/cplieger/wiregen v1.3.1
 	golang.org/x/sync v0.22.0
 	pgregory.net/rapid v1.3.0
 )
