@@ -5,17 +5,17 @@ go 1.26.5
 require github.com/creack/pty v1.1.24
 
 require (
-	github.com/cplieger/atomicfile/v2 v2.1.1
-	github.com/cplieger/ssrf/v2 v2.0.5
-	github.com/cplieger/web-terminal-engine/v2 v2.3.0
-	github.com/cplieger/webhttp v1.2.0
-	github.com/cplieger/wiregen v1.3.1
+	github.com/cplieger/atomicfile/v2 v2.1.2
+	github.com/cplieger/ssrf/v2 v2.0.6
+	github.com/cplieger/web-terminal-engine/v2 v2.3.1
+	github.com/cplieger/webhttp v1.2.1
+	github.com/cplieger/wiregen v1.3.3
 	golang.org/x/sync v0.22.0
 	pgregory.net/rapid v1.3.0
 )
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect
-	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 )
