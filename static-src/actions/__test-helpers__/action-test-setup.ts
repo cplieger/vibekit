@@ -34,3 +34,31 @@ export function resetActionFramework(): void {
     return r as TransportSendResult;
   });
 }
+
+/**
+ * Read a header value from a mocked `fetch` call's RequestInit, regardless of
+ * how the headers were supplied. Since actions 2.0.7 routes `apiAction` through
+ * `@cplieger/fetch`, the request core always hands the underlying `fetch` a
+ * `Headers` instance (not the plain lowercase-keyed object the pre-2.0.7 core
+ * used), so a bracket lookup like `init.headers["idempotency-key"]` reads
+ * `undefined`. This accessor handles a `Headers` instance, a plain record, or
+ * an entries array, and is case-insensitive. Returns undefined when the header
+ * (or the RequestInit) is absent.
+ */
+export function headerValue(init: RequestInit | undefined, name: string): string | undefined {
+  const h = init?.headers;
+  if (h === undefined) {
+    return undefined;
+  }
+  if (h instanceof Headers) {
+    return h.get(name) ?? undefined;
+  }
+  const lower = name.toLowerCase();
+  const entries = Array.isArray(h) ? h : Object.entries(h);
+  for (const [k, v] of entries) {
+    if (k.toLowerCase() === lower) {
+      return v;
+    }
+  }
+  return undefined;
+}

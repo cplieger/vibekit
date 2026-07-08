@@ -12,7 +12,7 @@ vi.mock("../toast.js", () =>
 
 import * as toast from "../toast.js";
 const IDEMPOTENCY_HEADER = "idempotency-key";
-import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
 import { signOut, startDeviceFlow, cloneRepo, connectPAT } from "./forge.js";
 
 beforeEach(() => {
@@ -110,12 +110,12 @@ describe("forge.cloneRepo retry", () => {
     await p;
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const key1 = fetchSpy.mock.calls[0]![1]!.headers as Record<string, string>;
-    const key2 = fetchSpy.mock.calls[1]![1]!.headers as Record<string, string>;
-    const key3 = fetchSpy.mock.calls[2]![1]!.headers as Record<string, string>;
-    expect(key1[IDEMPOTENCY_HEADER]).toBeDefined();
-    expect(key1[IDEMPOTENCY_HEADER]).toBe(key2[IDEMPOTENCY_HEADER]);
-    expect(key2[IDEMPOTENCY_HEADER]).toBe(key3[IDEMPOTENCY_HEADER]);
+    const key1 = headerValue(fetchSpy.mock.calls[0]![1], IDEMPOTENCY_HEADER);
+    const key2 = headerValue(fetchSpy.mock.calls[1]![1], IDEMPOTENCY_HEADER);
+    const key3 = headerValue(fetchSpy.mock.calls[2]![1], IDEMPOTENCY_HEADER);
+    expect(key1).toBeDefined();
+    expect(key1).toBe(key2);
+    expect(key2).toBe(key3);
   });
 
   it("no retry toast button (error: false suppresses toast entirely)", async () => {
@@ -160,11 +160,12 @@ describe("forge.connectPAT retry", () => {
     expect(result).toEqual({ status: "ok" });
 
     // Idempotency key reused
-    const key1 = fetchSpy.mock.calls[0]![1]!.headers as Record<string, string>;
-    const key2 = fetchSpy.mock.calls[1]![1]!.headers as Record<string, string>;
-    const key3 = fetchSpy.mock.calls[2]![1]!.headers as Record<string, string>;
-    expect(key1[IDEMPOTENCY_HEADER]).toBe(key2[IDEMPOTENCY_HEADER]);
-    expect(key2[IDEMPOTENCY_HEADER]).toBe(key3[IDEMPOTENCY_HEADER]);
+    const key1 = headerValue(fetchSpy.mock.calls[0]![1], IDEMPOTENCY_HEADER);
+    const key2 = headerValue(fetchSpy.mock.calls[1]![1], IDEMPOTENCY_HEADER);
+    const key3 = headerValue(fetchSpy.mock.calls[2]![1], IDEMPOTENCY_HEADER);
+    expect(key1).toBeDefined();
+    expect(key1).toBe(key2);
+    expect(key2).toBe(key3);
   });
 
   it("no toast emitted (error: false)", async () => {

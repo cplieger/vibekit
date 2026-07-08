@@ -2,7 +2,7 @@
 // Tests for files.ts: createFile, createFolder, renameFile, deleteFilesBatch, upload.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
 
 vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
@@ -90,8 +90,7 @@ describe("files.rename", () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { renameFile } = await import("./files.js");
     await renameFile.dispatch({ dir: "/", original: "a", newName: "b" });
-    const headers = mockFetch.mock.calls[0]![1].headers as Record<string, string>;
-    expect(headers["idempotency-key"]).toEqual(expect.any(String));
+    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
   });
 
   it("toasts error with truncated filename on failure", async () => {
