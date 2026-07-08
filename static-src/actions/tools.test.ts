@@ -26,7 +26,7 @@ vi.mock("../api-client.js", () => ({
 
 import { installTools, saveTools, runDiagnostics, loadTools, seedMcp } from "./tools.js";
 import { enableTool, deleteTool, patchTool, getToolsStatus } from "./tools.js";
-import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
+import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
 import { getActionLog as recentLog } from "./index.js";
 
 const mockFetch = vi.fn();
@@ -55,8 +55,7 @@ describe("tools.install", () => {
   it("includes Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     await installTools.dispatch(undefined);
-    const headers = mockFetch.mock.calls[0]![1].headers as Record<string, string>;
-    expect(headers["idempotency-key"]).toEqual(expect.any(String));
+    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
   });
 
   it("retries on network error", async () => {
