@@ -239,7 +239,7 @@
     "gopls": {
       "enabled": false,
       "auto_update": true,
-      "version": "v0.22.0",
+      "version": "v0.23.0",
       "update": {
         "method": "gomod",
         "module": "golang.org/x/tools/gopls"
