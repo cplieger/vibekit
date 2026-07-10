@@ -4,8 +4,8 @@ github.com/cplieger/atomicfile/v2 v2.1.2 h1:WPU8rXB4/Ziq3JNiqBfOhHxTgBr7I+B/Vzkk
 github.com/cplieger/atomicfile/v2 v2.1.2/go.mod h1:jgwJ7oU3qahL4NwiF+1iBIzPRpR8LwXnicSalGoJeVA=
 github.com/cplieger/ssrf/v2 v2.0.6 h1:kzokAs1Ar7GaSNFGELt2Gfq3Ub0NZmvCGovTmYWWTGw=
 github.com/cplieger/ssrf/v2 v2.0.6/go.mod h1:Ujn/7wQbHHQZp/UzDF/WOS41UE1VR998dQyuBWM44TU=
-github.com/cplieger/web-terminal-engine/v2 v2.3.1 h1:gbvBQ9CrVl7zCDZI6UQQ2RBQsu/4XtNjIVjW/HBzrcQ=
-github.com/cplieger/web-terminal-engine/v2 v2.3.1/go.mod h1:iaWoFiwkDgOrfwCdQoIiaXECFdxmPmjPA+LqUqL6ZfI=
+github.com/cplieger/web-terminal-engine/v2 v2.3.2 h1:J3GsvNeg6Pk8o1bXHX6vImvZKqQhuHfnSxD9cnYQtME=
+github.com/cplieger/web-terminal-engine/v2 v2.3.2/go.mod h1:iaWoFiwkDgOrfwCdQoIiaXECFdxmPmjPA+LqUqL6ZfI=
 github.com/cplieger/webhttp v1.3.0 h1:0DF8bCi/tFbckYyG7LWnI7RpEzrpUt8MtflqNoS2i0o=
 github.com/cplieger/webhttp v1.3.0/go.mod h1:Nb8A8w/9MzFxB90Vbt6vQ/odRPd+hPedWekRkvIFnjg=
 github.com/cplieger/wiregen v1.3.4 h1:s9rW09OaLaHOhG8V1JQ3KgNhEkvjCb6Qoviv3qUK8j8=
