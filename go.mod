@@ -7,7 +7,7 @@ require github.com/creack/pty v1.1.24
 require (
 	github.com/cplieger/atomicfile/v2 v2.1.2
 	github.com/cplieger/ssrf/v2 v2.0.6
-	github.com/cplieger/web-terminal-engine/v2 v2.3.1
+	github.com/cplieger/web-terminal-engine/v2 v2.3.2
 	github.com/cplieger/webhttp v1.3.0
 	github.com/cplieger/wiregen v1.3.4
 	golang.org/x/sync v0.22.0
