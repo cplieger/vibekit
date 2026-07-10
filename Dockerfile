@@ -103,7 +103,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # API. This ARG and static-src/package.json's @cplieger/ui-primitives pin both
 # track 2.1.0.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
-ARG CPLIEGER_UI_PRIMITIVES_VERSION=2.1.0
+ARG CPLIEGER_UI_PRIMITIVES_VERSION=2.1.1
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
