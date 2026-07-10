@@ -193,7 +193,7 @@
     "tsgo": {
       "enabled": false,
       "auto_update": true,
-      "version": "7.0.0-dev.20260615.1",
+      "version": "7.0.0-dev.20260706.1",
       "update": {
         "method": "npm",
         "package": "@typescript/native-preview"
