@@ -66,7 +66,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 # createFetch/requestRaw from it; resolved via the importmap at runtime
 # (/vendor/cplieger-fetch/index.js).
 # renovate: datasource=npm depName=@cplieger/fetch
-ARG CPLIEGER_FETCH_VERSION=1.1.0
+ARG CPLIEGER_FETCH_VERSION=1.1.1
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
