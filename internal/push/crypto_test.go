@@ -178,8 +178,10 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	}
 
 	plaintext := []byte("hello push")
-	padded := make([]byte, 2+len(plaintext))
-	copy(padded[2:], plaintext)
+	// RFC 8188 §2.1: payload || 0x02 padding-delimiter (single last record).
+	padded := make([]byte, len(plaintext)+1)
+	copy(padded, plaintext)
+	padded[len(plaintext)] = 0x02
 
 	block, _ := aes.NewCipher(cek)
 	gcm, _ := cipher.NewGCM(block)
@@ -203,8 +205,11 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
-	// Strip 2-byte padding prefix.
-	result := decrypted[2:]
+	// Strip the trailing 0x02 padding-delimiter (RFC 8188 §2.1).
+	if len(decrypted) == 0 || decrypted[len(decrypted)-1] != 0x02 {
+		t.Fatalf("decrypted missing 0x02 delimiter: % x", decrypted)
+	}
+	result := decrypted[:len(decrypted)-1]
 	if string(result) != "hello push" {
 		t.Errorf("decrypted = %q, want %q", result, "hello push")
 	}
@@ -242,8 +247,9 @@ func BenchmarkPushEncrypt(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		padded := make([]byte, 2+len(payload))
-		copy(padded[2:], payload)
+		padded := make([]byte, len(payload)+1)
+		copy(padded, payload)
+		padded[len(payload)] = 0x02
 		block, err := aes.NewCipher(cek)
 		if err != nil {
 			b.Fatal(err)

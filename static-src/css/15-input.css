@@ -116,6 +116,111 @@
   opacity: 1;
 }
 
+/* --- Queued-prompt chips (pending sends buffered while a turn runs) --- */
+/* Distinct from attachment pills and from sent user bubbles: these are
+   prompts waiting to drain on the next turn end. Dashed accent-tinted border
+   + a breathing hourglass reads as "pending, not yet sent". */
+
+.queued-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2) 0;
+}
+
+.queued-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.4rem;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-secondary);
+  list-style: none;
+}
+
+.queued-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: min(20rem, 100%);
+  padding: 0.15rem 0.3rem 0.15rem 0.5rem;
+  border: 1px dashed color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-accent) 6%, var(--c-bg-secondary));
+  font-size: var(--fs-xs);
+  list-style: none;
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.queued-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--c-accent);
+}
+
+.queued-icon svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  animation: vk-breathe 2s var(--ease-standard) infinite;
+}
+
+.queued-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-secondary);
+}
+
+.queued-cancel {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 3px;
+  font-size: 0.9em;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    opacity var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
+}
+
+.queued-cancel:hover {
+  opacity: 1;
+  background: var(--c-bg-hover);
+}
+
+.queued-cancel:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* Expand the cancel hit target to ~44px on touch without growing the glyph. */
+@media (pointer: coarse) {
+  .queued-cancel::after {
+    content: "";
+    position: absolute;
+    inset: -0.9rem;
+  }
+}
+
 /* --- Pill row (bottom of prompt box) --- */
 
 .prompt-pills {
@@ -236,14 +341,6 @@
 
 .pill-spacer {
   flex: 1;
-}
-
-/* Auto-approve crew pill: shield icon, toggles on/off. Active state
-   uses green to match the "approved" semantic. Hidden when no crew
-   card exists in the active chat. */
-.pill-auto-approve.active {
-  color: var(--c-green);
-  background: color-mix(in srgb, var(--c-green) 12%, transparent);
 }
 
 /* Supervised mode pill: accent when mode is on, warning when there
@@ -649,6 +746,84 @@
   font-size: var(--fs-xs);
 }
 
+/* Role pill: shows the active chat's agent role; expands to a role list.
+ * Mirrors the model pill / model list styling. */
+.pill-role-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+
+  & svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+}
+
+.pill-role-label {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill-role-list {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  min-width: 12rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: var(--sp-2);
+}
+
+.pill-role-hint {
+  padding: 0 var(--sp-2) var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.pill-role-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--c-bg-tertiary);
+  }
+
+  &.active {
+    background: var(--c-accent-subtle);
+    color: var(--c-accent);
+  }
+}
+
+.pill-role-item-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+
+  & svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+.pill-role-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Effort row: pinned at the top of the model expand list. Five tier
  * buttons in a horizontal row with a label. */
 .effort-row {
@@ -720,6 +895,28 @@
   width: 100%;
   height: 1px;
   background: color-mix(in srgb, var(--c-border) 50%, transparent);
+}
+
+/* Account/subscription usage block in the status popup, fetched lazily
+ * when the popup opens. Plan label on top, credits meter below with
+ * tabular-nums so values stay column-aligned. */
+.pill-account {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+}
+
+.pill-account-plan {
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+}
+
+.pill-account-meter {
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
 }
 
 /* Active state for any toggle pill (auto-approve, supervised, etc.). */

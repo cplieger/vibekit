@@ -58,12 +58,51 @@ func TestParseSteeringFrontmatter(t *testing.T) {
 			in:   "",
 			want: Doc{Inclusion: "always"},
 		},
+		{
+			name: "CRLF line endings",
+			in:   "---\r\ninclusion: manual\r\ndescription: runbook\r\n---\r\nbody",
+			want: Doc{Inclusion: "manual", Description: "runbook"},
+		},
+		{
+			name: "leading UTF-8 BOM",
+			in:   "\ufeff---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n",
+			want: Doc{Inclusion: "fileMatch", FileMatch: "**/*.go"},
+		},
+		{
+			name: "BOM and CRLF together",
+			in:   "\ufeff---\r\ninclusion: manual\r\n---\r\n",
+			want: Doc{Inclusion: "manual"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := parseSteeringFrontmatter([]byte(tc.in))
 			if got != tc.want {
 				t.Errorf("parseSteeringFrontmatter() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseInclusion covers the exported wrapper shared with the REST
+// kiro-config scanner: valid values pass through, unknown/absent fold to
+// "always", and a BOM+CRLF-authored file is tolerated.
+func TestParseInclusion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"absent defaults to always", "# no frontmatter", "always"},
+		{"manual", "---\ninclusion: manual\n---\n", "manual"},
+		{"fileMatch", "---\ninclusion: fileMatch\n---\n", "fileMatch"},
+		{"unknown folds to always", "---\ninclusion: bogus\n---\n", "always"},
+		{"CRLF+BOM tolerated", "\ufeff---\r\ninclusion: manual\r\n---\r\n", "manual"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ParseInclusion([]byte(tc.in)); got != tc.want {
+				t.Errorf("ParseInclusion(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -338,4 +377,103 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 			t.Errorf("findMdDocsInDir(25 files) returned %d, want exactly 20 (cap)", got)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// findRepoSkills (skills are directories containing SKILL.md)
+// ---------------------------------------------------------------------------
+
+// TestFindRepoSkills_ScansSubdirsWithSkillMd verifies skills are scanned
+// as subdirectories pointing at SKILL.md (not flat .md files), that the
+// SKILL.md front-matter classifies the skill, that a subdir without a
+// SKILL.md still counts (default "always", matching the REST scan), and
+// that a stray flat .md file directly under skills/ is ignored.
+func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
+	repo := t.TempDir()
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "alpha", "SKILL.md"),
+		"---\ninclusion: manual\ndescription: Alpha skill\n---\n")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "beta", "SKILL.md"), "# beta\n")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "gamma", "notes.txt"), "no skill.md here\n")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "loose.md"), "# not a skill\n")
+
+	skills := findRepoSkills(repo)
+	// alpha, beta, gamma are directories -> 3 skills. loose.md is a flat
+	// file -> ignored.
+	if len(skills) != 3 {
+		t.Fatalf("findRepoSkills = %+v (len %d), want 3 skill dirs (flat .md ignored)", skills, len(skills))
+	}
+	byFile := map[string]Doc{}
+	for _, d := range skills {
+		byFile[d.Filename] = d
+	}
+	alpha, ok := byFile["alpha/SKILL.md"]
+	if !ok {
+		t.Fatalf("missing alpha/SKILL.md in %+v", skills)
+	}
+	if alpha.Inclusion != "manual" || alpha.Description != "Alpha skill" {
+		t.Errorf("alpha = %+v, want {Inclusion: manual, Description: Alpha skill}", alpha)
+	}
+	if beta, ok := byFile["beta/SKILL.md"]; !ok || beta.Inclusion != "always" {
+		t.Errorf("beta = %+v (ok=%v), want inclusion always", beta, ok)
+	}
+	if gamma, ok := byFile["gamma/SKILL.md"]; !ok || gamma.Inclusion != "always" {
+		t.Errorf("gamma (no SKILL.md) = %+v (ok=%v), want listed with inclusion always", gamma, ok)
+	}
+	if _, ok := byFile["loose.md"]; ok {
+		t.Error("flat skills/loose.md should not be treated as a skill")
+	}
+}
+
+func TestFindRepoSkills_NoSkillsDir(t *testing.T) {
+	if got := findRepoSkills(t.TempDir()); got != nil {
+		t.Errorf("findRepoSkills(no skills dir) = %+v, want nil", got)
+	}
+}
+
+// TestFindRepoSkills_CapAt20 feeds 25 skill directories and asserts the
+// exact 20-entry cap.
+func TestFindRepoSkills_CapAt20(t *testing.T) {
+	repo := t.TempDir()
+	for i := range 25 {
+		mustWriteFile(t,
+			filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("skill%02d", i), "SKILL.md"),
+			"body\n")
+	}
+	if got := len(findRepoSkills(repo)); got != 20 {
+		t.Errorf("findRepoSkills(25 skill dirs) = %d, want 20 (capped)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findRepoAgents de-dupes paired .json + .md
+// ---------------------------------------------------------------------------
+
+// TestFindRepoAgents_DedupsPairedFiles verifies a paired reviewer.json +
+// reviewer.md collapses to ONE agent preferring the .md, while a
+// .json-only and a .md-only agent are each listed once.
+func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
+	repo := t.TempDir()
+	agentsDir := filepath.Join(repo, ".kiro", "agents")
+	mustWriteFile(t, filepath.Join(agentsDir, "reviewer.json"), `{"name":"reviewer"}`)
+	mustWriteFile(t, filepath.Join(agentsDir, "reviewer.md"), "# reviewer\n")
+	mustWriteFile(t, filepath.Join(agentsDir, "deploy.json"), `{"name":"deploy"}`)
+	mustWriteFile(t, filepath.Join(agentsDir, "notes.md"), "# notes\n")
+
+	agents := findRepoAgents(repo)
+	if len(agents) != 3 {
+		t.Fatalf("findRepoAgents = %+v (len %d), want 3 (reviewer paired -> 1)", agents, len(agents))
+	}
+	byName := map[string]AgentEntry{}
+	for _, a := range agents {
+		byName[a.Name] = a
+	}
+	if got := byName["reviewer"].Filename; got != "reviewer.md" {
+		t.Errorf("reviewer filename = %q, want reviewer.md (prefer .md over .json)", got)
+	}
+	if got := byName["deploy"].Filename; got != "deploy.json" {
+		t.Errorf("deploy filename = %q, want deploy.json (.json-only)", got)
+	}
+	if got := byName["notes"].Filename; got != "notes.md" {
+		t.Errorf("notes filename = %q, want notes.md", got)
+	}
 }

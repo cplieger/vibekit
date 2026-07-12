@@ -19,6 +19,12 @@ type baseDeps struct {
 	bufStore    *buffer.Store
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, api.ServerEvent)
+	// onSetGovernance, when set, is invoked by SetGovernance so a test can
+	// assert the hub-side cache write (mirrors onBroadcast).
+	onSetGovernance func(api.GovernanceStatePayload)
+	// parent is returned by ParentACPSession; zero value "" preserves the
+	// historical "parent unknown" behavior for existing callers.
+	parent string
 }
 
 func newBaseDeps() *baseDeps {
@@ -35,51 +41,28 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 	}
 }
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
-func (d *baseDeps) ParentACPSession(api.ChatID) string { return "" }
+func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
 func (d *baseDeps) WorkDir() string                    { return "/tmp" }
 func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
 	return nil
 }
 func (d *baseDeps) BridgeRespond(context.Context, api.ChatID, int64, any, error) error { return nil }
 func (d *baseDeps) MCPRecorder() MCPRecorder                                           { return &testsupport.NopMCPRecorder{} }
-func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                             {}
-func (d *baseDeps) PendingPermsRemove(int64)                                           {}
-func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind)                   {}
-func (d *baseDeps) PermissionRules() *permissions.CommandRules                         { return nil }
-func (d *baseDeps) BufferStore() BufferAccess                                          { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                                          { return d.lineTracker }
-func (d *baseDeps) OpenPartialFile(context.Context, api.ChatID, *buffer.Buffer)        {}
-func (d *baseDeps) IsHookStatusEnabled() bool                                          { return false }
-
-var crewPayload = json.RawMessage(`{"subagents":[{"sessionId":"s1","sessionName":"worker","agentName":"coder","initialQuery":"fix bug","group":"g1","role":"worker","status":{"type":"running","message":"coding"}}]}`)
-
-var commandsPayload = json.RawMessage(`{"commands":[{"name":"/help","description":"Show help"}],"prompts":[],"tools":["t1","t2"],"mcpServers":[{"name":"srv","status":"running","tools":["a"]}]}`)
+func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
+	if d.onSetGovernance != nil {
+		d.onSetGovernance(g)
+	}
+}
+func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                      {}
+func (d *baseDeps) PendingPermsRemove(int64)                                    {}
+func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind)            {}
+func (d *baseDeps) PermissionRules() *permissions.CommandRules                  { return nil }
+func (d *baseDeps) BufferStore() BufferAccess                                   { return d.bufStore }
+func (d *baseDeps) LineTracker() LineRecorder                                   { return d.lineTracker }
+func (d *baseDeps) OpenPartialFile(context.Context, api.ChatID, *buffer.Buffer) {}
+func (d *baseDeps) IsHookStatusEnabled() bool                                   { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
-
-func BenchmarkTranslator_HandleCrewUpdate(b *testing.B) {
-	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
-	msg := &api.RPCResponse{Params: crewPayload}
-	ctx := context.Background()
-	chatID := api.ChatID("bench-chat")
-
-	b.ResetTimer()
-	for b.Loop() {
-		tr.HandleCrewUpdate(ctx, chatID, msg)
-	}
-}
-
-func BenchmarkTranslator_HandleCommandsAvailable(b *testing.B) {
-	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
-	msg := &api.RPCResponse{Params: commandsPayload}
-	ctx := context.Background()
-	chatID := api.ChatID("bench-chat")
-
-	b.ResetTimer()
-	for b.Loop() {
-		tr.HandleCommandsAvailable(ctx, chatID, msg)
-	}
-}
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	tr := New(newBaseDeps(), "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
@@ -144,14 +127,12 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 	}
 }
 
-var metadataPayload = json.RawMessage(`{"contextUsagePercentage":42.5,"turnDurationMs":1234,"meteringUsage":[{"unitSingular":"token","unitPlural":"tokens","value":500}]}`)
-
-func BenchmarkTranslator_HandleMetadata(b *testing.B) {
+func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
-	chatID := api.ChatID("bench-meta")
-	msg := &api.RPCResponse{Params: metadataPayload}
+	chatID := api.ChatID("bench-usage")
+	raw := json.RawMessage(`{"size":100000,"used":42500}`)
 
 	// Pre-create a chat so Mutate finds it.
 	_ = deps.store.Mutate(ctx, chatID, func(_ *api.Chat, _ bool) bool { return true })
@@ -159,6 +140,6 @@ func BenchmarkTranslator_HandleMetadata(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		tr.HandleMetadata(ctx, chatID, msg)
+		tr.HandleUsageUpdate(ctx, chatID, raw)
 	}
 }

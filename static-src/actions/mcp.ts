@@ -158,3 +158,80 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
   }),
   error: false,
 });
+
+// --- mcp.reconnect_server ---
+//
+// Reconnect a wedged / expired-OAuth server on every live chat bridge
+// (server-side fan-out). The refreshed runtime status arrives via SSE +
+// a /api/mcp/status refetch, so there's no optimistic state to flip.
+
+/** Result of POST /api/mcp/reconnect: how many live bridges were targeted. */
+export interface ReconnectResult {
+  reconnected: number;
+}
+
+export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
+  name: "mcp.reconnect_server",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  scope: (args) => "mcp-reconnect:" + args.server,
+  request: ({ server }) => ({
+    method: "POST",
+    path: `${MCP_API}/reconnect`,
+    body: { server },
+  }),
+  error: "Couldn't reconnect integration",
+});
+
+// --- mcp.get_prompt / mcp.get_resource ---
+//
+// Resolve an MCP prompt / read an MCP resource from a live bridge's pool.
+// The response is the raw MCP result; the UI extracts its text and inserts
+// it into the prompt bar.
+
+/** One content block of an MCP message (text is the only kind we surface). */
+export interface MCPContentBlock {
+  type?: string;
+  text?: string;
+}
+
+/** Raw MCP GetPromptResult: an ordered list of role-tagged messages. */
+export interface MCPPromptResult {
+  description?: string;
+  messages?: { role?: string; content?: MCPContentBlock | MCPContentBlock[] }[];
+}
+
+/** Raw MCP ReadResourceResult: one or more resource contents. */
+export interface MCPResourceResult {
+  contents?: { uri?: string; mimeType?: string; text?: string; blob?: string }[];
+}
+
+interface GetPromptArgs {
+  server: string;
+  prompt: string;
+  arguments?: Record<string, string>;
+}
+
+export const getPromptContent = apiAction<GetPromptArgs, MCPPromptResult>({
+  name: "mcp.get_prompt",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ server, prompt, arguments: args }) => ({
+    method: "POST",
+    path: `${MCP_API}/prompt`,
+    body: { server, prompt, arguments: args ?? {} },
+  }),
+  error: "Couldn't load prompt",
+});
+
+export const getResourceContent = apiAction<{ server: string; uri: string }, MCPResourceResult>({
+  name: "mcp.get_resource",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ server, uri }) => ({
+    method: "POST",
+    path: `${MCP_API}/resource`,
+    body: { server, uri },
+  }),
+  error: "Couldn't load resource",
+});

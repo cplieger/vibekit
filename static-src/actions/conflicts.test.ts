@@ -43,7 +43,11 @@ describe("conflicts.open_diff", () => {
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(mockFetch.mock.calls[0]![0]).toContain("/api/checkpoints/c1/blob/abc123");
+    // The expected side (what the OTHER chat left) is fetched under the other
+    // chat's id (c2), where that blob is actually owned; the actual side (what
+    // this chat saw) under the observing chat (c1). Fetching the expected side
+    // under c1 404s — that was the bug.
+    expect(mockFetch.mock.calls[0]![0]).toContain("/api/checkpoints/c2/blob/abc123");
     expect(mockFetch.mock.calls[1]![0]).toContain("/api/checkpoints/c1/blob/def456");
     expect(openFileDiff).toHaveBeenCalledWith(
       "src/main.ts",

@@ -152,7 +152,7 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 	// Defense-in-depth: bound payload size before any allocation. The
 	// IETF web-push spec caps record size at 4096 bytes; pushBodyCap=3000
 	// is the project's pre-pad ceiling. This early check makes the
-	// `make([]byte, 2+len(payload))` allocation in encryptPayload
+	// `make([]byte, len(payload)+1)` allocation in encryptPayload
 	// provably bounded and silences CodeQL's go/allocation-size-overflow
 	// rule.
 	if len(payload) > pushBodyCap {
@@ -211,7 +211,7 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 // payload for the subscriber's keys and returns the wire body:
 // salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
 // The caller (push) bounds len(payload) to pushBodyCap before calling,
-// so the 2+len(payload) allocation below is provably small.
+// so the len(payload)+1 allocation below is provably small.
 func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
@@ -243,8 +243,14 @@ func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	padded := make([]byte, 2+len(payload))
-	copy(padded[2:], payload)
+	// RFC 8188 §2.1 single-record plaintext: payload followed by the 0x02
+	// padding delimiter (0x02 = last record, no additional padding). This is
+	// NOT a 2-byte zero prefix — that was the obsolete "aesgcm" draft scheme;
+	// a conformant browser DISCARDS an aes128gcm record whose delimiter octet
+	// isn't 0x02, so payloaded pushes silently failed before this fix.
+	padded := make([]byte, len(payload)+1)
+	copy(padded, payload)
+	padded[len(payload)] = 0x02
 
 	block, err := aes.NewCipher(cek)
 	if err != nil {

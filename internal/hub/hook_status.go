@@ -108,7 +108,7 @@ func (c *hookStatusCache) get() bool {
 // and is toggled through `kiro-cli settings hooks.showStatus …`
 // via vibekit's /api/kiro-settings endpoint. Reading from vibekit's
 // configDir would be wrong: vibekit's config.json uses underscore
-// keys (shell_policy, trust_tools, …) and has no entry for this
+// keys (shell_policy, supervised_default, …) and has no entry for this
 // toggle — so the prior lookup of "hooks_show_status" against that
 // file was a permanent no-op and the Settings → General switch was
 // silently dead. See vibekit.md "Experimental kiro-cli flags".

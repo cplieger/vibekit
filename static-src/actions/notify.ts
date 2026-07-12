@@ -41,6 +41,15 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
+    // Wait for the SW to become active before subscribing: pushManager.subscribe
+    // needs an activated worker, and a freshly-registered SW may still be
+    // installing/waiting (the app registers it unconditionally at boot, so this
+    // usually resolves immediately).
+    await navigator.serviceWorker.ready;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await
+    if (signal.aborted) {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
 
     const keyData = await apiGet<{ publicKey: string }>(API_PUSH_VAPID_KEY, signal);
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: signal can abort during await

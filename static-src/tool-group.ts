@@ -15,48 +15,13 @@ import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
 
 /** CSS class names for tool-group collapse state machine. */
-export const CLS_COLLAPSED = "tool-group-collapsed";
-export const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
-export const CLS_USER_TOGGLED = "tool-group-user-toggled";
+const CLS_COLLAPSED = "tool-group-collapsed";
+const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
+const CLS_USER_TOGGLED = "tool-group-user-toggled";
 
 class ToolGroupTracker {
-  private currentGroup: HTMLDivElement | null = null;
-  private lastWasToolCall = false;
   private inProgressElements = new Set<HTMLElement>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-
-  breakGroup(): void {
-    this.lastWasToolCall = false;
-    this.currentGroup = null;
-  }
-
-  getOrCreateGroup(mount: (node: HTMLElement) => void): HTMLDivElement {
-    if (!this.lastWasToolCall || this.currentGroup === null) {
-      const group = el("div", { className: "tool-group" }) as HTMLDivElement;
-      const header = el("div", {
-        className: "tool-group-header",
-        role: "button",
-        tabindex: "0",
-        "aria-expanded": "true",
-      }) as HTMLDivElement;
-      header.innerHTML = '<span class="tool-group-count"></span>';
-      header.addEventListener("click", () => {
-        onHeaderClick(group, header);
-      });
-      header.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onHeaderClick(group, header);
-        }
-      });
-      group.appendChild(header);
-      mount(group);
-      this.currentGroup = group;
-    }
-    this.lastWasToolCall = true;
-    queueHeaderUpdate(this.currentGroup);
-    return this.currentGroup;
-  }
 
   trackInProgress(node: HTMLElement): void {
     this.inProgressElements.add(node);
@@ -113,14 +78,6 @@ registerCleanup(() => {
 
 // --- Delegate exports ---
 
-export function breakToolGroup(): void {
-  tracker.breakGroup();
-}
-
-export function getOrCreateToolGroup(mount: (node: HTMLElement) => void): HTMLDivElement {
-  return tracker.getOrCreateGroup(mount);
-}
-
 export function trackInProgress(node: HTMLElement): void {
   tracker.trackInProgress(node);
 }
@@ -130,13 +87,34 @@ export function untrackInProgress(node: HTMLElement): void {
 
 // --- Header update ---
 
-function queueHeaderUpdate(group: HTMLDivElement): void {
-  queueMicrotask(() => {
-    updateHeader(group);
+/** Build a `.tool-group` shell: header (role=button, tabindex, aria-expanded)
+ *  + keyboard (Enter/Space) + click collapse toggle. The caller appends the
+ *  tool-call children and owns per-container grouping — the block dispatcher
+ *  groups per render container (including nested subagent bodies), so there is
+ *  no single global "current group" anymore. */
+export function buildToolGroupShell(): HTMLDivElement {
+  const group = el("div", { className: "tool-group" }) as HTMLDivElement;
+  const header = el(
+    "div",
+    { className: "tool-group-header", role: "button", tabindex: "0", "aria-expanded": "true" },
+    el("span", { className: "tool-group-count" }),
+  ) as HTMLDivElement;
+  header.addEventListener("click", () => {
+    onHeaderClick(group, header);
   });
+  header.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onHeaderClick(group, header);
+    }
+  });
+  group.appendChild(header);
+  return group;
 }
 
-function updateHeader(group: HTMLElement): void {
+/** Recompute the group header summary text. Called after each card append,
+ *  on every tool status flip, and on collapse toggle. */
+export function refreshGroupHeader(group: HTMLElement): void {
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
@@ -309,7 +287,7 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
   group.classList.toggle(CLS_COLLAPSED);
   const collapsedNow = group.classList.contains(CLS_COLLAPSED);
   _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
-  updateHeader(group);
+  refreshGroupHeader(group);
   if (!collapsedNow || wasAuto) {
     setUserScrolledUp(true);
   }
@@ -338,7 +316,7 @@ export function maybeCollapseGroup(node: HTMLElement): void {
   group.classList.add(CLS_AUTO_COLLAPSED);
   const header = group.querySelector<HTMLElement>(".tool-group-header");
   header?.setAttribute("aria-expanded", "false");
-  updateHeader(group);
+  refreshGroupHeader(group);
 }
 
 export function formatDuration(ms: number): string {

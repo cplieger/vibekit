@@ -33,7 +33,9 @@ vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})
 vi.mock("../session-context.js", () => ({ restoreLastModel: vi.fn() }));
 vi.mock("../status.js", () => ({ refreshCompactionThreshold: vi.fn() }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
-vi.mock("../auto-approve.js", () => ({ clearCrewCache: vi.fn() }));
+
+const mockMaybeDrainIfIdle = vi.fn();
+vi.mock("../prompt-queue.js", () => ({ maybeDrainIfIdle: mockMaybeDrainIfIdle }));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
 // both transport:gap and mode_changed.
@@ -55,11 +57,9 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
     id,
     name: "seeded",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    auto_approve_crew: false,
     available_modes: [],
     available_models: [],
     usage: {
@@ -128,6 +128,16 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setActive("active-chat");
     fireGap();
     expect(mockLoadMessages).toHaveBeenCalledWith("active-chat");
+  });
+
+  it("re-drains every session so a queued prompt isn't stranded by the outage", () => {
+    // The gap clears thinking on all chats; a prompt queued before the outage
+    // would otherwise wait for a turn_ended that will never fire. The handler
+    // re-checks each chat for a drainable queue.
+    setSessions([makeSession("a"), makeSession("b", { thinking: true })]);
+    fireGap();
+    expect(mockMaybeDrainIfIdle).toHaveBeenCalledWith("a");
+    expect(mockMaybeDrainIfIdle).toHaveBeenCalledWith("b");
   });
 });
 

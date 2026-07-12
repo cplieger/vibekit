@@ -37,6 +37,8 @@ type Server struct {
 	modelsSF      singleflight.Group
 	mcpStatus     api.RouteHandler
 	utilityPrompt api.UtilityPrompter
+	accountUsage  api.AccountUsageProvider
+	policy        api.PolicyProvider
 	hub           api.Hub
 	steering      api.SteeringGenerator
 	mcpRegistry   api.RouteHandler
@@ -51,13 +53,14 @@ type Server struct {
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
 	// log the unspoofable socket peer.
 	trustedProxies []*net.IPNet
+	acctUsage      acctUsageCache
 	cliTimeouts    cliTimeouts
 	settingsMu     sync.Mutex
 	installing     atomic.Bool
 	// ready flips to true once the listener binds and srv.Serve is
 	// running; flips back to false on shutdown signal so /api/health
 	// reports unready during drain. Same semantic across the cplieger
-	// Go apps (subflux, plex-exporter, vibecli).
+	// Go apps (subflux, plex-exporter, web-terminal-kiro).
 	ready atomic.Bool
 }
 
@@ -108,6 +111,20 @@ func WithUtilityPrompt(p api.UtilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
 
+// WithAccountUsage sets the provider for account/subscription usage,
+// served at GET /api/account/usage (sidebar footer).
+func WithAccountUsage(p api.AccountUsageProvider) Option {
+	return func(s *Server) { s.accountUsage = p }
+}
+
+// WithPolicy sets the native Cedar policy provider, backing the read-only
+// policy view at GET /api/permissions and the pre-flight simulation at
+// POST /api/permissions/explain. The rule WRITER at POST /api/permissions/rules
+// needs no provider (it is a file write KAS hot-reloads).
+func WithPolicy(p api.PolicyProvider) Option {
+	return func(s *Server) { s.policy = p }
+}
+
 // WithStaticFS sets the embedded filesystem serving the compiled web UI.
 func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
@@ -152,7 +169,6 @@ func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
 	s.hub.RegisterRoutes(mux)
-	s.hub.RegisterSlashRoutes(mux)
 	mux.HandleFunc("/api/models", s.handleModels)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
@@ -181,8 +197,12 @@ func (s *Server) ListenAndServe() error {
 		s.forges.RegisterRoutes(mux)
 	}
 	mux.HandleFunc("/api/permissions/commands", s.handleCommandRules)
+	mux.HandleFunc("GET /api/permissions", s.handlePolicyView)
+	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
+	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
 	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
+	mux.HandleFunc("GET /api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 
 	// Compute the CSP once from the embedded index.html so the inline
@@ -278,7 +298,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // handleHealth returns the liveness+readiness status. Emits the
 // canonical JSON envelope shared across the cplieger Go apps
-// (vibekit, vibecli, subflux, registry-stats, plex-exporter): 200 with
+// (vibekit, web-terminal-kiro, subflux, registry-stats, plex-exporter): 200 with
 // {"status":"ok"} when the listener is bound and serving; 503 with
 // {"status":"unready",...} during startup or graceful shutdown drain.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

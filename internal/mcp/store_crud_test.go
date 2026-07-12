@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -80,5 +81,57 @@ func TestSetKnownTools_noWarnOnPersistSuccess(t *testing.T) {
 
 	if strings.Contains(buf.String(), "persist after SetKnownTools failed") {
 		t.Errorf("persist succeeded but failure warn logged; log=%q", buf.String())
+	}
+}
+
+// TestSetKnownTools_changeDetection verifies SetKnownTools skips BOTH the
+// disk write and the onChange broadcast when the incoming tool set is
+// identical to the stored one, and resumes both on a real change. Without
+// the guard every bridge spawn re-reports the same tools, firing redundant
+// mcp.json writes + mcp_config_changed broadcasts + npx prewarm passes.
+func TestSetKnownTools_changeDetection(t *testing.T) {
+	dir := t.TempDir()
+	var broadcasts atomic.Int32
+	s, err := New(context.Background(), dir, func(context.Context) { broadcasts.Add(1) })
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "srv", Command: "bash"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Create fires onChange; wait for it so the later counts start clean.
+	waitForCounter(t, &broadcasts, 1)
+
+	// First set is a real change (nil -> [a b]): persists + broadcasts.
+	s.SetKnownTools(context.Background(), "srv", []string{"a", "b"})
+	waitForCounter(t, &broadcasts, 2)
+	if got := serverByName(s, "srv").KnownTools; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("KnownTools after change = %v, want [a b]", got)
+	}
+
+	// Remove mcp.json so a subsequent persist is detectable by re-creation.
+	if err := os.Remove(s.path); err != nil {
+		t.Fatalf("remove mcp.json: %v", err)
+	}
+
+	// Identical set: must skip the write and the broadcast entirely.
+	s.SetKnownTools(context.Background(), "srv", []string{"a", "b"})
+	if _, err := os.Stat(s.path); !os.IsNotExist(err) {
+		t.Errorf("unchanged SetKnownTools rewrote mcp.json (stat err=%v), want skip", err)
+	}
+	// The skip path returns before notifyChange, so no notifier goroutine
+	// is spawned and the count is stably 2 (no timing race to guard).
+	if got := broadcasts.Load(); got != 2 {
+		t.Errorf("unchanged SetKnownTools broadcast count = %d, want 2 (no new broadcast)", got)
+	}
+
+	// A different set (adds "c") resumes both persist and broadcast.
+	s.SetKnownTools(context.Background(), "srv", []string{"a", "b", "c"})
+	waitForCounter(t, &broadcasts, 3)
+	if _, err := os.Stat(s.path); err != nil {
+		t.Errorf("changed SetKnownTools did not rewrite mcp.json: %v", err)
+	}
+	if got := serverByName(s, "srv").KnownTools; len(got) != 3 {
+		t.Fatalf("KnownTools after second change = %v, want len 3", got)
 	}
 }

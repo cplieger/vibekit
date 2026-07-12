@@ -13,6 +13,8 @@ import (
 )
 
 // runCmd executes a CLI command with timeout and captures its output.
+//
+//nolint:unparam // stdin mirrors cliexec.RunCmd; forge request bodies go through runCmdEnv (gh) or net/http (gitea), so runCmd's stdin is currently always nil
 func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string, args ...string) ([]byte, error) {
 	return cliexec.RunCmd(ctx, timeout, stdin, cli, args...)
 }

@@ -1535,6 +1535,20 @@
   overflow-wrap: anywhere;
 }
 
+/* Read-only Organization-policy disclosure (Settings → General). "Off" is
+   muted so the eye lands on what is on; no red/green, because a flag's "good"
+   direction differs per row (a capability being on vs. prompt logging being
+   on), so no value judgment is implied. */
+dd.governance-off {
+  color: var(--c-text-tertiary);
+}
+
+.governance-reason {
+  margin: var(--sp-2) 0 0;
+  color: var(--c-yellow);
+  font-size: var(--fs-sm);
+}
+
 /* Inline dropdown used in Settings → Custom instructions (default
    agent picker). Mirrors .settings-tab-select styling so both lives
    behave identically. */
@@ -1548,4 +1562,235 @@
   font-family: var(--font-sans);
   font-size: var(--fs-md);
   appearance: auto;
+}
+
+/* --- Native (Cedar) policy view + editor -------------------------------- */
+
+.native-policy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: var(--sp-2) 0;
+}
+
+.native-policy-scope-label {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-text-tertiary);
+}
+.native-policy-scope-label:first-child {
+  margin-top: 0;
+}
+
+.native-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.native-rule-effect {
+  flex: none;
+  min-inline-size: 3.2rem;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.eff-allow {
+  color: #10894b;
+  background: color-mix(in srgb, #10b981 18%, transparent);
+}
+.eff-deny {
+  color: #d1394b;
+  background: color-mix(in srgb, #ef4444 18%, transparent);
+}
+.eff-ask {
+  color: #b26a00;
+  background: color-mix(in srgb, #f59e0b 20%, transparent);
+}
+
+.native-rule-cap {
+  flex: none;
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+}
+
+.native-rule-globs {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.native-rule-src {
+  flex: none;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+.native-rule-remove {
+  flex: none;
+  margin-inline-start: auto;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
+}
+.native-rule-remove:hover {
+  color: var(--c-text-primary);
+  background: var(--c-bg-hover);
+}
+
+.native-rule-adder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.native-rule-adder .chip-input {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+}
+
+.native-policy-status-error {
+  color: #d1394b;
+}
+
+.native-explain-summary {
+  cursor: pointer;
+}
+#native-explain-result:empty {
+  display: none;
+}
+
+/* --- Run diagnostics: copyable report surface (Settings → General) ---------
+ * The full report renders into a readonly, selectable textarea (the durable
+ * surface) instead of a truncated ephemeral string, so it's always obtainable
+ * even when the clipboard API is blocked (non-HTTPS self-host). A version row +
+ * explicit Copy button sit alongside it. */
+.diagnostics-version {
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  color: var(--c-text-secondary);
+}
+
+.diagnostics-result-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: var(--sp-2);
+}
+
+.diagnostics-result {
+  inline-size: 100%;
+  min-block-size: 12rem;
+  max-block-size: 24rem;
+  margin-block-start: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.diagnostics-result:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* --- Kiro config list (Settings → Instructions): keyboard rows + skeleton --- */
+
+/* The whole row is the activation target (role="button"); keyboard users get a
+ * visible focus ring, tucked inside the row edge with a negative offset. */
+#kiro-config-list .kiro-config-row {
+  cursor: pointer;
+}
+
+#kiro-config-list .kiro-config-row:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+
+.kiro-config-skel-row {
+  pointer-events: none;
+}
+
+.kiro-config-skel-label {
+  block-size: 0.75rem;
+  margin: var(--sp-1) var(--sp-2);
+}
+
+.kiro-config-skel-name {
+  block-size: 0.85rem;
+}
+
+/* --- History (full-page table + sidebar): keyboard rows, skeleton, error --- */
+
+/* The title block restores the chat on click/Enter/Space (role="button"). */
+#history-table .list-row-title {
+  cursor: pointer;
+  border-radius: var(--r);
+}
+
+#history-table .list-row-title:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+
+#history-list .history-restore:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+/* Load-failure state: message + Retry, so it's never a dead end. */
+.history-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.history-skel-row {
+  pointer-events: none;
+}
+
+.history-skel-name {
+  block-size: 0.85rem;
+}
+
+.history-skel-summary {
+  block-size: 0.7rem;
+  margin-block-start: var(--sp-1);
+}
+
+.history-skel-date {
+  block-size: 0.75rem;
 }

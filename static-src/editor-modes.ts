@@ -32,6 +32,14 @@ export function restoreUI(state: FileState): void {
     $.editorCancelBtn.classList.add("hidden");
     $.editorSaveBtn.classList.add("hidden");
     $.editorDiffBtn.classList.add("hidden");
+    // A resolved/expired pending change still routes here with an error
+    // ("Change already resolved"). Hide the Accept/Reject/Discuss actions the
+    // top of restoreUI un-hid for pending paths, so the user can't dispatch a
+    // resolve for a tool_call_id the server has already dropped.
+    $.editorPendingAcceptBtn.classList.add("hidden");
+    $.editorPendingRejectBtn.classList.add("hidden");
+    $.editorPendingDiscussBtn.classList.add("hidden");
+    $.editorPendingApplyPartialBtn.classList.add("hidden");
     showReadMode();
     return;
   }

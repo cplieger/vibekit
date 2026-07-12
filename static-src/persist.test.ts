@@ -185,15 +185,15 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("array-valued settings dedup correctly", async () => {
-    initSettingsTracking({ trust_tools: ["a", "b", "c"] });
-    patchSettings({ trust_tools: ["a", "b", "c"] });
+    initSettingsTracking({ agent_ignore_files: ["a", "b", "c"] });
+    patchSettings({ agent_ignore_files: ["a", "b", "c"] });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
     // Different order is treated as different (we use deterministic JSON).
-    patchSettings({ trust_tools: ["c", "b", "a"] });
+    patchSettings({ agent_ignore_files: ["c", "b", "a"] });
     await vi.advanceTimersByTimeAsync(350);
     expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
-      trust_tools: ["c", "b", "a"],
+      agent_ignore_files: ["c", "b", "a"],
     });
   });
 

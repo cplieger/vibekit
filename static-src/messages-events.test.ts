@@ -20,7 +20,8 @@ vi.mock("./store.js", () => ({
   state: { messages: [], chatID: "" },
 }));
 
-import { EVENT_RENDER_MAP } from "./messages-events.js";
+import { EVENT_RENDER_MAP, buildEvent } from "./messages-events.js";
+import type { Message } from "./types.js";
 
 describe("EVENT_RENDER_MAP exhaustiveness", () => {
   it("every boundary entry has non-empty icon and defaultLabel", () => {
@@ -43,39 +44,6 @@ describe("EVENT_RENDER_MAP exhaustiveness", () => {
     }
   });
 
-  it("inline render functions do not throw on minimal Message", () => {
-    const minimalMessage = {
-      id: "test-id",
-      role: "event" as const,
-      content: "test content",
-      ts: Date.now(),
-    };
-
-    for (const [kind, strategy] of Object.entries(EVENT_RENDER_MAP)) {
-      if (strategy.kind === "inline") {
-        expect(() => strategy.render(minimalMessage as any), `${kind} threw`).not.toThrow();
-      }
-    }
-  });
-
-  it("inline render functions return HTMLElement or null", () => {
-    const minimalMessage = {
-      id: "test-id",
-      role: "event" as const,
-      content: "test content",
-      ts: Date.now(),
-    };
-
-    for (const [kind, strategy] of Object.entries(EVENT_RENDER_MAP)) {
-      if (strategy.kind === "inline") {
-        const result = strategy.render(minimalMessage as any);
-        if (result !== null) {
-          expect(result, `${kind} result`).toBeInstanceOf(HTMLElement);
-        }
-      }
-    }
-  });
-
   it("boundary metadata snapshot", () => {
     const boundaries = Object.entries(EVENT_RENDER_MAP)
       .filter(([, s]) => s.kind === "boundary")
@@ -88,5 +56,98 @@ describe("EVENT_RENDER_MAP exhaustiveness", () => {
 
     expect(boundaries.length).toBeGreaterThan(0);
     expect(boundaries.map((b) => b.kind).sort()).toMatchSnapshot();
+  });
+});
+
+describe("infra_safety_blocked event (Kiro Infrastructure-Safety enforce block)", () => {
+  it("renders a red blocked boundary carrying the violated properties", () => {
+    const node = buildEvent({
+      id: "m1",
+      role: "event",
+      event_kind: "infra_safety_blocked",
+      content: "no public S3 buckets; encrypt at rest",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    expect(node?.className).toContain("boundary-blocked");
+    const text = node?.textContent ?? "";
+    expect(text).toContain("Infrastructure Safety blocked");
+    expect(text).toContain("no public S3 buckets; encrypt at rest");
+  });
+
+  it("falls back to a default label when the block carries no reason", () => {
+    const node = buildEvent({
+      id: "m2",
+      role: "event",
+      event_kind: "infra_safety_blocked",
+      ts: 0,
+    } as Message);
+    expect(node?.textContent ?? "").toContain("Infrastructure Safety blocked a change");
+  });
+});
+
+describe("interrupted event (partial-turn recovery badge)", () => {
+  it("renders a visible boundary instead of being skipped", () => {
+    const node = buildEvent({
+      id: "i1",
+      role: "event",
+      event_kind: "interrupted",
+      content: "Turn interrupted by server restart",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    expect(node?.className).toContain("boundary");
+    expect(node?.textContent ?? "").toContain("Interrupted by server restart");
+  });
+
+  it("shows the badge even when the event carries no content", () => {
+    const node = buildEvent({
+      id: "i2",
+      role: "event",
+      event_kind: "interrupted",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    expect(node?.textContent ?? "").toContain("Interrupted by server restart");
+  });
+});
+
+describe("cancelled event", () => {
+  it("stays invisible (expected user action, no badge)", () => {
+    const node = buildEvent({ id: "c1", role: "event", event_kind: "cancelled", ts: 0 } as Message);
+    expect(node).toBeNull();
+  });
+});
+
+describe("compacted event summary", () => {
+  it("renders the conversation summary in a collapsible disclosure", () => {
+    const node = buildEvent({
+      id: "cp1",
+      role: "event",
+      event_kind: "compacted",
+      content: "The user asked to refactor the auth module; we split it into three files.",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    // The boundary marker is present...
+    expect(node?.querySelector(".boundary")).not.toBeNull();
+    // ...and the summary is surfaced (not dropped) in an expandable details.
+    const details = node?.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details?.textContent ?? "").toContain("Conversation summary");
+    expect(details?.textContent ?? "").toContain("split it into three files");
+  });
+
+  it("renders just the marker (no disclosure) when there is no summary", () => {
+    const node = buildEvent({
+      id: "cp2",
+      role: "event",
+      event_kind: "compacted",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    expect(node?.className).toContain("boundary-compacted");
+    expect(node?.querySelector("details")).toBeNull();
+    expect(node?.textContent ?? "").toContain("Conversation compacted");
   });
 });

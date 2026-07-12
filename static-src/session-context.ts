@@ -1,23 +1,19 @@
 // ---------------------------------------------------------------------------
-// Session context: the ambient agent + model the user is currently composing
-// with. Separated from app.ts so multiple modules can read/write without
-// going through the orchestrator.
+// Session context: the ambient model the user is currently composing with.
+// Separated from app.ts so multiple modules can read/write without going
+// through the orchestrator.
 //
 // last_model is also synced to server settings so it follows the user across
-// devices; current_agent is ephemeral (plan button sets it for the next
-// createSession then reverts).
+// devices. There is no ambient agent — v3 roles are modes, set via the mode
+// picker, not an ambient agent.
 // ---------------------------------------------------------------------------
 
 import { patchSettings } from "./persist.js";
 
 class SessionContextController {
-  private currentAgent = "";
   private currentModel = "auto";
   private lastModelCache = "auto";
 
-  getCurrentAgent(): string {
-    return this.currentAgent;
-  }
   getCurrentModel(): string {
     return this.currentModel;
   }
@@ -49,23 +45,10 @@ class SessionContextController {
       this.lastModelCache = id;
     }
   }
-
-  withAgent(agent: string, fn: () => void): void {
-    const prev = this.currentAgent;
-    this.currentAgent = agent;
-    try {
-      fn();
-    } finally {
-      this.currentAgent = prev;
-    }
-  }
 }
 
 const instance = new SessionContextController();
 
-export function getCurrentAgent(): string {
-  return instance.getCurrentAgent();
-}
 export function getCurrentModel(): string {
   return instance.getCurrentModel();
 }
@@ -83,9 +66,4 @@ export function setLastModel(id: string): void {
 /** Restore last_model from settings on startup. */
 export function restoreLastModel(id: string | undefined): void {
   instance.restoreLastModel(id);
-}
-
-/** Run fn with currentAgent temporarily set; restored when fn returns. */
-export function withAgent(agent: string, fn: () => void): void {
-  instance.withAgent(agent, fn);
 }

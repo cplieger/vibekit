@@ -4,33 +4,6 @@ import (
 	"testing"
 )
 
-func TestParseSignal_Table(t *testing.T) {
-	// Exercise the unix parseSignal directly. The non-unix build of this
-	// file has its own parseSignal that returns (0, false) for everything;
-	// covered implicitly by the shell-level tests.
-	tests := []struct {
-		name string
-		ok   bool
-	}{
-		{"SIGINT", true},
-		{"SIGTERM", true},
-		{"SIGQUIT", true},
-		{"SIGKILL", false}, // not allowlisted (would be unblockable)
-		{"SIGHUP", false},
-		{"", false},
-		{"sigint", false}, // case-sensitive on purpose
-		{"INT", false},    // without SIG prefix
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, ok := parseSignal(tt.name)
-			if ok != tt.ok {
-				t.Errorf("parseSignal(%q) ok = %v, want %v", tt.name, ok, tt.ok)
-			}
-		})
-	}
-}
-
 // Scrollback tests now exercise byteRing directly (the old shellSession
 // wrapper is gone; byteRing lives in byte_ring.go and is used by
 // agent_terminal.go).

@@ -113,36 +113,60 @@ func TestParseGitStatusOutput(t *testing.T) {
 	}{
 		{"nil input", nil, nil},
 		{"empty input", []byte(""), nil},
-		{"whitespace only", []byte("  \n\t\r\n"), nil},
-		{"unstaged modified", []byte(" M file.go\n"), []gitFile{
+		{"unstaged modified", []byte(" M file.go\x00"), []gitFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
-		{"staged added", []byte("A  new.go\n"), []gitFile{
+		{"staged added", []byte("A  new.go\x00"), []gitFile{
 			{Path: "new.go", Status: "A", Display: "Added", Staged: true},
 		}},
-		{"staged and unstaged emits two entries", []byte("MM both.go\n"), []gitFile{
+		{"staged and unstaged emits two entries", []byte("MM both.go\x00"), []gitFile{
 			{Path: "both.go", Status: "M", Display: "Modified", Staged: true},
 			{Path: "both.go", Status: "M", Display: "Modified", Staged: false},
 		}},
-		{"untracked", []byte("?? newfile.go\n"), []gitFile{
+		{"untracked", []byte("?? newfile.go\x00"), []gitFile{
 			{Path: "newfile.go", Status: "?", Display: "Untracked"},
 		}},
-		{"rename", []byte("R  old.go -> new.go\n"), []gitFile{
+		// -z rename: the ` -> ` is dropped and the order is reversed, so
+		// the new (current) path comes first and the origin path is a
+		// second NUL field that must be consumed, not parsed.
+		{"rename keeps new path, consumes origin field", []byte("R  new.go\x00old.go\x00"), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
 		}},
-		{"directory entry skipped", []byte("?? somedir/\n?? real.txt\n"), []gitFile{
+		{"rename plus worktree modify emits two entries", []byte("RM renamed.go\x00orig.go\x00"), []gitFile{
+			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true},
+			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
+		}},
+		{"copy consumes origin field", []byte("C  copy.go\x00src.go\x00"), []gitFile{
+			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true},
+		}},
+		// -z never quotes: non-ASCII bytes arrive verbatim as UTF-8.
+		{"non-ascii filename unquoted", []byte(" M café.txt\x00"), []gitFile{
+			{Path: "café.txt", Status: "M", Display: "Modified"},
+		}},
+		{"staged non-ascii rename", []byte("R  café-new.txt\x00café-old.txt\x00"), []gitFile{
+			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true},
+		}},
+		// A literal " -> " inside a filename is no longer mistaken for a
+		// rename separator (the old newline parser split on it).
+		{"spaced filename with arrow-like substring", []byte(" M foo -> bar.txt\x00"), []gitFile{
+			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
+		}},
+		{"rename of spaced paths", []byte("R  new name.txt\x00old name.txt\x00"), []gitFile{
+			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true},
+		}},
+		{"directory entry skipped", []byte("?? somedir/\x00?? real.txt\x00"), []gitFile{
 			{Path: "real.txt", Status: "?", Display: "Untracked"},
 		}},
-		{"short lines skipped", []byte("XY\n M file.go\n?\n"), []gitFile{
+		{"short records skipped", []byte("XY\x00 M file.go\x00?\x00"), []gitFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
-		{"multiple entries", []byte("M  staged.go\n M unstaged.go\n?? untracked.go\nA  added.go\n"), []gitFile{
+		{"multiple entries", []byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"), []gitFile{
 			{Path: "staged.go", Status: "M", Display: "Modified", Staged: true},
 			{Path: "unstaged.go", Status: "M", Display: "Modified"},
 			{Path: "untracked.go", Status: "?", Display: "Untracked"},
 			{Path: "added.go", Status: "A", Display: "Added", Staged: true},
 		}},
-		{"trailing whitespace trimmed", []byte(" M file.go\n\n\t\r\n"), []gitFile{
+		{"no trailing NUL still parses final record", []byte(" M file.go"), []gitFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
 	}
@@ -1267,6 +1291,65 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	}
 }
 
+// parseGitStatus round-trips real `git status --porcelain=v1 -z` output
+// for filenames git C-quotes in the default (newline) format: non-ASCII
+// bytes, embedded spaces, and a staged rename to such a name. The -z
+// format never quotes, so every returned Path is the exact on-disk path
+// — which is what stage/unstage/discard/diff feed back to git. This is
+// the end-to-end proof of the quoting-bug fix (GIT-PANEL): under the old
+// newline + line[3:] parser these paths came back wrapped in double
+// quotes with C-escapes (café.txt → "caf\303\251.txt") and no subsequent
+// git op could resolve them.
+func TestParseGitStatus_UnquotesSpecialFilenames(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir) // commits README.md on main
+
+	// Untracked files whose names the default porcelain format would quote.
+	const nonASCII = "café.txt"
+	const spaced = "with space.txt"
+	for _, name := range []string{nonASCII, spaced} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A staged rename to a non-ASCII + spaced name (git mv stages it).
+	const renamedTo = "rénamed doc.md"
+	runGit(t, dir, "mv", "README.md", renamedTo)
+
+	files := parseGitStatus(context.Background(), dir)
+
+	byPath := make(map[string]gitFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+		// Regression guard: the old parser surfaced C-quoted paths
+		// (e.g. "caf\303\251.txt"). -z output is verbatim, so no
+		// returned path may be double-quote-wrapped or carry a
+		// backslash escape.
+		if strings.HasPrefix(f.Path, `"`) || strings.Contains(f.Path, `\`) {
+			t.Errorf("path %q looks C-quoted; -z output must be verbatim", f.Path)
+		}
+	}
+
+	if f, ok := byPath[nonASCII]; !ok {
+		t.Errorf("non-ASCII untracked file %q missing from %+v", nonASCII, files)
+	} else if f.Status != "?" {
+		t.Errorf("%q status = %q, want untracked", nonASCII, f.Status)
+	}
+	if _, ok := byPath[spaced]; !ok {
+		t.Errorf("spaced untracked file %q missing from %+v", spaced, files)
+	}
+	// The rename's new (current) path must be present, staged, and
+	// un-quoted regardless of whether git reports it as R (rename
+	// detected, origin field consumed) or A (add) — both stage the new
+	// path under this exact name.
+	if f, ok := byPath[renamedTo]; !ok {
+		t.Errorf("renamed path %q missing from %+v", renamedTo, files)
+	} else if !f.Staged {
+		t.Errorf("renamed path %q Staged = false, want true", renamedTo)
+	}
+}
+
 func TestHandleLog_RepoReturnsCommitLines(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
@@ -1687,20 +1770,23 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 // --- fuzz targets ---
 
 func FuzzParseGitStatusOutput(f *testing.F) {
-	// Seed corpus from the table-driven test cases.
+	// Seed corpus from the table-driven test cases (NUL-delimited -z format).
 	seeds := [][]byte{
 		nil,
 		[]byte(""),
-		[]byte("  \n\t\r\n"),
-		[]byte(" M file.go\n"),
-		[]byte("A  new.go\n"),
-		[]byte("MM both.go\n"),
-		[]byte("?? newfile.go\n"),
-		[]byte("R  old.go -> new.go\n"),
-		[]byte("?? somedir/\n?? real.txt\n"),
-		[]byte("XY\n M file.go\n?\n"),
-		[]byte("M  staged.go\n M unstaged.go\n?? untracked.go\nA  added.go\n"),
-		[]byte(" M file.go\n\n\t\r\n"),
+		[]byte(" M file.go\x00"),
+		[]byte("A  new.go\x00"),
+		[]byte("MM both.go\x00"),
+		[]byte("?? newfile.go\x00"),
+		[]byte("R  new.go\x00old.go\x00"),
+		[]byte("RM renamed.go\x00orig.go\x00"),
+		[]byte("C  copy.go\x00src.go\x00"),
+		[]byte(" M café.txt\x00"),
+		[]byte(" M foo -> bar.txt\x00"),
+		[]byte("?? somedir/\x00?? real.txt\x00"),
+		[]byte("XY\x00 M file.go\x00?\x00"),
+		[]byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"),
+		[]byte(" M file.go"),
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -1843,19 +1929,19 @@ func FuzzExtractCommitMessage(f *testing.F) {
 }
 
 func BenchmarkParseGitStatusOutput(b *testing.B) {
-	// Generate synthetic porcelain output for sub-benchmarks.
+	// Generate synthetic porcelain -z output (NUL-delimited) for sub-benchmarks.
 	generate := func(n int) []byte {
 		var buf strings.Builder
 		for i := range n {
 			switch i % 4 {
 			case 0:
-				buf.WriteString(" M file" + strconv.Itoa(i) + ".go\n")
+				buf.WriteString(" M file" + strconv.Itoa(i) + ".go\x00")
 			case 1:
-				buf.WriteString("A  new" + strconv.Itoa(i) + ".go\n")
+				buf.WriteString("A  new" + strconv.Itoa(i) + ".go\x00")
 			case 2:
-				buf.WriteString("?? untracked" + strconv.Itoa(i) + ".txt\n")
+				buf.WriteString("?? untracked" + strconv.Itoa(i) + ".txt\x00")
 			case 3:
-				buf.WriteString("MM both" + strconv.Itoa(i) + ".go\n")
+				buf.WriteString("MM both" + strconv.Itoa(i) + ".go\x00")
 			}
 		}
 		return []byte(buf.String())
@@ -2570,16 +2656,22 @@ func TestCollectStatus_HasGH(t *testing.T) {
 	})
 }
 
-// parseGitStatusOutput processes a status line of exactly 3 bytes ("??x"),
-// yielding one entry with an empty path (a 3-byte line is the inclusive
-// lower bound for a parseable entry).
+// parseGitStatusOutput's inclusive lower bound for a parseable record is
+// 4 bytes ("XY P": 2 status bytes, a space, a >=1-char path). A record of
+// exactly 4 bytes yields one entry; a 3-byte record (no path) is dropped
+// rather than emitting a useless empty-path entry.
 func TestParseGitStatusOutput_LenBoundary(t *testing.T) {
-	got := parseGitStatusOutput([]byte("??x"))
+	got := parseGitStatusOutput([]byte("?? x\x00"))
 	if len(got) != 1 {
-		t.Fatalf("parseGitStatusOutput(\"??x\") len = %d, want 1", len(got))
+		t.Fatalf("parseGitStatusOutput(\"?? x\") len = %d, want 1", len(got))
 	}
-	if got[0].Status != "?" || got[0].Display != "Untracked" || got[0].Path != "" {
-		t.Errorf("entry = %+v, want {Path:\"\" Status:\"?\" Display:\"Untracked\"}", got[0])
+	if got[0].Status != "?" || got[0].Display != "Untracked" || got[0].Path != "x" {
+		t.Errorf("entry = %+v, want {Path:\"x\" Status:\"?\" Display:\"Untracked\"}", got[0])
+	}
+
+	// One byte short of a path: dropped, not emitted as an empty-path entry.
+	if got := parseGitStatusOutput([]byte("?? \x00")); len(got) != 0 {
+		t.Errorf("parseGitStatusOutput(\"?? \") = %+v, want no entries", got)
 	}
 }
 

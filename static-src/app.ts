@@ -24,6 +24,7 @@ import { computed, effect } from "@cplieger/reactive";
 import { dispatch } from "./bus.js";
 import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
+import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
 import { apiGet, apiGetTyped } from "./api-client.js";
@@ -53,10 +54,14 @@ import { initAwaySummary } from "./away-summary.js";
 import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
 import { initHistory } from "./history.js";
+import { initSpecs, showSpecsView } from "./specs.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
+import { handleFindHotkey } from "./find-in-chat.js";
 import { loadToolsList } from "./tools.js";
 import { loadKiroConfig } from "./kiro-config.js";
+import { loadKnowledge } from "./knowledge.js";
+import { loadHooks } from "./hooks.js";
 import { forceSettingsTab } from "./settings-tabs.js";
 import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
@@ -64,16 +69,17 @@ import { restoreLastModel } from "./session-context.js";
 import {
   openChatTab,
   createSession,
-  createPlannerSession,
   switchSession,
   sendPrompt,
   installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { initAutoApprove } from "./auto-approve.js";
 import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
+import { loadAccountUsage } from "./account-usage.js";
+import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
+import { initQueuedPrompts } from "./queued-prompts.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
@@ -84,6 +90,8 @@ import "./handlers/messages.js";
 import "./handlers/pending.js";
 import "./handlers/turn.js";
 import "./handlers/system.js";
+import "./handlers/open-external-url.js";
+import "./handlers/safety.js";
 import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -182,7 +190,9 @@ function init(): void {
         /* noop */
       });
   });
-  // Sync history button visibility with retention setting.
+  // Sync history button visibility with retention setting. Retention = 0 is
+  // "no retention" (ephemeral chats, nothing archived) → hide History; > 0
+  // archives on close → show it.
   const syncHistoryBtn = (): void => {
     $.historyBtn.classList.toggle("hidden", !isRetentionEnabled());
   };
@@ -192,6 +202,13 @@ function init(): void {
   initAgentTerminals();
   initTooltips();
   initHistory();
+  initSpecs();
+  // Fetch the org/account governance snapshot + subscribe to live updates.
+  // Gates MCP availability (Settings → Tools), renders the read-only
+  // Organization-policy disclosure (Settings → General), and gates the
+  // code-reference chip. Safe before transport connects: the SSE fills in
+  // updates, the REST snapshot seeds the initial state.
+  initGovernance();
   initLoginModal(onLoginSuccess);
   initSidebarSwipe($.chatArea, $.sidebar);
   initKeyboardShortcuts({
@@ -213,6 +230,11 @@ function init(): void {
     },
     sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
   });
+
+  // Find in Chat (Ctrl-F / Cmd-F). Capture phase so we can preventDefault the
+  // browser's native find before it opens — but only when the chat view is the
+  // active context (see find-in-chat.ts; native find is left alone elsewhere).
+  document.addEventListener("keydown", handleFindHotkey, true);
 
   // Action-framework global: live-log every action error to the
   // browser console so failures are visible in DevTools regardless of
@@ -268,6 +290,16 @@ function init(): void {
           }, 200);
         }
       }
+    });
+  }
+
+  // Register the service worker unconditionally at boot (independent of the
+  // push opt-in): an active SW with a fetch handler is a PWA install-criteria
+  // requirement, so browsers only offer "Install app" once one controls the
+  // page. register() is idempotent — the push-enable flow reuses it.
+  if ("serviceWorker" in navigator) {
+    void navigator.serviceWorker.register("/sw.js").catch((err: unknown) => {
+      console.warn("sw: registration failed", err);
     });
   }
 
@@ -330,7 +362,7 @@ async function checkAuthAndStart(): Promise<void> {
       }
     } else {
       for (const s of getSessions()) {
-        openChatTab(s.id, s.name, s.agent);
+        openChatTab(s.id, s.name);
       }
       restoreTabState();
       if (getActiveTabId() === "" && getSessions().length > 0) {
@@ -449,13 +481,6 @@ function setupInput(): void {
     $.sidebar.classList.remove("open");
   });
   $.newChatBtn.addEventListener("click", doCreate);
-  $.newPlanBtn.addEventListener(
-    "click",
-    guardAction(() => {
-      createPlannerSession();
-      $.sidebar.classList.remove("open");
-    }),
-  );
   $.menuToggle.addEventListener("click", () => $.sidebar.classList.toggle("open"));
   $.sidebarClose.addEventListener("click", () => {
     $.sidebar.classList.remove("open");
@@ -464,8 +489,11 @@ function setupInput(): void {
   // The model switcher owns its button click, popover, queue, and
   // outside-click dismissal. See model-switcher.ts.
   initModelSwitcher();
-  initAutoApprove();
+  // The role picker owns the prompt-bar role pill (expand, list, selection).
+  initRolePicker();
   initSupervisedPill();
+  // Queued-prompt chips (pending sends buffered while a turn is in flight).
+  initQueuedPrompts();
 
   // Expandable pills: context and status dot.
   const ctxExpand = $.contextIndicator.querySelector<HTMLElement>(".pill-expand-content");
@@ -474,7 +502,13 @@ function setupInput(): void {
   }
   const statusExpand = $.statusDot.querySelector<HTMLElement>(".pill-expand-content");
   if (statusExpand !== null) {
-    makeExpandable($.statusDot, statusExpand);
+    // Fetch account/subscription usage lazily when the popup opens (it
+    // changes slowly and may be rate-limited); loadAccountUsage throttles.
+    makeExpandable($.statusDot, statusExpand, {
+      onExpand: () => {
+        loadAccountUsage();
+      },
+    });
   }
 }
 
@@ -536,6 +570,9 @@ function applyRoute(route: Route): void {
           /* noop */
         });
       break;
+    case "specs":
+      showSpecsView();
+      break;
   }
 }
 
@@ -543,12 +580,21 @@ function applyRoute(route: Route): void {
 // tab. Keeps applyRoute readable while preserving the lazy-load behaviour
 // each tab currently has (tools list, kiro config list, etc. only fetch
 // when their tab actually opens).
+// loadInstructionsPanel loads both lists the Instructions tab shows: the
+// .kiro/ steering-docs/skills/agents list and the workspace knowledge bases
+// (the same "workspace context" family).
+function loadInstructionsPanel(): void {
+  loadKiroConfig();
+  loadKnowledge();
+  loadHooks();
+}
+
 function loadSettingsForTab(tab: SettingsTab): () => void {
   switch (tab) {
     case "tools":
       return loadToolsList;
     case "instructions":
-      return loadKiroConfig;
+      return loadInstructionsPanel;
     case "general":
       return noop;
     case "permissions":

@@ -18,12 +18,15 @@ import (
 // a field, it lands here once rather than in N handler-local structs.
 
 // ACPChunkWire is the wire shape for agent_message_chunk and
-// agent_thought_chunk session updates.
+// agent_thought_chunk session updates. On v3 (KAS) a nested subagent's
+// chunks ride the parent session id and carry _meta.kiro.agentSubtaskId
+// identifying which agent-subtask tool call they belong to.
 type ACPChunkWire struct {
 	Content struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	Meta ACPKiroMeta `json:"_meta"`
 }
 
 // ACPToolCallContentBlock is one element in a tool_call or
@@ -38,8 +41,31 @@ type ACPToolCallContentBlock struct {
 	} `json:"content"`
 }
 
+// ACPKiroMeta is the top-level `_meta.kiro` block carried on v3 (KAS)
+// tool_call / tool_call_update session updates. When Kind=="agent-subtask"
+// the tool call is a subagent card (the model invoked invoke_sub_agent);
+// AgentSubtaskID is the stable id that links the card to its nested
+// agent_message_chunk / agent_thought_chunk deltas (which carry the same
+// id under their own _meta.kiro).
+//
+// HookAsk is present (non-empty) only on the synthetic tool call KAS emits
+// to surface a pre-tool-use hook's ask-permission gate: KAS sends a
+// kind:"other" tool_call/tool_call_update tagged
+// _meta.kiro.hookAsk={kind:"pre-tool-use",toolName,reason[,decision]} —
+// NOT a ToolKind "hook" (v3's zToolKind has no "hook"). Its presence is
+// the signal HandleToolCall uses to suppress hook cards when the
+// hooks.showStatus setting is off; the contents are opaque here.
+type ACPKiroMeta struct {
+	Kiro struct {
+		Kind           string          `json:"kind"`
+		AgentSubtaskID string          `json:"agentSubtaskId"`
+		HookAsk        json.RawMessage `json:"hookAsk,omitempty"`
+	} `json:"kiro"`
+}
+
 // ACPToolCallWire is the wire shape for tool_call session updates.
 type ACPToolCallWire struct {
+	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       api.ToolKind              `json:"kind"`
@@ -50,9 +76,16 @@ type ACPToolCallWire struct {
 }
 
 // ACPToolCallUpdateWire is the wire shape for tool_call_update session
-// updates.
+// updates. KAS's zToolCallUpdate also carries optional title/kind (a
+// mid-flight card refinement) and rawOutput; we decode title/kind so the
+// card can be relabelled, but leave rawOutput undecoded — the tool's
+// textual output already arrives through the `content` blocks below and
+// the domain ToolCall has no structured-output field.
 type ACPToolCallUpdateWire struct {
+	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
+	Title      string                    `json:"title"`
+	Kind       api.ToolKind              `json:"kind"`
 	Status     api.ToolStatus            `json:"status"`
 	Locations  []api.ToolLocation        `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
@@ -63,19 +96,14 @@ type ACPPlanWire struct {
 	Entries []api.PlanEntry `json:"entries"`
 }
 
-// ACPModeUpdateWire is the wire shape for current_mode_update session
-// updates.
+// ACPModeUpdateWire is the wire shape for the current_mode_update
+// session/update sub-kind. KAS keys the new mode on `currentModeId`
+// (the bundle's zCurrentModeUpdate object), NOT `modeId` — `modeId` is
+// the field name on the outbound session/set_mode REQUEST (command/mode.go),
+// a different message. Reading the wrong key here left ModeID empty, so
+// HandleModeUpdate never persisted agent-initiated mode changes.
 type ACPModeUpdateWire struct {
-	ModeID string `json:"modeId"`
-}
-
-// ACPSteeringWire is the wire shape for steering_inclusion session
-// updates.
-type ACPSteeringWire struct {
-	Documents []struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	} `json:"documents"`
+	ModeID string `json:"currentModeId"`
 }
 
 // ACPSessionUpdateEnvelope is the outer envelope for session/update
@@ -101,76 +129,3 @@ const ContentTypeContent = "content"
 // ContentTypeDiff is the ACP content-block type for file-change diffs
 // in tool_call and tool_call_update payloads.
 const ContentTypeDiff = "diff"
-
-// ExtUpdateToolCallChunk is the extension session-update subtype for
-// subagent tool-call streaming chunks.
-const ExtUpdateToolCallChunk = "tool_call_chunk"
-
-// --- Crew notification wire types ---
-
-// CrewNotifPayload mirrors kiro-cli's wire format for subagent/list_update.
-type CrewNotifPayload struct {
-	Subagents     []CrewNotifSubagent     `json:"subagents"`
-	PendingStages []CrewNotifPendingStage `json:"pendingStages"`
-}
-
-// CrewNotifSubagent is one subagent in the crew notification.
-type CrewNotifSubagent struct {
-	Status struct {
-		Type    string `json:"type"`
-		Message string `json:"message,omitempty"`
-	} `json:"status"`
-	SessionID    string   `json:"sessionId"`
-	SessionName  string   `json:"sessionName"`
-	AgentName    string   `json:"agentName"`
-	InitialQuery string   `json:"initialQuery"`
-	Group        string   `json:"group"`
-	Role         string   `json:"role"`
-	DependsOn    []string `json:"dependsOn,omitempty"`
-}
-
-// CrewNotifPendingStage is one pending stage in the crew notification.
-type CrewNotifPendingStage struct {
-	Name      string   `json:"name"`
-	AgentName string   `json:"agentName"`
-	Role      string   `json:"role"`
-	DependsOn []string `json:"dependsOn,omitempty"`
-}
-
-// crewFromWire converts a wire-format CrewNotifPayload into the domain
-// type *api.Crew. This is the single place where wire→domain field
-// mapping lives; when kiro-cli adds fields to the notification, only
-// this adapter changes.
-func crewFromWire(p *CrewNotifPayload) *api.Crew {
-	crew := &api.Crew{
-		Group:     p.Subagents[0].Group,
-		Subagents: make([]api.CrewSubagent, len(p.Subagents)),
-	}
-	for i := range p.Subagents {
-		s := &p.Subagents[i]
-		crew.Subagents[i] = api.CrewSubagent{
-			SessionID:    s.SessionID,
-			SessionName:  s.SessionName,
-			AgentName:    s.AgentName,
-			InitialQuery: s.InitialQuery,
-			Status:       api.CrewStatus(s.Status.Type),
-			StatusMsg:    s.Status.Message,
-			Group:        s.Group,
-			Role:         s.Role,
-			DependsOn:    s.DependsOn,
-		}
-	}
-	if len(p.PendingStages) > 0 {
-		crew.PendingStages = make([]api.CrewPendingStage, len(p.PendingStages))
-		for i := range p.PendingStages {
-			ps := &p.PendingStages[i]
-			crew.PendingStages[i] = api.CrewPendingStage{
-				Name:      ps.Name,
-				AgentName: ps.AgentName,
-				Role:      ps.Role,
-				DependsOn: ps.DependsOn,
-			}
-		}
-	}
-	return crew
-}

@@ -16,20 +16,6 @@ const (
 	DecisionDeny
 )
 
-// AutoDecideCrew evaluates whether a crew (subagent) permission
-// request should be auto-approved based on the chat's
-// AutoApproveCrew flag. Returns DecisionAllow if the flag is set
-// and an allow_once option exists; DecisionNone otherwise.
-func AutoDecideCrew(autoApproveCrew, hasAllowOnce bool) AutoDecision {
-	if !autoApproveCrew {
-		return DecisionNone
-	}
-	if !hasAllowOnce {
-		return DecisionNone
-	}
-	return DecisionAllow
-}
-
 // shellDecisionMap maps each ShellDecision to its corresponding
 // AutoDecision outcome. New ShellDecision values must be added here;
 // unlisted values fall through to DecisionNone.

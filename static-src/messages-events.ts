@@ -1,20 +1,21 @@
 // ---------------------------------------------------------------------------
-// Event/boundary rendering: build event messages (boundary dividers,
-// system messages, inbox, crew cards).
+// Event/boundary rendering: build event messages (boundary dividers, system
+// messages).
 //
-// Extracted from messages.ts — the "Events" section (lines 1244-1362).
+// v3 EventKinds are boundary dividers (model_switched, compacted,
+// compaction_failed, infra_safety_blocked, interrupted). `cancelled` is the
+// one invisible marker (an expected user action needs no badge). The v2
+// crew / inbox / agent_switched kinds are gone.
 // ---------------------------------------------------------------------------
 
-import type { Message, EventKind, Crew } from "./types.js";
-import { ensureCrewSig, clearCrewSig } from "./store-signals.js";
-import { el, effect } from "@cplieger/reactive";
-import { updateCrew as updateCrewInternal, buildCrewCardForReplay } from "./crew-card.js";
+import type { Message, EventKind } from "./types.js";
+import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
 // Event render strategy (exhaustive over EventKind via satisfies)
 // ---------------------------------------------------------------------------
 
-type BoundaryKind = "switched" | "compacted" | "failed" | "agent";
+type BoundaryKind = "switched" | "compacted" | "failed" | "blocked";
 
 type EventRenderStrategy =
   | {
@@ -24,7 +25,6 @@ type EventRenderStrategy =
       defaultLabel: string;
       labelFn?: (content: string) => string;
     }
-  | { kind: "inline"; render: (m: Message) => HTMLElement | null }
   | { kind: "skip" };
 
 /** Exhaustive render strategy map — every EventKind must have an entry.
@@ -51,50 +51,32 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
     defaultLabel: "Compaction failed",
     labelFn: (c) => (c ? `Compaction failed: ${c}` : "Compaction failed"),
   },
-  agent_switched: {
+  // Kiro Infrastructure-Safety ENFORCE-mode refusal: KAS blocked an
+  // infra-as-code write/shell tool call upstream (the tool never ran, nothing
+  // was written). A permanent transcript record, distinct from the transient
+  // status banner in handlers/safety.ts. content carries the violated safety
+  // properties; the block is chat-scoped (KAS's toolId is a tool name, not a
+  // tool_call id, so it can't pin a specific tool card).
+  infra_safety_blocked: {
     kind: "boundary",
-    boundary: "agent",
-    icon: "\u2192",
-    defaultLabel: "Agent switched",
-    labelFn: (c) => c || "Agent switched",
+    boundary: "blocked",
+    icon: "\u{1F6E1}",
+    defaultLabel: "Infrastructure Safety blocked a change",
+    labelFn: (c) =>
+      c ? `Infrastructure Safety blocked: ${c}` : "Infrastructure Safety blocked a change",
   },
-  interrupted: { kind: "skip" },
+  // A turn cut short by a server restart, recovered from its .partial file.
+  // Without a visible boundary the recovered (often mid-sentence) turn reads
+  // as a short but complete answer — so render a red "failed"-styled divider.
+  // Reuses the existing .boundary-failed styling (no new CSS).
+  interrupted: {
+    kind: "boundary",
+    boundary: "failed",
+    icon: "\u26a0",
+    defaultLabel: "Interrupted by server restart",
+  },
   cancelled: { kind: "skip" },
-  inbox: {
-    kind: "inline",
-    render: (m) =>
-      el("div", { className: "message system inbox-message" }, m.content ?? "Subagent message"),
-  },
-  crew: {
-    kind: "inline",
-    render: () => null, // handled specially via buildEvent's crew branch
-  },
 } satisfies Record<EventKind, EventRenderStrategy>;
-
-// (EVENT_BOUNDARY_META removed — consumers query EVENT_RENDER_MAP directly)
-
-// ---------------------------------------------------------------------------
-// Crew effect tracking (owned here, disposed by messages.ts on unmount)
-// ---------------------------------------------------------------------------
-
-const crewEffects = new Map<string, () => void>();
-
-export function disposeCrewEffect(id: string): void {
-  const fn = crewEffects.get(id);
-  if (fn !== undefined) {
-    fn();
-    crewEffects.delete(id);
-  }
-  clearCrewSig(id);
-}
-
-export function disposeAllCrewEffects(): void {
-  for (const [id, fn] of crewEffects) {
-    fn();
-    clearCrewSig(id);
-  }
-  crewEffects.clear();
-}
 
 // ---------------------------------------------------------------------------
 // Build / update
@@ -106,58 +88,46 @@ export function buildEvent(m: Message): HTMLElement | null {
     if (strategy.kind === "boundary") {
       const content = m.content ?? "";
       const label = strategy.labelFn ? strategy.labelFn(content) : strategy.defaultLabel;
-      return buildBoundaryDivider(strategy.boundary, label);
-    }
-    if (strategy.kind === "inline") {
-      if (m.event_kind === "crew" && m.crew !== undefined) {
-        return buildCrewEvent(m.id, m.crew);
+      const divider = buildBoundaryDivider(strategy.boundary, strategy.icon, label);
+      // Compaction carries the conversation summary in the event content.
+      // Surface it as a collapsible disclosure below the marker (reusing the
+      // reasoning-block styling) instead of dropping it, matching the IDE's
+      // "Conversation summary" affordance.
+      if (m.event_kind === "compacted" && content !== "") {
+        return wrapWithSummary(divider, content);
       }
-      return strategy.render(m);
+      return divider;
     }
-    // "skip" — interrupted/cancelled produce no visible element
+    // "skip" — cancelled produces no visible element
   }
   return null;
 }
 
 export function updateEvent(_el: HTMLElement, _m: Message): void {
   // All event types are immutable from the global reconcile's POV.
-  // Crew snapshots flow through the per-crew signal directly.
 }
 
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
 
-function buildCrewEvent(msgId: string, crew: Crew): HTMLElement {
-  const node = buildCrewCardForReplay(msgId, crew);
-  const sig = ensureCrewSig(msgId, crew);
-  let lastApplied = crew;
-  const cleanup = effect(() => {
-    const next = sig.value;
-    if (next === lastApplied) {
-      return;
-    }
-    updateCrewInternal(msgId, next, () => {
-      /* no-op: node already mounted */
-    });
-    lastApplied = next;
-  });
-  crewEffects.set(msgId, cleanup);
-  return node;
-}
-
-function buildBoundaryDivider(kind: BoundaryKind, label: string): HTMLElement {
+function buildBoundaryDivider(kind: BoundaryKind, icon: string, label: string): HTMLElement {
   const node = el("div", { className: `boundary boundary-${kind}` });
-  let icon = "";
-  for (const entry of Object.values(EVENT_RENDER_MAP)) {
-    if (entry.kind === "boundary" && entry.boundary === kind) {
-      icon = entry.icon;
-      break;
-    }
-  }
   node.appendChild(el("span", { className: "boundary-icon" }, icon));
   node.appendChild(el("span", { className: "boundary-label" }, label));
   return node;
+}
+
+/** Stack a compaction boundary above a collapsible "Conversation summary"
+ *  disclosure. Reuses the reasoning-block/summary/body classes so no new CSS
+ *  is needed; the wrapper is a plain block container. */
+function wrapWithSummary(divider: HTMLElement, summary: string): HTMLElement {
+  const wrap = el("div", { className: "boundary-with-summary" });
+  const details = el("details", { className: "reasoning-block compaction-summary" });
+  details.appendChild(el("summary", { className: "reasoning-summary" }, "Conversation summary"));
+  details.appendChild(el("blockquote", { className: "reasoning-body" }, summary));
+  wrap.append(divider, details);
+  return wrap;
 }
 
 export function buildSystemFallback(m: Message): HTMLElement {

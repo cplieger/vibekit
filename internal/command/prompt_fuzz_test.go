@@ -9,13 +9,13 @@ import (
 
 func FuzzValidatePromptPayload(f *testing.F) {
 	// Valid prompt.
-	f.Add([]byte(`{"text":"hello","message_id":"abc-123","agent":"default","model":"claude"}`))
+	f.Add([]byte(`{"text":"hello","message_id":"abc-123","model":"claude"}`))
 	// Empty text.
-	f.Add([]byte(`{"text":"","message_id":"abc-123","agent":"default","model":"claude"}`))
+	f.Add([]byte(`{"text":"","message_id":"abc-123","model":"claude"}`))
 	// Missing message_id.
-	f.Add([]byte(`{"text":"hi","message_id":"","agent":"a","model":"m"}`))
+	f.Add([]byte(`{"text":"hi","message_id":"","model":"m"}`))
 	// Invalid characters in message_id.
-	f.Add([]byte(`{"text":"hi","message_id":"../evil","agent":"a","model":"m"}`))
+	f.Add([]byte(`{"text":"hi","message_id":"../evil","model":"m"}`))
 	// Oversized text.
 	f.Add(make([]byte, 600000))
 	// Malformed JSON.

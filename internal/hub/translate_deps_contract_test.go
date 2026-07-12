@@ -62,7 +62,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(context.Background(), "test-server")
+		r.RecordConnected(context.Background(), "test-server", nil, nil)
 		r.SignalReady()
 	})
 

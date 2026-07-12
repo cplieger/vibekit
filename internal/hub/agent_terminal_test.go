@@ -1,9 +1,13 @@
 package hub
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"sort"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -189,4 +193,283 @@ func TestAgentTerminals_Release(t *testing.T) {
 	if len(at.terms) != 1 {
 		t.Errorf("terms size = %d, want 1", len(at.terms))
 	}
+}
+
+// --- agent-terminal server-side regression tests (ordering + UTF-8 boundary) ---
+
+// ringEvent is a decoded terminal_* SSE event captured from the replay ring.
+type ringEvent struct {
+	typ     string
+	termID  string
+	data    string
+	eventID uint64
+}
+
+// captureTerminalEvents reads the hub's replay ring and returns every
+// terminal_created/terminal_output/terminal_exited event, sorted by the
+// monotonic SSE event id (ring insertion order can differ from event-id
+// order because seq.Add runs before the fan-out lock).
+func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
+	t.Helper()
+	var out []ringEvent
+	for _, e := range h.sse.ctrl.replay.Events() {
+		var env struct {
+			Type    string `json:"type"`
+			Payload struct {
+				TerminalID string `json:"terminal_id"`
+				Data       string `json:"data"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(e.data, &env); err != nil {
+			t.Fatalf("unmarshal ring event: %v", err)
+		}
+		switch env.Type {
+		case string(api.EventTerminalCreated), string(api.EventTerminalOutput), string(api.EventTerminalExited):
+			out = append(out, ringEvent{
+				eventID: e.eventID,
+				typ:     env.Type,
+				termID:  env.Payload.TerminalID,
+				data:    env.Payload.Data,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].eventID < out[j].eventID })
+	return out
+}
+
+func hasType(evs []ringEvent, typ api.EventType) bool {
+	for _, e := range evs {
+		if e.typ == string(typ) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstEventID returns the lowest event id of the given type (evs is sorted).
+func firstEventID(evs []ringEvent, typ api.EventType) (uint64, bool) {
+	for _, e := range evs {
+		if e.typ == string(typ) {
+			return e.eventID, true
+		}
+	}
+	return 0, false
+}
+
+// terminal_created must be broadcast (and so receive a lower monotonic event
+// id) before any terminal_output / terminal_exited event. emit() assigns ids
+// in call order and the pump/exit goroutines are started only after the
+// terminal_created broadcast, so created always sorts first. If it didn't, a
+// fast write-and-exit command's output/exited events would reach the client
+// before the tab exists and get dropped (unknown terminal id) — wedging the
+// tab in "running".
+func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
+	work := t.TempDir()
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, work, br)
+	// printf writes to stdout (pump → terminal_output); the brief sleep keeps
+	// the process alive so the pump reads that output well before cmd.Wait
+	// closes the pipe, then the process exits (exit goroutine → terminal_exited).
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", "printf hello; sleep 1"}, nil)
+
+	h.translateACPEvent("c1", msg)
+	term := singleTerm(t, h)
+	waitClosed(t, term.done, "terminal")
+
+	// The terminal_exited broadcast happens just after term.done closes, so
+	// poll until both output and exited have landed in the ring.
+	var evs []ringEvent
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		evs = captureTerminalEvents(t, h)
+		if hasType(evs, api.EventTerminalOutput) && hasType(evs, api.EventTerminalExited) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	createdID, ok := firstEventID(evs, api.EventTerminalCreated)
+	if !ok {
+		t.Fatal("terminal_created was never broadcast")
+	}
+	sawOutput, sawExited := false, false
+	for _, e := range evs {
+		switch e.typ {
+		case string(api.EventTerminalOutput):
+			sawOutput = true
+			if e.eventID <= createdID {
+				t.Errorf("terminal_output event id %d <= terminal_created id %d (created must be broadcast first)", e.eventID, createdID)
+			}
+		case string(api.EventTerminalExited):
+			sawExited = true
+			if e.eventID <= createdID {
+				t.Errorf("terminal_exited event id %d <= terminal_created id %d (created must be broadcast first)", e.eventID, createdID)
+			}
+		}
+	}
+	if !sawOutput {
+		t.Error("no terminal_output event captured (pump never broadcast the command's stdout)")
+	}
+	if !sawExited {
+		t.Error("no terminal_exited event captured")
+	}
+}
+
+// chunkReader hands out its byte chunks one Read at a time, letting a test
+// place a read boundary exactly inside a multi-byte UTF-8 rune.
+type chunkReader struct {
+	chunks [][]byte
+	i      int
+}
+
+func (c *chunkReader) Read(p []byte) (int, error) {
+	if c.i >= len(c.chunks) {
+		return 0, io.EOF
+	}
+	n := copy(p, c.chunks[c.i])
+	c.i++
+	return n, nil
+}
+
+// A multi-byte rune split across the 4 KB read boundary must not be corrupted
+// in the live SSE broadcast: pumpTerminalOutput carries the incomplete tail to
+// the next chunk so every terminal_output chunk is valid UTF-8, while the ring
+// still receives every raw byte.
+func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
+	h := New(t.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1024)}
+	// "aé€😀" with reads that split every multi-byte rune internally:
+	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
+	r := &chunkReader{chunks: [][]byte{
+		{0x61},             // "a" (complete ASCII)
+		{0xC3},             // é byte 1/2  → incomplete, held
+		{0xA9, 0xE2},       // é byte 2/2 (completes é) + € byte 1/3 (held)
+		{0x82},             // € byte 2/3  → still incomplete, held
+		{0xAC, 0xF0, 0x9F}, // € byte 3/3 (completes €) + 😀 bytes 1,2/4 (held)
+		{0x98},             // 😀 byte 3/4 → still incomplete, held
+		{0x80},             // 😀 byte 4/4 (completes 😀)
+	}}
+	const want = "aé€😀"
+
+	h.pumpTerminalOutput(term, "t1", "c1", r)
+
+	// Reassemble the broadcast chunks. A split rune would have its halves
+	// coerced to U+FFFD by the SSE JSON marshal, so the reassembly would not
+	// equal the original text — the equality check is what proves the fix.
+	var got bytes.Buffer
+	for _, e := range captureTerminalEvents(t, h) {
+		if e.typ == string(api.EventTerminalOutput) {
+			got.WriteString(e.data)
+		}
+	}
+	if got.String() != want {
+		t.Errorf("broadcast reassembly = %q, want %q (a rune was split across the read boundary)", got.String(), want)
+	}
+	// The ring buffer must still hold every raw byte.
+	if ring := term.output.String(); ring != want {
+		t.Errorf("ring content = %q, want %q", ring, want)
+	}
+}
+
+func TestIncompleteTailLen(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   []byte
+		want int
+	}{
+		{"empty", nil, 0},
+		{"ascii", []byte("hello"), 0},
+		{"complete 2-byte é", []byte{0xC3, 0xA9}, 0},
+		{"complete 3-byte €", []byte{0xE2, 0x82, 0xAC}, 0},
+		{"complete 4-byte 😀", []byte{0xF0, 0x9F, 0x98, 0x80}, 0},
+		{"ascii then partial 2-byte lead", []byte{0x41, 0xC3}, 1},
+		{"partial 3-byte 1of3", []byte{0xE2}, 1},
+		{"partial 3-byte 2of3", []byte{0xE2, 0x82}, 2},
+		{"partial 4-byte 3of4", []byte{0xF0, 0x9F, 0x98}, 3},
+		{"real U+FFFD is complete", []byte{0xEF, 0xBF, 0xBD}, 0},
+		{"lone continuation byte", []byte{0x80}, 0},
+		{"invalid lead 0xFF", []byte{0xFF}, 0},
+		{"complete multibyte then ascii", []byte{0xE2, 0x82, 0xAC, 0x41}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := incompleteTailLen(tc.in); got != tc.want {
+				t.Errorf("incompleteTailLen(%x) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// sizeChunkReader hands out fixed-size slices of data, one per Read, so a fuzz
+// target can place read boundaries at every offset.
+type sizeChunkReader struct {
+	data []byte
+	size int
+	pos  int
+}
+
+func (r *sizeChunkReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	end := min(r.pos+r.size, len(r.data))
+	n := copy(p, r.data[r.pos:end])
+	r.pos += n
+	return n, nil
+}
+
+// FuzzPumpTerminalOutput_UTF8Broadcast asserts two invariants over arbitrary
+// bytes split at arbitrary read boundaries: (1) the concatenation of every
+// broadcast chunk equals the raw input exactly (no byte dropped or
+// duplicated), and (2) when the whole input is valid UTF-8, every broadcast
+// chunk is itself valid UTF-8 (no rune split across the read boundary). One
+// hub is reused across iterations (fuzz iterations run sequentially per
+// process) to avoid leaking the per-Hub background goroutines.
+func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
+	f.Add([]byte("hello"), uint8(1))
+	f.Add([]byte("aé€😀z"), uint8(1))
+	f.Add([]byte("aé€😀z"), uint8(3))
+	f.Add([]byte{0xE2, 0x82, 0xAC}, uint8(1))
+	f.Add([]byte{0xFF, 0x80, 0xE2}, uint8(1)) // invalid + incomplete tail
+	h := New(f.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
+		if len(data) > 512 {
+			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
+		}
+		chunkSize := int(chunkRaw)%8 + 1
+		preSeq := h.sse.ctrl.seq.Load()
+		term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1 << 20)}
+		h.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
+
+		// The ring receives every raw byte exactly once, for any input.
+		if ring := term.output.Bytes(); !bytes.Equal(ring, data) {
+			t.Errorf("ring content = %x, want raw input %x (chunkSize=%d)", ring, data, chunkSize)
+		}
+
+		var got []byte
+		for _, e := range h.sse.ctrl.replay.Replay(preSeq, "") {
+			var env struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Data string `json:"data"`
+				} `json:"payload"`
+			}
+			if err := json.Unmarshal(e.data, &env); err != nil {
+				t.Fatalf("unmarshal ring event: %v", err)
+			}
+			if env.Type == string(api.EventTerminalOutput) {
+				got = append(got, env.Payload.Data...)
+			}
+		}
+		// When the whole input is valid UTF-8 the fix never splits a rune, so
+		// each broadcast chunk survives the SSE JSON round-trip intact and the
+		// chunks reassemble to the exact input. Invalid input is expectedly
+		// coerced to U+FFFD by json.Marshal, so byte-preservation of the
+		// broadcast only holds for valid UTF-8 — the ring check above covers
+		// the raw-byte path for all inputs.
+		if utf8.Valid(data) && !bytes.Equal(got, data) {
+			t.Errorf("valid UTF-8 input %x reassembled from broadcasts as %x (chunkSize=%d) — a rune was split across the read boundary", data, got, chunkSize)
+		}
+	})
 }

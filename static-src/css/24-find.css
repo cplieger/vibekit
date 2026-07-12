@@ -1,0 +1,144 @@
+/* ==========================================================================
+   Find in Chat (Ctrl-F overlay)
+
+   A floating search bar anchored top-right over the transcript, plus the
+   <mark> highlight styles. Unlayered (like the other component slices) so it
+   wins over the layered base by source order. Shown/hidden via the global
+   `.hidden` utility; @starting-style animates the entry. Reduced-motion is
+   handled globally in 40-a11y.css.
+   ========================================================================== */
+
+.chat-find {
+  position: absolute;
+  inset-block-start: var(--sp-2);
+  inset-inline-end: var(--sp-2);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 20%),
+    0 6px 16px rgb(0 0 0 / 28%);
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+}
+
+/* Diagonal grow-in from the top-right corner it's anchored to. */
+@starting-style {
+  .chat-find {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+.chat-find-input {
+  inline-size: 12rem;
+  max-inline-size: 45vw;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-base);
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-micro);
+}
+
+.chat-find-input:focus-visible {
+  outline: none;
+  border-color: var(--c-accent);
+}
+
+.chat-find-count {
+  min-inline-size: 4.5rem;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.chat-find-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+}
+
+.chat-find-btn:hover {
+  color: var(--c-text-primary);
+  background: var(--c-bg-hover);
+}
+
+.chat-find-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* No-results affordance: tint the field + counter without restructuring. */
+.chat-find--no-results .chat-find-input {
+  border-color: var(--c-red);
+}
+
+.chat-find--no-results .chat-find-count {
+  color: var(--c-red);
+}
+
+/* Match highlights. `scroll-margin` keeps a match clear of the floating bar
+   (and any sticky chrome) when scrolled into view. */
+mark.chat-find-hit {
+  color: inherit;
+  background: color-mix(in srgb, var(--c-accent) 32%, transparent);
+  border-radius: 2px;
+  scroll-margin-block: 20vh;
+}
+
+mark.chat-find-hit-current {
+  color: #fff;
+  background: var(--c-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
+}
+
+/* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom. */
+@media (max-width: 40rem) {
+  .chat-find {
+    inset-inline: var(--sp-2);
+    inset-inline-end: var(--sp-2);
+  }
+
+  .chat-find-input {
+    flex: 1;
+    inline-size: auto;
+    max-inline-size: none;
+    font-size: 16px;
+  }
+
+  .chat-find-btn {
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
+  }
+}

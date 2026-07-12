@@ -1,37 +1,34 @@
 package hub
 
-// Tests for the _kiro.dev/* translate handlers:
-//   - translate_mcp.go     (server_initialized, oauth_request)
-//   - translate_compact.go (compaction/status)
-//   - translate_commands.go(commands/available)
-//   - translate_crew.go    (subagent/list_update)
+// Tests for the v3 (KAS) _kiro/* translate handlers dispatched through
+// translateACPEvent:
+//   - _kiro/mcp/status            (translate/v3_notifications.go)
+//   - _kiro/customAgent/*         (translate/init_errors.go)
+//   - _kiro/error/rate_limit      (translate/init_errors.go)
+//   - _kiro/system/notify         (translate/init_errors.go)
+//   - session/update sub-kinds    (translate/v3_updates.go)
 //
 // Shared fixtures live in shared_test.go.
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/translate"
 )
 
-// --- MCP ---
+// --- MCP (v3 consolidated status) ---
 
-func TestTranslateMCP(t *testing.T) {
+func TestTranslateMCPStatus(t *testing.T) {
 	tests := []struct {
 		name       string
-		method     string
-		params     any // passed to mustJSON; use json.RawMessage for raw input
-		rawParams  json.RawMessage
+		params     any
 		wantSnap   func(t *testing.T, snap []mcpServerRuntime)
-		wantEvents []string // subset of emitted SSE event types
+		wantEvents []string
 	}{
 		{
-			name:   "ServerInitializedDecodesServerName",
-			method: "_kiro.dev/mcp/server_initialized",
-			params: map[string]any{"serverName": "github"},
+			name:   "ConnectedRecordsServer",
+			params: map[string]any{"servers": []map[string]any{{"name": "github", "status": "connected"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
 				if len(snap) != 1 || snap[0].Name != "github" {
@@ -43,50 +40,12 @@ func TestTranslateMCP(t *testing.T) {
 			},
 		},
 		{
-			name:   "ServerInitializedMissingNameDropped",
-			method: "_kiro.dev/mcp/server_initialized",
-			params: map[string]any{"server": "github"},
+			name:   "FailedRecordsError",
+			params: map[string]any{"servers": []map[string]any{{"name": "broken", "status": "failed", "errorMessage": "connection refused"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
-				if len(snap) != 0 {
-					t.Error("legacy field name incorrectly accepted; kiro-cli 2.0.1 emits serverName only")
-				}
-			},
-		},
-		{
-			name:   "OAuthRequestEmitsEvent",
-			method: "_kiro.dev/mcp/oauth_request",
-			params: map[string]any{"serverName": "linear", "oauthUrl": "https://oauth.example/authorize"},
-			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
-				t.Helper()
-				if len(snap) != 1 || snap[0].OAuthURL != "https://oauth.example/authorize" {
-					t.Errorf("snapshot = %+v", snap)
-				}
-			},
-			wantEvents: []string{"mcp_oauth_needed"},
-		},
-		{
-			name:   "OAuthLegacyFieldNamesDropped",
-			method: "_kiro.dev/mcp/oauth_request",
-			params: map[string]any{"server": "linear", "url": "https://x"},
-			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
-				t.Helper()
-				if len(snap) != 0 {
-					t.Error("legacy oauth field names incorrectly accepted")
-				}
-			},
-		},
-		{
-			name:   "InitFailureRecordsError",
-			method: "_kiro.dev/mcp/server_init_failure",
-			params: map[string]any{"serverName": "broken", "error": "connection refused"},
-			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
-				t.Helper()
-				if len(snap) != 1 || snap[0].Name != "broken" {
+				if len(snap) != 1 || snap[0].State != mcpStateFailed {
 					t.Fatalf("snapshot = %+v", snap)
-				}
-				if snap[0].State != mcpStateFailed {
-					t.Errorf("state = %q, want %q", snap[0].State, mcpStateFailed)
 				}
 				if snap[0].Error != "connection refused" {
 					t.Errorf("error = %q", snap[0].Error)
@@ -95,15 +54,15 @@ func TestTranslateMCP(t *testing.T) {
 			wantEvents: []string{"mcp_failed"},
 		},
 		{
-			name:      "MalformedServerInitializedDropped",
-			method:    "_kiro.dev/mcp/server_initialized",
-			rawParams: json.RawMessage(`{"not-json`),
+			name:   "FailedWithAuthURLEmitsOAuth",
+			params: map[string]any{"servers": []map[string]any{{"name": "linear", "status": "failed", "authorizationUrl": "https://oauth.example/authorize"}}},
 			wantSnap: func(t *testing.T, snap []mcpServerRuntime) {
 				t.Helper()
-				if len(snap) != 0 {
-					t.Error("malformed payload affected registry")
+				if len(snap) != 1 || snap[0].OAuthURL != "https://oauth.example/authorize" {
+					t.Errorf("snapshot = %+v", snap)
 				}
 			},
+			wantEvents: []string{"mcp_oauth_needed"},
 		},
 	}
 
@@ -111,14 +70,7 @@ func TestTranslateMCP(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			before := h.sse.replayBuf.Len()
-
-			var params json.RawMessage
-			if tc.rawParams != nil {
-				params = tc.rawParams
-			} else {
-				params = mustJSON(t, tc.params)
-			}
-			msg := &api.RPCResponse{Method: tc.method, Params: params}
+			msg := &api.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
 			h.translateACPEvent("", msg)
 
 			if tc.wantSnap != nil {
@@ -132,70 +84,45 @@ func TestTranslateMCP(t *testing.T) {
 	}
 }
 
-// --- Commands ---
+// --- Available commands (v3 session/update sub-kind) ---
 
-func TestTranslateCommands_FiltersBrowserIncompatibleEntries(t *testing.T) {
+func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.sse.replayBuf.Len()
 
-	commands := []map[string]any{
-		{"name": "/compact", "description": "Summarise"},
-		{"name": "/paste", "description": "Clipboard paste"},
-		{"name": "/reply", "description": "Open editor"},
-		{"name": "/quit", "description": "Exit"},
-		{"name": "/chat", "description": "Manage chats"},
-		{"name": "/knowledge", "description": "Search docs"},
-	}
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/commands/available",
-		Params: mustJSON(t, map[string]any{"commands": commands}),
+		Method: api.MethodSessionUpdate,
+		Params: mustJSON(t, map[string]any{
+			"update": map[string]any{
+				"sessionUpdate": "available_commands_update",
+				"availableCommands": []map[string]any{
+					{"name": "/help", "description": "Show help"},
+				},
+			},
+		}),
 	}
 	h.translateACPEvent("c1", msg)
 
-	// Find the emitted commands_updated event.
-	var payload struct {
-		Payload struct {
-			Commands []map[string]any `json:"commands"`
-		} `json:"payload"`
-	}
-	var found bool
-	for _, ev := range h.sse.replayBuf.Events()[before:] {
-		var raw struct {
-			Type string `json:"type"`
-		}
-		_ = json.Unmarshal(ev.data, &raw)
-		if raw.Type == "commands_updated" {
-			_ = json.Unmarshal(ev.data, &payload)
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("no commands_updated event emitted")
-	}
-	got := make([]string, 0, len(payload.Payload.Commands))
-	for _, c := range payload.Payload.Commands {
-		if name, ok := c["name"].(string); ok {
-			got = append(got, name)
-		}
-	}
-	// FilterCommands is now a no-op; all commands pass through.
-	if len(got) != 6 {
-		t.Errorf("got %v, want all 6 commands (filter is no-op)", got)
-	}
+	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	wantSubset(t, types, "commands_updated")
 }
 
-// --- Compaction ---
+// --- Compaction (v3 session_info_update summarization) ---
 
-func TestTranslateCompact_StartedEmitsTransient(t *testing.T) {
+func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.sse.replayBuf.Len()
 
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/compaction/status",
-		Params: mustJSON(t, map[string]any{"status": map[string]string{"type": "started"}}),
+		Method: api.MethodSessionUpdate,
+		Params: mustJSON(t, map[string]any{
+			"update": map[string]any{
+				"sessionUpdate": "session_info_update",
+				"_meta":         map[string]any{"kiro": map[string]any{"summarization": map[string]any{"status": "running"}}},
+			},
+		}),
 	}
 	h.translateACPEvent("c1", msg)
 
@@ -203,16 +130,21 @@ func TestTranslateCompact_StartedEmitsTransient(t *testing.T) {
 	wantSubset(t, types, "compaction_started")
 }
 
-func TestTranslateCompact_CompletedPersistsEvent(t *testing.T) {
+func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	summary := "summary text"
 
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/compaction/status",
+		Method: api.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
-			"status":  map[string]string{"type": "completed"},
-			"summary": summary,
+			"update": map[string]any{
+				"sessionUpdate": "session_info_update",
+				"_meta": map[string]any{"kiro": map[string]any{"summarization": map[string]any{
+					"status":  "success",
+					"summary": map[string]any{"conversationSummary": summary},
+				}}},
+			},
 		}),
 	}
 	h.translateACPEvent("c1", msg)
@@ -229,219 +161,55 @@ func TestTranslateCompact_CompletedPersistsEvent(t *testing.T) {
 	}
 }
 
-// --- Crew ---
+// --- Usage (v3 usage_update sub-kind) ---
 
-func TestTranslateCrew_FirstSnapshotCreatesMessage(t *testing.T) {
+func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/subagent/list_update",
+		Method: api.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
-			"subagents": []map[string]any{{
-				"sessionId": "s1", "sessionName": "sub1",
-				"agentName": "kiro_default", "initialQuery": "do a thing",
-				"status": map[string]string{"type": "working", "message": "running"},
-				"group":  "crew-foo", "role": "kiro_default",
-			}},
+			"update": map[string]any{
+				"sessionUpdate": "usage_update",
+				"size":          1000,
+				"used":          250,
+			},
 		}),
 	}
 	h.translateACPEvent("c1", msg)
 
 	chat, _ := cs.Get(context.Background(), "c1")
-	if len(chat.Messages) != 1 {
-		t.Fatalf("messages = %d", len(chat.Messages))
-	}
-	m := chat.Messages[0]
-	if m.EventKind != api.EventCrew || m.Crew == nil || m.Crew.Group != "crew-foo" {
-		t.Errorf("message = %+v", m)
-	}
-	if len(m.Crew.Subagents) != 1 || m.Crew.Subagents[0].SessionID != "s1" {
-		t.Errorf("subagents = %+v", m.Crew.Subagents)
+	if chat.Usage.ContextPct != 25 {
+		t.Errorf("context_pct = %v, want 25", chat.Usage.ContextPct)
 	}
 }
 
-func TestTranslateCrew_IdenticalSnapshotDeduplicates(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	snap := mustJSON(t, map[string]any{
-		"subagents": []map[string]any{{
-			"sessionId": "s1", "sessionName": "sub1",
-			"agentName": "kiro_default", "initialQuery": "q",
-			"status": map[string]string{"type": "working"},
-			"group":  "g",
-		}},
-	})
-	msg := &api.RPCResponse{Method: "_kiro.dev/subagent/list_update", Params: snap}
-
-	h.translateACPEvent("c1", msg)
-	firstCount := len(cs.Chats["c1"].Messages)
-
-	// Same snapshot again: must not append or emit anything.
-	before := h.sse.replayBuf.Len()
-	h.translateACPEvent("c1", msg)
-	if len(cs.Chats["c1"].Messages) != firstCount {
-		t.Error("duplicate snapshot caused a second message append")
-	}
-	if h.sse.replayBuf.Len() != before {
-		t.Errorf("duplicate snapshot emitted %d new events", h.sse.replayBuf.Len()-before)
-	}
-}
-
-func TestTranslateCrew_StatusChangeUpdatesInPlace(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	msg1 := &api.RPCResponse{
-		Method: "_kiro.dev/subagent/list_update",
-		Params: mustJSON(t, map[string]any{
-			"subagents": []map[string]any{{
-				"sessionId": "s1", "group": "g",
-				"status": map[string]string{"type": "working"},
-			}},
-		}),
-	}
-	h.translateACPEvent("c1", msg1)
-
-	// Change status: same group key → in-place update, no new message.
-	msg2 := &api.RPCResponse{
-		Method: "_kiro.dev/subagent/list_update",
-		Params: mustJSON(t, map[string]any{
-			"subagents": []map[string]any{{
-				"sessionId": "s1", "group": "g",
-				"status": map[string]string{"type": "terminated"},
-			}},
-		}),
-	}
-	h.translateACPEvent("c1", msg2)
-
-	chat, _ := cs.Get(context.Background(), "c1")
-	if len(chat.Messages) != 1 {
-		t.Fatalf("expected 1 message after status change, got %d", len(chat.Messages))
-	}
-	if chat.Messages[0].Crew == nil ||
-		len(chat.Messages[0].Crew.Subagents) == 0 ||
-		chat.Messages[0].Crew.Subagents[0].Status != api.CrewTerminated {
-		t.Errorf("message not updated in place: %+v", chat.Messages[0].Crew)
-	}
-}
-
-func TestTranslateCrew_EmptySnapshotIgnored(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	msg := &api.RPCResponse{
-		Method: "_kiro.dev/subagent/list_update",
-		Params: mustJSON(t, map[string]any{"subagents": []map[string]any{}}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	chat, _ := cs.Get(context.Background(), "c1")
-	if len(chat.Messages) != 0 {
-		t.Errorf("empty snapshot created %d messages", len(chat.Messages))
-	}
-}
-
-func TestIsSubagentNoiseTitle(t *testing.T) {
-	tests := []struct {
-		title string
-		want  bool
-	}{
-		{"subagent", true},
-		{"summary", true},
-		{"Summarizing", true},
-		{"Spawning agent crew", true},
-		{"readFile", false},
-		{"write", false},
-		{"", false},
-	}
-	for _, tc := range tests {
-		if got := translate.IsSubagentNoiseTitle(tc.title); got != tc.want {
-			t.Errorf("IsSubagentNoiseTitle(%q) = %v, want %v", tc.title, got, tc.want)
-		}
-	}
-}
-
-// --- Crew cache ---
-
-func TestCrewCache_LookupAfterAppend(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	crew := &api.Crew{Group: "g-1"}
-	h.translator.PersistCrew(context.Background(), "c1", crew)
-
-	id, ok := h.translator.LookupCrewCache("c1", "g-1")
-	if !ok || id == "" {
-		t.Fatalf("cache lookup miss after persist: id=%q ok=%v", id, ok)
-	}
-}
-
-func TestCrewCache_ClearedOnChatDelete(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	h.translator.PersistCrew(context.Background(), "c1", &api.Crew{Group: "g-1"})
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "delete_chat", ChatID: "c1", RequestID: "r-1",
-	})
-	if rec.Code != 200 {
-		t.Fatalf("delete_chat status = %d", rec.Code)
-	}
-
-	if _, ok := h.translator.LookupCrewCache("c1", "g-1"); ok {
-		t.Error("crew cache not cleared after chat delete")
-	}
-}
-
-// --- Init errors ---
+// --- Init errors (v3 _kiro/customAgent/* + _kiro/error/rate_limit) ---
 
 func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Agent = "nonexistent"
+		c.CurrentModeID = "nonexistent"
 		return true
 	})
 	before := h.sse.replayBuf.Len()
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/agent/not_found",
+		Method: "_kiro/customAgent/not_found",
 		Params: mustJSON(t, map[string]any{
 			"requestedAgent": "nonexistent",
-			"fallbackAgent":  "kiro_default",
+			"fallbackAgent":  "vibe",
 		}),
 	}
 	h.translateACPEvent("c1", msg)
 
 	c, _ := cs.Get(context.Background(), "c1")
-	if c.Agent != "kiro_default" {
-		t.Errorf("agent = %q, want kiro_default", c.Agent)
+	if c.CurrentModeID != "vibe" {
+		t.Errorf("current_mode_id = %q, want vibe", c.CurrentModeID)
 	}
 	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
 	wantSubset(t, types, "error")
-}
-
-func TestTranslateInitErrors_ModelNotFoundPersistsFallback(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Model = "old-model"
-		return true
-	})
-	msg := &api.RPCResponse{
-		Method: "_kiro.dev/model/not_found",
-		Params: mustJSON(t, map[string]any{
-			"requestedModel": "old-model",
-			"fallbackModel":  "claude-sonnet",
-		}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if c.Model != "claude-sonnet" {
-		t.Errorf("model = %q, want claude-sonnet", c.Model)
-	}
 }
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
@@ -449,7 +217,7 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.sse.replayBuf.Len()
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/agent/config_error",
+		Method: "_kiro/customAgent/config_error",
 		Params: mustJSON(t, map[string]any{
 			"path":  "/home/user/.kiro/agents/broken.md",
 			"error": "invalid YAML frontmatter",
@@ -465,7 +233,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.sse.replayBuf.Len()
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/error/rate_limit",
+		Method: "_kiro/error/rate_limit",
 		Params: mustJSON(t, map[string]any{
 			"message": "Rate limit exceeded, try again in 30s",
 		}),
@@ -475,79 +243,20 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	wantSubset(t, types, "error")
 }
 
-// --- Agent switched ---
+// --- System notify (v3 replacement for session/retry) ---
 
-func TestTranslateAgentSwitched_PersistsEventAndUpdatesChat(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Agent = "kiro_default"
-		c.Model = "old-model"
-		return true
-	})
-	msg := &api.RPCResponse{
-		Method: "_kiro.dev/agent/switched",
-		Params: mustJSON(t, map[string]any{
-			"agentName":         "kiro_planner",
-			"previousAgentName": "kiro_default",
-			"welcomeMessage":    "Ready to plan!",
-			"model":             "claude-opus",
-		}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if c.Agent != "kiro_planner" {
-		t.Errorf("agent = %q, want kiro_planner", c.Agent)
-	}
-	if c.Model != "claude-opus" {
-		t.Errorf("model = %q, want claude-opus", c.Model)
-	}
-	if len(c.Messages) != 1 || c.Messages[0].EventKind != api.EventAgentSwitched {
-		t.Errorf("messages = %+v", c.Messages)
-	}
-	if c.Messages[0].Content != "Ready to plan!" {
-		t.Errorf("content = %q", c.Messages[0].Content)
-	}
-}
-
-// --- Compaction failed ---
-
-func TestTranslateCompact_FailedPersistsEventAndEmitsError(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+func TestTranslateSystemNotify_EmitsError(t *testing.T) {
+	h, _, _ := newTestHub()
 	before := h.sse.replayBuf.Len()
+	// No sessionId on _kiro/system/notify — broadcast at bridge scope.
 	msg := &api.RPCResponse{
-		Method: "_kiro.dev/compaction/status",
+		Method: "_kiro/system/notify",
 		Params: mustJSON(t, map[string]any{
-			"status": map[string]string{"type": "failed", "error": "context too large"},
+			"level":   "warning",
+			"message": "The selected model is experiencing high load.",
 		}),
 	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if len(c.Messages) != 1 || c.Messages[0].EventKind != api.EventCompactFailed {
-		t.Fatalf("messages = %+v", c.Messages)
-	}
-	if c.Messages[0].Content != "context too large" {
-		t.Errorf("content = %q", c.Messages[0].Content)
-	}
+	h.translateACPEvent("", msg)
 	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
 	wantSubset(t, types, "error")
-}
-
-// --- Clear status (noop) ---
-
-func TestTranslateClearStatus_NoopNoEvents(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	before := h.sse.replayBuf.Len()
-	msg := &api.RPCResponse{
-		Method: "_kiro.dev/clear/status",
-		Params: mustJSON(t, map[string]any{}),
-	}
-	h.translateACPEvent("c1", msg)
-	if h.sse.replayBuf.Len() != before {
-		t.Errorf("clear/status emitted %d events, want 0", h.sse.replayBuf.Len()-before)
-	}
 }

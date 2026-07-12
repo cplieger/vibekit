@@ -10,47 +10,6 @@ import (
 	"github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
-// FuzzReadEventLog writes arbitrary JSONL to a temp file and verifies
-// readEventLog returns exactly as many events as a line-by-line JSON parse
-// yields, and never panics on any input.
-func FuzzReadEventLog(f *testing.F) {
-	f.Add([]byte(`{"before_sha":"abc","after_sha":"def"}` + "\n"))
-	f.Add([]byte(`not json` + "\n"))
-	f.Add([]byte{})
-	f.Add([]byte(`{"before_sha":"x"}` + "\n" + `garbage` + "\n" + `{"after_sha":"y"}` + "\n"))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) > 1<<20 {
-			return
-		}
-		path := filepath.Join(t.TempDir(), "events.jsonl")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		events, err := readEventLog(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Reference: count the lines a line-by-line JSON parse accepts.
-		var want int
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if line == "" {
-				continue
-			}
-			var ev types.BlobRef
-			if json.Unmarshal([]byte(line), &ev) == nil {
-				want++
-			}
-		}
-
-		if len(events) != want {
-			t.Errorf("readEventLog returned %d events, expected %d parseable lines", len(events), want)
-		}
-	})
-}
-
 // FuzzStreamEventSHAs exercises streamEventSHAs on arbitrary data, asserting
 // it never panics, every returned SHA is non-empty, and every returned SHA is
 // one a line-by-line JSON parse would also extract.

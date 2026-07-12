@@ -53,8 +53,8 @@ func (h *Hub) MCPRecorder() translate.MCPRecorder {
 // hubMCPRecorder adapts Hub's MCP internals to the MCPRecorder interface.
 type hubMCPRecorder struct{ h *Hub }
 
-func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string) {
-	r.h.mcpRegistry.recordConnected(ctx, serverName)
+func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+	r.h.mcpRegistry.recordConnected(ctx, serverName, prompts, resources)
 }
 
 func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {

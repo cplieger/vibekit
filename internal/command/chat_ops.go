@@ -6,6 +6,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -33,7 +34,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if !ValidIdent(p.Agent) || !ValidIdent(p.Model) {
+	if !ValidIdent(p.Model) {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
@@ -42,7 +43,6 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 			return false
 		}
 		c.Name = name
-		c.Agent = p.Agent
 		c.Model = p.Model
 		return true
 	})
@@ -130,9 +130,14 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		api.BadRequest(w, "invalid tag format")
 		return
 	}
+	release, ok := d.guardIdleBridge(w, cmd.ChatID)
+	if !ok {
+		return
+	}
+	defer release()
 	messageCount, err := d.Checkpoint().Checkpoints().Restore(ctx, cmd.ChatID, parsedTag)
 	if err != nil {
-		api.InternalError(w, err)
+		respondCheckpointErr(w, err)
 		return
 	}
 	mutErr := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
@@ -182,10 +187,50 @@ func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		api.BadRequest(w, "invalid tag format")
 		return
 	}
+	release, ok := d.guardIdleBridge(w, cmd.ChatID)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := d.Checkpoint().Checkpoints().CheckoutFile(ctx, cmd.ChatID, parsedTag, p.FilePath); err != nil {
-		api.InternalError(w, err)
+		respondCheckpointErr(w, err)
 		return
 	}
 	slog.Info("undo edit", "chat_id", cmd.ChatID, "tag", p.Tag, "file", p.FilePath)
 	d.RespondOK(w, cmd.RequestID)
+}
+
+// guardIdleBridge rejects a checkpoint mutation with 409 when a turn is
+// in flight on the chat's bridge, and otherwise acquires the prompt lock
+// so the mutation can't race a concurrently-starting prompt. Restore and
+// per-file undo both write the workspace + truncate the transcript, so
+// they must not interleave with the agent's writes / the assistant-buffer
+// flush at turn_ended (mirrors CmdPrompt's TryAcquireForPrompt guard).
+//
+// Returns (release, true) when the caller may proceed — release MUST be
+// deferred — or (nil, false) when a 409 was already written and the
+// caller must return. With no bridge there is no turn to race, so it
+// proceeds with a no-op release.
+func (d *Dispatcher) guardIdleBridge(w http.ResponseWriter, chatID api.ChatID) (func(), bool) {
+	sb := d.Bridge().GetBridge(chatID)
+	if sb == nil {
+		return func() {}, true
+	}
+	if !sb.TryAcquireForPrompt() {
+		d.RespondErr(w, http.StatusConflict, errBusy)
+		return nil, false
+	}
+	sb.SetLastActive()
+	return sb.ReleaseAfterPrompt, true
+}
+
+// respondCheckpointErr maps a checkpoint operation error to HTTP status:
+// an unknown tag is a 404 (matching the GET checkpoint handlers), any
+// other failure is a 500.
+func respondCheckpointErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, chktypes.ErrTagNotFound) {
+		api.NotFound(w, "tag not found")
+		return
+	}
+	api.InternalError(w, err)
 }

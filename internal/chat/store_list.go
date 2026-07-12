@@ -39,6 +39,28 @@ func (s *Store) List(ctx context.Context) []api.ChatHeader {
 	return headers
 }
 
+// ReferencedSessionIDs returns the set of ACP session ids still referenced
+// by a chat vibekit keeps — both active and archived. It backs the orphan
+// session sweep (internal/kirosession): any on-disk KAS session NOT in this
+// set is safe to reap. Headers carry acp_session_id, so this reuses the
+// cached List/ListArchived reads without loading full chats.
+func (s *Store) ReferencedSessionIDs(ctx context.Context) map[string]struct{} {
+	refs := make(map[string]struct{})
+	active := s.List(ctx)
+	for i := range active {
+		if active[i].ACPSessionID != "" {
+			refs[active[i].ACPSessionID] = struct{}{}
+		}
+	}
+	archived := s.ListArchived(ctx)
+	for i := range archived {
+		if archived[i].ACPSessionID != "" {
+			refs[archived[i].ACPSessionID] = struct{}{}
+		}
+	}
+	return refs
+}
+
 func (s *Store) listOnce(ctx context.Context) []api.ChatHeader {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {

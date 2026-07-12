@@ -174,7 +174,8 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
 		"[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n")
 	mustWriteFile(t, filepath.Join(repo, "README.md"), "A widget toolkit\n")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "build.md"), "body\n")
+	// Skills are directories containing SKILL.md, not flat .md files.
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "build", "SKILL.md"), "body\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "deploy.json"), `{"name":"deploy"}`)
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
 		`{"event_type":"preToolUse","command":"echo hi"}`)

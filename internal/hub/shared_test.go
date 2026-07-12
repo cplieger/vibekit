@@ -23,7 +23,7 @@ func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
 	factory := func() api.ACPBridge { return br }
-	h := New("/tmp/work", factory, cs, func() []string { return nil })
+	h := New("/tmp/work", factory, cs)
 	cs.SetBroadcaster(h)
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.
 	h.mcpRegistry.signalReady()

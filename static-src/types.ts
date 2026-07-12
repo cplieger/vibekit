@@ -17,7 +17,6 @@ export type {
   AvailableCommand,
   // Enums
   ClearReason,
-  CrewStatus,
   ErrorCode,
   EventKind,
   ForgeKind,
@@ -25,46 +24,65 @@ export type {
   PendingChangeKind,
   PlanStatus,
   Role,
+  SafetyStatus,
   StopReason,
   ToolKind,
   ToolStatus,
   Transport,
   // Domain shapes
+  AccountUsage,
+  AccountUsageBreakdown,
   ChatHeader,
-  Crew,
-  CrewPendingStage,
-  CrewSubagent,
   FileChange,
   Message,
   Block,
+  CodeReference,
   MeteringItem,
   PendingChange,
   PermissionOption,
   PlanEntry,
+  PolicyRule,
+  PolicyView,
+  PolicyExplainResult,
   SessionMode,
   SessionModel,
+  Spec,
+  SpecTaskNode,
+  SpecTaskPBT,
+  SpecsResponse,
   ToolCall,
   ToolDiff,
   ToolLocation,
   Usage,
   // SSE payloads
   ChatDeletedPayload,
+  SpecTaskChange,
+  SpecTaskChangedPayload,
+  CodeReferencesPayload,
   CommandsUpdatedPayload,
   ConnectedPayload,
   ElicitationNeededPayload,
-  ElicitationCompletePayload,
   ElicitationPropertySchema,
   ElicitationRequestSchema,
   ErrorPayload,
+  GovernanceFeatures,
+  GovernanceStatePayload,
+  KnowledgeIndexingPayload,
   MCPConnectedPayload,
   MCPDisconnectedPayload,
   MCPFailedPayload,
   MCPOAuthPayload,
   MessageChunkPayload,
+  OpenExternalURLPayload,
   PendingChangeAddedPayload,
   PendingChangeResolvedPayload,
   PendingChangesClearedPayload,
   PermissionNeededPayload,
+  PermissionsChangedPayload,
+  PolicyErrorPayload,
+  SafetyProperty,
+  SafetyStatusPayload,
+  SafetyPropertiesPayload,
   ToolCallPayload,
   ToolCallUpdatePayload,
   TurnEndedPayload,
@@ -119,16 +137,25 @@ export interface PendingTrustClearedPayload {
   reason?: "turn_ended" | "cancelled" | "mode_disabled" | "chat_deleted";
 }
 
+/** One prompt buffered while a turn is in flight, waiting to drain on the
+ *  next `turn_ended`. Text and its attachments travel together in one entry
+ *  so they can never desync (the earlier design kept attachments in a
+ *  parallel map keyed positionally, which was one refactor away from
+ *  leaking onto the wrong prompt). Attachments are `unknown[]` — the same
+ *  loose shape the attachment row uses — carrying `AttachedFile` objects. */
+export interface QueuedPrompt {
+  text: string;
+  attachments: unknown[];
+}
+
 // --- Local session state (client-only projection of server chat) ---
 
 export interface Session {
   id: string;
   name: string;
-  agent: string;
   model: string;
   acp_session_id: string;
   current_mode_id: string;
-  auto_approve_crew: boolean;
   available_modes: SessionMode[];
   available_models: SessionModel[];
   usage: Usage;
@@ -137,7 +164,7 @@ export interface Session {
   has_more: boolean;
   thinking: boolean;
   working_label: string;
-  prompt_queue?: string[];
+  prompt_queue?: QueuedPrompt[];
   supervised_mode?: boolean;
   trusted_this_turn?: boolean;
   pending_changes: PendingChange[];

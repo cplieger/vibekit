@@ -48,18 +48,6 @@ func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
 // should surface this as empty content rather than a hard error.
 var ErrPathNotInRef = errors.New("path not found at ref")
 
-// ErrNoStagedChanges indicates no staged changes are available for the
-// requested operation (e.g. commit message generation).
-var ErrNoStagedChanges = errors.New("no staged changes")
-
-// ErrGenerationFailed indicates the AI prompt generation failed (utility
-// bridge returned an error or empty result).
-var ErrGenerationFailed = errors.New("generation failed")
-
-// ErrNoChanges indicates no diff changes were found against the
-// specified base branch.
-var ErrNoChanges = errors.New("no changes found")
-
 // gitShowCmd runs `git show <ref>:<path>` and classifies the error.
 // Returns ErrPathNotInRef when the file doesn't exist at the ref
 // (exit code 128 is the fatal error signal for `git show ref:path`).

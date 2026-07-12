@@ -25,13 +25,11 @@ const clearReasonArb = fc.constantFrom(
   "shutdown",
   "user_cleared",
 );
-const crewStatusArb = fc.constantFrom("working", "terminated", "error", "pending");
 const errorCodeArb = fc.constantFrom(
   "recovery_failed",
   "bridge_start_failed",
   "prompt_failed",
   "agent_not_found",
-  "model_not_found",
   "agent_config_error",
   "rate_limit",
   "stream_timeout",
@@ -44,10 +42,7 @@ const eventKindArb = fc.constantFrom(
   "cancelled",
   "model_switched",
   "compacted",
-  "crew",
-  "agent_switched",
   "compaction_failed",
-  "inbox",
 );
 const forgeKindArb = fc.constantFrom("github", "gitlab", "codeberg", "gitea");
 const pendingActionArb = fc.constantFrom("accept", "reject");
@@ -124,6 +119,7 @@ const sessionModeArb = fc.record({
   id: fc.string({ minLength: 1 }),
   name: fc.string({ minLength: 1 }),
   description: optField(fc.string()),
+  source: optField(fc.string()),
 });
 
 const availableCommandArb = fc.record({
@@ -142,7 +138,6 @@ const chatHeaderArb = fc.record({
   updated_at: posInt,
   message_count: posInt,
   parent_chat_id: optField(fc.string()),
-  agent: optField(fc.string()),
   model: optField(fc.string()),
   acp_session_id: optField(fc.string()),
   current_mode_id: optField(fc.string()),
@@ -152,7 +147,6 @@ const chatHeaderArb = fc.record({
   available_models: optField(fc.array(sessionModelArb, { maxLength: 3 })),
   available_modes: optField(fc.array(sessionModeArb, { maxLength: 3 })),
   supervised_mode: optField(fc.boolean()),
-  auto_approve_crew: optField(fc.boolean()),
 });
 
 const checkArb = fc.record({
@@ -181,31 +175,6 @@ const configuredForgeArb = fc.record({
 const connectedPayloadArb = fc.record({
   floor: posInt,
   head: posInt,
-});
-
-const crewPendingStageArb = fc.record({
-  name: fc.string({ minLength: 1 }),
-  agent_name: fc.string({ minLength: 1 }),
-  role: optField(fc.string()),
-  depends_on: optField(fc.array(fc.string(), { maxLength: 3 })),
-});
-
-const crewSubagentArb = fc.record({
-  session_id: fc.string({ minLength: 1 }),
-  session_name: fc.string({ minLength: 1 }),
-  agent_name: fc.string({ minLength: 1 }),
-  initial_query: fc.string({ minLength: 1 }),
-  status: crewStatusArb,
-  group: fc.string({ minLength: 1 }),
-  status_msg: optField(fc.string()),
-  role: optField(fc.string()),
-  depends_on: optField(fc.array(fc.string(), { maxLength: 3 })),
-});
-
-const crewArb = fc.record({
-  group: fc.string({ minLength: 1 }),
-  subagents: fc.array(crewSubagentArb, { maxLength: 3 }),
-  pending_stages: optField(fc.array(crewPendingStageArb, { maxLength: 3 })),
 });
 
 const deviceFlowResponseArb = fc.record({
@@ -281,6 +250,7 @@ const toolCallArb = fc.record({
   ts: posInt,
   output: optField(fc.string()),
   sub_session_id: optField(fc.string()),
+  agent_subtask_id: optField(fc.string()),
   input: optField(fc.anything()),
   locations: optField(fc.array(toolLocationArb, { maxLength: 3 })),
   diffs: optField(fc.array(toolDiffArb, { maxLength: 3 })),
@@ -291,7 +261,6 @@ const messageArb = fc.record({
   id: fc.string({ minLength: 1 }),
   role: roleArb,
   ts: posInt,
-  crew: optField(crewArb),
   content: optField(fc.string()),
   reasoning: optField(fc.string()),
   event_kind: optField(eventKindArb),
@@ -303,6 +272,7 @@ const messageChunkPayloadArb = fc.record({
   message_id: fc.string({ minLength: 1 }),
   delta: fc.string({ minLength: 1 }),
   is_reasoning: optField(fc.boolean()),
+  agent_subtask_id: optField(fc.string()),
   block_index: fc.nat(),
 });
 
@@ -365,10 +335,6 @@ const permissionNeededPayloadArb = fc.record({
   title: optField(fc.string()),
   kind: optField(toolKindArb),
   sub_session_id: optField(fc.string()),
-});
-
-const elicitationCompletePayloadArb = fc.record({
-  request_id: posInt,
 });
 
 const elicitationPropertySchemaArb = fc.record({
@@ -500,13 +466,6 @@ const decoderRegistry: {
     decoder: decoders.decodeConnectedPayload,
     arb: connectedPayloadArb,
   },
-  { name: "decodeCrew", decoder: decoders.decodeCrew, arb: crewArb },
-  {
-    name: "decodeCrewPendingStage",
-    decoder: decoders.decodeCrewPendingStage,
-    arb: crewPendingStageArb,
-  },
-  { name: "decodeCrewSubagent", decoder: decoders.decodeCrewSubagent, arb: crewSubagentArb },
   {
     name: "decodeDeviceFlowResponse",
     decoder: decoders.decodeDeviceFlowResponse,
@@ -569,11 +528,6 @@ const decoderRegistry: {
     name: "decodeElicitationNeededPayload",
     decoder: decoders.decodeElicitationNeededPayload,
     arb: elicitationNeededPayloadArb,
-  },
-  {
-    name: "decodeElicitationCompletePayload",
-    decoder: decoders.decodeElicitationCompletePayload,
-    arb: elicitationCompletePayloadArb,
   },
   {
     name: "decodeElicitationPropertySchema",

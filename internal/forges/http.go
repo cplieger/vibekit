@@ -222,7 +222,12 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		Token:    body.Token,
 		Username: body.Username,
 	}); err != nil {
-		api.WriteJSONStatus(w, http.StatusBadRequest, api.ErrorJSON(err.Error()))
+		// Return the validation failure as a 2xx {error} envelope (vibekit
+		// convention): the client's apiPost/action layer collapses any non-2xx
+		// to null → a generic "Network error.", hiding the real reason (bad
+		// credentials, missing scope, wrong host). On a 2xx the PAT form's
+		// inline error branch surfaces err. (Malformed JSON above stays 400.)
+		api.WriteJSON(w, api.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()

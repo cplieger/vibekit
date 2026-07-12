@@ -20,7 +20,6 @@ func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
 	c := &Chat{
 		ID:              "c1",
 		Name:            "Hello",
-		Agent:           "kiro",
 		Model:           "claude",
 		ACPSessionID:    "acp-1",
 		CurrentModeID:   "plan",
@@ -34,8 +33,8 @@ func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
 
 	h := c.Header()
 
-	if h.ID != "c1" || h.Name != "Hello" || h.Agent != "kiro" || h.Model != "claude" {
-		t.Errorf("header identity fields = %+v, want id=c1 name=Hello agent=kiro model=claude", h)
+	if h.ID != "c1" || h.Name != "Hello" || h.Model != "claude" {
+		t.Errorf("header identity fields = %+v, want id=c1 name=Hello model=claude", h)
 	}
 	if h.ACPSessionID != "acp-1" {
 		t.Errorf("ACPSessionID = %q, want acp-1", h.ACPSessionID)
@@ -68,7 +67,7 @@ func TestChatHeader_zero_value_chat_produces_empty_header(t *testing.T) {
 	if h.ID != "c-empty" {
 		t.Errorf("ID = %q, want c-empty", h.ID)
 	}
-	if h.Name != "" || h.Agent != "" || h.Model != "" || h.ACPSessionID != "" || h.CurrentModeID != "" {
+	if h.Name != "" || h.Model != "" || h.ACPSessionID != "" || h.CurrentModeID != "" {
 		t.Errorf("leaked non-zero strings: %+v", h)
 	}
 	if h.MessageCount != 0 {
@@ -88,20 +87,16 @@ func TestChatHeader_zero_value_chat_produces_empty_header(t *testing.T) {
 
 func TestChatHeader_copies_boolean_and_tangent_fields(t *testing.T) {
 	c := &Chat{
-		ID:              "tangent-1",
-		Name:            "Side conversation",
-		ParentChatID:    "parent-1",
-		SupervisedMode:  true,
-		AutoApproveCrew: true,
+		ID:             "tangent-1",
+		Name:           "Side conversation",
+		ParentChatID:   "parent-1",
+		SupervisedMode: true,
 	}
 
 	h := c.Header()
 
 	if !h.SupervisedMode {
 		t.Error("SupervisedMode not copied to header")
-	}
-	if !h.AutoApproveCrew {
-		t.Error("AutoApproveCrew not copied to header")
 	}
 	if h.ParentChatID != "parent-1" {
 		t.Errorf("ParentChatID = %q, want parent-1", h.ParentChatID)

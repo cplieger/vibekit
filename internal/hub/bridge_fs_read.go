@@ -33,7 +33,7 @@ import (
 // via integer overflow on attacker-influenced line/limit params; the
 // immediate bug is fixed in sliceByLines but this wrapper forecloses
 // the whole class.
-func (h *Hub) handleFSRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
+func (h *Hub) handleFSRequest(_ context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
 	var handler func(context.Context, api.ChatID, *api.RPCResponse)
 	switch msg.Method {
 	case api.MethodFSRead:
@@ -44,6 +44,16 @@ func (h *Hub) handleFSRequest(ctx context.Context, chatID api.ChatID, msg *api.R
 		return false
 	}
 	h.lifecycle.inflight.Go(func() {
+		// Derive a fresh hub-scoped context: translateACPEvent cancels the
+		// per-event ctx via its defer the instant it returns, which is
+		// BEFORE this async handler runs its Respond. Bridge.Respond drops
+		// the write when its ctx is already cancelled, so the agent's
+		// fs read/write Call would hang forever. The fresh ctx lives until
+		// this goroutine finishes or the hub shuts down (h.lifecycle.done),
+		// so Respond succeeds AND shutdown still cancels it. Mirrors the
+		// chat_summary goroutine in hub.go. Shadows the passed-in ctx.
+		ctx, cancel := h.hubContext()
+		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("fs handler panic",

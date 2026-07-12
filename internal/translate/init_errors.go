@@ -1,68 +1,48 @@
 package translate
 
-// Init-error and rate-limit handlers.
+// v3 (KAS) init-error, rate-limit, and system-notify handlers.
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// HandleFallback is the shared logic for agent_not_found and
-// model_not_found: decode a requested/fallback pair, persist the
-// fallback into the chat, and broadcast a typed error.
-func (t *Translator) HandleFallback(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, code api.ErrorCode, mutate func(c *api.Chat, requested, fallback string)) {
+// HandleAgentNotFound handles the _kiro/customAgent/not_found notification:
+// the requested agent (a mode id on v3) doesn't exist. Persists the
+// fallback mode (always "vibe" on v3) as the chat's CurrentModeID and
+// broadcasts a typed error — on v3 the fallback agent IS a mode id. v3
+// carries no model fields here — a bad model is an InvalidModelError RPC
+// error on the set_config_option/prompt call, not a notification, so there
+// is no model-not-found handler.
+func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	p, ok := unmarshalParams[struct {
-		Requested      string `json:"requestedAgent"`
-		Fallback       string `json:"fallbackAgent"`
-		RequestedModel string `json:"requestedModel"`
-		FallbackModel  string `json:"fallbackModel"`
-	}](msg, string(code))
+		Requested string `json:"requestedAgent"`
+		Fallback  string `json:"fallbackAgent"`
+	}](msg, string(api.ErrCodeAgentNotFound))
 	if !ok {
 		return
 	}
-	requested := p.Requested
-	if requested == "" {
-		requested = p.RequestedModel
-	}
-	fallback := p.Fallback
-	if fallback == "" {
-		fallback = p.FallbackModel
-	}
-	if fallback != "" && chatID != "" {
+	if p.Fallback != "" && chatID != "" {
 		if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
-			mutate(c, requested, fallback)
+			c.CurrentModeID = p.Fallback
 			return true
 		}); err != nil {
-			slog.Error(string(code)+": persist fallback", "error", err)
+			slog.Error("agent_not_found: persist fallback", "error", err)
 		}
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    code,
-		Message: "\"" + requested + "\" not found — using \"" + fallback + "\"",
+		Code:    api.ErrCodeAgentNotFound,
+		Message: "\"" + p.Requested + "\" not found — using \"" + p.Fallback + "\"",
 	}))
 }
 
-// HandleAgentNotFound handles the agent_not_found notification.
-func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	t.HandleFallback(ctx, chatID, msg, api.ErrCodeAgentNotFound, func(c *api.Chat, _, fallback string) {
-		c.Agent = fallback
-	})
-}
-
-// HandleModelNotFound handles the model_not_found notification.
-func (t *Translator) HandleModelNotFound(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	t.HandleFallback(ctx, chatID, msg, api.ErrCodeModelNotFound, func(c *api.Chat, _, fallback string) {
-		c.Model = fallback
-	})
-}
-
-// HandleAgentConfigError handles the agent_config_error notification.
+// HandleAgentConfigError handles the _kiro/customAgent/config_error
+// notification ({path, error}); the extra v3 sessionId is ignored.
 func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Path  string `json:"path"`
@@ -77,7 +57,9 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.Chat
 	}))
 }
 
-// HandleRateLimit handles the rate_limit notification.
+// HandleRateLimit handles the _kiro/error/rate_limit notification
+// ({message}); the extra v3 sessionId is ignored. Rendered as an
+// auto-clearing amber banner.
 func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Message string `json:"message"`
@@ -91,24 +73,23 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg
 	}))
 }
 
-// HandleSessionRetry handles the session_retry notification.
-func (t *Translator) HandleSessionRetry(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+// HandleSystemNotify handles the v3 _kiro/system/notify notification
+// ({level, message}) — the replacement for v2's session/retry banner. KAS
+// emits it as a connection-level "model under high load" notice: no attempt
+// counter and no sessionId, so it is a bridge-scope broadcast (chatID may
+// be empty). The message is surfaced verbatim as an auto-clearing banner;
+// level (info/warning/error) is decoded for forward-compatibility but not
+// separately surfaced — banner styling keys off the error code.
+func (t *Translator) HandleSystemNotify(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	p, ok := unmarshalParams[struct {
-		Reason  string `json:"reason"`
-		Attempt int    `json:"attempt"`
-	}](msg, "session_retry")
-	if !ok {
+		Level   string `json:"level"`
+		Message string `json:"message"`
+	}](msg, "system/notify")
+	if !ok || p.Message == "" {
 		return
 	}
-	message := "Retrying"
-	if p.Reason != "" {
-		message = p.Reason
-	}
-	if p.Attempt > 0 {
-		message += fmt.Sprintf(" (attempt %d)", p.Attempt)
-	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeStreamTimeout,
-		Message: message,
+		Code:    api.ErrCodeRateLimit,
+		Message: p.Message,
 	}))
 }

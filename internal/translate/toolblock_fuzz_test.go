@@ -30,37 +30,3 @@ func FuzzACPToolCallContentBlockDecode(f *testing.F) {
 		}
 	})
 }
-
-func FuzzCrewNotifSubagentDecode(f *testing.F) {
-	f.Add([]byte(`{"sessionId":"s1","sessionName":"w","agentName":"a","initialQuery":"q","group":"g","role":"r","status":{"type":"running","message":"ok"},"dependsOn":["x"]}`))
-	f.Add([]byte(`{"status":{}}`))
-	f.Add([]byte(`{}`))
-	f.Add([]byte(`null`))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var s CrewNotifSubagent
-		if json.Unmarshal(data, &s) != nil {
-			return
-		}
-		if _, err := json.Marshal(s); err != nil {
-			t.Fatalf("re-marshal: %v", err)
-		}
-	})
-}
-
-func FuzzCrewNotifPendingStageDecode(f *testing.F) {
-	f.Add([]byte(`{"name":"stage1","agentName":"a","role":"review","dependsOn":["s1"]}`))
-	f.Add([]byte(`{}`))
-	f.Add([]byte(`null`))
-	f.Add([]byte(`{"name":"","dependsOn":[]}`))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var ps CrewNotifPendingStage
-		if json.Unmarshal(data, &ps) != nil {
-			return
-		}
-		if _, err := json.Marshal(ps); err != nil {
-			t.Fatalf("re-marshal: %v", err)
-		}
-	})
-}

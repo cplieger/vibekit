@@ -1,6 +1,6 @@
 package translate
 
-// Content streaming handlers: text chunks, plans, mode updates, steering.
+// Content streaming handlers: text chunks, plans, mode updates.
 
 import (
 	"context"
@@ -27,7 +27,13 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 		return
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
-	t.ensureTurnStarted(ctx, chatID, buf, true)
+	t.ensureTurnStarted(ctx, chatID, buf)
+	// Open the .partial recovery file lazily on the first content/reasoning
+	// chunk (idempotent — no-op once open). This is what makes a tool-first
+	// turn crash-durable: the file opens as soon as any text arrives and
+	// WritePartial then captures the whole buffer, including tool calls
+	// that streamed before this chunk.
+	t.deps.OpenPartialFile(ctx, chatID, buf)
 	totalLen := buf.Content.Len() + buf.Reasoning.Len()
 	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
 		return
@@ -44,17 +50,18 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	// HandleToolCall's AppendToolUseBlock call.
 	var blockIndex int
 	if isReasoning {
-		blockIndex = buf.AppendThinkingDelta(chunk.Content.Text)
+		blockIndex = buf.AppendThinkingDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
 	} else {
-		blockIndex = buf.AppendTextDelta(chunk.Content.Text)
+		blockIndex = buf.AppendTextDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
 	}
 	buf.WritePartial(ctx)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
 		api.MessageChunkPayload{
-			MessageID:   buf.MessageID,
-			Delta:       chunk.Content.Text,
-			IsReasoning: isReasoning,
-			BlockIndex:  blockIndex,
+			MessageID:      buf.MessageID,
+			Delta:          chunk.Content.Text,
+			IsReasoning:    isReasoning,
+			BlockIndex:     blockIndex,
+			AgentSubtaskID: chunk.Meta.Kiro.AgentSubtaskID,
 		}))
 }
 
@@ -118,26 +125,4 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID api.ChatID, ra
 	if changed {
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventModeChanged, chatID, api.ModeChangedPayload{ModeID: p.ModeID}))
 	}
-}
-
-// HandleSteeringInclusion processes steering_inclusion events.
-func (t *Translator) HandleSteeringInclusion(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
-	var p ACPSteeringWire
-	if json.Unmarshal(raw, &p) != nil || len(p.Documents) == 0 {
-		return
-	}
-	names := make([]string, 0, len(p.Documents))
-	for _, d := range p.Documents {
-		name := d.Name
-		if name == "" {
-			name = d.Path
-		}
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return
-	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventSteeringLoaded, chatID, api.SteeringLoadedPayload{Documents: names}))
 }

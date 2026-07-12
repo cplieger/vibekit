@@ -2,6 +2,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import type { PolicyExplainResult } from "../types.js";
 
 export interface CommandRule {
   pattern: string;
@@ -9,6 +10,51 @@ export interface CommandRule {
   priority: number;
   created_at: number;
 }
+
+// --- Native Cedar policy rules (v3 / KAS) -----------------------------------
+// These write the user/workspace permissions.yaml, which KAS hot-reloads. No
+// optimistic update: the native view is a server projection, refetched after
+// a successful edit (and on the permissions_changed SSE), so it can never
+// drift from what KAS actually enforces.
+
+/** Add or remove a native policy rule. op="add" defaults an empty effect to
+ *  "ask" server-side (conservative); op="remove" needs the exact rule, and
+ *  removing a deny needs confirm=true (widens access). */
+export interface NativeRuleArgs {
+  op: "add" | "remove";
+  scope: "user" | "workspace";
+  capability: string;
+  /** allow | deny | ask. Empty on add → server defaults to ask. */
+  effect: string;
+  match?: string[];
+  exclude?: string[];
+  confirm?: boolean;
+}
+
+export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: string }>({
+  name: "permissions.edit_native_rule",
+  // Both ops are idempotent server-side (add no-ops if identical rule exists;
+  // remove no-ops if absent), so a retried timeout is safe.
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  idempotencyKey: true,
+  scope: "permissions",
+  request: (a) => ({ method: "POST", path: "/api/permissions/rules", body: a }),
+  error: "Couldn't update policy rule",
+});
+
+/** Simulate the policy decision for a capability/resource. Pure — KAS
+ *  evaluateSingleResource raises no consent prompt (verified live), so this
+ *  is safe to call as a UI pre-flight. Errors are shown inline, not toasted. */
+export const explainPolicy = apiAction<
+  { capability?: string; tool_id?: string; resource?: string },
+  PolicyExplainResult
+>({
+  name: "permissions.explain",
+  scope: "permissions",
+  request: (a) => ({ method: "POST", path: "/api/permissions/explain", body: a }),
+  error: false,
+});
 
 interface AddRuleArgs {
   pattern: string;

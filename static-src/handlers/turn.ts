@@ -2,16 +2,8 @@
 // SSE handlers for turn lifecycle + permission dialog + errors.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
 import { onSSE } from "../bus.js";
-import {
-  setThinking,
-  setWorkingLabel,
-  get,
-  getActiveId,
-  dequeuePrompt,
-  peekQueuedAttachments,
-} from "../store.js";
+import { setThinking, setWorkingLabel, setTurnSummary, get, getActiveId } from "../store.js";
 import {
   notifyIfHidden,
   setBadge,
@@ -20,12 +12,13 @@ import {
   NOTIFY_TITLE,
 } from "../notify.js";
 import { showPermissionDialog } from "../permission.js";
-import { showElicitationDialog, dismissElicitation } from "../elicitation.js";
-import { sendPromptTo } from "../chat-commands.js";
+import { showElicitationDialog } from "../elicitation.js";
+import { drainNext } from "../prompt-queue.js";
+import { drainModelSwitchQueue } from "../model-switcher.js";
+import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
-import { setSubagentPendingApproval } from "../crew-card.js";
 import { respondPermission, respondElicitation } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
 export { ERROR_ROUTES };
@@ -37,22 +30,6 @@ function notifyAndBadge(title: string, body: string): void {
   if (document.visibilityState === "hidden") {
     setBadge(1);
   }
-}
-
-/** Drain one queued prompt, restoring any attachments that were saved
- *  alongside it so they flow through the next sendPromptTo call. */
-function drainQueuedPromptWithAttachments(chatID: string): void {
-  const attachments = peekQueuedAttachments(chatID);
-  const text = dequeuePrompt(chatID);
-  if (text === undefined) {
-    return;
-  }
-  const session = get(chatID);
-  void sendPromptTo(chatID, text, {
-    ...(session?.agent !== undefined && session.agent !== "" && { agent: session.agent }),
-    ...(session?.model !== undefined && session.model !== "" && { model: session.model }),
-    ...(attachments.length > 0 && { attachments }),
-  });
 }
 
 /** Track last notification time per chat to avoid duplicate notifications
@@ -91,10 +68,18 @@ onSSE("working_label", (chatID, p) => {
 onSSE("turn_ended", (chatID, p) => {
   // --- Side-effects: fire unconditionally regardless of active chat or dedup ---
   setThinking(chatID, false);
+  // Clear the per-tab "thinking" activity dot for the chat whose turn ended,
+  // even when it's a background tab (its own per-chat thinking signal is not
+  // tracked by the active-session effect, so the dot would otherwise stick).
+  setTabStatus(chatID, "");
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();
-  drainQueuedPromptWithAttachments(chatID);
+  // Prompt queue and model-switch queue both drain off the per-chat turn_ended
+  // (not the active-only turn:idle bus event) so a background chat's queued
+  // prompt AND queued model switch fire when ITS turn ends.
+  drainNext(chatID);
+  drainModelSwitchQueue(chatID);
 
   // Prune stale entries unconditionally to prevent unbounded growth
   // when notifications are disabled (the notify path below is the only
@@ -116,102 +101,30 @@ onSSE("turn_ended", (chatID, p) => {
     }
   }
 
-  // --- DOM rendering: only for the active chat ---
-  if (chatID !== getActiveId()) {
-    return;
+  // Turn summary (credits · elapsed · files changed): stamp it onto the last
+  // assistant message via the store. The renderer projects it into a keyed
+  // `.turn-footer` under that turn (fundamentals/turn-footer.ts). This replaces
+  // the old direct DOM writes here — those weren't in the store, so they
+  // double-rendered on SSE replay and vanished on refresh. Unconditional (not
+  // active-gated): a background turn's footer is then present on switch, and
+  // the server persists the same fields so it survives reload.
+  const summary: { credits?: number; elapsedMs?: number; changedFiles?: typeof p.changed_files } =
+    {};
+  if (p.credits_delta !== undefined) {
+    summary.credits = p.credits_delta;
   }
-
-  // Single DOM lookup shared by both turn-summary and file-changes rendering.
-  const msgsEl = document.getElementById("messages");
-  if (msgsEl === null) {
-    return;
+  if (p.elapsed_ms !== undefined) {
+    summary.elapsedMs = p.elapsed_ms;
   }
-
-  // Render turn summary (credits + elapsed time).
-  const credits = p.credits_delta;
-  const elapsed = p.elapsed_ms;
-  if ((credits !== undefined && credits > 0) || (elapsed !== undefined && elapsed > 0)) {
-    const parts: string[] = [];
-    if (credits !== undefined && credits > 0) {
-      parts.push(`Est. ${credits.toFixed(2)} credits`);
-    }
-    if (elapsed !== undefined && elapsed > 0) {
-      if (elapsed >= 60000) {
-        const m = Math.floor(elapsed / 60000);
-        const s = Math.floor((elapsed % 60000) / 1000);
-        parts.push(`${String(m)}m ${String(s)}s`);
-      } else {
-        parts.push(`${(elapsed / 1000).toFixed(1)}s`);
-      }
-    }
-    const summaryText = parts.join(" · ");
-
-    const msgs = msgsEl.querySelectorAll(".message.assistant");
-    const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
-    const actionsRow = lastMsg?.nextElementSibling;
-    if (actionsRow?.classList.contains("turn-actions")) {
-      const leftSlot = actionsRow.querySelector(".turn-actions-summary");
-      if (leftSlot !== null) {
-        leftSlot.textContent = summaryText;
-      }
-    } else if (lastMsg !== undefined) {
-      // Dedup: skip DOM insertion only (side-effects already fired above)
-      const nextEl = lastMsg.nextElementSibling;
-      if (!nextEl?.classList.contains("turn-summary")) {
-        const summary = el(
-          "div",
-          {
-            className: "turn-summary",
-            role: "note",
-            "aria-label": "Turn summary",
-            "data-chat-entry": "",
-          },
-          summaryText,
-        );
-        lastMsg.insertAdjacentElement("afterend", summary);
-      }
-    }
+  if (p.changed_files !== undefined) {
+    summary.changedFiles = p.changed_files;
   }
-
-  // Render file-change summary banner if files were modified.
-  const changedFiles = p.changed_files;
-  if (changedFiles !== undefined && Object.keys(changedFiles).length > 0) {
-    const entries = Object.values(changedFiles);
-    const count = entries.length;
-    let added = 0;
-    let removed = 0;
-    for (const f of entries) {
-      added += f.lines_added;
-      removed += f.lines_removed;
-    }
-    const parts: string[] = [`${String(count)} file${count > 1 ? "s" : ""} changed`];
-    if (added > 0) {
-      parts.push(`+${String(added)}`);
-    }
-    if (removed > 0) {
-      parts.push(`-${String(removed)}`);
-    }
-    const banner = el(
-      "div",
-      { className: "turn-file-changes", role: "note", "data-chat-entry": "" },
-      parts.join(" · "),
-    );
-    // Dedup: skip if a turn-file-changes already exists as the last entry
-    const lastChild = msgsEl.lastElementChild;
-    if (lastChild !== null && !lastChild.classList.contains("turn-file-changes")) {
-      lastChild.insertAdjacentElement("afterend", banner);
-    }
-  }
+  setTurnSummary(chatID, summary);
 });
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
     notifyAndBadge(NOTIFY_TITLE, `Permission needed: ${p.title ?? "Tool"}`);
-  }
-  // Mark the subagent row as having a pending approval.
-  const subSid = p.sub_session_id;
-  if (subSid !== undefined && subSid !== "") {
-    setSubagentPendingApproval(subSid, true);
   }
   if (chatID !== getActiveId()) {
     return;
@@ -225,23 +138,12 @@ onSSE("permission_needed", (chatID, p) => {
     toolCallInput,
     p.options,
     (optionID: string) => {
-      // Clear the pending-approval indicator only after successful dispatch.
-      void respondPermission
-        .dispatch({
-          chatID,
-          requestID: p.request_id,
-          optionID,
-        })
-        .then((result: unknown) => {
-          if (result === null) {
-            return;
-          }
-          if (subSid !== undefined && subSid !== "") {
-            setSubagentPendingApproval(subSid, false);
-          }
-        });
+      void respondPermission.dispatch({
+        chatID,
+        requestID: p.request_id,
+        optionID,
+      });
     },
-    p.sub_session_id,
   );
 });
 
@@ -259,13 +161,6 @@ onSSE("elicitation_needed", (chatID, p) => {
         : { chatID, requestID: p.request_id, action },
     );
   });
-});
-
-onSSE("elicitation_complete", (chatID, p) => {
-  if (chatID !== getActiveId()) {
-    return;
-  }
-  dismissElicitation(p.request_id);
 });
 
 function lookupToolInput(chatID: string, toolCallID: string): unknown {

@@ -7,7 +7,6 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/ids"
-	"golang.org/x/sync/singleflight"
 )
 
 // BufferAccess is the consumer-side interface for buffer store access.
@@ -31,13 +30,18 @@ type Deps interface {
 	BridgeComm
 	// MCPRecorder returns the MCP state recorder sub-interface.
 	MCPRecorder() MCPRecorder
+	// SetGovernance caches the latest account/workspace governance state so
+	// GET /api/governance can serve it with no chat open (see hub/governance.go).
+	SetGovernance(state api.GovernanceStatePayload)
 }
 
 // MCPRecorder groups MCP server state tracking methods.
 // Extracted from Deps to narrow the interface (21→17 methods) and
 // allow independent stubbing in tests.
 type MCPRecorder interface {
-	RecordConnected(ctx context.Context, serverName string)
+	// RecordConnected marks a server connected and records the prompts +
+	// resources it advertises (from _kiro/mcp/status). Both may be nil.
+	RecordConnected(ctx context.Context, serverName string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
 	SignalReady()
@@ -45,12 +49,10 @@ type MCPRecorder interface {
 }
 
 // Translator holds stateful translate logic extracted from Hub.
-// It owns the crew cache and delegates Hub access through Deps.
+// It delegates Hub access through Deps.
 type Translator struct {
 	deps      Deps
-	crewSF    singleflight.Group
 	newMsgID  func() string
-	crewCache *crewCache
 	configDir string
 }
 
@@ -59,7 +61,6 @@ func New(deps Deps, configDir string, opts ...Option) *Translator {
 	t := &Translator{
 		deps:      deps,
 		configDir: configDir,
-		crewCache: newCrewCache(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -93,6 +94,12 @@ func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Mes
 // deriveSubSession determines whether a notification belongs to a
 // subagent session. Returns the sessionID if it differs from the
 // parent ACP session (indicating a subagent), or "" for the parent.
+//
+// On v3 (KAS) this returns "" in practice: subagents are ordinary tool
+// calls that ride the SAME parent sess_ id and attribute via
+// _meta.kiro.agentSubtaskId (threaded onto ToolCall.AgentSubtaskID), not
+// via a distinct session id. The differing-sessionId mechanism is inert
+// but harmless, so it stays for wire-compat rather than being ripped out.
 func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) string {
 	parent := t.deps.ParentACPSession(chatID)
 	if sessionID != "" && parent != "" && sessionID != parent {

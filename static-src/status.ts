@@ -215,12 +215,9 @@ export function updateContextBar(opts: ContextBarUpdate): void {
   contextBar.update(opts);
 }
 
-export function setInputDisabled(disabled: boolean, reason?: string): void {
-  $.promptInput.disabled = disabled;
-  $.sendBtn.disabled = disabled;
-  if (disabled && reason !== undefined) {
-    $.promptInput.placeholder = reason;
-  } else {
-    $.promptInput.placeholder = "Message Kiro...";
-  }
-}
+// The send button / textarea `disabled` state (and the "context nearly full"
+// placeholder) has a single owner: prompt-input.ts, which reads the
+// `sendDisabled` signal from context-ui.ts. status.ts used to write those DOM
+// props too (setInputDisabled), which fought prompt-input's send-state machine
+// on every turn boundary — last-writer-wins left the disable unreliable. That
+// second writer is gone.

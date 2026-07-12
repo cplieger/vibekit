@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/kiroauth"
 	"pgregory.net/rapid"
 )
 
@@ -41,24 +43,12 @@ func TestUtilityBridge_LazyStart(t *testing.T) {
 func TestUtilityBridge_DrainCollectsChunks(t *testing.T) {
 	h, _, br := newTestHub()
 
-	// Pre-buffer the chunks so they're available as soon as the drain
-	// loop starts consuming notifCh. The fakeBridge's notifCh has a
-	// buffer large enough for this; sending before the Call means the
-	// chunks land before idleDebounce can fire.
-	br.notifCh <- &api.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{
-			"sessionUpdate": "agent_message_chunk",
-			"content":       map[string]any{"type": "text", "text": "hello "},
-		}),
-	}
-	br.notifCh <- &api.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{
-			"sessionUpdate": "agent_message_chunk",
-			"content":       map[string]any{"type": "text", "text": "world"},
-		}),
-	}
+	// Deliver the agent's reply chunks in RESPONSE to the prompt Call
+	// (chunksOnCall sends them on notifCh after the Call begins). Doing it
+	// this way instead of pre-buffering keeps the test deterministic against
+	// UtilityPrompt's at-start responseCh drain, which would otherwise race
+	// and eat chunks that landed before the Call.
+	br.chunksOnCall = map[string][]string{api.MethodPrompt: {"hello ", "world"}}
 
 	result, err := h.UtilityPrompt(t.Context(), "test")
 	if err != nil {
@@ -317,4 +307,240 @@ func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
 	if ub.promptCount != 1 {
 		t.Errorf("promptCount after one prompt = %d, want 1", ub.promptCount)
 	}
+}
+
+// TestAnswerUtilityHostRequest verifies the utility bridge ANSWERS the v3
+// (KAS) host-mediated peer requests (auth token + shell type) rather than
+// ignoring them. Regression guard: forwardUtility used to drop peer
+// requests, which on v3 stalls session/new and hangs every UtilityPrompt.
+func TestAnswerUtilityHostRequest(t *testing.T) {
+	t.Run("shell_type answered with bash", func(t *testing.T) {
+		rb := newRespondingBridge()
+		id := int64(7)
+		(&utilityBridge{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroShellType})
+		rb.respMu.Lock()
+		defer rb.respMu.Unlock()
+		if rb.response.id != id {
+			t.Fatalf("shell_type request not answered: got id %d, want %d", rb.response.id, id)
+		}
+		m, ok := rb.response.result.(map[string]any)
+		if !ok || m["shellType"] != "bash" {
+			t.Errorf("shell_type result = %v, want map{shellType: bash}", rb.response.result)
+		}
+	})
+
+	t.Run("getAccessToken answered even when no token file", func(t *testing.T) {
+		saved := kiroTokenReader
+		kiroTokenReader = kiroauth.NewReader(filepath.Join(t.TempDir(), "absent.json"))
+		defer func() { kiroTokenReader = saved }()
+		rb := newRespondingBridge()
+		id := int64(9)
+		(&utilityBridge{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
+		rb.respMu.Lock()
+		defer rb.respMu.Unlock()
+		// Answered as a JSON-RPC error (no token present) — never dropped.
+		if rb.response.id != id {
+			t.Fatalf("auth request not answered: got id %d, want %d", rb.response.id, id)
+		}
+		if rb.response.err == nil {
+			t.Errorf("expected an error result when the token file is absent")
+		}
+	})
+}
+
+// TestForwardChunk_NonBlockingDropsWhenFull verifies forwardChunk never
+// blocks on a full responseCh. A blocking send would park the forward
+// goroutine so it never observes notifCh closing, deadlocking reset()'s
+// <-forwardDone (taken under ub.mu) and the whole utility subsystem.
+func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
+	// Buffered size 1, pre-filled: the next chunk has nowhere to go.
+	ch := make(chan utilityChunkPayload, 1)
+	ch <- utilityChunkPayload{}
+
+	msg := &api.RPCResponse{
+		Method: api.MethodSessionUpdate,
+		Params: mustJSON(t, map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": "dropped"},
+		}),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		forwardChunk(msg, ch)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("forwardChunk blocked on a full responseCh; the send must be non-blocking")
+	}
+	if len(ch) != 1 {
+		t.Errorf("responseCh len = %d, want 1 (the overflow chunk must be dropped)", len(ch))
+	}
+}
+
+// TestUtilityPrompt_DrainsStaleResponseChAtStart verifies a chunk left in
+// responseCh by a prior turn is drained before the next turn's Call, so it
+// can't prepend to this task's output.
+func TestUtilityPrompt_DrainsStaleResponseChAtStart(t *testing.T) {
+	ub := newTestUtilBridge()
+	defer ub.Stop()
+	ctx := context.Background()
+
+	// Warm up so the bridge + responseCh exist and are empty.
+	if _, err := ub.UtilityPrompt(ctx, "warmup"); err != nil {
+		t.Fatalf("warmup: %v", err)
+	}
+	// Inject a residual chunk from a "prior turn" directly into responseCh.
+	var stale utilityChunkPayload
+	stale.Content.Text = "STALE"
+	ub.responseCh <- stale
+
+	// The next prompt (no chunks delivered) must return empty — the stale
+	// chunk was drained at the top, not collected by drainResponse.
+	got, err := ub.UtilityPrompt(ctx, "real")
+	if err != nil {
+		t.Fatalf("UtilityPrompt: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want empty; stale chunk bled into this task's output", got)
+	}
+}
+
+// TestUtilityBridge_PromptCountResetOnRestart verifies start() zeroes the
+// prompt counter, so a culled-then-restarted bridge doesn't recycle after
+// fewer than maxUtilityPrompts. The cull marks the bridge stopped WITHOUT
+// going through reset() (which would zero the counter), so start() must.
+func TestUtilityBridge_PromptCountResetOnRestart(t *testing.T) {
+	ub := newTestUtilBridge()
+	defer ub.Stop()
+	ctx := context.Background()
+
+	if _, err := ub.UtilityPrompt(ctx, "p1"); err != nil {
+		t.Fatalf("p1: %v", err)
+	}
+	if ub.promptCount != 1 {
+		t.Fatalf("promptCount after p1 = %d, want 1", ub.promptCount)
+	}
+
+	// Mimic the cull: stop the current bridge and mark not-started, without
+	// calling reset() (which would also zero promptCount).
+	ub.mu.Lock()
+	victim := ub.bridge
+	ub.started = false
+	ub.mu.Unlock()
+	victim.Stop()
+
+	// The next prompt restarts the bridge; start() must reset the counter.
+	if _, err := ub.UtilityPrompt(ctx, "p2"); err != nil {
+		t.Fatalf("p2: %v", err)
+	}
+	if ub.promptCount != 1 {
+		t.Errorf("promptCount after cull+restart = %d, want 1 (start must zero it)", ub.promptCount)
+	}
+}
+
+// TestAccountUsage_CallHasTimeout verifies AccountUsage bounds the utility
+// bridge Call with a context deadline. Without it, a wedged getUsage holds
+// the single utility mutex indefinitely, starving chat auto-rename etc.
+func TestAccountUsage_CallHasTimeout(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"managed by admin"}`),
+	}
+	if _, err := h.AccountUsage(context.Background()); err != nil {
+		t.Fatalf("AccountUsage: %v", err)
+	}
+	if !br.callHadDeadline(methodKiroGetUsage) {
+		t.Error("account usage Call ran without a deadline; a wedged getUsage would hold the utility mutex forever")
+	}
+}
+
+// TestPolicyList_CallHasTimeout verifies PolicyList bounds its Call with a
+// deadline (same mutex-starvation concern as AccountUsage).
+func TestPolicyList_CallHasTimeout(t *testing.T) {
+	h, _, br := newTestHub()
+	seedPolicy(br, `{"rules":[]}`, `{}`)
+	if _, err := h.PolicyList(context.Background(), ""); err != nil {
+		t.Fatalf("PolicyList: %v", err)
+	}
+	if !br.callHadDeadline(methodV3PermissionsList) {
+		t.Error("permissions/list Call ran without a deadline")
+	}
+}
+
+// TestPolicyExplain_CallHasTimeout verifies PolicyExplain bounds its Call
+// with a deadline.
+func TestPolicyExplain_CallHasTimeout(t *testing.T) {
+	h, _, br := newTestHub()
+	seedPolicy(br, `{}`, `{"capability":"fs_write","effect":"ask"}`)
+	if _, err := h.PolicyExplain(context.Background(), api.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
+		t.Fatalf("PolicyExplain: %v", err)
+	}
+	if !br.callHadDeadline(methodV3PermissionsExplain) {
+		t.Error("permissions/explain Call ran without a deadline")
+	}
+}
+
+// TestCullIdleBridgesOnce_StopsIdleUtilityBridge verifies the cull captures
+// the idle utility bridge under ub.mu and stops that exact instance.
+func TestCullIdleBridgesOnce_StopsIdleUtilityBridge(t *testing.T) {
+	h, _, _ := newTestHub()
+	ub := h.ensureUtility()
+	if _, err := ub.UtilityPrompt(context.Background(), "warm"); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	victim, ok := ub.bridge.(*fakeBridge)
+	if !ok {
+		t.Fatal("utility bridge is not a *fakeBridge")
+	}
+	// Backdate activity so the cull considers it idle.
+	ub.mu.Lock()
+	ub.lastActiveAt = time.Now().Add(-bridgeIdleTimeout - time.Minute)
+	ub.mu.Unlock()
+
+	h.cullIdleBridgesOnce()
+
+	// cull stops the captured victim in a goroutine; poll for it.
+	deadline := time.Now().Add(2 * time.Second)
+	stopped := false
+	for time.Now().Before(deadline) {
+		victim.mu.Lock()
+		stopped = victim.stopped
+		victim.mu.Unlock()
+		if stopped {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !stopped {
+		t.Error("cull did not stop the idle utility bridge")
+	}
+	ub.mu.Lock()
+	started := ub.started
+	ub.mu.Unlock()
+	if started {
+		t.Error("cull did not mark the utility bridge stopped")
+	}
+}
+
+// TestStopUtilityBridge_ConcurrentWithCull_NoRace exercises stopUtilityBridge
+// concurrently with the cull. Both must coordinate on h.lifecycle.mu for the
+// h.bridge.utility field read/nil; -race flags the fix's absence.
+func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
+	h, _, _ := newTestHub()
+	ub := h.ensureUtility()
+	if _, err := ub.UtilityPrompt(context.Background(), "warm"); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	ub.mu.Lock()
+	ub.lastActiveAt = time.Now().Add(-bridgeIdleTimeout - time.Minute)
+	ub.mu.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); h.cullIdleBridgesOnce() }()
+	go func() { defer wg.Done(); h.stopUtilityBridge() }()
+	wg.Wait()
 }

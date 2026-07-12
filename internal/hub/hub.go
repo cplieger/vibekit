@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/ignore"
+	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/pending"
 	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -95,7 +96,6 @@ type Hub struct {
 	mcpConfig          api.MCPConfig
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
-	permArgsFn         func() []string
 	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
@@ -103,9 +103,12 @@ type Hub struct {
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
 	checkpoints        api.CheckpointService
+	sessionReaper      *kirosession.Reaper
+	sessionRefs        func(context.Context) map[string]struct{}
 	lines              *buffer.LineTracker
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
+	governance         *governanceCache
 }
 
 // Option configures optional Hub parameters.
@@ -129,11 +132,22 @@ func WithMCPConfig(c api.MCPConfig) Option {
 	return func(h *Hub) { h.mcpConfig = c }
 }
 
-// New constructs a Hub. permArgsFn returns kiro-cli flags to append
-// when spawning a bridge (derived from the user's permission settings
-// on each call). Called fresh per spawn so UI changes take effect on
-// the next bridge without a server restart.
-func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, permArgsFn func() []string, opts ...Option) *Hub {
+// WithSessionReaper wires the KAS session reaper and the referenced-session
+// thunk. The reaper removes on-disk kiro-cli/KAS session state: promptly on
+// chat delete (via cleanupChatState) and via a periodic orphan sweep that
+// spares any session id refs reports as still referenced by a live or
+// archived chat. Unset in tests → session reaping is a no-op.
+func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) map[string]struct{}) Option {
+	return func(h *Hub) {
+		h.sessionReaper = r
+		h.sessionRefs = refs
+	}
+}
+
+// New constructs a Hub. Bridges spawn with a fixed kiro-cli acp arg set
+// (agent engine + model + effort); tool-call authorization is owned by
+// kiro-cli's native Cedar policy on v3, not by CLI trust flags.
+func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
 	sseC := newSSEController(replayBufSize)
 	lc := &lifecyclePlane{
 		workDir: workDir,
@@ -158,8 +172,8 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 			pending: pending.New(),
 		},
 		chatStore:    chatStore,
-		permArgsFn:   permArgsFn,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
+		governance:   newGovernanceCache(),
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
@@ -189,16 +203,14 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	}
 	go h.cleanIdempotency()
 	go h.cullIdleBridges()
+	go h.sweepSessionsLoop()
 	return h
 }
 
 // UtilityPrompt delegates to the utility bridge, satisfying
 // api.UtilityPrompter. The bridge is lazily constructed on first call.
 func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
-	h.bridge.utilityOnce.Do(func() {
-		h.bridge.utility = newUtilityBridge(h.lifecycle.shutdownCtx, h.bridge.factory, h.Models)
-	})
-	return h.bridge.utility.UtilityPrompt(ctx, prompt)
+	return h.ensureUtility().UtilityPrompt(ctx, prompt)
 }
 
 // Rules returns the shared CommandRules instance so callers outside
@@ -214,26 +226,39 @@ func (h *Hub) CleanupCheckpoints(ctx context.Context, chatID api.ChatID) {
 	}
 }
 
-// OnChatArchived is the single callback wired to chat.WithOnArchive.
-// Fires once per Archive; runs the cleanup, clears the in-memory line
-// tracker, and kicks off the async summary generation under the hub's
-// inflight WaitGroup so Shutdown can drain it. Skipped entirely when
-// the hub is already draining: no point spawning new work that's about
-// to race teardown.
-func (h *Hub) OnChatArchived(chatID api.ChatID) {
+// OnChatArchiving is the pre-archive hook wired to chat.WithPreArchive.
+// It runs the SAME in-memory teardown a delete performs — flush the
+// in-flight turn (CloseBridge), kill agent terminals, clear pending perms
+// + supervised trust, close+remove the .partial — EXCEPT it does not remove
+// the chat file (Archive moves it) and does not reap checkpoints (archive
+// is reversible; checkpoints are reaped only at purge / hard delete).
+//
+// It MUST run before the chat file is moved to the archive dir so that:
+//   - a live bridge can't outlive its chat record (invariant #3),
+//   - archiving mid-turn can't strand the in-flight turn (the moved file +
+//     tombstone would make Store.Mutate refuse the persist), and
+//   - no orphan .partial survives for RecoverPartials to resurrect as a
+//     ghost active chat after a restart.
+func (h *Hub) OnChatArchiving(chatID api.ChatID) {
 	ctx, cancel := h.hubContext()
 	defer cancel()
-	h.CleanupCheckpoints(ctx, chatID)
-	// VB-HUB-001: archive is the default tab-close outcome, so without
-	// this the lineTracker accumulates per-chat state for every chat
-	// the user ever archived. Delete was the only Clear caller before.
-	h.lines.Clear(chatID)
+	h.cleanupChatState(ctx, chatID, false)
+}
+
+// OnChatArchived is the post-archive callback wired to chat.WithOnArchive.
+// The in-memory teardown (including the line tracker) already ran in
+// OnChatArchiving before the file moved; checkpoints are deliberately NOT
+// reaped here (archive is reversible — a restored chat keeps its
+// file-restore/undo history; only purge / hard delete reap them). All that
+// remains is kicking off the async summary under the hub's inflight
+// WaitGroup so Shutdown can drain it. Skipped entirely when the hub is
+// already draining: no point spawning new work that's about to race teardown.
+func (h *Hub) OnChatArchived(chatID api.ChatID) {
 	if h.lifecycle.draining.Load() {
 		return
 	}
-	// Derive a fresh done-aware context for the summary goroutine.
-	// The outer ctx's cancel fires on defer, so we need a separate
-	// context that lives as long as the goroutine (cancelled by h.lifecycle.done).
+	// Derive a fresh done-aware context for the summary goroutine
+	// (cancelled by h.lifecycle.done).
 	sumCtx, sumCancel := h.hubContext()
 	h.lifecycle.inflight.Go(func() {
 		defer sumCancel()
@@ -321,6 +346,10 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
 	mux.HandleFunc("/api/pending-changes/", h.handlePendingChange)
 	h.registerCheckpointRoutes(mux)
+	h.registerKnowledgeRoutes(mux)
+	h.registerSpecRoutes(mux)
+	h.registerHooksRoutes(mux)
+	h.registerGovernanceRoutes(mux)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges.
@@ -412,28 +441,6 @@ func (h *Hub) Broadcast(_ context.Context, evt api.ServerEvent) {
 	h.emit(evt)
 }
 
-// PushMCPConfig sends the current MCP server configuration to all live
-// bridges via session/setConfigOption. This avoids restarting bridges
-// when the user adds/removes/toggles MCP servers.
-func (h *Hub) PushMCPConfig() {
-	if h.mcpConfig == nil {
-		return
-	}
-	ctx, cancel := h.hubContext()
-	defer cancel()
-	servers := h.mcpConfig.ACPServers(ctx)
-	snapshot := h.bridge.mgr.all()
-	for _, sb := range snapshot {
-		if err := sb.bridge.Notify(ctx, api.MethodSetConfigOption, command.SessionParams(sb, map[string]any{
-			"option": "mcpServers",
-			"value":  servers,
-		})); err != nil {
-			slog.Warn("push MCP config to bridge", "error", err)
-		}
-	}
-	slog.Info("pushed MCP config to bridges", "count", len(snapshot))
-}
-
 // CheckDedup returns a cached response for the given request ID.
 // Satisfies command.Dependencies.
 func (h *Hub) CheckDedup(reqID string) ([]byte, bool) {
@@ -492,6 +499,41 @@ func (h *Hub) cleanIdempotency() {
 	h.sse.idempotency.StartCleaner(h.lifecycle.done)
 }
 
+// sweepSessionsInterval is how often the orphan-session sweep runs after
+// its initial boot pass.
+const sweepSessionsInterval = 1 * time.Hour
+
+// sweepSessionsLoop runs an initial orphan-session sweep at startup, then
+// repeats every sweepSessionsInterval until shutdown. It reaps on-disk KAS
+// session state left behind by archived-chat purges, crashes, or a pre-v3
+// install — the direct Reap on chat delete handles the common case. The
+// goroutine exits immediately when the reaper is unwired (e.g. tests), and
+// on h.lifecycle.done otherwise.
+func (h *Hub) sweepSessionsLoop() {
+	if h.sessionReaper == nil || h.sessionRefs == nil {
+		return
+	}
+	h.sweepSessionsOnce()
+	ticker := time.NewTicker(sweepSessionsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.lifecycle.done:
+			return
+		case <-ticker.C:
+			h.sweepSessionsOnce()
+		}
+	}
+}
+
+// sweepSessionsOnce runs one orphan-session sweep against a fresh referenced
+// set (every active + archived chat's acp_session_id).
+func (h *Hub) sweepSessionsOnce() {
+	ctx, cancel := h.hubContext()
+	defer cancel()
+	h.sessionReaper.Sweep(h.sessionRefs(ctx))
+}
+
 // cullIdleBridges stops bridges that have been idle for longer than
 // bridgeIdleTimeout. Runs every 60 seconds. The next prompt on a
 // culled chat will create a fresh bridge via getOrCreateBridge (which
@@ -540,12 +582,18 @@ func (h *Hub) cullIdleBridgesOnce() {
 		cutoff := now.Add(-bridgeIdleTimeout)
 		ub.mu.Lock()
 		shouldStop := ub.started && !ub.lastActiveAt.IsZero() && ub.lastActiveAt.Before(cutoff)
+		// Capture the bridge to stop INSIDE the lock. start() reassigns
+		// ub.bridge under ub.mu, so reading it after the unlock races that
+		// write and could Stop a freshly-restarted bridge. victim is the
+		// exact instance we decided was idle.
+		var victim api.ACPBridge
 		if shouldStop {
 			ub.started = false
+			victim = ub.bridge
 		}
 		ub.mu.Unlock()
 		if shouldStop {
-			go ub.bridge.Stop()
+			go victim.Stop()
 			slog.Info("culled idle utility bridge")
 		}
 	}

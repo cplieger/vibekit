@@ -31,34 +31,12 @@ func FuzzACPPlanWireRoundTrip(f *testing.F) {
 	})
 }
 
-func FuzzACPSteeringWireDecode(f *testing.F) {
-	f.Add([]byte(`{"documents":[{"name":"guide.md","path":"/docs/guide.md"}]}`))
-	f.Add([]byte(`{"documents":[]}`))
-	f.Add([]byte(`{"documents":[{"name":"","path":""}]}`))
-	f.Add([]byte(`{}`))
-	f.Add([]byte(`null`))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var s ACPSteeringWire
-		if json.Unmarshal(data, &s) != nil {
-			return
-		}
-		for _, d := range s.Documents {
-			name := d.Name
-			if name == "" {
-				name = d.Path
-			}
-			_ = name
-		}
-	})
-}
-
 func FuzzACPModeUpdateWireRoundTrip(f *testing.F) {
-	f.Add([]byte(`{"modeId":"code"}`))
-	f.Add([]byte(`{"modeId":""}`))
+	f.Add([]byte(`{"currentModeId":"code"}`))
+	f.Add([]byte(`{"currentModeId":""}`))
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`null`))
-	f.Add([]byte(`{"modeId":"architect"}`))
+	f.Add([]byte(`{"currentModeId":"architect"}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var m ACPModeUpdateWire

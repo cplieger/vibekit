@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // Chat history: sidebar popover listing archived chats, plus a full-page
 // History table opened from the toolbar (#history-btn). Restoring a chat
-// loads its messages into a new tab. Deletion is permanent (server-side).
+// loads its messages into a new tab. Deletion is permanent (server-side) and
+// is guarded by a destructive confirm dialog.
 //
 // Uses loadHistory / deleteArchivedChat from actions/chat.ts
 // for the table view, and raw apiGet for the lightweight sidebar fetch
@@ -11,10 +12,13 @@
 import { apiGet } from "./api-client.js";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { ICON_TRASH } from "./icons.js";
+import { ICON_TRASH, ICON_EXPORT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { downloadChatExport } from "./chat-export.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
+import { deferSkeleton } from "./skeleton-timing.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 
@@ -81,26 +85,24 @@ class HistoryController {
     this.tableAbortController = new AbortController();
     const { signal } = this.tableAbortController;
 
+    // Stable skeleton (150ms show-delay) while the fetch is in flight; skipped
+    // when the table already holds rows (a re-open) so it doesn't flash.
+    const cancelSkeleton = deferSkeleton(() => showTableSkeleton(container));
+
     const d = await loadHistory.dispatch(undefined);
+    cancelSkeleton();
     if (signal.aborted) {
       return;
     }
-    // Bug 5: if dispatch returned null (error), bail — don't paint a misleading empty state.
+    // Error: don't paint a misleading empty state — offer a retry (no dead end).
     if (d === null) {
       this.flushRowUnbinds();
-      container.replaceChildren();
-      container.appendChild(
-        el(
-          "div",
-          { className: "list-empty" },
-          "Failed to load history. Check your connection and try again.",
-        ),
-      );
+      container.replaceChildren(this.buildErrorState());
       return;
     }
     const chats = d.chats ?? []; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
-    // Drop any non-keyed sibling (empty/error placeholder) before reconcile.
+    // Drop any non-keyed sibling (skeleton / empty / error placeholder) before reconcile.
     for (const child of [...container.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
         child.remove();
@@ -126,45 +128,105 @@ class HistoryController {
       },
     });
 
-    // Bug 1: Use signal-bound listener so it's automatically removed on next
-    // loadHistoryTable call (which aborts tableAbortController).
+    // Bug 1: Use signal-bound listeners so they're automatically removed on the
+    // next loadHistoryTable call (which aborts tableAbortController).
     container.addEventListener(
       "click",
       (e) => {
-        const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-        if (target === null) {
-          return;
-        }
-        const row = target.closest<HTMLElement>("[data-chat-id]");
-        if (row === null) {
-          return;
-        }
-        const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-        const action = target.getAttribute("data-action");
-        if (action === "restore") {
-          // Bug 4: optimistic-remove the row to prevent double-click dispatches.
-          row.remove();
-          const u = this.rowUnbinds.get(chatId);
-          if (u !== undefined) {
-            u();
-            this.rowUnbinds.delete(chatId);
-          }
-          restoreArchivedChat(chatId);
-        } else if (action === "delete") {
-          // Bug 4: optimistic-remove the row on click.
-          row.remove();
-          const u = this.rowUnbinds.get(chatId);
-          if (u !== undefined) {
-            u();
-            this.rowUnbinds.delete(chatId);
-          }
-          if (container.querySelector("[data-chat-id]") === null) {
-            container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
-          }
-          void deleteArchivedChat.dispatch(chatId);
-        }
+        this.handleRowAction(container, e.target as HTMLElement);
       },
       { signal },
+    );
+    // Restore is a non-native activation target (a role="button" title block),
+    // so translate Enter/Space into the same click path for keyboard users.
+    container.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Enter" && e.key !== " ") {
+          return;
+        }
+        const restore = (e.target as HTMLElement).closest<HTMLElement>('[data-action="restore"]');
+        if (restore === null) {
+          return;
+        }
+        e.preventDefault();
+        restore.click();
+      },
+      { signal },
+    );
+  }
+
+  /** Dispatch a click on a `[data-action]` control to its handler. */
+  private handleRowAction(container: HTMLElement, targetEl: HTMLElement): void {
+    const target = targetEl.closest<HTMLElement>("[data-action]");
+    if (target === null) {
+      return;
+    }
+    const row = target.closest<HTMLElement>("[data-chat-id]");
+    if (row === null) {
+      return;
+    }
+    const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const action = target.getAttribute("data-action");
+    if (action === "restore") {
+      // Optimistic-remove the row to prevent double-click dispatches.
+      row.remove();
+      this.dropRowUnbind(chatId);
+      restoreArchivedChat(chatId);
+    } else if (action === "delete") {
+      // Destructive + permanent: confirm before removing (no optimistic remove
+      // until the user has agreed).
+      void this.confirmAndDelete(container, row, chatId);
+    } else if (action === "export") {
+      // Non-destructive: keep the row. The server export path falls back
+      // to the archive dir, so archived chats export without restoring.
+      const name = row.querySelector<HTMLElement>(".list-row-name")?.textContent ?? "";
+      downloadChatExport(chatId, name, "md");
+    }
+  }
+
+  /** Confirm, then permanently delete an archived chat. */
+  private async confirmAndDelete(
+    container: HTMLElement,
+    row: HTMLElement,
+    chatId: string,
+  ): Promise<void> {
+    const name = row.querySelector<HTMLElement>(".list-row-name")?.textContent ?? "this chat";
+    const ok = await confirmDialog(
+      `Delete "${name}" permanently? This can't be undone.`,
+      "Delete",
+      "destructive",
+    );
+    if (!ok) {
+      return;
+    }
+    row.remove();
+    this.dropRowUnbind(chatId);
+    if (container.querySelector("[data-chat-id]") === null) {
+      container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
+    }
+    void deleteArchivedChat.dispatch(chatId);
+  }
+
+  private dropRowUnbind(chatId: string): void {
+    const u = this.rowUnbinds.get(chatId);
+    if (u !== undefined) {
+      u();
+      this.rowUnbinds.delete(chatId);
+    }
+  }
+
+  /** Error placeholder with a Retry button so a failed load isn't a dead end. */
+  private buildErrorState(): HTMLElement {
+    const retry = el("button", { type: "button", className: "btn-small" }, "Retry");
+    retry.addEventListener("click", () => {
+      void this.loadHistoryTable();
+    });
+    return el(
+      "div",
+      { className: "list-empty history-error" },
+      el("span", {}, "Couldn't load history. Check your connection and try again."),
+      retry,
     );
   }
 
@@ -182,19 +244,36 @@ class HistoryController {
 
     const nameWrap = el(
       "div",
-      { className: "list-row-title", "data-action": "restore" },
+      {
+        className: "list-row-title",
+        role: "button",
+        tabindex: "0",
+        "aria-label": `Restore ${chat.name}`,
+        "data-action": "restore",
+      },
       el("span", { className: "list-row-name" }, chat.name),
       chat.summary !== undefined && chat.summary !== ""
         ? el("span", { className: "list-row-summary" }, chat.summary)
         : null,
     );
-    nameWrap.style.cursor = "pointer";
 
     const date = el(
       "span",
       { className: "list-row-meta" },
       new Date(chat.updated_at).toLocaleString(),
     );
+
+    const exportBtn = el(
+      "button",
+      {
+        type: "button",
+        className: "btn-small icon-only",
+        "data-tooltip": "Export as Markdown",
+        "aria-label": `Export ${chat.name}`,
+        "data-action": "export",
+      },
+      iconEl(ICON_EXPORT),
+    ) as HTMLButtonElement;
 
     const delBtn = el(
       "button",
@@ -208,7 +287,7 @@ class HistoryController {
       iconEl(ICON_TRASH),
     ) as HTMLButtonElement;
 
-    row.append(nameWrap, date, delBtn);
+    row.append(nameWrap, date, exportBtn, delBtn);
     this.rowUnbinds.set(chat.id, bindLoadingState("chat.delete_archived", delBtn));
     return row;
   }
@@ -282,7 +361,7 @@ class HistoryController {
         }
         const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
         if (target.getAttribute("data-action") === "restore") {
-          // Bug 4: optimistic-remove row to prevent double-click.
+          // Optimistic-remove row to prevent double-click.
           row.remove();
           restoreArchivedChat(chatId);
         }
@@ -290,6 +369,37 @@ class HistoryController {
       { signal },
     );
   }
+}
+
+/** Skeleton rows for the full-page history table (matches .history-table-row
+ *  dimensions). Skipped when the table already holds rows so a re-open doesn't
+ *  flash placeholders. Returns a teardown that removes the skeleton. */
+function showTableSkeleton(container: HTMLElement): () => void {
+  if (container.querySelector("[data-chat-id]") !== null) {
+    return () => {
+      /* already populated — nothing shown */
+    };
+  }
+  const wrap = el("div", { className: "history-skeleton", "aria-hidden": "true" });
+  for (let i = 0; i < 4; i++) {
+    const row = el("div", { className: "list-row history-table-row history-skel-row" });
+    const title = el("div", { className: "list-row-title" });
+    title.appendChild(skelBar("history-skel-name", "60%"));
+    title.appendChild(skelBar("history-skel-summary", "42%"));
+    row.appendChild(title);
+    row.appendChild(skelBar("history-skel-date", "8rem"));
+    wrap.appendChild(row);
+  }
+  container.replaceChildren(wrap);
+  return () => {
+    wrap.remove();
+  };
+}
+
+function skelBar(className: string, width: string): HTMLElement {
+  const bar = el("div", { className: `skeleton ${className}` });
+  bar.style.width = width;
+  return bar;
 }
 
 function buildArchivedSidebarRow(chat: ArchivedHeader): HTMLElement {
@@ -306,7 +416,12 @@ function buildArchivedSidebarRow(chat: ArchivedHeader): HTMLElement {
     ),
     el(
       "button",
-      { type: "button", className: "history-restore", "data-action": "restore" },
+      {
+        type: "button",
+        className: "history-restore",
+        "aria-label": `Restore ${chat.name}`,
+        "data-action": "restore",
+      },
       "Restore",
     ),
   );

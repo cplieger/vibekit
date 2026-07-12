@@ -6,7 +6,6 @@
 // ---------------------------------------------------------------------------
 
 import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./store.js";
-import { onBus, BUS_TURN_IDLE } from "./bus.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
@@ -20,10 +19,14 @@ import {
 } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
-import { bindLoadingState } from "./actions/index.js";
+import {
+  bindLoadingState,
+  transportAction,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el, signal, effect } from "@cplieger/reactive";
-import { send } from "./transport.js";
 import { patchSettings } from "./persist.js";
 import type { ModelInfo } from "./types.js";
 
@@ -38,6 +41,61 @@ const EFFORT_LEVELS = [
 ] as const;
 
 export type EffortLevel = (typeof EFFORT_LEVELS)[number]["id"];
+
+/** Active reasoning effort. Module-scoped so the effort action and the row's
+ *  render effect share one source of truth (rather than the action reaching
+ *  into a controller instance field). */
+const currentEffort = signal("");
+let effortLoaded = false;
+
+/** Dispatch a reasoning-effort change through the actions framework — the
+ *  established command path, never a hand-rolled transport.send. Optimistic:
+ *  the active tier flips instantly and rolls back if the server rejects the
+ *  set_config_option, so the pill can't advertise an effort that never applied. */
+const setEffortAction = transportAction<{ chatID: string; level: string }, { prev: string }>({
+  name: "chat.set_effort",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, level }) => ({
+    type: "set_effort",
+    chat_id: chatID,
+    payload: { level },
+  }),
+  optimistic: ({ level }) => {
+    const prev = currentEffort.peek();
+    currentEffort.value = level;
+    return { prev };
+  },
+  rollback: (_args, op) => {
+    if (op !== undefined) {
+      currentEffort.value = op.prev;
+    }
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't set reasoning effort",
+});
+
+/** Model-aware effort gating. KAS advertises a per-model effort capability in
+ *  the config catalog (config_option_update `_meta.kiro.hasEffort`). When the
+ *  server plumbs it onto the catalog entries, gate the effort row on the CURRENT
+ *  model's capability; when it isn't plumbed at all (no entry carries it), fall
+ *  back to showing the row so a working control is never silently hidden. Read
+ *  defensively so this compiles whether or not the catalog type carries the
+ *  field yet. */
+function currentModelHasEffort(models: readonly ModelInfo[], modelID: string): boolean {
+  let plumbed = false;
+  let current = false;
+  for (const m of models) {
+    const cap = (m as { has_effort?: unknown }).has_effort;
+    if (cap !== undefined) {
+      plumbed = true;
+      if (m.model_id === modelID) {
+        current = cap === true;
+      }
+    }
+  }
+  return plumbed ? current : true;
+}
 
 type QueueState =
   | { status: "idle" }
@@ -65,22 +123,18 @@ class ModelSwitchController {
       },
     });
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
-    onBus(BUS_TURN_IDLE, (chatID: string) => {
-      this.drainQueue(chatID);
-    });
+    // The queued mid-turn model switch drains from the per-chat `turn_ended`
+    // SSE (handlers/turn.ts → drainModelSwitchQueue), NOT the active-only
+    // `turn:idle` bus event — so a switch queued on a background chat is no
+    // longer stranded until that chat happens to become the active tab.
   }
 
   private openRichPicker(): void {
     const currentModel = getActive()?.model ?? "";
-    const agent = getActive()?.agent ?? "";
-    showModelPicker(
-      currentModel,
-      (modelID: string) => {
-        this.applyLocalChoice(modelID);
-        hideModelPicker();
-      },
-      agent,
-    );
+    showModelPicker(currentModel, (modelID: string) => {
+      this.applyLocalChoice(modelID);
+      hideModelPicker();
+    });
   }
 
   private renderCondensedList(): void {
@@ -97,10 +151,14 @@ class ModelSwitchController {
     }
     const current = session.model;
 
-    // Effort row: always visible at the top. Five tier buttons.
-    // The active level is read from vibekit's config (stored in the
-    // session context); clicking dispatches set_effort.
-    this.ensureEffortRow(list);
+    // Effort row: shown only when the current model advertises reasoning
+    // effort (KAS `hasEffort`). Falls back to showing it when the catalog
+    // doesn't carry the capability at all (see currentModelHasEffort).
+    if (currentModelHasEffort(getCachedModels(), current)) {
+      this.ensureEffortRow(list);
+    } else {
+      this.removeEffortRow();
+    }
 
     reconcile(list, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
@@ -113,33 +171,43 @@ class ModelSwitchController {
   }
 
   private effortRow: HTMLDivElement | null = null;
-  private readonly currentEffort = signal("");
-  private effortLoaded = false;
+
+  /** Remove the effort row from the list (current model doesn't advertise
+   *  effort). Idempotent — re-added by ensureEffortRow when a model that does
+   *  advertise it becomes current. */
+  private removeEffortRow(): void {
+    this.effortRow?.remove();
+  }
 
   private ensureEffortRow(list: HTMLElement): void {
     // Load persisted effort on first call.
-    if (!this.effortLoaded) {
-      this.effortLoaded = true;
+    if (!effortLoaded) {
+      effortLoaded = true;
       void import("./api-client.js")
         .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings")) // eslint-disable-line @typescript-eslint/no-explicit-any
         .then((settings) => {
           const me = (settings as Record<string, unknown> | null)?.["model_effort"] as
             { effort?: string; last_model?: string } | undefined;
           if (me?.effort && me.last_model === getActive()?.model) {
-            this.currentEffort.value = me.effort;
+            currentEffort.value = me.effort;
           }
         });
     }
     if (this.effortRow === null) {
       this.effortRow = el(
         "div",
-        { className: "effort-row", "aria-label": "Reasoning effort" },
+        { className: "effort-row", role: "group", "aria-label": "Reasoning effort" },
         el("span", { className: "effort-label" }, "Effort"),
       ) as HTMLDivElement;
       for (const { id: level, label } of EFFORT_LEVELS) {
         const btn = el(
           "button",
-          { type: "button", className: "effort-btn", "data-level": level },
+          {
+            type: "button",
+            className: "effort-btn",
+            "data-level": level,
+            "aria-pressed": "false",
+          },
           label,
         );
         btn.addEventListener("click", (e) => {
@@ -148,15 +216,17 @@ class ModelSwitchController {
         });
         this.effortRow.appendChild(btn);
       }
-      // One effect keeps every .effort-btn's active class in sync with the
-      // currentEffort signal (replaces the three hand-rolled sync loops). The
-      // row + controller are app-lifetime singletons, so this never needs
-      // disposal.
+      // One effect keeps every .effort-btn's active class + aria-pressed in
+      // sync with the currentEffort signal (replaces the three hand-rolled
+      // sync loops). The row + controller are app-lifetime singletons, so this
+      // never needs disposal.
       const row = this.effortRow;
       effect(() => {
-        const lvl = this.currentEffort.value;
+        const lvl = currentEffort.value;
         for (const btn of row.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-          btn.classList.toggle("active", btn.dataset["level"] === lvl);
+          const active = btn.dataset["level"] === lvl;
+          btn.classList.toggle("active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
         }
       });
     }
@@ -172,21 +242,22 @@ class ModelSwitchController {
     if (session === undefined) {
       return;
     }
-    this.currentEffort.value = level;
-    // Dispatch to server (applies to active session).
-    void send({
-      type: "set_effort",
-      chat_id: session.id,
-      request_id: `effort-${Date.now()}`,
-      payload: { level },
-    });
-    // Persist so effort restores on next bridge spawn for this model.
-    void patchSettings({
-      model_effort: {
-        last_model: session.model,
-        effort: level as "low" | "medium" | "high" | "xhigh" | "max",
+    // Dispatch through the actions framework (optimistic flip + rollback live
+    // in setEffortAction). Persist only after the server accepts, so a rejected
+    // set_config_option doesn't leave a stale saved effort for this model.
+    void setEffortAction.dispatch(
+      { chatID: session.id, level },
+      {
+        onSuccess: () => {
+          void patchSettings({
+            model_effort: {
+              last_model: session.model,
+              effort: level as EffortLevel,
+            },
+          });
+        },
       },
-    });
+    );
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {
@@ -268,6 +339,14 @@ class ModelSwitchController {
     );
   }
 
+  /** Drain a queued mid-turn model switch for the chat whose turn just ended.
+   *  Called from the per-chat `turn_ended` SSE (handlers/turn.ts) and from the
+   *  reconnect-gap recovery (handlers/system.ts), so a background chat's queued
+   *  switch fires when ITS turn ends rather than waiting to become active. */
+  drainForChat(chatID: string): void {
+    this.drainQueue(chatID);
+  }
+
   private drainQueue(idleChatID: string): void {
     if (this.queueState.status !== "queued") {
       return;
@@ -290,6 +369,14 @@ const controller = new ModelSwitchController();
 
 export function initModelSwitcher(): void {
   controller.init();
+}
+
+/** Drain any queued mid-turn model switch for `chatID`. Called by the
+ *  `turn_ended` SSE handler (and the reconnect-gap recovery) so a switch
+ *  queued while a background chat was thinking still fires when that chat's
+ *  turn ends — model-switcher.ts stays the queue owner. */
+export function drainModelSwitchQueue(chatID: string): void {
+  controller.drainForChat(chatID);
 }
 
 export function applyLocalModel(modelID: string): void {

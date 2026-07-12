@@ -1,6 +1,5 @@
 // ---------------------------------------------------------------------------
-// Supervised mode pill: lives in the prompt-row pill cluster, next to
-// the autopilot/trust UI in Settings. Two functions:
+// Supervised mode pill: lives in the prompt-row pill cluster. Two functions:
 //
 //   1. Shows a toggle affordance for Supervised mode. Clicking the pill
 //      opens a popover with an explanation + an on/off toggle. This is

@@ -1,0 +1,98 @@
+/* ==========================================================================
+   Knowledge bases (Settings → Instructions)
+
+   The list reuses the generic .list-* + .page-section + .action-pill classes;
+   this slice only adds the inline add-form, the enable hint, and the live
+   indexing progress bar. Unlayered (like the other component slices) so it
+   wins over the layered base by source order. Reduced-motion is handled
+   globally in 40-a11y.css (the progress-bar width transition degrades there).
+   ========================================================================== */
+
+/* Enable hint: shown only when chat.enableKnowledge is off. A subtle amber
+   wash so it reads as an advisory, not an error. */
+.knowledge-hint {
+  margin-block-start: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-inline-start: 2px solid var(--c-yellow);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
+}
+
+/* Inline add form: revealed by the + button. display is set only when NOT
+   hidden so the UA [hidden]{display:none} still wins when collapsed. */
+.knowledge-add-form:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-block: var(--sp-2);
+}
+
+.knowledge-add-input {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-micro);
+}
+
+.knowledge-add-input:focus-visible {
+  outline: none;
+  border-color: var(--c-accent);
+}
+
+/* Item-count meta uses tabular figures so counts don't jitter. */
+.knowledge-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A base still indexing: accent left-border marks it as in-progress. */
+.knowledge-row.knowledge-indexing {
+  box-shadow: inset 2px 0 0 var(--c-accent);
+}
+
+.knowledge-progress {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-2);
+  min-inline-size: 0;
+}
+
+.knowledge-bar {
+  flex: 1;
+  block-size: 4px;
+  min-inline-size: 3rem;
+  max-inline-size: 10rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--c-accent) 20%, transparent);
+  border-radius: 2px;
+}
+
+.knowledge-bar-fill {
+  display: block;
+  block-size: 100%;
+  background: var(--c-accent);
+  border-radius: 2px;
+  transition: inline-size var(--dur-standard) var(--ease-standard);
+}
+
+.knowledge-progress-text {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Remove button picks up a red tint on hover (the confirm dialog is the real
+   guard; this is just the affordance). */
+.knowledge-remove:hover {
+  color: var(--c-red);
+}

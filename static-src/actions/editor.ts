@@ -36,12 +36,18 @@ export const saveFile = apiAction<
   error: false,
 });
 
-/** Send the active plan to the agent. writePlanDraft shows its own banner;
- *  framework toast suppressed.
+/** Send the active plan to the agent. Saves the draft, then hands off via
+ *  runPlan (which switches out of Plan mode when needed and sends the prompt).
+ *  Returns the send status ("sent" | "queued") so the editor can close the
+ *  plan-draft tab only once the draft is actually sent+deleted.
+ *
+ *  Error surfaces are single: writePlanDraft shows its own draft/size banner
+ *  and the inner plan.run shows the "Failed to send plan" toast, so this
+ *  action's own framework toast is suppressed (error:false) and the editor
+ *  adds no inline error on top.
  *  Note: writePlanDraft is not cancellable — once started it will complete
  *  regardless of signal state. Cancellation is checked between steps. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const sendPlan = defineAction<{ chatID: string; content: string }, void>({
+export const sendPlan = defineAction<{ chatID: string; content: string }, "sent" | "queued">({
   name: "editor.send_plan",
   scope: (args) => "chat:" + args.chatID,
   run: async ({ chatID, content }, signal) => {
@@ -52,10 +58,11 @@ export const sendPlan = defineAction<{ chatID: string; content: string }, void>(
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    const sent = await runPlan(chatID, content.trim());
-    if (!sent) {
+    const result = await runPlan(chatID, content.trim());
+    if (result === "failed" || result === "too_large") {
       throw new ActionError("Plan send failed", { code: "run_plan_failed" });
     }
+    return result;
   },
   error: false,
 });

@@ -68,20 +68,22 @@ func (s *Store) Get(_ context.Context, id ServerID) *Server {
 func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	now := time.Now().UnixMilli()
 	rec := &Server{
-		ID:            newID(),
-		Transport:     in.Transport,
-		Name:          strings.TrimSpace(in.Name),
-		Command:       in.Command,
-		Args:          append([]string(nil), in.Args...),
-		Env:           copyPairs(in.Env),
-		URL:           in.URL,
-		Headers:       copyPairs(in.Headers),
-		DisabledTools: append([]string(nil), in.DisabledTools...),
-		OAuthClientID: strings.TrimSpace(in.OAuthClientID),
-		Prewarm:       in.Prewarm,
-		Enabled:       in.Enabled,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                newID(),
+		Transport:         in.Transport,
+		Name:              strings.TrimSpace(in.Name),
+		Command:           in.Command,
+		Args:              append([]string(nil), in.Args...),
+		Env:               copyPairs(in.Env),
+		URL:               in.URL,
+		Headers:           copyPairs(in.Headers),
+		DisabledTools:     append([]string(nil), in.DisabledTools...),
+		AutoApprove:       append([]string(nil), in.AutoApprove...),
+		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
+		OAuthClientSecret: strings.TrimSpace(in.OAuthClientSecret),
+		Prewarm:           in.Prewarm,
+		Enabled:           in.Enabled,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	if err := Validate(rec); err != nil {
 		return nil, err
@@ -119,20 +121,22 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	}
 	existing := s.servers[idx]
 	rec := &Server{
-		ID:            existing.ID,
-		Transport:     in.Transport,
-		Name:          strings.TrimSpace(in.Name),
-		Command:       in.Command,
-		Args:          append([]string(nil), in.Args...),
-		Env:           mergeSecrets(in.Env, existing.Env),
-		URL:           in.URL,
-		Headers:       mergeSecrets(in.Headers, existing.Headers),
-		DisabledTools: append([]string(nil), in.DisabledTools...),
-		OAuthClientID: strings.TrimSpace(in.OAuthClientID),
-		Prewarm:       in.Prewarm,
-		Enabled:       in.Enabled,
-		CreatedAt:     existing.CreatedAt,
-		UpdatedAt:     time.Now().UnixMilli(),
+		ID:                existing.ID,
+		Transport:         in.Transport,
+		Name:              strings.TrimSpace(in.Name),
+		Command:           in.Command,
+		Args:              append([]string(nil), in.Args...),
+		Env:               mergeSecrets(in.Env, existing.Env),
+		URL:               in.URL,
+		Headers:           mergeSecrets(in.Headers, existing.Headers),
+		DisabledTools:     append([]string(nil), in.DisabledTools...),
+		AutoApprove:       preserveNilSlice(in.AutoApprove, existing.AutoApprove),
+		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
+		OAuthClientSecret: mergeSecret(strings.TrimSpace(in.OAuthClientSecret), existing.OAuthClientSecret),
+		Prewarm:           in.Prewarm,
+		Enabled:           in.Enabled,
+		CreatedAt:         existing.CreatedAt,
+		UpdatedAt:         time.Now().UnixMilli(),
 	}
 	// Validate runs under s.mu because rec.Env and rec.Headers were just
 	// resolved against `existing` via mergeSecrets, which only makes
@@ -217,14 +221,14 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 // SetKnownTools updates the cached tool list for the named server.
 // Called when kiro-cli reports commands/available with per-server tool
 // names. Persists to mcp.json so the UI can show suggestions even when
-// the server is disconnected. No-op if the server name isn't found.
+// the server is disconnected. No-op if the server name isn't found, or
+// if the incoming set is identical to what's already stored.
 func (s *Store) SetKnownTools(ctx context.Context, name string, tools []string) {
 	s.mu.Lock()
 	var found *Server
 	for _, srv := range s.servers {
 		if srv.Name == name {
 			found = srv
-			srv.KnownTools = tools
 			break
 		}
 	}
@@ -232,6 +236,17 @@ func (s *Store) SetKnownTools(ctx context.Context, name string, tools []string) 
 		s.mu.Unlock()
 		return
 	}
+	// Change-detection: kiro-cli re-reports the same known-tools set on
+	// every bridge spawn/reconnect, so without this guard opening N chats
+	// would fire N identical disk writes + mcp_config_changed broadcasts +
+	// npx prewarm passes for unchanged data. Skip when the set is
+	// unchanged; only a real change persists + notifies (comparison runs
+	// under the lock, before the mutation).
+	if slices.Equal(found.KnownTools, tools) {
+		s.mu.Unlock()
+		return
+	}
+	found.KnownTools = tools
 	s.mu.Unlock()
 
 	// Persist outside the lock: KnownTools is a non-critical UI cache

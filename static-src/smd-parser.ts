@@ -8,7 +8,7 @@
 // text via the renderer's callback instead of the fixed `appendChild(text
 // node)` form, so callers can wrap newly-appended text in an animated
 // span without patching the parser. That's the whole point of porting
-// it — our renderer wraps each new text chunk in `<span data-vk-stream>`
+// it — our renderer wraps each new text chunk in `<span data-vk-chunk-enter>`
 // so CSS can fade it in as it mounts. The parser is append-only, so old
 // content stays stable across flushes.
 //

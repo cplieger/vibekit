@@ -9,6 +9,8 @@
 //      on switch-away, and a cleared banner never resurrects on switch-back.
 //   2. identity — A -> B -> A reuses the SAME entry-owned DOM node.
 //   3. idempotency — calling ensureBound() twice does not double-bind.
+//   4. single live region — the stack container is the only aria-live region;
+//      individual banners carry no role/aria-live (no nested live regions).
 //
 // `./store.js` is mocked so `activeSession` is a writable signal we control;
 // `./ui-state.js` load/save back a plain dismissals array; `$.bannerStack` is
@@ -117,5 +119,29 @@ describe("banner-stack: active-chat scoping", () => {
     mod.showBanner("A", "x", "boom", "error", false);
     flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
+  });
+});
+
+describe("banner-stack: single live region", () => {
+  it("marks only the stack container as a live region; banners are not separately live", async () => {
+    const { container, mod, flush } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    // The stack container is the SINGLE polite live region.
+    expect(container.getAttribute("aria-live")).toBe("polite");
+
+    mod.showBanner("A", "err", "boom", "error", false);
+    mod.showBanner("A", "inf", "note", "info", false);
+    flush();
+
+    const nodes = container.querySelectorAll(".banner");
+    expect(nodes).toHaveLength(2);
+    // No nested live region on individual banners: dropping role="alert"/"status"
+    // is what prevents the double-announce.
+    for (const node of nodes) {
+      expect(node.hasAttribute("role")).toBe(false);
+      expect(node.hasAttribute("aria-live")).toBe(false);
+    }
   });
 });

@@ -58,15 +58,23 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	var forkedSessionID string
 	bridge := deps.GetBridge(cmd.ChatID)
 	if bridge != nil {
-		resp, err := bridge.Call(ctx, "session/fork", map[string]any{
-			"turnIndex": p.TurnIndex,
-		})
+		// v3 (KAS) session/fork keys the fork point on _meta.kiro.messageId
+		// (a transcript message id, not a turn index) and requires cwd +
+		// sessionId. The id space is populated by forwarding the user
+		// message id on session/prompt (see BuildPromptParams); KAS only
+		// knows the ids vibekit supplied, i.e. user turns.
+		resp, err := bridge.Call(ctx, api.MethodSessionFork, SessionParams(bridge, map[string]any{
+			"cwd":   deps.WorkDir(),
+			"_meta": map[string]any{"kiro": map[string]any{"messageId": forkMessageID(parent.Messages, p.TurnIndex)}},
+		}))
 		if err == nil && resp != nil && resp.Result != nil {
 			var result struct {
 				SessionID string `json:"sessionId"`
 			}
 			_ = json.Unmarshal(resp.Result, &result)
 			forkedSessionID = result.SessionID
+		} else if err != nil {
+			slog.Warn("session/fork failed; rewind starts a fresh session", "chat", cmd.ChatID, keyError, err)
 		}
 	}
 
@@ -81,7 +89,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		if len(c.Name) > api.MaxChatNameBytes {
 			c.Name = c.Name[:api.MaxChatNameBytes]
 		}
-		c.Agent = parent.Agent
+		c.CurrentModeID = parent.CurrentModeID
 		c.Model = parent.Model
 		c.ACPSessionID = forkedSessionID
 		c.ParentChatID = cmd.ChatID
@@ -103,6 +111,21 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		"ok":        true,
 		"rewind_id": string(rewindID),
 	})
+}
+
+// forkMessageID returns the transcript message id KAS should fork at:
+// the message at turnIndex, or the nearest preceding user message. KAS
+// only knows the ids vibekit supplied on session/prompt (user turns), so
+// assistant/event turns resolve back to their originating user message.
+// Empty when no user message precedes turnIndex (KAS then forks at the
+// session head). Callers guarantee 0 <= turnIndex < len(messages).
+func forkMessageID(messages []api.Message, turnIndex int) string {
+	for i := turnIndex; i >= 0; i-- {
+		if messages[i].Role == api.RoleUser && messages[i].ID != "" {
+			return messages[i].ID
+		}
+	}
+	return ""
 }
 
 // CmdPromoteRewindChat promotes a rewind chat to replace its parent.
@@ -182,10 +205,11 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	})
 }
 
-// CmdSetEffort dispatches the /effort slash command to kiro-cli via
-// the running bridge's _kiro.dev/commands/execute path. Vibekit owns
-// persistence of the effort level; this command applies it to the
-// active session.
+// CmdSetEffort applies a reasoning-effort level to the active session. On
+// v3 (KAS) effort is a session config option, so this dispatches
+// session/set_config_option (configId "effortLevel"). Vibekit owns
+// persistence of the effort level; a new session's initial effort is
+// seeded at acp launch via StartOpts.Effort instead.
 func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
@@ -203,16 +227,14 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		return
 	}
 
-	// Dispatch /effort via the internal slash-execute path. (Mid-session
-	// change; a new session's initial effort is seeded at acp launch via
-	// StartOpts.Effort instead.)
-	result, err := api.ExecuteSlashCommand(ctx, bridge, "effort", string(p.Level))
-	if err != nil {
+	if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+		"configId": api.ConfigOptionEffort,
+		"value":    string(p.Level),
+	})); err != nil {
 		slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		d.RespondErr(w, http.StatusBadGateway, err)
 		return
 	}
-	_ = result // success; kiro-cli applies the effort level to the session
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
 	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"level": p.Level}))

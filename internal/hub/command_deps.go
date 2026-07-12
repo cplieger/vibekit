@@ -27,8 +27,8 @@ func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
 }
 
 // GetOrCreateBridge ensures a bridge exists for the chat.
-func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, model string) (command.Bridge, error) {
-	sb, err := h.coord.GetOrCreateBridge(ctx, chatID, agent, model)
+func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (command.Bridge, error) {
+	sb, err := h.coord.GetOrCreateBridge(ctx, chatID, model)
 	if err != nil {
 		return nil, err
 	}
@@ -110,9 +110,12 @@ func (h *Hub) InflightGo(fn func()) {
 	h.lifecycle.inflight.Go(fn)
 }
 
-// CleanupChatState tears down all in-memory state for a chat.
+// CleanupChatState tears down all in-memory state for a chat that is being
+// permanently deleted (the delete / promote / discard paths), reaping the
+// chat's checkpoints too. The archive path uses OnChatArchiving, which runs
+// the same teardown but preserves checkpoints (archive is reversible).
 func (h *Hub) CleanupChatState(ctx context.Context, chatID api.ChatID) {
-	h.cleanupChatState(ctx, chatID)
+	h.cleanupChatState(ctx, chatID, true)
 }
 
 // MCPWaitForReady blocks until MCP servers are ready or timeout.

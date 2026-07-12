@@ -152,11 +152,26 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	_ = settings.WarnUnknownKeys(patchKeys, r.Method+" "+r.URL.Path)
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	// For PATCH, merge with existing; for PUT, replace entirely.
-	if r.Method == http.MethodPatch {
+	// PATCH merges the incoming keys over the existing file. PUT replaces the
+	// file, but must not silently wipe server-managed keys written by other
+	// flows (agent_ignore_files from the Permissions UI, model_effort from the
+	// model switcher): carry over any managed key the PUT body omits so a
+	// full-object PUT stays non-destructive of them.
+	switch r.Method {
+	case http.MethodPatch:
 		existing := readExistingSettings(path)
 		maps.Copy(existing, patch)
 		patch = existing
+	case http.MethodPut:
+		existing := readExistingSettings(path)
+		for _, k := range settings.ServerManagedKeys() {
+			if _, inBody := patch[k]; inBody {
+				continue
+			}
+			if v, ok := existing[k]; ok {
+				patch[k] = v
+			}
+		}
 	}
 	pretty, err := json.MarshalIndent(patch, "", "  ")
 	if err != nil {

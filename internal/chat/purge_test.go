@@ -147,10 +147,7 @@ func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Archive(context.Background(), "c1")
 	archivePath := filepath.Join(s.dir, "archive", "c1.json")
-	oldTime := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(archivePath, oldTime, oldTime); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
 	p.Start()
@@ -198,8 +195,7 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Archive(context.Background(), "c1")
 	archivePath := filepath.Join(s.dir, "archive", "c1.json")
-	oldTime := time.Now().Add(-48 * time.Hour)
-	_ = os.Chtimes(archivePath, oldTime, oldTime)
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
 	// Stop before Start — the goroutine never runs.
@@ -220,8 +216,7 @@ func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Archive(context.Background(), "c1")
 	archivePath := filepath.Join(s.dir, "archive", "c1.json")
-	oldTime := time.Now().Add(-48 * time.Hour)
-	_ = os.Chtimes(archivePath, oldTime, oldTime)
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
 	defer p.Stop()
@@ -259,10 +254,9 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Archive(context.Background(), "c1")
 	archivePath := filepath.Join(s.dir, "archive", "c1.json")
-	old := time.Now().Add(-48 * time.Hour)
-	_ = os.Chtimes(archivePath, old, old)
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
-	// Create a second chat whose mtime is fresh (should survive).
+	// Create a second chat that is freshly archived (should survive).
 	_ = s.Mutate(context.Background(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 	_ = s.Archive(context.Background(), "c2")
 	c2Path := filepath.Join(s.dir, "archive", "c2.json")
@@ -274,7 +268,7 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	if !waitForPurge(t, archivePath, 2*time.Second) {
 		t.Error("expired entry not purged")
 	}
-	// c2 should survive (fresh mtime, retention=1s).
+	// c2 should survive (freshly archived, retention=1s).
 	if _, err := os.Stat(c2Path); err != nil {
 		t.Errorf("fresh entry purged unexpectedly: %v", err)
 	}
@@ -313,9 +307,8 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		_ = s.Mutate(context.Background(), "old1", func(c *api.Chat, _ bool) bool { c.Name = "Old"; return true })
 		_ = s.Archive(context.Background(), "old1")
 		archivePath := filepath.Join(s.dir, "archive", "old1.json")
-		// Age it well past retention.
-		oldTime := time.Now().Add(-72 * time.Hour)
-		_ = os.Chtimes(archivePath, oldTime, oldTime)
+		// Age it well past retention (stamp + mtime).
+		ageArchivedChat(t, s, "old1", 72*time.Hour)
 
 		retention := 24 * time.Hour
 		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
@@ -355,8 +348,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		_ = s.Mutate(context.Background(), "stop1", func(c *api.Chat, _ bool) bool { c.Name = "Stop"; return true })
 		_ = s.Archive(context.Background(), "stop1")
 		archivePath := filepath.Join(s.dir, "archive", "stop1.json")
-		oldTime := time.Now().Add(-72 * time.Hour)
-		_ = os.Chtimes(archivePath, oldTime, oldTime)
+		ageArchivedChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
 		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
@@ -379,8 +371,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		_ = s.Mutate(context.Background(), "dup1", func(c *api.Chat, _ bool) bool { c.Name = "Dup"; return true })
 		_ = s.Archive(context.Background(), "dup1")
 		archivePath := filepath.Join(s.dir, "archive", "dup1.json")
-		oldTime := time.Now().Add(-72 * time.Hour)
-		_ = os.Chtimes(archivePath, oldTime, oldTime)
+		ageArchivedChat(t, s, "dup1", 72*time.Hour)
 
 		retention := 24 * time.Hour
 		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
@@ -398,4 +389,39 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		p.Trigger()
 		time.Sleep(50 * time.Millisecond)
 	})
+}
+
+// TestPurgeArchived_AgesFromArchivedAtNotMtime is the core of the G1 purge
+// fix: purge ages from the explicit ArchivedAt stamp, not the file mtime. A
+// chat with a stale mtime but a fresh ArchivedAt (the state a skipped/failed
+// post-archive summary write leaves) must survive; a chat whose ArchivedAt is
+// genuinely old must be purged.
+func TestPurgeArchived_AgesFromArchivedAtNotMtime(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	// keep: freshly archived (ArchivedAt = now) but with a backdated mtime,
+	// exactly what a skipped/failed post-archive summary write leaves behind.
+	_ = s.Mutate(ctx, "keep", func(c *api.Chat, _ bool) bool { c.Name = "K"; return true })
+	_ = s.Archive(ctx, "keep")
+	keepPath := filepath.Join(s.dir, "archive", "keep.json")
+	stale := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(keepPath, stale, stale); err != nil {
+		t.Fatalf("chtimes keep: %v", err)
+	}
+
+	// gone: ArchivedAt genuinely old.
+	_ = s.Mutate(ctx, "gone", func(c *api.Chat, _ bool) bool { c.Name = "G"; return true })
+	_ = s.Archive(ctx, "gone")
+	gonePath := filepath.Join(s.dir, "archive", "gone.json")
+	ageArchivedChat(t, s, "gone", 72*time.Hour)
+
+	s.PurgeArchived(ctx, 24*time.Hour)
+
+	if _, err := os.Stat(keepPath); err != nil {
+		t.Errorf("old-but-just-archived chat purged from stale mtime (ArchivedAt is fresh): %v", err)
+	}
+	if _, err := os.Stat(gonePath); !os.IsNotExist(err) {
+		t.Errorf("chat with old ArchivedAt not purged: stat err = %v", err)
+	}
 }

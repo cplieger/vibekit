@@ -7,7 +7,6 @@
     "ansi_up": ["./test-stubs/ansi_up.ts"]
   },
   "ignoreDependencies": ["html-validate", "stylelint", "stylelint-config-standard"],
-  "ignoreBinaries": ["tsgo"],
   "ignoreMembers": [
     "active",
     "addPendingPermission",
@@ -22,13 +21,11 @@
     "isThinking",
     "loadList",
     "loadMessages",
-    "queuedPrompt",
     "removeChat",
     "removePendingPermission",
     "setActive",
     "setAvailableCommands",
     "setCurrentMode",
-    "setQueuedPrompt",
     "setThinking",
     "setWorkingLabel",
     "subscribe",

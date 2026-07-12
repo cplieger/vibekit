@@ -42,7 +42,7 @@ func TestListForChat_AfterResolve(t *testing.T) {
 			t.Fatalf("Add: %v", err)
 		}
 	}
-	if _, err := s.Resolve(context.Background(), "tc-1", ActionAccept); err != nil {
+	if _, err := s.Resolve(context.Background(), "c-1", "tc-1", ActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	got := s.ListForChat("c-1")

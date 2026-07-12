@@ -1,6 +1,10 @@
 package testsupport
 
-import "context"
+import (
+	"context"
+
+	"github.com/cplieger/vibekit/internal/api"
+)
 
 // NopMCPRecorder is a no-op implementation of translate.MCPRecorder for
 // tests and benchmarks. The compile-time assertion lives in
@@ -9,7 +13,8 @@ import "context"
 type NopMCPRecorder struct{}
 
 // RecordConnected is a no-op; implements translate.MCPRecorder.
-func (*NopMCPRecorder) RecordConnected(context.Context, string) {}
+func (*NopMCPRecorder) RecordConnected(context.Context, string, []api.MCPPromptInfo, []api.MCPResourceInfo) {
+}
 
 // RecordOAuth is a no-op; implements translate.MCPRecorder.
 func (*NopMCPRecorder) RecordOAuth(context.Context, string, string) {}

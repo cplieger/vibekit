@@ -25,7 +25,6 @@ vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn(), apiGet: vi.fn() }));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
-  trimOldMessages: vi.fn(),
   setUserScrolledUp: vi.fn(),
 }));
 vi.mock("./transport.js", () => ({ send: vi.fn() }));

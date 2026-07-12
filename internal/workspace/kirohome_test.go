@@ -48,8 +48,8 @@ func TestKiroHome_resolverResultCachedOnce(t *testing.T) {
 }
 
 // The Kiro path helpers join their name argument under the matching
-// subdirectory of KiroHome(). The "steering" / "settings" / "sessions/cli"
-// segments are load-bearing: kiro-cli and vibekit must agree on them.
+// subdirectory of KiroHome(). The "steering" / "settings" segments are
+// load-bearing: kiro-cli and vibekit must agree on them.
 func TestKiroPathHelpers(t *testing.T) {
 	prev := kiroHomeResolver
 	kiroHomeResolver = nil
@@ -64,8 +64,5 @@ func TestKiroPathHelpers(t *testing.T) {
 	}
 	if got, want := KiroSettingsPath("global.json"), "/cfg/.kiro/settings/global.json"; got != want {
 		t.Errorf("KiroSettingsPath = %q, want %q", got, want)
-	}
-	if got, want := KiroSessionsCLIDir(), "/cfg/.kiro/sessions/cli"; got != want {
-		t.Errorf("KiroSessionsCLIDir = %q, want %q", got, want)
 	}
 }

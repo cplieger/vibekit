@@ -21,7 +21,7 @@ import (
 // cancel, subagent, slash, and permission handlers.
 type BridgeAccess interface {
 	GetBridge(chatID api.ChatID) Bridge
-	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agent, model string) (Bridge, error)
+	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID api.ChatID)
 	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
 }

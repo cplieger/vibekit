@@ -30,9 +30,7 @@ func main() {
 		wiregen.TypeRef[api.ToolCall](),
 		wiregen.TypeRef[api.PlanEntry](),
 		wiregen.TypeRef[api.Block](),
-		wiregen.TypeRef[api.CrewSubagent](),
-		wiregen.TypeRef[api.CrewPendingStage](),
-		wiregen.TypeRef[api.Crew](),
+		wiregen.TypeRef[api.CodeReference](),
 		wiregen.TypeRef[api.Message](),
 		wiregen.TypeRef[api.MeteringItem](),
 		wiregen.TypeRef[api.Usage](),
@@ -62,7 +60,29 @@ func main() {
 		wiregen.TypeRef[api.ElicitationPropertySchema](),
 		wiregen.TypeRef[api.ElicitationRequestSchema](),
 		wiregen.TypeRef[api.ElicitationNeededPayload](),
-		wiregen.TypeRef[api.ElicitationCompletePayload](),
+		wiregen.TypeRef[api.OpenExternalURLPayload](),
+		wiregen.TypeRef[api.CodeReferencesPayload](),
+		wiregen.TypeRef[api.KnowledgeIndexingPayload](),
+		wiregen.TypeRef[api.AccountUsageBreakdown](),
+		wiregen.TypeRef[api.AccountUsage](),
+		wiregen.TypeRef[api.PolicyRuleCore](),
+		wiregen.TypeRef[api.PolicyRule](),
+		wiregen.TypeRef[api.PolicyView](),
+		wiregen.TypeRef[api.PolicyExplainResult](),
+		wiregen.TypeRef[api.PolicyErrorItem](),
+		wiregen.TypeRef[api.PermissionsChangedPayload](),
+		wiregen.TypeRef[api.PolicyErrorPayload](),
+		wiregen.TypeRef[api.SpecTaskPBT](),
+		wiregen.TypeRef[api.SpecTaskNode](),
+		wiregen.TypeRef[api.Spec](),
+		wiregen.TypeRef[api.SpecsResponse](),
+		wiregen.TypeRef[api.SpecTaskChange](),
+		wiregen.TypeRef[api.SpecTaskChangedPayload](),
+		wiregen.TypeRef[api.SafetyProperty](),
+		wiregen.TypeRef[api.SafetyStatusPayload](),
+		wiregen.TypeRef[api.SafetyPropertiesPayload](),
+		wiregen.TypeRef[api.GovernanceFeatures](),
+		wiregen.TypeRef[api.GovernanceStatePayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),
 		wiregen.TypeRef[forges.Repo](),
 		wiregen.TypeRef[forges.PR](),
@@ -81,10 +101,10 @@ func main() {
 	// registered-type (root) package, so discovery doesn't scan it.
 	r.Enums = map[string]wiregen.EnumDef{
 		"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
-		"PlanStatus": {}, "CrewStatus": {}, "PendingChangeKind": {},
+		"PlanStatus": {}, "PendingChangeKind": {},
 		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-		"PendingAction": {}, "ClearReason": {},
-		"Transport": {Values: []string{"stdio", "http"}},
+		"PendingAction": {}, "ClearReason": {}, "SafetyStatus": {},
+		"Transport": {Values: []string{"stdio", "http", "sse"}},
 	}
 
 	r.EnumTSName = map[string]string{
@@ -95,6 +115,10 @@ func main() {
 	// unambiguously, so its snake_case path is given explicitly.
 	r.PathNameOverride = map[string]string{
 		"MCPOAuthPayload": "mcp_oauth_payload",
+		// URL acronym cluster can't be split unambiguously; pin the path.
+		"OpenExternalURLPayload": "open_external_url_payload",
+		// PBT acronym cluster can't be split unambiguously; pin the path.
+		"SpecTaskPBT": "spec_task_pbt",
 	}
 
 	const typeMessage = "Message" // 3 SSE events decode to api.Message
@@ -102,11 +126,13 @@ func main() {
 		{EventType: "chat_created", TypeName: "ChatHeader"},
 		{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
 		{EventType: "chat_updated", TypeName: "ChatHeader"},
+		{EventType: "code_references", TypeName: "CodeReferencesPayload"},
 		{EventType: "commands_updated", TypeName: "CommandsUpdatedPayload"},
 		{EventType: "connected", TypeName: "ConnectedPayload"},
-		{EventType: "elicitation_complete", TypeName: "ElicitationCompletePayload"},
 		{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 		{EventType: "error", TypeName: "ErrorPayload"},
+		{EventType: "governance_state", TypeName: "GovernanceStatePayload"},
+		{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},
 		{EventType: "mcp_connected", TypeName: "MCPConnectedPayload"},
 		{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
 		{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
@@ -115,10 +141,16 @@ func main() {
 		{EventType: "message_chunk", TypeName: "MessageChunkPayload"},
 		{EventType: "message_created", TypeName: typeMessage},
 		{EventType: "message_updated", TypeName: typeMessage},
+		{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
 		{EventType: "pending_change_added", TypeName: "PendingChangeAddedPayload"},
 		{EventType: "pending_change_resolved", TypeName: "PendingChangeResolvedPayload"},
 		{EventType: "pending_changes_cleared", TypeName: "PendingChangesClearedPayload"},
 		{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
+		{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
+		{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
+		{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
+		{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
+		{EventType: "spec_task_changed", TypeName: "SpecTaskChangedPayload"},
 		{EventType: "tool_call", TypeName: "ToolCallPayload"},
 		{EventType: "tool_call_update", TypeName: "ToolCallUpdatePayload"},
 		{EventType: "turn_ended", TypeName: "TurnEndedPayload"},

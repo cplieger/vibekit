@@ -11,7 +11,7 @@ import {
   transportAction,
 } from "./index.js";
 
-import { sendPromptTo } from "../chat-commands.js";
+import { submitPrompt } from "../prompt-queue.js";
 
 /** Copy text to clipboard with success/error toast. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
@@ -61,11 +61,14 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   error: "Undo failed — the checkpoint may have expired",
 });
 
-/** Hand a plan to the running agent as a prompt.
- *  Note: sendPromptTo doesn't accept a signal, so cancellation is
- *  best-effort between calls (checked before sendPromptTo). */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const runPlan = defineAction<{ chatID: string; content: string }, void>({
+/** Hand a plan to the running agent as a prompt. Routes through the queue's
+ *  submitPrompt so a plan sent while a turn is in flight is buffered and
+ *  drained like any other prompt (returns "queued") rather than dropped.
+ *  Returns the send status so the caller (plan-actions.runPlan) can delete the
+ *  draft only on "sent" and keep it as the durable copy on "queued".
+ *  Note: submitPrompt doesn't accept a signal, so cancellation is best-effort
+ *  between calls (checked before the send). */
+export const runPlan = defineAction<{ chatID: string; content: string }, "sent" | "queued">({
   name: "plan.run",
   scope: (args) => "chat:" + args.chatID,
   idempotencyKey: (args) => `plan.run:${args.chatID}:${args.content.slice(0, 40)}`,
@@ -74,10 +77,11 @@ export const runPlan = defineAction<{ chatID: string; content: string }, void>({
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    const result = await sendPromptTo(chatID, `Please implement this plan:\n\n${content}`);
+    const result = await submitPrompt(chatID, `Please implement this plan:\n\n${content}`);
     if (result === "failed") {
       throw new ActionError("prompt rejected", { code: "send_failed" });
     }
+    return result;
   },
   error: "Failed to send plan",
 });

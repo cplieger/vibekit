@@ -34,7 +34,7 @@ func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.Response
 		d.RespondErr(w, http.StatusBadRequest, errResolveBadAction)
 		return
 	}
-	snap, err := d.Supervised().PendingStore().Resolve(ctx, p.ToolCallID, p.Action)
+	snap, err := d.Supervised().PendingStore().Resolve(ctx, cmd.ChatID, p.ToolCallID, p.Action)
 	switch {
 	case errors.Is(err, pending.ErrUnknown):
 		d.RespondErr(w, http.StatusNotFound, errResolveUnknown)
@@ -166,7 +166,7 @@ func CmdResolvePendingChangePartial(d *Dispatcher, ctx context.Context, w http.R
 		d.RespondErr(w, http.StatusRequestEntityTooLarge, errMergedTooLarge)
 		return
 	}
-	snap, err := d.Supervised().PendingStore().ResolveWithText(ctx, p.ToolCallID, p.MergedText)
+	snap, err := d.Supervised().PendingStore().ResolveWithText(ctx, cmd.ChatID, p.ToolCallID, p.MergedText)
 	switch {
 	case errors.Is(err, pending.ErrUnknown):
 		d.RespondErr(w, http.StatusNotFound, errResolveUnknown)

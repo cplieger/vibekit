@@ -129,3 +129,78 @@ func FuzzValidateHookPayload(f *testing.F) {
 		}
 	})
 }
+
+// TestNormalizeTrigger pins the event-type -> PascalCase v1 trigger map:
+// canonical names pass through, v2/IDE camelCase aliases are rewritten
+// (case-insensitively), and unknown values pass through trimmed.
+func TestNormalizeTrigger(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// Canonical PascalCase passes through.
+		{"SessionStart", "SessionStart"},
+		{"PostFileSave", "PostFileSave"},
+		{"Manual", "Manual"},
+		// v2 / Kiro-IDE camelCase aliases map to PascalCase.
+		{"fileEdited", "PostFileSave"},
+		{"fileCreated", "PostFileCreate"},
+		{"fileDeleted", "PostFileDelete"},
+		{"userTriggered", "Manual"},
+		{"agentStop", "Stop"},
+		{"userPromptSubmit", "UserPromptSubmit"},
+		// Case-insensitive + trimmed.
+		{"POSTFILESAVE", "PostFileSave"},
+		{"  fileEdited  ", "PostFileSave"},
+		// Unknown passes through trimmed (best effort).
+		{"someFutureTrigger", "someFutureTrigger"},
+		{"  x  ", "x"},
+	}
+	for _, tc := range cases {
+		if got := normalizeTrigger(tc.in); got != tc.want {
+			t.Errorf("normalizeTrigger(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestBuildHookDoc pins the v1 envelope shape and the action/matcher/
+// timeout mapping for both action branches.
+func TestBuildHookDoc(t *testing.T) {
+	t.Run("askAgent maps to an agent action", func(t *testing.T) {
+		doc := buildHookDoc(&hookCreatePayload{
+			Name: "Review", EventType: "fileEdited", ActionType: "askAgent",
+			Prompt: "review", Patterns: `\.go$`, Description: "desc",
+		})
+		if doc.Version != "v1" {
+			t.Errorf("version = %q, want v1", doc.Version)
+		}
+		if len(doc.Hooks) != 1 {
+			t.Fatalf("hooks = %d, want 1", len(doc.Hooks))
+		}
+		h := doc.Hooks[0]
+		if h.Name != "Review" || h.Trigger != "PostFileSave" ||
+			h.Matcher != `\.go$` || h.Description != "desc" {
+			t.Errorf("hook = %+v", h)
+		}
+		if h.Action.Type != "agent" || h.Action.Prompt != "review" || h.Action.Command != "" {
+			t.Errorf("action = %+v", h.Action)
+		}
+		if h.Timeout != 0 {
+			t.Errorf("timeout = %d, want 0 (omitted)", h.Timeout)
+		}
+	})
+
+	t.Run("runCommand maps to a command action with timeout", func(t *testing.T) {
+		doc := buildHookDoc(&hookCreatePayload{
+			Name: "Lint", EventType: "PostFileSave", ActionType: "runCommand",
+			Command: "make lint", Timeout: 30,
+		})
+		h := doc.Hooks[0]
+		if h.Action.Type != "command" || h.Action.Command != "make lint" || h.Action.Prompt != "" {
+			t.Errorf("action = %+v", h.Action)
+		}
+		if h.Timeout != 30 {
+			t.Errorf("timeout = %d, want 30", h.Timeout)
+		}
+		if h.Matcher != "" {
+			t.Errorf("matcher = %q, want empty", h.Matcher)
+		}
+	})
+}

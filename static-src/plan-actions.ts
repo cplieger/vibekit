@@ -3,18 +3,39 @@
 // "Send plan" toolbar button all route through this module so the flow
 // lives in one place.
 //
-// The planner agent is expected to declare session modes that include a
-// "build" or "implement" variant — when the agent decides the plan is
-// ready, it issues a `switch_mode` tool call that the user approves,
-// and the next prompt runs in the new mode. vibekit does NOT force an
-// agent swap behind the user's back; we just hand the plan to the
-// running agent as a prompt and let it choose what to do.
+// KAS's built-in Plan mode is READ-ONLY — it has no write/execute tools and
+// cannot switch itself out of Plan mode (there is no `switch_mode` tool on the
+// acp wire; KAS's own Step-3 hand-off tells the *user* to switch). So the
+// handoff must move the chat to an executing mode itself: when the chat is
+// currently in `plan` mode, `runPlan` dispatches the `chat.set_mode` action to
+// the bundled default executing mode (`vibe`, labelled "Default") and awaits it
+// before sending the "Please implement this plan" prompt. From an already-
+// executing mode the switch is skipped and the plan is sent as-is.
 // ---------------------------------------------------------------------------
 
 import type { PlanEntry } from "./types.js";
 import { apiPutOrError, apiDelete } from "./api-client.js";
 import { showBanner } from "./banner-stack.js";
 import { runPlan as runPlanAction } from "./actions/messages.js";
+import { setMode } from "./actions/chat.js";
+import { get } from "./store.js";
+
+/** Server-enforced plan-draft size ceiling (mirrors plan_draft.go's 256 KB
+ *  cap). The Run path sends the plan straight as a prompt with no PUT, so it
+ *  must apply the cap client-side — the draft PUT's 413 guard never runs for
+ *  it. */
+const PLAN_DRAFT_MAX_BYTES = 256 * 1024;
+
+/** Bundled read-only planning mode id (KAS). */
+const PLAN_MODE_ID = "plan";
+/** Bundled default executing mode id (KAS; labelled "Default"). */
+const EXECUTING_MODE_ID = "vibe";
+
+/** Outcome of a plan handoff. `too_large` / `failed` are terminal errors that
+ *  have already surfaced their own message; `sent` / `queued` are success
+ *  (queued = buffered behind an in-flight turn, the draft kept as the durable
+ *  copy). */
+export type PlanHandoffResult = "sent" | "queued" | "too_large" | "failed";
 
 /** Serialize a plan into markdown suitable for the draft file + prompt
  *  body. High-priority items are marked inline so the agent sees them. */
@@ -63,24 +84,57 @@ async function deletePlanDraft(chatID: string): Promise<void> {
   await apiDelete(`/api/chats/${encodeURIComponent(chatID)}/plan-draft`);
 }
 
-/** Hand the plan to the running agent as a prompt. The agent decides
- *  whether to switch modes / agents — vibekit doesn't force anything.
- *  Runs under the shared thinking lifecycle so the send button shows
- *  "busy" for the whole handoff.
- *
- *  Only deletes the draft on send/queue. If the prompt was rejected
- *  (e.g. parent chat tombstoned mid-handoff, chat frozen because a
- *  tangent landed between the Edit and Send clicks), the draft stays
- *  on disk so the user's work survives the failure and they can retry
- *  from the editor. */
-export async function runPlan(chatID: string, content: string): Promise<boolean> {
-  if (chatID === "" || content.trim() === "") {
-    return false;
+/** Number of UTF-8 bytes in `content` — matches how the server measures the
+ *  256 KB plan-draft cap. */
+function planByteSize(content: string): number {
+  return new TextEncoder().encode(content).length;
+}
+
+/** If the chat sits in the read-only Plan mode, switch it to the bundled
+ *  executing mode before the implement-prompt is sent. Awaited so the server
+ *  applies `session/set_mode` ahead of the prompt; best-effort — a failed
+ *  switch surfaces its own toast (chat.set_mode) and we still attempt the
+ *  send. */
+async function switchOutOfPlanMode(chatID: string): Promise<void> {
+  if (get(chatID)?.current_mode_id !== PLAN_MODE_ID) {
+    return;
   }
+  await setMode.dispatch({ chatID, modeID: EXECUTING_MODE_ID });
+}
+
+/** Hand the plan to the running agent as a prompt. When the chat is in the
+ *  read-only Plan mode this first switches it to an executing mode (KAS Plan
+ *  mode can neither implement nor self-switch), then sends "Please implement
+ *  this plan". Runs under the shared thinking lifecycle so the send button
+ *  shows "busy" for the whole handoff.
+ *
+ *  The draft is deleted ONLY once the send is confirmed ("sent"). A queued
+ *  send (turn in flight) keeps the draft as the durable copy — the prompt
+ *  lives only in the client's in-memory queue until it drains, so deleting it
+ *  optimistically would lose the plan on a reload before the drain. A rejected
+ *  send (chat tombstoned/gone) likewise keeps the draft so the user can
+ *  retry. */
+export async function runPlan(chatID: string, content: string): Promise<PlanHandoffResult> {
+  if (chatID === "" || content.trim() === "") {
+    return "failed";
+  }
+  if (planByteSize(content) > PLAN_DRAFT_MAX_BYTES) {
+    showBanner(
+      chatID,
+      "plan_run_too_large",
+      "Plan is too large to send (256 KB limit). Trim some items and try again.",
+      "error",
+      true,
+    );
+    return "too_large";
+  }
+  await switchOutOfPlanMode(chatID);
   const result = await runPlanAction.dispatch({ chatID, content });
   if (result === null) {
-    return false;
+    return "failed";
   }
-  await deletePlanDraft(chatID);
-  return true;
+  if (result === "sent") {
+    await deletePlanDraft(chatID);
+  }
+  return result;
 }

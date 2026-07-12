@@ -7,11 +7,15 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { appendMessage, upsertMessage, appendChunk, upsertToolCall } from "../store.js";
+import {
+  appendMessage,
+  upsertMessage,
+  appendChunk,
+  upsertToolCall,
+  setCodeReferences,
+} from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
-import { clearBannerCodes } from "../banner-stack.js";
-import { setSubagentActivity } from "../crew-card.js";
 
 // Defensive `=== undefined` guards in this file look unnecessary to
 // the type checker — the wire decoder marks payloads non-nullable —
@@ -26,10 +30,6 @@ onSSE("message_appended", (chatID, m) => {
     return;
   }
   appendMessage(chatID, m);
-  // Agent-switched events resolve init-error banners.
-  if (m.event_kind === "agent_switched") {
-    clearBannerCodes(chatID, ["agent_not_found", "agent_config_error"]);
-  }
 });
 
 onSSE("message_created", (chatID, m) => {
@@ -45,7 +45,14 @@ onSSE("message_chunk", (chatID, p) => {
   if (p === undefined) {
     return;
   }
-  appendChunk(chatID, p.message_id, p.delta, p.is_reasoning ?? false, p.block_index);
+  appendChunk(
+    chatID,
+    p.message_id,
+    p.delta,
+    p.is_reasoning ?? false,
+    p.block_index,
+    p.agent_subtask_id ?? "",
+  );
 });
 
 onSSE("message_updated", (chatID, m) => {
@@ -53,6 +60,14 @@ onSSE("message_updated", (chatID, m) => {
     return;
   }
   upsertMessage(chatID, m);
+});
+
+onSSE("code_references", (chatID, p) => {
+  if (p === undefined) {
+    return;
+  }
+  // Full deduped list each time; setCodeReferences replaces (idempotent).
+  setCodeReferences(chatID, p.message_id, p.references);
 });
 
 onSSE("tool_call", (chatID, p) => {
@@ -73,39 +88,5 @@ onSSE("tool_call_update", (chatID, p) => {
   upsertToolCall(chatID, p.message_id, p.tool_call, 0);
   if (p.tool_call.status === "completed" && isRepoMutatingKind(p.tool_call.kind)) {
     markGitDirty();
-  }
-});
-
-// Per-subagent activity stream: updates the activity line on the crew
-// card row in real time (e.g. "Reading file.go", "Running tests",
-// "Thinking..."). The event carries a sub_session_id and an event
-// object with a human-readable label.
-
-/** Typed shape of the subagent_activity SSE payload's event field. */
-interface SubagentActivityEvent {
-  label?: string;
-  title?: string;
-  tool_name?: string;
-  status?: string;
-}
-
-onSSE("subagent_activity", (_chatID, p) => {
-  if (p === undefined) {
-    return;
-  }
-  const sid = p.sub_session_id;
-  if (typeof sid !== "string" || sid === "") {
-    return;
-  }
-  const evt = p.event;
-  if (evt === null || evt === undefined || typeof evt !== "object") {
-    return;
-  }
-  const e = evt as SubagentActivityEvent;
-  // Extract a human-readable label from the activity event. kiro-cli
-  // sends various shapes; we look for common fields in priority order.
-  const label = e.label ?? e.title ?? e.tool_name ?? e.status ?? "";
-  if (label !== "") {
-    setSubagentActivity(sid, label);
   }
 });

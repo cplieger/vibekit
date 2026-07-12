@@ -3,32 +3,34 @@ package chat
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-func FuzzSafeExportName(f *testing.F) {
-	f.Add("my chat", "fallback")
-	f.Add("", "fallback")
-	f.Add("a/b:c*d?e<f>g|h\"i\\j", "fb")
-	f.Add(strings.Repeat("x", 200), "fb")
-	f.Add("\x00\x1f\x7f", "fb")
+func FuzzExportFilename(f *testing.F) {
+	f.Add("my chat", "c1")
+	f.Add("", "c1")
+	f.Add("a/b:c*d?e<f>g|h\"i\\j", "cAFE")
+	f.Add(strings.Repeat("x", 200), "c1")
+	f.Add("\x00\x1f\x7f", "c1")
+	f.Add("", "")
 
 	const forbidden = "/\\:*?<>|\""
 
-	f.Fuzz(func(t *testing.T, raw, fallback string) {
-		result := safeExportName(raw, fallback)
+	f.Fuzz(func(t *testing.T, name, id string) {
+		result := exportFilename(name, id, ".md")
 
-		if !strings.HasSuffix(result, ".json") {
-			t.Fatalf("missing .json suffix: %q", result)
+		if !strings.HasSuffix(result, ".md") {
+			t.Fatalf("missing .md suffix: %q", result)
 		}
-
-		stem := strings.TrimSuffix(result, ".json")
-		if len(stem) > 80 {
-			t.Fatalf("stem exceeds 80 chars: len=%d", len(stem))
+		if !utf8.ValidString(result) {
+			t.Fatalf("result is not valid UTF-8: %q", result)
 		}
-
+		if strings.ContainsAny(result, "\x00") {
+			t.Fatalf("result contains NUL: %q", result)
+		}
 		for _, c := range forbidden {
-			if strings.ContainsRune(result[:len(stem)], c) {
-				t.Fatalf("forbidden char %q in stem %q", string(c), stem)
+			if strings.ContainsRune(result, c) {
+				t.Fatalf("forbidden char %q in %q", string(c), result)
 			}
 		}
 	})

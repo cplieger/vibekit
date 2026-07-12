@@ -16,6 +16,9 @@ import (
 func (s *Store) archiveSvc() *archive.Service {
 	s.archiveOnce.Do(func() {
 		var opts []archive.Option
+		if s.preArchive != nil {
+			opts = append(opts, archive.WithPreArchive(s.preArchive))
+		}
 		if s.onArchive != nil {
 			opts = append(opts, archive.WithOnArchive(s.onArchive))
 		}

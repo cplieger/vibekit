@@ -107,11 +107,6 @@ type CommandBridge interface {
 	IsPrimed() bool
 	// SetPrimed marks the bridge as primed.
 	SetPrimed()
-	// SupportsDocuments reports whether the negotiated agent accepts
-	// inline document/embedded content blocks (promptCapabilities.
-	// embeddedContext). Gates whether attachments are sent as `document`
-	// blocks or as path references. See ACPBridge.SupportsDocuments.
-	SupportsDocuments() bool
 }
 
 // Broadcaster sends events to all connected SSE clients.
@@ -127,9 +122,6 @@ type Hub interface {
 	// RouteHandler provides RegisterRoutes to wire /api/events (SSE) and
 	// /api/command (POST).
 
-	// RegisterSlashRoutes wires /api/slash/execute and /api/slash/options.
-	RegisterSlashRoutes(mux *http.ServeMux)
-
 	// Lifecycle
 
 	// Shutdown drains in-flight prompts and closes all bridges.
@@ -137,24 +129,24 @@ type Hub interface {
 }
 
 // StartOpts collects the parameters for ACPBridge.Start. All fields are
-// optional; a zero-value StartOpts creates a new session with no agent,
-// no model override, no extra args, and no MCP servers.
+// optional; a zero-value StartOpts creates a new session with no model
+// override and no MCP servers.
 type StartOpts struct {
-	// SessionID is the ACP session id to resume. Empty means create new.
-	SessionID string
-	// Agent is the agent identifier to launch.
-	Agent string
-	// Model is the model id to use for the session.
-	Model string
-	// Effort is the initial reasoning effort level passed to kiro-cli
-	// >=2.6 via `acp --effort` (low|medium|high|xhigh|max). Empty leaves
-	// the model/service default; invalid values are dropped at launch.
-	Effort string
-	// ExtraArgs are permission-mode flags derived from user settings.
-	ExtraArgs []string
-	// MCPServers is the ACP mcpServers array (enabled user-configured
-	// MCP servers). Nil means empty set.
-	MCPServers []map[string]any
+	SessionID   string
+	Model       string
+	Effort      string
+	AgentEngine string
+	Mode        string
+	MCPServers  []map[string]any
+	// EnableHooks opts the session into KAS's v2 hook engine by
+	// declaring _meta.kiro.hooks={enabled,v2} in the initialize
+	// handshake. Set on BOTH the utility bridge (so the hooks-management
+	// dashboard's list|setEnabled|triggerHook work) AND chat bridges (so
+	// the workspace's .kiro/hooks/*.json hooks autofire on their triggers
+	// during a turn). In v2 mode KAS loads and runs the hooks itself; it
+	// does not call back the client to execute autofired hooks. See
+	// internal/hub/hooks.go and internal/hub/bridge_coord.go.
+	EnableHooks bool
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods
@@ -202,12 +194,6 @@ type ACPBridge interface {
 	// NotifCh yields incoming ACP notifications. Closes when the
 	// subprocess exits.
 	NotifCh() <-chan *RPCResponse
-	// SupportsDocuments reports whether the negotiated agent accepts
-	// inline document/embedded content blocks, derived from the
-	// initialize handshake's promptCapabilities.embeddedContext. When
-	// false (kiro-cli 2.7's acp), document attachments must be sent as
-	// path references instead of dropped `document` content blocks.
-	SupportsDocuments() bool
 }
 
 // ACPBridgeFactory creates new ACPBridge instances. The hub calls it
@@ -278,6 +264,15 @@ type UtilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string) (string, error)
 }
 
+// AccountUsageProvider fetches account/subscription-level usage (plan,
+// credits, quota) via the KAS _kiro/account/getUsage request on a live
+// bridge. Narrow interface so the server can serve GET /api/account/usage
+// without depending on the full Hub surface; the concrete *hub.Hub
+// satisfies it via the utility bridge.
+type AccountUsageProvider interface {
+	AccountUsage(ctx context.Context) (*AccountUsage, error)
+}
+
 // --- Pending Changes ---
 
 // PendingStore is the consumer-side interface for the pending-change
@@ -295,7 +290,10 @@ type PendingStore interface {
 	// returning the rejected snapshots.
 	RejectAllForChat(chatID ChatID) []PendingChange
 	// Resolve resolves a single pending change with the given action.
-	Resolve(ctx context.Context, toolCallID string, action PendingAction) (PendingChange, error)
+	// chatID scopes the resolution: an op whose ChatID differs is treated
+	// as unknown, so a resolve command carrying a mismatched chat_id can
+	// never settle another chat's op.
+	Resolve(ctx context.Context, chatID ChatID, toolCallID string, action PendingAction) (PendingChange, error)
 }
 
 // --- Checkpoints ---

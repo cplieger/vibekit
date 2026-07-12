@@ -34,21 +34,6 @@ type RPCError struct {
 	Code    int    `json:"code"`
 }
 
-// PromptCapabilities are the prompt content-block capabilities the agent
-// advertises in the ACP initialize handshake (under
-// agentCapabilities.promptCapabilities). They gate which content-block
-// types a session/prompt may carry.
-type PromptCapabilities struct {
-	// Image reports acceptance of image content blocks.
-	Image bool `json:"image"`
-	// Audio reports acceptance of audio content blocks.
-	Audio bool `json:"audio"`
-	// EmbeddedContext reports acceptance of inline embedded-resource
-	// (document) content blocks. kiro-cli 2.7's `acp` advertises false,
-	// so document attachments must be sent as path references instead.
-	EmbeddedContext bool `json:"embeddedContext"`
-}
-
 // Error makes RPCError implement the error interface by returning the
 // server-provided message verbatim. Callers that need the code use
 // errors.As to recover the concrete *RPCError.

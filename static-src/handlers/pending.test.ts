@@ -48,11 +48,9 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
     id,
     name: "seeded",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    auto_approve_crew: false,
     available_modes: [],
     available_models: [],
     usage: {

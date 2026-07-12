@@ -103,11 +103,29 @@
 /* Line-jump flash: a brief full-width highlight at the target line after
    openFile(path, line). Anchored absolute inside .editor-body so it lands
    at the correct pixel offset regardless of gutter/highlight grid layout.
-   Placed via inline `top` + `height`; opacity animates out to 0. */
+   Placed via inline `top` + `height`. vk-line-flash fades the highlight IN
+   then back OUT (a genuine flash) across the 1.2s the element lives before
+   editor-scroll.ts removes it. No fill-mode: a reduced-motion user (animation
+   collapsed to ~0ms) keeps a static highlight for that window instead of the
+   old fade-in-then-vanish that read as no flash at all. */
 .editor-line-flash {
   position: absolute;
   inset-inline: 0;
   pointer-events: none;
   background: color-mix(in srgb, var(--c-accent) 40%, transparent);
-  animation: vk-fade-in 1s var(--ease-standard) both;
+  animation: vk-line-flash 1.2s var(--ease-standard);
+}
+
+@keyframes vk-line-flash {
+  0% {
+    opacity: 0;
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
 }

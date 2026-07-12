@@ -89,13 +89,21 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Diagnostics)
 	defer cancel()
-	out, err := s.cliRunner.Run(ctx, "diagnostic", "--force", "--format", "json-pretty")
+	// Capture STDOUT only (stderr is logged, never merged in) and cap the
+	// output so a runaway diagnostic dump can't bloat the HTTP response.
+	out, truncated, err := s.cliRunner.RunStdoutCapped(ctx, diagnosticsMaxBytes, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
 		api.WriteJSON(w, api.ErrorJSON("diagnostic command failed"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{"report": string(out)})
+	// Sanitize (ANSI + hidden Unicode) then best-effort redact obvious
+	// secret patterns before the report reaches the browser.
+	report := redactSecrets(api.SanitizeOutput(string(out)))
+	if truncated {
+		report += "\n\n[truncated]"
+	}
+	api.WriteJSON(w, map[string]string{"report": report})
 }
 
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {

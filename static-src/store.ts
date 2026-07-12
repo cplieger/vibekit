@@ -7,14 +7,25 @@
 // signal — subscribers read it to react only to active-session changes.
 //
 // MESSAGES are deliberately NOT a collection: each session owns a Message[]
-// with sub-message (block/tool/crew) streaming signals in store-signals.ts,
+// with sub-message (block/tool) streaming signals in store-signals.ts,
 // finer-grained than a per-message signal. The messages renderer subscribes
 // to `messagesVersion` (coarse "list shape changed") while the SignalMaps do
-// the per-block/per-tool/per-crew fine-grained work. Streaming paths coalesce
+// the per-block/per-tool fine-grained work. Streaming paths coalesce
 // renders via scheduleMessages (queueMicrotask).
 // ---------------------------------------------------------------------------
 
-import type { Session, ChatHeader, Message, Usage, ToolCall, PendingChange } from "./types.js";
+import type {
+  Session,
+  ChatHeader,
+  Message,
+  Block,
+  Usage,
+  ToolCall,
+  CodeReference,
+  FileChange,
+  PendingChange,
+  QueuedPrompt,
+} from "./types.js";
 import { signal, computed, createCollection, batch } from "@cplieger/reactive";
 import {
   streamingTextSigs,
@@ -23,7 +34,6 @@ import {
   blockThinkingSigs,
   blockKey,
   toolCallSigs,
-  crewSigs,
 } from "./store-signals.js";
 
 // --- Messages reactivity: the renderer + task-list subscribe to this ---
@@ -84,7 +94,6 @@ export const activeSession = computed<Session | undefined>(() => {
 });
 
 const msgIndex = new Map<string, Map<string, number>>();
-const _queuedAttachments = new Map<string, unknown[][]>();
 
 // --- Accessors ---
 export function getSessions(): Session[] {
@@ -133,39 +142,59 @@ export function setWorkingLabel(id: string, label: string): void {
   sessions.update(id, (s) => ({ ...s, working_label: label }));
 }
 
-export function queuedPrompt(id: string): string | undefined {
-  const q = get(id)?.prompt_queue;
-  if (q === undefined || q.length === 0) {
-    return undefined;
-  }
-  return q[0];
+// --- Prompt queue (per-chat FIFO of prompts buffered while a turn runs) ---
+//
+// Text and its attachments travel together in one QueuedPrompt entry, so
+// they can never desync (the old design kept attachments in a parallel map
+// keyed positionally). The queue is client-only (never persisted or sent to
+// the server) and reactive — a field on the session — so send-state.ts
+// derives the "queued" button state and queued-prompts.ts renders the pending
+// chips straight off `session.prompt_queue`. All lifecycle decisions
+// (enqueue-on-409, drain, idle re-check, cancel) live in prompt-queue.ts;
+// these are the pure data ops.
+
+/** Number of prompts currently queued for a chat. */
+export function queueLength(id: string): number {
+  return get(id)?.prompt_queue?.length ?? 0;
 }
 
+/** Append a prompt (text + its attachments) to the back of the queue. */
 export function enqueuePrompt(id: string, text: string, attachments?: readonly unknown[]): void {
   const s = get(id);
   if (s === undefined) {
     return;
   }
-  const queue = [...(s.prompt_queue ?? []), text];
-  if (!_queuedAttachments.has(id)) {
-    _queuedAttachments.set(id, []);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  _queuedAttachments.get(id)!.push(attachments !== undefined ? [...attachments] : []);
+  const entry: QueuedPrompt = {
+    text,
+    attachments: attachments !== undefined ? [...attachments] : [],
+  };
+  const queue = [...(s.prompt_queue ?? []), entry];
   sessions.update(id, (cur) => ({ ...cur, prompt_queue: queue }));
 }
 
-export function dequeuePrompt(id: string): string | undefined {
-  const s = get(id);
-  if (s === undefined) {
+/** Read the front entry without removing it. */
+export function peekPrompt(id: string): QueuedPrompt | undefined {
+  return get(id)?.prompt_queue?.[0];
+}
+
+/** Remove and return the front entry (FIFO). */
+export function dequeuePrompt(id: string): QueuedPrompt | undefined {
+  return removeQueuedAt(id, 0);
+}
+
+/** Remove and return the entry at `index` (0-based). Backs both the drain
+ *  (front) and the UI cancel affordance (any position). No-op + undefined
+ *  for an out-of-range index or unknown chat. */
+export function removeQueuedAt(id: string, index: number): QueuedPrompt | undefined {
+  const q = get(id)?.prompt_queue;
+  if (q === undefined || index < 0 || index >= q.length) {
     return undefined;
   }
-  const q = s.prompt_queue;
-  if (q === undefined || q.length === 0) {
+  const removed = q[index];
+  if (removed === undefined) {
     return undefined;
   }
-  const rest = q.slice(1);
-  const next = q[0];
+  const rest = q.filter((_, i) => i !== index);
   sessions.update(id, (cur) => {
     const copy = { ...cur };
     if (rest.length === 0) {
@@ -175,54 +204,11 @@ export function dequeuePrompt(id: string): string | undefined {
     }
     return copy;
   });
-  // Also shift attachments (consumed via dequeuePromptAttachments or discarded).
-  const aq = _queuedAttachments.get(id);
-  if (aq !== undefined) {
-    aq.shift();
-    if (aq.length === 0) {
-      _queuedAttachments.delete(id);
-    }
-  }
-  return next;
-}
-
-/** Peek the attachments for the next queued prompt (call before dequeuePrompt
- *  to capture them). */
-export function peekQueuedAttachments(id: string): readonly unknown[] {
-  const aq = _queuedAttachments.get(id);
-  if (aq === undefined || aq.length === 0) {
-    return [];
-  }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return aq[0]!;
-}
-
-/** Replace attachments on the last queued entry (used when the action
- *  enqueued text-only and the caller needs to attach files after). */
-export function setLastQueuedAttachments(id: string, attachments: readonly unknown[]): void {
-  const aq = _queuedAttachments.get(id);
-  if (aq === undefined || aq.length === 0) {
-    return;
-  }
-  aq[aq.length - 1] = [...attachments];
-}
-
-export function setQueuedPrompt(id: string, text: string | undefined): void {
-  if (text === undefined) {
-    _queuedAttachments.delete(id);
-    sessions.update(id, (cur) => {
-      const copy = { ...cur };
-      delete copy.prompt_queue;
-      return copy;
-    });
-  } else {
-    _queuedAttachments.set(id, [[]]);
-    sessions.update(id, (cur) => ({ ...cur, prompt_queue: [text] }));
-  }
+  return removed;
 }
 
 // --- Index helpers ---
-export function clearMsgIndex(sessionID: string): void {
+function clearMsgIndex(sessionID: string): void {
   msgIndex.delete(sessionID);
 }
 
@@ -274,7 +260,6 @@ export function upsertHeader(h: ChatHeader): void {
       const next: Session = {
         ...s,
         name: h.name,
-        agent: h.agent ?? "",
         model: h.model ?? "",
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
@@ -284,9 +269,6 @@ export function upsertHeader(h: ChatHeader): void {
         usage: h.usage,
         message_count: Math.max(s.message_count, h.message_count),
       };
-      if (h.auto_approve_crew !== undefined) {
-        next.auto_approve_crew = h.auto_approve_crew;
-      }
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
       } else {
@@ -309,13 +291,11 @@ export function upsertHeader(h: ChatHeader): void {
   const s: Session = {
     id: h.id,
     name: h.name,
-    agent: h.agent ?? "",
     model: h.model ?? "",
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
     available_modes: h.available_modes ?? [],
     available_models: h.available_models ?? [],
-    auto_approve_crew: h.auto_approve_crew ?? false,
     supervised_mode: h.supervised_mode ?? false,
     pending_changes: [],
     usage: h.usage,
@@ -358,7 +338,6 @@ export function removeChat(id: string): void {
   batch(() => {
     sessions.remove(id);
     msgIndex.delete(id);
-    _queuedAttachments.delete(id);
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
@@ -378,46 +357,164 @@ export function reinsertSession(session: Session, atIndex?: number): void {
   sessions.setAll(order);
 }
 
-export function appendMessage(chatID: string, msg: Message): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  const mi = getMsgIndex(chatID, s.messages);
-  if (mi.has(msg.id)) {
-    return;
-  }
-  const newIdx = s.messages.length;
-  mi.set(msg.id, newIdx);
-  s.messages.push(msg);
-  s.message_count = Math.max(s.message_count, s.messages.length);
-  emitMessages();
+function nonEmptyStr(v: string | undefined): v is string {
+  return v !== undefined && v !== "";
 }
 
-export function upsertMessage(chatID: string, msg: Message): void {
+/** Spread helper: include `agent_subtask_id` on a block only when non-empty
+ *  (exactOptionalPropertyTypes forbids setting an optional field to
+ *  undefined; "" is the top-level default and is simply omitted). */
+function subtaskField(id: string | undefined): { agent_subtask_id?: string } {
+  return nonEmptyStr(id) ? { agent_subtask_id: id } : {};
+}
+
+/** Ensure an assistant message has a `blocks` array so the renderer has ONE
+ *  path. v3 server messages already carry blocks; legacy replays (content /
+ *  reasoning / tool_calls only) get synthesized blocks — thinking, then text,
+ *  then a tool_use per tool call. Non-assistant or already-block messages pass
+ *  through unchanged. */
+export function normalizeMessage(m: Message): Message {
+  if (m.role !== "assistant" || (m.blocks !== undefined && m.blocks.length > 0)) {
+    return m;
+  }
+  const tools = m.tool_calls ?? [];
+  if (!nonEmptyStr(m.content) && !nonEmptyStr(m.reasoning) && tools.length === 0) {
+    return m; // e.g. a plan-only assistant message — nothing to synthesize
+  }
+  const blocks: Block[] = [];
+  if (nonEmptyStr(m.reasoning)) {
+    blocks.push({ type: "thinking", thinking: m.reasoning });
+  }
+  if (nonEmptyStr(m.content)) {
+    blocks.push({ type: "text", text: m.content });
+  }
+  for (const tc of tools) {
+    blocks.push({ type: "tool_use", tool_call_id: tc.id, ...subtaskField(tc.agent_subtask_id) });
+  }
+  return { ...m, blocks };
+}
+
+/** Merge a freshly-ingested server message over the existing one: adopt the
+ *  incoming's non-empty fields, never clobber non-empty with empty. This is
+ *  what lets the streamed assistant message and its final message_appended
+ *  (same id) coexist — the final's sanitized fields win, but an empty
+ *  message_created can't wipe streamed content. */
+function mergeMessage(existing: Message, incoming: Message): Message {
+  const merged: Message = { ...existing };
+  if (nonEmptyStr(incoming.content)) {
+    merged.content = incoming.content;
+  }
+  if (nonEmptyStr(incoming.reasoning)) {
+    merged.reasoning = incoming.reasoning;
+  }
+  if (incoming.blocks !== undefined && incoming.blocks.length > 0) {
+    merged.blocks = incoming.blocks;
+  }
+  if (incoming.tool_calls !== undefined && incoming.tool_calls.length > 0) {
+    merged.tool_calls = incoming.tool_calls;
+  }
+  if (incoming.plan !== undefined && incoming.plan.length > 0) {
+    merged.plan = incoming.plan;
+  }
+  if (incoming.code_references !== undefined && incoming.code_references.length > 0) {
+    merged.code_references = incoming.code_references;
+  }
+  if (nonEmptyStr(incoming.checkpoint_tag)) {
+    merged.checkpoint_tag = incoming.checkpoint_tag;
+  }
+  if (incoming.event_kind !== undefined) {
+    merged.event_kind = incoming.event_kind;
+  }
+  if (incoming.ts > 0) {
+    merged.ts = incoming.ts;
+  }
+  return merged;
+}
+
+/** Ingest a server-canonical message. message_created / message_appended /
+ *  message_updated ALL route here. Upsert by id with a merge that never drops
+ *  a message and never overwrites non-empty content with empty:
+ *  - absent  → normalize (ensure blocks) + push.
+ *  - present → mergeMessage (adopt incoming's non-empty fields).
+ *  Fixes the "final message never renders" (old append no-op), the
+ *  "message_created wipes streamed content" (old blind replace), and the
+ *  out-of-order chunk-before-created bugs. Internal — the public entry points
+ *  are appendMessage / upsertMessage. */
+function ingestMessage(chatID: string, incoming: Message): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
   }
   const mi = getMsgIndex(chatID, s.messages);
-  const idx = mi.get(msg.id) ?? -1;
+  const idx = mi.get(incoming.id) ?? -1;
   if (idx === -1) {
-    const newIdx = s.messages.length;
-    s.messages.push(msg);
+    mi.set(incoming.id, s.messages.length);
+    s.messages.push(normalizeMessage(incoming));
     s.message_count = Math.max(s.message_count, s.messages.length);
-    mi.set(msg.id, newIdx);
     emitMessages();
     return;
   }
-  s.messages[idx] = msg;
-  if (msg.event_kind === "crew" && msg.crew !== undefined) {
-    const sig = crewSigs.get(msg.id);
-    if (sig !== undefined) {
-      sig.value = msg.crew;
-      return;
-    }
+  const existing = s.messages[idx];
+  if (existing !== undefined) {
+    s.messages[idx] = mergeMessage(existing, normalizeMessage(incoming));
   }
   emitMessages();
+}
+
+/** message_appended → merge path (was a dedup no-op that dropped the final
+ *  sanitized message). */
+export function appendMessage(chatID: string, msg: Message): void {
+  ingestMessage(chatID, msg);
+}
+
+/** message_created / message_updated → merge path (was a blind replace that
+ *  wiped streamed content). */
+export function upsertMessage(chatID: string, msg: Message): void {
+  ingestMessage(chatID, msg);
+}
+
+/** Stamp the just-ended turn's summary (credits / elapsed / changed files)
+ *  onto the chat's last assistant message. The renderer projects it into a
+ *  keyed `.turn-footer` under that turn — replacing the old un-keyed direct
+ *  DOM write in handlers/turn.ts that double-rendered on SSE replay and
+ *  vanished on refresh. Applies to any chat (not just the active one) so a
+ *  background turn's footer is present when the user switches to it. The
+ *  server persists the same fields at flush time so it also survives reload. */
+export function setTurnSummary(
+  chatID: string,
+  data: { credits?: number; elapsedMs?: number; changedFiles?: Record<string, FileChange> },
+): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  let target: Message | undefined;
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const m = s.messages[i];
+    if (m?.role === "assistant") {
+      target = m;
+      break;
+    }
+  }
+  if (target === undefined) {
+    return;
+  }
+  let changed = false;
+  if (data.credits !== undefined && data.credits > 0) {
+    target.turn_credits = data.credits;
+    changed = true;
+  }
+  if (data.elapsedMs !== undefined && data.elapsedMs > 0) {
+    target.turn_elapsed_ms = data.elapsedMs;
+    changed = true;
+  }
+  if (data.changedFiles !== undefined && Object.keys(data.changedFiles).length > 0) {
+    target.changed_files = data.changedFiles;
+    changed = true;
+  }
+  if (changed) {
+    emitMessages();
+  }
 }
 
 export function addPendingChange(chatID: string, change: PendingChange): void {
@@ -462,14 +559,6 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
 }
 
-export function setAutoApproveCrew(chatID: string, enabled: boolean): void {
-  const s = get(chatID);
-  if (s === undefined || s.auto_approve_crew === enabled) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, auto_approve_crew: enabled }));
-}
-
 /** Set session model and notify subscribers. Used by switchModel. */
 export function setModel(chatID: string, model: string): void {
   if (!sessions.has(chatID)) {
@@ -508,6 +597,7 @@ export function appendChunk(
   delta: string,
   isReasoning: boolean,
   blockIndex: number,
+  subtaskID: string,
 ): void {
   const s = get(chatID);
   if (s === undefined) {
@@ -532,8 +622,8 @@ export function appendChunk(
   }
   // Mirror the delta into the chronological blocks array using the
   // server-provided block_index. The server guarantees consecutive
-  // chunks for the same kind share an index; a tool_call between
-  // text segments bumps the next text chunk to a new index.
+  // chunks for the same kind (and same subtask) share an index; a
+  // tool_call, a kind switch, or a subtask switch bumps to a new index.
   msg.blocks ??= [];
   const blockKind = isReasoning ? "thinking" : "text";
   if (msg.blocks[blockIndex] === undefined) {
@@ -542,7 +632,11 @@ export function appendChunk(
     while (msg.blocks.length < blockIndex) {
       msg.blocks.push({ type: blockKind });
     }
-    msg.blocks.push({ type: blockKind, ...(isReasoning ? { thinking: delta } : { text: delta }) });
+    msg.blocks.push({
+      type: blockKind,
+      ...subtaskField(subtaskID),
+      ...(isReasoning ? { thinking: delta } : { text: delta }),
+    });
   } else {
     const existing = msg.blocks[blockIndex];
     if (isReasoning) {
@@ -584,6 +678,29 @@ export function appendChunk(
   }
 }
 
+/** Attach licensed-code attributions to an in-flight assistant message
+ *  (v3 code_references SSE). The server sends the full deduped list each
+ *  time, so we replace rather than append. No-op if the target message
+ *  isn't in the store yet — the refs still persist server-side and render
+ *  on reload from Message.code_references. */
+export function setCodeReferences(chatID: string, messageID: string, refs: CodeReference[]): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  const mi = getMsgIndex(chatID, s.messages);
+  const idx = mi.get(messageID) ?? -1;
+  if (idx === -1) {
+    return;
+  }
+  const msg = s.messages[idx];
+  if (msg === undefined) {
+    return;
+  }
+  msg.code_references = refs;
+  emitMessages();
+}
+
 export function upsertToolCall(
   chatID: string,
   messageID: string,
@@ -604,7 +721,7 @@ export function upsertToolCall(
       ts: Date.now(),
       content: "",
       tool_calls: [call],
-      blocks: [{ type: "tool_use", tool_call_id: call.id }],
+      blocks: [{ type: "tool_use", tool_call_id: call.id, ...subtaskField(call.agent_subtask_id) }],
     };
     const newIdx = s.messages.length;
     s.messages.push(msg);
@@ -624,7 +741,11 @@ export function upsertToolCall(
       msg.blocks.push({ type: "text" });
     }
     if (msg.blocks[blockIndex] === undefined) {
-      msg.blocks.push({ type: "tool_use", tool_call_id: call.id });
+      msg.blocks.push({
+        type: "tool_use",
+        tool_call_id: call.id,
+        ...subtaskField(call.agent_subtask_id),
+      });
     }
     scheduleMessages();
     return;

@@ -18,13 +18,17 @@ import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
 import { initThemeToggle } from "./theme.js";
 import { initSettingsTabs } from "./settings-tabs.js";
-import { initPermissionsUI, initShellPolicyUI } from "./permissions-ui.js";
+import { initPermissionsUI, initShellPolicyUI, initNativePolicyUI } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
+import { initKnowledge } from "./knowledge.js";
+import { initHooks } from "./hooks.js";
+import { initKiroConfig } from "./kiro-config.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import { $ } from "./dom.js";
+import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -114,7 +118,51 @@ export function restoreAll(s: AppSettings): void {
   // resolved theme on construction. No separate apply is needed here.
   initPermissionsUI(s);
   initShellPolicyUI(s);
+  initNativePolicyUI();
   initDebugLogsToggle(s);
+  initChatRetention(s);
+}
+
+// --- Chat retention (vibekit-owned; /api/settings chat_retention_days) ---
+//
+// kiro-cli's cleanup.periodDays is pinned to 0/never — vibekit owns retention
+// end to end. The Days-kept number field carries 0 (off) .. N (keep N days);
+// the Keep-forever checkbox overrides it to -1 (archive, never purged) and
+// disables the number field. Writes go to /api/settings; the settings_updated
+// SSE refreshes retention.ts (archive-vs-delete-on-close + History visibility).
+function initChatRetention(s: AppSettings): void {
+  const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
+  const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
+  if (daysInput === null || foreverInput === null) {
+    return;
+  }
+  const current = typeof s.chat_retention_days === "number" ? s.chat_retention_days : 1;
+  foreverInput.checked = current === -1;
+  daysInput.disabled = current === -1;
+  if (current >= 0) {
+    daysInput.value = String(current);
+  }
+
+  const persist = (value: number, input: HTMLInputElement): void => {
+    void patchSettings({ chat_retention_days: value }, input);
+  };
+
+  daysInput.addEventListener("change", () => {
+    if (foreverInput.checked) {
+      return; // forever wins; the number field is disabled
+    }
+    const n = parseInt(daysInput.value, 10);
+    persist(!isNaN(n) && n >= 0 ? n : 0, daysInput);
+  });
+  foreverInput.addEventListener("change", () => {
+    daysInput.disabled = foreverInput.checked;
+    if (foreverInput.checked) {
+      persist(-1, foreverInput);
+      return;
+    }
+    const n = parseInt(daysInput.value, 10);
+    persist(!isNaN(n) && n >= 0 ? n : 1, foreverInput);
+  });
 }
 
 // --- UI init ---
@@ -139,6 +187,9 @@ export function initUI(): void {
 
   initTools();
   initMCP();
+  initKnowledge();
+  initHooks();
+  initKiroConfig();
   initAllModals();
 
   // The "Git & forges" tab in Settings was retired with the multi-repo
@@ -228,16 +279,126 @@ async function loadAbout(): Promise<void> {
   }
 }
 
-/** Wires the "Run diagnostics" button. Shows a spinner while kiro-cli
- *  collects its report, then copies the output to the clipboard and
- *  prints a summary below the button. Failures are surfaced as an
- *  error status so the user can manually re-run. */
-function initDiagnostics(): void {
+/** Pull a kiro-cli / KAS version out of a diagnostics report so the About
+ *  panel can surface it as a dedicated row. The report is the raw
+ *  `kiro-cli diagnostic --format json-pretty` output; the version lives under
+ *  `q-details.version` in the Amazon-Q-derived schema, with a few fallbacks for
+ *  forks that name it differently (or a server that folds it in top-level).
+ *  Returns "" when the report isn't JSON or carries no recognisable version, in
+ *  which case the caller omits the row. */
+export function extractDiagnosticVersion(report: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(report);
+  } catch {
+    return "";
+  }
+  const paths: readonly string[][] = [
+    ["q-details", "version"],
+    ["kiro_cli", "version"],
+    ["kiro-cli", "version"],
+    ["cli", "version"],
+    ["version"],
+    ["kiro_cli"],
+    ["kas"],
+  ];
+  for (const path of paths) {
+    const v = digPath(parsed, path);
+    if (typeof v === "string" && v.trim() !== "") {
+      return v.trim();
+    }
+  }
+  return "";
+}
+
+/** Walk `obj` down `path`, returning undefined at the first non-object hop. */
+function digPath(obj: unknown, path: readonly string[]): unknown {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (typeof cur !== "object" || cur === null) {
+      return undefined;
+    }
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+/** Copy `text` to the clipboard, resolving to whether it worked. The clipboard
+ *  API rejects on a non-secure-context self-host (plain-http LAN IP) or in an
+ *  iframe, so the caller falls back to the always-present textarea. */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Wires the "Run diagnostics" button. Shows a spinner (keeping the label)
+ *  while kiro-cli collects its report, then renders the FULL report into a
+ *  readonly, selectable textarea with an explicit Copy button — the report can
+ *  be large and the clipboard is unreachable on non-HTTPS self-hosts, so a
+ *  truncated ephemeral string is never the only surface. A kiro-cli version row
+ *  is shown when the payload carries one. Failures surface as an error status
+ *  so the user can re-run. */
+export function initDiagnostics(): void {
   const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
   if (btn === null || status === null) {
     return;
   }
+
+  // Announce the transient status transitions (collecting / ready / error) to
+  // assistive tech. Setting the live-region role here keeps announcements
+  // working regardless of the static markup (see the index.html note in the
+  // task report).
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+
+  // Build the copyable result surface once, right under the status line.
+  const host = status.parentElement ?? btn.parentElement;
+  const versionRow = el("p", {
+    className: "section-hint diagnostics-version",
+  }) as HTMLParagraphElement;
+  versionRow.hidden = true;
+
+  const result = el("textarea", {
+    className: "diagnostics-result",
+    "aria-label": "Diagnostics report",
+    spellcheck: "false",
+  }) as HTMLTextAreaElement;
+  result.readOnly = true;
+  result.hidden = true;
+
+  const copyBtn = el(
+    "button",
+    { type: "button", className: "btn-small diagnostics-copy" },
+    "Copy report",
+  ) as HTMLButtonElement;
+  const copyWrap = el(
+    "div",
+    { className: "diagnostics-result-actions" },
+    copyBtn,
+  ) as HTMLDivElement;
+  copyWrap.hidden = true;
+
+  host?.append(versionRow, copyWrap, result);
+
+  copyBtn.addEventListener("click", () => {
+    void copyToClipboard(result.value).then((ok) => {
+      if (ok) {
+        status.hidden = false;
+        status.textContent = "Copied report to clipboard.";
+      } else {
+        // Select the text so the keyboard shortcut copies the whole report.
+        result.focus();
+        result.select();
+        status.hidden = false;
+        status.textContent = "Press Ctrl/Cmd+C to copy the selected report.";
+      }
+    });
+  });
 
   bindLoadingState("tools.run_diagnostics", btn, { pendingClass: "btn-loading" });
 
@@ -245,21 +406,30 @@ function initDiagnostics(): void {
   btn.addEventListener("click", async () => {
     status.hidden = false;
     status.textContent = "Collecting diagnostics\u2026";
+    result.hidden = true;
+    copyWrap.hidden = true;
+    versionRow.hidden = true;
     const out = await runDiagnostics.dispatch(undefined);
     if (out === null || out.error !== undefined) {
       status.textContent = out?.error ?? "Diagnostics failed. Check server logs.";
       return;
     }
     const report = out.report ?? "";
-    try {
-      await navigator.clipboard.writeText(report);
-      status.textContent = `Copied ${report.length.toLocaleString()} chars to clipboard.`;
-    } catch {
-      // Clipboard may be unavailable (iframe, HTTPS-only policy). Fall
-      // back to showing the first 400 chars in-place so the user can
-      // copy manually.
-      status.textContent = report.slice(0, 400) + (report.length > 400 ? "…" : "");
+    // Full report in a selectable, newline-preserving textarea (the durable
+    // surface), plus a version row when the payload carries one.
+    result.value = report;
+    result.hidden = false;
+    copyWrap.hidden = false;
+    const version = extractDiagnosticVersion(report);
+    if (version !== "") {
+      versionRow.textContent = `kiro-cli ${version}`;
+      versionRow.hidden = false;
     }
+    // Clipboard copy is a convenience; the textarea above works regardless.
+    const copied = await copyToClipboard(report);
+    status.textContent = copied
+      ? `Report ready — copied ${report.length.toLocaleString()} characters to your clipboard.`
+      : "Report ready — copy it from the box below.";
   });
 }
 
@@ -281,10 +451,9 @@ export function setUserEmail(email: string): void {
 
 // --- Experimental flag toggles (Settings → General) ---
 //
-// Three kiro-cli experimental features gated by settings keys. Vibekit
-// enables all three by default at container boot (entrypoint.sh); this
-// UI lets the user flip them individually if they want the memory /
-// disk / context-window savings of the slimmer variant.
+// kiro-cli experimental features gated by settings keys (see the
+// experimentalFlags registry below for the full set). Vibekit seeds them at
+// container boot (entrypoint.sh); this UI lets the user flip each one.
 
 interface KiroSettingPayload {
   key?: string;
@@ -305,6 +474,10 @@ const experimentalFlags: readonly {
   { key: "hooks.showStatus", inputID: "flag-hooks-status" },
   { key: "telemetry.enabled", inputID: "flag-telemetry" },
   { key: "toolSearch.enabled", inputID: "flag-tool-search" },
+  // Checked = disable inheritance of default steering/skills/AGENTS.md by
+  // custom agents (kiro-cli 2.10+). Not inverted: on = true = disabled.
+  // Seeded false in entrypoint so the unset->on fallback doesn't mis-render.
+  { key: "chat.disableInheritingDefaultResources", inputID: "flag-disable-inherit-resources" },
 ];
 
 function initExperimentalToggles(): void {
@@ -362,11 +535,6 @@ const compactionSettings: readonly {
     inputID: "compact-context-buffer",
     isBool: false,
   },
-  // Chat retention (auto-archive lifetime). kiro-cli calls this
-  // "cleanup.periodDays" and uses it both for its own session
-  // cleanup and as the retention window for vibekit's archived
-  // chats. 0 means "never clean up".
-  { key: "cleanup.periodDays", inputID: "chat-retention-days", isBool: false },
 ];
 
 function initCompactionSettings(): void {
@@ -434,12 +602,12 @@ function initCompactionSettings(): void {
 
 // --- Default agent picker (Settings → Custom instructions) ---
 //
-// REMOVED: the picker exposed only two built-in agents (kiro_default,
-// kiro_planner) that are already covered by the sidebar Build/Plan
-// buttons. Subagents are ephemeral per-turn and don't belong here. If
-// a custom agent is dropped into ~/.kiro/cli-agents/ inside the
-// container, set it as default via `docker exec vibekit kiro-cli
-// agent set-default <name>`.
+// REMOVED: a Settings-level *default*-agent picker. Role selection now
+// lives on the prompt-bar role pill (role-picker.ts, #role-pill): it picks
+// the agent per chat (built-in or a workspace custom agent from
+// .kiro/agents/), which fits vibekit's per-chat model better than a
+// persistent default. To set a container-wide default agent instead, use
+// `docker exec vibekit kiro-cli agent set-default <name>`.
 
 // --- Debug logs toggle ---
 //

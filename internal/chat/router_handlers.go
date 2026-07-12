@@ -1,8 +1,10 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -122,7 +124,19 @@ func parseBeforeParam(r *http.Request) int64 {
 	return before
 }
 
-// handleExport returns the full chat JSON as a downloadable file.
+// exportFormat is the requested export serialization.
+type exportFormat int
+
+const (
+	exportFormatMarkdown exportFormat = iota
+	exportFormatJSON
+)
+
+// handleExport serves GET /api/chats/{id}/export?format=md|json, rendering
+// the persisted chat to a downloadable Markdown transcript (the default) or
+// the raw chat JSON. The chat store is the source of truth, so no live ACP
+// bridge is involved — any chat exports, including archived ones, which are
+// served by falling back to the archive directory (the History view).
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
 		api.MethodNotAllowed(w)
@@ -132,46 +146,106 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ap
 		api.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), chatID)
+	format, ok := parseExportFormat(r.URL.Query().Get("format"))
 	if !ok {
+		api.BadRequest(w, "unsupported export format (use md or json)")
+		return
+	}
+	c, found := rt.loadForExport(r.Context(), chatID)
+	if !found {
 		api.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	filename := safeExportName(c.Name, string(chatID))
+	if format == exportFormatJSON {
+		w.Header().Set("Content-Disposition",
+			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
+		api.WriteJSON(w, c)
+		return
+	}
 	w.Header().Set("Content-Disposition",
-		mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	api.WriteJSON(w, c)
+		dispositionAttachment(exportFilename(c.Name, string(chatID), ".md")))
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	if _, err := io.WriteString(w, renderChatMarkdown(c)); err != nil {
+		slog.Debug("chat export: markdown write failed", "chat_id", chatID, "error", err)
+	}
 }
 
-// safeExportName builds a filesystem-safe export filename.
-func safeExportName(raw, fallback string) string {
-	sanitize := func(s string) string {
-		var b strings.Builder
-		b.Grow(len(s))
-		for _, r := range s {
-			switch {
-			case r < 0x20 || r == 0x7f:
-				b.WriteByte('_')
-			case r == '"', r == '\\', r == '/', r == ':', r == '*',
-				r == '?', r == '<', r == '>', r == '|':
-				b.WriteByte('_')
-			default:
-				b.WriteRune(r)
-			}
+// parseExportFormat maps the ?format= value to an exportFormat. Absent or
+// md/markdown selects Markdown (the default); json selects raw JSON;
+// anything else is rejected so a typo fails loudly rather than silently
+// returning the wrong format.
+func parseExportFormat(v string) (exportFormat, bool) {
+	switch strings.ToLower(v) {
+	case "", "md", "markdown":
+		return exportFormatMarkdown, true
+	case "json":
+		return exportFormatJSON, true
+	default:
+		return exportFormatMarkdown, false
+	}
+}
+
+// loadForExport returns the chat for chatID, checking the active store first
+// and falling back to the archive directory so archived chats (surfaced in
+// the History view) export too. No live bridge is required either way.
+func (rt *Router) loadForExport(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
+	if c, ok := rt.store.Get(ctx, chatID); ok {
+		return c, true
+	}
+	if c, err := rt.store.LoadArchived(ctx, chatID); err == nil {
+		return c, true
+	}
+	return nil, false
+}
+
+// dispositionAttachment builds a safe Content-Disposition header value
+// (attachment) for filename via mime.FormatMediaType, which quotes/escapes
+// any characters the sanitiser left in.
+func dispositionAttachment(filename string) string {
+	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+}
+
+// exportFilename builds a filesystem-safe download name of the form
+// "<name>-<id><ext>", falling back to "<id><ext>" when the name is empty and
+// "chat<ext>" when both are empty. The name stem is rune-capped so a very
+// long chat title can't produce an unwieldy filename.
+func exportFilename(name, id, ext string) string {
+	const maxStem = 80
+	stem := sanitizeFilenamePart(name)
+	if r := []rune(stem); len(r) > maxStem {
+		stem = strings.TrimSpace(string(r[:maxStem]))
+	}
+	safeID := sanitizeFilenamePart(id)
+	switch {
+	case stem == "" && safeID == "":
+		return "chat" + ext
+	case stem == "":
+		return safeID + ext
+	case safeID == "":
+		return stem + ext
+	default:
+		return stem + "-" + safeID + ext
+	}
+}
+
+// sanitizeFilenamePart replaces control characters and characters unsafe in
+// a filename (and in a Content-Disposition filename param) with '_', then
+// trims surrounding whitespace.
+func sanitizeFilenamePart(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			b.WriteByte('_')
+		case r == '"', r == '\\', r == '/', r == ':', r == '*',
+			r == '?', r == '<', r == '>', r == '|':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
 		}
-		return strings.TrimSpace(b.String())
 	}
-	name := sanitize(raw)
-	if name == "" {
-		name = sanitize(fallback)
-	}
-	if name == "" {
-		name = "chat"
-	}
-	if len(name) > 80 {
-		name = name[:80]
-	}
-	return name + chatFileSuffix
+	return strings.TrimSpace(b.String())
 }
 
 // handleArchive moves a chat to the archive directory.

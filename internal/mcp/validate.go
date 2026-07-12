@@ -56,19 +56,26 @@ const (
 	// client IDs are typically 20–80 chars (UUID-ish or app-id-ish);
 	// 256 leaves headroom and rejects clearly-malformed input.
 	oauthClientIDMax = 256
+	// oauthClientSecretMax bounds the OAuth 2.0 client_secret length.
+	// Secrets are typically 40-128 chars; 512 leaves ample headroom.
+	oauthClientSecretMax = 512
 )
 
 // transportValidators maps each supported transport to its validation
 // function. Adding a new transport requires only a map entry, not a
 // control-flow change. The init() below validates that every known
 // transport has a registered validator, preventing nil-call panics.
+// TransportSSE shares validateRemote with TransportHTTP: both are remote
+// transports whose wire shape is url + headers (+ optional oauth), differing
+// only in the ACP `type` discriminator emitted at export time.
 var transportValidators = map[Transport]func(*Server) error{
 	TransportStdio: validateStdio,
 	TransportHTTP:  validateRemote,
+	TransportSSE:   validateRemote,
 }
 
 func init() {
-	for _, t := range []Transport{TransportStdio, TransportHTTP} {
+	for _, t := range []Transport{TransportStdio, TransportHTTP, TransportSSE} {
 		if _, ok := transportValidators[t]; !ok {
 			panic("mcp: no validator registered for transport " + string(t))
 		}
@@ -95,7 +102,10 @@ func Validate(s *Server) error {
 	if err := fn(s); err != nil {
 		return err
 	}
-	return validateDisabledTools(s.DisabledTools)
+	if err := validateToolNames("disabled_tools", s.DisabledTools); err != nil {
+		return err
+	}
+	return validateToolNames("auto_approve", s.AutoApprove)
 }
 
 // hasCtl reports whether s contains any C0 control character
@@ -116,18 +126,21 @@ func hasCtl(s string) bool {
 	return false
 }
 
-func validateDisabledTools(tools []string) error {
+// validateToolNames enforces the shared shape rules for a list of MCP
+// tool names (disabled_tools, auto_approve): bounded count, no control
+// characters, per-entry length cap. field names the list in errors.
+func validateToolNames(field string, tools []string) error {
 	if len(tools) > maxDisabledTools {
-		return fmt.Errorf("disabled_tools: too many entries (%d, max %d)",
-			len(tools), maxDisabledTools)
+		return fmt.Errorf("%s: too many entries (%d, max %d)",
+			field, len(tools), maxDisabledTools)
 	}
 	for i, t := range tools {
 		if hasCtl(t) {
-			return fmt.Errorf("disabled_tools[%d]: control character", i)
+			return fmt.Errorf("%s[%d]: control character", field, i)
 		}
 		if len(t) > disabledToolMax {
-			return fmt.Errorf("disabled_tools[%d]: too long (%d bytes, max %d)",
-				i, len(t), disabledToolMax)
+			return fmt.Errorf("%s[%d]: too long (%d bytes, max %d)",
+				field, i, len(t), disabledToolMax)
 		}
 	}
 	return nil
@@ -148,6 +161,9 @@ func validateStdio(s *Server) error {
 	}
 	if s.OAuthClientID != "" {
 		return errors.New("stdio transport cannot have oauth_client_id")
+	}
+	if s.OAuthClientSecret != "" {
+		return errors.New("stdio transport cannot have oauth_client_secret")
 	}
 	if len(s.Args) > maxArgs {
 		return fmt.Errorf("args: too many entries (%d, max %d)", len(s.Args), maxArgs)
@@ -187,16 +203,31 @@ func validateRemote(s *Server) error {
 	if u.User != nil {
 		return errors.New("url must not contain userinfo; use Headers for auth")
 	}
-	if s.OAuthClientID != "" {
-		if len(s.OAuthClientID) > oauthClientIDMax {
-			return fmt.Errorf("oauth_client_id too long: %d bytes (max %d)",
-				len(s.OAuthClientID), oauthClientIDMax)
-		}
-		if hasCtl(s.OAuthClientID) {
-			return errors.New("oauth_client_id contains a control character")
-		}
+	if err := validateOAuthField("oauth_client_id", s.OAuthClientID, oauthClientIDMax); err != nil {
+		return err
+	}
+	if err := validateOAuthField("oauth_client_secret", s.OAuthClientSecret, oauthClientSecretMax); err != nil {
+		return err
 	}
 	return validateKeyPairs("headers", s.Headers, maxHeaderEntries, headerValueMax, true)
+}
+
+// validateOAuthField enforces the shared length-cap + control-character
+// rules for the optional oauth_client_id / oauth_client_secret fields. An
+// empty value is allowed (both are optional). The error wording matches
+// what the two inline call sites used, so validate_test.go substring
+// assertions still match.
+func validateOAuthField(field, value string, maxLen int) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > maxLen {
+		return fmt.Errorf("%s too long: %d bytes (max %d)", field, len(value), maxLen)
+	}
+	if hasCtl(value) {
+		return fmt.Errorf("%s contains a control character", field)
+	}
+	return nil
 }
 
 // validateKeyPairs enforces the shared shape rules for env entries and

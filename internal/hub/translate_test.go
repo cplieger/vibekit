@@ -93,13 +93,15 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			},
 		},
 		{
-			name: "summarizing_tool_call_dropped",
+			// v3: subagents ARE ordinary tool calls now — there is no
+			// noise-title filter, so every tool_call passes through.
+			name: "tool_call_passes_through_without_noise_filter",
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-noise","title":"Summarizing","kind":"read","status":"pending"}`),
 			},
 			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 0 {
-					t.Errorf("Summarizing tool call not filtered: %+v", buf.ToolCalls)
+				if len(buf.ToolCalls) != 1 || buf.ToolCalls[0].ID != "tc-noise" {
+					t.Errorf("tool call not passed through: %+v", buf.ToolCalls)
 				}
 			},
 		},
@@ -205,15 +207,20 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	before := h.sse.replayBuf.Len()
+	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
+	// and the params are FLAT ({sessionId, toolCall, options}); the option id
+	// is camelCase `optionId`. (The pre-fix shape nested id+params inside
+	// msg.Params and used option_id — which decoded to an empty, unanswerable
+	// request; see HandlePermissionRequest.)
+	permID := int64(42)
 	msg := &api.RPCResponse{
+		ID:     &permID,
 		Method: "session/request_permission",
 		Params: mustJSON(t, map[string]any{
-			"id": 42,
-			"params": map[string]any{
-				"toolCall": map[string]any{"toolCallId": "tc-1", "title": "writeFile"},
-				"options": []map[string]any{
-					{"option_id": "allow", "name": "Allow", "kind": "allow_once"},
-				},
+			"sessionId": "c1-sess",
+			"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "writeFile", "kind": "edit"},
+			"options": []map[string]any{
+				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 			},
 		}),
 	}
@@ -221,88 +228,6 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 
 	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
 	wantSubset(t, types, "permission_needed")
-}
-
-func TestTranslateACPEvent_MetadataUpdatesUsage(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	msg := &api.RPCResponse{
-		Method: "kiro/metadata",
-		Params: mustJSON(t, map[string]any{
-			"contextUsagePercentage": 42.5,
-			"turnDurationMs":         1500.0,
-			"meteringUsage":          []map[string]any{{"value": 0.123, "unitPlural": "credits", "unitSingular": "credit"}},
-		}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if c.Usage.ContextPct != 42.5 || c.Usage.LastTurnMs != 1500 || c.Usage.Credits != 0.123 {
-		t.Errorf("usage = %+v", c.Usage)
-	}
-	if c.Usage.TurnCount != 1 {
-		t.Errorf("turn_count = %d, want 1", c.Usage.TurnCount)
-	}
-	if !c.Usage.HasRealData {
-		t.Errorf("has_real_data = false")
-	}
-	if len(c.Usage.MeteringItems) != 1 || c.Usage.MeteringItems[0].UnitPlural != "credits" {
-		t.Errorf("metering items = %+v", c.Usage.MeteringItems)
-	}
-}
-
-func TestTranslateACPEvent_MetadataMissingContextPctDoesNotOverwrite(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Usage.ContextPct = 60
-		c.Usage.HasRealData = true
-		return true
-	})
-
-	// Metadata without contextUsagePercentage: must not flash the pill to 0.
-	msg := &api.RPCResponse{
-		Method: "kiro/metadata",
-		Params: mustJSON(t, map[string]any{
-			"turnDurationMs": 500.0,
-		}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if c.Usage.ContextPct != 60 {
-		t.Errorf("context_pct = %v, want preserved 60", c.Usage.ContextPct)
-	}
-}
-
-func TestTranslateACPEvent_MetadataSubagentSessionIDIgnored(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Usage.ContextPct = 50
-		return true
-	})
-	// Spin up a bridge so parentACPSession returns a real id.
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
-	if err != nil {
-		t.Fatalf("getOrCreateBridge: %v", err)
-	}
-	defer sb.bridge.Stop()
-
-	msg := &api.RPCResponse{
-		Method: "kiro/metadata",
-		Params: mustJSON(t, map[string]any{
-			"sessionId":              "subagent-session-id",
-			"contextUsagePercentage": 99.0,
-		}),
-	}
-	h.translateACPEvent("c1", msg)
-
-	c, _ := cs.Get(context.Background(), "c1")
-	if c.Usage.ContextPct != 50 {
-		t.Errorf("context_pct = %v, want parent value 50 (subagent metadata must not apply)", c.Usage.ContextPct)
-	}
 }
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
@@ -314,7 +239,7 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 		{Method: "session/update", Params: json.RawMessage(`{bad`)},
 		{Method: "session/update", Params: json.RawMessage(`{"params":{"update":null}}`)},
 		{Method: "session/update", Params: nil},
-		{Method: "kiro/metadata", Params: json.RawMessage(`not json`)},
+		{Method: "_kiro/mcp/status", Params: json.RawMessage(`not json`)},
 		{Method: "session/request_permission", Params: json.RawMessage(`{`)},
 		{Method: "unknown_method", Params: json.RawMessage(`{}`)},
 	}
@@ -383,59 +308,23 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 
 // --- Fuzz targets ---
 
-// FuzzTranslateCommands feeds arbitrary byte sequences through the
-// _kiro.dev/commands/available JSON parsing path. Verifies that
-// malformed payloads are silent no-ops (no panics) and that the
-// replay buffer length is non-decreasing (no corruption).
-func FuzzTranslateCommands(f *testing.F) {
+// FuzzTranslateInitErrors feeds arbitrary byte sequences through the v3
+// init-error / notice JSON parsing paths (init_errors.go: rate_limit,
+// customAgent/not_found, customAgent/config_error, system/notify). Verifies
+// that malformed payloads are silent no-ops (no panics) and that the replay
+// buffer length is non-decreasing (no corruption). The v2 commands/available
+// path this target used to fuzz is, on v3, a session/update sub-kind covered
+// by FuzzHandleSessionUpdate.
+func FuzzTranslateInitErrors(f *testing.F) {
 	seeds := []string{
-		`{"commands":[{"name":"/help","description":"Show help"}],"prompts":[{"name":"review"}],"tools":[{},{}],"mcpServers":[{"name":"srv","status":"running","tools":["t1"]}]}`,
-		`{"commands":[],"prompts":[],"tools":[],"mcpServers":[]}`,
-		`{"commands":[{"name":"/tools","description":"List tools"}],"tools":[1,2,3],"mcpServers":[{"name":"a","status":"running","tools":[]},{"name":"b","status":"idle","tools":[]}]}`,
+		`{"message":"rate limited, retry in 30s"}`,
+		`{"requestedAgent":"planner","fallbackAgent":"vibe"}`,
+		`{"path":"/config/agents/x.json","error":"parse error"}`,
+		`{"level":"warning","message":"model under high load"}`,
 		`{}`,
-		`{"commands":[{"name":"/mcp","description":"MCP servers"}],"mcpServers":[{"name":"` + strings.Repeat("あ", 100) + `","status":"running","tools":[]}]}`,
+		`{"message":null}`,
+		`{"requestedAgent":"` + strings.Repeat("あ", 100) + `","fallbackAgent":""}`,
 		`not json at all`,
-		`{"commands":null,"prompts":null}`,
-		`{"commands":[{"name":"/paste"}],"tools":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]}`,
-	}
-	for _, s := range seeds {
-		f.Add([]byte(s))
-	}
-
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "fuzz", func(c *api.Chat, _ bool) bool {
-		c.Name = "fuzz"
-		return true
-	})
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		before := h.sse.replayBuf.Len()
-		msg := &api.RPCResponse{
-			Method: "_kiro.dev/commands/available",
-			Params: data,
-		}
-		// Must not panic.
-		h.translateACPEvent("fuzz", msg)
-		if h.sse.replayBuf.Len() < before {
-			t.Errorf("replay buffer shrank: %d → %d", before, h.sse.replayBuf.Len())
-		}
-	})
-}
-
-// FuzzTranslateMCP feeds arbitrary byte sequences through the
-// _kiro.dev/mcp/* JSON parsing paths (handleMCPInitialized,
-// handleMCPOAuth, handleMCPInitFailure). Verifies that arbitrary
-// payloads never panic and that mcpRegistry state remains consistent.
-func FuzzTranslateMCP(f *testing.F) {
-	seeds := []string{
-		`{"serverName":"my-server"}`,
-		`{"serverName":"oauth-srv","oauthUrl":"https://example.com/auth"}`,
-		`{"serverName":"fail-srv","error":"connection refused"}`,
-		`{"serverName":""}`,
-		`{}`,
-		`{"serverName":null}`,
-		`{"serverName":"` + strings.Repeat("x", 1000) + `"}`,
-		`not json`,
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -448,19 +337,60 @@ func FuzzTranslateMCP(f *testing.F) {
 	})
 
 	methods := []string{
-		"_kiro.dev/mcp/server_initialized",
-		"_kiro.dev/mcp/oauth_request",
-		"_kiro.dev/mcp/server_init_failure",
+		"_kiro/error/rate_limit",
+		"_kiro/customAgent/not_found",
+		"_kiro/customAgent/config_error",
+		"_kiro/system/notify",
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		// Route through all three methods based on first byte.
+		before := h.sse.replayBuf.Len()
 		var idx int
 		if len(data) > 0 {
 			idx = int(data[0]) % len(methods)
 		}
 		msg := &api.RPCResponse{
 			Method: methods[idx],
+			Params: data,
+		}
+		// Must not panic.
+		h.translateACPEvent("fuzz", msg)
+		if h.sse.replayBuf.Len() < before {
+			t.Errorf("replay buffer shrank: %d → %d", before, h.sse.replayBuf.Len())
+		}
+	})
+}
+
+// FuzzTranslateMCP feeds arbitrary byte sequences through the v3
+// _kiro/mcp/status JSON parsing path (HandleMCPStatus, which consolidates
+// v2's per-server server_initialized / oauth_request / server_init_failure
+// into one status list). Verifies that arbitrary payloads never panic and
+// that mcpRegistry state remains consistent.
+func FuzzTranslateMCP(f *testing.F) {
+	seeds := []string{
+		`{"servers":[{"name":"my-server","status":"connected","tools":[{"name":"t1"}]}]}`,
+		`{"servers":[{"name":"oauth-srv","status":"failed","authorizationUrl":"https://example.com/auth"}]}`,
+		`{"servers":[{"name":"fail-srv","status":"failed","errorMessage":"connection refused"}]}`,
+		`{"servers":[{"name":"","status":"connecting"}]}`,
+		`{"servers":[]}`,
+		`{}`,
+		`{"servers":null}`,
+		`{"servers":[{"name":"` + strings.Repeat("x", 1000) + `","status":"connected","tools":null}]}`,
+		`not json`,
+	}
+	for _, s := range seeds {
+		f.Add([]byte(s))
+	}
+
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "fuzz", func(c *api.Chat, _ bool) bool {
+		c.Name = "fuzz"
+		return true
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		msg := &api.RPCResponse{
+			Method: "_kiro/mcp/status",
 			Params: data,
 		}
 		// Must not panic.

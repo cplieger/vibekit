@@ -67,6 +67,37 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
+// ageArchivedChat rewrites an archived chat file so both its ArchivedAt
+// stamp and its mtime predate `ago`, making it eligible for purge. Purge
+// ages from ArchivedAt (mtime is only a legacy fallback), and Archive now
+// stamps ArchivedAt to the archive moment, so a test that wants an entry
+// purged must age the stamped field — os.Chtimes on the mtime alone no
+// longer suffices.
+func ageArchivedChat(t *testing.T, s *Store, id string, ago time.Duration) {
+	t.Helper()
+	path := filepath.Join(s.dir, "archive", id+chatFileSuffix)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read archived chat %s: %v", id, err)
+	}
+	var c api.Chat
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatalf("unmarshal archived chat %s: %v", id, err)
+	}
+	old := time.Now().Add(-ago)
+	c.ArchivedAt = old.UnixMilli()
+	out, err := json.MarshalIndent(&c, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal archived chat %s: %v", id, err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write archived chat %s: %v", id, err)
+	}
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("chtimes archived chat %s: %v", id, err)
+	}
+}
+
 // badChatIDs is the canonical set of invalid chat identifiers used
 // across all RejectsBadChatID / InvalidChatIDRejected tests. Adding a
 // new invalid pattern here automatically covers every method.
@@ -93,7 +124,6 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 			t.Error("exists = true on fresh chat")
 		}
 		c.Name = "Hello"
-		c.Agent = "kiro"
 		c.Model = "claude"
 		return true
 	})
@@ -104,7 +134,7 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	if !ok {
 		t.Fatal("Get returned false for created chat")
 	}
-	if got.Name != "Hello" || got.Agent != "kiro" || got.Model != "claude" {
+	if got.Name != "Hello" || got.Model != "claude" {
 		t.Errorf("fields: %+v", got)
 	}
 	if got.CreatedAt == 0 || got.UpdatedAt == 0 {
@@ -2079,10 +2109,7 @@ func TestPurgeArchived_RemovesAgedOutEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldPath := filepath.Join(s.dir, "archive", "old.json")
-	past := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(oldPath, past, past); err != nil {
-		t.Fatal(err)
-	}
+	ageArchivedChat(t, s, "old", 48*time.Hour)
 
 	s.PurgeArchived(context.Background(), 24*time.Hour)
 
@@ -2105,8 +2132,7 @@ func TestPurgeArchived_AlsoRemovesPlanDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	archiveDir := filepath.Join(s.dir, "archive")
-	past := time.Now().Add(-48 * time.Hour)
-	_ = os.Chtimes(filepath.Join(archiveDir, "c1.json"), past, past)
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
 	s.PurgeArchived(context.Background(), 24*time.Hour)
 
@@ -2125,8 +2151,7 @@ func TestPurgeArchived_InvokesOnPurgeCallback(t *testing.T) {
 	})(s)
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Archive(context.Background(), "c1")
-	past := time.Now().Add(-48 * time.Hour)
-	_ = os.Chtimes(filepath.Join(s.dir, "archive", "c1.json"), past, past)
+	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
 	s.PurgeArchived(context.Background(), 24*time.Hour)
 
@@ -2175,7 +2200,7 @@ func runtimeSkipChmodCheck() bool {
 
 // --- handleExport ---
 
-func TestHandleExport_ReturnsChatJSONWithDispositionHeader(t *testing.T) {
+func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	s, _ := newTestStore(t)
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Named Chat"
@@ -2185,7 +2210,7 @@ func TestHandleExport_ReturnsChatJSONWithDispositionHeader(t *testing.T) {
 		return true
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=json", nil)
 	rec := httptest.NewRecorder()
 	NewRouter(s).handleOne(rec, req)
 
@@ -2193,11 +2218,82 @@ func TestHandleExport_ReturnsChatJSONWithDispositionHeader(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	disp := rec.Header().Get("Content-Disposition")
-	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat.json") {
-		t.Errorf("Content-Disposition = %q, want attachment with chat name", disp)
+	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat-c1.json") {
+		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.json", disp)
 	}
 	if !strings.Contains(rec.Body.String(), `"role":"user"`) {
 		t.Errorf("body = %q, want full chat including messages", rec.Body.String())
+	}
+}
+
+func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "Named Chat"
+		c.Messages = []api.Message{
+			{ID: "m1", Role: api.RoleUser, Content: "hi"},
+		}
+		return true
+	})
+
+	// No ?format= param — Markdown is the default.
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q, want text/markdown", ct)
+	}
+	disp := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat-c1.md") {
+		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.md", disp)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "# Named Chat") || !strings.Contains(body, "## User") {
+		t.Errorf("body = %q, want Markdown transcript with title and role headings", body)
+	}
+}
+
+func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400 for unsupported format", rec.Code)
+	}
+}
+
+func TestHandleExport_ServesArchivedChat(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "Archived One"
+		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "hi"}}
+		return true
+	})
+	if err := s.Archive(context.Background(), "c1"); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	// The chat is no longer active, but export falls back to the archive dir.
+	if _, ok := s.Get(context.Background(), "c1"); ok {
+		t.Fatal("precondition: chat should be archived, not active")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=md", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 for archived chat export", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "# Archived One") {
+		t.Errorf("body = %q, want Markdown transcript for the archived chat", rec.Body.String())
 	}
 }
 
@@ -2213,7 +2309,7 @@ func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	disp := rec.Header().Get("Content-Disposition")
-	if !strings.Contains(disp, "c1.json") {
+	if !strings.Contains(disp, "c1.md") {
 		t.Errorf("Content-Disposition = %q, want chat id fallback filename", disp)
 	}
 }
@@ -2336,31 +2432,32 @@ func TestHandleArchive_MissingChatReturns500(t *testing.T) {
 	}
 }
 
-// --- safeExportName ---
+// --- exportFilename ---
 
-func TestSafeExportName(t *testing.T) {
+func TestExportFilename(t *testing.T) {
 	tests := []struct {
-		raw, fallback, want string
+		name, id, ext, want string
 	}{
-		{"", "c1", "c1.json"},
-		{"hello", "c1", "hello.json"},
-		{"bad/name", "c1", "bad_name.json"},
-		{"with\"quote", "c1", "with_quote.json"},
-		{"win<bad>:chars", "c1", "win_bad__chars.json"},
-		{"   ", "c1", "c1.json"},
-		{"\x01\x02ctrl", "c1", "__ctrl.json"},
+		{"", "c1", ".md", "c1.md"},
+		{"hello", "c1", ".md", "hello-c1.md"},
+		{"Named Chat", "c1", ".json", "Named Chat-c1.json"},
+		{"bad/name", "c1", ".md", "bad_name-c1.md"},
+		{"with\"quote", "c1", ".md", "with_quote-c1.md"},
+		{"win<bad>:chars", "c1", ".md", "win_bad__chars-c1.md"},
+		{"   ", "c1", ".md", "c1.md"},
+		{"\x01\x02ctrl", "c1", ".md", "__ctrl-c1.md"},
+		{"", "", ".md", "chat.md"},
 	}
 	for _, tc := range tests {
-		if got := safeExportName(tc.raw, tc.fallback); got != tc.want {
-			t.Errorf("safeExportName(%q, %q) = %q, want %q",
-				tc.raw, tc.fallback, got, tc.want)
+		if got := exportFilename(tc.name, tc.id, tc.ext); got != tc.want {
+			t.Errorf("exportFilename(%q, %q, %q) = %q, want %q",
+				tc.name, tc.id, tc.ext, got, tc.want)
 		}
 	}
-	// Length cap
-	raw := strings.Repeat("x", 200)
-	got := safeExportName(raw, "c1")
-	if len(got) > 85 {
-		t.Errorf("len(safeExportName(200x)) = %d, want <=85", len(got))
+	// Rune cap on the name stem (id and ext are appended after the cap).
+	got := exportFilename(strings.Repeat("x", 200), "c1", ".md")
+	if len([]rune(got)) > 80+len("-c1.md") {
+		t.Errorf("len(exportFilename(200x)) = %d runes, want name stem capped", len([]rune(got)))
 	}
 }
 
@@ -3318,5 +3415,27 @@ func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 				t.Errorf("broadcast fired %d time(s) on a rejected mutation; want 0", n)
 			}
 		})
+	}
+}
+
+// TestArchive_StampsArchivedAt verifies Archive records an explicit
+// ArchivedAt timestamp (near "now") on the chat, so purge can age from it
+// rather than the last-activity file mtime.
+func TestArchive_StampsArchivedAt(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	before := time.Now().UnixMilli()
+	_ = s.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	if err := s.Archive(ctx, "c1"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	after := time.Now().UnixMilli()
+
+	c, err := s.LoadArchived(ctx, "c1")
+	if err != nil {
+		t.Fatalf("LoadArchived: %v", err)
+	}
+	if c.ArchivedAt < before || c.ArchivedAt > after {
+		t.Errorf("ArchivedAt = %d, want within [%d, %d]", c.ArchivedAt, before, after)
 	}
 }

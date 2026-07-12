@@ -3,12 +3,11 @@
 // Tests for handlers/messages.ts SSE event routing.
 //
 // Drives the REAL store and asserts the resulting message / chunk / tool-call
-// state (the observable projection the renderer reads). git.ts, tool-schema.ts,
-// banner-stack.ts and crew-card.ts stay mocked: they are separate subsystems,
-// and a call into them (markGitDirty, clearBannerCodes, setSubagentActivity) is
-// a command at the handler's boundary, not store state. isRepoMutatingKind is
-// stubbed so the "completed + mutating ⇒ markGitDirty" branch can be exercised
-// independently of tool-schema's classification table.
+// state (the observable projection the renderer reads). git.ts and
+// tool-schema.ts stay mocked: they are separate subsystems, and a call into
+// them (markGitDirty) is a command at the handler's boundary, not store state.
+// isRepoMutatingKind is stubbed so the "completed + mutating ⇒ markGitDirty"
+// branch can be exercised independently of tool-schema's classification table.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -25,16 +24,6 @@ vi.mock("../tool-schema.js", () => ({
   isRepoMutatingKind: mockIsRepoMutatingKind,
 }));
 
-const mockClearBannerCodes = vi.fn();
-vi.mock("../banner-stack.js", () => ({
-  clearBannerCodes: mockClearBannerCodes,
-}));
-
-const mockSetSubagentActivity = vi.fn();
-vi.mock("../crew-card.js", () => ({
-  setSubagentActivity: mockSetSubagentActivity,
-}));
-
 // Capture SSE handlers via shared helper.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 vi.mock("../bus.js", () => createBusMock());
@@ -46,11 +35,9 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
     id,
     name: "seeded",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    auto_approve_crew: false,
     available_modes: [],
     available_models: [],
     usage: {
@@ -80,22 +67,18 @@ describe("message_appended", () => {
   it("appends the message to the active chat's transcript", () => {
     const msg: Message = { id: "m1", role: "assistant", ts: 0, content: "hi" };
     fireSSE("message_appended", "chat-1", msg);
-    expect(get("chat-1")?.messages).toEqual([msg]);
+    const stored = get("chat-1")?.messages;
+    expect(stored).toHaveLength(1);
+    expect(stored?.[0]?.id).toBe("m1");
+    expect(stored?.[0]?.content).toBe("hi");
+    // ingestMessage normalizes an assistant message into the canonical block
+    // model so the renderer has one path.
+    expect(stored?.[0]?.blocks).toEqual([{ type: "text", text: "hi" }]);
   });
 
   it("skips an undefined payload (transcript unchanged)", () => {
     fireSSE("message_appended", "chat-1", undefined);
     expect(get("chat-1")?.messages).toEqual([]);
-  });
-
-  it("clears agent init-error banners on an agent_switched event and still appends it", () => {
-    const msg: Message = { id: "m2", role: "event", ts: 0, event_kind: "agent_switched" };
-    fireSSE("message_appended", "chat-1", msg);
-    expect(get("chat-1")?.messages).toEqual([msg]);
-    expect(mockClearBannerCodes).toHaveBeenCalledWith("chat-1", [
-      "agent_not_found",
-      "agent_config_error",
-    ]);
   });
 });
 
@@ -121,6 +104,38 @@ describe("message_chunk", () => {
   it("skips an undefined payload (no message created)", () => {
     fireSSE("message_chunk", "chat-1", undefined);
     expect(get("chat-1")?.messages).toEqual([]);
+  });
+});
+
+describe("code_references", () => {
+  it("attaches the reference list to an existing assistant message", () => {
+    const msg: Message = { id: "m1", role: "assistant", ts: 0, content: "code" };
+    fireSSE("message_appended", "chat-1", msg);
+    fireSSE("code_references", "chat-1", {
+      message_id: "m1",
+      references: [
+        { license_name: "MIT", repository: "github.com/a/b", url: "https://example.com" },
+      ],
+    });
+    const got = get("chat-1")?.messages.find((m) => m.id === "m1");
+    expect(got?.code_references).toEqual([
+      { license_name: "MIT", repository: "github.com/a/b", url: "https://example.com" },
+    ]);
+  });
+
+  it("no-ops for an unknown message id (no message created)", () => {
+    fireSSE("code_references", "chat-1", {
+      message_id: "nope",
+      references: [{ license_name: "MIT" }],
+    });
+    expect(get("chat-1")?.messages).toEqual([]);
+  });
+
+  it("skips an undefined payload", () => {
+    const msg: Message = { id: "m1", role: "assistant", ts: 0, content: "code" };
+    fireSSE("message_appended", "chat-1", msg);
+    fireSSE("code_references", "chat-1", undefined);
+    expect(get("chat-1")?.messages.find((m) => m.id === "m1")?.code_references).toBeUndefined();
   });
 });
 
@@ -155,60 +170,5 @@ describe("tool_call_update", () => {
       tool_call: { id: "tc1", title: "write", kind: "write", status: "in_progress", ts: 0 },
     });
     expect(mockMarkGitDirty).not.toHaveBeenCalled();
-  });
-});
-
-describe("subagent_activity", () => {
-  // The label-extraction logic + guards live in the handler; setSubagentActivity
-  // is the command at the crew-card boundary, so asserting it is correct here.
-  it.each<{ desc: string; payload: unknown; expected: [string, string] | null }>([
-    {
-      desc: "sets activity label from event.label",
-      payload: { sub_session_id: "sub-1", event: { label: "Reading file.go" } },
-      expected: ["sub-1", "Reading file.go"],
-    },
-    {
-      desc: "falls back to event.title",
-      payload: { sub_session_id: "sub-1", event: { title: "Running tests" } },
-      expected: ["sub-1", "Running tests"],
-    },
-    {
-      desc: "falls back to event.tool_name",
-      payload: { sub_session_id: "sub-1", event: { tool_name: "bash" } },
-      expected: ["sub-1", "bash"],
-    },
-    {
-      desc: "skips when sub_session_id is empty",
-      payload: { sub_session_id: "", event: { label: "test" } },
-      expected: null,
-    },
-    {
-      desc: "skips when sub_session_id is not a string",
-      payload: { sub_session_id: 123, event: { label: "test" } },
-      expected: null,
-    },
-    {
-      desc: "skips when event is null",
-      payload: { sub_session_id: "sub-1", event: null },
-      expected: null,
-    },
-    {
-      desc: "skips when event is a non-object primitive",
-      payload: { sub_session_id: "sub-1", event: "not-an-object" },
-      expected: null,
-    },
-    {
-      desc: "skips when all label fields are empty",
-      payload: { sub_session_id: "sub-1", event: { unrelated: "value" } },
-      expected: null,
-    },
-    { desc: "skips undefined payload", payload: undefined, expected: null },
-  ])("$desc", ({ payload, expected }) => {
-    fireSSE("subagent_activity", "chat-1", payload);
-    if (expected) {
-      expect(mockSetSubagentActivity).toHaveBeenCalledWith(...expected);
-    } else {
-      expect(mockSetSubagentActivity).not.toHaveBeenCalled();
-    }
   });
 });

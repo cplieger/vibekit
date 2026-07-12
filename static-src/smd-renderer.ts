@@ -6,10 +6,11 @@
 //   1. Per-block animation. When a top-level block closes (paragraph,
 //      pre/code, heading, list, blockquote, table), the renderer fires
 //      `onBlockComplete(element)`. Callers tag the element with
-//      `data-vk-block-enter` so a single CSS rule fades it in. This is
-//      cheaper and more semantic than the older per-chunk
-//      `<span data-vk-stream>` approach (which wrapped every text
-//      fragment regardless of structure).
+//      `data-vk-block-enter` so a single CSS rule fades it in. This
+//      complements the per-chunk fade (add_text_dom wraps each streamed
+//      text fragment in a `<span data-vk-chunk-enter>`): the block-level
+//      fade covers structural elements (pre/table/blockquote) that
+//      shouldn't be split into per-fragment spans.
 //
 //   2. Inline decoration. Same hook lets callers run code-block
 //      syntax highlighting + path linkification per block as it

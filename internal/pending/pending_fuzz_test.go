@@ -85,7 +85,7 @@ func FuzzStoreInvariants(f *testing.F) {
 				p := pending[idx]
 
 				countBefore := s.CountForChat(p.chatID)
-				_, err := s.Resolve(context.Background(), p.toolCallID, ActionAccept)
+				_, err := s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionAccept)
 				if err != nil {
 					t.Fatalf("Resolve(%q, accept): %v", p.toolCallID, err)
 				}
@@ -104,7 +104,7 @@ func FuzzStoreInvariants(f *testing.F) {
 				}
 
 				// Invariant 3: second resolve returns ErrUnknown.
-				_, err = s.Resolve(context.Background(), p.toolCallID, ActionAccept)
+				_, err = s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionAccept)
 				if err != ErrUnknown {
 					t.Fatalf("second Resolve(%q) = %v, want ErrUnknown", p.toolCallID, err)
 				}
@@ -119,7 +119,7 @@ func FuzzStoreInvariants(f *testing.F) {
 				p := pending[idx]
 
 				countBefore := s.CountForChat(p.chatID)
-				_, err := s.Resolve(context.Background(), p.toolCallID, ActionReject)
+				_, err := s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionReject)
 				if err != nil {
 					t.Fatalf("Resolve(%q, reject): %v", p.toolCallID, err)
 				}
@@ -138,7 +138,7 @@ func FuzzStoreInvariants(f *testing.F) {
 				}
 
 				// Invariant 3: idempotent.
-				_, err = s.Resolve(context.Background(), p.toolCallID, ActionReject)
+				_, err = s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionReject)
 				if err != ErrUnknown {
 					t.Fatalf("second Resolve(%q) = %v, want ErrUnknown", p.toolCallID, err)
 				}

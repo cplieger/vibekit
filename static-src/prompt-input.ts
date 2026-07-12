@@ -19,6 +19,22 @@ import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_SPINNER, ICON_HOURGLASS, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
+import { signal, effect } from "@cplieger/reactive";
+
+// Single source of truth for the "context (nearly) full → block the next
+// prompt" state, scoped to the ACTIVE chat (the prompt bar is shared). The
+// VALUE is computed and written by context-ui.ts (refreshContextUI); this
+// module owns the send button/textarea, so it holds the signal and is the sole
+// reader/writer of the resulting `disabled` DOM props + placeholder. Keeping
+// the signal here (rather than importing it from context-ui) keeps the
+// send-state → prompt-input import chain free of the heavy status/context-ui
+// modules, so the transport/actions graph never loads them.
+export const sendDisabled = signal(false);
+
+/** Placeholder / tooltip shown while `sendDisabled` is true. Module-local:
+ *  only prompt-input.ts renders it. */
+const SEND_DISABLED_REASON =
+  "Context nearly full. kiro-cli will compact automatically on the next turn.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
@@ -103,17 +119,28 @@ class PromptInputController {
 
   private applyButtonState(): void {
     const k = this.state.kind;
+    // Context-full (the sole `sendDisabled` signal from context-ui.ts) is an
+    // orthogonal disable that only applies while idle — queued/blocked/busy
+    // already own their own disable + affordance, and typing-ahead during a
+    // turn (busy) must stay allowed. This is the single place the
+    // send-button/textarea `disabled` + placeholder are written.
+    const ctxFull = k === "idle" && sendDisabled.value;
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
-    const tooltip = this.state.kind === "blocked" ? this.state.reason : DEFAULT_TOOLTIP[k];
+    const tooltip = ctxFull
+      ? SEND_DISABLED_REASON
+      : this.state.kind === "blocked"
+        ? this.state.reason
+        : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("busy", k === "busy");
     $.sendBtn.classList.toggle("queued", k === "queued");
     $.sendBtn.classList.toggle("blocked", k === "blocked");
 
-    const disableForm = k === "queued" || k === "blocked" || k === "busy";
+    const disableForm = k === "queued" || k === "blocked" || k === "busy" || ctxFull;
     $.sendBtn.disabled = disableForm;
-    $.promptInput.disabled = k === "queued" || k === "blocked";
+    $.promptInput.disabled = k === "queued" || k === "blocked" || ctxFull;
+    $.promptInput.placeholder = ctxFull ? SEND_DISABLED_REASON : "Message Kiro...";
 
     if (this.cancelHalf !== null) {
       this.cancelHalf.classList.toggle("hidden", k !== "busy");
@@ -161,7 +188,14 @@ class PromptInputController {
       }
     });
 
-    this.applyButtonState();
+    // One effect keeps the disable state in sync with the context-full signal
+    // (runs once immediately for the initial paint, then on every change).
+    // setSendState() calls applyButtonState directly for send-state kind
+    // changes (this.state isn't a signal), so both inputs stay in sync.
+    effect(() => {
+      void sendDisabled.value;
+      this.applyButtonState();
+    });
 
     form.addEventListener("submit", (e: Event) => {
       e.preventDefault();

@@ -48,7 +48,7 @@ func newRecordingStartHub(t *testing.T) (*Hub, *fakeChatStore, *recordingStartBr
 	t.Helper()
 	cs := newFakeChatStore()
 	rb := newRecordingStartBridge()
-	h := New("/tmp/rec-start", func() api.ACPBridge { return rb }, cs, func() []string { return nil })
+	h := New("/tmp/rec-start", func() api.ACPBridge { return rb }, cs)
 	cs.SetBroadcaster(h)
 	h.mcpRegistry.signalReady()
 	return h, cs, rb
@@ -75,27 +75,23 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind) 
 
 // --- GetOrCreateBridge overrides + persisted model ---
 
-// On a fresh session/new path the override agent and model win over the
-// chat's stored values, and the persisted chat model is copied from the
-// started bridge's ModelID.
+// On a fresh session/new path the override model wins over the chat's
+// stored value, and the persisted chat model is copied from the started
+// bridge's ModelID.
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := context.Background()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Agent = "a-chat"
 		c.Model = "m-chat"
 		return true // no ACPSessionID -> fresh session/new path
 	})
 
-	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", "agent-override", "model-override"); err != nil {
+	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", "model-override"); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}
 
 	opts := rb.startOpts()
-	if opts.Agent != "agent-override" {
-		t.Errorf("StartOpts.Agent = %q, want %q (override must beat chat.Agent)", opts.Agent, "agent-override")
-	}
 	if opts.Model != "model-override" {
 		t.Errorf("StartOpts.Model = %q, want %q (override must beat chat.Model)", opts.Model, "model-override")
 	}
@@ -113,7 +109,7 @@ func TestTryFastModelSwitch_SucceedsReturnsTrue(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := context.Background()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", "", ""); err != nil {
+	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}
 
@@ -190,8 +186,7 @@ func TestEmitTurnEnded_CancelledUsesCancelledClearReason(t *testing.T) {
 func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs := newFakeChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New("/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs,
-		func() []string { return nil }, WithPush(fp))
+	h := New("/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.SetBroadcaster(h)
 	h.mcpRegistry.signalReady()
 	ctx := context.Background()
@@ -221,7 +216,7 @@ func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 		c.Messages = []api.Message{{Role: api.RoleUser, Content: "hi"}}
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(ctx, "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(ctx, "c1", "")
 	if err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}

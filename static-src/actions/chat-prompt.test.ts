@@ -20,7 +20,6 @@ vi.mock("../store.js", () => ({
   enqueuePrompt: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
-  setAutoApproveCrew: vi.fn(),
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
@@ -44,19 +43,20 @@ beforeEach(() => {
 });
 
 describe("sendPrompt — 409 queued path", () => {
-  it("returns 'queued' and calls enqueuePrompt on 409", async () => {
+  it("returns 'queued' on 409 WITHOUT enqueuing (queueing is prompt-queue's job)", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "in-flight" });
     const result = await sendPrompt.dispatch({
       chatID: "c1",
       text: "hello",
       messageID: "m1",
-      agent: "default",
       model: "model-1",
       activeFile: "",
       openFiles: [],
     });
     expect(result).toBe("queued");
-    expect(enqueuePrompt).toHaveBeenCalled();
+    // The action stays a pure send so the drain path can re-send a queued
+    // prompt without double-enqueuing. prompt-queue.submitPrompt owns enqueue.
+    expect(enqueuePrompt).not.toHaveBeenCalled();
   });
 
   it("sets thinking optimistically", async () => {
@@ -65,7 +65,6 @@ describe("sendPrompt — 409 queued path", () => {
       chatID: "c1",
       text: "hi",
       messageID: "m2",
-      agent: "default",
       model: "model-1",
       activeFile: "",
       openFiles: [],

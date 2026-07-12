@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get, enqueuePrompt } from "../store.js";
+import { setSessions, setActive, get } from "../store.js";
 import type { Session } from "../types.js";
 
 // scroll.ts touches DOM elements at import; use the shared mock.
@@ -21,8 +21,8 @@ vi.mock(
 );
 vi.mock("../permission.js", () => ({ showPermissionDialog: vi.fn() }));
 
-const mockSendPromptTo = vi.fn();
-vi.mock("../chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
+const mockDrainNext = vi.fn();
+vi.mock("../prompt-queue.js", () => ({ drainNext: mockDrainNext }));
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
 
@@ -47,8 +47,6 @@ vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
 const mockShowBanner = vi.fn();
 vi.mock("../banner-stack.js", () => ({ showBanner: mockShowBanner, onTurnEnded: vi.fn() }));
 
-vi.mock("../crew-card.js", () => ({ setSubagentPendingApproval: vi.fn() }));
-
 // Capture SSE handlers via shared helper.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 vi.mock("../bus.js", () => createBusMock());
@@ -60,11 +58,9 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
     id,
     name: "seeded",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    auto_approve_crew: false,
     available_modes: [],
     available_models: [],
     usage: {
@@ -97,7 +93,6 @@ describe("ERROR_ROUTES", () => {
   const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] = [
     ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
     ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],
-    ["model_not_found", { surface: "banner", level: "warning", dismissible: true }],
     ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
     ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
     ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
@@ -112,7 +107,7 @@ describe("ERROR_ROUTES", () => {
     },
   );
 
-  it("contains exactly the eight known error codes", () => {
+  it("contains exactly the seven known error codes", () => {
     expect(Object.keys(ERROR_ROUTES).sort()).toEqual(expectedRoutes.map(([c]) => c).sort());
   });
 
@@ -122,57 +117,48 @@ describe("ERROR_ROUTES", () => {
   });
 });
 
-describe("turn_ended turn summary rendering", () => {
-  // Drives the real handler and asserts the rendered summary text — the actual
-  // observable formatting, not a reimplementation of the Math.floor expression.
-  it.each<{ desc: string; payload: Record<string, unknown>; text: string }>([
-    {
-      desc: "sub-minute elapsed uses one decimal second",
-      payload: { elapsed_ms: 45500 },
-      text: "45.5s",
-    },
-    { desc: "minute+ elapsed splits into m and s", payload: { elapsed_ms: 90000 }, text: "1m 30s" },
-    {
-      desc: "minute branch floors the seconds (no round-up to 60)",
-      payload: { elapsed_ms: 119999 },
-      text: "1m 59s",
-    },
-    {
-      desc: "credits and elapsed are joined",
-      payload: { credits_delta: 1.5, elapsed_ms: 2000 },
-      text: "Est. 1.50 credits · 2.0s",
-    },
-    {
-      desc: "credits alone render without an elapsed segment",
-      payload: { credits_delta: 0.5 },
-      text: "Est. 0.50 credits",
-    },
-  ])("$desc", ({ payload, text }) => {
-    setSessions([makeSession("chat-1")]);
+describe("turn_ended turn summary → store", () => {
+  // The handler no longer writes DOM; it stamps the turn's summary metadata
+  // onto the last assistant message via setTurnSummary. The renderer then
+  // projects it into a keyed .turn-footer, and the text formatting is covered
+  // by fundamentals/turn-footer.test.ts. Here we assert the handler→store wire.
+  function seedWithAssistant(): void {
+    setSessions([
+      makeSession("chat-1", {
+        messages: [{ id: "a1", role: "assistant", ts: 1, content: "hi" }],
+        message_count: 1,
+      }),
+    ]);
     setActive("chat-1");
-    fireSSE("turn_ended", "chat-1", payload);
-    expect(document.querySelector(".turn-summary")?.textContent).toBe(text);
+  }
+
+  it("stamps credits + elapsed onto the last assistant message", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { credits_delta: 1.5, elapsed_ms: 2000 });
+    const m = get("chat-1")?.messages[0];
+    expect(m?.turn_credits).toBe(1.5);
+    expect(m?.turn_elapsed_ms).toBe(2000);
   });
 
-  it("renders no summary when there are neither credits nor elapsed time", () => {
-    setSessions([makeSession("chat-1")]);
-    setActive("chat-1");
-    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    expect(document.querySelector(".turn-summary")).toBeNull();
-  });
-
-  it("renders a file-change banner summarising touched files", () => {
-    setSessions([makeSession("chat-1")]);
-    setActive("chat-1");
+  it("stamps changed_files onto the last assistant message", () => {
+    seedWithAssistant();
     fireSSE("turn_ended", "chat-1", {
       changed_files: {
         "a.ts": { lines_added: 5, lines_removed: 2 },
         "b.ts": { lines_added: 1, lines_removed: 0 },
       },
     });
-    expect(document.querySelector(".turn-file-changes")?.textContent).toBe(
-      "2 files changed · +6 · -2",
-    );
+    const m = get("chat-1")?.messages[0];
+    expect(Object.keys(m?.changed_files ?? {})).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("stamps nothing when there are neither credits nor elapsed nor files", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    const m = get("chat-1")?.messages[0];
+    expect(m?.turn_credits).toBeUndefined();
+    expect(m?.turn_elapsed_ms).toBeUndefined();
+    expect(m?.changed_files).toBeUndefined();
   });
 });
 
@@ -184,19 +170,21 @@ describe("turn_ended side effects", () => {
     expect(get("chat-1")?.thinking).toBe(false);
   });
 
-  it("drains a queued prompt by sending it", () => {
+  it("drains the queue on turn end (draining is delegated to prompt-queue)", () => {
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
-    enqueuePrompt("chat-1", "next prompt");
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    expect(mockSendPromptTo).toHaveBeenCalledWith("chat-1", "next prompt", expect.any(Object));
+    // The handler always hands off to drainNext, which no-ops internally when
+    // the queue is empty and is failure-safe when it isn't (see
+    // prompt-queue.test.ts). The unit boundary here is "turn_ended → drain".
+    expect(mockDrainNext).toHaveBeenCalledWith("chat-1");
   });
 
-  it("does not send anything when the queue is empty", () => {
-    setSessions([makeSession("chat-1")]);
-    setActive("chat-1");
+  it("drains even for a background (non-active) chat", () => {
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockDrainNext).toHaveBeenCalledWith("chat-1");
   });
 });
 

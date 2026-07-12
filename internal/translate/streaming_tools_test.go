@@ -37,10 +37,21 @@ type workDirDeps struct {
 
 func (d *workDirDeps) WorkDir() string { return d.workDir }
 
+// hookStatusDeps wraps baseDeps and overrides IsHookStatusEnabled so the
+// hook-ask suppression path is exercisable in both states (baseDeps hard-
+// codes false).
+type hookStatusDeps struct {
+	*baseDeps
+	enabled bool
+}
+
+func (d *hookStatusDeps) IsHookStatusEnabled() bool { return d.enabled }
+
 var (
 	_ LineRecorder = (*lineRec)(nil)
 	_ Deps         = (*lineDeps)(nil)
 	_ Deps         = (*workDirDeps)(nil)
+	_ Deps         = (*hookStatusDeps)(nil)
 )
 
 // newLineCaptureDeps builds an event-capturing baseDeps with a recording
@@ -96,6 +107,73 @@ func hasWorkingLabel(events *[]api.ServerEvent) bool {
 		}
 	}
 	return false
+}
+
+// hasToolCallEvent reports whether any tool_call event was broadcast.
+func hasToolCallEvent(events *[]api.ServerEvent) bool {
+	for _, e := range *events {
+		if e.Type == api.EventToolCall {
+			return true
+		}
+	}
+	return false
+}
+
+// TestHandleToolCall_HookAskSuppression pins the M4 fix. On v3 (KAS) a
+// pre-tool-use hook's ask-permission gate arrives as a kind:"other" tool
+// call tagged _meta.kiro.hookAsk (there is no ToolKind "hook" in v3's
+// zToolKind). When hooks.showStatus is off (IsHookStatusEnabled false)
+// the hook-ask card is suppressed; when on, it renders. A normal tool
+// call is never suppressed regardless of the setting.
+func TestHandleToolCall_HookAskSuppression(t *testing.T) {
+	hookAsk := map[string]any{
+		"toolCallId": "hook-ask-1",
+		"title":      "Run hook",
+		"kind":       "other",
+		"status":     "pending",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write", "reason": "guard"},
+		}},
+	}
+
+	t.Run("SuppressedWhenStatusDisabled", func(t *testing.T) {
+		base, events := newEventCaptureDeps()
+		deps := &hookStatusDeps{baseDeps: base, enabled: false}
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+		chatID := api.ChatID("c1")
+		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, hookAsk), "")
+		if hasToolCallEvent(events) {
+			t.Error("hook-ask tool call broadcast a tool_call event; want suppressed (hooks.showStatus off)")
+		}
+		if n := len(base.bufStore.GetOrInit(chatID).ToolCalls); n != 0 {
+			t.Errorf("buffered tool calls = %d, want 0 (hook-ask must not be buffered)", n)
+		}
+	})
+
+	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
+		base, events := newEventCaptureDeps()
+		deps := &hookStatusDeps{baseDeps: base, enabled: true}
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, hookAsk), "")
+		if !hasToolCallEvent(events) {
+			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
+		}
+	})
+
+	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
+		base, events := newEventCaptureDeps()
+		deps := &hookStatusDeps{baseDeps: base, enabled: false}
+		tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"title":      "readFile",
+			"kind":       "read",
+			"status":     "pending",
+		}), "")
+		if !hasToolCallEvent(events) {
+			t.Error("normal tool call suppressed with hooks.showStatus off; want shown (only hook-ask cards are gated)")
+		}
+	})
 }
 
 // TestHandleToolCall_DiffGate pins that HandleToolCall records line

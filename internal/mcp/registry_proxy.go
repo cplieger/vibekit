@@ -437,7 +437,7 @@ var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 var supportedRemoteTypes = map[string]Transport{
 	"streamable-http": TransportHTTP,
 	"http":            TransportHTTP,
-	"sse":             TransportHTTP,
+	"sse":             TransportSSE,
 }
 
 // registryWireResponse mirrors the upstream registry v0.1 search

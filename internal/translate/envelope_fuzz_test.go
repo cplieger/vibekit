@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-func FuzzContextRecoveryMetaRoundTrip(f *testing.F) {
-	f.Add(0)
-
-	f.Fuzz(func(t *testing.T, _ int) {
-		m := newContextRecoveryMeta()
-		b, err := json.Marshal(m)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		var decoded contextRecoveryMeta
-		if err := json.Unmarshal(b, &decoded); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		if !decoded.Kiro.ContextRecovery {
-			t.Fatal("contextRecovery lost in round-trip")
-		}
-	})
-}
-
 func FuzzACPSessionUpdateEnvelopeLayered(f *testing.F) {
 	f.Add([]byte(`{"sessionId":"sess-1","update":{"sessionUpdate":"session_started"}}`))
 	f.Add([]byte(`{"sessionId":"","update":null}`))

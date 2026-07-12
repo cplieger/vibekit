@@ -37,9 +37,6 @@ type CommandType =
   | "cancel"
   | "delete_chat"
   | "switch_model"
-  | "fork_chat"
-  | "merge_tangent"
-  | "discard_tangent"
   | "set_supervised_mode"
   | "resolve_pending_change"
   | "resolve_pending_change_partial"
@@ -50,10 +47,9 @@ type CommandType =
   | "elicitation_response"
   | "restore_checkpoint"
   | "undo_edit"
-  | "message_subagent"
-  | "set_auto_approve_crew"
   | "rename_chat"
   | "set_effort"
+  | "set_mode"
   | "promote_rewind_chat"
   | "discard_rewind_chat"
   | "rewind_chat";
@@ -77,7 +73,6 @@ export type TypedCommand =
         attachments?: readonly unknown[];
         message_id?: string;
         request_id?: string;
-        agent?: string;
         model?: string;
         active_file?: string;
         open_files?: readonly string[];
@@ -86,9 +81,6 @@ export type TypedCommand =
   | { type: "cancel"; chat_id: string }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
-  | { type: "fork_chat"; chat_id: string; payload?: { tangent_id?: string } }
-  | { type: "merge_tangent"; chat_id: string }
-  | { type: "discard_tangent"; chat_id: string }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | {
       type: "resolve_pending_change";
@@ -115,10 +107,9 @@ export type TypedCommand =
     }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
   | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
-  | { type: "message_subagent"; chat_id: string; payload: { sub_session_id: string; text: string } }
-  | { type: "set_auto_approve_crew"; chat_id: string; payload: { enabled: boolean } }
   | { type: "rename_chat"; chat_id: string; payload: { name: string } }
   | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
+  | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
   | { type: "promote_rewind_chat"; chat_id: string; request_id: string }
   | { type: "discard_rewind_chat"; chat_id: string; request_id: string }
   | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { turn_index: number } };

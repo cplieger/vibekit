@@ -34,6 +34,7 @@ type hookCreatePayload struct {
 	Prompt      string `json:"prompt,omitempty"`
 	Command     string `json:"command,omitempty"`
 	Patterns    string `json:"patterns,omitempty"`
+	Timeout     int    `json:"timeout,omitempty"` // optional per-hook timeout (seconds)
 }
 
 // hookFieldsExceedLimit reports whether any CmdCreateHook string field
@@ -77,29 +78,111 @@ func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName 
 	return p, safeName, 0, nil
 }
 
-// buildHookDoc renders the JSON document written to .kiro/hooks/<name>.json.
-func buildHookDoc(p *hookCreatePayload) map[string]any {
-	when := map[string]any{keyType: p.EventType}
-	then := map[string]any{keyType: p.ActionType}
-	hook := map[string]any{
-		keyName:   p.Name,
-		"version": "1.0.0",
-		"when":    when,
-		"then":    then,
+// v1 hook schema (the standalone KAS/v3 .kiro/hooks/<name>.json shape).
+// The document wraps a single hook in a versioned envelope:
+//
+//	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
+//
+// trigger is PascalCase (see normalizeTrigger); action.type is "command"
+// (carries command) or "agent" (carries prompt). This replaces the old
+// embedded 2.x shape (a top-level hook object with when/then blocks).
+type hookAction struct {
+	Type    string `json:"type"`
+	Command string `json:"command,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type hookEntry struct {
+	Name        string     `json:"name"`
+	Trigger     string     `json:"trigger"`
+	Description string     `json:"description,omitempty"`
+	Matcher     string     `json:"matcher,omitempty"`
+	Action      hookAction `json:"action"`
+	Timeout     int        `json:"timeout,omitempty"`
+}
+
+type hookDoc struct {
+	Version string      `json:"version"`
+	Hooks   []hookEntry `json:"hooks"`
+}
+
+// hookTriggers maps event-type payload values (vibekit's own vocabulary
+// plus v2 / Kiro-IDE camelCase aliases) to the PascalCase trigger names
+// KAS v1 hooks expect. Keys are lowercased for case-insensitive lookup.
+//
+//nolint:goconst // alias lookup table: the PascalCase trigger names are map values, not scattered magic strings.
+var hookTriggers = map[string]string{
+	// Canonical PascalCase names (self-map via their lowercase key).
+	"sessionstart":     "SessionStart",
+	"stop":             "Stop",
+	"pretooluse":       "PreToolUse",
+	"posttooluse":      "PostToolUse",
+	"pretaskexec":      "PreTaskExec",
+	"posttaskexec":     "PostTaskExec",
+	"userpromptsubmit": "UserPromptSubmit",
+	"postfilecreate":   "PostFileCreate",
+	"postfilesave":     "PostFileSave",
+	"postfiledelete":   "PostFileDelete",
+	"manual":           "Manual",
+	// v2 / Kiro-IDE camelCase aliases.
+	"agentstop":         "Stop",
+	"promptsubmit":      "UserPromptSubmit",
+	"userprompt":        "UserPromptSubmit",
+	"pretaskexecution":  "PreTaskExec",
+	"posttaskexecution": "PostTaskExec",
+	"filecreate":        "PostFileCreate",
+	"filecreated":       "PostFileCreate",
+	"filesave":          "PostFileSave",
+	"filesaved":         "PostFileSave",
+	"fileedit":          "PostFileSave",
+	"fileedited":        "PostFileSave",
+	"filedelete":        "PostFileDelete",
+	"filedeleted":       "PostFileDelete",
+	"usertriggered":     "Manual",
+}
+
+// normalizeTrigger maps a client event-type value to its PascalCase v1
+// trigger. Unrecognised values pass through trimmed (best effort) so a
+// trigger this map doesn't yet know about isn't blocked server-side.
+func normalizeTrigger(eventType string) string {
+	trimmed := strings.TrimSpace(eventType)
+	if t, ok := hookTriggers[strings.ToLower(trimmed)]; ok {
+		return t
 	}
-	if p.Description != "" {
-		hook["description"] = p.Description
+	return trimmed
+}
+
+// buildHookAction maps vibekit's action_type payload ("askAgent" /
+// "runCommand") to the v1 action shape. validateHookPayload guarantees
+// one of the two values, so the default arm is defensive only.
+func buildHookAction(p *hookCreatePayload) hookAction {
+	switch p.ActionType {
+	case "runCommand":
+		return hookAction{Type: "command", Command: p.Command}
+	case "askAgent":
+		return hookAction{Type: "agent", Prompt: p.Prompt}
+	default:
+		return hookAction{Type: p.ActionType}
 	}
-	if p.Patterns != "" {
-		when["patterns"] = strings.Split(p.Patterns, ",")
+}
+
+// buildHookDoc renders the v1 hook document written to
+// .kiro/hooks/<name>.json. vibekit's event-type/action-type payload is
+// mapped to the KAS v1 schema: a PascalCase trigger, an
+// action.{type, command|prompt}, and optional matcher/timeout. Patterns
+// become the single-regex matcher; an unset/zero timeout is omitted.
+func buildHookDoc(p *hookCreatePayload) hookDoc {
+	entry := hookEntry{
+		Name:        p.Name,
+		Trigger:     normalizeTrigger(p.EventType),
+		Description: p.Description,
+		Matcher:     strings.TrimSpace(p.Patterns),
+		Action:      buildHookAction(p),
 	}
-	if p.ActionType == "askAgent" && p.Prompt != "" {
-		then["prompt"] = p.Prompt
+	if p.Timeout > 0 {
+		entry.Timeout = p.Timeout
 	}
-	if p.ActionType == "runCommand" && p.Command != "" {
-		then["command"] = p.Command
-	}
-	return hook
+	return hookDoc{Version: "v1", Hooks: []hookEntry{entry}}
 }
 
 // CmdCreateHook creates a hook file from chat context.

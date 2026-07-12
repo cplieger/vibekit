@@ -18,7 +18,6 @@ const registeredEvents = [
   "commands_updated",
   "connected",
   "elicitation_needed",
-  "elicitation_complete",
   "error",
   "mcp_connected",
   "mcp_disconnected",

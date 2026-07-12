@@ -281,6 +281,148 @@ func TestACPServers_WireShape(t *testing.T) {
 	}
 }
 
+func TestACPServers_SSEWireShape(t *testing.T) {
+	s := newTestStore(t)
+	_, _ = s.Create(context.Background(), &Server{
+		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
+		Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
+		Enabled: true,
+	})
+	acp := s.ACPServers(context.Background())
+	if len(acp) != 1 {
+		t.Fatalf("len = %d", len(acp))
+	}
+	// Wire shape matches ACP McpServerSse: type "sse", name, url, and a
+	// {name,value}[] headers array — identical to McpServerHttp but for the
+	// discriminator (verified against the KAS 2.12 zMcpServer union).
+	j, err := json.Marshal(acp[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(j)
+	for _, want := range []string{
+		`"type":"sse"`,
+		`"name":"legacy"`,
+		`"url":"https://mcp.example/sse"`,
+		`"headers":[{"name":"Authorization","value":"Bearer x"}]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+}
+
+// TestParseTransport pins the first-class transport set: stdio/http/sse
+// each parse to their own value (sse is NOT folded into http), and any
+// other string errors.
+func TestParseTransport(t *testing.T) {
+	ok := []struct {
+		in   string
+		want Transport
+	}{
+		{"stdio", TransportStdio},
+		{"http", TransportHTTP},
+		{"sse", TransportSSE},
+	}
+	for _, tc := range ok {
+		got, err := ParseTransport(tc.in)
+		if err != nil {
+			t.Errorf("ParseTransport(%q) unexpected error: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("ParseTransport(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	for _, bad := range []string{"", "SSE", "grpc", "websocket", "streamable-http"} {
+		if _, err := ParseTransport(bad); err == nil {
+			t.Errorf("ParseTransport(%q) = nil error, want unknown-transport error", bad)
+		}
+	}
+}
+
+// TestCreate_SSERoundTripsFromDisk verifies an SSE server survives a save +
+// reload as TransportSSE (no migration to http) and still validates — the
+// backward-compat guarantee that adding sse doesn't rewrite stored entries.
+func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.Create(context.Background(), &Server{
+		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("Create sse: %v", err)
+	}
+	// Reload from the same directory: the transport must stay "sse".
+	reloaded, err := New(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("reload New: %v", err)
+	}
+	list := reloaded.List(context.Background())
+	if len(list) != 1 {
+		t.Fatalf("reloaded list len = %d, want 1", len(list))
+	}
+	if list[0].Transport != TransportSSE {
+		t.Errorf("reloaded transport = %q, want %q (sse must not migrate to http)",
+			list[0].Transport, TransportSSE)
+	}
+}
+
+// TestSSE_SecretRoundTrip proves an SSE server's secrets (a header value
+// and the oauth_client_secret) mask on read and survive a "***"-preserving
+// Update, exactly like an HTTP server — the masking/merge helpers are
+// transport-agnostic, and SSE must not regress that parity.
+func TestSSE_SecretRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	orig, err := s.Create(context.Background(), &Server{
+		Transport:         TransportSSE,
+		Name:              "sse-secret",
+		URL:               "https://mcp.example/sse",
+		Headers:           []KeyPair{{Name: "Authorization", Value: "Bearer real-token"}},
+		OAuthClientSecret: "real-secret",
+		Enabled:           true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Read is masked.
+	got := s.Get(context.Background(), orig.ID)
+	if got == nil {
+		t.Fatal("Get returned nil")
+	}
+	if got.Headers[0].Value != SecretMask {
+		t.Errorf("header secret not masked on read: %q", got.Headers[0].Value)
+	}
+	if got.OAuthClientSecret != SecretMask {
+		t.Errorf("oauth_client_secret not masked on read: %q", got.OAuthClientSecret)
+	}
+
+	// Update resubmitting the mask preserves both stored secrets.
+	if _, err := s.Update(context.Background(), orig.ID, &Server{
+		Transport:         TransportSSE,
+		Name:              "sse-secret",
+		URL:               "https://mcp.example/sse",
+		Headers:           []KeyPair{{Name: "Authorization", Value: SecretMask}},
+		OAuthClientSecret: SecretMask,
+		Enabled:           true,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	raw := s.EnabledRaw(context.Background())
+	if len(raw) != 1 {
+		t.Fatalf("EnabledRaw len = %d, want 1", len(raw))
+	}
+	if raw[0].Headers[0].Value != "Bearer real-token" {
+		t.Errorf("header secret not preserved: %q", raw[0].Headers[0].Value)
+	}
+	if raw[0].OAuthClientSecret != "real-secret" {
+		t.Errorf("oauth_client_secret not preserved: %q", raw[0].OAuthClientSecret)
+	}
+}
+
 func TestACPServers_StdioWireShape(t *testing.T) {
 	s := newTestStore(t)
 	_, _ = s.Create(context.Background(), &Server{

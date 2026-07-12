@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Scroll + DOM cap management for the message list.
+// Scroll management for the message list.
 //
 // Auto-scroll during streaming: MutationObserver on the messages
 // container fires on every chunk mutation; a ResizeObserver catches
@@ -14,8 +14,8 @@
 // Reference: vercel/ai-chatbot hooks/use-scroll-to-bottom.tsx.
 //
 // Imperative scroll() is kept as a public no-op shim so existing
-// callers (messages.ts, tool-card.ts, permission.ts, subagent.ts)
-// continue to compile unchanged. The observer does the real work.
+// callers (messages.ts, tool-card.ts, permission.ts) continue to
+// compile unchanged. The observer does the real work.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -23,10 +23,6 @@ import { loadMoreSkeleton } from "./skeleton.js";
 import { $ } from "./dom.js";
 
 // Tuning constants for the scroll controller.
-// DOM_MESSAGE_CAP: max DOM nodes kept in the messages container (older
-// messages are trimmed to keep rendering fast — this is a DOM cap, not
-// a data cap; full history remains in the store).
-const DOM_MESSAGE_CAP = 50;
 // LOAD_MORE_THRESHOLD_PX: distance from the top at which we trigger
 // loading older messages into the DOM.
 const LOAD_MORE_THRESHOLD_PX = 100;
@@ -146,22 +142,6 @@ class ScrollController {
   setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
     this.onLoadMore = fn;
     this.hasMoreMessages = hasMore;
-    this.updateLoadMoreIndicator();
-  }
-
-  trimOldMessages(): void {
-    const children = [...this.messagesEl.children].filter(
-      (child) => child.id !== "load-more-indicator",
-    );
-    const excess = children.length - DOM_MESSAGE_CAP;
-    if (excess <= 0) {
-      return;
-    }
-    for (let i = 0; i < excess; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      children[i]!.remove();
-    }
-    this.hasMoreMessages = true;
     this.updateLoadMoreIndicator();
   }
 
@@ -290,9 +270,6 @@ export function scrollToBottom(): void {
 }
 export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
   getInstance().setLoadMore(fn, hasMore);
-}
-export function trimOldMessages(): void {
-  getInstance().trimOldMessages();
 }
 export function resetScrollState(): void {
   getInstance().resetScrollState();

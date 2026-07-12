@@ -37,9 +37,9 @@ cat >"$VK_MANIFEST" <<'JSON'
       "enabled": true, "version": "v0.17.1", "method": "go",
       "requires": ["runtimes.go"]
     },
-    "tsgo": {
+    "tsc": {
       "enabled": true, "version": "7.0.0-dev", "method": "binary",
-      "shims": { "typescript-language-server": "/x/tsgo --lsp --stdio" }
+      "shims": { "typescript-language-server": "/x/tsc --lsp --stdio" }
     }
   }
 }
@@ -72,7 +72,7 @@ if entry_enabled '.lsp["gopls"]'; then pass "gopls enabled"; else fail "gopls en
 if entry_auto_update '.runtimes["node"]'; then pass "node auto_update on"; else fail "node auto_update"; fi
 if entry_auto_update '.runtimes["go"]'; then fail "go auto_update should be off"; else pass "go pinned"; fi
 # Missing field defaults to true.
-if entry_auto_update '.lsp["tsgo"]'; then pass "tsgo auto_update default on"; else fail "tsgo auto_update default"; fi
+if entry_auto_update '.lsp["tsc"]'; then pass "tsc auto_update default on"; else fail "tsc auto_update default"; fi
 
 # --- requires_satisfied: gopls requires runtimes.go which is disabled ---
 if requires_satisfied '.lsp["gopls"]' >/dev/null; then
@@ -80,23 +80,23 @@ if requires_satisfied '.lsp["gopls"]' >/dev/null; then
 else
   pass "gopls requires unsatisfied (go disabled)"
 fi
-# tsgo has no requires -> satisfied.
-if requires_satisfied '.lsp["tsgo"]' >/dev/null; then pass "tsgo requires satisfied"; else fail "tsgo requires"; fi
+# tsc has no requires -> satisfied.
+if requires_satisfied '.lsp["tsc"]' >/dev/null; then pass "tsc requires satisfied"; else fail "tsc requires"; fi
 
 # --- write_shims creates the wrapper ---
-write_shims '.lsp["tsgo"]' >/dev/null
+write_shims '.lsp["tsc"]' >/dev/null
 shim="$VK_TOOLS_DIR/bin/typescript-language-server"
 if [ -x "$shim" ]; then pass "shim created + executable"; else fail "shim missing"; fi
-if grep -q 'exec /x/tsgo --lsp --stdio' "$shim" 2>/dev/null; then
+if grep -q 'exec /x/tsc --lsp --stdio' "$shim" 2>/dev/null; then
   pass "shim body correct"
 else
   fail "shim body wrong"
 fi
 
 # --- clear_tool removes binary + shims ---
-touch "$VK_TOOLS_DIR/bin/tsgo"
-clear_tool lsp tsgo
-if [ ! -e "$VK_TOOLS_DIR/bin/tsgo" ]; then pass "clear_tool removed binary"; else fail "binary remains"; fi
+touch "$VK_TOOLS_DIR/bin/tsc"
+clear_tool lsp tsc
+if [ ! -e "$VK_TOOLS_DIR/bin/tsc" ]; then pass "clear_tool removed binary"; else fail "binary remains"; fi
 if [ ! -e "$shim" ]; then pass "clear_tool removed shim"; else fail "shim remains"; fi
 
 # --- clear_tool with custom uninstall override ---

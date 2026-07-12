@@ -1,20 +1,33 @@
 // ---------------------------------------------------------------------------
-// Context bar update + "input disabled when context full" rule.
+// Context bar update + the single "input disabled when context full" signal.
 //
-// Every store emit refreshes the context bar from the active session.
-// When `thinking` settles to false we emit a `turn:idle` bus event —
-// model-switcher.ts subscribes to drain any queued switch and clear
-// the button's transient spinner class. That pattern keeps this
-// module free of switcher-specific state.
+// Every store emit refreshes the context bar from the active session. When the
+// ACTIVE chat's context is (nearly) full, `sendDisabled` flips true — that
+// signal is the ONE source of truth for the context-full disable; prompt-input.ts
+// reads it and owns the actual send-button/textarea `disabled` DOM state (see
+// status.ts note). There is no module-global previous-thinking flag anymore: it
+// used to detect the active chat's thinking→idle transition to (a) emit a
+// `turn:idle` bus event that drained the model-switch queue and (b) toggle the
+// input disable. Both were active-chat-only and cross-contaminated across chats.
+// (a) now drains from the per-chat `turn_ended` SSE (handlers/turn.ts →
+// model-switcher.drainModelSwitchQueue); (b) is this continuous per-active-chat
+// signal. So no transition state — per-chat or global — is needed here.
 // ---------------------------------------------------------------------------
 
 import type { Session, MeteringItem } from "./types.js";
-import { updateContextBar, setInputDisabled } from "./status.js";
-import { emitBus, BUS_TURN_IDLE } from "./bus.js";
+import { updateContextBar } from "./status.js";
+import { getActiveId } from "./store.js";
+import { sendDisabled } from "./prompt-input.js";
 
 const CONTEXT_RESERVE_TOKENS = 16_000;
 const DEFAULT_CUTOFF_PCT = 95;
-let _prevThinking = false;
+
+// `sendDisabled` (the single "context full → block next prompt" signal) is
+// declared in prompt-input.ts — the module that owns the send button/textarea
+// and is the sole reader/writer of the disabled DOM. This module COMPUTES its
+// value for the active chat below. Importing it from prompt-input (rather than
+// declaring it here) keeps the light send-state → prompt-input import chain
+// free of this module + status.ts.
 
 export function refreshContextUI(s: Session): void {
   const u = s.usage;
@@ -49,21 +62,14 @@ export function refreshContextUI(s: Session): void {
     toolCount,
     summarizedCount,
   });
+
+  // Only the active chat drives the shared prompt bar's disable state.
+  if (s.id !== getActiveId()) {
+    return;
+  }
   const cutoff =
     u.context_size > 0
       ? ((u.context_size - CONTEXT_RESERVE_TOKENS) / u.context_size) * 100
       : DEFAULT_CUTOFF_PCT;
-  const full = u.context_pct >= cutoff;
-
-  const isThinking = s.thinking;
-  if (_prevThinking && !isThinking) {
-    emitBus(BUS_TURN_IDLE, s.id);
-    setInputDisabled(
-      full,
-      full
-        ? "Context nearly full. kiro-cli will compact automatically on the next turn."
-        : undefined,
-    );
-  }
-  _prevThinking = isThinking;
+  sendDisabled.value = u.context_pct >= cutoff;
 }

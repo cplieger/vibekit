@@ -1,9 +1,8 @@
 package api
 
 // Chat domain types: session state, messages, tool calls, plans, usage,
-// session modes/models, agent metadata. These are the persisted and
-// over-the-wire shapes the store, hub, bridge, and push packages
-// operate on.
+// session modes/models. These are the persisted and over-the-wire shapes
+// the store, hub, bridge, and push packages operate on.
 
 import (
 	"encoding/json"
@@ -28,10 +27,14 @@ const (
 	EventCancelled     EventKind = "cancelled"
 	EventModelSwitched EventKind = "model_switched" // fresh ACP session with a new model
 	EventCompacted     EventKind = "compacted"      // kiro-cli's native /compact, carries summary
-	EventCrew          EventKind = "crew"           // kiro-cli's subagent orchestration (list_update snapshots)
-	EventAgentSwitched EventKind = "agent_switched" // kiro-cli's agent hand-off mid-session
 	EventCompactFailed EventKind = "compaction_failed"
-	EventInbox         EventKind = "inbox" // subagent-to-parent message
+	// EventInfraSafetyBlocked marks an ENFORCE-mode Infrastructure-Safety
+	// refusal: KAS blocked an infra-as-code write/shell tool call upstream
+	// (it never issued the fs/write_text_file request, so nothing was
+	// written). Persisted as a permanent inline event so the refusal is part
+	// of the transcript rather than a fleeting banner. Content carries the
+	// violated safety properties. See translate/safety.go.
+	EventInfraSafetyBlocked EventKind = "infra_safety_blocked"
 )
 
 // ToolKind identifies the category of a tool invocation. Values are
@@ -41,7 +44,14 @@ const (
 // dialogs and tool-card rendering.
 type ToolKind string
 
-// ToolKindExecute and the following constants define the valid ToolKind values for classifying tool invocations.
+// ToolKindExecute and the following constants define the valid ToolKind
+// values for classifying tool invocations. KAS v3's zToolKind enum emits
+// only read/edit/delete/move/search/execute/think/fetch/switch_mode/other.
+// The remaining kinds (shell, hook, write, command, browser, mcp) are never
+// emitted on v3 but are retained: they still back WorkingLabelForKind's
+// label table and keep older persisted chat files that recorded them
+// renderable. Hook activity in particular arrives as kind "other" tagged
+// _meta.kiro.hookAsk, NOT ToolKindHook (see translate.ACPKiroMeta).
 const (
 	ToolKindExecute    ToolKind = "execute"
 	ToolKindShell      ToolKind = "shell"
@@ -85,7 +95,16 @@ const (
 	ACPUpdateToolUpdate   ACPUpdateKind = "tool_call_update"
 	ACPUpdatePlan         ACPUpdateKind = "plan"
 	ACPUpdateModeChange   ACPUpdateKind = "current_mode_update"
-	ACPUpdateSteering     ACPUpdateKind = "steering_inclusion"
+	// v3 (KAS) session/update sub-kinds. v3 moves context-usage stats and
+	// the available-command catalog into session/update instead of the v2
+	// _kiro.dev/metadata and _kiro.dev/commands/available notifications.
+	ACPUpdateSessionInfo       ACPUpdateKind = "session_info_update"
+	ACPUpdateCommandsAvailable ACPUpdateKind = "available_commands_update"
+	// config_option_update carries the live model/mode/effort catalog;
+	// usage_update carries context-window usage ({size, used, cost?}).
+	// Both are v3-only session/update sub-kinds (KAS 2.12).
+	ACPUpdateConfigOption ACPUpdateKind = "config_option_update"
+	ACPUpdateUsage        ACPUpdateKind = "usage_update"
 )
 
 // BlockType discriminates content blocks in an assistant message's
@@ -127,23 +146,36 @@ type Block struct {
 	// ToolCallID references a tool by ID in Message.ToolCalls for
 	// Type=BlockToolUse. Empty for other types.
 	ToolCallID string `json:"tool_call_id,omitempty"`
+	// AgentSubtaskID is the subtask id of the agent that produced this
+	// block ("" = top-level agent). Set from the emitting event's
+	// _meta.kiro.agentSubtaskId; lets the client group a subagent's
+	// blocks and render them nested.
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
 }
 
 // ToolCall is a tool invocation inside an assistant message. One assistant
 // message may have multiple tool calls; each can be updated in place as
 // status changes (pending → in_progress → completed/failed).
 type ToolCall struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Kind         ToolKind        `json:"kind"`
-	Status       ToolStatus      `json:"status"`
-	Output       string          `json:"output,omitempty"`
-	SubSessionID string          `json:"sub_session_id,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	Locations    []ToolLocation  `json:"locations,omitempty"`
-	Diffs        []ToolDiff      `json:"diffs,omitempty"`
-	DurationMs   int             `json:"duration_ms,omitempty"`
-	Ts           int64           `json:"ts"`
+	ID     string     `json:"id"`
+	Title  string     `json:"title"`
+	Kind   ToolKind   `json:"kind"`
+	Status ToolStatus `json:"status"`
+	Output string     `json:"output,omitempty"`
+	// SubSessionID is the v2 subagent-session attribution (inert on v3;
+	// all subagent updates ride the parent session id there).
+	SubSessionID string `json:"sub_session_id,omitempty"`
+	// AgentSubtaskID is set from a tool call's _meta.kiro.agentSubtaskId.
+	// On v3 (KAS) a subagent surfaces as an ordinary tool_call with
+	// _meta.kiro.kind=="agent-subtask"; this id links the subagent card
+	// to its nested agent_message_chunk / agent_thought_chunk deltas
+	// (which carry the same id) so the client can render them nested.
+	AgentSubtaskID string          `json:"agent_subtask_id,omitempty"`
+	Input          json.RawMessage `json:"input,omitempty"`
+	Locations      []ToolLocation  `json:"locations,omitempty"`
+	Diffs          []ToolDiff      `json:"diffs,omitempty"`
+	DurationMs     int             `json:"duration_ms,omitempty"`
+	Ts             int64           `json:"ts"`
 }
 
 // ToolLocation is a file path (and optional line) the agent is working
@@ -166,6 +198,21 @@ type ToolDiff struct {
 	NewText string `json:"new_text"`
 }
 
+// CodeReference is one licensed-code attribution surfaced by the agent
+// (v3/KAS _kiro/code_references). KAS emits it when a completion reproduces
+// a recognizable chunk of a referenced open-source file and the account's
+// code-reference tracker is enabled. The KAS ACP layer maps every reference
+// down to these three fields (licenseName + repository + url); the raw
+// CodeWhisperer recommendationContentSpan and information fields are dropped
+// upstream before we ever see them, so there is no span to map a reference
+// to a specific message region — attributions are turn-scoped and persisted
+// on the assistant Message they arrived during.
+type CodeReference struct {
+	LicenseName string `json:"license_name"`
+	Repository  string `json:"repository,omitempty"`
+	URL         string `json:"url,omitempty"`
+}
+
 // PlanStatus is the lifecycle state of a plan entry.
 type PlanStatus string
 
@@ -183,83 +230,52 @@ type PlanEntry struct {
 	Status   PlanStatus `json:"status"`
 }
 
-// CrewStatus is the lifecycle state of a crew subagent. The full set
-// reflects what kiro-cli actually emits via _kiro.dev/subagent/list_update;
-// the comment on CrewSubagent.Status previously called these "other
-// kiro-cli types" — they are now first-class enum values.
-type CrewStatus string
-
-// CrewWorking and the following constants define the CrewStatus lifecycle states for a crew subagent.
-const (
-	CrewWorking    CrewStatus = "working"
-	CrewTerminated CrewStatus = "terminated"
-	CrewError      CrewStatus = "error"
-	CrewPending    CrewStatus = "pending"
-)
-
-// CrewSubagent is one subagent in a `crew` event message, sourced from
-// kiro-cli's `_kiro.dev/subagent/list_update` notification. Each
-// kiro-cli snapshot replaces the full list; we persist the last seen
-// snapshot on the message so reloading a chat shows the final state.
-type CrewSubagent struct {
-	SessionID    string     `json:"session_id"`
-	SessionName  string     `json:"session_name"`  // short user-facing label ("count_to_3")
-	AgentName    string     `json:"agent_name"`    // kiro-cli agent config used
-	InitialQuery string     `json:"initial_query"` // task the subagent was given
-	Status       CrewStatus `json:"status"`        // see CrewStatus enum above
-	StatusMsg    string     `json:"status_msg,omitempty"`
-	Group        string     `json:"group"` // grouping key from kiro-cli, e.g. "crew-<desc>"
-	Role         string     `json:"role,omitempty"`
-	DependsOn    []string   `json:"depends_on,omitempty"`
-}
-
-// Crew is the live state of one crew message. Subagents is the latest
-// snapshot; Group is the shared group id across the subagents (used
-// for message identity when kiro-cli emits subsequent updates).
-// PendingStages lists subagents that are planned but not yet spawned.
-type Crew struct {
-	Group         string             `json:"group"`
-	Subagents     []CrewSubagent     `json:"subagents"`
-	PendingStages []CrewPendingStage `json:"pending_stages,omitempty"`
-}
-
-// CrewPendingStage is a planned subagent that hasn't spawned yet.
-// kiro-cli emits these in the pendingStages array of list_update.
-type CrewPendingStage struct {
-	Name      string   `json:"name"`
-	AgentName string   `json:"agent_name"`
-	Role      string   `json:"role,omitempty"`
-	DependsOn []string `json:"depends_on,omitempty"`
-}
-
 // Message is one entry in a chat transcript. Tool calls are embedded in
 // assistant messages (not standalone messages). Event messages carry an
-// EventKind for inline rendering (compression, cancellation, restart,
-// subagent orchestration).
+// EventKind for inline rendering (compression, cancellation, restart).
 type Message struct {
-	// Crew is populated only for EventKind=crew messages; holds the
-	// latest subagent snapshot from kiro-cli's list_update stream.
-	Crew    *Crew  `json:"crew,omitempty"`
-	ID      string `json:"id"`
-	Role    Role   `json:"role"`
-	Content string `json:"content,omitempty"`
+	// ChangedFiles is part of the per-turn summary (credits · elapsed · files
+	// changed) shown in the assistant turn's footer, set on the final assistant
+	// message at turn_ended so the footer survives reload. It was previously an
+	// un-keyed direct DOM write in the client, which double-rendered on SSE
+	// replay and vanished on refresh. Mirrors the turn_ended SSE payload shape.
+	// (Field order in this struct is govet-fieldalignment-optimal, not logical.)
+	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
+	Role         Role                   `json:"role"`
+	Content      string                 `json:"content,omitempty"`
 	// Reasoning is the agent's "thinking" trace for this turn —
 	// extended-thinking models emit it as a parallel stream alongside
 	// Content. Persisted on the same message so the one-message-per-turn
 	// invariant holds; rendered above the content bubble in the UI.
-	Reasoning string      `json:"reasoning,omitempty"`
-	EventKind EventKind   `json:"event_kind,omitempty"`
-	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-	Plan      []PlanEntry `json:"plan,omitempty"`
-	// Blocks is the chronologically-ordered content array — text /
-	// tool_use / thinking blocks in the order the agent emitted them.
-	// Mirrors Anthropic's Messages API content array. Newly-streamed
-	// assistant messages populate Blocks alongside Content / ToolCalls
-	// (the latter two are kept for back-compat with replay of older
-	// messages that don't have Blocks). The client prefers Blocks when
-	// non-empty and falls back to Content + ToolCalls otherwise.
+	Reasoning string `json:"reasoning,omitempty"`
+	// CheckpointTag is the REAL checkpoint tag the server allocated for
+	// this turn (set only on the user message that started a turn whose
+	// agent produced at least one file snapshot). It is the turn-canonical
+	// tag ("N", never "N.K") the client passes verbatim to restore_checkpoint
+	// / undo_edit. Empty when the turn produced no snapshot; persisted so it
+	// survives reload.
+	CheckpointTag string     `json:"checkpoint_tag,omitempty"`
+	EventKind     EventKind  `json:"event_kind,omitempty"`
+	ID            string     `json:"id"`
+	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
+	// Blocks is the chronologically-ordered content array — text / tool_use /
+	// thinking blocks in the order the agent emitted them, each stamped with an
+	// agent_subtask_id (empty for the parent agent, set for a subagent). It is
+	// the canonical render model; the client normalizes legacy Content/ToolCalls
+	// into Blocks on replay so there is a single render path.
 	Blocks []Block `json:"blocks,omitempty"`
-	Ts     int64   `json:"ts"`
+	// CodeReferences carries licensed-code attributions the agent flagged
+	// during this turn (v3/KAS _kiro/code_references). Turn-scoped: the wire
+	// carries no span, so it annotates the whole assistant turn. Persisted here
+	// so the chip survives reload.
+	CodeReferences []CodeReference `json:"code_references,omitempty"`
+	Plan           []PlanEntry     `json:"plan,omitempty"`
+	// TurnCredits / TurnElapsedMs complete the turn footer summary alongside
+	// ChangedFiles (above). The values also ride the turn_ended SSE for the
+	// live render; omitempty drops the zero cases (a read-only turn has none).
+	TurnCredits   float64 `json:"turn_credits,omitempty"`
+	TurnElapsedMs float64 `json:"turn_elapsed_ms,omitempty"`
+	Ts            int64   `json:"ts"`
 }
 
 // Usage is a chat's last-known context and billing snapshot.
@@ -286,10 +302,17 @@ type MeteringItem struct {
 // from the `modes.availableModes` field of kiro-cli's session/new or
 // session/load response; kept on the chat so the UI can render a mode
 // pill without re-querying the bridge.
+//
+// On v3 (KAS) the availableModes list is unified: it carries both the
+// bundled workflow modes (vibe/spec/quick-spec/bug-fix/plan/autonomous)
+// AND every workspace custom agent (.kiro/agents/*), each switchable via
+// session/set_mode. Source distinguishes them ("bundled" vs "workspace")
+// so the picker can group built-in modes above custom agents.
 type SessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	Source      string `json:"source,omitempty"` // "bundled" | "workspace" (v3 _meta.kiro.source)
 }
 
 // SessionModel describes one model the running agent can swap to, as
@@ -300,32 +323,46 @@ type SessionModel struct {
 	Name           string  `json:"name"`
 	Description    string  `json:"description,omitempty"`
 	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
+	// HasEffort reports whether this model supports a reasoning-effort level.
+	// KAS's config_option_update stamps _meta.kiro.hasEffort on each model
+	// choice (true when the model has effort levels). The model picker hides
+	// the effort row for the current model when the catalog carries
+	// has_effort:true on some model but not the current one; a catalog with no
+	// has_effort anywhere (e.g. the pre-session REST list) safely shows it. A
+	// non-effort model omits the field (client reads it as undefined), which is
+	// why the client's gate keys off "any model advertises effort" rather than
+	// a per-model false.
+	HasEffort bool `json:"has_effort,omitempty"`
 }
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
 type Chat struct {
-	CrewMessageIDs      map[string]string `json:"crew_message_ids,omitempty"`
-	Name                string            `json:"name"`
-	Agent               string            `json:"agent,omitempty"`
-	Model               string            `json:"model,omitempty"`
-	ACPSessionID        string            `json:"acp_session_id,omitempty"`
-	CurrentModeID       string            `json:"current_mode_id,omitempty"`
-	ParentChatID        ChatID            `json:"parent_chat_id,omitempty"`
-	CompactionWatermark string            `json:"compaction_watermark,omitempty"`
-	Summary             string            `json:"summary,omitempty"`
-	OldestCheckpointTag string            `json:"oldest_checkpoint_tag,omitempty"`
-	ID                  string            `json:"id"`
-	AvailableModels     []SessionModel    `json:"available_models,omitempty"`
-	AvailableModes      []SessionMode     `json:"available_modes,omitempty"`
-	Messages            []Message         `json:"messages"`
-	CurrentPlan         []PlanEntry       `json:"current_plan,omitempty"`
-	Usage               Usage             `json:"usage"`
-	CreatedAt           int64             `json:"created_at"`
-	UpdatedAt           int64             `json:"updated_at"`
-	RewindFromTurn      int               `json:"rewind_from_turn,omitempty"`
-	MessageCount        int               `json:"message_count"`
-	SupervisedMode      bool              `json:"supervised_mode,omitempty"`
-	AutoApproveCrew     bool              `json:"auto_approve_crew,omitempty"`
+	Name                string         `json:"name"`
+	Model               string         `json:"model,omitempty"`
+	ACPSessionID        string         `json:"acp_session_id,omitempty"`
+	CurrentModeID       string         `json:"current_mode_id,omitempty"`
+	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
+	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
+	Summary             string         `json:"summary,omitempty"`
+	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
+	ID                  string         `json:"id"`
+	AvailableModels     []SessionModel `json:"available_models,omitempty"`
+	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
+	Messages            []Message      `json:"messages"`
+	CurrentPlan         []PlanEntry    `json:"current_plan,omitempty"`
+	Usage               Usage          `json:"usage"`
+	CreatedAt           int64          `json:"created_at"`
+	UpdatedAt           int64          `json:"updated_at"`
+	// ArchivedAt is the unix-milli timestamp recorded when the chat was
+	// moved to the archive dir. Purge ages from this, NOT the file mtime:
+	// a skipped/failed post-archive summary write leaves mtime at the
+	// chat's last-activity time, which would purge an old-but-just-archived
+	// chat almost immediately. Zero for active chats and for legacy archives
+	// written before this field existed (purge falls back to mtime then).
+	ArchivedAt     int64 `json:"archived_at,omitempty"`
+	RewindFromTurn int   `json:"rewind_from_turn,omitempty"`
+	MessageCount   int   `json:"message_count"`
+	SupervisedMode bool  `json:"supervised_mode,omitempty"`
 }
 
 // Header returns the chat's metadata without messages. Used for list
@@ -334,7 +371,6 @@ func (c *Chat) Header() ChatHeader {
 	return ChatHeader{
 		ID:                  c.ID,
 		Name:                c.Name,
-		Agent:               c.Agent,
 		Model:               c.Model,
 		ACPSessionID:        c.ACPSessionID,
 		CurrentModeID:       c.CurrentModeID,
@@ -345,7 +381,6 @@ func (c *Chat) Header() ChatHeader {
 		UpdatedAt:           c.UpdatedAt,
 		MessageCount:        len(c.Messages),
 		SupervisedMode:      c.SupervisedMode,
-		AutoApproveCrew:     c.AutoApproveCrew,
 		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
 		OldestCheckpointTag: c.OldestCheckpointTag,
@@ -359,7 +394,6 @@ func (c *Chat) Header() ChatHeader {
 type ChatHeader struct {
 	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	Name                string         `json:"name"`
-	Agent               string         `json:"agent,omitempty"`
 	Model               string         `json:"model,omitempty"`
 	ACPSessionID        string         `json:"acp_session_id,omitempty"`
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
@@ -374,5 +408,4 @@ type ChatHeader struct {
 	UpdatedAt           int64          `json:"updated_at"`
 	MessageCount        int            `json:"message_count"`
 	SupervisedMode      bool           `json:"supervised_mode,omitempty"`
-	AutoApproveCrew     bool           `json:"auto_approve_crew,omitempty"`
 }

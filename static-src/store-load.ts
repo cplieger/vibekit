@@ -9,7 +9,14 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
-import { setSessions, get, getSessions, rebuildMsgIndex, emitMessages } from "./store.js";
+import {
+  setSessions,
+  get,
+  getSessions,
+  rebuildMsgIndex,
+  emitMessages,
+  normalizeMessage,
+} from "./store.js";
 
 // --- Inline decoders ---
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
@@ -74,13 +81,11 @@ export async function loadList(): Promise<boolean> {
     const session: Session = {
       id: h.id,
       name: h.name,
-      agent: h.agent ?? "",
       model: h.model ?? "",
       acp_session_id: h.acp_session_id ?? "",
       current_mode_id: h.current_mode_id ?? "",
       available_modes: h.available_modes ?? [],
       available_models: h.available_models ?? [],
-      auto_approve_crew: h.auto_approve_crew ?? existing?.auto_approve_crew ?? false,
       supervised_mode: h.supervised_mode ?? false,
       pending_changes: existing?.pending_changes ?? [],
       usage: h.usage,
@@ -145,9 +150,18 @@ export async function loadMessages(chatID: string, before?: number, limit = 50):
     return false;
   }
   if (before !== undefined) {
-    session.messages = [...d.messages, ...session.messages];
+    // Prepend older-page messages, deduped by id. The `before` cursor is an
+    // exclusive-ish timestamp; when several messages share a millisecond ts at
+    // a page boundary the server can re-return a boundary message, which would
+    // otherwise render twice (and corrupt the msg index). Keep the copy already
+    // in the store (the authoritative newer render) and drop any id we've seen.
+    const seen = new Set(session.messages.map((m) => m.id));
+    const older = d.messages.filter((m) => !seen.has(m.id)).map(normalizeMessage);
+    session.messages = [...older, ...session.messages];
   } else {
-    session.messages = d.messages;
+    // Normalize replayed messages so legacy transcripts (persisted before the
+    // blocks field) get synthesized blocks — the renderer is block-only.
+    session.messages = d.messages.map(normalizeMessage);
   }
   session.message_count = d.chat.message_count;
   session.has_more = d.has_more;

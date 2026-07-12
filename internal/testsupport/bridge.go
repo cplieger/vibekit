@@ -46,6 +46,3 @@ func (*NopACPBridge) SetModel(context.Context, string) error { return nil }
 
 // NotifCh returns nil; implements api.ACPBridge.
 func (*NopACPBridge) NotifCh() <-chan *api.RPCResponse { return nil }
-
-// SupportsDocuments returns false; implements api.ACPBridge.
-func (*NopACPBridge) SupportsDocuments() bool { return false }

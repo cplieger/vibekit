@@ -15,33 +15,74 @@ import "log/slog"
 // reference these instead of bare string literals to prevent drift.
 const (
 	KeyAgentIgnoreFiles     = "agent_ignore_files"
+	KeyChatRetentionDays    = "chat_retention_days"
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyModelEffort          = "model_effort"
 	KeyNotificationsEnabled = "notifications_enabled"
 	KeyNotifyAgentFinished  = "notify_agent_finished"
 	KeyNotifyPermission     = "notify_permission"
-	KeyPermissionMode       = "permission_mode"
 	KeyShellPolicy          = "shell_policy"
 	KeySupervisedDefault    = "supervised_default"
-	KeyTrustTools           = "trust_tools"
 )
 
-// DefaultSettings returns the canonical defaults the GET /api/settings
-// handler emits when config.json is missing or unreadable. It is
-// currently empty: every preference has a consumer-side default, so a
-// fresh install receives {} and the frontend applies its own per-field
-// defaults. A server-emitted default belongs here only when the
-// GET-when-missing wire shape must carry it (add it to KnownKeys too).
+// DefaultChatRetentionDays is the seeded default for chat_retention_days.
 //
-// Per-key consumer-side defaults live near their consumers (e.g.
-// ignore.go's "[.kiroignore]" default for agent_ignore_files,
-// logctl.go's false for debug_logs) because the consumer knows the
-// fail-mode policy. This function is for the wire shape the GET
-// endpoint returns when no file exists yet, not the in-process
-// fallback every consumer applies.
+// vibekit owns chat retention end to end (kiro-cli's own cleanup.periodDays
+// is pinned to 0/never so the two systems never both purge). The value is a
+// day count with two sentinels:
+//
+//	-1 = forever  — closing a tab archives to History; never purged ("backups").
+//	 0 = off      — closing a tab deletes the chat (ephemeral); History hidden.
+//	 N = keep N days — archive on close; the purge scheduler removes after N days.
+//
+// The server purge scheduler treats <= 0 as "no purge" (off AND forever); the
+// client decides archive-vs-delete on close from the same value (enabled when
+// != 0). Default 1 preserves the prior 1-day behavior.
+const DefaultChatRetentionDays = 1
+
+// DefaultAgentIgnoreFiles is the seeded default for the agent_ignore_files
+// setting: the ignore-file basenames the agent read filter (internal/ignore,
+// wired into the fs/read_text_file A→C path) applies, each resolved against
+// the workspace root. A fresh install — no config.json, or a config.json that
+// predates the key — uses this list so gitignored secrets (.env.dec, anything
+// under a gitignored secrets/ dir) are refused from agent reads out of the box
+// instead of the filter being opt-in.
+//
+// The names track the Kiro IDE's recognized ignore-file set (its context
+// walker keys on .gitignore/.continueignore/.kiroignore/.cursorignore). We
+// seed the two relevant to this stack — .gitignore (the universal exclude
+// file) and .kiroignore (Kiro's own) — and skip the competitor-tool files.
+// This is deliberately MORE protective than the IDE's own out-of-box behavior:
+// the IDE's kiroAgent.agentIgnoreFiles setting is undeclared and read as
+// `get("agentIgnoreFiles") ?? []`, so the IDE filters agent reads only through
+// the always-on user-global ~/.kiro/settings/kiroignore + git global excludes,
+// not workspace .gitignore. Turning the workspace filter ON by default is the
+// settled vibekit decision.
+//
+// Returns a fresh slice so callers can resolve/append without mutating the
+// shared default. An explicit [] in config.json is honoured as an opt-out
+// (see internal/ignore).
+func DefaultAgentIgnoreFiles() []string {
+	return []string{".gitignore", ".kiroignore"}
+}
+
+// DefaultSettings returns the canonical defaults the GET /api/settings
+// handler emits when config.json is missing or unreadable. Every key it emits
+// must also be in KnownKeys (enforced by TestDefaultSettings_OnlyKnownKeys) so
+// a fresh GET response round-tripped back as a PATCH never trips the
+// unknown-key warning.
+//
+// agent_ignore_files carries a real default (DefaultAgentIgnoreFiles) so the
+// agent read filter is ON out of the box and the GET-when-missing wire shape
+// advertises it. Preferences NOT listed here apply their default in-process
+// near their consumer (e.g. logctl.go's false for debug_logs) because the
+// consumer owns the fail-mode policy; those need not ride this wire shape.
 func DefaultSettings() map[string]any {
-	return map[string]any{}
+	return map[string]any{
+		KeyAgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
+		KeyChatRetentionDays: DefaultChatRetentionDays,
+	}
 }
 
 // KnownKeys is the set of vibekit-managed config.json keys. PATCH
@@ -52,20 +93,19 @@ func DefaultSettings() map[string]any {
 // `AppSettings` interface grows.
 //
 // Note: kiro-cli's own settings (cleanup.periodDays, chat.enable*,
-// etc.) live in a separate file (~/.kiro/settings/config.json) and
+// etc.) live in a separate file ($KIRO_HOME/settings/settings.json) and
 // are not part of this set.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:     {},
+	KeyChatRetentionDays:    {},
 	KeyDebugLogs:            {},
 	KeyLastModel:            {},
 	KeyModelEffort:          {},
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPermission:     {},
-	KeyPermissionMode:       {},
 	KeyShellPolicy:          {},
 	KeySupervisedDefault:    {},
-	KeyTrustTools:           {},
 }
 
 // WarnUnknownKeys logs a warning for each top-level key in keys that
@@ -87,4 +127,15 @@ func WarnUnknownKeys(keys []string, source string) []string {
 			"keys", unknown)
 	}
 	return unknown
+}
+
+// ServerManagedKeys are settings keys owned by flows other than a full-file
+// PUT of the settings object: agent_ignore_files (written by the
+// Settings→Permissions UI) and model_effort (written by the model switcher),
+// both via PATCH. A PUT whose body omits them must not silently wipe them, so
+// handleSettingsWrite carries any omitted managed key over from the existing
+// file. Kept beside KnownKeys so the managed-key set stays in the settings
+// domain and references the same key constants (no drift).
+func ServerManagedKeys() []string {
+	return []string{KeyAgentIgnoreFiles, KeyModelEffort}
 }

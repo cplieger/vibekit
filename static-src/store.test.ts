@@ -17,11 +17,10 @@ import {
   setWorkingLabel,
   enqueuePrompt,
   dequeuePrompt,
-  setQueuedPrompt,
-  queuedPrompt,
+  peekPrompt,
+  removeQueuedAt,
+  queueLength,
   setName,
-  peekQueuedAttachments,
-  setLastQueuedAttachments,
   activeSession,
   getActiveId,
 } from "./store.js";
@@ -50,13 +49,11 @@ function makeSession(chatID: string): Session {
   return {
     id: chatID,
     name: "test",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    auto_approve_crew: false,
     supervised_mode: false,
     pending_changes: [],
     usage: {
@@ -124,19 +121,35 @@ describe("Store idempotency (property-based)", () => {
     );
   });
 
-  it("upsertMessage: updates existing message by ID", () => {
+  it("upsertMessage: non-empty content wins on merge, upsert not duplicate", () => {
     fc.assert(
-      fc.property(arbMessage(), fc.string({ maxLength: 100 }), (msg, newContent) => {
+      fc.property(arbMessage(), fc.string({ minLength: 1, maxLength: 100 }), (msg, newContent) => {
         resetStore("chat-1");
         upsertMessage("chat-1", msg);
-        const updated = { ...msg, content: newContent };
-        upsertMessage("chat-1", updated);
+        upsertMessage("chat-1", { ...msg, content: newContent });
         const session = get("chat-1")!;
         const found = session.messages.find((m) => m.id === msg.id);
+        // ingestMessage merges: a non-empty incoming content replaces the
+        // existing, and the message is upserted (never duplicated) by id.
         expect(found?.content).toBe(newContent);
         expect(session.messages.filter((m) => m.id === msg.id)).toHaveLength(1);
       }),
       { numRuns: 200 },
+    );
+  });
+
+  it("upsertMessage: an empty incoming content does not clobber existing content", () => {
+    fc.assert(
+      fc.property(arbMessage(), (msg) => {
+        resetStore("chat-1");
+        // Seed with real content, then re-upsert the same id with empty content
+        // (the message_created-after-stream case): the merge must keep it.
+        upsertMessage("chat-1", { ...msg, content: "seeded-content" });
+        upsertMessage("chat-1", { ...msg, content: "" });
+        const found = get("chat-1")!.messages.find((m) => m.id === msg.id);
+        expect(found?.content).toBe("seeded-content");
+      }),
+      { numRuns: 100 },
     );
   });
 
@@ -335,13 +348,11 @@ describe("Store removeChat index consistency (property-based)", () => {
     return {
       id,
       name: id,
-      agent: "",
       model: "",
       acp_session_id: "",
       current_mode_id: "",
       available_modes: [],
       available_models: [],
-      auto_approve_crew: false,
       supervised_mode: false,
       usage: {
         context_pct: 0,
@@ -418,13 +429,15 @@ describe("Store queue operations (property-based)", () => {
           for (const text of items) {
             enqueuePrompt("chat-1", text);
           }
+          expect(queueLength("chat-1")).toBe(items.length);
           const dequeued: string[] = [];
           let next = dequeuePrompt("chat-1");
           while (next !== undefined) {
-            dequeued.push(next);
+            dequeued.push(next.text);
             next = dequeuePrompt("chat-1");
           }
           expect(dequeued).toEqual(items);
+          expect(queueLength("chat-1")).toBe(0);
         },
       ),
       { numRuns: 200 },
@@ -434,6 +447,7 @@ describe("Store queue operations (property-based)", () => {
   it("dequeue on empty returns undefined", () => {
     resetStore("chat-1");
     expect(dequeuePrompt("chat-1")).toBeUndefined();
+    expect(queueLength("chat-1")).toBe(0);
   });
 
   it("dequeue on unknown chat returns undefined", () => {
@@ -441,45 +455,7 @@ describe("Store queue operations (property-based)", () => {
     expect(dequeuePrompt("nonexistent")).toBeUndefined();
   });
 
-  it("setQueuedPrompt(undefined) clears the queue", () => {
-    fc.assert(
-      fc.property(
-        fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
-        (items) => {
-          resetStore("chat-1");
-          for (const text of items) {
-            enqueuePrompt("chat-1", text);
-          }
-          setQueuedPrompt("chat-1", undefined);
-          expect(queuedPrompt("chat-1")).toBeUndefined();
-          expect(dequeuePrompt("chat-1")).toBeUndefined();
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-
-  it("setQueuedPrompt(text) replaces entire queue with single item", () => {
-    fc.assert(
-      fc.property(
-        fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
-        fc.string({ minLength: 1, maxLength: 50 }),
-        (items, replacement) => {
-          resetStore("chat-1");
-          for (const text of items) {
-            enqueuePrompt("chat-1", text);
-          }
-          setQueuedPrompt("chat-1", replacement);
-          expect(queuedPrompt("chat-1")).toBe(replacement);
-          expect(dequeuePrompt("chat-1")).toBe(replacement);
-          expect(dequeuePrompt("chat-1")).toBeUndefined();
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-
-  it("queuedPrompt returns the front of the queue without consuming it", () => {
+  it("peekPrompt returns the front entry without consuming it", () => {
     fc.assert(
       fc.property(
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
@@ -489,13 +465,86 @@ describe("Store queue operations (property-based)", () => {
             enqueuePrompt("chat-1", text);
           }
           if (items.length > 0) {
-            expect(queuedPrompt("chat-1")).toBe(items[0]);
-            expect(queuedPrompt("chat-1")).toBe(items[0]);
+            expect(peekPrompt("chat-1")?.text).toBe(items[0]);
+            expect(peekPrompt("chat-1")?.text).toBe(items[0]);
+            expect(queueLength("chat-1")).toBe(items.length);
+          } else {
+            expect(peekPrompt("chat-1")).toBeUndefined();
           }
         },
       ),
       { numRuns: 100 },
     );
+  });
+
+  it("peekPrompt returns undefined for unknown chat", () => {
+    resetStore("chat-1");
+    expect(peekPrompt("nonexistent")).toBeUndefined();
+  });
+});
+
+describe("Store queue attachments (inlined with text)", () => {
+  it("dequeue/peek return the attachments that were enqueued with the text", () => {
+    resetStore("chat-1");
+    const att = [{ path: "a.ts" }, { path: "b.ts" }];
+    enqueuePrompt("chat-1", "hello", att);
+    expect(peekPrompt("chat-1")).toEqual({ text: "hello", attachments: att });
+    // Peek does not consume.
+    expect(peekPrompt("chat-1")).toEqual({ text: "hello", attachments: att });
+    expect(dequeuePrompt("chat-1")).toEqual({ text: "hello", attachments: att });
+  });
+
+  it("attachments stay aligned to their own prompt across a multi-entry queue", () => {
+    resetStore("chat-1");
+    enqueuePrompt("chat-1", "first", [{ path: "x.ts" }]);
+    enqueuePrompt("chat-1", "second", [{ path: "y.ts" }]);
+    // Text and attachments travel together — no positional drift possible.
+    expect(dequeuePrompt("chat-1")).toEqual({ text: "first", attachments: [{ path: "x.ts" }] });
+    expect(dequeuePrompt("chat-1")).toEqual({ text: "second", attachments: [{ path: "y.ts" }] });
+  });
+
+  it("enqueue without attachments stores an empty array (never undefined)", () => {
+    resetStore("chat-1");
+    enqueuePrompt("chat-1", "no files");
+    expect(dequeuePrompt("chat-1")).toEqual({ text: "no files", attachments: [] });
+  });
+
+  it("enqueue copies the attachments array (later caller mutation does not leak in)", () => {
+    resetStore("chat-1");
+    const att = [{ path: "a.ts" }];
+    enqueuePrompt("chat-1", "hello", att);
+    att.push({ path: "sneaky.ts" });
+    expect(peekPrompt("chat-1")?.attachments).toEqual([{ path: "a.ts" }]);
+  });
+});
+
+describe("Store removeQueuedAt (UI cancel affordance)", () => {
+  it("removes and returns the entry at the given index", () => {
+    resetStore("chat-1");
+    enqueuePrompt("chat-1", "a");
+    enqueuePrompt("chat-1", "b");
+    enqueuePrompt("chat-1", "c");
+    expect(removeQueuedAt("chat-1", 1)).toEqual({ text: "b", attachments: [] });
+    expect(dequeuePrompt("chat-1")?.text).toBe("a");
+    expect(dequeuePrompt("chat-1")?.text).toBe("c");
+    expect(dequeuePrompt("chat-1")).toBeUndefined();
+  });
+
+  it("clears prompt_queue when the last entry is removed", () => {
+    resetStore("chat-1");
+    enqueuePrompt("chat-1", "only");
+    expect(removeQueuedAt("chat-1", 0)?.text).toBe("only");
+    expect(get("chat-1")?.prompt_queue).toBeUndefined();
+  });
+
+  it("returns undefined for an out-of-range index or unknown chat", () => {
+    resetStore("chat-1");
+    enqueuePrompt("chat-1", "a");
+    expect(removeQueuedAt("chat-1", 5)).toBeUndefined();
+    expect(removeQueuedAt("chat-1", -1)).toBeUndefined();
+    expect(removeQueuedAt("nonexistent", 0)).toBeUndefined();
+    // The valid entry is untouched.
+    expect(queueLength("chat-1")).toBe(1);
   });
 });
 
@@ -514,78 +563,8 @@ describe("Store setName", () => {
   });
 });
 
-describe("Store peekQueuedAttachments", () => {
-  it("returns empty array when no attachments queued", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    enqueuePrompt("chat-1", "hello");
-    expect(peekQueuedAttachments("chat-1")).toEqual([]);
-  });
-
-  it("returns the first queued attachment set without consuming it", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    const att = [{ path: "a.ts" }, { path: "b.ts" }];
-    enqueuePrompt("chat-1", "hello", att);
-    expect(peekQueuedAttachments("chat-1")).toEqual(att);
-    // Peek again — still there
-    expect(peekQueuedAttachments("chat-1")).toEqual(att);
-  });
-
-  it("returns empty array for unknown chat", () => {
-    resetStore("chat-1");
-    expect(peekQueuedAttachments("nonexistent")).toEqual([]);
-  });
-
-  it("advances after dequeue", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    enqueuePrompt("chat-1", "first", [{ path: "x.ts" }]);
-    enqueuePrompt("chat-1", "second", [{ path: "y.ts" }]);
-    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "x.ts" }]);
-    dequeuePrompt("chat-1");
-    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "y.ts" }]);
-  });
-});
-
-describe("Store setLastQueuedAttachments", () => {
-  it("replaces attachments on the last queued entry", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    enqueuePrompt("chat-1", "hello");
-    setLastQueuedAttachments("chat-1", [{ path: "new.ts" }]);
-    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "new.ts" }]);
-  });
-
-  it("replaces last entry when multiple queued", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    enqueuePrompt("chat-1", "first", [{ path: "a.ts" }]);
-    enqueuePrompt("chat-1", "second");
-    setLastQueuedAttachments("chat-1", [{ path: "z.ts" }]);
-    // First entry unchanged
-    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "a.ts" }]);
-    dequeuePrompt("chat-1");
-    // Second entry was replaced
-    expect(peekQueuedAttachments("chat-1")).toEqual([{ path: "z.ts" }]);
-  });
-
-  it("no-ops on unknown chat", () => {
-    resetStore("chat-1");
-    setLastQueuedAttachments("nonexistent", [{ path: "x.ts" }]);
-    expect(peekQueuedAttachments("nonexistent")).toEqual([]);
-  });
-
-  it("no-ops when queue is empty", () => {
-    resetStore("chat-1");
-    setQueuedPrompt("chat-1", undefined);
-    setLastQueuedAttachments("chat-1", [{ path: "x.ts" }]);
-    expect(peekQueuedAttachments("chat-1")).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
-// Per-message + per-tool + per-crew signal architecture
+// Per-message + per-tool signal architecture
 // ---------------------------------------------------------------------------
 
 import { appendChunk, upsertToolCall } from "./store.js";
@@ -598,32 +577,29 @@ import {
   clearReasoningSig,
   ensureToolCallSig,
   clearToolCallSig,
-  ensureCrewSig,
-  crewSigs,
-  clearCrewSig,
 } from "./store-signals.js";
-import type { ToolCall, Crew } from "./types.js";
+import type { ToolCall } from "./types.js";
 
 describe("streaming signals", () => {
   it("appendChunk routes content vs reasoning to separate signals", () => {
     resetStore("chat-1");
     // First chunk creates the message + bumps global; signals are
     // created lazily by callers (mountContentBubble / mountReasoningBlock).
-    appendChunk("chat-1", "m1", "hello", false, 0);
+    appendChunk("chat-1", "m1", "hello", false, 0, "");
     const session = get("chat-1")!;
     expect(session.messages[0]?.content).toBe("hello");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
     // Subscribe a content signal so subsequent content chunks route here.
     const contentSig = ensureStreamingSig("m1", "hello");
-    appendChunk("chat-1", "m1", " world", false, 0);
+    appendChunk("chat-1", "m1", " world", false, 0, "");
     expect(contentSig.value).toBe("hello world");
     expect(session.messages[0]?.content).toBe("hello world");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
     // Subscribe a reasoning signal; reasoning chunks route there.
     const reasoningSig = ensureReasoningSig("m1", "");
-    appendChunk("chat-1", "m1", "let me think", true, 1);
+    appendChunk("chat-1", "m1", "let me think", true, 1, "");
     expect(reasoningSig.value).toBe("let me think");
     expect(session.messages[0]?.reasoning).toBe("let me think");
     expect(session.messages[0]?.content).toBe("hello world");
@@ -698,53 +674,5 @@ describe("per-tool signal", () => {
     expect(a).toBe(b);
     expect(a.value.status).toBe("pending");
     clearToolCallSig("t-id");
-  });
-});
-
-describe("per-crew signal", () => {
-  const sampleCrew = (label: string): Crew => ({
-    group: "g-1",
-    subagents: [
-      {
-        session_id: "s1",
-        session_name: "sub",
-        agent_name: "agent",
-        initial_query: label,
-        status: "working",
-        group: "g-1",
-      },
-    ],
-  });
-
-  it("upsertMessage on a crew event with existing signal updates via sig.value", () => {
-    resetStore("chat-1");
-    // First append the crew message via upsertMessage (idx=-1 path).
-    upsertMessage("chat-1", {
-      id: "crew-msg-1",
-      role: "event",
-      event_kind: "crew",
-      crew: sampleCrew("first"),
-      ts: 0,
-    });
-    // Subscribe a signal as the messages.ts mount would do.
-    const sig = ensureCrewSig("crew-msg-1", sampleCrew("first"));
-    // Subsequent upsertMessage with a new crew payload — should fan
-    // out via the signal (no global emit).
-    upsertMessage("chat-1", {
-      id: "crew-msg-1",
-      role: "event",
-      event_kind: "crew",
-      crew: sampleCrew("second"),
-      ts: 0,
-    });
-    expect(sig.value.subagents[0]?.initial_query).toBe("second");
-    clearCrewSig("crew-msg-1");
-  });
-
-  it("clearCrewSig + getCrewSig", () => {
-    ensureCrewSig("c-z", sampleCrew("z"));
-    expect(crewSigs.get("c-z")).toBeDefined();
-    clearCrewSig("c-z");
-    expect(crewSigs.get("c-z")).toBeUndefined();
   });
 });

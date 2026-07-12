@@ -175,12 +175,12 @@ setSwitchMode((kind, slug, identifier, fields) => {
     setMode("npm", null);
     fillNpmForm(slug, identifier, fields);
   } else {
-    // Any non-npm registry hit (http, streamable-http, sse, ...) lands
-    // on the remote panel. Transport is always "http" — kiro-cli does
-    // the HTTP+SSE fallback at connection time per the 2025-03-26 MCP
-    // spec, so no user-visible transport pick is needed.
+    // Any non-npm registry hit lands on the remote panel. `kind` is the
+    // normalised vibekit transport ("http" or "sse", mapped from the
+    // registry's remote type by supportedRemoteTypes server-side), so we
+    // preselect it in the panel's transport selector.
     setMode("remote", null);
-    fillRemoteForm(slug, identifier, fields);
+    fillRemoteForm(slug, identifier, fields, kind);
   }
 });
 
@@ -331,14 +331,23 @@ export function extractNpxPackage(s: Server): string {
   return "";
 }
 
-// --- Panel: remote (http; kiro-cli falls back to HTTP+SSE per the
-// 2025-03-26 MCP spec at connection time, so no user-visible
-// transport pick is needed) ---
+// --- Panel: remote (Streamable HTTP or legacy SSE; the transport is
+// chosen via the panel's transport selector and emitted as the ACP
+// `type` discriminator — kiro-cli v3/KAS accepts both http and sse) ---
+
+/** Normalise a remote-panel transport-select value to a valid remote
+ *  Transport. Only "http" and "sse" are remote transports; anything else
+ *  (including undefined) falls back to the recommended "http". */
+function remoteTransport(v: string | undefined): Transport {
+  return v === "sse" ? "sse" : "http";
+}
 
 function initRemotePanel(existing: Server | null): void {
   const name = byId<HTMLInputElement>("mcp-remote-name");
   const url = byId<HTMLInputElement>("mcp-remote-url");
+  const transportSel = byId<HTMLSelectElement>("mcp-remote-transport");
   const oauthClientID = byId<HTMLInputElement>("mcp-remote-oauth-client-id");
+  const oauthClientSecret = byId<HTMLInputElement>("mcp-remote-oauth-client-secret");
   const headers = byId<HTMLDivElement>("mcp-remote-headers");
   const errEl = byId<HTMLParagraphElement>("mcp-remote-error");
   errEl.classList.add("hidden");
@@ -348,22 +357,27 @@ function initRemotePanel(existing: Server | null): void {
     name.value = existing.name;
     url.value = existing.url ?? "";
     oauthClientID.value = existing.oauth_client_id ?? "";
+    oauthClientSecret.value = existing.oauth_client_secret ?? "";
     renderKeyPairList(headers, existing.headers ?? [], "header");
   } else {
     name.value = "";
     url.value = "";
     oauthClientID.value = "";
+    oauthClientSecret.value = "";
     renderKeyPairList(headers, [], "header");
   }
+  // Preselect the stored transport (http/sse); default to http for a new
+  // server. A stdio server never reaches this panel (openEditModal routes
+  // it to the npm panel), so existing.transport is always http or sse here.
+  transportSel.value = remoteTransport(existing?.transport);
 
   byId<HTMLButtonElement>("mcp-remote-add-header").onclick = (): void => {
     appendKeyPair(headers, { name: "", value: "" }, "header");
   };
 
   byId<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
-    const transport: Transport = PANEL_MODES.remote.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     const body: Partial<Server> = {
-      transport,
+      transport: remoteTransport(transportSel.value),
       name: name.value.trim(),
       url: url.value.trim(),
       headers: collectKeyPairs(headers),
@@ -372,6 +386,13 @@ function initRemotePanel(existing: Server | null): void {
     const oauthID = oauthClientID.value.trim();
     if (oauthID !== "") {
       body.oauth_client_id = oauthID;
+    }
+    // Secret round-trips as "***" when already stored; sending it back
+    // unchanged preserves it server-side (mergeSecret), any other value
+    // replaces it, empty leaves it untouched on create / clears intent.
+    const oauthSecret = oauthClientSecret.value.trim();
+    if (oauthSecret !== "") {
+      body.oauth_client_secret = oauthSecret;
     }
     void submitServer(body, errEl, byId<HTMLButtonElement>("mcp-remote-save"));
   };
@@ -386,9 +407,11 @@ function fillRemoteForm(
     required?: boolean | undefined;
     secret?: boolean | undefined;
   }[],
+  transportHint?: string,
 ): void {
   byId<HTMLInputElement>("mcp-remote-name").value = name;
   byId<HTMLInputElement>("mcp-remote-url").value = url;
+  byId<HTMLSelectElement>("mcp-remote-transport").value = remoteTransport(transportHint);
   const list = byId<HTMLDivElement>("mcp-remote-headers");
   renderKeyPairList(
     list,

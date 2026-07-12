@@ -160,7 +160,7 @@
 
 /* Chat-chrome entry animation. Applies to every realtime-appended
  * element in the message list — user messages, assistant bubbles,
- * checkpoints, plans, tool cards, subagent crew cards, boundary
+ * checkpoints, plans, tool cards, subagent cards, boundary
  * dividers, reasoning blocks, system messages, the turn-actions row
  * below assistant messages. One unified motion language: 4px
  * upward slide + opacity fade, 200ms ease-out. Historical bulk

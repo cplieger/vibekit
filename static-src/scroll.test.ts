@@ -6,8 +6,8 @@
 // then asserted those copies against themselves (e.g. `expect(150).toBe(150)`
 // and `expect(controllerResult).toBe(atBottom)` where both sides were the same
 // expression). That exercised zero production code. These tests set up the DOM
-// the controller binds to and exercise trimOldMessages, setLoadMore, and the
-// scroll-event → scroll-bottom toggle (which runs the private isAtBottom).
+// the controller binds to and exercise setLoadMore and the scroll-event →
+// scroll-bottom toggle (which runs the private isAtBottom).
 
 import { describe, it, expect, beforeEach } from "vitest";
 
@@ -60,61 +60,11 @@ function setGeometry(scrollTop: number, clientHeight: number, scrollHeight: numb
   });
 }
 
-/** Append n message divs tagged with a 0-based data-idx. */
-function appendMessages(n: number): void {
-  for (let i = 0; i < n; i++) {
-    const div = document.createElement("div");
-    div.className = "message";
-    div.dataset["idx"] = String(i);
-    messagesEl.appendChild(div);
-  }
-}
-
-function messageCount(): number {
-  // The load-more indicator also carries the "message" class, so exclude it —
-  // mirroring trimOldMessages' own `id !== "load-more-indicator"` filter.
-  return [...messagesEl.querySelectorAll(".message")].filter((e) => e.id !== "load-more-indicator")
-    .length;
-}
-
 beforeEach(() => {
   scroll.resetScrollState();
   scroll.setLoadMore(null, false);
   messagesEl.replaceChildren();
   scrollBtn.classList.add("hidden");
-});
-
-describe("trimOldMessages (DOM cap = 50)", () => {
-  it("does nothing at exactly the cap", () => {
-    appendMessages(50);
-    scroll.trimOldMessages();
-    expect(messageCount()).toBe(50);
-  });
-
-  it("does nothing below the cap", () => {
-    appendMessages(10);
-    scroll.trimOldMessages();
-    expect(messageCount()).toBe(10);
-  });
-
-  it("trims to the 50 newest when over the cap", () => {
-    appendMessages(60);
-    scroll.trimOldMessages();
-    expect(messageCount()).toBe(50);
-    // The oldest 10 (idx 0..9) are dropped; idx 10 is now first.
-    const first = messagesEl.querySelector(".message") as HTMLElement;
-    expect(first.dataset["idx"]).toBe("10");
-  });
-
-  it("keeps the load-more indicator while trimming", () => {
-    scroll.setLoadMore(() => undefined, true);
-    expect(document.getElementById("load-more-indicator")).not.toBeNull();
-    appendMessages(60);
-    scroll.trimOldMessages();
-    expect(messageCount()).toBe(50);
-    // The indicator is not counted toward the cap and survives the trim.
-    expect(document.getElementById("load-more-indicator")).not.toBeNull();
-  });
 });
 
 describe("setLoadMore indicator", () => {

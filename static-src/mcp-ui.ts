@@ -12,25 +12,42 @@
 import { el, bindList, effect } from "@cplieger/reactive";
 
 import { $ } from "./dom.js";
+import { isSafeURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
+import { onGovernanceChange } from "./governance.js";
+import type { GovernanceStatePayload } from "./types.js";
 import { onModalClose, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16 } from "./icons.js";
+import { showToast } from "./toast.js";
+import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
 import {
   type Server,
   type RuntimeStatus,
   type RuntimeState,
   type PrewarmState,
+  type ServerDiscovery,
+  type MCPPromptInfo,
+  type MCPPromptArg,
+  type MCPResourceInfo,
   servers,
   mcpState,
   statusSignalFor,
   prewarmSignalFor,
+  discoverySignalFor,
   setPrewarm,
   configuredServers,
 } from "./mcp-state.js";
 import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import { extractNpxPackage } from "./mcp-panels.js";
-import { toggleServer, deleteServer, openEdit } from "./actions/mcp.js";
+import {
+  toggleServer,
+  deleteServer,
+  openEdit,
+  reconnectServer,
+  getPromptContent,
+  getResourceContent,
+} from "./actions/mcp.js";
+import { promptResultToText, resourceResultToText } from "./mcp-content.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 // --- Section scaffold ---
@@ -38,6 +55,10 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 let sectionBody: HTMLDivElement | null = null;
 let emptyMsg: HTMLParagraphElement | null = null;
 let listBound = false;
+// Held so the governance effect can disable the add affordance and toggle the
+// "disabled by your organization" notice when mcp_enabled is off.
+let addBtn: HTMLButtonElement | null = null;
+let govDisabledMsg: HTMLParagraphElement | null = null;
 
 // Per-row cleanups (the row effect + its bindLoadingState bindings), disposed
 // when the row leaves the list.
@@ -65,19 +86,26 @@ function buildSectionScaffold(): void {
     "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.",
   );
 
-  const addBtn = el("button", {
+  const btn = el("button", {
     type: "button",
     className: "action-pill",
     "data-tooltip": "Connect integration",
     "aria-label": "Connect integration",
-  });
-  addBtn.innerHTML = ICON_PLUS_16;
-  addBtn.addEventListener("click", () => {
+  }) as HTMLButtonElement;
+  btn.innerHTML = ICON_PLUS_16;
+  btn.addEventListener("click", () => {
     openAddModal();
   });
+  addBtn = btn;
 
-  const actions = el("div", { className: "action-bar action-bar-inline" }, addBtn);
+  const actions = el("div", { className: "action-bar action-bar-inline" }, btn);
   const actionRow = el("div", { className: "section-actions-row" }, actions);
+
+  // Org-governance notice: shown only when governance says MCP is disabled.
+  govDisabledMsg = el("p", {
+    className: "mcp-gov-disabled",
+    hidden: true,
+  }) as HTMLParagraphElement;
 
   emptyMsg = el(
     "p",
@@ -86,8 +114,43 @@ function buildSectionScaffold(): void {
   ) as HTMLParagraphElement;
   sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
 
-  section.replaceChildren(title, hint, actionRow, emptyMsg, sectionBody);
+  section.replaceChildren(title, hint, actionRow, govDisabledMsg, emptyMsg, sectionBody);
   bindServerList();
+}
+
+// applyGovernance reflects the org/account MCP policy into the section's held
+// add button + notice element. Thin wrapper over the pure applyMcpGovernance so
+// the DOM effect is unit-testable without initMCP's network side effects.
+function applyGovernance(g: GovernanceStatePayload): void {
+  if (addBtn !== null && govDisabledMsg !== null) {
+    applyMcpGovernance(g, addBtn, govDisabledMsg);
+  }
+}
+
+/** Apply the MCP governance policy to a given add-button + notice element: when
+ *  governance is KNOWN and mcp_enabled is false, the add-server affordance is
+ *  disabled and the notice (with disabledReason when present) is shown. An
+ *  unknown policy leaves the affordance enabled (permissive default). Exported
+ *  for focused testing. */
+export function applyMcpGovernance(
+  g: GovernanceStatePayload,
+  add: HTMLButtonElement,
+  notice: HTMLElement,
+): void {
+  const disabled = g.known && !g.features.mcp_enabled;
+  add.disabled = disabled;
+  add.setAttribute(
+    "data-tooltip",
+    disabled ? "MCP is disabled by your organization" : "Connect integration",
+  );
+  notice.hidden = !disabled;
+  if (disabled) {
+    const reason = (g.disabled_reason ?? "").trim();
+    notice.textContent =
+      reason !== ""
+        ? `MCP integrations are disabled by your organization: ${reason}`
+        : "MCP integrations are disabled by your organization.";
+  }
 }
 
 // --- Reactive server list ---
@@ -154,9 +217,23 @@ function mountRow(s: Server, id: string): HTMLElement {
   const meta = el("div", { className: "mcp-row-meta" });
   const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
 
+  const reconnectBtn = renderReconnectBtn(id, s);
   const editBtn = renderEditBtn(s, cleanups);
   const deleteBtn = renderDeleteBtn(s, cleanups);
-  const actions = el("div", { className: "mcp-row-actions" }, editBtn, deleteBtn);
+  const actions = el("div", { className: "mcp-row-actions" }, reconnectBtn, editBtn, deleteBtn);
+
+  // Discovery disclosure (prompts & resources) — lives in the row body,
+  // rendered by its own effect so it re-renders only when THIS server's
+  // discovery changes (independent of the status/prewarm tier below).
+  const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
+  body.appendChild(discoveryBox);
+  cleanups.push(
+    effect(() => {
+      const cur = servers.signalFor(id)?.value ?? s;
+      const disc = discoverySignalFor(cur.name).value;
+      renderDiscovery(discoveryBox, cur.name, disc, cur.enabled);
+    }),
+  );
 
   const row = el(
     "div",
@@ -184,6 +261,10 @@ function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st);
       meta.textContent = renderMeta(cur, st);
+
+      // Reconnect only makes sense when a live bridge could hold this
+      // server's connection: enabled and past the "idle" (no-bridge) state.
+      reconnectBtn.hidden = !cur.enabled || st.state === "idle";
 
       if (cur.enabled && st.state === "needs_auth") {
         if (oauthPill === null || oauthUrl !== st.oauth_url) {
@@ -291,15 +372,6 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
   ) as HTMLAnchorElement;
 }
 
-function isSafeURL(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
   const btn = el("button", {
     type: "button",
@@ -347,6 +419,253 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
   return btn;
 }
 
+function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn",
+    "data-tooltip": "Reconnect",
+    "aria-label": `Reconnect ${initial.name}`,
+  }) as HTMLButtonElement;
+  btn.innerHTML = ICON_REFRESH;
+  btn.addEventListener("click", () => {
+    if (btn.disabled) {
+      return;
+    }
+    const cur = servers.signalFor(id)?.value ?? initial;
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+    btn.innerHTML = ICON_SPINNER;
+    void reconnectServer
+      .dispatch(
+        { server: cur.name },
+        {
+          onSuccess: (res) => {
+            // Server-canonical: the reconnect re-emits _kiro/mcp/status on
+            // every bridge; refetch to pull the refreshed dot + discovery.
+            mcpState.refetchStatus();
+            if (res.reconnected === 0) {
+              showToast("No active chat to reconnect through — open a chat first.", "info");
+            }
+          },
+        },
+      )
+      .finally(() => {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.innerHTML = ICON_REFRESH;
+      });
+  });
+  return btn;
+}
+
+// --- Discovery (prompts & resources) surface ---
+
+/** Pick the display string, falling back when the primary is empty. */
+function orFallback(primary: string, fallback: string): string {
+  return primary !== "" ? primary : fallback;
+}
+
+/** (Re)render the per-server prompts/resources disclosure. Hidden when the
+ *  server is disabled or advertises nothing. */
+function renderDiscovery(
+  box: HTMLDivElement,
+  serverName: string,
+  disc: ServerDiscovery,
+  enabled: boolean,
+): void {
+  box.replaceChildren();
+  const count = disc.prompts.length + disc.resources.length;
+  if (!enabled || count === 0) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+
+  const details = el("details", { className: "mcp-discovery-details" });
+  details.appendChild(
+    el("summary", { className: "mcp-discovery-summary" }, `Prompts & resources (${String(count)})`),
+  );
+  if (disc.prompts.length > 0) {
+    details.appendChild(el("div", { className: "mcp-disc-group" }, "Prompts"));
+    for (const p of disc.prompts) {
+      details.appendChild(buildPromptItem(serverName, p));
+    }
+  }
+  if (disc.resources.length > 0) {
+    details.appendChild(el("div", { className: "mcp-disc-group" }, "Resources"));
+    for (const res of disc.resources) {
+      details.appendChild(buildResourceItem(serverName, res));
+    }
+  }
+  box.appendChild(details);
+}
+
+/** Build the label (name + optional description) shared by disc items. */
+function discItemLabel(name: string, description: string | undefined): HTMLElement {
+  const label = el(
+    "div",
+    { className: "mcp-disc-item-label" },
+    el("span", { className: "mcp-disc-item-name" }, name),
+  );
+  if (description !== undefined && description !== "") {
+    label.appendChild(el("span", { className: "mcp-disc-item-desc" }, description));
+  }
+  return label;
+}
+
+function buildResourceItem(serverName: string, res: MCPResourceInfo): HTMLElement {
+  const label = discItemLabel(orFallback(res.name, res.uri), res.description);
+  const btn = el(
+    "button",
+    { type: "button", className: "mcp-disc-insert", "data-tooltip": "Insert into prompt" },
+    "Insert",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    void insertResource(serverName, res, btn);
+  });
+  return el("div", { className: "mcp-disc-item" }, label, btn);
+}
+
+function buildPromptItem(serverName: string, p: MCPPromptInfo): HTMLElement {
+  const displayName = orFallback(p.name, p.prompt_name);
+  const args = p.arguments ?? [];
+  const item = el("div", { className: "mcp-disc-item" }, discItemLabel(displayName, p.description));
+
+  if (args.length === 0) {
+    const btn = el(
+      "button",
+      { type: "button", className: "mcp-disc-insert", "data-tooltip": "Insert into prompt" },
+      "Insert",
+    ) as HTMLButtonElement;
+    btn.addEventListener("click", () => {
+      void insertPrompt(serverName, p, {}, btn);
+    });
+    item.appendChild(btn);
+    return item;
+  }
+
+  // Prompt with arguments: a toggle reveals an inline form; submit inserts.
+  const form = buildArgForm(serverName, p, args);
+  form.hidden = true;
+  const toggleBtn = el(
+    "button",
+    { type: "button", className: "mcp-disc-insert", "data-tooltip": "Fill in arguments" },
+    "Fill in…",
+  ) as HTMLButtonElement;
+  toggleBtn.addEventListener("click", () => {
+    form.hidden = !form.hidden;
+  });
+  item.appendChild(toggleBtn);
+  const wrap = el("div", { className: "mcp-disc-prompt-wrap" }, item, form);
+  return wrap;
+}
+
+function buildArgForm(serverName: string, p: MCPPromptInfo, args: MCPPromptArg[]): HTMLFormElement {
+  const form = el("form", { className: "mcp-disc-arg-form" }) as HTMLFormElement;
+  const inputs = new Map<string, HTMLInputElement>();
+  for (const a of args) {
+    const input = el("input", {
+      type: "text",
+      className: "mcp-disc-arg-input",
+      placeholder: orFallback(a.description ?? "", a.name),
+    }) as HTMLInputElement;
+    if (a.required === true) {
+      input.required = true;
+    }
+    inputs.set(a.name, input);
+    form.appendChild(
+      el(
+        "label",
+        { className: "mcp-disc-arg-row" },
+        el(
+          "span",
+          { className: "mcp-disc-arg-name" },
+          a.required === true ? `${a.name} *` : a.name,
+        ),
+        input,
+      ),
+    );
+  }
+  const submit = el(
+    "button",
+    { type: "submit", className: "mcp-disc-insert" },
+    "Insert",
+  ) as HTMLButtonElement;
+  form.appendChild(submit);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const values: Record<string, string> = {};
+    for (const [name, input] of inputs) {
+      if (input.value !== "") {
+        values[name] = input.value;
+      }
+    }
+    void insertPrompt(serverName, p, values, submit);
+  });
+  return form;
+}
+
+async function insertPrompt(
+  serverName: string,
+  p: MCPPromptInfo,
+  args: Record<string, string>,
+  btn: HTMLButtonElement,
+): Promise<void> {
+  btn.disabled = true;
+  try {
+    const res = await getPromptContent.dispatch({
+      server: serverName,
+      prompt: p.prompt_name,
+      arguments: args,
+    });
+    if (res === null) {
+      return;
+    }
+    const text = promptResultToText(res);
+    if (text === "") {
+      showToast("Prompt returned no text.", "info");
+      return;
+    }
+    insertIntoPrompt(text);
+    showToast(`Inserted "${orFallback(p.name, p.prompt_name)}" into the prompt.`, "success");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function insertResource(
+  serverName: string,
+  res: MCPResourceInfo,
+  btn: HTMLButtonElement,
+): Promise<void> {
+  btn.disabled = true;
+  try {
+    const result = await getResourceContent.dispatch({ server: serverName, uri: res.uri });
+    if (result === null) {
+      return;
+    }
+    const text = resourceResultToText(result);
+    if (text === "") {
+      showToast("Resource has no text content to insert.", "info");
+      return;
+    }
+    const heading = orFallback(res.name, res.uri);
+    insertIntoPrompt(`# ${heading}\n\n${text}`);
+    showToast(`Inserted "${heading}" into the prompt.`, "success");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Append text to the prompt input (preserving any draft) and notify the
+ *  prompt-input module so it re-sizes + re-enables the send button. */
+function insertIntoPrompt(text: string): void {
+  const input = $.promptInput;
+  input.value = input.value === "" ? text : `${input.value}\n\n${text}`;
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 // --- Modal openers ---
 
 function openAddModal(): void {
@@ -385,6 +704,9 @@ export function initMCP(): void {
   });
   onSSE("mcp_connected", (_chat, p) => {
     mcpState.setStatus(p.server, { name: p.server, state: "connected" });
+    // Pull the newly-connected server's advertised prompts/resources (they
+    // ride /api/mcp/status, not the mcp_connected payload). Coalesced.
+    mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
     mcpState.setStatus(p.server, { name: p.server, state: "needs_auth", oauth_url: p.url });
@@ -398,6 +720,10 @@ export function initMCP(): void {
   onSSE("mcp_prewarm", (_chat, p) => {
     updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
   });
+
+  // Reflect the org MCP policy (disable add + show notice when suppressed).
+  // Fires immediately if governance is already known, then on every change.
+  onGovernanceChange(applyGovernance);
 
   mcpState.refetchServers();
   mcpState.refetchStatus();

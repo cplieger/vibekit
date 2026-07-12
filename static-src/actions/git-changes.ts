@@ -114,7 +114,7 @@ export const commit = apiAction<{ repo: string; message: string }>({
   // retrying would create a duplicate commit.
 });
 
-export const generateCommitMessage = apiAction<{ repo: string }, { message?: string }>({
+export const generateCommitMessage = apiAction<{ repo: string }, { output?: string }>({
   name: "git.generate_message",
   scope: (args) => "git:" + args.repo,
   dedupe: (args) => args.repo,

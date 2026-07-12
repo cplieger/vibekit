@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +24,8 @@ type fsWriteParams struct {
 
 // newFSWriteMsg constructs the minimum RPCResponse needed to drive
 // respondFSWrite. ID must be non-nil so the handler routes a response
-// back to the bridge.
+// back to the bridge. A blank toolCallID exercises the v3-real path
+// (no toolCallId in params → the store key derives from msg.ID).
 func newFSWriteMsg(t *testing.T, path, content, toolCallID string) *api.RPCResponse {
 	t.Helper()
 	raw := mustJSON(t, fsWriteParams{Path: path, Content: content, ToolCallID: toolCallID})
@@ -43,10 +45,36 @@ func hubWithWorkDir(t *testing.T) (*Hub, *fakeChatStore, string) {
 	cs := newFakeChatStore()
 	workDir := t.TempDir()
 	factory := func() api.ACPBridge { return newFakeBridge() }
-	h := New(workDir, factory, cs, func() []string { return nil })
+	h := New(workDir, factory, cs)
 	cs.SetBroadcaster(h)
 	h.mcpRegistry.signalReady()
 	return h, cs, workDir
+}
+
+// supervisedChat marks chatID as an existing supervised chat.
+func supervisedChat(t *testing.T, cs *fakeChatStore, chatID api.ChatID) {
+	t.Helper()
+	_ = cs.Mutate(context.Background(), chatID, func(c *api.Chat, _ bool) bool {
+		c.Name = string(chatID)
+		c.SupervisedMode = true
+		return true
+	})
+}
+
+// waitStaged polls until chatID has exactly one staged op, then returns
+// its (chat-unique) tool_call_id. The store key is computed internally
+// (fs-<chat>-<...>), so tests look it up rather than hardcode the format.
+func waitStaged(t *testing.T, h *Hub, chatID api.ChatID) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.perm.pending.CountForChat(chatID) == 1 {
+			return h.perm.pending.ListForChat(chatID)[0].ToolCallID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("op not staged for %s within 2s; count=%d", chatID, h.perm.pending.CountForChat(chatID))
+	return ""
 }
 
 // TestFSWrite_SupervisedBlocksUntilAccept proves the core invariant:
@@ -55,11 +83,7 @@ func hubWithWorkDir(t *testing.T) (*Hub, *fakeChatStore, string) {
 func TestFSWrite_SupervisedBlocksUntilAccept(t *testing.T) {
 	t.Parallel()
 	h, cs, workDir := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	// Kick off respondFSWrite in a goroutine so we can observe the
 	// block. It will park on the resume channel until Resolve fires.
@@ -70,18 +94,7 @@ func TestFSWrite_SupervisedBlocksUntilAccept(t *testing.T) {
 		close(done)
 	}()
 
-	// Poll for the staged op to appear. CountForChat goes 0→1 once
-	// Add completes inside stageFSWrite.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if h.perm.pending.CountForChat("c1") != 1 {
-		t.Fatalf("op not staged within 1s; count=%d", h.perm.pending.CountForChat("c1"))
-	}
+	id := waitStaged(t, h, "c1")
 
 	// File must not exist yet.
 	abs := filepath.Join(workDir, "hello.txt")
@@ -90,7 +103,7 @@ func TestFSWrite_SupervisedBlocksUntilAccept(t *testing.T) {
 	}
 
 	// Resolve accept — write should land.
-	if _, err := h.perm.pending.Resolve(context.Background(), "tc-1", api.PendingActionAccept); err != nil {
+	if _, err := h.perm.pending.Resolve(context.Background(), "c1", id, api.PendingActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	select {
@@ -112,11 +125,7 @@ func TestFSWrite_SupervisedBlocksUntilAccept(t *testing.T) {
 func TestFSWrite_SupervisedRejectLeavesFileUntouched(t *testing.T) {
 	t.Parallel()
 	h, cs, workDir := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	// Pre-create the file so we can verify it wasn't touched.
 	abs := filepath.Join(workDir, "sticky.txt")
@@ -131,16 +140,8 @@ func TestFSWrite_SupervisedRejectLeavesFileUntouched(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for staging.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	if _, err := h.perm.pending.Resolve(context.Background(), "tc-7", api.PendingActionReject); err != nil {
+	id := waitStaged(t, h, "c1")
+	if _, err := h.perm.pending.Resolve(context.Background(), "c1", id, api.PendingActionReject); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	<-done
@@ -183,11 +184,7 @@ func TestFSWrite_NotSupervisedWritesImmediately(t *testing.T) {
 func TestFSWrite_SupervisedPathBusy(t *testing.T) {
 	t.Parallel()
 	h, cs, workDir := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -195,14 +192,7 @@ func TestFSWrite_SupervisedPathBusy(t *testing.T) {
 	msg2 := newFSWriteMsg(t, "dup.txt", "second", "tc-b")
 	go func() { defer wg.Done(); h.respondFSWrite(context.Background(), "c1", msg1) }()
 
-	// Wait for the first to stage.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	id := waitStaged(t, h, "c1")
 
 	// Fire the second — path-busy should reject it immediately.
 	go func() { defer wg.Done(); h.respondFSWrite(context.Background(), "c1", msg2) }()
@@ -214,7 +204,7 @@ func TestFSWrite_SupervisedPathBusy(t *testing.T) {
 	}
 
 	// Let the first op drain so the goroutines exit cleanly.
-	if _, err := h.perm.pending.Resolve(context.Background(), "tc-a", api.PendingActionReject); err != nil {
+	if _, err := h.perm.pending.Resolve(context.Background(), "c1", id, api.PendingActionReject); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	wg.Wait()
@@ -231,26 +221,14 @@ func TestFSWrite_SupervisedPathBusy(t *testing.T) {
 func TestFSWrite_SupervisedBroadcastsEvents(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	msg := newFSWriteMsg(t, "evt.txt", "x", "tc-z")
 	done := make(chan struct{})
 	go func() { h.respondFSWrite(context.Background(), "c1", msg); close(done) }()
 
-	// Wait for stage.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	if _, err := h.perm.pending.Resolve(context.Background(), "tc-z", api.PendingActionAccept); err != nil {
+	id := waitStaged(t, h, "c1")
+	if _, err := h.perm.pending.Resolve(context.Background(), "c1", id, api.PendingActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	<-done
@@ -271,11 +249,7 @@ func TestFSWrite_SupervisedBroadcastsEvents(t *testing.T) {
 func TestFSWrite_SupervisedTruncatesOversizedContent(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	// Build content just over the cap.
 	big := make([]byte, fsWriteCap)
@@ -290,13 +264,11 @@ func TestFSWrite_SupervisedTruncatesOversizedContent(t *testing.T) {
 	// generous because this test stages ~4 MiB under the race
 	// detector — race instrumentation slows every syscall ~10x,
 	// and the SHA-256 hash on the oversized blob chews up CPU.
-	// A 10s cap keeps us well clear of spurious flakes without
-	// blocking CI if something genuinely deadlocked.
 	deadline := time.Now().Add(10 * time.Second)
 	var snap api.PendingChange
 	for time.Now().Before(deadline) {
-		if s, ok := h.perm.pending.Get("tc-big"); ok {
-			snap = s
+		if list := h.perm.pending.ListForChat("c1"); len(list) == 1 {
+			snap = list[0]
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -306,14 +278,12 @@ func TestFSWrite_SupervisedTruncatesOversizedContent(t *testing.T) {
 	}
 	// Content was exactly fsWriteCap; truncateForStaging respects the
 	// pending.Cap (identical to fsWriteCap), so Truncated stays false.
-	// If the write cap or staging cap diverge in the future, this
-	// test will flag it.
 	if snap.Truncated {
 		t.Errorf("Truncated=true for content at cap boundary")
 	}
 
 	// Clean up.
-	_, _ = h.perm.pending.Resolve(context.Background(), "tc-big", api.PendingActionReject)
+	_, _ = h.perm.pending.Resolve(context.Background(), "c1", snap.ToolCallID, api.PendingActionReject)
 	<-done
 }
 
@@ -321,16 +291,10 @@ func TestFSWrite_SupervisedTruncatesOversizedContent(t *testing.T) {
 // merged-text override path: when a user resolves via
 // resolve_pending_change_partial, the fs handler writes the caller-
 // supplied merged text instead of the agent's proposed p.Content.
-// Also verifies the side map is cleared on read so subsequent ops
-// don't leak state.
 func TestFSWrite_SupervisedPartialMergeOverridesContent(t *testing.T) {
 	t.Parallel()
 	h, cs, workDir := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	msg := newFSWriteMsg(t, "merge.txt", "agent wanted this", "tc-merge")
 	done := make(chan struct{})
@@ -339,18 +303,11 @@ func TestFSWrite_SupervisedPartialMergeOverridesContent(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for staging.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	id := waitStaged(t, h, "c1")
 
 	// Resolve with merged text — simulates the user accepting only
 	// some hunks and sending the partial merge.
-	if _, err := h.perm.pending.ResolveWithText(context.Background(), "tc-merge", "user edited version"); err != nil {
+	if _, err := h.perm.pending.ResolveWithText(context.Background(), "c1", id, "user edited version"); err != nil {
 		t.Fatalf("ResolveWithText: %v", err)
 	}
 	<-done
@@ -365,17 +322,54 @@ func TestFSWrite_SupervisedPartialMergeOverridesContent(t *testing.T) {
 	}
 }
 
+// TestFSWrite_SupervisedEmptyMergeWritesEmpty pins fix #4: a partial
+// merge that resolves to EMPTY text must write the empty result, not
+// silently fall back to the agent's proposed content. Before the fix,
+// override=="" was indistinguishable from "no override" (plain accept),
+// so an empty user merge wrote the agent's original text.
+func TestFSWrite_SupervisedEmptyMergeWritesEmpty(t *testing.T) {
+	t.Parallel()
+	h, cs, workDir := hubWithWorkDir(t)
+	supervisedChat(t, cs, "c1")
+
+	// Pre-create the file with content so we can prove the empty merge
+	// (not the agent's proposal) landed.
+	abs := filepath.Join(workDir, "empty-merge.txt")
+	if err := os.WriteFile(abs, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := newFSWriteMsg(t, "empty-merge.txt", "AGENT PROPOSED CONTENT", "tc-empty")
+	done := make(chan struct{})
+	go func() {
+		h.respondFSWrite(context.Background(), "c1", msg)
+		close(done)
+	}()
+
+	id := waitStaged(t, h, "c1")
+
+	// User merges to empty (rejected every hunk of a full-file replace).
+	if _, err := h.perm.pending.ResolveWithText(context.Background(), "c1", id, ""); err != nil {
+		t.Fatalf("ResolveWithText(empty): %v", err)
+	}
+	<-done
+
+	data, err := os.ReadFile(abs) // #nosec G304 -- test path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := string(data); got != "" {
+		t.Fatalf("file content = %q, want empty (empty merge must override agent content)", got)
+	}
+}
+
 // TestFSWrite_PerTurnTrustBypassesStaging pins the trust-remaining
 // path: once the chat has perTurnTrust set, subsequent fs writes
 // skip the staging gate entirely even though SupervisedMode is true.
 func TestFSWrite_PerTurnTrustBypassesStaging(t *testing.T) {
 	t.Parallel()
 	h, cs, workDir := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	// Turn on per-turn trust. Subsequent writes must not stage.
 	h.perm.supervised.SetTrust("c1")
@@ -405,11 +399,7 @@ func TestFSWrite_PerTurnTrustBypassesStaging(t *testing.T) {
 func TestFSWrite_PerTurnTrustClearedRestoresStaging(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := hubWithWorkDir(t)
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	h.perm.supervised.SetTrust("c1")
 	h.perm.supervised.ClearTrust("c1", api.ClearReasonTurnEnded)
@@ -421,31 +411,85 @@ func TestFSWrite_PerTurnTrustClearedRestoresStaging(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if h.perm.pending.CountForChat("c1") != 1 {
-		t.Fatalf("op not staged after trust cleared: count=%d",
-			h.perm.pending.CountForChat("c1"))
-	}
+	id := waitStaged(t, h, "c1")
 
 	// Clean up so the goroutine exits.
-	if _, err := h.perm.pending.Resolve(context.Background(), "tc-restage", "accept"); err != nil {
+	if _, err := h.perm.pending.Resolve(context.Background(), "c1", id, api.PendingActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	<-done
+}
+
+// TestFSWrite_TwoChatsSameMsgIDNoCollision pins fix #1: two concurrent
+// supervised chats staging a write with the SAME per-bridge JSON-RPC id
+// (msg.ID=42, and no toolCallId so the v3-real msg.ID branch fires) must
+// produce DISTINCT store ops. Before the chat-unique keying they both
+// keyed "fs-42": the second Add overwrote the first's op pointer, and
+// ListForChat for one chat leaked the OTHER chat's snapshot.
+func TestFSWrite_TwoChatsSameMsgIDNoCollision(t *testing.T) {
+	t.Parallel()
+	h, cs, _ := hubWithWorkDir(t)
+	supervisedChat(t, cs, "c1")
+	supervisedChat(t, cs, "c2")
+
+	// Same message object (same msg.ID, no toolCallId) staged from both
+	// chats concurrently.
+	msg := newFSWriteMsg(t, "f.txt", "content", "")
+	done1 := make(chan struct{})
+	done2 := make(chan struct{})
+	go func() { h.respondFSWrite(context.Background(), "c1", msg); close(done1) }()
+	go func() { h.respondFSWrite(context.Background(), "c2", msg); close(done2) }()
+
+	id1 := waitStaged(t, h, "c1")
+	id2 := waitStaged(t, h, "c2")
+
+	if id1 == id2 {
+		t.Fatalf("colliding store key for two chats sharing msg.ID: %q", id1)
+	}
+	// Each chat's op must belong to that chat (no cross-chat leak).
+	if snap := h.perm.pending.ListForChat("c1")[0]; snap.ChatID != "c1" {
+		t.Errorf("c1 op leaked ChatID=%q, want c1", snap.ChatID)
+	}
+	if snap := h.perm.pending.ListForChat("c2")[0]; snap.ChatID != "c2" {
+		t.Errorf("c2 op leaked ChatID=%q, want c2", snap.ChatID)
+	}
+
+	// Drain both.
+	_, _ = h.perm.pending.Resolve(context.Background(), "c1", id1, api.PendingActionReject)
+	_, _ = h.perm.pending.Resolve(context.Background(), "c2", id2, api.PendingActionReject)
+	<-done1
+	<-done2
+}
+
+// TestExtractToolCallID_ChatUnique unit-tests the keying directly: the
+// same request yields distinct keys per chat and a stable key per chat.
+func TestExtractToolCallID_ChatUnique(t *testing.T) {
+	t.Parallel()
+	id := int64(7)
+	msg := &api.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{})}
+	a := extractToolCallID("chatA", msg)
+	b := extractToolCallID("chatB", msg)
+	if a == b {
+		t.Fatalf("same key for different chats: %q", a)
+	}
+	if a != extractToolCallID("chatA", msg) {
+		t.Errorf("key not stable for the same chat: %q vs %q", a, extractToolCallID("chatA", msg))
+	}
+	// A supplied toolCallId is also chat-prefixed.
+	withTC := &api.RPCResponse{ID: &id, Params: mustJSON(t, map[string]string{"toolCallId": "abc"})}
+	if got := extractToolCallID("chatA", withTC); !strings.Contains(got, "chatA") {
+		t.Errorf("toolCallId branch not chat-scoped: %q", got)
+	}
 }
 
 // Appease the unused-import check for sync when future tests need it;
 // keeping the variable alive avoids toolchain noise during iteration.
 var _ = sync.Mutex{}
 
-// readStagedOld reads a file of exactly fsReadCap bytes successfully
-// (the guard is a strict `>`) and rejects one byte over the cap.
+// TestReadStagedOld_ExactCapBoundary reads a file of exactly fsReadCap
+// bytes successfully (the guard is a strict `>`); a file one byte over
+// the cap now stages BLIND (empty OldText + truncated=true, no error) —
+// fix #5 — rather than failing the write outright.
 func TestReadStagedOld_ExactCapBoundary(t *testing.T) {
 	dir := t.TempDir()
 
@@ -453,12 +497,15 @@ func TestReadStagedOld_ExactCapBoundary(t *testing.T) {
 	if err := os.WriteFile(exact, bytes.Repeat([]byte("a"), fsReadCap), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldText, kind, err := readStagedOld(exact)
+	oldText, kind, truncated, err := readStagedOld(exact)
 	if err != nil {
 		t.Fatalf("readStagedOld(exact cap) err = %v, want nil (boundary is strict >)", err)
 	}
 	if len(oldText) != fsReadCap {
 		t.Errorf("readStagedOld(exact cap) len = %d, want %d", len(oldText), fsReadCap)
+	}
+	if truncated {
+		t.Error("readStagedOld(exact cap) truncated = true, want false")
 	}
 	if kind != pending.KindEdit {
 		t.Errorf("readStagedOld(exact cap) kind = %q, want %q", kind, pending.KindEdit)
@@ -468,8 +515,18 @@ func TestReadStagedOld_ExactCapBoundary(t *testing.T) {
 	if err := os.WriteFile(over, bytes.Repeat([]byte("b"), fsReadCap+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readStagedOld(over); err == nil {
-		t.Errorf("readStagedOld(cap+1) err = nil, want a cap-exceeded error")
+	oldOver, kindOver, truncatedOver, errOver := readStagedOld(over)
+	if errOver != nil {
+		t.Errorf("readStagedOld(cap+1) err = %v, want nil (stage blind)", errOver)
+	}
+	if oldOver != "" {
+		t.Errorf("readStagedOld(cap+1) oldText = %q, want empty (stage blind)", oldOver)
+	}
+	if !truncatedOver {
+		t.Error("readStagedOld(cap+1) truncated = false, want true (stage blind)")
+	}
+	if kindOver != pending.KindEdit {
+		t.Errorf("readStagedOld(cap+1) kind = %q, want %q", kindOver, pending.KindEdit)
 	}
 }
 
@@ -478,11 +535,7 @@ func TestReadStagedOld_ExactCapBoundary(t *testing.T) {
 func TestStageFSWrite_KeepsNormalizedRelOnSuccess(t *testing.T) {
 	h, cs, _ := hubWithWorkDir(t)
 	ctx := context.Background()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
-		c.Name = "A"
-		c.SupervisedMode = true
-		return true
-	})
+	supervisedChat(t, cs, "c1")
 
 	msg := newFSWriteMsg(t, "./hello.txt", "x", "tc-staging")
 	done := make(chan struct{})
@@ -491,14 +544,8 @@ func TestStageFSWrite_KeepsNormalizedRelOnSuccess(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat("c1") == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	snap, ok := h.perm.pending.Get("tc-staging")
+	id := waitStaged(t, h, "c1")
+	snap, ok := h.perm.pending.Get(id)
 	if !ok {
 		t.Fatal("staged op not found")
 	}
@@ -507,7 +554,7 @@ func TestStageFSWrite_KeepsNormalizedRelOnSuccess(t *testing.T) {
 	}
 
 	// Unblock the staging goroutine.
-	if _, err := h.perm.pending.Resolve(ctx, "tc-staging", api.PendingActionAccept); err != nil {
+	if _, err := h.perm.pending.Resolve(ctx, "c1", id, api.PendingActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	select {

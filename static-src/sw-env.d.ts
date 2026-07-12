@@ -37,6 +37,11 @@ interface PushSubscriptionChangeEvent extends ExtendableEvent {
   readonly oldSubscription: PushSubscription | null;
 }
 
+interface FetchEvent extends ExtendableEvent {
+  readonly request: Request;
+  respondWith(response: Response | Promise<Response>): void;
+}
+
 interface ExtendableEvent extends Event {
   waitUntil(promise: Promise<unknown>): void;
 }

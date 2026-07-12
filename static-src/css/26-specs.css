@@ -1,0 +1,344 @@
+/* Specs board (#specs-view). A live, read-only requirements→design→tasks
+   view of .kiro/specs. See static-src/specs.ts. */
+
+.specs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* --- Spec card --- */
+
+.spec-card {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 12%),
+    0 4px 12px rgb(0 0 0 / 8%);
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+}
+
+@starting-style {
+  .spec-card {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.spec-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.spec-name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.spec-updated {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Document trio --- */
+
+.spec-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.spec-doc {
+  font-size: 0.8125rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: calc(var(--r) / 2);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+button.spec-doc:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+  border-color: var(--c-accent);
+}
+
+.spec-doc:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+.spec-doc-missing {
+  cursor: default;
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+/* --- Progress + inline states --- */
+
+.spec-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.spec-progress-count {
+  font-size: 0.75rem;
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.spec-inline-error {
+  font-size: 0.8125rem;
+  color: var(--c-red);
+}
+
+.spec-empty-tasks,
+.spec-loading {
+  font-size: 0.8125rem;
+  color: var(--c-text-tertiary);
+  padding: var(--sp-2) 0;
+}
+
+.spec-empty-board {
+  text-align: center;
+}
+
+/* --- Task tree --- */
+
+.spec-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.spec-node-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.3125rem var(--sp-2);
+  padding-inline-start: calc(var(--sp-2) + var(--depth, 0) * 1.125rem);
+  border-radius: calc(var(--r) / 2);
+}
+
+.spec-node-row:hover {
+  background: var(--c-bg-tertiary);
+}
+
+/* Collapse toggle (chevron drawn in CSS; rotates on collapse). */
+.spec-toggle,
+.spec-toggle-spacer {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+}
+
+.spec-toggle {
+  position: relative;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--c-text-tertiary);
+  transition: transform var(--dur-standard) var(--ease-spring);
+}
+
+.spec-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid currentcolor;
+  border-bottom: 2px solid currentcolor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.spec-node.collapsed > .spec-node-row .spec-toggle {
+  transform: rotate(-90deg);
+}
+
+.spec-toggle:hover {
+  color: var(--c-text-primary);
+}
+
+.spec-toggle:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Markdown checkbox status glyph. */
+.spec-check {
+  flex-shrink: 0;
+  position: relative;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid var(--c-text-tertiary);
+  box-sizing: border-box;
+}
+
+.spec-check[data-status="completed"] {
+  background: var(--c-green);
+  border-color: var(--c-green);
+}
+
+.spec-check[data-status="completed"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0.25rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--c-bg-secondary);
+  border-bottom: 2px solid var(--c-bg-secondary);
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.spec-check[data-status="in_progress"] {
+  border-color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 35%, transparent);
+}
+
+.spec-check[data-status="queued"] {
+  border-color: var(--c-yellow);
+}
+
+.spec-task-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* --- Badges --- */
+
+.spec-badge {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.spec-badge-optional {
+  color: var(--c-text-tertiary);
+  border-color: var(--c-border);
+}
+
+.spec-badge-exec.exec-running {
+  color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 16%, transparent);
+  animation: vk-breathe 1.6s var(--ease-standard) infinite;
+}
+
+.spec-badge-exec.exec-succeed,
+.spec-badge-pbt.pbt-passed {
+  color: var(--c-green);
+  background: color-mix(in srgb, var(--c-green) 16%, transparent);
+}
+
+.spec-badge-exec.exec-failed,
+.spec-badge-pbt.pbt-failed {
+  color: var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 16%, transparent);
+}
+
+.spec-badge-exec.exec-queued {
+  color: var(--c-yellow);
+  background: color-mix(in srgb, var(--c-yellow) 16%, transparent);
+}
+
+.spec-badge-exec.exec-aborted,
+.spec-badge-pbt.pbt-not_run {
+  color: var(--c-text-tertiary);
+  background: var(--c-bg-tertiary);
+}
+
+.spec-badge-pbt.pbt-unexpected_pass {
+  color: var(--c-yellow);
+  background: color-mix(in srgb, var(--c-yellow) 16%, transparent);
+}
+
+/* --- PBT failing-example detail --- */
+
+.spec-pbt-detail {
+  margin-inline-start: calc(var(--sp-2) + var(--depth, 0) * 1.125rem + 1.5rem);
+  margin-block: 2px var(--sp-1);
+}
+
+.spec-pbt-detail > summary {
+  font-size: 0.75rem;
+  color: var(--c-red);
+  cursor: pointer;
+}
+
+.spec-pbt-example {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-2);
+  border-radius: calc(var(--r) / 2);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--c-text-secondary);
+}
+
+/* --- Collapsible children (height 0 ↔ auto via interpolate-size) --- */
+
+.spec-node-children {
+  overflow: hidden;
+  height: auto;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.spec-node.collapsed > .spec-node-children {
+  height: 0;
+}
+
+/* --- Mobile: 44px hit targets --- */
+
+@media (width <= 40rem) {
+  .spec-doc {
+    padding: 0.5rem 0.75rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .spec-toggle,
+  .spec-toggle-spacer {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  .spec-node-row {
+    padding-block: 0.5rem;
+  }
+}

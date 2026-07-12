@@ -78,7 +78,7 @@ var statusBinaries = []string{
 	"cargo", "rustc",
 	"uv", "uvx",
 	"gh", "glab", "tea",
-	"typescript-language-server", "tsgo",
+	"typescript-language-server", "tsc",
 	"pyright", "pyrefly",
 	"gopls", "rust-analyzer", "clangd",
 	"jdtls", "kotlin-language-server", "solargraph",

@@ -11,10 +11,13 @@
 package forges
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -73,11 +76,7 @@ func (p *giteaProvider) Whoami(ctx context.Context) (*User, error) {
 
 func (p *giteaProvider) userViaAPI(ctx context.Context, login string) (*User, error) {
 	endpoint := fmt.Sprintf("https://%s/api/v1/users/%s", p.host, login)
-	out, err := runCmd(ctx, CmdTimeout, nil, "curl", flagSilent, flagShowError,
-		flagMaxTime, "20",
-		flagHeader, "Accept: application/json",
-		endpoint,
-	)
+	out, err := p.apiGet(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -515,58 +514,99 @@ func (p *giteaProvider) ListLabels(ctx context.Context, repo string) ([]Label, e
 	return labels, nil
 }
 
-// apiGet calls the Gitea API using tea's stored token.
-// Falls back to running curl with the user's token from tea's config.
-// Since tea doesn't have a native "raw API" passthrough, we read its
-// config file (see inject.go for the format) and use curl.
-func (p *giteaProvider) apiGet(ctx context.Context, endpoint string) ([]byte, error) {
+// Gitea/Forgejo REST API access.
+//
+// These calls go through Go's net/http rather than shelling out to
+// curl. That is a deliberate security choice: the auth token is set as
+// an Authorization *header*, so it is never part of a process-argument
+// list. It therefore cannot leak into a cliexec CmdError string (which
+// joins argv), an slog line, or the HTTP error body writeOpsError
+// returns to the browser — the PAT-in-error-response leak the curl-arg
+// approach caused.
+
+// giteaAPIClient is the shared HTTP client for direct Gitea/Forgejo API
+// calls. The timeout mirrors the CLI command timeout so a wedged forge
+// can't pin a request.
+var giteaAPIClient = &http.Client{Timeout: CmdTimeout}
+
+// apiMaxResponseBytes caps how much of an API response body we buffer,
+// mirroring cliexec's output cap.
+const apiMaxResponseBytes = 32 << 20 // 32 MiB
+
+// doAPI performs an authenticated Gitea API request. The token is sent
+// only as an Authorization header, so it is structurally absent from
+// every error this function can return. On a non-2xx status it returns
+// the (token-free) response body plus a status-coded error.
+func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body []byte) ([]byte, error) {
 	token, err := readTeaToken(p.host)
 	if err != nil {
 		return nil, err
 	}
-	args := []string{
-		flagSilent, flagShowError, flagMaxTime, "30",
-		flagHeader, "Accept: application/json",
-		flagHeader, "Authorization: token " + token,
-		endpoint,
+	var reqBody io.Reader
+	if body != nil {
+		reqBody = bytes.NewReader(body)
 	}
-	return runCmd(ctx, CmdTimeout, nil, "curl", args...)
+	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("gitea api: build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "token "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
+	resp, err := giteaAPIClient.Do(req)
+	if err != nil {
+		// The url.Error here carries the method, URL, and cause — none of
+		// which contain the token (it lived only in a request header).
+		return nil, fmt.Errorf("gitea api: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, apiMaxResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("gitea api: read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return data, fmt.Errorf("gitea api: %s %s: status %d: %s",
+			method, endpoint, resp.StatusCode, apiErrorSnippet(data))
+	}
+	return data, nil
+}
+
+// apiErrorSnippet returns a short, single-line summary of a Gitea API
+// error body for an error message. It is derived purely from the
+// server's response, so it never contains the request's auth token.
+func apiErrorSnippet(body []byte) string {
+	var e struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &e) == nil && e.Message != "" {
+		return trimSpace(e.Message)
+	}
+	const maxLen = 256
+	s := trimSpace(string(body))
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return s
+}
+
+// apiGet performs an authenticated GET against the Gitea API.
+func (p *giteaProvider) apiGet(ctx context.Context, endpoint string) ([]byte, error) {
+	return p.doAPI(ctx, http.MethodGet, endpoint, nil)
 }
 
 // apiPostJSON sends a POST with a JSON body to the Gitea API.
 func (p *giteaProvider) apiPostJSON(ctx context.Context, endpoint string, body []byte) error {
-	token, err := readTeaToken(p.host)
-	if err != nil {
-		return err
-	}
-	args := []string{
-		flagSilent, flagShowError, flagMaxTime, "30",
-		"--fail",
-		flagHeader, "Content-Type: application/json",
-		flagHeader, "Authorization: token " + token,
-		"--data-binary", "@-",
-		endpoint,
-	}
-	_, err = runCmd(ctx, CmdTimeout, body, "curl", args...)
+	_, err := p.doAPI(ctx, http.MethodPost, endpoint, body)
 	return err
 }
 
 // apiPatchJSON sends a PATCH with a JSON body.
 func (p *giteaProvider) apiPatchJSON(ctx context.Context, endpoint string, body []byte) error {
-	token, err := readTeaToken(p.host)
-	if err != nil {
-		return err
-	}
-	args := []string{
-		flagSilent, flagShowError, flagMaxTime, "30",
-		"--fail",
-		"--request", "PATCH",
-		flagHeader, "Content-Type: application/json",
-		flagHeader, "Authorization: token " + token,
-		"--data-binary", "@-",
-		endpoint,
-	}
-	_, err = runCmd(ctx, CmdTimeout, body, "curl", args...)
+	_, err := p.doAPI(ctx, http.MethodPatch, endpoint, body)
 	return err
 }
 

@@ -202,3 +202,52 @@ func TestRestoreArchived_NoBroadcastWhenReloadFails(t *testing.T) {
 			api.EventChatCreated, rec.recordedTypes())
 	}
 }
+
+// TestArchive_PreArchiveRunsBeforeFileMoves verifies the pre-archive hook
+// fires while the chat file is still in the active dir (not yet in the
+// archive dir) — the ordering that lets the hub tear down a chat's live
+// bridge / in-flight turn / .partial before the record moves. (fakeStore.Load
+// errors, so the ArchivedAt stamp is a no-op here; the rename still proceeds.)
+func TestArchive_PreArchiveRunsBeforeFileMoves(t *testing.T) {
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, Subdir)
+	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+		t.Fatalf("mkdir archive dir: %v", err)
+	}
+	store := newFakeStore(dir)
+	activePath := filepath.Join(dir, "chatP.json")
+	if err := os.WriteFile(activePath, []byte(`{"id":"chatP"}`), 0o600); err != nil {
+		t.Fatalf("write active chat: %v", err)
+	}
+
+	var (
+		hookRan          bool
+		srcPresentAtHook bool
+		dstAbsentAtHook  bool
+	)
+	svc := New(store, WithPreArchive(func(id api.ChatID) {
+		hookRan = true
+		srcPresentAtHook = exists(t, activePath)
+		dstAbsentAtHook = !exists(t, filepath.Join(archiveDir, string(id)+".json"))
+	}))
+
+	if err := svc.Archive(context.Background(), "chatP"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	if !hookRan {
+		t.Fatal("preArchive hook never ran")
+	}
+	if !srcPresentAtHook {
+		t.Error("preArchive ran AFTER the chat file left the active dir")
+	}
+	if !dstAbsentAtHook {
+		t.Error("preArchive ran AFTER the chat file reached the archive dir")
+	}
+	if exists(t, activePath) {
+		t.Error("chat file not moved out of the active dir")
+	}
+	if !exists(t, filepath.Join(archiveDir, "chatP.json")) {
+		t.Error("chat file not moved into the archive dir")
+	}
+}

@@ -167,6 +167,47 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	}
 }
 
+// TestHandleSSE_ReplaysNewestBeyondClientBuffer pins the replay-cap fix:
+// the per-client delivery channel is sized to the replay ring, so a
+// reconnect that missed more events than the old 256-slot buffer still
+// receives the NEWEST events. Replay yields oldest→newest into a
+// non-blocking send, so an undersized buffer dropped exactly the freshest
+// events — the ones the reconnecting client most needs. Here 299 events
+// replay (past the old 256 cap); the newest (c300) and an event past the
+// old boundary (c290) must both be delivered.
+func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	const n = 300
+	for i := 1; i <= n; i++ {
+		h.emit(api.ServerEvent{Type: "chat_updated", ChatID: api.ChatID(fmt.Sprintf("c%d", i))})
+	}
+
+	// Reconnect asking for everything after event 1 → 299 events to replay,
+	// well beyond the old 256-slot client buffer.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	// The newest event MUST arrive (silently dropped under the old 256 cap).
+	if !strings.Contains(body, fmt.Sprintf(`"chat_id":"c%d"`, n)) {
+		t.Errorf("replay dropped the newest event c%d (client buffer smaller than the replay set)", n)
+	}
+	// An event past the old 256-slot boundary must survive too.
+	if !strings.Contains(body, `"chat_id":"c290"`) {
+		t.Error("replay dropped event c290 past the old 256 client-buffer cap")
+	}
+	// Sanity: the one skipped event (<= Last-Event-ID) is absent.
+	if strings.Contains(body, `"chat_id":"c1"`) {
+		t.Error("replay included c1 which is <= Last-Event-ID")
+	}
+}
+
 func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Use a bare ResponseWriter wrapper that hides Flusher.
