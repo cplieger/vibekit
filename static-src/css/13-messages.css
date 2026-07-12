@@ -543,6 +543,109 @@
   border-left-color: color-mix(in srgb, var(--c-accent) 60%, var(--c-border));
 }
 
+/* Licensed-code attribution footnote (v3 _kiro/code_references). A quiet,
+ * collapsible note at the bottom of an assistant turn: a scale glyph + count
+ * that expands to the license + source link per reference. Turn-scoped (the
+ * wire carries no span to anchor it finer). */
+.code-refs {
+  max-width: var(--content-max-w);
+  margin: var(--sp-1) auto 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.code-refs-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  font-variant-numeric: tabular-nums;
+  transition:
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+/* Scale glyph is the affordance; hide the native disclosure triangle. */
+.code-refs > summary {
+  list-style: none;
+}
+
+.code-refs-summary::-webkit-details-marker {
+  display: none;
+}
+
+.code-refs-summary:hover {
+  color: var(--c-text-secondary);
+  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+}
+
+.code-refs-summary:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+.code-refs-summary svg {
+  flex-shrink: 0;
+}
+
+.code-refs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: var(--sp-1) 0 0;
+  padding-inline-start: var(--sp-4);
+}
+
+.code-refs-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.code-refs-license {
+  font-weight: 600;
+  color: var(--c-text-secondary);
+}
+
+.code-refs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--c-accent);
+  text-decoration: none;
+  touch-action: manipulation;
+  transition: color var(--dur-micro) var(--ease-micro);
+}
+
+.code-refs-link:hover {
+  color: var(--c-accent-hover);
+  text-decoration: underline;
+}
+
+.code-refs-link:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--r);
+}
+
+.code-refs-link svg {
+  flex-shrink: 0;
+}
+
+/* Comfortable touch targets on mobile (vibekit-ui: 44px min). */
+@media (max-width: 40rem) {
+  .code-refs-summary,
+  .code-refs-link {
+    min-height: 44px;
+  }
+}
+
 /* Boundary divider: centered icon + label with horizontal rules on both
    sides. Used for `compressed` and `model_switched` events where a new
    ACP session was started. Distinct from plain system messages so long
@@ -586,6 +689,16 @@
   color: var(--c-red);
 }
 
+/* Infrastructure-Safety ENFORCE block — a change was refused upstream. Red,
+   like `failed`, since it is a hard stop, but keeps its own shield glyph. */
+.boundary-blocked .boundary-icon {
+  color: var(--c-red);
+}
+
+.boundary-blocked .boundary-label {
+  color: var(--c-red);
+}
+
 .boundary-agent .boundary-icon {
   color: var(--c-accent);
 }
@@ -611,6 +724,19 @@
   border-radius: 0.5rem;
   font-size: var(--fs-sm);
   border-left: 3px solid;
+
+  /* Entry animation on bindList insert: fade + subtle drop-in using the app's
+   * enter vocabulary. Exit can't animate (bindList removes nodes
+   * synchronously), so entry is the realistic win. Reduced motion is
+   * neutralised globally by 40-a11y.css. */
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
 .banner-error {
@@ -650,6 +776,35 @@
 
   &:hover {
     opacity: 1;
+  }
+}
+
+/* Clickable affordance inside a banner (e.g. open_external_url's
+ * "Open sign-in page →"). Inherits the banner level colour; keyboard
+ * users get a focus ring. */
+.banner-link {
+  color: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 0.25rem;
+  transition: opacity var(--dur-micro) var(--ease-micro);
+
+  &:hover {
+    opacity: 0.85;
+  }
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+}
+
+@media (width <= 40rem) {
+  .banner-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 }
 

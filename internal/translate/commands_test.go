@@ -1,68 +1,6 @@
 package translate
 
-import (
-	"context"
-	"testing"
-
-	"github.com/cplieger/vibekit/internal/api"
-)
-
-// mcpRec is a recording MCPRecorder counting SetKnownTools calls.
-type mcpRec struct {
-	setKnownCalls int
-}
-
-func (*mcpRec) RecordConnected(context.Context, string)           {}
-func (*mcpRec) RecordOAuth(context.Context, string, string)       {}
-func (*mcpRec) RecordInitFailure(context.Context, string, string) {}
-func (*mcpRec) SignalReady()                                      {}
-func (r *mcpRec) SetKnownTools(_ context.Context, _ string, _ []string) {
-	r.setKnownCalls++
-}
-
-// mcpDeps wraps baseDeps and swaps in the recording MCPRecorder.
-type mcpDeps struct {
-	*baseDeps
-	rec *mcpRec
-}
-
-func (d *mcpDeps) MCPRecorder() MCPRecorder { return d.rec }
-
-var (
-	_ MCPRecorder = (*mcpRec)(nil)
-	_ Deps        = (*mcpDeps)(nil)
-)
-
-// TestCommandsAvailable_SetKnownToolsGate pins that per-server tool
-// names are persisted only when the server reports a non-empty tool
-// list; an empty list is skipped (no SetKnownTools call).
-func TestCommandsAvailable_SetKnownToolsGate(t *testing.T) {
-	tests := []struct {
-		name      string
-		tools     []string
-		wantCalls int
-	}{
-		{name: "NonEmptyToolsPersisted", tools: []string{"a", "b"}, wantCalls: 1},
-		{name: "EmptyToolsSkipped", tools: []string{}, wantCalls: 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := &mcpRec{}
-			deps := &mcpDeps{baseDeps: newBaseDeps(), rec: rec}
-			tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
-			tr.HandleCommandsAvailable(context.Background(), api.ChatID("c1"), &api.RPCResponse{
-				Params: mustJSON(t, map[string]any{
-					"mcpServers": []map[string]any{
-						{"name": "srv", "status": "running", "tools": tt.tools},
-					},
-				}),
-			})
-			if rec.setKnownCalls != tt.wantCalls {
-				t.Errorf("SetKnownTools calls = %d, want %d (tools=%v)", rec.setKnownCalls, tt.wantCalls, tt.tools)
-			}
-		})
-	}
-}
+import "testing"
 
 // TestToAvailableCommands_EmptyVsNonEmpty pins that an empty/nil input
 // returns a nil slice (not a non-nil empty slice) and a non-empty input

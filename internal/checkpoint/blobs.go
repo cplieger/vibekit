@@ -188,15 +188,19 @@ func (b *blobStore) Get(ctx context.Context, hash string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Integrity check: the filename IS the SHA-256 of the content.
-	// If they don't match, the blob is silently corrupted (bitrot,
-	// truncated write, bad sector). Warn loudly but return the data
-	// anyway — partial/corrupt content is better than a hard failure
-	// that blocks the entire restore.
+	// Integrity check: the filename IS the SHA-256 of the content. A
+	// mismatch means the blob is corrupted (bitrot, truncated write, bad
+	// sector). FAIL CLOSED — returning the corrupt bytes would let Restore /
+	// CheckoutFile overwrite a good working-tree file with garbage. The
+	// two-phase journaled restore stages every file before committing, so
+	// this error aborts the restore cleanly and leaves the workspace
+	// untouched (far better than silent data corruption); the HTTP blob
+	// endpoint surfaces it as an error rather than serving a corrupt diff.
 	actual := fmt.Sprintf("%x", sha256.Sum256(data))
 	if actual != hash {
 		slog.Error("checkpoint: blob integrity check FAILED — content does not match hash",
 			"expected", hash, "actual", actual, "path", p, "size", len(data))
+		return nil, fmt.Errorf("%w (expected %s, got %s)", ErrBlobCorrupt, hash, actual)
 	}
 	return data, nil
 }
@@ -257,3 +261,9 @@ var ErrBlobNotFound = errors.New("blob not found")
 // from a generic error so the HTTP layer can map it to 413 without
 // string matching.
 var ErrBlobTooLarge = errors.New("blob too large")
+
+// ErrBlobCorrupt signals that a blob's content hash does not match its
+// filename (bitrot / truncated write / bad sector). Get fails closed on
+// this so a corrupt blob can't be written over a good working-tree file
+// during a restore.
+var ErrBlobCorrupt = errors.New("blob integrity check failed")

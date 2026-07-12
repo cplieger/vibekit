@@ -30,8 +30,8 @@ func FuzzUnmarshalParams(f *testing.F) {
 			Params:  json.RawMessage(data),
 		}
 		// Exercise several concrete decode targets the handlers use.
-		assertUnmarshalParamsConsistent[CrewNotifPayload](t, msg, data)
-		assertUnmarshalParamsConsistent[metadataParams](t, msg, data)
+		assertUnmarshalParamsConsistent[ACPChunkWire](t, msg, data)
+		assertUnmarshalParamsConsistent[usageUpdate](t, msg, data)
 		assertUnmarshalParamsConsistent[ACPToolCallWire](t, msg, data)
 	})
 }

@@ -21,18 +21,13 @@ const (
 	CmdSwitchModel              CommandType = "switch_model"
 	CmdPermissionResponse       CommandType = "permission_response"
 	CmdElicitationResponse      CommandType = "elicitation_response"
-	CmdSpawnSubagent            CommandType = "spawn_subagent"
-	CmdMessageSubagent          CommandType = "message_subagent"
-	CmdTerminateSubagent        CommandType = "terminate_subagent"
-	CmdAttachSubagent           CommandType = "attach_subagent"
-	CmdListSessions             CommandType = "list_sessions"
-	CmdSetAutoApproveCrew       CommandType = "set_auto_approve_crew"
 	CmdRestoreCheckpoint        CommandType = "restore_checkpoint"
 	CmdUndoEdit                 CommandType = "undo_edit"
 	CmdRewindChat               CommandType = "rewind_chat"
 	CmdPromoteRewindChat        CommandType = "promote_rewind_chat"
 	CmdDiscardRewindChat        CommandType = "discard_rewind_chat"
 	CmdSetEffort                CommandType = "set_effort"
+	CmdSetMode                  CommandType = "set_mode"
 	CmdCreateHook               CommandType = "create_hook"
 	CmdResolvePendingChange     CommandType = "resolve_pending_change"
 	CmdResolvePendingPartial    CommandType = "resolve_pending_change_partial"
@@ -56,15 +51,14 @@ type ClientCommand struct {
 // Text is required, trimmed, and capped at 512 KiB; oversize returns
 // HTTP 413. MessageID is required and must match the ULID/id character
 // set enforced by the hub's validMessageID check (128-byte cap, no
-// control chars). Agent and Model are optional; if non-empty they must
-// match validIdent (ASCII alphanumerics plus `_.-`, 1-128 bytes).
+// control chars). Model is optional; if non-empty it must match
+// validIdent (ASCII alphanumerics plus `_.-`, 1-128 bytes).
 // ActiveFile and OpenFiles are forwarded to kiro-cli as _meta.kiro
 // metadata; they do not reach a filesystem sink directly in vibekit.
 // Attachments are resolved via resolveInsideWorkDir before read.
 type PromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"` // client-generated ULID
-	Agent       string       `json:"agent,omitempty"`
 	Model       string       `json:"model,omitempty"`
 	ActiveFile  string       `json:"active_file,omitempty"` // editor active file path
 	OpenFiles   []string     `json:"open_files,omitempty"`  // all open editor tabs
@@ -82,12 +76,11 @@ type Attachment struct {
 // CreateChatCommand is the payload for type="create_chat".
 //
 // Name is optional and capped at 512 bytes (maxChatNameBytes); empty
-// values default to "New conversation". Agent and Model are optional;
-// if non-empty they must match validIdent (ASCII alphanumerics plus
-// `_.-`, 1-128 bytes). Validation failures return HTTP 400.
+// values default to "New conversation". Model is optional; if non-empty
+// it must match validIdent (ASCII alphanumerics plus `_.-`, 1-128
+// bytes). Validation failures return HTTP 400.
 type CreateChatCommand struct {
 	Name  string `json:"name,omitempty"`
-	Agent string `json:"agent,omitempty"`
 	Model string `json:"model,omitempty"`
 }
 
@@ -125,20 +118,6 @@ type ElicitationResponseCommand struct {
 	RequestID int64           `json:"request_id"`
 }
 
-// SpawnSubagentCommand is the payload for type="spawn_subagent".
-// Spawns a new ephemeral subagent via session/spawn.
-type SpawnSubagentCommand struct {
-	Task string `json:"task"`
-	Name string `json:"name,omitempty"`
-}
-
-// MessageSubagentCommand is the payload for type="message_subagent".
-// Sends a message to a specific subagent via message/send.
-type MessageSubagentCommand struct {
-	SubSessionID string `json:"sub_session_id"`
-	Text         string `json:"text"`
-}
-
 // RewindChatCommand is the payload for type="rewind_chat".
 // Creates a new chat branched from a specific turn of the current chat.
 type RewindChatCommand struct {
@@ -149,6 +128,16 @@ type RewindChatCommand struct {
 // Applies a reasoning effort level to the active session.
 type SetEffortCommand struct {
 	Level EffortLevel `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+}
+
+// SetModeCommand is the payload for type="set_mode". ModeID is the id of
+// an entry in the chat's AvailableModes — on v3 that spans the bundled
+// workflow modes (vibe/spec/plan/…) AND workspace custom agents, all
+// switched via session/set_mode. Applied to the live session in place;
+// for a chat whose bridge hasn't started yet the mode is persisted and
+// applied when session/new completes (StartOpts.Mode).
+type SetModeCommand struct {
+	ModeID string `json:"mode_id"`
 }
 
 // EffortLevel is a typed enum for reasoning effort levels.
@@ -171,14 +160,6 @@ func (e EffortLevel) Valid() bool {
 	}
 	return false
 }
-
-// MergeTangentCommand has no payload beyond the envelope's chat_id.
-// Merges the last Q&A pair from the tangent back to the parent.
-// type="merge_tangent"
-
-// DiscardTangentCommand has no payload beyond the envelope's chat_id.
-// Discards the tangent and unfreezes the parent.
-// type="discard_tangent"
 
 // ResolvePendingChangeCommand is the payload for
 // type="resolve_pending_change". Accept or reject ONE staged file op.

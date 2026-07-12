@@ -5,7 +5,8 @@
 // The shared lifecycle rules live in exactly one place:
 //
 //   1. `store.setThinking(chatID, true)` before posting.
-//   2. 409 busy on prompts queues the text for the next turn end.
+//   2. 409 busy on prompts is reported as "queued"; deciding what to do with
+//      it (buffer, drain, restore) is prompt-queue.ts's job, not this leaf's.
 //   3. Other failures clear thinking so send-state settles on "blocked"
 //      (transport.ts already called setLastError).
 //   4. Success leaves thinking=true; SSE turn_ended / error will clear it.
@@ -32,58 +33,42 @@
 // ---------------------------------------------------------------------------
 
 import { newMessageID } from "./transport.js";
-import { getCurrentAgent, getCurrentModel } from "./session-context.js";
+import { getCurrentModel } from "./session-context.js";
 import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
-import { takeAttachments, addAttachment } from "./attachments.js";
 import {
   switchModel as switchModelAction,
   resolvePendingChange as resolvePendingChangeAction,
   sendPrompt as sendPromptAction,
 } from "./actions/chat.js";
-import { setLastQueuedAttachments } from "./store.js";
 
 /** Options for the low-level prompt sender. */
 export interface SendPromptOpts {
-  agent?: string;
   model?: string;
   attachments?: readonly unknown[];
 }
 
-/** Post a prompt to a chat with the shared thinking + 409-queue
- *  lifecycle. Returns "sent" on 2xx, "queued" on 409 (the prompt
- *  will drain when the in-flight turn ends), or "failed" on any other
- *  error. Callers that want to know whether the server took the
- *  prompt (e.g. plan handoff deleting its draft) inspect the result;
- *  most callers still ignore it. */
+/** Post a prompt to a chat once. Low-level "send" primitive: it dispatches the
+ *  prompt command (which sets thinking optimistically) and reports the
+ *  outcome — "sent" on 2xx, "queued" on 409 (a turn is in flight), or "failed"
+ *  on any other error. It does NOT own the queue: whether a "queued" prompt is
+ *  buffered, drained, or its attachments restored is prompt-queue.ts's job.
+ *  Callers outside prompt-queue.ts should use `submitPrompt` (from
+ *  prompt-queue.ts) for user sends rather than calling this directly. */
 export async function sendPromptTo(
   chatID: string,
   text: string,
   opts: SendPromptOpts = {},
 ): Promise<"sent" | "queued" | "failed"> {
-  const attachments = opts.attachments !== undefined ? [...opts.attachments] : takeAttachments();
   const result = await sendPromptAction.dispatch({
     chatID,
     text,
     messageID: newMessageID(),
-    agent: opts.agent ?? getCurrentAgent(),
     model: opts.model ?? getCurrentModel(),
     activeFile: getActiveFilePath(),
     openFiles: getOpenFilePaths(),
-    attachments,
+    ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
   });
-  if (result === null) {
-    // Restore attachments on failure so the user doesn't lose them.
-    if (opts.attachments === undefined) {
-      for (const a of attachments) {
-        addAttachment((a as { path: string }).path);
-      }
-    }
-    return "failed";
-  }
-  if (result === "queued" && attachments.length > 0) {
-    setLastQueuedAttachments(chatID, attachments);
-  }
-  return result;
+  return result ?? "failed";
 }
 
 /** Send a standalone switch_model command. Used by the model picker

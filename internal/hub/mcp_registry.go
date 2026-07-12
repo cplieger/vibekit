@@ -44,12 +44,16 @@ const (
 	mcpStateFailed    mcpServerState = "failed"
 )
 
-// mcpServerRuntime is the registry's per-server record.
+// mcpServerRuntime is the registry's per-server record. Prompts and
+// Resources are the discovery lists a connected server advertises (from
+// the _kiro/mcp/status notification); empty for non-connected servers.
 type mcpServerRuntime struct {
-	Name     string
-	State    mcpServerState
-	OAuthURL string
-	Error    string
+	Name      string
+	State     mcpServerState
+	OAuthURL  string
+	Error     string
+	Prompts   []api.MCPPromptInfo
+	Resources []api.MCPResourceInfo
 }
 
 // mcpRegistry is the hub's in-memory view of connected MCP servers.
@@ -120,10 +124,17 @@ func (r *mcpRegistry) Snapshot() []mcpServerRuntime {
 	return out
 }
 
-// RegisterRoutes wires /api/mcp/status, a read-only view of the runtime
-// registry.
+// RegisterRoutes wires the runtime MCP endpoints: a read-only status view
+// plus the live-control routes (reconnect / prompt / resource) that act on
+// the running chat bridges. The exact paths are more specific than the
+// mcp store's "/api/mcp/" subtree handler, so they take precedence on the
+// shared mux (same as "/api/mcp/status" already does). See mcp_control.go
+// for the handlers.
 func (r *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/status", r.handleStatus)
+	mux.HandleFunc("/api/mcp/reconnect", r.hub.handleMCPReconnect)
+	mux.HandleFunc("/api/mcp/prompt", r.hub.handleMCPGetPrompt)
+	mux.HandleFunc("/api/mcp/resource", r.hub.handleMCPGetResource)
 }
 
 // signalReady closes the readyCh so any goroutine waiting in
@@ -140,17 +151,20 @@ func (r *mcpRegistry) signalReady() {
 	}
 }
 
-// recordConnected marks a server as connected, broadcasts
-// mcp_connected, and fires onChange. Called from translateACPEvent
-// when kiro-cli sends server_initialized.
-func (r *mcpRegistry) recordConnected(ctx context.Context, name string) {
+// recordConnected marks a server as connected (recording the prompts and
+// resources it advertises), broadcasts mcp_connected, and fires onChange.
+// Called from the _kiro/mcp/status handler when a server reports the
+// "connected" state. prompts/resources may be nil (server exposes none).
+func (r *mcpRegistry) recordConnected(ctx context.Context, name string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
 	if !r.nameIsEnabled(ctx, name) {
 		return
 	}
 	r.mu.Lock()
 	r.servers[name] = &mcpServerRuntime{
-		Name:  name,
-		State: mcpStateConnected,
+		Name:      name,
+		State:     mcpStateConnected,
+		Prompts:   prompts,
+		Resources: resources,
 	}
 	r.mu.Unlock()
 
@@ -233,10 +247,12 @@ type mcpStatusResponse struct {
 }
 
 type statusServer struct {
-	Name     string             `json:"name"`
-	State    api.MCPServerState `json:"state"`
-	OAuthURL string             `json:"oauth_url,omitempty"`
-	Error    string             `json:"error,omitempty"`
+	Name      string                `json:"name"`
+	State     api.MCPServerState    `json:"state"`
+	OAuthURL  string                `json:"oauth_url,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	Prompts   []api.MCPPromptInfo   `json:"prompts,omitempty"`
+	Resources []api.MCPResourceInfo `json:"resources,omitempty"`
 }
 
 func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {

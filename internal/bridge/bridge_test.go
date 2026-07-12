@@ -208,23 +208,24 @@ func TestNormalizeMCPServers_PreservesAllFieldsAndLength(t *testing.T) {
 
 func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	b := &Bridge{}
-	r := sessionCreated{
-		Modes: &sessionModes{
-			CurrentModeID: "mode-b",
-			AvailableModes: []sessionMode{
-				{ID: "mode-a", Name: "Alpha", Description: "first"},
-				{ID: "mode-b", Name: "Beta", Description: "second"},
-			},
-		},
-		Models: &sessionModels{
-			CurrentModelID: "claude-sonnet",
-			AvailableModels: []sessionModel{
-				{ModelID: "claude-sonnet", Name: "Sonnet", Description: "general", RateMultiplier: 1.0},
-				{ModelID: "old-opus", Name: "Opus", Description: "[Deprecated] old", RateMultiplier: 3.0},
-				{ModelID: "preview", Name: "Preview", Description: "[Internal] experimental", RateMultiplier: 1.5},
-				{ModelID: "legacy", Name: "Legacy", Description: "[Legacy] v1", RateMultiplier: 1.0},
-			},
-		},
+	// v3 shape: modes block + the model catalog carried inside the
+	// configOptions "model" select (currentValue + options[] with each
+	// choice's rate multiplier under _meta.kiro).
+	var r sessionCreated
+	if err := json.Unmarshal([]byte(`{
+		"sessionId": "sess-1",
+		"modes": {"currentModeId": "mode-b", "availableModes": [
+			{"id": "mode-a", "name": "Alpha", "description": "first"},
+			{"id": "mode-b", "name": "Beta", "description": "second"}
+		]},
+		"configOptions": [{"id": "model", "currentValue": "claude-sonnet", "options": [
+			{"value": "claude-sonnet", "name": "Sonnet", "description": "general", "_meta": {"kiro": {"rateMultiplier": 1.0}}},
+			{"value": "old-opus", "name": "Opus", "description": "[Deprecated] old", "_meta": {"kiro": {"rateMultiplier": 3.0}}},
+			{"value": "preview", "name": "Preview", "description": "[Internal] experimental", "_meta": {"kiro": {"rateMultiplier": 1.5}}},
+			{"value": "legacy", "name": "Legacy", "description": "[Legacy] v1", "_meta": {"kiro": {"rateMultiplier": 1.0}}}
+		]}]
+	}`), &r); err != nil {
+		t.Fatalf("unmarshal session result: %v", err)
 	}
 
 	b.mu.Lock()
@@ -279,7 +280,9 @@ func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
 func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
 	b := &Bridge{}
 	r := sessionCreated{
-		Models: &sessionModels{CurrentModelID: "real-model"},
+		ConfigOptions: []sessionConfigOption{
+			{ID: "model", CurrentValue: json.RawMessage(`"real-model"`)},
+		},
 	}
 	b.mu.Lock()
 	b.applySessionResultLocked(r, "fallback")
@@ -324,14 +327,15 @@ func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 // the Models accessor.
 func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	b := &Bridge{}
-	r := sessionCreated{
-		Models: &sessionModels{
-			CurrentModelID: "a",
-			AvailableModels: []sessionModel{
-				{ModelID: "a", Name: "Alpha", Description: "x", RateMultiplier: 1},
-				{ModelID: "b", Name: "Beta", Description: "y", RateMultiplier: 2},
-			},
-		},
+	var r sessionCreated
+	if err := json.Unmarshal([]byte(`{
+		"sessionId": "sess-1",
+		"configOptions": [{"id": "model", "currentValue": "a", "options": [
+			{"value": "a", "name": "Alpha", "description": "x", "_meta": {"kiro": {"rateMultiplier": 1}}},
+			{"value": "b", "name": "Beta", "description": "y", "_meta": {"kiro": {"rateMultiplier": 2}}}
+		]}]
+	}`), &r); err != nil {
+		t.Fatalf("unmarshal session result: %v", err)
 	}
 	b.mu.Lock()
 	b.applySessionResultLocked(r, "")
@@ -402,32 +406,6 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Call did not unblock after Stop")
-	}
-}
-
-// TestCleanupStaleSessions_InvalidIDsIgnored pins the validSessionID
-// gate on the CleanupStaleSessions side. Lock filenames whose derived
-// id would read as "." or ".." must be skipped rather than driving
-// filesystem operations.
-func TestCleanupStaleSessions_InvalidIDsIgnored(t *testing.T) {
-	mgr, dir := newTestSessionManager(t)
-	// `..lock` → id = `.` (invalid). `...lock` → id = `..` (invalid).
-	// Both should remain untouched after the cleanup pass.
-	invalid := []string{"..lock", "...lock"}
-	for _, name := range invalid {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(`{"pid":1}`), 0o644); err != nil {
-			t.Fatalf("plant %q: %v", name, err)
-		}
-	}
-
-	mgr.CleanupStale(context.Background())
-
-	for _, name := range invalid {
-		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("invalid-id lock %q was touched: %v", name, err)
-		}
 	}
 }
 
@@ -775,8 +753,10 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 // kiro-cli binary.
 //
 // The fake script reads JSON-RPC requests from stdin and responds with
-// minimal valid responses for initialize, session/new, session/load,
-// session/prompt, and session/set_model.
+// minimal valid responses for initialize, session/new, session/load, and
+// session/prompt. Any other id'd request (e.g. v3's
+// session/set_config_option) gets a generic empty result via the default
+// case.
 func TestRealBridge_Contract(t *testing.T) {
 	// Write a fake kiro-cli script that speaks minimal JSON-RPC.
 	script := `#!/bin/sh
@@ -790,16 +770,13 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake-kiro"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"test-sess-001","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"models":{"currentModelId":"model-1","availableModels":[{"modelId":"model-1","name":"Test Model","description":"A test model","rateMultiplier":1.0}]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"test-sess-001","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
       ;;
     session/load)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"existing-sess","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"models":{"currentModelId":"model-1","availableModels":[{"modelId":"model-1","name":"Test Model","description":"A test model","rateMultiplier":1.0}]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"existing-sess","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"default mode"}]},"configOptions":[{"id":"model","currentValue":"model-1","options":[{"value":"model-1","name":"Test Model","description":"A test model","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
       ;;
     session/prompt)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"status":"ok"}}\n' "$id"
-      ;;
-    session/set_model)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
       ;;
     *)
       # Notifications (no id) or unknown methods — ignore.
@@ -816,21 +793,13 @@ done
 		t.Fatalf("write fake script: %v", err)
 	}
 
-	// Set HOME so lockfile operations don't interfere with real sessions.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	sessDir := filepath.Join(home, ".kiro", "sessions", "cli")
-	if err := os.MkdirAll(sessDir, 0o755); err != nil {
-		t.Fatalf("mkdir sessions: %v", err)
-	}
-
 	newBridge := func() api.ACPBridge {
 		return New(scriptPath, dir)
 	}
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -841,7 +810,7 @@ done
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -852,7 +821,7 @@ done
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -867,7 +836,7 @@ done
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -878,7 +847,7 @@ done
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -896,7 +865,7 @@ done
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1007,7 +976,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
       ;;
     session/new)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"lifecycle-001","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"models":{"currentModelId":"sonnet","availableModels":[{"modelId":"sonnet","name":"Sonnet","description":"fast","rateMultiplier":1.0}]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"lifecycle-001","modes":{"currentModeId":"agent","availableModes":[{"id":"agent","name":"Agent","description":"agent mode"},{"id":"code","name":"Code","description":"code mode"}]},"configOptions":[{"id":"model","currentValue":"sonnet","options":[{"value":"sonnet","name":"Sonnet","description":"fast","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
       ;;
     *)
       if [ -n "$id" ]; then
@@ -1020,11 +989,6 @@ done
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".kiro", "sessions", "cli"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1042,7 +1006,7 @@ done
 	}
 
 	// Start: accessors populated.
-	if err := b.Start(context.Background(), &api.StartOpts{Agent: "a", Model: "m"}); err != nil {
+	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -1359,50 +1323,6 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCRespo
 	}
 }
 
-// --- bridge.go: capturePromptCapabilities / SupportsDocuments ---
-
-// A result carrying embeddedContext:true must be captured so
-// SupportsDocuments() flips to true.
-func TestCapturePromptCapabilities_StoresEmbeddedContext(t *testing.T) {
-	b := New("cli", "work")
-	if b.SupportsDocuments() {
-		t.Fatalf("SupportsDocuments() = true before capture, want false")
-	}
-	resp := &api.RPCResponse{
-		Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":true}}}`),
-	}
-	b.capturePromptCapabilities(resp)
-	if !b.SupportsDocuments() {
-		t.Errorf("SupportsDocuments() after capturing embeddedContext:true = false, want true")
-	}
-}
-
-// A nil, empty, malformed, or embeddedContext:false result leaves
-// SupportsDocuments() at its false default.
-func TestCapturePromptCapabilities_LeavesUnset(t *testing.T) {
-	cases := []struct {
-		resp *api.RPCResponse
-		name string
-	}{
-		{name: "nil_response", resp: nil},
-		{name: "empty_result", resp: &api.RPCResponse{Result: nil}},
-		{name: "malformed_json", resp: &api.RPCResponse{Result: json.RawMessage(`{not valid`)}},
-		{
-			name: "embedded_context_false",
-			resp: &api.RPCResponse{Result: json.RawMessage(`{"agentCapabilities":{"promptCapabilities":{"embeddedContext":false}}}`)},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			b := New("cli", "work")
-			b.capturePromptCapabilities(tc.resp)
-			if b.SupportsDocuments() {
-				t.Errorf("SupportsDocuments() = true for %s, want false", tc.name)
-			}
-		})
-	}
-}
-
 // --- bridge_parse_err.go: parseErrTracker.Record ---
 
 // The burst-th Record() sets the window start; the next call falls inside
@@ -1465,7 +1385,7 @@ func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
 	t.Cleanup(b.Stop)
-	err := b.startProcess("", "", "", nil)
+	err := b.startProcess("", "", "")
 	if err == nil {
 		t.Fatal("startProcess with a nonexistent binary returned nil error, want a start failure")
 	}
@@ -1477,7 +1397,7 @@ func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	b := New(bogus, t.TempDir())
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
-	_ = b.startProcess("", "", "", nil)
+	_ = b.startProcess("", "", "")
 	if b.cmd == nil {
 		t.Fatal("b.cmd is nil; startProcess did not reach CommandContext")
 	}
@@ -1680,7 +1600,7 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	resp := &api.RPCResponse{
-		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","models":{"currentModelId":"parsed-model","availableModels":[{"modelId":"parsed-model","name":"Parsed","description":"ok","rateMultiplier":1}]}}`),
+		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","configOptions":[{"id":"model","currentValue":"parsed-model","options":[{"value":"parsed-model","name":"Parsed","description":"ok","_meta":{"kiro":{"rateMultiplier":1}}}]}]}`),
 	}
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
@@ -1717,4 +1637,78 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	if got := b.ModelID(); got != "fb-model" {
 		t.Errorf("loadSession ModelID() = %q, want %q (an empty model must be filled from the fallback on an unparseable result)", got, "fb-model")
 	}
+}
+
+// TestInitialize_HooksCapabilityOptIn verifies that StartOpts.EnableHooks
+// controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
+// the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires
+// the workspace's .kiro/hooks/*.json hooks during a turn (chat bridges set this
+// in hub/bridge_coord.go; KAS then loads and runs the hooks internally, with no
+// executeHook callback to the client). When false (the zero value) the opt-in
+// is omitted, while the always-on openExternalUrl + infrastructureSafety kiro
+// capabilities are still declared either way.
+func TestInitialize_HooksCapabilityOptIn(t *testing.T) {
+	// Fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE
+	// so the test can assert on the exact clientCapabilities vibekit sent.
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '%s\n' "$line" >> "$INIT_CAPTURE"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_hooktest","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
+      ;;
+  esac
+done
+`
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	run := func(t *testing.T, enableHooks bool) string {
+		t.Helper()
+		capture := filepath.Join(t.TempDir(), "init.jsonl")
+		t.Setenv("INIT_CAPTURE", capture)
+		b := New(scriptPath, dir)
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "m", EnableHooks: enableHooks}); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer b.Stop()
+		data, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatalf("read init capture: %v", err)
+		}
+		return string(data)
+	}
+
+	t.Run("enabled declares v2 hooks opt-in", func(t *testing.T) {
+		got := run(t, true)
+		if !strings.Contains(got, `"hooks":{"enabled":true,"v2":true}`) {
+			t.Errorf("initialize missing hooks opt-in; got: %s", got)
+		}
+		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) {
+			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
+		}
+	})
+
+	t.Run("disabled omits the hooks opt-in", func(t *testing.T) {
+		got := run(t, false)
+		if strings.Contains(got, `"hooks"`) {
+			t.Errorf("initialize should omit hooks when EnableHooks=false; got: %s", got)
+		}
+		if !strings.Contains(got, `"openExternalUrl":true`) {
+			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
+		}
+	})
 }

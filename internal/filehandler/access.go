@@ -28,25 +28,37 @@ type sensitivePath struct {
 }
 
 // Specific paths or path prefixes blocked from the file-editor surface.
-// Protects system-level agent config, auto-generated docs, and internal
-// state files that users should not accidentally edit from the UI.
+// Protects system-level agent config, auto-generated docs, internal
+// state files, and — most importantly — the credential stores that back
+// vibekit's own auth, git, and MCP integrations.
 //
-// All kiro-cli per-user state lives under /config/kiro/ (the location
-// vibekit's entrypoint sets via KIRO_HOME).
+// Per-user state spans two trees. kiro-cli's own state lives under
+// /config/kiro/ (KIRO_HOME). The container's HOME is /config/home/, and
+// it holds the real secrets: the AWS SSO token + OAuth client secret
+// (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
+// (~/.config/gh/hosts.yml), and ~/.gitconfig. The whole /config/home/
+// tree is marked sensitive so none of it is listable, readable,
+// editable, downloadable, or deletable from the UI.
 var sensitivePrefixes = []sensitivePath{
 	// System-level steering (base personality; must not be user-edited).
 	{Path: "/config/kiro/steering/vibekit.md", IsDir: false},
 	// Auto-regenerated at startup; edits are clobbered and misleading.
 	{Path: "/config/kiro/steering/environment.md", IsDir: false},
-	// Agent configs, session state, knowledge bases.
+	// kiro-cli agent configs, session state, settings.
 	{Path: "/config/kiro/agents/", IsDir: true},
 	{Path: "/config/kiro/sessions/", IsDir: true},
 	{Path: "/config/kiro/settings/", IsDir: true},
-	{Path: "/config/home/.local/share/kiro-cli/", IsDir: true},
+	// Container HOME ($HOME=/config/home): AWS SSO token + OAuth secret
+	// (~/.aws/sso/cache), git SSH keys (~/.ssh), forge PAT
+	// (~/.config/gh/hosts.yml), ~/.gitconfig, and kiro-cli's ~/.local
+	// state. The whole tree is blocked.
+	{Path: "/config/home/", IsDir: true},
 	// Internal vibekit runtime state.
 	{Path: "/config/chats/", IsDir: true},
 	{Path: "/config/push-subs.json", IsDir: false},
 	{Path: "/config/vapid-keys.json", IsDir: false},
+	// MCP server config — env / header / OAuth secrets stored cleartext.
+	{Path: "/config/mcp.json", IsDir: false},
 }
 
 // isSensitive reports whether the resolved absolute path is user-blocked.

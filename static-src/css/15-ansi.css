@@ -150,3 +150,22 @@
 .ansi-underline {
   text-decoration: underline;
 }
+
+/* --- Agent terminal exit-status footer --- */
+/* Rendered by agent-terminal.ts when a terminal process exits: a small
+ * "exited (code N)" / "killed (SIGNAL)" line below the output. Green on a
+ * clean exit, red otherwise; colours match the ansi green/red above. */
+.agent-term-status {
+  padding: 0.25rem 0.5rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+.agent-term-status.is-ok {
+  color: #5f5;
+}
+
+.agent-term-status.is-err {
+  color: #f55;
+}

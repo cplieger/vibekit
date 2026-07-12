@@ -129,7 +129,14 @@ func (s *Service) saveSubs(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		<-done
+		// Guard the completion wait with ctx too: if Close() raced this send
+		// and writeLoop already exited, nothing will ever close `done` —
+		// without this guard the goroutine (an inflight.Go member) would block
+		// forever and hang inflight.Wait() at shutdown.
+		select {
+		case <-done:
+		case <-s.ctx.Done():
+		}
 	case <-s.ctx.Done():
 	}
 }
@@ -147,7 +154,14 @@ func (s *Service) flushSaves() {
 	s.mu.Unlock()
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		<-done
+		// Guard the completion wait with ctx too: if Close() raced this send
+		// and writeLoop already exited, nothing will ever close `done` —
+		// without this guard the goroutine (an inflight.Go member) would block
+		// forever and hang inflight.Wait() at shutdown.
+		select {
+		case <-done:
+		case <-s.ctx.Done():
+		}
 	case <-s.ctx.Done():
 	}
 }

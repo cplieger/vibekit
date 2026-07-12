@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
-// Service worker for Web Push notifications.
-// Handles push events, notification clicks, and subscription recovery.
+// Service worker for Web Push notifications + PWA installability.
+// Handles push events, notification clicks, subscription recovery, and a
+// minimal fetch handler (the presence of an active fetch handler is part of
+// the browser's PWA install criteria).
 // Compiled to static/sw.js by tsconfig.sw.json.
 // ---------------------------------------------------------------------------
 
@@ -8,6 +10,19 @@
 /// <reference path="sw-env.d.ts" />
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
+
+// Minimal fetch handler. Its presence (an active SW with a fetch handler) is
+// what satisfies the PWA install criterion; without it browsers won't offer
+// installation. We only pass navigations straight through to the network and
+// leave every other request (assets, /api/*, SSE, the shell WebSocket) to the
+// browser's default handling. Deliberately NO caching — the app is served
+// fresh on every load (HTTP `Cache-Control: no-cache` + revalidation owns
+// freshness), so a deploy is never masked by a stale precache.
+sw.addEventListener("fetch", ((event: FetchEvent) => {
+  if (event.request.mode === "navigate") {
+    event.respondWith(fetch(event.request));
+  }
+}) as EventListener);
 
 sw.addEventListener("push", ((event: PushEvent) => {
   if (event.data === null) {

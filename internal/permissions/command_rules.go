@@ -5,10 +5,10 @@
 //   - allow: pattern auto-approves the command in "safe_commands"
 //     mode, in addition to the built-in safe list. Historical name
 //     "whitelist"; the wire format calls this mode "allow".
-//   - deny:  pattern forces a manual prompt regardless of shell
-//     policy or trust level. Safety net for destructive one-shots
-//     like `git filter-repo` or `rm -rf /` that the user wants to
-//     catch even in trust-all mode. Overrides everything else.
+//   - deny:  pattern forces a manual prompt regardless of the shell-policy
+//     tier (even the permissive "all_commands" tier). Safety net for
+//     destructive one-shots like `git filter-repo` or `rm -rf /` the user
+//     wants to always catch. Overrides everything else.
 //
 // Pattern syntax (same shape as ASAI / Claude Code):
 //

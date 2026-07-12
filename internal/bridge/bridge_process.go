@@ -19,21 +19,17 @@ import (
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
 // session (acpSessionID == "") or loads an existing one. Exactly one call
-// per bridge instance. extraArgs are permission-mode flags derived from
-// the user's settings at spawn time (nil == prompt for every tool).
-// mcpServers is the ACP mcpServers array (enabled user-configured MCP
-// servers); pass nil for an empty set.
+// per bridge instance. mcpServers is the ACP mcpServers array (enabled
+// user-configured MCP servers); pass nil for an empty set.
 func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	b.lifecycleCtx = ctx
-	if opts.SessionID != "" {
-		if !api.ValidSessionID(opts.SessionID) {
-			return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
-		}
-		if b.lockMgr != nil {
-			b.lockMgr.RemoveStaleLock(ctx, opts.SessionID)
-		}
+	// Immutable after Start; read lock-free by SetModel / initialize.
+	b.agentEngine = opts.AgentEngine
+	b.enableHooks = opts.EnableHooks
+	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
+		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
-	if err := b.startProcess(opts.Agent, opts.Model, opts.Effort, opts.ExtraArgs); err != nil {
+	if err := b.startProcess(opts.AgentEngine, opts.Model, opts.Effort); err != nil {
 		return err
 	}
 	if err := b.initialize(ctx); err != nil {
@@ -44,7 +40,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	if opts.SessionID != "" {
 		err = b.loadSession(ctx, opts.SessionID, opts.Model, opts.MCPServers)
 	} else {
-		err = b.newSession(ctx, opts.MCPServers)
+		err = b.newSession(ctx, opts.MCPServers, opts.Mode)
 	}
 	if err != nil {
 		b.Stop()
@@ -53,10 +49,9 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	// Lifecycle breadcrumb so operators correlating Loki logs can
 	// see which bridge a subsequent Stop / error belongs to without
 	// reading the chat store. Cardinality stays sane: session id is
-	// bounded by chats, model/agent by catalog.
+	// bounded by chats, model by catalog.
 	slog.Info("bridge started",
 		"session_id", b.SessionID(),
-		"agent", opts.Agent,
 		"model", b.ModelID(),
 		"work_dir", b.workDir,
 		"acp_session_id", opts.SessionID,
@@ -95,16 +90,22 @@ func (b *Bridge) Stop() {
 // buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept
 // pure (no process side effects) so the arg shaping — including the
 // kiro-cli >=2.6 `--effort` flag and its validation — is unit-testable.
-func buildACPArgs(agent, model, effort string, extraArgs []string) []string {
-	// Pin kiro-cli's agent engine to v2. kiro-cli 2.7 made v2 the `acp`
-	// default; pinning it explicitly insulates the bridge from a future
-	// default flip, since the engine determines which ACP methods the
-	// agent registers.
-	args := []string{"acp", "--agent-engine", "v2"}
-	args = append(args, extraArgs...)
-	if agent != "" {
-		args = append(args, "--agent", agent)
+//
+// The arg set is fixed (engine + model + effort): vibekit passes no
+// permission/trust flags. Tool-call authorization on v3 (KAS) is owned
+// by kiro-cli's native Cedar policy engine, which ignores the legacy
+// --trust-all-tools / --trust-tools flags (confirmed inert on the v3
+// acp wire — the permission prompt fires regardless), so vibekit no
+// longer emits them.
+func buildACPArgs(engine, model, effort string) []string {
+	// The agent engine determines which ACP methods the agent registers.
+	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
+	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
+	// callbacks (see internal/hub/bridge_v3_auth.go).
+	if engine == "" {
+		engine = api.AgentEngineV3
 	}
+	args := []string{"acp", "--agent-engine", engine}
 	if model != "" && model != api.ModelAuto {
 		args = append(args, "--model", model)
 	}
@@ -116,14 +117,11 @@ func buildACPArgs(agent, model, effort string, extraArgs []string) []string {
 	return args
 }
 
-func (b *Bridge) startProcess(agent, model, effort string, extraArgs []string) error {
-	if !validIdent(agent) {
-		return fmt.Errorf("invalid agent identifier: %q", agent)
-	}
+func (b *Bridge) startProcess(engine, model, effort string) error {
 	if !validIdent(model) {
 		return fmt.Errorf("invalid model identifier: %q", model)
 	}
-	args := buildACPArgs(agent, model, effort, extraArgs)
+	args := buildACPArgs(engine, model, effort)
 	// Lifecycle is owned by Stop(), not by a context. The
 	// lifecycleCtx is a belt-and-braces kill signal: if the hub
 	// shuts down and Stop() races or panics, the OS-level context

@@ -8,11 +8,11 @@
 // sibling `translate_*.go` file so this one stays short and readable.
 //
 // Design rules:
-//   - Unhandled `_kiro.dev/*` extensions fall through to a debug log,
-//     not a panic or a silent drop. kiro-cli's extension namespace is
+//   - Unhandled `_kiro/*` extensions fall through to a debug log,
+//     not a panic or a silent drop. KAS's extension namespace is
 //     explicitly unstable; we discover new surfaces without committing
 //     to decode them.
-//   - ACP-spec methods (no `_kiro.dev` prefix) are expected to be
+//   - ACP-spec methods (no `_kiro/` prefix) are expected to be
 //     stable; unknown ones log at the same debug level but that's a
 //     stronger signal something needs wiring.
 //   - Requests (msg.ID != nil && msg.Method != "") route through the
@@ -49,33 +49,58 @@ func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) ses
 // translateACPEvent on first use (lazy init avoids a constructor).
 func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
-		api.MethodSessionUpdate:       h.handleSessionUpdate,
-		api.MethodRequestPermission:   h.translator.HandlePermissionRequest,
-		api.MethodElicitationCreate:   h.translator.HandleElicitationCreate,
-		api.MethodElicitationComplete: h.translator.HandleElicitationComplete,
-		methodMetadataLegacy:          h.translator.HandleMetadata,
-		methodMetadata:                h.translator.HandleMetadata,
-		methodCommandsAvailable:       h.translator.HandleCommandsAvailable,
-		methodCompactionStatus:        h.translator.HandleCompactionStatus,
-		methodSubagentListUpdate:      h.translator.HandleCrewUpdate,
-		methodAgentNotFound:           h.translator.HandleAgentNotFound,
-		methodAgentConfigError:        h.translator.HandleAgentConfigError,
-		methodModelNotFound:           h.translator.HandleModelNotFound,
-		methodErrorRateLimit:          h.translator.HandleRateLimit,
-		methodAgentSwitched:           h.translator.HandleAgentSwitched,
-		methodSessionActivity:         h.translator.HandleSessionActivity,
-		methodSessionListUpdate:       h.translator.HandleSessionListUpdate,
-		methodInboxNotification:       h.translator.HandleInboxNotification,
-		methodExtSessionUpdate:        h.translator.HandleExtSessionUpdate,
-		methodSessionRetry:            h.translator.HandleSessionRetry,
-		// Global handlers (chatID is always "" for these).
-		methodMCPServerInitialized: h.translator.HandleMCPInitialized,
-		methodMCPServerInitFailure: h.translator.HandleMCPInitFailure,
-		methodMCPOAuthRequest:      h.translator.HandleMCPOAuth,
+		api.MethodSessionUpdate:     h.handleSessionUpdate,
+		api.MethodRequestPermission: h.translator.HandlePermissionRequest,
+		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
+		api.MethodElicitationCreate: h.translator.HandleElicitationCreate,
+		// v3 (KAS) _kiro/* notifications.
+		methodV3RateLimit:            h.translator.HandleRateLimit,
+		methodV3CustomAgentNotFound:  h.translator.HandleAgentNotFound,
+		methodV3CustomAgentConfigErr: h.translator.HandleAgentConfigError,
+		methodV3MCPStatus:            h.translator.HandleMCPStatus,
+		methodV3SystemNotify:         h.translator.HandleSystemNotify,
+		// Native Cedar policy: hot-reload + parse-error notifications KAS
+		// emits when a permissions.{yaml,json} file changes. Translated to
+		// SSE so the client refetches GET /api/permissions.
+		methodV3PolicyChanged: h.translator.HandlePolicyChanged,
+		methodV3PolicyError:   h.translator.HandlePolicyError,
+		// Licensed-code attribution: surfaced as a per-turn attribution chip.
+		methodV3CodeReferences: h.translator.HandleCodeReferences,
+		// Spec-workflow task-status deltas → the live Specs board SSE.
+		methodV3SpecTaskStatusChanged: h.translator.HandleSpecTaskChanged,
+		// Infrastructure-Safety gate state → safety_status / safety_properties
+		// SSE. Defensive: KAS only emits these when the gate is installed (client
+		// capability + an AWS governance flag that is off by default), so on a
+		// normal account they never fire. See translate/safety.go.
+		methodV3SafetyStatusChanged: h.translator.HandleSafetyStatusChanged,
+		methodV3SafetyPropertiesChg: h.translator.HandleSafetyPropertiesChanged,
+		// Org/account feature-flag policy → governance_state SSE (broadcast
+		// global) + hub-side cache served at GET /api/governance. Gates
+		// affordances the flags control (MCP availability, the org-policy
+		// disclosure, the code-reference chip). See translate/governance.go.
+		methodV3Governance: h.translator.HandleGovernanceState,
+		// Knowledge-base indexing progress → knowledge_indexing SSE. Two
+		// methods share one handler (a started/completed bool discriminates
+		// the payload). Fire only for agent-declared knowledge_bases sync;
+		// user-add progress is polled via GET /api/knowledge.
+		methodKiroKnowledgeIndexingStarted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, true)
+		},
+		methodKiroKnowledgeIndexingCompleted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, false)
+		},
 	}
-	// Explicit noops: methods we recognise but intentionally ignore.
+	// Explicit noops: v3 methods we recognise but intentionally ignore
+	// (feature flags, tool/steering/skills catalogs vibekit sources via
+	// REST, and the session inventory diff which has no client consumer now
+	// that subagents are tool calls). Listing them keeps them out of the
+	// "unhandled" debug log.
 	h.noopMethods = map[string]struct{}{
-		methodClearStatus: {},
+		methodV3SessionsChanged:    {},
+		methodV3ToolsDidChange:     {},
+		methodV3SteeringDocs:       {},
+		methodV3ProgressiveContext: {},
+		methodV3Powers:             {},
 	}
 	// Session-update sub-dispatcher: built eagerly to avoid a data race
 	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
@@ -90,7 +115,15 @@ func (h *Hub) initDispatch() {
 		api.ACPUpdateToolUpdate: h.translator.HandleToolCallUpdate,
 		api.ACPUpdatePlan:       ignoreSubSession(h.translator.HandlePlan),
 		api.ACPUpdateModeChange: ignoreSubSession(h.translator.HandleModeUpdate),
-		api.ACPUpdateSteering:   ignoreSubSession(h.translator.HandleSteeringInclusion),
+		// v3 (KAS) sub-kinds: context-usage + slash-command catalog moved
+		// here from the v2 _kiro.dev/metadata + commands/available notifs.
+		// session_info_update also carries compaction (summarization) state;
+		// usage_update is the primary v3 context-usage channel; and
+		// config_option_update delivers the live model/mode/effort catalog.
+		api.ACPUpdateSessionInfo:       h.translator.HandleSessionInfoUpdate,
+		api.ACPUpdateCommandsAvailable: h.translator.HandleAvailableCommandsUpdate,
+		api.ACPUpdateUsage:             ignoreSubSession(h.translator.HandleUsageUpdate),
+		api.ACPUpdateConfigOption:      ignoreSubSession(h.translator.HandleConfigOptionUpdate),
 	}
 }
 
@@ -106,6 +139,11 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	if msg.ID != nil && h.handleFSRequest(ctx, chatID, msg) {
 		return
 	}
+	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
+	// _kiro/terminal/shell_type). No-op under v1/v2.
+	if msg.ID != nil && h.handleKiroClientRequest(ctx, chatID, msg) {
+		return
+	}
 	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.)
 	if msg.ID != nil && strings.HasPrefix(msg.Method, methodTermPrefix) {
 		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)
@@ -119,7 +157,10 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	if _, ok := h.noopMethods[msg.Method]; ok {
 		return
 	}
-	if strings.HasPrefix(msg.Method, "_kiro.dev/") {
+	// v3 (KAS) emits the _kiro/* extension namespace. Unhandled surfaces
+	// (Cedar policy, spec/hooks/knowledge/safety/sandbox families, etc.)
+	// fall through to a debug log rather than a silent drop.
+	if strings.HasPrefix(msg.Method, "_kiro/") {
 		slog.Debug("unhandled kiro extension",
 			"method", msg.Method, "chat_id", chatID)
 	}
@@ -151,6 +192,10 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 		subSessionID = env.Params.SessionID
 	}
 
+	// Sub-kinds without a handler fall through silently. user_message_chunk
+	// is intentionally one of them: vibekit persists user messages itself
+	// (cmdPrompt echoes the bubble via message_appended before the turn
+	// starts), so consuming KAS's echo of the prompt would double-render it.
 	fn, ok := h.sessionUpdateHandlers()[base.Kind]
 	if !ok {
 		return

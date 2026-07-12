@@ -1,13 +1,11 @@
 // @vitest-environment happy-dom
-// Tests for retention.ts: SSE-triggered refresh, abort safety, state + listeners.
+// Tests for retention.ts: reads the vibekit-owned chat_retention_days from
+// /api/settings; state + listeners; the off(0)/forever(-1)/N-days semantics.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
-  API_TIMEOUT_MS: 30_000,
-  withTimeout: (signal: AbortSignal | undefined, _ms: number) =>
-    signal ?? new AbortController().signal,
-  fetchKiroSetting: vi.fn(),
+  apiGet: vi.fn(),
 }));
 
 vi.mock("./toast.js", () => ({
@@ -17,9 +15,14 @@ vi.mock("./toast.js", () => ({
   showToast: vi.fn(),
 }));
 
-import { fetchKiroSetting } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 
-const mockFetchKiroSetting = vi.mocked(fetchKiroSetting);
+const mockApiGet = vi.mocked(apiGet);
+
+// Return the /api/settings shape retention.ts reads.
+function settings(days: number | undefined): { chat_retention_days?: number } {
+  return days === undefined ? {} : { chat_retention_days: days };
+}
 
 beforeEach(() => {
   vi.resetModules();
@@ -27,80 +30,52 @@ beforeEach(() => {
 });
 
 describe("retention", () => {
-  it("SSE-triggered refresh after in-flight returns FRESH data (no dedupe stale issue)", async () => {
-    // First call returns 7, second call returns 30 (simulating SSE-triggered refresh)
-    let callCount = 0;
-    mockFetchKiroSetting.mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return 7;
-      }
-      return 30;
-    });
-
-    // Fresh import to get clean module state
+  it("reads chat_retention_days from /api/settings on refresh", async () => {
+    mockApiGet.mockResolvedValue(settings(14));
     const mod = await import("./retention.js");
 
-    // First refresh
     await mod.refreshRetention();
-    expect(mod.isRetentionEnabled()).toBe(true);
 
-    // Second refresh (simulating SSE-triggered) returns fresh data
-    await mod.refreshRetention();
     expect(mod.isRetentionEnabled()).toBe(true);
-    expect(mockFetchKiroSetting).toHaveBeenCalledTimes(2);
+    expect(mockApiGet).toHaveBeenCalledWith("/api/settings", expect.anything());
   });
 
-  it("abort during fetch does NOT update retentionDays", async () => {
-    mockFetchKiroSetting.mockImplementation(async (_key, _parse, _fallback, signal) => {
-      // Simulate abort during fetch
-      if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
-      }
-      return null; // returning null means the dispatch result is null → no update
-    });
-
+  it("a null response (network failure) leaves the current value in place", async () => {
+    mockApiGet.mockResolvedValue(null);
     const mod = await import("./retention.js");
 
-    // When fetchKiroSetting returns null, refreshRetention early-returns
-    // without updating state
     await mod.refreshRetention();
-    // Default is enabled (retentionDays = 1)
+
+    // Default is 1 (enabled); a failed fetch must not flip it off.
     expect(mod.isRetentionEnabled()).toBe(true);
   });
 
-  it("success updates state and fires listeners", async () => {
-    mockFetchKiroSetting.mockResolvedValue(14);
+  it("a missing field falls back to the default (1 day, enabled)", async () => {
+    mockApiGet.mockResolvedValue(settings(undefined));
+    const mod = await import("./retention.js");
 
+    await mod.refreshRetention();
+
+    expect(mod.isRetentionEnabled()).toBe(true);
+  });
+
+  it("forever (-1) counts as enabled (archive on close, History shown)", async () => {
+    mockApiGet.mockResolvedValue(settings(-1));
+    const mod = await import("./retention.js");
+
+    await mod.refreshRetention();
+
+    expect(mod.isRetentionEnabled()).toBe(true);
+  });
+
+  it("off (0) is the only disabled state; subscribe fires on 0<->N flips", async () => {
+    let next = 0;
+    mockApiGet.mockImplementation(async () => settings(next));
     const mod = await import("./retention.js");
     const listener = vi.fn();
     const unsub = mod.onRetentionChange(listener);
 
-    // subscribe() fires immediately with the current value (default 1).
-    expect(listener).toHaveBeenCalledTimes(1);
-
-    await mod.refreshRetention();
-
-    expect(mod.isRetentionEnabled()).toBe(true);
-    // Immediate fire + one fire for the 1 -> 14 change.
-    expect(listener).toHaveBeenCalledTimes(2);
-
-    unsub();
-    // After unsub, listener should not fire again
-    mockFetchKiroSetting.mockResolvedValue(0);
-    await mod.refreshRetention();
-    expect(listener).toHaveBeenCalledTimes(2);
-  });
-
-  it("subscribe fires on retentionDays change 0<->N and isRetentionEnabled flips", async () => {
-    let next = 0;
-    mockFetchKiroSetting.mockImplementation(async () => next);
-
-    const mod = await import("./retention.js");
-    const listener = vi.fn();
-    mod.onRetentionChange(listener);
-
-    // Immediate fire on register with the default value (1 => enabled).
+    // subscribe() fires immediately with the current value (default 1 => enabled).
     expect(listener).toHaveBeenCalledTimes(1);
     expect(mod.isRetentionEnabled()).toBe(true);
 
@@ -115,5 +90,11 @@ describe("retention", () => {
     await mod.refreshRetention();
     expect(listener).toHaveBeenCalledTimes(3);
     expect(mod.isRetentionEnabled()).toBe(true);
+
+    unsub();
+    // After unsub, listener should not fire again.
+    next = 0;
+    await mod.refreshRetention();
+    expect(listener).toHaveBeenCalledTimes(3);
   });
 });

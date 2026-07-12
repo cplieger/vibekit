@@ -9,7 +9,6 @@ export const scrollMock = {
   scrollToBottom: vi.fn(),
   suppressScroll: vi.fn(),
   setUserScrolledUp: vi.fn(),
-  trimOldMessages: vi.fn(),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
 };

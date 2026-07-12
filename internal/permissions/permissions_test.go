@@ -2,12 +2,8 @@ package permissions
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
-	"slices"
-	"strings"
 	"testing"
 
 	cfgsettings "github.com/cplieger/vibekit/internal/settings"
@@ -24,285 +20,6 @@ func writeSettings(t *testing.T, body string) string {
 		}
 	}
 	return dir
-}
-
-// --- Args() ---
-
-func TestArgs_FailModes(t *testing.T) {
-	tests := []struct {
-		name     string
-		settings string
-		want     []string
-		corrupt  bool
-		noFile   bool
-	}{
-		{"MissingSettingsFallsOpenToTrustAll", "", []string{"--trust-all-tools"}, false, true},
-		{"UnreadableSettingsFallsOpenToTrustAll", "{not json", []string{"--trust-all-tools"}, true, false},
-		{"UnsetModeFallsOpenToTrustAll", `{"some_other_field":"x"}`, []string{"--trust-all-tools"}, false, false},
-		{"UnknownModeFallsOpenToTrustAll", `{"permission_mode":"yolo"}`, []string{"--trust-all-tools"}, false, false},
-		{"PromptModeReturnsEmpty", `{"permission_mode":"prompt"}`, []string{}, false, false},
-		{"TrustAllModeReturnsFlag", `{"permission_mode":"trust-all"}`, []string{"--trust-all-tools"}, false, false},
-		{"TrustListEmptyFallsToPrompt", `{"permission_mode":"trust-list","trust_tools":[]}`, []string{}, false, false},
-		{"MalformedPermissionModeFallsOpenToTrustAll", `{"permission_mode":42}`, []string{"--trust-all-tools"}, false, false},
-		{"MalformedTrustToolsFallsOpenToTrustAll", `{"trust_tools":"fsWrite"}`, []string{"--trust-all-tools"}, false, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var dir string
-			switch {
-			case tt.noFile:
-				dir = t.TempDir()
-			case tt.corrupt:
-				dir = t.TempDir()
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.settings), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			default:
-				dir = writeSettings(t, tt.settings)
-			}
-			got := Args(context.Background(), dir)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Args() = %v, want %v", got, tt.want)
-			}
-			// Non-nil empty slice contract for prompt-mode cases.
-			if len(tt.want) == 0 && got == nil {
-				t.Error("Args returned nil; contract says non-nil empty slice")
-			}
-		})
-	}
-}
-
-func TestArgs_TrustListPopulatesToolsFlag(t *testing.T) {
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["fsWrite","strReplace","executePwsh"]}`)
-	got := Args(context.Background(), dir)
-	if len(got) != 2 || got[0] != "--trust-tools" {
-		t.Fatalf("Args = %v, want [--trust-tools, <list>]", got)
-	}
-	names := strings.Split(got[1], ",")
-	wantAll := []string{"fsWrite", "strReplace", "executePwsh"}
-	for _, w := range wantAll {
-		if !slices.Contains(names, w) {
-			t.Errorf("tool list missing %q: %v", w, names)
-		}
-	}
-}
-
-func TestArgs_TrustListSanitisesList(t *testing.T) {
-	// Trailing whitespace, duplicates, and non-alnum garbage all get cleaned.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":[" fsWrite ","fsWrite","bad name","",":evil;"]}`)
-	got := Args(context.Background(), dir)
-	if len(got) != 2 {
-		t.Fatalf("Args = %v, want two elements", got)
-	}
-	names := strings.Split(got[1], ",")
-	if !slices.Contains(names, "fsWrite") {
-		t.Errorf("expected fsWrite in %v", names)
-	}
-	for _, n := range names {
-		if strings.ContainsAny(n, " :;") || n == "" {
-			t.Errorf("sanitise failed, tool name %q still has bad chars", n)
-		}
-	}
-	// Dedup: fsWrite appears exactly once.
-	count := 0
-	for _, n := range names {
-		if n == "fsWrite" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected fsWrite once after dedup, got %d in %v", count, names)
-	}
-}
-
-// --- cleanList and validToolName ---
-
-func TestCleanList_DropsEmptyAndWhitespace(t *testing.T) {
-	got := cleanList([]string{"", "  ", "\t", "ok"})
-	want := []string{"ok"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("cleanList = %v, want %v", got, want)
-	}
-}
-
-func TestCleanList_PreservesOrder(t *testing.T) {
-	got := cleanList([]string{"zeta", "alpha", "beta"})
-	want := []string{"zeta", "alpha", "beta"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("cleanList did not preserve insertion order: %v", got)
-	}
-}
-
-func TestValidToolName(t *testing.T) {
-	tests := []struct {
-		input string
-		name  string
-		want  bool
-	}{
-		{"fsWrite", "simple", true},
-		{"strReplace", "camelCase", true},
-		{"tool_with_underscore", "underscore", true},
-		{"tool-with-dash", "dash", true},
-		{"tool.with.dot", "dot", true},
-		{"Tool123", "digits_mixed_case", true},
-		{"", "empty", false},
-		{"tool with space", "space", false},
-		{"tool;rm", "semicolon", false},
-		{"tool/path", "slash", false},
-		{"tool$var", "dollar", false},
-		{"tool|pipe", "pipe", false},
-		{strings.Repeat("a", 128), "at_cap", true},
-		{strings.Repeat("a", 129), "over_cap", false},
-		// F2: leading hyphen/dot rejected as defense-in-depth against
-		// tool names that could look like CLI flags or hidden-file
-		// idioms to a lax downstream parser. Kiro-cli identifiers
-		// are camelCase (fsWrite, executePwsh) — nothing legitimate
-		// starts with `-` or `.`.
-		{"-foo", "leading_hyphen_rejected", false},
-		{"--version", "double_leading_hyphen_rejected", false},
-		{".hidden", "leading_dot_rejected", false},
-		{"..up", "double_leading_dot_rejected", false},
-		{"123tool", "leading_digit_still_ok", true},
-		{"_internal", "leading_underscore_still_ok", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := validToolName(tt.input); got != tt.want {
-				t.Errorf("validToolName(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCleanList_EnforcesLengthCap(t *testing.T) {
-	long := strings.Repeat("x", 200)
-	got := cleanList([]string{"ok", long})
-	if len(got) != 1 || got[0] != "ok" {
-		t.Errorf("cleanList did not drop overlong name: %v", got)
-	}
-}
-
-func TestValidToolName_MCPLongNamesAccepted(t *testing.T) {
-	// Regression (ops-perm-03): the MCP wire format
-	// `mcp__<server>__<tool>` is user-chosen on both components;
-	// legitimate names easily pass 64 chars (e.g. a server like
-	// "github-enterprise-read-write-replica" plus a tool like
-	// "list_pull_request_review_threads" is ~76 chars). The 128-
-	// char cap must accept these while still rejecting runaway
-	// strings.
-	mcp76 := "mcp__github-enterprise-read-write-replica__list_pull_request_review_threads"
-	if !validToolName(mcp76) {
-		t.Errorf("validToolName(%q) = false, want true (76-char MCP name below 128 cap)", mcp76)
-	}
-	if !validToolName("mcp__" + strings.Repeat("a", 123)) {
-		t.Error("128-char name at cap must be accepted")
-	}
-	if validToolName("mcp__" + strings.Repeat("a", 124)) {
-		t.Error("129-char name must be rejected (above 128 cap)")
-	}
-}
-
-func TestArgs_MalformedTrustToolsInTrustListModeFallsToPrompt(t *testing.T) {
-	// Invariant: when the mode is set to trust-list but trust_tools is the wrong
-	// type, the field unmarshal fails, TrustTools stays nil, cleanList returns
-	// empty, and the empty-list branch in trust-list mode maps to "prompt for
-	// everything" (empty slice). Partial corruption in trust-list mode must NOT
-	// silently escalate privileges from trust-list (restrictive) to trust-all
-	// (permissive) — the user chose trust-list, we honor it.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":"fsWrite"}`)
-
-	got := Args(context.Background(), dir)
-
-	if len(got) != 0 {
-		t.Errorf("Args with trust-list mode + malformed trust_tools = %v, want empty", got)
-	}
-}
-
-func TestArgs_TrustListAllEntriesRejectedFallsToPrompt(t *testing.T) {
-	// Invariant: trust-list mode with a non-empty list where every entry
-	// fails cleanList's filters must return the prompt fallback (empty
-	// slice), not trust-all. Partial corruption inside trust-list mode
-	// never escalates privileges. Exercises the slog.Warn downgrade
-	// branch in Args that existing tests don't hit (empty-list and
-	// wrong-type paths skip it; sanitise-keeps-some paths skip it too).
-	tests := []struct {
-		name       string
-		trustTools string // raw JSON array body
-	}{
-		{
-			name:       "all entries contain invalid characters",
-			trustTools: `[" bad name ",":evil;","tool/path","tool|pipe"]`,
-		},
-		{
-			name:       "all entries exceed length cap",
-			trustTools: `["` + strings.Repeat("x", 129) + `","` + strings.Repeat("y", 200) + `"]`,
-		},
-		{
-			name:       "mix of over-length and invalid chars",
-			trustTools: `["` + strings.Repeat("a", 129) + `","tool with space"]`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":`+tt.trustTools+`}`)
-
-			got := Args(context.Background(), dir)
-
-			if len(got) != 0 {
-				t.Errorf("Args with trust-list + all-rejected entries = %v, want empty slice (downgrade to prompt)", got)
-			}
-			if got == nil {
-				t.Errorf("Args returned nil; contract requires non-nil empty slice")
-			}
-		})
-	}
-}
-
-// --- FuzzValidToolName ---
-
-func FuzzValidToolName(f *testing.F) {
-	// Seed corpus: representative valid and invalid names.
-	f.Add("fsWrite")
-	f.Add("mcp__server__tool")
-	f.Add("")
-	f.Add("-flag")
-	f.Add(".hidden")
-	f.Add(strings.Repeat("a", 128))
-	f.Add(strings.Repeat("a", 129))
-	f.Add("tool with space")
-	f.Add("tool;rm")
-
-	f.Fuzz(func(t *testing.T, s string) {
-		got := validToolName(s)
-
-		// Invariant 1: never panics (implicit — reaching here means no panic).
-
-		// Invariant 2: idempotent.
-		if validToolName(s) != got {
-			t.Errorf("validToolName(%q) not idempotent", s)
-		}
-
-		// Invariant 3: if valid, enforce character allowlist and constraints.
-		if got {
-			if len(s) == 0 || len(s) > 128 {
-				t.Errorf("validToolName(%q) = true but len %d outside [1,128]", s, len(s))
-			}
-			if s[0] == '-' || s[0] == '.' {
-				t.Errorf("validToolName(%q) = true but starts with %q", s, s[0])
-			}
-			for _, r := range s {
-				if !isToolNameRune(r) {
-					t.Errorf("validToolName(%q) = true but contains invalid rune %q", s, r)
-				}
-			}
-		}
-
-		// Invariant 4: empty string always returns false.
-		if s == "" && got {
-			t.Error("validToolName(\"\") = true, want false")
-		}
-	})
 }
 
 // --- SupervisedDefault ---
@@ -347,29 +64,25 @@ func TestSupervisedDefault(t *testing.T) {
 	}
 }
 
-// --- Non-ENOENT settings read-error fail-mode (test-u8c1-5) ---
+// --- Settings-reader fail-modes (shell + supervised) ---
+//
+// Both surviving config.json readers fail CLOSED. (The former Args /
+// permission_mode reader — which failed OPEN to --trust-all-tools — was
+// removed in 2026-07 with the dead trust-mode surface; kiro-cli's native
+// Cedar policy now owns tool-call authorization on v3.)
 
 func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
-	// Regression: when config.json exists but cannot be read
-	// (here simulated by making it a directory, which returns
-	// EISDIR — a non-ENOENT error), every reader must land on
-	// its documented fail-mode. The asymmetry is deliberate:
-	//   Args                → fail OPEN (--trust-all-tools)
-	//   readShellPolicy     → fail CLOSED (safe_commands)
-	//   SupervisedDefault   → fail CLOSED (false)
-	// A regression that flipped any CLOSED branch to OPEN would
-	// silently grant shell auto-approval or disable the
-	// Supervised gate.
+	// Regression: when config.json exists but cannot be read (here
+	// simulated by making it a directory, which returns EISDIR — a
+	// non-ENOENT error), every reader must land on its documented
+	// fail-mode. Both fail CLOSED:
+	//   readShellPolicy     → safe_commands
+	//   SupervisedDefault   → false
+	// A regression that flipped either CLOSED branch to OPEN would
+	// silently grant shell auto-approval or disable the Supervised gate.
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o700); err != nil {
 		t.Fatal(err)
-	}
-
-	// Args: fail OPEN → [--trust-all-tools]
-	got := Args(context.Background(), dir)
-	want := []string{"--trust-all-tools"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Args(dir-as-settings) = %v, want %v (fail-open)", got, want)
 	}
 
 	// readShellPolicy via EvaluateShellCommand: fail CLOSED to
@@ -403,156 +116,9 @@ func TestReadSettingsBytes_EmptyConfigDirReturnsNil(t *testing.T) {
 	if data != nil {
 		t.Errorf("cfgsettings.ReadBytes(\"\") data = %v, want nil", data)
 	}
-	// SupervisedDefault, Args, readShellPolicy all inherit the
-	// short-circuit; pin their fallbacks.
+	// SupervisedDefault and readShellPolicy inherit the short-circuit;
+	// pin the supervised fallback.
 	if SupervisedDefault(context.Background(), "") {
 		t.Error("SupervisedDefault(context.Background(), \"\") = true, want false")
-	}
-	if got, want := Args(context.Background(), ""), []string{"--trust-all-tools"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Args(\"\") = %v, want %v (fail-open)", got, want)
-	}
-}
-
-// isToolNameRune mirrors validToolName's per-character predicate:
-// ASCII letters, digits, underscore, dash, or dot. Factored out of
-// the fuzz/property test to satisfy staticcheck QF1001 (the inline
-// `!(A || B || C)` form is De-Morgan-equivalent to `!A && !B && !C`
-// but the latter is harder to read across six clauses).
-func isToolNameRune(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z':
-		return true
-	case r >= 'A' && r <= 'Z':
-		return true
-	case r >= '0' && r <= '9':
-		return true
-	case r == '_' || r == '-' || r == '.':
-		return true
-	}
-	return false
-}
-
-// --- Args / read log-effect coverage (folded from the u21 mutation set) ---
-//
-// These assert on operator-facing log lines because the behavior under
-// test (the rejected/dropped counts, the unknown-mode coercion path) has
-// no return value of its own — the log is the only observable effect.
-// They install an in-memory slog handler via captureLogs (helpers_test.go)
-// and so must not run in parallel.
-
-func TestArgs_NoRejectWarnWhenTrustToolsEmpty(t *testing.T) {
-	// trust-list mode with an empty trust_tools list downgrades to prompt
-	// silently — nothing was rejected, so no "all entries rejected" Warn.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":[]}`)
-	logs := captureLogs(t)
-	_ = Args(context.Background(), dir)
-	if logs.has(slog.LevelWarn, "all trust_tools entries rejected") {
-		t.Error("unexpected 'entries rejected' Warn when trust_tools is empty")
-	}
-}
-
-func TestArgs_RejectWarnWhenAllTrustToolsInvalid(t *testing.T) {
-	// trust-list mode with a non-empty list whose entries are all invalid
-	// logs the "all entries rejected" Warn before downgrading to prompt.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["bad name",":evil;"]}`)
-	logs := captureLogs(t)
-	_ = Args(context.Background(), dir)
-	if !logs.has(slog.LevelWarn, "all trust_tools entries rejected") {
-		t.Error("expected 'entries rejected' Warn when all trust_tools entries are invalid")
-	}
-}
-
-func TestArgs_DroppedDebugReportsRawMinusKept(t *testing.T) {
-	// With 3 raw entries and 1 invalid, the sanitiser keeps 2 and the Debug
-	// "dropped by sanitiser" line reports dropped == raw - kept == 1.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["fsWrite","strReplace","bad name"]}`)
-	logs := captureLogs(t)
-	got := Args(context.Background(), dir)
-	if len(got) != 2 || got[0] != "--trust-tools" {
-		t.Fatalf("Args = %v, want [--trust-tools <list>]", got)
-	}
-	v, ok := logs.attrInt(slog.LevelDebug, "dropped by sanitiser", "dropped")
-	if !ok {
-		t.Fatal("expected Debug 'dropped by sanitiser' with an int 'dropped' attr")
-	}
-	if v != 1 {
-		t.Errorf("dropped attr = %d, want 1 (raw 3 - kept 2)", v)
-	}
-}
-
-func TestArgs_NoDroppedDebugWhenNothingDropped(t *testing.T) {
-	// With 2 raw entries, both valid, nothing is dropped and the Debug
-	// "dropped by sanitiser" line must not fire.
-	dir := writeSettings(t, `{"permission_mode":"trust-list","trust_tools":["fsWrite","strReplace"]}`)
-	logs := captureLogs(t)
-	got := Args(context.Background(), dir)
-	if len(got) != 2 || got[0] != "--trust-tools" {
-		t.Fatalf("Args = %v, want [--trust-tools <list>]", got)
-	}
-	if logs.has(slog.LevelDebug, "dropped by sanitiser") {
-		t.Error("unexpected 'dropped by sanitiser' Debug when nothing was dropped")
-	}
-}
-
-func TestRead_CoercesUnknownModeToTrustAll(t *testing.T) {
-	// A present-but-invalid permission_mode is coerced to trust-all.
-	// Observed via read() directly because Args' own default branch also
-	// returns trust-all and would mask whether read() did the coercion.
-	dir := writeSettings(t, `{"permission_mode":"bogus"}`)
-	s := read(context.Background(), dir)
-	if s.Mode != modeTrustAll {
-		t.Errorf("read() Mode for unknown permission_mode = %q, want %q", s.Mode, modeTrustAll)
-	}
-}
-
-func TestRead_TrustToolsParseWarn(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		wantWarn bool
-	}{
-		{
-			// Valid array: unmarshal succeeds, so no parse Warn.
-			name:     "valid_array_no_warn",
-			body:     `{"permission_mode":"trust-list","trust_tools":["fsWrite"]}`,
-			wantWarn: false,
-		},
-		{
-			// Wrong JSON type: unmarshal fails, so read() logs a parse Warn.
-			name:     "wrong_type_warns",
-			body:     `{"permission_mode":"trust-list","trust_tools":"notarray"}`,
-			wantWarn: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := writeSettings(t, tt.body)
-			logs := captureLogs(t)
-			_ = read(context.Background(), dir)
-			if got := logs.has(slog.LevelWarn, "parse trust_tools"); got != tt.wantWarn {
-				t.Errorf("read() 'parse trust_tools' Warn = %v, want %v", got, tt.wantWarn)
-			}
-		})
-	}
-}
-
-func TestIsToolNameIdentStart_Boundaries(t *testing.T) {
-	// The inclusive ASCII range boundaries must all count as valid
-	// identifier-start runes: 'A', 'Z', '0', and '9'.
-	tests := []struct {
-		name string
-		r    rune
-	}{
-		{"upper_A_boundary", 'A'},
-		{"upper_Z_boundary", 'Z'},
-		{"digit_0_boundary", '0'},
-		{"digit_9_boundary", '9'},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !isToolNameIdentStart(tt.r) {
-				t.Errorf("isToolNameIdentStart(%q) = false, want true", tt.r)
-			}
-		})
 	}
 }

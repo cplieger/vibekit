@@ -31,7 +31,7 @@ export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
     "button",
     {
       className: "plan-edit-btn btn-small",
-      title: "Open this plan in the editor for tweaks before handing it to the default agent",
+      title: "Open this plan in the editor to tweak it before sending it to the agent",
     },
     "Edit",
   );
@@ -39,7 +39,7 @@ export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
     "button",
     {
       className: "plan-run-btn btn-small",
-      title: "Switch to the default agent and implement this plan",
+      title: "Send this plan to the agent to implement (switches out of Plan mode if needed)",
     },
     "Run this plan",
   );

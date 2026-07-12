@@ -29,7 +29,15 @@ type BridgeCoordinator struct {
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
 	preBridgeSpawn func(context.Context)
-	permArgsFn     func() []string
+	// flushPending rejects every outstanding pending op for a chat and
+	// broadcasts the cleared events. Injected (from h.flushPendingForChat)
+	// so Forward can flush a chat's staged writes when its bridge exits,
+	// without the coordinator importing the full Hub.
+	flushPending func(context.Context, api.ChatID, api.ClearReason)
+	// agentEngine is the kiro-cli agent engine for every bridge this
+	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
+	// vibekit is v3-only.
+	agentEngine string
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Hub's
@@ -46,26 +54,39 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,
-		permArgsFn:     h.permArgsFn,
+		flushPending:   h.flushPendingForChat,
+		agentEngine:    resolveAgentEngine(),
 	}
+}
+
+// resolveAgentEngine returns the kiro-cli agent engine, hard-pinned to v3
+// (KAS). vibekit is v3-only: the v2 (_kiro.dev/*) wire and its handlers
+// were removed, so a stray KIRO_AGENT_ENGINE=v1/v2 is deliberately
+// ignored — honoring it would launch a legacy engine vibekit can no
+// longer talk to (session/new stalls, every turn fails). v3 requires the
+// host to answer _kiro/auth/getAccessToken + _kiro/terminal/shell_type
+// (internal/hub/bridge_v3_auth.go). The v2→v3 wire comparison is in
+// kiro-cli-research.md.
+func resolveAgentEngine() string {
+	return api.AgentEngineV3
 }
 
 // GetOrCreateBridge returns an existing bridge for chatID, or creates one.
 // Concurrent callers for the same chatID coalesce via singleflight.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the hub package.
-func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, agentOverride, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
 		return sb, nil
 	}
 
-	// Coalesce concurrent spawn attempts for the same chatID+overrides.
-	// Including overrides in the key ensures callers with different
-	// agent/model parameters don't coalesce onto the wrong bridge.
-	sfKey := string(chatID) + "\x00" + agentOverride + "\x00" + modelOverride
+	// Coalesce concurrent spawn attempts for the same chatID+model.
+	// Including the model override in the key ensures callers with
+	// different model parameters don't coalesce onto the wrong bridge.
+	sfKey := string(chatID) + "\x00" + modelOverride
 	v, err, _ := bc.bridge.mgr.spawnSF.Do(sfKey, func() (any, error) {
-		return bc.spawnBridge(ctx, chatID, agentOverride, modelOverride)
+		return bc.spawnBridge(ctx, chatID, modelOverride)
 	})
 	if err != nil {
 		return nil, err
@@ -76,11 +97,11 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 
 // spawnBridge creates (or returns the just-created) bridge for chatID.
 // It runs inside the singleflight so concurrent callers coalesce. It
-// resolves the agent/model (overrides beat the chat's stored values),
+// resolves the model (the override beats the chat's stored value),
 // tries session/load when an ACP session id is stored, and otherwise
 // starts a fresh session/new. On any start failure it rolls the
 // half-registered bridge back out of the map and returns the error.
-func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID, agentOverride, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Double-check after winning the singleflight race.
 	sb, existed := bc.bridge.mgr.getOrInsert(chatID)
 	if existed {
@@ -98,16 +119,10 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 		return nil, setupErr(fmt.Errorf("chat %s not found", chatID))
 	}
 
-	agent := chat.Agent
-	if agentOverride != "" {
-		agent = agentOverride
-	}
 	model := chat.Model
 	if modelOverride != "" && modelOverride != modelAuto {
 		model = modelOverride
 	}
-
-	permArgs := bc.permArgsFn()
 
 	var mcpServers []map[string]any
 	if bc.mcpConfig != nil {
@@ -119,18 +134,44 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	}
 
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, agent, model, permArgs, mcpServers) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, mcpServers) {
 			go bc.Forward(chatID, sb.bridge)
 			return sb, nil
 		}
 	}
 
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Agent: agent, Model: model, Effort: bc.effortForModel(ctx, model), ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
+	// EnableHooks:true opts chat bridges into KAS's v2 hook engine
+	// (_meta.kiro.hooks={enabled,v2} in the initialize handshake) so the
+	// workspace's user-authored .kiro/hooks/*.json hooks AUTOFIRE on their
+	// triggers (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse)
+	// during a turn. In v2 mode KAS loads the hook files itself and RUNS
+	// runCommand hooks internally (its own process runner, in the workspace),
+	// exactly as the Kiro IDE and kiro-cli TUI do — it does NOT call back the
+	// client's _kiro/hooks/executeHook for autofire (verified on the live v3
+	// wire: chat autofire produced zero executeHook callbacks; the hook
+	// commands ran internally). So no chat-bridge executeHook handler is
+	// needed. Same trust model as vibekit's `!cmd` interception: the hooks are
+	// the user's own automation. The utility bridge keeps its own EnableHooks
+	// for the hooks dashboard (list/setEnabled/Run-now); see hub/hooks.go.
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 	sb.primed = false
+	// Failed-fork rewind degrade: a rewind chat reaches this fresh
+	// session/new path only when session/fork was unavailable (ACPSessionID
+	// never set) or a stored forked session failed to load — in both cases
+	// the new session has none of the prior context the truncated UI
+	// transcript shows. Flag it so PrimeIfNeeded injects that history on the
+	// first prompt. Deriving from chat fields (no new schema field): a
+	// successfully-forked rewind resumes via session/load above and never
+	// reaches here (no prime); a promoted rewind has ParentChatID cleared;
+	// a normal new chat has no ParentChatID. Messages is already non-empty
+	// here (the rewind's truncated history plus the just-appended prompt).
+	if chat.ParentChatID != "" && len(chat.Messages) > 0 {
+		sb.primeReason = primeReasonRewind
+	}
 	sb.state = bridgeIdle
 
 	go bc.Forward(chatID, sb.bridge)
@@ -140,10 +181,13 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 
 // tryLoadSession attempts session/load against the stored ACP session id.
 func (bc *BridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID api.ChatID, sb *sharedBridge, acpSessionID, agent, model string,
-	permArgs []string, mcpServers []map[string]any,
+	ctx context.Context, chatID api.ChatID, sb *sharedBridge, acpSessionID, model string,
+	mcpServers []map[string]any,
 ) bool {
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Agent: agent, Model: model, ExtraArgs: permArgs, MCPServers: mcpServers}); err != nil {
+	// EnableHooks:true — the session/load path must opt into the hook engine
+	// too, so hooks autofire on resumed sessions after a container restart
+	// (same rationale as spawnBridge's session/new path above).
+	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		sb.bridge.Stop()
@@ -226,6 +270,18 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 	slog.Info("bridge exited", "chat_id", chatID)
 
 	bc.bridge.mgr.removeIfBridge(chatID, bridge)
+
+	// Flush staged writes for the chat. A bridge exit (crash, or a
+	// model-switch CloseBridge) leaves the supervised fs-handler goroutine
+	// parked on its resume channel and a phantom "awaiting approval"
+	// pending op that would replay to reconnecting clients. Cancel, delete,
+	// and mode-disable already flush; this is the bridge-exit sibling.
+	// Idempotent: chat-delete flushes before CloseBridge, so the second
+	// flush here finds no ops and broadcasts nothing.
+	if bc.flushPending != nil {
+		bc.flushPending(bc.lifecycle.shutdownCtx, chatID, api.ClearReasonBridgeExited)
+	}
+
 	lastBridge := bc.bridge.mgr.count() == 0
 
 	if lastBridge {
@@ -248,6 +304,11 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 			"or both). Below is the full conversation history. Read it " +
 			"silently and reply with a single short line confirming " +
 			"you're caught up.\n\n" + history
+	case primeReasonRewind:
+		prime = "This conversation was rewound to an earlier turn and is " +
+			"resuming in a fresh session. Below is the conversation history " +
+			"up to the rewind point. Read it silently and reply with a " +
+			"single short line confirming you're caught up.\n\n" + history
 	default:
 		return
 	}
@@ -309,7 +370,6 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
 		changedFiles = buf.ChangedFiles
-		closeAndRemovePartial(ctx, chatID, buf)
 		if stopReason == stopReasonCancelled {
 			changed := buf.MarkCancelledToolsFailed()
 			for i := range changed {
@@ -330,10 +390,28 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			// actually produced it (text, tool, more text, another
 			// tool, …) rather than collapsing all text to the top.
 			Blocks: buf.Blocks,
+			// CodeReferences persists the turn's licensed-code
+			// attributions so the chip survives reload (the streamed
+			// assistant turn is never re-broadcast as message_appended).
+			CodeReferences: buf.CodeReferences,
+			// Turn summary (credits · elapsed · files changed) — persisted on
+			// the message so the turn footer survives reload. The same values
+			// ride the turn_ended SSE for the live render; omitempty drops the
+			// zero/nil cases (a read-only or zero-cost turn carries no footer).
+			TurnCredits:   creditsDelta,
+			TurnElapsedMs: elapsedMs,
+			ChangedFiles:  changedFiles,
 		}
+		// Persist the finalized turn BEFORE deleting the .partial. A crash
+		// in this window would otherwise lose a COMPLETED turn (the
+		// .partial gone, the chat file never committed). RecoverPartials is
+		// idempotent — it skips the append when the MessageID is already
+		// committed — so a crash AFTER this commit / BEFORE the delete
+		// below can't double-append on the next boot.
 		if err := bc.chatStore.AppendMessage(ctx, chatID, &msg); err != nil {
 			slog.Error("persist assistant turn", "chat_id", chatID, "error", err)
 		}
+		closeAndRemovePartial(ctx, chatID, buf)
 	}
 
 	if stopReason == stopReasonCancelled {
@@ -368,7 +446,8 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 }
 
-// TryFastModelSwitch attempts session/set_model on the running bridge.
+// TryFastModelSwitch attempts an in-session model swap via
+// session/set_config_option (configId "model") on the running bridge.
 func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID api.ChatID, model string) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
@@ -379,7 +458,7 @@ func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID api.
 			"chat_id", chatID, "model", model, "error", err)
 		return false
 	}
-	slog.Info("model switch: fast path succeeded (session/set_model)",
+	slog.Info("model switch: fast path succeeded (session/set_config_option)",
 		"chat_id", chatID, "model", model)
 	return true
 }

@@ -41,7 +41,7 @@ func BenchmarkPendingAddResolve(b *testing.B) {
 					if err != nil {
 						b.Fatalf("Add: %v", err)
 					}
-					_, _ = s.Resolve(context.Background(), id, ActionAccept)
+					_, _ = s.Resolve(context.Background(), "bench-chat", id, ActionAccept)
 					// Drain the channel to avoid leaking.
 					<-ch
 				}
@@ -99,7 +99,7 @@ func BenchmarkPendingStore_Contention(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Add: %v", err)
 			}
-			_, _ = s.Resolve(context.Background(), id, ActionAccept)
+			_, _ = s.Resolve(context.Background(), "shared-chat", id, ActionAccept)
 			<-ch
 		}
 	})

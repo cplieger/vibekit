@@ -13,7 +13,7 @@ var _ translate.MCPRecorder = (*NopMCPRecorder)(nil)
 func TestNopMCPRecorder_NoPanic(t *testing.T) {
 	r := &NopMCPRecorder{}
 	// Exercise all methods — verify no panics.
-	r.RecordConnected(context.Background(), "server1")
+	r.RecordConnected(context.Background(), "server1", nil, nil)
 	r.RecordOAuth(context.Background(), "server1", "https://example.com/oauth")
 	r.RecordInitFailure(context.Background(), "server1", "timeout")
 	r.SignalReady()

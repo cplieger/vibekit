@@ -162,6 +162,56 @@ func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 	})
 }
 
+// TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts pins the H3
+// fix: KAS's current_mode_update sub-kind carries the new mode under
+// `currentModeId` (the bundle's zCurrentModeUpdate object), not `modeId`
+// (which is the outbound session/set_mode request's field). HandleModeUpdate
+// must read that key, persist CurrentModeID, and broadcast mode_changed.
+// Fails against the old `json:"modeId"` tag: the payload then decodes to
+// an empty ModeID, so HandleModeUpdate early-returns with no persist and
+// no broadcast.
+func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	store := testsupport.NewRecordingChatStore()
+	deps.store = store
+	chatID := api.ChatID("c1")
+	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
+	_ = store.Mutate(context.Background(), chatID, func(_ *api.Chat, _ bool) bool { return true })
+
+	tr := New(deps, "/tmp", WithIDGenerator(func() string { return "id" }))
+	tr.HandleModeUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		"currentModeId": "plan",
+	}))
+
+	// Persisted the new mode.
+	got, ok := store.Get(context.Background(), chatID)
+	if !ok {
+		t.Fatal("chat missing after HandleModeUpdate")
+	}
+	if got.CurrentModeID != "plan" {
+		t.Errorf("CurrentModeID = %q, want %q (current_mode_update must read currentModeId, not modeId)", got.CurrentModeID, "plan")
+	}
+
+	// Broadcast mode_changed carrying the new mode id.
+	found := false
+	for _, e := range *events {
+		if e.Type != api.EventModeChanged {
+			continue
+		}
+		p, isModePayload := e.Payload.(api.ModeChangedPayload)
+		if !isModePayload {
+			t.Fatalf("mode_changed payload type = %T, want api.ModeChangedPayload", e.Payload)
+		}
+		if p.ModeID != "plan" {
+			t.Errorf("mode_changed ModeID = %q, want %q", p.ModeID, "plan")
+		}
+		found = true
+	}
+	if !found {
+		t.Errorf("no mode_changed event broadcast; got %v", eventTypes(*events))
+	}
+}
+
 // TestHandlePlan_ContextErrGuard pins that HandlePlan proceeds to Mutate
 // under an active context but skips it when the context is already
 // cancelled.

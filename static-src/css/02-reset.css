@@ -121,6 +121,11 @@
     scrollbar-gutter: stable;
     text-wrap: pretty;
     touch-action: pan-x pan-y;
+    /* The web-terminal-ui bundle (in the lowest `web-terminal-ui` layer) sets
+       `body { color-scheme: dark }` for its standalone full-page terminal.
+       vibekit drives color-scheme from :root per theme, so inherit it here to
+       keep light-theme scrollbars/native controls correct. */
+    color-scheme: inherit;
   }
 
   :where(button) {

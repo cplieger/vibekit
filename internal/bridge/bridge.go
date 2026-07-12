@@ -4,7 +4,6 @@ package bridge
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/sessions"
 	"github.com/cplieger/vibekit/internal/version"
 )
 
@@ -47,7 +45,7 @@ const (
 	methodInitialize  = api.MethodInitialize
 	methodSessionNew  = api.MethodSessionNew
 	methodSessionLoad = api.MethodSessionLoad
-	methodSetModel    = api.MethodSetModel
+	methodSetMode     = api.MethodSetMode
 )
 
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
@@ -60,15 +58,15 @@ type Bridge struct {
 	notifCh      chan *api.RPCResponse
 	done         chan struct{}
 	models       atomic.Pointer[[]api.SessionModel]
-	promptCaps   atomic.Pointer[api.PromptCapabilities]
 	cmd          *exec.Cmd
-	lockMgr      *sessions.Manager
 	modelID      api.ModelID
 	sessionID    api.SessionID
 	workDir      string
 	cliPath      string
 	currentMode  string
+	agentEngine  string
 	nextID       atomic.Int64
+	enableHooks  bool
 	stopOnce     sync.Once
 	mu           sync.Mutex
 	writeMu      sync.Mutex
@@ -76,30 +74,14 @@ type Bridge struct {
 }
 
 // New returns a fresh bridge. Call Start before any other method.
-// lockMgr may be nil if session lock management is not needed.
-func New(cliPath, workDir string, opts ...BridgeOption) *Bridge {
-	b := &Bridge{
+func New(cliPath, workDir string) *Bridge {
+	return &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
 		pending: make(map[int64]chan *api.RPCResponse),
 		notifCh: make(chan *api.RPCResponse, 256),
 		done:    make(chan struct{}),
 	}
-	for _, o := range opts {
-		o(b)
-	}
-	return b
-}
-
-// BridgeOption configures a Bridge at construction time.
-//
-//nolint:revive // BridgeOption: name kept for clarity at call sites; bridge.Option would conflict with other package-level Option names callers commonly use.
-type BridgeOption func(*Bridge)
-
-// WithSessionManager sets the sessions.Manager used for stale-lock
-// removal during session load.
-func WithSessionManager(mgr *sessions.Manager) BridgeOption {
-	return func(b *Bridge) { b.lockMgr = mgr }
 }
 
 // SessionID returns the bridge's ACP session id. Safe to call from
@@ -150,17 +132,19 @@ func (b *Bridge) Models() []api.SessionModel {
 // NotifCh returns the channel of incoming ACP notifications from the bridge subprocess.
 func (b *Bridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
 
-// SetModel performs an in-session model swap via session/set_model.
-// On success, updates the bridge's internal model id and returns nil.
-// On failure (context too large, model unavailable), returns the error
-// and leaves the bridge's model id unchanged.
+// SetModel performs an in-session model swap via session/set_config_option
+// (configId "model") — the v3 (KAS) replacement for the removed
+// session/set_model. On success, updates the bridge's internal model id
+// and returns nil. On failure (context too large, model unavailable,
+// InvalidModelError), returns the error and leaves the model id unchanged.
 func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Lock()
 	sessionID := b.sessionID
 	b.mu.Unlock()
-	_, err := b.Call(ctx, methodSetModel, map[string]any{
+	_, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
 		api.KeySessionID: sessionID,
-		"modelId":        modelID,
+		"configId":       api.ConfigOptionModel,
+		"value":          modelID,
 	})
 	if err != nil {
 		return err
@@ -179,55 +163,50 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// this capability is present (verified against kiro-cli 2.6.0, which
 	// gates forwarding on clientCapabilities.elicitation). Without it the
 	// agent has nowhere to surface the prompt and the tool call stalls.
-	resp, err := b.Call(ctx, methodInitialize, map[string]any{
+	// _meta.kiro.openExternalUrl opts into KAS's _kiro/openExternalUrl
+	// request (open a URL for the user, e.g. an MCP OAuth page).
+	// _meta.kiro capabilities. openExternalUrl advertises that we can open
+	// a URL for the user; KAS (v3) gates its _kiro/openExternalUrl request
+	// on it (proactively opening an MCP server's OAuth page — the client
+	// surfaces a clickable banner, no auto-open; see hub/bridge_v3_auth.go).
+	// hooks opts into KAS's v2 hook engine. Set on the utility bridge (so
+	// _kiro/hooks/list|setEnabled|triggerHook are available for the
+	// hooks-management dashboard) AND on chat bridges (so the workspace's
+	// user-authored .kiro/hooks/*.json hooks autofire on their triggers
+	// during an agent turn). In v2 mode KAS loads the hook files and runs
+	// runCommand hooks internally — it does not call back the client to run
+	// autofired hooks. See hub/hooks.go and hub/bridge_coord.go.
+	// _meta.kiro.infrastructureSafety opts into KAS's Infrastructure-Safety
+	// gate for infrastructure-as-code tool calls. Safe-by-default: KAS installs
+	// the gate only when this capability AND an AWS governance flag
+	// (infraSafetyMonitor|infraSafetyEnforce) are both set, and that flag is off
+	// by default on individual/Builder-ID accounts — so declaring it has zero
+	// effect there (verified on a live probe: no gate, getProperties returns []).
+	// It is required for the gate's statusChanged/propertiesChanged notifications
+	// to ever surface (translate/safety.go); on an enterprise account with the
+	// flag on, enforce mode can block infra-as-code writes remotely. Distinct
+	// from vibekit's own Supervised write-gate (vibekit-supervised.md).
+	kiroMeta := map[string]any{"openExternalUrl": true, "infrastructureSafety": true}
+	if b.enableHooks {
+		kiroMeta["hooks"] = map[string]any{"enabled": true, "v2": true}
+	}
+	if _, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs":          map[string]any{"readTextFile": true, "writeTextFile": true},
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
+			"_meta":       map[string]any{"kiro": kiroMeta},
 		},
 		"clientInfo": map[string]any{
 			"name": "vibekit", "title": "Vibekit for Kiro", "version": version.Build,
 		},
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
-	b.capturePromptCapabilities(resp)
 	// Developer-oriented intermediate signal; the user-facing
 	// "bridge started" breadcrumb in Start() is the authoritative
 	// "a bridge exists now" Info line.
 	slog.Debug("ACP initialize RPC completed", "version", version.Build)
 	return nil
-}
-
-// capturePromptCapabilities records the agent's advertised prompt
-// content-block capabilities from the initialize result, so the prompt
-// builder only sends block types the agent can consume (e.g. inline
-// document/embedded-context blocks). A decode failure or absent field
-// leaves the zero value (text-only), which is the safe default.
-func (b *Bridge) capturePromptCapabilities(resp *api.RPCResponse) {
-	if resp == nil || len(resp.Result) == 0 {
-		return
-	}
-	var init struct {
-		AgentCapabilities struct {
-			PromptCapabilities api.PromptCapabilities `json:"promptCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if err := json.Unmarshal(resp.Result, &init); err != nil {
-		slog.Debug("initialize: could not decode promptCapabilities", "error", err)
-		return
-	}
-	caps := init.AgentCapabilities.PromptCapabilities
-	b.promptCaps.Store(&caps)
-}
-
-// SupportsDocuments reports whether the negotiated agent accepts inline
-// document/embedded content blocks (promptCapabilities.embeddedContext).
-// False until initialize completes, and for kiro-cli 2.7's acp, which
-// advertises embeddedContext:false.
-func (b *Bridge) SupportsDocuments() bool {
-	c := b.promptCaps.Load()
-	return c != nil && c.EmbeddedContext
 }

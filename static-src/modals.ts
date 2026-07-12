@@ -109,6 +109,12 @@ export function initAllModals(): void {
 const EXPAND_HINT =
   '<svg class="output-expand-hint" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
 
+// Parse the constant expand-hint SVG ONCE at module load; each append imports a
+// fresh copy of the cached node rather than re-running DOMParser on every
+// output update / modal open.
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+const EXPAND_HINT_NODE = new DOMParser().parseFromString(EXPAND_HINT, "text/html").body.firstChild!;
+
 /** Manages a rolling output bar that shows the last 4 lines and expands to a modal on click. */
 export class RollingOutput {
   private full = "";
@@ -132,8 +138,7 @@ export class RollingOutput {
     this.full += (this.full !== "" ? "\n" : "") + text;
     const lines = this.full.split("\n").filter((l) => l.trim() !== "");
     const textNode = document.createTextNode(lines.slice(-4).join("\n"));
-    const hintNode = new DOMParser().parseFromString(EXPAND_HINT, "text/html").body.firstChild!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    this.bar.replaceChildren(textNode, document.importNode(hintNode, true));
+    this.bar.replaceChildren(textNode, document.importNode(EXPAND_HINT_NODE, true));
     this.bar.classList.remove("hidden");
   }
 
@@ -166,11 +171,6 @@ export function openModal(modal: HTMLDivElement): void {
 /** Close a modal by its content element. No-op if it was never opened. */
 export function closeModal(modal: HTMLDivElement): void {
   controllers.get(modal)?.close();
-}
-
-/** Whether a modal is currently open (and not already fading out). */
-export function isModalOpen(modal: HTMLDivElement): boolean {
-  return controllers.get(modal)?.isOpen ?? false;
 }
 
 /** Close the topmost OPEN modal. Returns true if one was closed. Kept working

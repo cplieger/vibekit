@@ -35,7 +35,7 @@ func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, erro
 	if !ValidMessageID(p.MessageID) {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
-	if !ValidIdent(p.Agent) || !ValidIdent(p.Model) {
+	if !ValidIdent(p.Model) {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
 	return p, 0, nil
@@ -100,7 +100,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
 	}
-	sb2, err2 := deps.GetOrCreateBridge(ctx, chatID, p.Agent, p.Model)
+	sb2, err2 := deps.GetOrCreateBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
@@ -133,7 +133,6 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			c.Name = api.DefaultChatName
-			c.Agent = p.Agent
 			c.Model = p.Model
 			c.SupervisedMode = supervisedDefault
 		}
@@ -158,6 +157,32 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 		return true
 	})
 	return err
+}
+
+// turnContext derives the context an in-flight turn runs under. It
+// deliberately severs the caller's (prompt POST r.Context()) cancellation
+// via context.WithoutCancel: a mid-turn client drop — iOS backgrounding,
+// a proxy timeout, a network blip — must NOT cancel the bridge Call. If
+// it did, CmdPrompt would emit prompt_failed and return BEFORE
+// EmitTurnEndedWithStats, so no turn_ended fires and the assistant buffer
+// is never persisted, even though kiro-cli keeps running the turn to
+// completion. Request-scoped values are preserved. Cancellation is
+// re-attached to the hub shutdown context via AfterFunc so the turn still
+// dies on hub shutdown; the returned cancel also tears it down on handler
+// return. Explicit user cancellation is unaffected — it goes through
+// session/cancel (Notify), not this context.
+//
+// This mirrors the established pattern in hub/agent_terminal.go, which
+// runs agent-spawned subprocesses under context.WithCancel(
+// context.WithoutCancel(ctx)) + AfterFunc(shutdownCtx, cancel) for the
+// same reason (a per-request ctx must not tear down longer-lived work).
+func turnContext(reqCtx, shutdownCtx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
+	stop := context.AfterFunc(shutdownCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 // CmdPrompt handles the prompt command.
@@ -187,12 +212,14 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 	deps.AdvanceCheckpointTurn(ctx, cmd.ChatID)
 
-	// 2. Ensure the bridge exists and serialize per-chat prompts.
-	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(deps.ShutdownCtx(), cancel)
-	defer stop()
+	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
+	// runs under a context detached from the prompt POST's r.Context()
+	// (see turnContext): a mid-turn client disconnect must not cancel the
+	// in-flight bridge Call, or the turn fails before it can finalize and
+	// persist the assistant buffer.
+	ctx, cancel := turnContext(ctx, deps.ShutdownCtx())
 	defer cancel()
-	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Agent, p.Model)
+	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: err.Error()}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
@@ -250,8 +277,14 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 // BuildPromptParams constructs the full session/prompt parameter map.
 func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir, sb.SupportsDocuments()),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
+	// Forward the client-generated user message id so KAS stores this turn
+	// under vibekit's own id. That id space is what session/fork references
+	// (via _meta.kiro.messageId) to rewind to a past turn (see CmdRewindChat).
+	if p.MessageID != "" {
+		params["messageId"] = p.MessageID
+	}
 	kiroMeta := map[string]any{}
 	if p.ActiveFile != "" {
 		kiroMeta["activeFile"] = p.ActiveFile

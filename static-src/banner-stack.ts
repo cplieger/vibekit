@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------------------
 // Banner stack: per-chat persistent banners above the transcript.
 //
-// Init errors (agent_not_found, agent_config_error, model_not_found),
-// rate limits, and MCP failures surface here. Each banner is keyed on
-// (chat_id, code) so the same error replaces rather than duplicates.
+// Init errors (agent_not_found, agent_config_error), rate limits (including
+// the v3 system/notify "model under load" notice), and MCP failures surface
+// here. Each banner is keyed on (chat_id, code) so the same error replaces
+// rather than duplicates.
 //
-// Banners are per-device (dismissal state in localStorage) and auto-
-// clear when the underlying condition resolves (e.g. agent_switched
-// clears agent_not_found + agent_config_error).
+// Banners are per-device (dismissal state in localStorage) and auto-clear
+// when the underlying condition resolves.
 //
 // State is a createCollection<BannerEntry>; the stack is rendered by a single
 // bindList over a computed active-chat view, so add / remove / chat-switch all
@@ -18,8 +18,17 @@
 import { $ } from "./dom.js";
 import { activeSession } from "./store.js";
 import { load, save } from "./ui-state.js";
+import { isSafeURL } from "./url-safety.js";
 import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import type { BannerLevel } from "./types.js";
+
+/** Optional clickable link rendered inside a banner (e.g. the
+ *  open_external_url "Open sign-in page" affordance). Only http/https
+ *  hrefs are rendered; anything else is dropped. */
+export interface BannerLink {
+  readonly label: string;
+  readonly href: string;
+}
 
 interface BannerEntry {
   readonly code: string;
@@ -60,6 +69,9 @@ export function ensureBound(): void {
   bound = true;
   const container = $.bannerStack;
   container.setAttribute("aria-label", "Notifications");
+  // The stack container is the SINGLE live region for banners; individual
+  // banner nodes carry no role/aria-live (see showBanner) so an added banner
+  // announces exactly once.
   container.setAttribute("aria-live", "polite");
   // Reuse the entry-owned element so banner identity (and any ongoing
   // transitions / focus) persists across re-renders.
@@ -95,12 +107,46 @@ function clearDismiss(chatID: string, code: string): void {
   }
 }
 
+/** Build a safe banner link anchor, or null when the href is unsafe. */
+function buildBannerLink(link: BannerLink): HTMLAnchorElement | null {
+  if (!isSafeURL(link.href)) {
+    return null;
+  }
+  return el(
+    "a",
+    {
+      className: "banner-link",
+      href: link.href,
+      target: "_blank",
+      rel: "noopener noreferrer",
+    },
+    link.label,
+  ) as HTMLAnchorElement;
+}
+
+/** Insert/replace the banner link on an existing banner node, before the
+ *  dismiss button when present. */
+function updateBannerLink(node: HTMLDivElement, link: BannerLink): void {
+  node.querySelector(".banner-link")?.remove();
+  const a = buildBannerLink(link);
+  if (a === null) {
+    return;
+  }
+  const dismissBtn = node.querySelector(".banner-dismiss");
+  if (dismissBtn !== null) {
+    node.insertBefore(a, dismissBtn);
+  } else {
+    node.appendChild(a);
+  }
+}
+
 export function showBanner(
   chatID: string,
   code: string,
   message: string,
   level: BannerLevel,
   dismissible: boolean,
+  link?: BannerLink,
 ): void {
   if (isDismissed(chatID, code)) {
     return;
@@ -115,17 +161,29 @@ export function showBanner(
       msg.textContent = message;
     }
     existing.message = message;
+    if (link !== undefined) {
+      updateBannerLink(existing.el, link);
+    }
     return;
   }
   const msg = el("span", { className: "banner-msg" }, message);
+  // No per-banner role/aria-live: the stack container (ensureBound) is the single
+  // aria-live="polite" region, so individual banners are NOT separately live —
+  // nesting a role="alert"/"status" child inside a live region double-announces
+  // (or announces at a conflicting politeness). Same decoupling toast.ts uses.
   const node = el(
     "div",
     {
       className: `banner banner-${level}`,
-      role: level === "error" ? "alert" : "status",
     },
     msg,
   ) as HTMLDivElement;
+  if (link !== undefined) {
+    const a = buildBannerLink(link);
+    if (a !== null) {
+      node.appendChild(a);
+    }
+  }
   if (dismissible) {
     const btn = el(
       "button",
@@ -141,7 +199,7 @@ export function showBanner(
   const entry: BannerEntry = { code, chatID, message, level, dismissible, el: node };
   ensureBound();
   banners.upsert(entry);
-  pruneStaleDissmissals();
+  pruneStaleDismissals();
 }
 
 function removeBanner(chatID: string, code: string): void {
@@ -182,7 +240,7 @@ const PRUNE_THRESHOLD = 200;
 
 /** Prune dismissed_banners entries that exceed the threshold. Keeps only the
  *  most recent entries (tail of the array). */
-function pruneStaleDissmissals(): void {
+function pruneStaleDismissals(): void {
   const state = load();
   if (state.dismissed_banners.length <= PRUNE_THRESHOLD) {
     return;

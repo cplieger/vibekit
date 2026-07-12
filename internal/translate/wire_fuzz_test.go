@@ -23,10 +23,8 @@ func FuzzACPWireDecode(f *testing.F) {
 		`{"toolCallId":"tc-2","status":"completed","locations":[],"content":[]}`,
 		// plan
 		`{"entries":[{"title":"Step 1","status":"pending"}]}`,
-		// current_mode_update
-		`{"modeId":"code"}`,
-		// steering_inclusion
-		`{"documents":[{"name":"guide.md","path":"/docs/guide.md"}]}`,
+		// current_mode_update (KAS keys the mode on currentModeId)
+		`{"currentModeId":"code"}`,
 		// chunk with empty text (edge case)
 		`{"content":{"type":"text","text":""}}`,
 		// malformed but parseable JSON
@@ -55,9 +53,6 @@ func FuzzACPWireDecode(f *testing.F) {
 
 		var mode ACPModeUpdateWire
 		decodeAndCheck(t, data, &mode)
-
-		var steering ACPSteeringWire
-		decodeAndCheck(t, data, &steering)
 
 		var env ACPSessionUpdateEnvelope
 		decodeAndCheck(t, data, &env)

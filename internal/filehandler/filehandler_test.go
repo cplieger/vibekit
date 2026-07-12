@@ -2338,3 +2338,47 @@ func TestHandleDownloadZip_Rejects(t *testing.T) {
 		t.Errorf("empty paths status = %d, want 400", rec.Code)
 	}
 }
+
+// Security regression: the container's HOME tree (/config/home/) holds the
+// real credential stores — the AWS SSO token + OAuth client secret
+// (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
+// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json holds
+// MCP env/header/oauth secrets in cleartext. A prior audit found these
+// browsable/readable/downloadable because sensitivePrefixes omitted them.
+// Pins that every access path (isSensitive predicate, resolvePath, HTTP
+// read, HTTP download) now refuses them. The checks fire on the lexical
+// enforceAccess pass, so no such file needs to exist on the test host.
+func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
+	credPaths := []string{
+		"config/home/.aws/sso/cache/kiro-auth-token.json",    // live SSO bearer + refresh token
+		"config/home/.aws/sso/cache/botocore-client-id.json", // OAuth client id + secret
+		"config/home/.ssh/id_ed25519",                        // git SSH private key
+		"config/home/.config/gh/hosts.yml",                   // forge PAT / OAuth token
+		"config/home/.gitconfig",                             // git identity / credential config
+		"config/mcp.json",                                    // MCP secrets, cleartext
+	}
+	h, _ := New("/")
+	for _, p := range credPaths {
+		t.Run(p, func(t *testing.T) {
+			abs := filepath.Clean("/" + p)
+			// isSensitive is the predicate enforceAccess relies on.
+			if !isSensitive(abs) {
+				t.Errorf("isSensitive(%q) = false, want true (credential store must be protected)", abs)
+			}
+			// resolvePath gates every read/write/download/action.
+			if _, err := resolvePath(p); err == nil {
+				t.Errorf("resolvePath(%q) = nil error, want rejection", p)
+			}
+			// GET read must 403.
+			if rec := getReq(t, h, "/api/file?path="+p); rec.Code != http.StatusForbidden {
+				t.Errorf("GET /api/file?path=%s: status = %d, want 403; body=%s",
+					p, rec.Code, rec.Body.String())
+			}
+			// GET download must 403 (this is the escaped-confinement path).
+			if rec := getReq(t, h, "/api/file/download?path="+p); rec.Code != http.StatusForbidden {
+				t.Errorf("GET /api/file/download?path=%s: status = %d, want 403; body=%s",
+					p, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

@@ -43,14 +43,14 @@ func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 	if cfg != nil {
 		opts = append(opts, WithMCPConfig(cfg))
 	}
-	h := New("/tmp/work", factory, cs, func() []string { return nil }, opts...)
+	h := New("/tmp/work", factory, cs, opts...)
 	cs.SetBroadcaster(h)
 	return h
 }
 
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github")
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want 1 server", snap)
@@ -62,7 +62,7 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "linear")
+	h.mcpRegistry.recordConnected(context.Background(), "linear", nil, nil)
 	h.mcpRegistry.recordOAuth(context.Background(), "linear", "https://oauth.example/auth")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -107,8 +107,8 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "a")
-	h.mcpRegistry.recordConnected(context.Background(), "b")
+	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "b", nil, nil)
 
 	before := h.sse.replayBuf.Len()
 	h.mcpRegistry.clearAll(context.Background())
@@ -140,8 +140,8 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 	cfg := &fakeMCPConfig{enabled: map[string]struct{}{"github": {}}}
 	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.recordConnected(context.Background(), "github")
-	h.mcpRegistry.recordConnected(context.Background(), "disabled-server")
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "disabled-server", nil, nil)
 	h.mcpRegistry.recordInitFailure(context.Background(), "another-disabled", "x")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -152,9 +152,9 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "zulu")
-	h.mcpRegistry.recordConnected(context.Background(), "alpha")
-	h.mcpRegistry.recordConnected(context.Background(), "mike")
+	h.mcpRegistry.recordConnected(context.Background(), "zulu", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "alpha", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "mike", nil, nil)
 
 	names := make([]string, 0)
 	for _, s := range h.mcpRegistry.Snapshot() {
@@ -176,7 +176,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 		mu.Unlock()
 		done <- struct{}{}
 	})
-	h.mcpRegistry.recordConnected(context.Background(), "a")
+	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil)
 	h.mcpRegistry.recordOAuth(context.Background(), "a", "url")
 	h.mcpRegistry.recordInitFailure(context.Background(), "a", "err")
 	h.mcpRegistry.clearAll(context.Background())
@@ -211,7 +211,7 @@ drained:
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github")
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
 	h.mcpRegistry.recordInitFailure(context.Background(), "broken", "no auth")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil)
@@ -250,7 +250,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			h := newHubWithMCPConfig(nil)
 			for i := range n {
-				h.mcpRegistry.recordConnected(context.Background(), fmt.Sprintf("server-%02d", i))
+				h.mcpRegistry.recordConnected(context.Background(), fmt.Sprintf("server-%02d", i), nil, nil)
 			}
 			b.ResetTimer()
 			for range b.N {

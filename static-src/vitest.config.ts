@@ -105,7 +105,7 @@ export default defineConfig({
     // Show full diff when a snapshot fails, not just a patch.
     expandSnapshotDiff: true,
 
-    // TypeScript type-checking is handled by tsgo --noEmit (via validate-local.sh
+    // TypeScript type-checking is handled by tsc --noEmit (via validate-local.sh
     // and CI). Vitest's built-in typecheck is experimental and redundant here.
     // typecheck: { enabled: false } is the default; omitted for clarity.
 
@@ -127,9 +127,11 @@ export default defineConfig({
         // events (no simulated network I/O). The XHR lifecycle is
         // untestable; the pure path-construction logic is minimal.
         "upload.ts",
-        // shell.ts: web-terminal-engine DOM terminal — uses canvas 2d text
-        // measurement and a live WebSocket. happy-dom provides
-        // neither a real canvas context nor simulated socket I/O.
+        // shell.ts: the terminal itself is @cplieger/web-terminal-ui's
+        // createTerminal (canvas 2d text measurement + a live WebSocket),
+        // which happy-dom can't back. shell.test.ts covers the panel wiring
+        // with createTerminal mocked, but shell.ts stays coverage-excluded —
+        // its meaningful paths live in the UI package + engine, not here.
         "shell.ts",
         // agent-terminal.ts: fully testable with happy-dom (no canvas
         // — uses plain <pre> + DOM APIs). NOT excluded.

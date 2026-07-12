@@ -17,22 +17,22 @@ RUN ARCH=$(dpkg --print-architecture) && \
     | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# tsgo for TypeScript compilation (native binary, no Node needed). Tracks
-# the `latest` dist-tag on @typescript/native-preview — Microsoft's curated
-# stabler channel — rather than the daily `latest` channel. The per-arch
-# platform tarballs below are published in lockstep with the metapackage at
-# the same version string, so the URL resolves identically. See
-# .github/renovate.json for the followTag rule.
-# renovate: datasource=npm depName=@typescript/native-preview
-ARG TSGO_VERSION=7.0.0-dev.20260707.2
+# tsc — the TypeScript 7 native compiler (a Go binary, no Node needed). Now
+# that TS7 has shipped stable, the native compiler is the `typescript`
+# package's own `tsc`, distributed per-platform under
+# @typescript/typescript-linux-<arch> (published in lockstep with the
+# `typescript` metapackage at the same version). We fetch just that platform
+# tarball and run its bundled `tsc` at build time.
+# renovate: datasource=npm depName=typescript
+ARG TS_VERSION=7.0.2
 # Arch-aware fetch: native per-arch runners build arm64 on real arm64
-# hardware, so the tsgo binary must match the build arch. dpkg reports
-# arm64/amd64; tsgo's npm platform package uses arm64/x64. A hardcoded x64
-# here fails the arm64 build with "tsgo: cannot execute binary file: Exec
+# hardware, so the tsc binary must match the build arch. dpkg reports
+# arm64/amd64; the npm platform package uses arm64/x64. A hardcoded x64
+# here fails the arm64 build with "cannot execute binary file: Exec
 # format error".
-RUN TSGO_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
+RUN TS_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL \
-    "https://registry.npmjs.org/@typescript/native-preview-linux-${TSGO_ARCH}/-/native-preview-linux-${TSGO_ARCH}-${TSGO_VERSION}.tgz" \
+    "https://registry.npmjs.org/@typescript/typescript-linux-${TS_ARCH}/-/typescript-linux-${TS_ARCH}-${TS_VERSION}.tgz" \
     | tar -xz -C /tmp
 
 # ansi_up: lightweight ANSI→HTML converter for agent-terminal <pre> panels.
@@ -54,7 +54,7 @@ RUN mkdir -p static/vendor && \
 # TS only (no precompiled JS) — same pattern as @cplieger/reactive and
 # @cplieger/web-terminal-engine, matching how local TS files in static-src/ are
 # treated. Extracted to static-src/node_modules/@cplieger/actions/ so
-# tsgo's bundler resolution finds the package + its types relative to
+# tsc's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
 ARG CPLIEGER_ACTIONS_VERSION=2.0.11
@@ -81,13 +81,27 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
 # Fetch @cplieger/web-terminal-engine TS source (same TS-only pattern). shell.ts
-# imports render/keyboard/scroll/connection from it; resolved via the importmap
-# at runtime (/vendor/cplieger-web-terminal-engine/index.js).
+# imports `render` from it (the reset primitives), and it is the peer the UI
+# package builds on; resolved via the importmap at runtime
+# (/vendor/cplieger-web-terminal-engine/index.js).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.3.2
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
+
+# Fetch @cplieger/web-terminal-ui TS source (same TS-only pattern). shell.ts
+# imports createTerminal + presetTouch from it; it is the reference touch-first
+# terminal UI built on the engine (a peer dependency). Extracted side by side
+# under static-src/node_modules/@cplieger so tsc's bundler resolution finds the
+# engine when compiling the UI's `@cplieger/web-terminal-engine` import. Resolved
+# via the importmap at runtime (/vendor/cplieger-web-terminal-ui/index.js +
+# /presets.js), and its css/ bundle is concatenated into style.css below.
+# renovate: datasource=npm depName=@cplieger/web-terminal-ui
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.4.3
+RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
 # Fetch @cplieger/ui-primitives TS source (same TS-only pattern). The app's
 # headless UI modules (toast, tooltip, confirm, popover, focus-trap, theme,
@@ -113,16 +127,17 @@ RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
 # running binary can report what tag it was built from. Defaults to "dev"
 # for local test builds; CI sets it to the date-sha tag.
 #
-# Step 1: tsgo --project compiles app TS (build + service-worker configs).
+# Step 1: tsc --project compiles app TS (build + service-worker configs).
 # Step 2: compile @cplieger/actions's TS source into static/vendor/cplieger-actions/
 # so the browser can fetch the lib's compiled JS via the importmap entry.
 # The lib uses internal relative imports (./registry.js, ./api.js, etc.)
 # which are preserved as relative paths in the emit and resolve naturally
 # within /vendor/cplieger-actions/ at runtime.
 ARG BUILD_VERSION=dev
-RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
-    /tmp/package/lib/tsgo --project static-src/tsconfig.sw.json && \
-    /tmp/package/lib/tsgo \
+RUN mapfile -t wt_ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts') && \
+    /tmp/package/lib/tsc --project static-src/tsconfig.build.json && \
+    /tmp/package/lib/tsc --project static-src/tsconfig.sw.json && \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -131,7 +146,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --skipLibCheck \
         --strict \
         static-src/node_modules/@cplieger/reactive/src/*.ts && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -140,7 +155,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --skipLibCheck \
         --strict \
         static-src/node_modules/@cplieger/actions/src/*.ts && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -149,7 +164,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --skipLibCheck \
         --strict \
         static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -159,7 +174,7 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --strict \
         static-src/node_modules/@cplieger/ui-primitives/src/*.ts \
         static-src/node_modules/@cplieger/ui-primitives/src/toast/*.ts && \
-    /tmp/package/lib/tsgo \
+    /tmp/package/lib/tsc \
         --module ESNext \
         --target ESNext \
         --moduleResolution bundler \
@@ -167,17 +182,38 @@ RUN /tmp/package/lib/tsgo --project static-src/tsconfig.build.json && \
         --rootDir static-src/node_modules/@cplieger/fetch/src \
         --skipLibCheck \
         --strict \
-        static-src/node_modules/@cplieger/fetch/src/*.ts
+        static-src/node_modules/@cplieger/fetch/src/*.ts && \
+    /tmp/package/lib/tsc \
+        --module ESNext \
+        --target ESNext \
+        --moduleResolution bundler \
+        --outDir static/vendor/cplieger-web-terminal-ui \
+        --rootDir static-src/node_modules/@cplieger/web-terminal-ui/src \
+        --skipLibCheck \
+        --strict \
+        "${wt_ui_ts[@]}"
 
-# Concatenate per-feature CSS splits into the served bundle.
+# Concatenate per-feature CSS splits into the served bundle, then append the
+# @cplieger/web-terminal-ui CSS bundle (its own css/MANIFEST order) wrapped in an
+# `@layer web-terminal-ui { ... }` block. That layer is declared FIRST in
+# static-src/css/00-header.css (lowest priority), so the UI package's standalone
+# full-page tokens/reset never clobber vibekit's design system — vibekit's
+# layered + unlayered rules win every conflict, while the terminal-specific
+# `.term` / `.wt-*` / `.term-input` classes (which vibekit has no rule for) apply.
 # Behavior: skip blank lines and #-comments, cat each listed file
-# (paths relative to manifest dir) into the output.
+# (paths relative to each manifest's dir) into the output.
 RUN set -eu; \
     : > static/style.css; \
     while IFS= read -r line || [ -n "$line" ]; do \
         case "$line" in ''|\#*) continue ;; esac; \
         cat "static-src/css/${line}" >> static/style.css; \
-    done < static-src/css/MANIFEST
+    done < static-src/css/MANIFEST; \
+    printf '@layer web-terminal-ui {\n' >> static/style.css; \
+    while IFS= read -r line || [ -n "$line" ]; do \
+        case "$line" in ''|\#*) continue ;; esac; \
+        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
+    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST; \
+    printf '}\n' >> static/style.css
 
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \

@@ -3,7 +3,7 @@
 // signals that bypass the global reconcile loop.
 // ---------------------------------------------------------------------------
 
-import type { ToolCall, Crew } from "./types.js";
+import type { ToolCall } from "./types.js";
 import { SignalMap, type Signal } from "@cplieger/reactive";
 
 // SignalMap (the dynamic per-id signal registry) is provided by @cplieger/reactive.
@@ -30,9 +30,6 @@ export const blockThinkingSigs = new SignalMap<string>();
 /** Per-tool-call signal. */
 export const toolCallSigs = new SignalMap<ToolCall>();
 
-/** Per-crew-message signal. */
-export const crewSigs = new SignalMap<Crew>();
-
 // --- Public accessors ---
 
 export function ensureStreamingSig(messageID: string, initial: string): Signal<string> {
@@ -45,10 +42,6 @@ export function ensureReasoningSig(messageID: string, initial: string): Signal<s
 
 export function ensureToolCallSig(toolID: string, initial: ToolCall): Signal<ToolCall> {
   return toolCallSigs.ensure(toolID, initial);
-}
-
-export function ensureCrewSig(messageID: string, initial: Crew): Signal<Crew> {
-  return crewSigs.ensure(messageID, initial);
 }
 
 /** Key helper for per-(message, block-index) signal maps. */
@@ -84,6 +77,10 @@ export function clearToolCallSig(toolID: string): void {
   toolCallSigs.clear(toolID);
 }
 
-export function clearCrewSig(messageID: string): void {
-  crewSigs.clear(messageID);
+/** Drop every per-(message, block-index) streaming signal. Called on chat
+ *  switch / full teardown so block signals don't accumulate across chats
+ *  (the per-key set isn't cheaply enumerable, so this is a wholesale wipe). */
+export function clearAllBlockSigs(): void {
+  blockTextSigs.clearAll();
+  blockThinkingSigs.clearAll();
 }

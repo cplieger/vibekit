@@ -304,11 +304,17 @@ async function sendActivePlan(): Promise<void> {
   const content = state.current.value; // capture before await
   const result = await sendPlanAction.dispatch({ chatID, content });
   if (result === null) {
-    if (getActiveFilePath() === state.path) {
-      $.editorError.textContent = "Couldn't send plan";
-      $.editorError.classList.remove("hidden");
-    }
+    // The failure already surfaced exactly once — the draft/size banner
+    // (writePlanDraft) or the shared "Failed to send plan" toast (plan.run).
+    // Deliberately no inline editor error on top: one surface per failure.
     return;
   }
-  state.original.value = content;
+  state.original.value = content; // buffer now matches the saved draft
+  if (result === "sent") {
+    // The draft was deleted on send; close its editor tab so it doesn't
+    // linger pointing at a now-gone draft (reopening would show an empty file).
+    closeEditorFile(state.path);
+  }
+  // "queued": keep the tab + draft — the prompt drains from the queue and the
+  // draft stays the durable copy until then.
 }

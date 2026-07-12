@@ -83,6 +83,43 @@ type MCPSnapshotServer struct {
 	Name string `json:"name"`
 }
 
+// --- Discovery (prompts + resources advertised by a connected server) ---
+//
+// On v3 (KAS) a connected MCP server's prompts and resources arrive in
+// the _kiro/mcp/status notification (alongside its tools). The registry
+// caches them per server and the /api/mcp/status endpoint surfaces them so
+// the Settings → Tools UI can list what a server exposes and fetch a
+// specific prompt/resource on demand via _kiro/mcp/getPrompt /
+// _kiro/mcp/getResource. Shapes verified against the KAS 2.12 acp-server
+// bundle + a live probe.
+
+// MCPPromptArg describes one argument of an MCP prompt.
+type MCPPromptArg struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// MCPPromptInfo describes one prompt a connected MCP server advertises.
+// PromptName is the machine id passed to _kiro/mcp/getPrompt; Name is the
+// human-readable display title (they differ — e.g. "Simple Prompt" vs
+// "simple-prompt"). Arguments lists the prompt's parameters, if any.
+type MCPPromptInfo struct {
+	Name        string         `json:"name"`
+	PromptName  string         `json:"prompt_name"`
+	Description string         `json:"description,omitempty"`
+	Arguments   []MCPPromptArg `json:"arguments,omitempty"`
+}
+
+// MCPResourceInfo describes one resource a connected MCP server advertises.
+// URI is the identifier passed to _kiro/mcp/getResource.
+type MCPResourceInfo struct {
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mime_type,omitempty"`
+}
+
 // MCPServerState is the lifecycle status of one configured MCP server.
 // Exported so the hub's mcpRegistry and the /api/mcp/status endpoint
 // share a single typed enum with compile-time safety.

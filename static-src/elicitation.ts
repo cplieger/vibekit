@@ -27,9 +27,8 @@ function dlg(): HTMLDialogElement {
   cachedDialog ??= $.elicitationDialog;
   return cachedDialog;
 }
-// The request currently shown, so the SSE elicitation_complete handler
-// can dismiss only the matching dialog (a stale completion for an
-// already-answered request is a no-op).
+// The request currently shown, so a superseding elicitation_needed for a
+// different request can cancel the one still open before showing the new one.
 let activeRequestID: number | null = null;
 let activeSubmit: SubmitFn | null = null;
 let answered = false;
@@ -132,16 +131,6 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
 
   openDialog(dialogEl);
   releaseFocus = trapFocus(dialogEl);
-}
-
-/** Dismiss the dialog for requestID without sending a response (upstream
- *  already cancelled). No-op if a different request is showing. */
-export function dismissElicitation(requestID: number): void {
-  if (activeRequestID !== requestID) {
-    return;
-  }
-  answered = true; // suppress the cancel-on-close path; agent isn't waiting.
-  closeDialog();
 }
 
 function finish(action: ElicitAction, content?: Record<string, unknown>): void {

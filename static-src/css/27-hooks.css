@@ -1,0 +1,157 @@
+/* ==========================================================================
+   Hooks management (Settings → Instructions)
+
+   Reuses the generic .list-* + .page-section + .toggle classes; this slice
+   adds the hook row layout (header badges + action summary + controls), the
+   enable toggle placement, and the "Run now" output panel. Unlayered (like the
+   other component slices) so it wins over the layered base by source order.
+   Reduced-motion is handled globally in 40-a11y.css.
+   ========================================================================== */
+
+/* A hook row wraps so the run-output panel drops onto its own full-width line
+   below the header + controls. */
+.hook-row {
+  flex-wrap: wrap;
+  row-gap: var(--sp-1);
+  align-items: flex-start;
+}
+
+.hook-main {
+  display: flex;
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.hook-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.hook-name {
+  color: var(--c-text-primary);
+  font-weight: 600;
+}
+
+/* Small pills for trigger / action-type / matcher. */
+.hook-badge {
+  padding: 0 0.4rem;
+  border-radius: var(--r-sm, 4px);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.hook-trigger {
+  color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 14%, transparent);
+}
+
+.hook-action-cmd {
+  color: var(--c-text-secondary);
+  background: var(--c-bg-primary);
+}
+
+.hook-action-agent {
+  color: var(--c-purple, var(--c-accent));
+  background: color-mix(in srgb, var(--c-purple, var(--c-accent)) 14%, transparent);
+}
+
+.hook-matcher {
+  color: var(--c-text-tertiary);
+  background: var(--c-bg-primary);
+  font-family: var(--font-mono);
+  max-inline-size: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Action summary line: the command (mono) or the agent prompt. */
+.hook-summary {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hook-cmd {
+  font-family: var(--font-mono);
+}
+
+.hook-prompt {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.hook-controls {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+/* "disabled" note for a hook KAS reports as effectively-off (e.g. an
+   untrusted workspace) — amber, advisory. */
+.hook-reason {
+  margin-inline-end: var(--sp-1);
+  color: var(--c-yellow);
+  font-size: var(--fs-xs);
+}
+
+.hook-run:hover {
+  color: var(--c-accent);
+}
+
+/* A disabled hook: dim its header + summary (the confirm-free toggle stays
+   full-strength so it's easy to re-enable). */
+.hook-row.hook-off .hook-name,
+.hook-row.hook-off .hook-summary {
+  opacity: 0.55;
+}
+
+/* Run-now output panel: full-width, below the row. */
+.hook-output {
+  flex-basis: 100%;
+  margin-block-start: var(--sp-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  overflow: hidden;
+}
+
+.hook-output-head {
+  padding: var(--sp-1) var(--sp-2);
+  border-block-end: 1px solid var(--c-border);
+}
+
+.hook-exit {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.hook-exit-ok {
+  color: var(--c-green);
+}
+
+.hook-exit-fail {
+  color: var(--c-red);
+}
+
+.hook-output-body {
+  margin: 0;
+  padding: var(--sp-2);
+  max-block-size: 16rem;
+  overflow: auto;
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

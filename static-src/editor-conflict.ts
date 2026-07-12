@@ -96,57 +96,91 @@ export function renderConflictOverlay(state: FileState): void {
   overlay.appendChild(
     el(
       "div",
-      { className: "conflict-status" },
+      {
+        className: "conflict-status",
+        // Live region: renderConflictOverlay re-runs after each resolution, so
+        // the changed count ("2 unresolved conflicts" → "1 …" → mode drops to
+        // edit) is announced to screen readers.
+        role: "status",
+        "aria-live": "polite",
+        "aria-atomic": "true",
+      },
       `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`,
     ),
   );
   for (let i = 0; i < conflict.hunks.length; i++) {
     const hunk = conflict.hunks[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const row = el("div", { className: "conflict-hunk-row" });
+    const lineNo = String(hunk.startLine + 1);
+    const ours = hunk.ourLabel || "HEAD";
+    const theirs = hunk.theirLabel || "incoming";
+    // role=group + aria-label so a screen reader announces the per-hunk button
+    // set with its line + side context (the visible title serves sighted users).
+    const row = el("div", {
+      className: "conflict-hunk-row",
+      role: "group",
+      "aria-label": `Conflict at line ${lineNo}: ${ours} vs ${theirs}`,
+    });
     row.appendChild(
-      el(
-        "span",
-        { className: "conflict-hunk-title" },
-        `Line ${String(hunk.startLine + 1)}: ${hunk.ourLabel || "HEAD"} vs ${hunk.theirLabel || "incoming"}`,
-      ),
+      el("span", { className: "conflict-hunk-title" }, `Line ${lineNo}: ${ours} vs ${theirs}`),
     );
     const suggestion = state.suggestions.get(hunk.startLine);
     if (suggestion !== undefined && suggestion.preview !== null) {
       row.appendChild(el("span", { className: "conflict-suggest-pill" }, "AI suggestion"));
       row.appendChild(
-        resolveBtn("Accept", () => {
-          acceptSuggestion(state, i);
-        }),
+        resolveBtn(
+          "Accept",
+          () => {
+            acceptSuggestion(state, i);
+          },
+          `Accept the suggested merge for the conflict at line ${lineNo}`,
+        ),
       );
       row.appendChild(
-        resolveBtn("Reject", () => {
-          rejectSuggestion(state, hunk.startLine);
-        }),
+        resolveBtn(
+          "Reject",
+          () => {
+            rejectSuggestion(state, hunk.startLine);
+          },
+          `Reject the suggested merge for the conflict at line ${lineNo}`,
+        ),
       );
       overlay.appendChild(row);
       overlay.appendChild(el("pre", { className: "conflict-suggest-preview" }, suggestion.preview));
       continue;
     }
     row.appendChild(
-      resolveBtn("Ours", () => {
-        applyResolution(state, i, "ours");
-      }),
+      resolveBtn(
+        "Ours",
+        () => {
+          applyResolution(state, i, "ours");
+        },
+        `Accept ours (${ours}) for the conflict at line ${lineNo}`,
+      ),
     );
     row.appendChild(
-      resolveBtn("Theirs", () => {
-        applyResolution(state, i, "theirs");
-      }),
+      resolveBtn(
+        "Theirs",
+        () => {
+          applyResolution(state, i, "theirs");
+        },
+        `Accept theirs (${theirs}) for the conflict at line ${lineNo}`,
+      ),
     );
     row.appendChild(
-      resolveBtn("Both", () => {
-        applyResolution(state, i, "both");
-      }),
+      resolveBtn(
+        "Both",
+        () => {
+          applyResolution(state, i, "both");
+        },
+        `Keep both sides for the conflict at line ${lineNo}`,
+      ),
     );
     const suggestBtn = el(
       "button",
       {
         className: "conflict-btn conflict-btn-suggest",
         title: "Propose a merged version using the utility AI bridge",
+        "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
         disabled: suggestion?.loading === true,
       },
       suggestion?.loading === true ? "Suggesting..." : "Suggest",
@@ -162,8 +196,11 @@ export function renderConflictOverlay(state: FileState): void {
   }
 }
 
-function resolveBtn(label: string, onClick: () => void): HTMLElement {
+function resolveBtn(label: string, onClick: () => void, ariaLabel?: string): HTMLElement {
   const b = el("button", { className: "conflict-btn" }, label);
+  if (ariaLabel !== undefined) {
+    b.setAttribute("aria-label", ariaLabel);
+  }
   b.addEventListener("click", onClick);
   return b;
 }

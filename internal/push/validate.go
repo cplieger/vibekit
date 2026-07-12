@@ -35,9 +35,8 @@ type pushEndpointRule struct {
 var pushEndpointRules = []pushEndpointRule{
 	{Host: "fcm.googleapis.com"},                // Chrome, Edge, others on Chromium
 	{Host: "updates.push.services.mozilla.com"}, // Firefox
-	{Host: "web.push.apple.com"},                // Safari
 	{Suffix: ".notify.windows.com"},             // WNS (Edge on Windows)
-	{Suffix: ".push.apple.com"},                 // Apple future-proofing
+	{Suffix: ".push.apple.com"},                 // Safari (web.push.apple.com) + Apple push subdomains
 }
 
 // isAllowedPushEndpoint validates that the endpoint URL is https and

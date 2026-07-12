@@ -65,6 +65,10 @@ func TestExtractToolCallID(t *testing.T) {
 	id7 := int64(7)
 	id3 := int64(3)
 
+	// Every key is chat-prefixed (fs-<chatID>-...) so two chats sharing a
+	// per-bridge msg.ID can't collide in the process-wide store.
+	const chatID api.ChatID = "c1"
+
 	cases := []struct {
 		name       string
 		msg        *api.RPCResponse
@@ -72,34 +76,34 @@ func TestExtractToolCallID(t *testing.T) {
 		wantPrefix string
 	}{
 		{
-			name: "prefers param field",
+			name: "prefers param field (chat-prefixed)",
 			msg:  &api.RPCResponse{ID: &id99, Params: mustJSON(t, map[string]any{"toolCallId": "from-param"})},
-			want: "from-param",
+			want: "fs-c1-from-param",
 		},
 		{
 			name: "falls back to RPC ID",
 			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{})},
-			want: "fs-7",
+			want: "fs-c1-7",
 		},
 		{
 			name: "falls back to RPC ID when param blank",
 			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{"toolCallId": ""})},
-			want: "fs-7",
+			want: "fs-c1-7",
 		},
 		{
-			name:       "time-based when no ID available",
+			name:       "sequence fallback when no ID available",
 			msg:        &api.RPCResponse{ID: nil, Params: mustJSON(t, map[string]any{})},
-			wantPrefix: "fs-",
+			wantPrefix: "fs-c1-fallback-",
 		},
 		{
 			name: "malformed params still returns non-empty",
 			msg:  &api.RPCResponse{ID: &id3, Params: json.RawMessage(`not-json`)},
-			want: "fs-3",
+			want: "fs-c1-3",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractToolCallID(tc.msg)
+			got := extractToolCallID(chatID, tc.msg)
 			switch {
 			case tc.wantPrefix != "":
 				if !strings.HasPrefix(got, tc.wantPrefix) || got == tc.wantPrefix {

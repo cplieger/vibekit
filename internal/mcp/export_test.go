@@ -147,6 +147,28 @@ func TestToACP_HTTPShape(t *testing.T) {
 	}
 }
 
+func TestToACP_SSEShape(t *testing.T) {
+	srv := []*Server{{
+		Name:      "legacy",
+		Transport: TransportSSE,
+		URL:       "https://api.example/sse",
+		Headers:   []KeyPair{{Name: "Auth", Value: "bearer"}},
+	}}
+	out := toACP(srv)
+	if len(out) != 1 {
+		t.Fatalf("toACP len = %d", len(out))
+	}
+	e := out[0]
+	// SSE shares McpServerHttp's field set but carries the "sse" type
+	// discriminator (ACP McpServerSse); kiro-cli v3/KAS keys the union on it.
+	if e["type"] != "sse" || e["url"] != "https://api.example/sse" {
+		t.Errorf("sse shape wrong: %+v", e)
+	}
+	if _, ok := e["command"]; ok {
+		t.Errorf("sse shape should not include command: %+v", e)
+	}
+}
+
 func TestToACP_SkipsUnknownTransport(t *testing.T) {
 	srv := []*Server{
 		{Name: "good", Transport: TransportStdio, Command: "x"},
@@ -219,7 +241,7 @@ func TestToACP_DisabledToolsForwardedOnAllTransports(t *testing.T) {
 	}{
 		{func(s *Server) { s.Command = "npx" }, "stdio", TransportStdio},
 		{func(s *Server) { s.URL = "https://x.example" }, "http", TransportHTTP},
-		{func(s *Server) { s.URL = "https://x.example/sse" }, "sse", TransportHTTP},
+		{func(s *Server) { s.URL = "https://x.example/sse" }, "sse", TransportSSE},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.transport), func(t *testing.T) {

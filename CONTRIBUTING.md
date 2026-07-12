@@ -50,10 +50,10 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `internal/permissions/`, `internal/forges/`, `internal/git/`,
   `internal/mcp/`, `internal/push/`, `internal/auth/`,
   `internal/server/` — feature subsystems (tool-approval policy, forge CLI
-  orchestration, git handlers, MCP, web push, authentication, HTTP middleware
-  and routing).
-- `internal/buffer/`, `internal/sessions/`, `internal/settings/`,
-  `internal/steering/`, `internal/workspace/`, `internal/version/`, and the
+  orchestration, git handlers, MCP, web push, kiro-cli identity endpoints, HTTP
+  middleware and routing).
+- `internal/buffer/`, `internal/settings/`, `internal/steering/`,
+  `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
   other small packages — focused helpers.
 
 Server dependencies flow one direction: composition root → hub → API contracts
@@ -103,9 +103,9 @@ These rules exist because breaking them caused real bugs. Preserve them.
   success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
   `w.Write([]byte(...))`). Use `Ok`, `WriteJSON`, `BadRequest`, `NotFound`,
   `Conflict`, `InternalError`, and the rest.
-- **Logs are UTC.** A `utcTimeAttr` slog `ReplaceAttr` (in `internal/logctl`)
-  forces every record's timestamp to UTC, so the container needs no `TZ` and
-  the binary embeds no `time/tzdata`.
+- **Logs are UTC.** `internal/logctl` installs the logger via `slogx.Setup`,
+  whose `UTCTime` `ReplaceAttr` forces every record's timestamp to UTC, so the
+  container needs no `TZ` and the binary embeds no `time/tzdata`.
 - **Only `transport.ts` / `sw.ts` / `upload.ts` / `api-client.ts` call
   `fetch()`.** All other modules use the `api-client.ts` helpers.
 - **Cross-module DOM access goes through `dom.ts` `$`.** Don't reach for
@@ -178,24 +178,26 @@ volume and exposes the UI on port `9847`.
 ### Frontend assets
 
 The browser bundle is **produced during the Docker build, not committed**. The
-builder stage runs `tsgo` over `static-src/tsconfig.build.json` and
-`tsconfig.sw.json` to compile TypeScript into `static/`, then concatenates the
+builder stage runs `tsc` (the TS7 native compiler) over
+`static-src/tsconfig.build.json` and `tsconfig.sw.json` to compile TypeScript
+into `static/`, then concatenates the
 per-feature CSS splits listed in `static-src/css/MANIFEST` into
 `static/style.css`. The compiled outputs (`static/*.js`, `static/vendor/`,
 `static/style.css`, and the mirrored subdirectories) are gitignored; only the
 hand-written assets in `static/` are committed.
 
 To iterate on `static-src/` locally, work through the package scripts (run from
-`static-src/`). `tsgo` is the native TypeScript compiler
-(`@typescript/native-preview`); the JavaScript devDependencies (vitest, eslint,
-prettier, stylelint, html-validate, knip) come from `npm install`:
+`static-src/`). `tsc` (the TypeScript 7 native compiler) comes from the
+`@typescript/native` devDependency (an npm alias for `typescript@7`); it and the
+JavaScript devDependencies (vitest, eslint, prettier, stylelint, html-validate,
+knip) all come from `npm install`:
 
 ```sh
 cd static-src
 npm test               # vitest --run (single pass)
 npm run test:watch     # vitest watch mode
-npm run typecheck      # tsgo -project tsconfig.json (source)
-npm run typecheck:tests # tsgo -project tsconfig.test.json (tests)
+npm run typecheck      # tsc -project tsconfig.json (source)
+npm run typecheck:tests # tsc -project tsconfig.test.json (tests)
 ```
 
 ## Running checks locally
@@ -225,8 +227,8 @@ enforces formatting; `golangci-lint fmt` is the fixer.
 ### Frontend (from `static-src/`)
 
 ```sh
-npm run typecheck          # tsgo -project tsconfig.json
-npm run typecheck:tests    # tsgo -project tsconfig.test.json
+npm run typecheck          # tsc -project tsconfig.json
+npm run typecheck:tests    # tsc -project tsconfig.test.json
 npm test                   # vitest --run
 npm run lint:eslint        # eslint . (strict typed linting)
 npm run lint:prettier      # prettier --check ../..

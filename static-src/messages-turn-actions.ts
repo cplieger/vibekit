@@ -8,10 +8,12 @@
 // claims are guaranteed non-null but can race with reconcile passes.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
+import type { Message } from "./types.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { getActive, getActiveId } from "./store.js";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { copyClipboard } from "./actions/messages.js";
+import { downloadChatExport } from "./chat-export.js";
 import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
@@ -39,14 +41,22 @@ export function initTurnActionCallbacks(cbs: {
 
 export function attachTurnActions(contentEl: HTMLDivElement): void {
   const wrap = contentEl.closest<HTMLElement>(".msg-wrap");
-  const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
-  const session = getActive();
-  const msg = session?.messages.find((m) => m.id === msgID);
-  const raw = msg?.content ?? contentEl.textContent ?? "";
-  if (raw.trim() === "") {
+  // Idempotent: exactly one turn-actions row per assistant turn, whether it
+  // was attached on live-stream finalize or on a historical/reloaded mount.
+  // Guard at the wrap level (the row is appended to the wrap, not right after
+  // contentEl) so block-mode turns with trailing tool/thinking blocks aren't
+  // double-decorated.
+  if (wrap !== null && wrap.querySelector(":scope > .turn-actions") !== null) {
     return;
   }
   if (contentEl.nextElementSibling?.classList.contains("turn-actions")) {
+    return;
+  }
+  const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
+  const session = getActive();
+  const msg = session?.messages.find((m) => m.id === msgID);
+  const markdown = turnMarkdown(msg, wrap, contentEl);
+  if (markdown.trim() === "") {
     return;
   }
 
@@ -102,12 +112,12 @@ export function attachTurnActions(contentEl: HTMLDivElement): void {
 
   rightSlot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, contentEl.textContent ?? "");
+      copyAndAnimate(btn, turnPlainText(wrap, contentEl));
     }),
   );
   rightSlot.appendChild(
     makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
-      copyAndAnimate(btn, raw);
+      copyAndAnimate(btn, markdown);
     }),
   );
   if (chatID !== "") {
@@ -118,14 +128,7 @@ export function attachTurnActions(contentEl: HTMLDivElement): void {
     );
     rightSlot.appendChild(
       makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
-        const a = el("a", {
-          href: `/api/chats/${encodeURIComponent(chatID)}/export`,
-          download: `${chatID}.json`,
-          rel: "noopener",
-        });
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        downloadChatExport(chatID, session?.name ?? "", "json");
       }),
     );
   }
@@ -135,4 +138,42 @@ export function attachTurnActions(contentEl: HTMLDivElement): void {
   } else {
     contentEl.insertAdjacentElement("afterend", row);
   }
+}
+
+/** The turn's markdown, for "copy as markdown": the stored message content,
+ *  or the concatenation of its text blocks, or the rendered text as a last
+ *  resort. Block-mode turns can carry an empty top-level `content`, so the
+ *  fallbacks keep the row attaching (and the copy correct) on those turns. */
+function turnMarkdown(
+  msg: Message | undefined,
+  wrap: HTMLElement | null,
+  contentEl: HTMLDivElement,
+): string {
+  if (msg !== undefined) {
+    if (msg.content !== undefined && msg.content !== "") {
+      return msg.content;
+    }
+    const text = (msg.blocks ?? [])
+      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+      .filter((t) => t !== "")
+      .join("\n\n")
+      .trim();
+    if (text !== "") {
+      return text;
+    }
+  }
+  return turnPlainText(wrap, contentEl);
+}
+
+/** The turn's rendered plain text, for "copy as text": every assistant bubble
+ *  in the turn joined, so a block-mode turn with several text bubbles copies
+ *  whole rather than just the bubble the finalize path happened to pass. */
+function turnPlainText(wrap: HTMLElement | null, contentEl: HTMLDivElement): string {
+  if (wrap !== null) {
+    const bubbles = [...wrap.querySelectorAll(".message.assistant")];
+    if (bubbles.length > 0) {
+      return bubbles.map((b) => b.textContent ?? "").join("\n\n");
+    }
+  }
+  return contentEl.textContent ?? "";
 }

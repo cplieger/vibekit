@@ -162,39 +162,15 @@ func writeSkillEntry(b *strings.Builder, repo string, d Doc) {
 	b.WriteString("\n")
 }
 
-// findRepoDocs scans a repo's `.kiro/steering/` directory and
-// returns the markdown files classified by their YAML frontmatter
-// inclusion mode. Files without frontmatter default to "always".
-// Returns at most 20 entries — a reasonable cap for the environment.md
-// budget; repos with more steering than that are pathological and the
-// agent gets a representative sample either way.
+// findRepoDocs scans a repo's `.kiro/steering/` directory and returns
+// the markdown files classified by their YAML frontmatter inclusion
+// mode. Files without frontmatter default to "always". Delegates to
+// findMdDocsInDir, which caps each file read at 64 KiB (only the
+// frontmatter head is needed) and the result at 20 entries — a
+// reasonable environment.md budget; a repo with more steering than that
+// is pathological and the agent gets a representative sample either way.
 func findRepoDocs(repoDir string) []Doc {
-	dir := filepath.Join(repoDir, ".kiro", "steering")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	out := make([]Doc, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		// Cap each steering file read at 64 KiB; we only need the
-		// frontmatter, which is at the head. Anything bigger would
-		// mean a broken file or pathological YAML; treat as truncated.
-		data, _ := readCappedFile(path, 64<<10)
-		doc := parseSteeringFrontmatter(data)
-		doc.Filename = e.Name()
-		out = append(out, doc)
-		if len(out) >= 20 {
-			break
-		}
-	}
-	return out
+	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
 // parseSteeringFrontmatter extracts inclusion / fileMatchPattern /
@@ -207,22 +183,17 @@ func findRepoDocs(repoDir string) []Doc {
 //	description: "Go layout for the internal/ tree"
 //	---
 //
-// Files without frontmatter default to inclusion=always with no
-// pattern and no description. Pure function — testable without DOM/FS.
+// Files without frontmatter default to inclusion=always with no pattern
+// and no description; an unrecognized inclusion value folds to "always".
+// Tolerant of a leading UTF-8 BOM and CRLF line endings so an
+// editor-saved doc doesn't silently lose its classification. Pure
+// function — testable without DOM/FS.
 func parseSteeringFrontmatter(data []byte) Doc {
-	doc := Doc{Inclusion: "always"}
-	if len(data) == 0 {
+	doc := Doc{Inclusion: inclusionAlways}
+	fm, ok := frontmatterBody(data)
+	if !ok {
 		return doc
 	}
-	content := string(data)
-	if !strings.HasPrefix(content, "---\n") {
-		return doc
-	}
-	end := strings.Index(content[4:], "\n---")
-	if end <= 0 {
-		return doc
-	}
-	fm := content[4 : 4+end]
 	for line := range strings.SplitSeq(fm, "\n") {
 		k, v, ok := strings.Cut(line, ":")
 		if !ok {
@@ -232,9 +203,7 @@ func parseSteeringFrontmatter(data []byte) Doc {
 		val := strings.Trim(strings.TrimSpace(v), `"'`)
 		switch key {
 		case "inclusion":
-			if val == inclusionAlways || val == inclusionFileMatch || val == inclusionManual {
-				doc.Inclusion = val
-			}
+			doc.Inclusion = normalizeInclusion(val)
 		case "fileMatchPattern":
 			doc.FileMatch = val
 		case "description":
@@ -244,10 +213,77 @@ func parseSteeringFrontmatter(data []byte) Doc {
 	return doc
 }
 
-// findRepoSkills scans `.kiro/skills/` with the same frontmatter
-// classification as steering docs. Skills use the same inclusion model.
+// frontmatterBody returns the YAML front-matter block of a steering
+// markdown file — the text between the opening and closing `---` fences —
+// and whether a well-formed block was present. It strips a leading UTF-8
+// BOM and normalizes CRLF to LF first, so fence detection is BOM- and
+// line-ending-agnostic (a CRLF- or BOM-authored doc must not fall
+// through the exact `---\n` prefix check and lose its front-matter).
+func frontmatterBody(data []byte) (string, bool) {
+	content := strings.TrimPrefix(string(data), "\ufeff")
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasPrefix(content, "---\n") {
+		return "", false
+	}
+	end := strings.Index(content[4:], "\n---")
+	if end <= 0 {
+		return "", false
+	}
+	return content[4 : 4+end], true
+}
+
+// normalizeInclusion validates a steering front-matter inclusion value,
+// folding any unrecognized value (typo, empty) to the default "always".
+func normalizeInclusion(v string) string {
+	switch v {
+	case inclusionFileMatch:
+		return inclusionFileMatch
+	case inclusionManual:
+		return inclusionManual
+	default:
+		return inclusionAlways
+	}
+}
+
+// ParseInclusion returns the validated inclusion mode ("always",
+// "fileMatch", or "manual") from a steering markdown file's YAML
+// front-matter, folding unknown or absent values to "always". It
+// tolerates a leading UTF-8 BOM and CRLF line endings. Exported so the
+// REST kiro-config scanner (internal/server) classifies steering docs
+// through this single parser rather than a divergent copy.
+func ParseInclusion(data []byte) string {
+	return parseSteeringFrontmatter(data).Inclusion
+}
+
+// findRepoSkills scans `.kiro/skills/` for skill directories. A skill is
+// a DIRECTORY containing SKILL.md (mirrors the authoritative REST scan
+// in internal/server/kiro_config.go's scanSkills) — NOT a flat `.md`
+// file. Each SKILL.md's frontmatter classifies the skill by inclusion
+// mode; a subdirectory without a SKILL.md still counts as a skill
+// (default "always"), matching the REST scan. Reads are capped at 64 KiB
+// (only the frontmatter head is needed) and the result at 20 entries.
 func findRepoSkills(repoDir string) []Doc {
-	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "skills"))
+	dir := filepath.Join(repoDir, ".kiro", "skills")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]Doc, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		// The skill's classification lives in its SKILL.md frontmatter;
+		// a missing SKILL.md yields empty data -> default "always".
+		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), 64<<10)
+		doc := parseSteeringFrontmatter(data)
+		doc.Filename = e.Name() + "/SKILL.md"
+		out = append(out, doc)
+		if len(out) >= 20 {
+			break
+		}
+	}
+	return out
 }
 
 // AgentEntry is a custom agent config found in `.kiro/agents/`.
@@ -256,28 +292,59 @@ type AgentEntry struct {
 	Name     string // from JSON "name" field
 }
 
-// findRepoAgents scans `.kiro/agents/` for JSON agent configs.
+// findRepoAgents scans `.kiro/agents/` for agent configs. An agent may
+// ship as a `.json` config, a `.md` doc, or both; paired files share a
+// base name and count as ONE agent (preferring the `.md`, mirroring the
+// REST scan's scanAgents in internal/server/kiro_config.go). Capped at
+// 10 distinct agents.
 func findRepoAgents(repoDir string) []AgentEntry {
 	dir := filepath.Join(repoDir, ".kiro", "agents")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	var out []AgentEntry
+	// De-dupe by base name; prefer the .md file when both .md and .json
+	// exist for the same agent.
+	chosen := make(map[string]string) // base name -> chosen filename
+	var order []string
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if !strings.HasSuffix(e.Name(), ".json") && !strings.HasSuffix(e.Name(), ".md") {
+		name, ok := agentBaseName(e.Name())
+		if !ok {
 			continue
 		}
-		name := strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".json"), ".md")
-		out = append(out, AgentEntry{Filename: e.Name(), Name: name})
+		existing, seen := chosen[name]
+		switch {
+		case !seen:
+			chosen[name] = e.Name()
+			order = append(order, name)
+		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
+			chosen[name] = e.Name()
+		}
+	}
+	out := make([]AgentEntry, 0, min(len(order), 10))
+	for _, name := range order {
 		if len(out) >= 10 {
 			break
 		}
+		out = append(out, AgentEntry{Filename: chosen[name], Name: name})
 	}
 	return out
+}
+
+// agentBaseName returns the base name of an agent config file (stripping
+// a `.md` or `.json` extension) and whether the file is an agent config.
+func agentBaseName(filename string) (string, bool) {
+	switch {
+	case strings.HasSuffix(filename, ".md"):
+		return strings.TrimSuffix(filename, ".md"), true
+	case strings.HasSuffix(filename, ".json"):
+		return strings.TrimSuffix(filename, ".json"), true
+	default:
+		return "", false
+	}
 }
 
 // HookEntry is a hook config found in `.kiro/hooks/`.
@@ -327,8 +394,12 @@ func parseHookJSON(data []byte) HookEntry {
 	return HookEntry{Trigger: raw.EventType, Command: cmd}
 }
 
-// findMdDocsInDir is a shared helper for scanning .md files with
-// frontmatter classification (used by both steering and skills).
+// findMdDocsInDir scans a flat directory of `.md` files, classifying
+// each by its YAML frontmatter (inclusion / fileMatchPattern /
+// description) and defaulting to "always" when absent. Reads are capped
+// at 64 KiB (frontmatter is at the head) and the result at 20 entries.
+// Backs findRepoDocs (per-repo steering); skills use findRepoSkills,
+// which scans subdirectories for SKILL.md instead.
 func findMdDocsInDir(dir string) []Doc {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

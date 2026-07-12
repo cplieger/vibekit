@@ -109,6 +109,11 @@ const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
   move: { kind: "move", writesFile: false },
   search: { kind: "search", writesFile: false },
   execute: { kind: "execute", writesFile: false },
+  // shell/hook aren't emitted by v3 (execute covers shell; hooks arrive as
+  // kind:"other"), but persisted PRE-v3 chats carry them — keep the mappings
+  // so a legacy tool card renders in its proper tier instead of falling to OTHER.
+  shell: { kind: "shell", writesFile: false },
+  hook: { kind: "hook", writesFile: false },
   command: { kind: "command", writesFile: false },
   browser: { kind: "browser", writesFile: false },
   fetch: { kind: "fetch", writesFile: false },

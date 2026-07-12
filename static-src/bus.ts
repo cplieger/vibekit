@@ -36,18 +36,18 @@ import type {
   PendingTrustEnabledPayload,
   PendingTrustClearedPayload,
   ElicitationNeededPayload,
-  ElicitationCompletePayload,
+  OpenExternalURLPayload,
+  CodeReferencesPayload,
+  KnowledgeIndexingPayload,
+  SpecTaskChangedPayload,
+  PermissionsChangedPayload,
+  PolicyErrorPayload,
+  SafetyStatusPayload,
+  SafetyPropertiesPayload,
+  GovernanceStatePayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
-
-/** Typed payload for subagent activity events from kiro-cli. */
-interface SubagentActivityEvent {
-  readonly label?: string;
-  readonly title?: string;
-  readonly tool_name?: string;
-  readonly status?: string;
-}
 
 /** Payload shape per SSE event type. Events with no payload use `undefined`;
  *  events with a well-known shape get their own entry. Events not listed
@@ -61,12 +61,14 @@ export interface SSEPayloads {
   readonly message_created: Message;
   readonly message_updated: Message;
   readonly message_chunk: MessageChunkPayload;
+  readonly code_references: CodeReferencesPayload;
   readonly tool_call: ToolCallPayload;
   readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
   readonly permission_needed: PermissionNeeded;
+  readonly permissions_changed: PermissionsChangedPayload;
+  readonly policy_error: PolicyErrorPayload;
   readonly elicitation_needed: ElicitationNeededPayload;
-  readonly elicitation_complete: ElicitationCompletePayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;
@@ -80,22 +82,25 @@ export interface SSEPayloads {
     readonly prompts?: AvailableCommand[];
   };
   readonly mode_changed: { readonly mode_id: string };
+  readonly knowledge_indexing: KnowledgeIndexingPayload;
+  readonly spec_task_changed: SpecTaskChangedPayload;
+  readonly safety_status: SafetyStatusPayload;
+  readonly safety_properties: SafetyPropertiesPayload;
+  readonly governance_state: GovernanceStatePayload;
+  readonly open_external_url: OpenExternalURLPayload;
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
-  readonly subagent_activity: {
-    readonly sub_session_id: string;
-    readonly event: SubagentActivityEvent | null;
-  };
-  /** Reserved for future crew-card auto-refresh; currently unused. */
-  readonly session_list_updated: { readonly sessions: unknown[] };
-  readonly steering_loaded: { readonly documents: string[] };
   readonly terminal_created: {
     readonly terminal_id: string;
     readonly command: string;
     readonly args?: string[];
   };
   readonly terminal_output: { readonly terminal_id: string; readonly data: string };
-  readonly terminal_exited: { readonly terminal_id: string; readonly exit_code: number };
+  readonly terminal_exited: {
+    readonly terminal_id: string;
+    readonly exit_code?: number;
+    readonly signal?: string;
+  };
   readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
   readonly conflict_detected: {
     readonly path: string;
@@ -106,6 +111,7 @@ export interface SSEPayloads {
     readonly ts: number;
   };
   readonly forges_changed: undefined;
+  readonly hooks_changed: undefined;
   readonly pending_change_added: PendingChangeAddedPayload;
   readonly pending_change_resolved: PendingChangeResolvedPayload;
   readonly pending_changes_cleared: PendingChangesClearedPayload;

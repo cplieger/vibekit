@@ -99,8 +99,11 @@ type rule struct {
 // setting in `<configDir>/config.json`. Relative entries in the
 // setting are resolved against workDir so users can type
 // `.gitignore` and have it pick up the workspace's top-level file.
-// Empty / missing settings produce a no-op matcher (Matches always
-// returns false).
+// When the key is unset (fresh install / no config.json), the matcher
+// falls back to settings.DefaultAgentIgnoreFiles() so a workspace
+// `.gitignore` / `.kiroignore` is honoured out of the box; it is still
+// a no-op when none of the resolved ignore files exist. An explicit
+// empty list in config.json opts out entirely.
 func NewMatcher(configDir, workDir string) *Matcher {
 	return &Matcher{
 		configDir: configDir,
@@ -287,7 +290,14 @@ func loadRules(files []string, sizeHint int) (rules []rule, mtimes map[string]ti
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	var list []string
 	if !cfgsettings.FieldInto(ctx, m.configDir, cfgsettings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
-		return nil
+		// Key unset: fresh install (no config.json), a config.json that
+		// predates the key, or a transient read/parse failure. Fall back to
+		// the seeded default so the agent read filter is ON out of the box
+		// (the settled decision; matches the ignore-file names the IDE
+		// recognizes). An explicit "agent_ignore_files":[] is a real opt-out —
+		// FieldInto returns true with an empty list, so this branch does not
+		// run and no filtering happens.
+		list = cfgsettings.DefaultAgentIgnoreFiles()
 	}
 	out := make([]string, 0, len(list))
 	for _, entry := range list {

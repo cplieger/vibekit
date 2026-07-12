@@ -9,10 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
@@ -25,13 +22,13 @@ import (
 	forgesPkg "github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
+	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/logctl"
 	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
-	"github.com/cplieger/vibekit/internal/permissions"
 	pushPkg "github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/server"
-	"github.com/cplieger/vibekit/internal/sessions"
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
@@ -66,9 +63,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
 	steer.Generate(ctx)
 
-	lockMgr := sessions.New(workspace.KiroSessionsCLIDir())
-	lockMgr.CleanupStale(ctx)
-
 	// Wipe legacy shadow-git checkpoint directories.
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
 	if err := os.RemoveAll(legacyCheckpoints); err != nil {
@@ -84,7 +78,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	bridgeFactory := func() api.ACPBridge {
-		return bridge.New(cfg.CLIPath, cfg.WorkDir, bridge.WithSessionManager(lockMgr))
+		return bridge.New(cfg.CLIPath, cfg.WorkDir)
 	}
 
 	mcpStore, err := mcpPkg.New(ctx, cfg.ConfigDir, nil)
@@ -94,9 +88,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	pushSvc := pushPkg.New(ctx, cfg.ConfigDir, cfg.VapidSub)
 
-	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore, func() []string {
-		return permissions.Args(ctx, cfg.ConfigDir)
-	}, hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc))
+	// vibekit owns kiro-cli/KAS session cleanup end to end (cleanup.periodDays
+	// pinned to 0/never): reap a chat's session state on delete, and orphans
+	// via a periodic sweep that spares every active/archived chat's session.
+	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
+	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore,
+		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
+		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
 	chat.WithBroadcaster(h)(chatStore)
 	h.RecoverPartials()
 	h.StartCheckpointBackgroundTasks()
@@ -112,7 +110,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, api.NewEvent(api.EventMCPConfigChanged, "", api.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
-		h.PushMCPConfig()
+		// v3 (KAS) has no live set_config_option for mcpServers; a bridge
+		// picks up the new MCP set when it next (re)starts a session
+		// (session/new and session/load both forward the current set).
 	})
 	mcpPrewarm.Run(ctx)
 
@@ -150,13 +150,26 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	retention := func() time.Duration {
-		days := readCleanupPeriodDays(ctx, cfg.CLIPath)
+		// vibekit owns retention (see settings.KeyChatRetentionDays). <= 0 is
+		// "no purge": 0 = off (chats deleted on close, nothing to purge) and
+		// -1 = forever (archived, never purged). N > 0 = purge after N days.
+		days, ok := settings.Field[int](ctx, cfg.ConfigDir, settings.KeyChatRetentionDays, "chat_retention_days")
+		if !ok {
+			days = settings.DefaultChatRetentionDays
+		}
 		if days <= 0 {
 			return 0
 		}
 		return time.Duration(days) * 24 * time.Hour
 	}
 	purgeScheduler := chat.NewPurgeScheduler(ctx, chatStore, retention)
+	// Pre-archive teardown MUST run before the chat file moves so archiving
+	// routes through the same bridge/in-memory teardown a delete performs
+	// (minus the file removal + checkpoint reap) — no orphaned live bridge,
+	// no stranded in-flight turn, no ghost .partial. See hub.OnChatArchiving.
+	chat.WithPreArchive(func(id api.ChatID) {
+		h.OnChatArchiving(id)
+	})(chatStore)
 	chat.WithOnArchive(func(id api.ChatID) {
 		h.OnChatArchived(id)
 		purgeScheduler.Trigger()
@@ -182,6 +195,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithForges(forgesHTTP),
 		server.WithRules(h.Rules()),
 		server.WithUtilityPrompt(h),
+		server.WithAccountUsage(h),
+		server.WithPolicy(h),
 		server.WithStaticFS(static),
 		server.WithCLIPath(cfg.CLIPath),
 		server.WithConfigDir(cfg.ConfigDir),
@@ -218,44 +233,6 @@ func (a *App) Shutdown() {
 	a.purgeScheduler.Stop()
 	a.mcpPrewarm.Stop()
 	a.Hub.Shutdown()
-}
-
-// readCleanupPeriodDays shells out to `kiro-cli settings
-// cleanup.periodDays` and returns the integer value. Any failure
-// returns 0 so the scheduler falls back to "disabled".
-func readCleanupPeriodDays(ctx context.Context, cliPath string) int {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, cliPath, "settings", "cleanup.periodDays").Output()
-	if err != nil {
-		slog.Warn("cleanup.periodDays: kiro-cli exec failed, retention disabled",
-			"error", err, "cli_path", cliPath)
-		return 0
-	}
-	return parseCleanupPeriodDays(string(out))
-}
-
-// parseCleanupPeriodDays parses kiro-cli's `settings cleanup.periodDays`
-// output into a non-negative day count. kiro-cli appends a scope suffix
-// like " (global)" / " (local)" to a non-empty setting value, which is
-// stripped before parsing. Any unparseable or negative value yields 0
-// ("retention disabled"), matching the exec-failure fallback.
-func parseCleanupPeriodDays(out string) int {
-	raw := strings.TrimSpace(out)
-	if i := strings.LastIndexByte(raw, '('); i > 0 {
-		raw = strings.TrimSpace(raw[:i])
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		slog.Warn("cleanup.periodDays: parse failed, retention disabled",
-			"error", err, "output", raw)
-		return 0
-	}
-	if n < 0 {
-		slog.Warn("cleanup.periodDays: negative value, retention disabled", "days", n)
-		return 0
-	}
-	return n
 }
 
 // sweepStaleTemps removes orphan temp files left by SIGKILL between

@@ -85,15 +85,17 @@ func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 
 	before := h.sse.replayBuf.Len()
 
-	// Same mode → no broadcast.
-	raw := json.RawMessage(`{"modeId":"code"}`)
+	// Same mode → no broadcast. KAS's current_mode_update keys the new
+	// mode on currentModeId (not modeId — that is the outbound set_mode
+	// request's field).
+	raw := json.RawMessage(`{"currentModeId":"code"}`)
 	h.translator.HandleModeUpdate(context.Background(), "c1", raw)
 	if h.sse.replayBuf.Len() != before {
 		t.Errorf("expected no broadcast for same mode, got %d new events", h.sse.replayBuf.Len()-before)
 	}
 
 	// Different mode → broadcast.
-	raw2 := json.RawMessage(`{"modeId":"chat"}`)
+	raw2 := json.RawMessage(`{"currentModeId":"chat"}`)
 	h.translator.HandleModeUpdate(context.Background(), "c1", raw2)
 	if h.sse.replayBuf.Len() == before {
 		t.Error("expected broadcast for mode change, got none")
@@ -102,33 +104,5 @@ func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 	c, _ := cs.Get(context.Background(), "c1")
 	if c.CurrentModeID != "chat" {
 		t.Errorf("mode = %q, want chat", c.CurrentModeID)
-	}
-}
-
-func TestHandleSteeringInclusion_ExtractsNames(t *testing.T) {
-	h, _, _ := newTestHub()
-
-	before := h.sse.replayBuf.Len()
-	raw := json.RawMessage(`{"documents":[{"name":"tech.md","path":"/steering/tech.md"},{"name":"","path":"/steering/go.md"}]}`)
-	h.translator.HandleSteeringInclusion(context.Background(), "c1", raw)
-
-	events := h.sse.replayBuf.Events()[before:]
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	var evt struct {
-		Type    string `json:"type"`
-		Payload struct {
-			Documents []string `json:"documents"`
-		} `json:"payload"`
-	}
-	if err := json.Unmarshal(events[0].data, &evt); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if evt.Type != string(api.EventSteeringLoaded) {
-		t.Errorf("event type = %q, want steering_loaded", evt.Type)
-	}
-	if len(evt.Payload.Documents) != 2 || evt.Payload.Documents[0] != "tech.md" || evt.Payload.Documents[1] != "/steering/go.md" {
-		t.Errorf("documents = %v", evt.Payload.Documents)
 	}
 }

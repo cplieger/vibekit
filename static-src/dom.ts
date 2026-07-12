@@ -46,9 +46,6 @@ class Elements {
   get newChatBtn(): HTMLButtonElement {
     return byId("new-chat");
   }
-  get newPlanBtn(): HTMLButtonElement {
-    return byId("new-plan");
-  }
   get menuToggle(): HTMLButtonElement {
     return byId("menu-toggle");
   }
@@ -93,17 +90,23 @@ class Elements {
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
   }
+  get queuedRow(): HTMLUListElement {
+    return byId("queued-row");
+  }
   get sendBtn(): HTMLButtonElement {
     return byId("send-btn");
-  }
-  get autoApproveCrewBtn(): HTMLButtonElement {
-    return byId("auto-approve-crew-btn");
   }
   get switchModelBtn(): HTMLButtonElement {
     return byId("switch-model-btn");
   }
   get modelSwitchList(): HTMLDivElement {
     return byId("model-switch-list");
+  }
+  get rolePill(): HTMLButtonElement {
+    return byId("role-pill");
+  }
+  get roleList(): HTMLDivElement {
+    return byId("role-list");
   }
   get toolApproval(): HTMLDialogElement {
     return byId("tool-approval");
@@ -157,6 +160,15 @@ class Elements {
   get stAuth(): HTMLElement {
     return byId("st-auth");
   }
+  get stAccount(): HTMLElement {
+    return byId("st-account");
+  }
+  get acctPlan(): HTMLElement {
+    return byId("acct-plan");
+  }
+  get acctMeter(): HTMLElement {
+    return byId("acct-meter");
+  }
 
   // Settings
   get steeringInput(): HTMLTextAreaElement {
@@ -188,9 +200,6 @@ class Elements {
   get shellClearBtn(): HTMLButtonElement {
     return byId("shell-clear-btn");
   }
-  get shellKillBtn(): HTMLButtonElement {
-    return byId("shell-kill-btn");
-  }
   get shellFullscreenBtn(): HTMLButtonElement {
     return byId("shell-fullscreen-btn");
   }
@@ -205,12 +214,6 @@ class Elements {
   }
   get shellResize(): HTMLDivElement {
     return byId("shell-resize");
-  }
-  get termInput(): HTMLTextAreaElement {
-    return byId("term-input");
-  }
-  get keyToolbar(): HTMLDivElement {
-    return byId("key-toolbar");
   }
 
   // Git
@@ -268,6 +271,14 @@ class Elements {
   // History
   get historyBtn(): HTMLButtonElement {
     return byId("history-btn");
+  }
+
+  // Specs board
+  get specsBtn(): HTMLButtonElement {
+    return byId("specs-btn");
+  }
+  get specsList(): HTMLDivElement {
+    return byId("specs-list");
   }
 
   // Editor
@@ -338,9 +349,6 @@ class Elements {
   }
   get gitBranchModal(): HTMLDivElement {
     return byId("git-branch-modal");
-  }
-  get subagentModal(): HTMLDivElement {
-    return byId("subagent-modal");
   }
 
   // Git panel (added 2026 audit)
@@ -509,14 +517,6 @@ class Elements {
   // Theme toggle
   get themeBtn(): HTMLButtonElement {
     return byId("theme-btn");
-  }
-
-  // Subagent modal
-  get subagentModalTitle(): HTMLElement {
-    return byId("subagent-modal-title");
-  }
-  get subagentModalBody(): HTMLPreElement {
-    return byId("subagent-modal-body");
   }
 
   // Tabs / shell

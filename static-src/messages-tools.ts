@@ -19,24 +19,10 @@ import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
 import { ICON_CHEVRON_UP } from "./icons.js";
-import {
-  isSubAgent,
-  isSubAgentActive,
-  appendToSubAgent,
-  createSubAgentCard,
-  updateSubAgentCard,
-} from "./subagent.js";
 import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
 import { isToolDone } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview } from "./tool-card.js";
 import { ansiToHtml } from "./ansi.js";
-import {
-  addToolToCrewRow,
-  getCrewToolEl,
-  onCrewToolCompleted,
-  setSubagentActivity,
-} from "./crew-card.js";
-import { formatToolActivity } from "./format-tool-activity.js";
 import { bindLoadingState } from "./actions/index.js";
 import { addEditActions } from "./messages-actions.js";
 
@@ -101,52 +87,11 @@ export function initToolCallbacks(cbs: {
 export const toolSpec: ReconcileSpec<ToolCall> = {
   key: (tc) => tc.id,
   mount: (tc) => {
-    if (isSubAgent(tc.title)) {
-      const card = createSubAgentCard(
-        tc.id,
-        tc.status,
-        tc.input as Record<string, unknown> | undefined,
-        tc.output,
-      );
-      toolEls.set(tc.id, card);
-      const sig = ensureToolCallSig(tc.id, tc);
-      let lastApplied = tc;
-      const cleanup = effect(() => {
-        const next = sig.value;
-        if (next === lastApplied) {
-          return;
-        }
-        updateSubAgentCard(next.id, next.status, next.output);
-        lastApplied = next;
-      });
-      toolEffects.set(tc.id, cleanup);
-      return card;
-    }
-
-    if (isSubAgentActive()) {
-      const preview = formatNestedToolPreview(tc);
-      appendToSubAgent(preview);
-      const placeholder = el("div", {
-        className: "subagent-folded-tool",
-        "data-tool-id": tc.id,
-      }) as HTMLDivElement;
-      toolEls.set(tc.id, placeholder);
-      const sig = ensureToolCallSig(tc.id, tc);
-      let last = tc;
-      const cleanup = effect(() => {
-        const next = sig.value;
-        if (next === last) {
-          return;
-        }
-        if (next.status !== last.status || (next.output ?? "") !== (last.output ?? "")) {
-          appendToSubAgent(formatNestedToolUpdate(next, last));
-        }
-        last = next;
-      });
-      toolEffects.set(tc.id, cleanup);
-      return placeholder;
-    }
-
+    // Every tool call — including a subagent's nested tools — renders as a
+    // real tool card. Subagent GROUPING (the invocation → a SubagentBlock
+    // header, the nested tools → cards inside its body) is handled one level
+    // up in messages-blocks.ts by contiguous agent_subtask_id runs, so this
+    // spec has no subagent-specific branches.
     const opts: Parameters<typeof buildToolCard>[0] = {
       id: tc.id,
       title: tc.title,
@@ -170,10 +115,6 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     const card = buildToolCard(opts);
     toolEls.set(tc.id, card);
 
-    if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
-      addToolToCrewRow(tc.sub_session_id, tc);
-    }
-
     const sig = ensureToolCallSig(tc.id, tc);
     let lastApplied = tc;
     const cleanup = effect(() => {
@@ -182,19 +123,13 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
         return;
       }
       applyToolCallUpdate(card, next);
-      mirrorToolUpdateToCrew(next);
       lastApplied = next;
     });
     toolEffects.set(tc.id, cleanup);
     return card;
   },
   update: (el, tc) => {
-    if (el.classList.contains("subagent-call")) {
-      updateSubAgentCard(tc.id, tc.status, tc.output);
-      return;
-    }
     applyToolCallUpdate(el as HTMLDivElement, tc);
-    mirrorToolUpdateToCrew(tc);
   },
   onRemove: (_, key) => {
     disposeToolEffect(key);
@@ -230,39 +165,6 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
   }
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
-  }
-}
-
-function formatNestedToolPreview(tc: ToolCall): string {
-  const tag = tc.kind !== undefined ? `[${tc.kind}]` : "[tool]";
-  return `\n${tag} ${tc.title}\n`;
-}
-
-function formatNestedToolUpdate(next: ToolCall, prev: ToolCall): string {
-  if (next.status === prev.status) {
-    return "";
-  }
-  if (next.status !== "completed" && next.status !== "failed") {
-    return "";
-  }
-  const verb = next.status === "completed" ? "✓" : "✗";
-  const out = (next.output ?? "").trim();
-  const tail = out !== "" ? `: ${out.slice(0, 80)}${out.length > 80 ? "…" : ""}` : "";
-  return `  ${verb} ${next.title}${tail}\n`;
-}
-
-function mirrorToolUpdateToCrew(tc: ToolCall): void {
-  const crewEl = getCrewToolEl(tc.id);
-  if (crewEl === undefined) {
-    return;
-  }
-  applyToolCallUpdate(crewEl, tc);
-  if (tc.sub_session_id !== undefined && tc.sub_session_id !== "") {
-    if (tc.status === "completed" || tc.status === "failed") {
-      onCrewToolCompleted(tc.sub_session_id);
-    } else if (tc.title !== undefined) {
-      setSubagentActivity(tc.sub_session_id, formatToolActivity(tc.title));
-    }
   }
 }
 
@@ -347,12 +249,18 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
   }
 }
 
-function applyOutputUpdate(card: HTMLDivElement, output: string): void {
+/** Replace the tool card's rendered output with the latest cumulative output.
+ *  kiro-cli sends the FULL output-so-far on every tool_call_update (server-side
+ *  `tc.Output += output` then broadcasts the whole thing), NOT deltas — so the
+ *  card's <pre> must be REPLACED, not appended. Appending each cumulative
+ *  snapshot compounds it (two updates "A" then "AB" → "AAB"). Exported for
+ *  unit testing. */
+export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
   const box = card.querySelector(".tool-output-box");
   if (box !== null) {
     const pre = box.querySelector("pre");
     if (pre !== null) {
-      pre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+      pre.innerHTML = ansiToHtml(output);
     } else {
       const newPre = el("pre");
       newPre.innerHTML = ansiToHtml(output);
@@ -367,7 +275,7 @@ function applyOutputUpdate(card: HTMLDivElement, output: string): void {
   }
   const existingPre = out.querySelector("pre");
   if (existingPre !== null) {
-    existingPre.insertAdjacentHTML("beforeend", ansiToHtml(output));
+    existingPre.innerHTML = ansiToHtml(output);
   } else {
     const pre = el("pre");
     pre.innerHTML = ansiToHtml(output);

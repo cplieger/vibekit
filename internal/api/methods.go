@@ -5,12 +5,16 @@ package api
 // verification of all consumers across packages.
 
 // Bridge lifecycle methods — used by the bridge package to drive the
-// kiro-cli subprocess through initialize → session/new|load → set_model.
+// kiro-cli subprocess through initialize → session/new|load. On v3 (KAS)
+// model/mode/effort switches all route through session/set_config_option
+// (session/set_model is gone), and session/fork branches a session at a
+// message id (see command/rewind.go).
 const (
 	MethodInitialize  = "initialize"
 	MethodSessionNew  = "session/new"
 	MethodSessionLoad = "session/load"
-	MethodSetModel    = "session/set_model"
+	MethodSetMode     = "session/set_mode"
+	MethodSessionFork = "session/fork"
 	MethodCancel      = "session/cancel"
 )
 
@@ -21,43 +25,27 @@ const (
 	MethodFSWrite = "fs/write_text_file"
 )
 
-// MCP elicitation method names. When an MCP server requests structured
-// input mid-tool-execution, kiro-cli (acting as the MCP client) forwards
-// the request to us over ACP as elicitation/create — sent the same way
-// as the fs/* requests above (see the agent's client-protocol method
-// registry, where elicitation_create sits beside fs_read_text_file).
-// We surface a form to the user and reply with {action, content}.
-// elicitation/complete is an agent→client notification telling us a
-// pending elicitation was cancelled upstream so we dismiss the dialog.
-// Gated by the clientCapabilities.elicitation capability advertised in
-// bridge.initialize(); without it kiro-cli does not forward elicitation.
+// MCP elicitation method name. On v3 (KAS) an MCP server's structured-input
+// request is forwarded to us as the extension request _kiro/mcp/elicitation
+// (a JSON-RPC request with an id, delivered like fs/*). The params nest the
+// elicitation body under an "elicitation" object with sessionId/toolCallId
+// at the top level; we surface a form and reply with {action, content} on
+// the request id. Gated by the clientCapabilities.elicitation capability
+// advertised in bridge.initialize(). v3 has no elicitation-complete method.
 const (
-	MethodElicitationCreate   = "elicitation/create"
-	MethodElicitationComplete = "elicitation/complete"
+	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
-// Slash-command extension method names (_kiro.dev/commands/* namespace).
-const (
-	MethodCommandsExecute = "_kiro.dev/commands/execute"
-	MethodCommandsOptions = "_kiro.dev/commands/options"
-)
-
-// Session-level ACP method names — prompt and subagent spawn.
+// Session-level ACP method name for prompts.
 const (
 	MethodPrompt = "session/prompt"
-	MethodSpawn  = "session/spawn"
 )
 
-// Session-level ACP method names — streaming updates, permissions,
-// config, and subagent lifecycle.
+// Session-level ACP method names — streaming updates, permissions, config.
 const (
 	MethodSessionUpdate     = "session/update"
 	MethodRequestPermission = "session/request_permission"
-	MethodSetConfigOption   = "session/setConfigOption"
-	MethodTerminate         = "session/terminate"
-	MethodAttach            = "session/attach"
-	MethodList              = "session/list"
-	MethodMessageSend       = "message/send"
+	MethodSetConfigOption   = "session/set_config_option"
 )
 
 // ContentTypeText is the ACP content-block type discriminator for plain text content.
@@ -68,6 +56,24 @@ const ContentTypeText = "text"
 // ModelAuto is the sentinel model value meaning "keep current / use
 // task-based selection". Used by bridge, hub, and model-switch logic.
 const ModelAuto = "auto"
+
+// AgentEngineV3 is the only agent engine vibekit speaks:
+// `kiro-cli acp --agent-engine v3` (KAS). It requires the host to answer
+// _kiro/auth/getAccessToken + _kiro/terminal/shell_type and emits the
+// reshaped _kiro/* extension set. The legacy v1/v2 identifiers were
+// removed with the v2 wire — vibekit is v3-only (resolveAgentEngine).
+const AgentEngineV3 = "v3"
+
+// Session config-option ids for session/set_config_option (v3/KAS). Model
+// and reasoning-effort switches route through set_config_option with one of
+// these configId values plus a matching value string. (Verified against the
+// KAS 2.12 acp-server bundle: MODEL_CONFIG_ID / EFFORT_LEVEL_CONFIG_ID.)
+// Mode switches use the dedicated session/set_mode method, not this path.
+const (
+	ConfigOptionModel  = "model"
+	ConfigOptionMode   = "mode"
+	ConfigOptionEffort = "effortLevel"
+)
 
 // ACP content-block JSON field name constants. These are the wire-format
 // keys inside a content block object (distinct from ContentTypeText which

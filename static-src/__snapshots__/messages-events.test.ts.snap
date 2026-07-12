@@ -2,9 +2,10 @@
 
 exports[`EVENT_RENDER_MAP exhaustiveness > boundary metadata snapshot 1`] = `
 [
-  "agent_switched",
   "compacted",
   "compaction_failed",
+  "infra_safety_blocked",
+  "interrupted",
   "model_switched",
 ]
 `;

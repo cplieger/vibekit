@@ -205,15 +205,6 @@ h3.section-title {
   }
 }
 
-[id="trust-list-editor"] {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-block-start: var(--sp-2);
-  padding-block-start: var(--sp-2);
-  border-block-start: 1px dashed var(--c-border);
-}
-
 .chip-list {
   display: flex;
   flex-wrap: wrap;

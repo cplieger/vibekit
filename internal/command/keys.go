@@ -13,10 +13,7 @@ import (
 const (
 	keyError    = "error"
 	keyName     = api.JSONKeyName
-	keyOptions  = "options"
 	keyResolved = "resolved"
-	keySessions = "sessions"
-	keyText     = api.ContentKeyText
 	keyType     = api.ContentKeyType
 )
 

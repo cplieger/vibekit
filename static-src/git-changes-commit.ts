@@ -109,9 +109,14 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
     void withAsyncFeedback(ai, async () => {
       const msg = await generateCommitMessage.dispatch({ repo: r.repo });
       deps.assertOk(msg);
-      deps.commitMessages.set(r.repo, msg.message ?? "");
-      if (ta.isConnected) {
-        ta.value = msg.message ?? "";
+      // Server returns {output}; only fill when non-empty so a failed/empty
+      // generation never wipes a message the user already typed.
+      const generated = msg.output ?? "";
+      if (generated !== "") {
+        deps.commitMessages.set(r.repo, generated);
+        if (ta.isConnected) {
+          ta.value = generated;
+        }
       }
     });
   });

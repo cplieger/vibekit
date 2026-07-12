@@ -1,21 +1,26 @@
-// Package permissions resolves kiro-cli permission args from the user's
-// config.json. Reads fresh on every call so UI toggles take effect on
-// the next bridge spawn without a server restart.
+// Package permissions evaluates vibekit's own permission controls from
+// the user's config.json: the shell-command safety policy (auto-approve
+// / prompt / deny for execute_bash) and the Supervised-mode default.
+// Reads fresh on every call so UI toggles take effect on the next
+// evaluation without a server restart.
 //
-// Settings schema (new fields, all optional):
+// Note: tool-call authorization on v3 (KAS) is owned by kiro-cli's
+// native Cedar policy engine (surfaced/edited via GET|POST
+// /api/permissions). The old imperative "trust-all / trust-list /
+// prompt" mode (the --trust-all-tools / --trust-tools kiro-cli spawn
+// flags) was removed in 2026-07: those flags are inert on v3 (the
+// engine ignores them; the permission prompt fires regardless), and
+// they fed nothing else. Cedar is the real approval surface now.
+//
+// Settings schema (all optional):
 //
 //	{
-//	  "permission_mode": "prompt" | "trust-list" | "trust-all",
-//	  "trust_tools":     ["fsWrite", "executePwsh", ...]
+//	  "shell_policy":       "no_commands" | "safe_commands" | "all_commands",
+//	  "supervised_default": true | false
 //	}
 //
-// Fail-mode philosophy (intentional asymmetry between readers):
+// Fail-mode philosophy (both readers fail CLOSED):
 //
-//   - Args / read: fail OPEN to "--trust-all-tools" on any
-//     read/parse error. Matches the previous hard-coded behaviour
-//     and avoids silently flooding the user with prompts on a fresh
-//     install. A typo in permission_mode is therefore a permissive
-//     failure, not a restrictive one; surfaced via slog.Warn.
 //   - readShellPolicy: fail CLOSED to safe_commands on any error.
 //     safe_commands is the default-and-safest policy, so a corrupt
 //     config.json defaults to prompting for destructive commands.
@@ -23,8 +28,6 @@
 //     opt-in; a user who never touches Settings must not suddenly
 //     get every write gated on approval because of a parse error.
 //
-// Do not "fix" the asymmetry without revisiting each reader's
-// semantics. Args' permissive fallback is a UX decision (no surprises
-// on fresh install); the others' restrictive fallbacks are safety
-// decisions.
+// Do not relax either fallback without revisiting its safety
+// semantics.
 package permissions

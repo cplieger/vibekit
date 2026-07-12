@@ -9,8 +9,8 @@ import (
 func TestBlockAccumulators(t *testing.T) {
 	t.Run("text deltas extend the trailing text block", func(t *testing.T) {
 		buf := &Buffer{}
-		i0 := buf.AppendTextDelta("hello ")
-		i1 := buf.AppendTextDelta("world")
+		i0 := buf.AppendTextDelta("hello ", "")
+		i1 := buf.AppendTextDelta("world", "")
 		if i0 != 0 || i1 != 0 {
 			t.Errorf("expected both deltas to land on block 0, got %d / %d", i0, i1)
 		}
@@ -27,9 +27,9 @@ func TestBlockAccumulators(t *testing.T) {
 
 	t.Run("tool_use breaks a text run into a new block", func(t *testing.T) {
 		buf := &Buffer{}
-		buf.AppendTextDelta("first")
-		buf.AppendToolUseBlock("tc-1")
-		idx := buf.AppendTextDelta("second")
+		buf.AppendTextDelta("first", "")
+		buf.AppendToolUseBlock("tc-1", "")
+		idx := buf.AppendTextDelta("second", "")
 		if idx != 2 {
 			t.Errorf("text-after-tool block index = %d, want 2", idx)
 		}
@@ -49,8 +49,8 @@ func TestBlockAccumulators(t *testing.T) {
 
 	t.Run("thinking and text don't coalesce", func(t *testing.T) {
 		buf := &Buffer{}
-		i0 := buf.AppendThinkingDelta("reasoning…")
-		i1 := buf.AppendTextDelta("answer.")
+		i0 := buf.AppendThinkingDelta("reasoning…", "")
+		i1 := buf.AppendTextDelta("answer.", "")
 		if i0 != 0 || i1 != 1 {
 			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
 		}
@@ -61,8 +61,8 @@ func TestBlockAccumulators(t *testing.T) {
 
 	t.Run("back-to-back tool calls each get their own block", func(t *testing.T) {
 		buf := &Buffer{}
-		i0 := buf.AppendToolUseBlock("a")
-		i1 := buf.AppendToolUseBlock("b")
+		i0 := buf.AppendToolUseBlock("a", "")
+		i1 := buf.AppendToolUseBlock("b", "")
 		if i0 != 0 || i1 != 1 {
 			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
 		}
@@ -70,8 +70,8 @@ func TestBlockAccumulators(t *testing.T) {
 
 	t.Run("consecutive thinking deltas coalesce into one block", func(t *testing.T) {
 		buf := &Buffer{}
-		i0 := buf.AppendThinkingDelta("aaa")
-		i1 := buf.AppendThinkingDelta("bbb")
+		i0 := buf.AppendThinkingDelta("aaa", "")
+		i1 := buf.AppendThinkingDelta("bbb", "")
 		if i0 != 0 || i1 != 0 {
 			t.Errorf("expected both deltas to land on block 0, got %d / %d", i0, i1)
 		}
@@ -85,8 +85,8 @@ func TestBlockAccumulators(t *testing.T) {
 
 	t.Run("thinking after a non-thinking block starts a new block", func(t *testing.T) {
 		buf := &Buffer{}
-		buf.AppendTextDelta("answer")
-		i := buf.AppendThinkingDelta("reasoning")
+		buf.AppendTextDelta("answer", "")
+		i := buf.AppendThinkingDelta("reasoning", "")
 		if i != 1 {
 			t.Errorf("thinking-after-text block index = %d, want 1", i)
 		}
@@ -98,6 +98,67 @@ func TestBlockAccumulators(t *testing.T) {
 		}
 		if got, want := buf.Blocks[1].Thinking, "reasoning"; got != want {
 			t.Errorf("Blocks[1].Thinking = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("same-subtask consecutive text deltas extend one block", func(t *testing.T) {
+		buf := &Buffer{}
+		i0 := buf.AppendTextDelta("sub ", "agent-7")
+		i1 := buf.AppendTextDelta("text", "agent-7")
+		if i0 != 0 || i1 != 0 {
+			t.Errorf("expected both deltas to land on block 0, got %d / %d", i0, i1)
+		}
+		if got, want := len(buf.Blocks), 1; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[0].Text, "sub text"; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q", got, want)
+		}
+		if got, want := buf.Blocks[0].AgentSubtaskID, "agent-7"; got != want {
+			t.Errorf("Blocks[0].AgentSubtaskID = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a differing subtask starts a new block", func(t *testing.T) {
+		buf := &Buffer{}
+		// Top-level text, then a subagent's text: must NOT merge into the
+		// parent's trailing block even though both are BlockText.
+		i0 := buf.AppendTextDelta("parent", "")
+		i1 := buf.AppendTextDelta("child", "agent-7")
+		if i0 != 0 || i1 != 1 {
+			t.Errorf("text indices = %d / %d, want 0 / 1", i0, i1)
+		}
+		if buf.Blocks[0].AgentSubtaskID != "" {
+			t.Errorf("Blocks[0].AgentSubtaskID = %q, want empty (top-level)", buf.Blocks[0].AgentSubtaskID)
+		}
+		if got, want := buf.Blocks[0].Text, "parent"; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q (child text must not merge in)", got, want)
+		}
+		if got, want := buf.Blocks[1].AgentSubtaskID, "agent-7"; got != want {
+			t.Errorf("Blocks[1].AgentSubtaskID = %q, want %q", got, want)
+		}
+		// Same guard for the thinking fast-path.
+		j0 := buf.AppendThinkingDelta("p-think", "agent-7")
+		j1 := buf.AppendThinkingDelta("c-think", "agent-8")
+		if j0 != 2 || j1 != 3 {
+			t.Errorf("thinking indices = %d / %d, want 2 / 3", j0, j1)
+		}
+		if got, want := buf.Blocks[3].AgentSubtaskID, "agent-8"; got != want {
+			t.Errorf("Blocks[3].AgentSubtaskID = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("tool_use block stamps the subtask id", func(t *testing.T) {
+		buf := &Buffer{}
+		idx := buf.AppendToolUseBlock("tc-42", "agent-9")
+		if idx != 0 {
+			t.Fatalf("block index = %d, want 0", idx)
+		}
+		if got, want := buf.Blocks[0].AgentSubtaskID, "agent-9"; got != want {
+			t.Errorf("Blocks[0].AgentSubtaskID = %q, want %q", got, want)
+		}
+		if got, want := buf.Blocks[0].ToolCallID, "tc-42"; got != want {
+			t.Errorf("Blocks[0].ToolCallID = %q, want %q", got, want)
 		}
 	})
 }

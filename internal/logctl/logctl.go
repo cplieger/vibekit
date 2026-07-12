@@ -21,32 +21,30 @@ package logctl
 import (
 	"context"
 	"log/slog"
-	"os"
 
+	"github.com/cplieger/slogx"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
-var levelVar slog.LevelVar
+// levelVar is the shared LevelVar the installed handler follows: slogx.Setup
+// wires it into the default logger (in Install) and SetDebug flips it at
+// runtime, so a PATCH to debug_logs re-levels subsequent log calls in place.
+var levelVar *slog.LevelVar
 
 // Install wires the shared LevelVar into slog's default logger and
 // reads the initial level from configDir/config.json. Call exactly
 // once at startup, before any other slog calls that matter.
 //
-// Parse failures (corrupt JSON, wrong type on debug_logs) fall back
-// to info level so a broken settings file never accidentally drops
-// the user into debug mode. The failure is logged at warn level
-// after the handler is wired so operators get a breadcrumb instead
-// of a silent fallback. A legitimately-missing config.json (first
-// boot) is not an error and produces no warn.
+// The handler is installed at info first (via slogx.Setup, which returns the
+// LevelVar the handler follows), then promoted to debug only when debug_logs
+// is present and true. Parse failures (corrupt JSON, wrong type on debug_logs)
+// or a legitimately-missing config.json (first boot) leave it at info, so a
+// broken settings file never accidentally drops the user into debug mode.
 func Install(ctx context.Context, configDir string) {
-	on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs, settings.KeyDebugLogs)
-	if on && ok {
+	levelVar = slogx.Setup(slogx.Options{})
+	if on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs, settings.KeyDebugLogs); on && ok {
 		levelVar.Set(slog.LevelDebug)
-	} else {
-		levelVar.Set(slog.LevelInfo)
 	}
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &levelVar, ReplaceAttr: utcTimeAttr})
-	slog.SetDefault(slog.New(handler))
 }
 
 // SetDebug flips the active log level at runtime. Called by the
@@ -57,16 +55,4 @@ func SetDebug(on bool) {
 	} else {
 		levelVar.Set(slog.LevelInfo)
 	}
-}
-
-// utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
-// key in UTC, so log-line timestamps are zone-stable regardless of the
-// container's TZ (the fleet logs-in-UTC standard). It rewrites only the
-// top-level time attribute; a user attribute that happens to share the "time"
-// key inside a group is left untouched.
-func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
-		a.Value = slog.TimeValue(a.Value.Time().UTC())
-	}
-	return a
 }

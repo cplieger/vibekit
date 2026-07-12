@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
@@ -62,10 +63,11 @@ type StoreAccess interface {
 
 // Service implements the archive lifecycle operations.
 type Service struct {
-	store     StoreAccess
-	onArchive func(chatID api.ChatID)
-	onPurge   func(chatID api.ChatID)
-	listSF    singleflight.Group
+	store      StoreAccess
+	preArchive func(chatID api.ChatID)
+	onArchive  func(chatID api.ChatID)
+	onPurge    func(chatID api.ChatID)
+	listSF     singleflight.Group
 }
 
 // New creates an archive Service backed by the given StoreAccess.
@@ -79,6 +81,15 @@ func New(store StoreAccess, opts ...Option) *Service {
 
 // Option configures the archive Service.
 type Option func(*Service)
+
+// WithPreArchive registers a callback fired BEFORE a chat's file is moved
+// to the archive dir. Used to run the hub's in-memory teardown (close the
+// bridge, kill terminals, clear pending state, remove the .partial) while
+// the chat record is still active, so archiving can't orphan a live bridge
+// or leave a ghost .partial.
+func WithPreArchive(fn func(chatID api.ChatID)) Option {
+	return func(s *Service) { s.preArchive = fn }
+}
 
 // WithOnArchive registers a callback fired after a chat is archived.
 func WithOnArchive(fn func(chatID api.ChatID)) Option {
@@ -114,12 +125,28 @@ func (s *Service) Archive(ctx context.Context, chatID api.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Pre-archive teardown (hub): close the bridge, kill agent terminals,
+	// clear pending perms + supervised trust, close+remove the .partial —
+	// BEFORE the file moves, so a live bridge can't outlive its chat record
+	// and no orphan .partial survives. Runs outside the per-chat lock,
+	// mirroring the delete path's CleanupChatState-then-Delete order.
+	if s.preArchive != nil {
+		s.preArchive(chatID)
+	}
 	m := s.store.Lock(chatID)
 	m.Lock()
 	srcPath, err := s.store.PathFor(chatID)
 	if err != nil {
 		m.Unlock()
 		return err
+	}
+	// Stamp ArchivedAt on the still-active file before the move so purge
+	// ages the entry from archive time, not the last-activity mtime (which
+	// a skipped/failed post-archive summary write would otherwise leave
+	// stale, purging an old-but-just-archived chat almost immediately).
+	// Best-effort: on failure purge falls back to mtime.
+	if err := s.stampArchivedAt(ctx, chatID, srcPath); err != nil {
+		slog.Warn("chat archive: stamp ArchivedAt failed", "chat_id", chatID, "error", err)
 	}
 	archiveDir := s.archivePath()
 	if err := os.MkdirAll(archiveDir, dirMode); err != nil {
@@ -148,6 +175,29 @@ func (s *Service) Archive(ctx context.Context, chatID api.ChatID) error {
 		s.onArchive(chatID)
 	}
 	return nil
+}
+
+// stampArchivedAt records the archive timestamp on the still-active chat
+// file at srcPath before it is moved. Written via atomicfile.WriteFile
+// (not the store's save) so UpdatedAt is preserved — the History sort order
+// keeps reflecting last activity, while purge ages from ArchivedAt. Caller
+// holds the per-chat mutex.
+func (s *Service) stampArchivedAt(ctx context.Context, chatID api.ChatID, srcPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c, err := s.store.Load(chatID)
+	if err != nil {
+		return err
+	}
+	c.ArchivedAt = time.Now().UnixMilli()
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = atomicfile.WriteFile(ctx, srcPath, data,
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	return err
 }
 
 // ListArchived returns headers for all archived chats, sorted by

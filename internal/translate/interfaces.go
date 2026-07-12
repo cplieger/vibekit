@@ -20,8 +20,9 @@ import (
 // Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
 var _ ChatStoreDeps = Deps(nil)
 
-// StreamingAccess provides the methods needed by session_streaming.go
-// for content buffering, partial file recovery, and line tracking.
+// StreamingAccess provides the methods needed by streaming_content.go /
+// streaming_tools.go for content buffering, partial file recovery, and
+// line tracking.
 type StreamingAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	BufferStore() BufferAccess
@@ -53,23 +54,10 @@ type BridgeComm interface {
 	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
 }
 
-// MCPState provides MCP server state tracking methods needed by mcp.go
-// and commands_handler.go. Alias for MCPRecorder.
-type MCPState = MCPRecorder
-
 // ChatStoreDeps provides the minimal interface needed by handlers that
-// only require chat store access and broadcast (init_errors, metadata,
-// agent_switch, crew_handler, subagent_session).
+// only require chat store access and broadcast (init_errors).
 type ChatStoreDeps interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	ChatStore() api.ChatStore
 	ParentACPSession(chatID api.ChatID) string
 }
-
-// Typed accessors on Translator for narrow interface access.
-// These allow handler methods to document and use only the
-// subset of Deps they actually need.
-//
-// NOTE: Currently unused by handlers (all use t.deps directly).
-// Retained as documentation of the role-based decomposition;
-// handlers may adopt them in a future cycle.

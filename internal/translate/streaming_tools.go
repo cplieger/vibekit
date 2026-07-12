@@ -14,17 +14,27 @@ import (
 )
 
 // HandleToolCall adds a tool call to the current assistant message
-// buffer and broadcasts it.
+// buffer and broadcasts it. On v3 (KAS) a subagent is an ordinary tool
+// call tagged _meta.kiro.kind=="agent-subtask"; AgentSubtaskID is threaded
+// onto the domain ToolCall so the client can render a subagent card and
+// nest the subagent's chunks (which carry the same id) under it.
 func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
 	var tc ACPToolCallWire
-	if json.Unmarshal(raw, &tc) != nil || IsSubagentNoiseTitle(tc.Title) {
+	if json.Unmarshal(raw, &tc) != nil {
 		return
 	}
-	if tc.Kind == api.ToolKindHook && !t.deps.IsHookStatusEnabled() {
+	// Hook status suppression. On v3 (KAS) a pre-tool-use hook's
+	// ask-permission gate arrives as a kind:"other" tool call tagged
+	// _meta.kiro.hookAsk (there is no ToolKind "hook" in v3's zToolKind).
+	// When the kiro-cli hooks.showStatus setting is off, drop the hook-ask
+	// card. Suppressing the initial tool_call also drops its follow-up
+	// tool_call_update: HandleToolCallUpdate early-returns when the id was
+	// never buffered.
+	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.deps.IsHookStatusEnabled() {
 		return
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
-	t.ensureTurnStarted(ctx, chatID, buf, false)
+	t.ensureTurnStarted(ctx, chatID, buf)
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {
 		if c.Type == ContentTypeDiff && c.Path != "" {
@@ -34,15 +44,16 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		}
 	}
 	call := api.ToolCall{
-		ID:           tc.ToolCallID,
-		Title:        tc.Title,
-		Kind:         tc.Kind,
-		Status:       tc.Status,
-		Input:        tc.RawInput,
-		SubSessionID: subSessionID,
-		Locations:    tc.Locations,
-		Diffs:        diffs,
-		Ts:           time.Now().UnixMilli(),
+		ID:             tc.ToolCallID,
+		Title:          tc.Title,
+		Kind:           tc.Kind,
+		Status:         tc.Status,
+		Input:          tc.RawInput,
+		SubSessionID:   subSessionID,
+		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
+		Locations:      tc.Locations,
+		Diffs:          diffs,
+		Ts:             time.Now().UnixMilli(),
 	}
 	buf.ToolCalls = append(buf.ToolCalls, call)
 	if buf.ToolCallIndex == nil {
@@ -53,7 +64,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// block — back-to-back tool calls each get their own tool_use
 	// block (the next text chunk after this will also start a new
 	// block since the trailing block is now tool_use, not text).
-	blockIndex := buf.AppendToolUseBlock(call.ID)
+	blockIndex := buf.AppendToolUseBlock(call.ID, tc.Meta.Kiro.AgentSubtaskID)
 	buf.RecordToolStart(tc.ToolCallID)
 	buf.WritePartial(ctx)
 	if len(diffs) > 0 {
@@ -91,6 +102,11 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) (output string, diffs []api.ToolDiff) {
 	var outputDelta strings.Builder
 	for _, item := range items {
+		// Only "content" (text) and "diff" blocks are consumed here. The
+		// execute tool's type:"terminal" content blocks are intentionally
+		// ignored: that output already streams to the client through the
+		// terminal/* SSE surface (terminal_output), so decoding it here
+		// would double-render it on the tool card.
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
 			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
 			outputDelta.WriteByte('\n')
@@ -109,6 +125,15 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) (ou
 // line tracking), and a first-seen subsession id.
 func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, output string, diffs []api.ToolDiff, subSessionID string) {
 	tc := &buf.ToolCalls[idx]
+	// A mid-flight update may refine the card's title/kind (KAS sends them
+	// nullish on tool_call_update); apply only when present so an update
+	// that omits them doesn't wipe the values set on the initial tool_call.
+	if tu.Title != "" {
+		tc.Title = tu.Title
+	}
+	if tu.Kind != "" {
+		tc.Kind = tu.Kind
+	}
 	if tu.Status != "" {
 		tc.Status = tu.Status
 		if tu.Status == api.ToolCompleted || tu.Status == api.ToolFailed {
@@ -132,42 +157,9 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	if tc.SubSessionID == "" && subSessionID != "" {
 		tc.SubSessionID = subSessionID
 	}
-}
-
-// HandleExtSessionUpdate handles the extension channel for subagent
-// tool-call chunks.
-func (t *Translator) HandleExtSessionUpdate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	var p struct {
-		SessionID string `json:"sessionId"`
-		Update    struct {
-			Kind       string `json:"sessionUpdate"`
-			ToolCallID string `json:"toolCallId"`
-			Title      string `json:"title"`
-			Kind2      string `json:"kind"`
-		} `json:"update"`
+	if tc.AgentSubtaskID == "" && tu.Meta.Kiro.AgentSubtaskID != "" {
+		tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
 	}
-	if json.Unmarshal(msg.Params, &p) != nil || p.Update.Kind != ExtUpdateToolCallChunk {
-		return
-	}
-	subSessionID := t.deriveSubSession(chatID, p.SessionID)
-	buf := t.deps.BufferStore().GetOrInit(chatID)
-	t.ensureTurnStarted(ctx, chatID, buf, false)
-	call := api.ToolCall{
-		ID:           p.Update.ToolCallID,
-		Title:        p.Update.Title,
-		Kind:         api.ToolKind(p.Update.Kind2),
-		Status:       api.ToolPending,
-		SubSessionID: subSessionID,
-		Ts:           time.Now().UnixMilli(),
-	}
-	buf.ToolCalls = append(buf.ToolCalls, call)
-	if buf.ToolCallIndex == nil {
-		buf.ToolCallIndex = make(map[string]int)
-	}
-	buf.ToolCallIndex[p.Update.ToolCallID] = len(buf.ToolCalls) - 1
-	buf.RecordToolStart(p.Update.ToolCallID)
-	buf.WritePartial(ctx)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCall, chatID, api.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call}))
 }
 
 // relPath strips the workspace root prefix from an absolute path.
@@ -185,18 +177,19 @@ func (t *Translator) relPath(abs string) string {
 	return filepath.ToSlash(rel)
 }
 
-// ensureTurnStarted initializes the buffer for a new turn if not already started.
-// openPartial controls whether the partial recovery file is opened (content chunks
-// need it; tool-call-only turns do not).
-func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, openPartial bool) {
+// ensureTurnStarted initializes the buffer for a new turn if not already
+// started: assigns the message id and broadcasts message_created. It does
+// NOT open the .partial recovery file — that is opened lazily on the first
+// content/reasoning chunk (HandleAssistantChunk), so a tool-first turn
+// (whose first streamed event is a tool call) still becomes crash-durable
+// the moment any text arrives, and a pure-tool-only turn — which the
+// recovery guard would drop anyway — skips the file entirely.
+func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
 	if buf.Started {
 		return
 	}
 	buf.Started = true
 	buf.MessageID = t.newMsgID()
-	if openPartial {
-		t.deps.OpenPartialFile(ctx, chatID, buf)
-	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
 		api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

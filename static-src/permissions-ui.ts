@@ -1,47 +1,41 @@
 // ---------------------------------------------------------------------------
-// "Tool permissions" section in the Settings panel.
+// "Permissions" section in the Settings panel.
 //
-// Three orthogonal layers live here, encapsulated in the
-// PermissionsUIController class. The module wires each to its
-// settings.json field and re-renders on change.
+// Two controllers live here:
 //
-//   1. permission_mode     trust-all | trust-list | prompt
-//   2. shell_policy        no_commands | safe_commands | all_commands
-//   3. supervised_default  boolean
+//   - PermissionsUIController — vibekit's own complementary controls,
+//     each wired to its settings.json field and re-rendered on change:
+//       * shell_policy        no_commands | safe_commands | all_commands
+//       * supervised_default  boolean
+//       * agent_ignore_files  string[]
+//     (plus the command-rule list, served from /api/permissions/commands).
+//   - NativePolicyController — the native (Cedar) policy VIEW + editor,
+//     the real tool-call authorization surface on v3.
 //
-// Layers (1) and (2) apply on next bridge spawn. Layer (3) applies
-// when a new chat is created.
+// The old imperative "tool approval" mode (trust-all | trust-list |
+// prompt, backed by the kiro-cli --trust-all-tools / --trust-tools spawn
+// flags) was removed in 2026-07: those flags are inert on v3 (KAS's Cedar
+// engine ignores them) and fed nothing else. Cedar is the approval surface.
 // ---------------------------------------------------------------------------
 
 import { patchSettings } from "./persist.js";
-import type { PermissionMode, AppSettings } from "./persist.js";
-import { byId, maybeEl } from "./dom.js";
+import type { AppSettings } from "./persist.js";
+import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./ui-primitives.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { addRule, removeRule, type CommandRule } from "./actions/permissions.js";
+import {
+  addRule,
+  removeRule,
+  editNativeRule,
+  explainPolicy,
+  type CommandRule,
+} from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
+import { onSSE } from "./bus.js";
+import { confirm } from "./confirm.js";
+import type { PolicyView, PolicyRule } from "./types.js";
 import { el } from "@cplieger/reactive";
-
-// Common kiro-cli tool names. Shown as "+" menu suggestions when adding to
-// the trust list.
-const SUGGESTED_TOOLS = [
-  "readFile",
-  "readCode",
-  "readMultipleFiles",
-  "listDirectory",
-  "fileSearch",
-  "grepSearch",
-  "fsWrite",
-  "fsAppend",
-  "strReplace",
-  "deleteFile",
-  "smartRelocate",
-  "semanticRename",
-  "executePwsh",
-  "webFetch",
-  "remote_web_search",
-] as const;
 
 // ---------------------------------------------------------------------------
 // PermissionsUIController — encapsulates all module-level state.
@@ -51,30 +45,16 @@ type ShellPolicy = "no_commands" | "safe_commands" | "all_commands";
 type RuleMode = "allow" | "deny";
 
 class PermissionsUIController {
-  private currentMode: PermissionMode = "trust-all";
-  private currentList: string[] = [];
   private currentShellPolicy: ShellPolicy = "safe_commands";
   private commandRules: CommandRule[] = [];
   private ignoreFiles: string[] = [];
   private rulesController: AbortController | null = null;
 
   initPermissions(initial: AppSettings): void {
-    this.currentMode = initial.permission_mode ?? "trust-all";
-    this.currentList = [...(initial.trust_tools ?? [])];
-
-    for (const m of ["trust-all", "trust-list", "prompt"] as PermissionMode[]) {
-      const radio = byId<HTMLInputElement>(`perm-mode-${m}`);
-      radio.checked = this.currentMode === m;
-      radio.addEventListener("change", () => {
-        if (!radio.checked) {
-          return;
-        }
-        this.currentMode = m;
-        void patchSettings({ permission_mode: m });
-        this.renderEditor();
-      });
-    }
-
+    // Supervised-mode default for new chats. (The old trust-all /
+    // trust-list / prompt "tool approval" radios were removed — Cedar,
+    // rendered by NativePolicyController below, is the approval surface
+    // on v3.)
     const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default === true;
@@ -82,24 +62,6 @@ class PermissionsUIController {
         void patchSettings({ supervised_default: supCheckbox.checked });
       });
     }
-
-    const adder = byId("trust-list-add");
-    adder.setAttribute("aria-label", "Add trusted tool");
-    adder.setAttribute("aria-expanded", "false");
-    adder.addEventListener("click", () => {
-      this.toggleMenu();
-    });
-
-    const menu = byId<HTMLDivElement>("trust-list-menu");
-    document.addEventListener("click", (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!adder.contains(t) && !menu.contains(t)) {
-        menu.classList.add("hidden");
-        adder.setAttribute("aria-expanded", "false");
-      }
-    });
-
-    this.renderEditor();
   }
 
   initShellPolicy(initial: AppSettings): void {
@@ -157,84 +119,6 @@ class PermissionsUIController {
 
   async addWhitelistEntry(pattern: string): Promise<void> {
     await this.addRule(pattern, "allow", 0);
-  }
-
-  // --- Private: permission mode ---
-
-  private renderEditor(): void {
-    const editor = byId<HTMLDivElement>("trust-list-editor");
-    editor.classList.toggle("hidden", this.currentMode !== "trust-list");
-    if (this.currentMode !== "trust-list") {
-      return;
-    }
-    this.renderChips();
-    const hint = byId<HTMLParagraphElement>("trust-list-empty-hint");
-    hint.classList.toggle("hidden", this.currentList.length > 0);
-  }
-
-  private renderChips(): void {
-    const chips = byId<HTMLDivElement>("trust-list-chips");
-    // Keyed reconcile (keyed by tool name) so add/remove touches only the
-    // changed chip instead of rebuilding the whole row. The empty state is a
-    // separate element (trust-list-empty-hint), toggled in renderEditor, so
-    // this container holds only chips — no replaceChildren/reconcile mixing.
-    reconcile(chips, this.currentList, {
-      key: (name: string) => name,
-      mount: (name: string) =>
-        buildChip({
-          label: name,
-          onRemove: () => {
-            this.removeTool(name);
-          },
-        }),
-    });
-  }
-
-  private addTool(name: string): void {
-    const clean = name.trim();
-    if (clean === "") {
-      return;
-    }
-    if (this.currentList.includes(clean)) {
-      return;
-    }
-    this.currentList.push(clean);
-    void patchSettings({ trust_tools: this.currentList });
-    this.renderEditor();
-  }
-
-  private removeTool(name: string): void {
-    this.currentList = this.currentList.filter((n) => n !== name);
-    void patchSettings({ trust_tools: this.currentList });
-    this.renderEditor();
-  }
-
-  private toggleMenu(): void {
-    const menu = byId<HTMLDivElement>("trust-list-menu");
-    const adder = byId("trust-list-add");
-    if (!menu.classList.contains("hidden")) {
-      menu.classList.add("hidden");
-      adder.setAttribute("aria-expanded", "false");
-      return;
-    }
-    menu.replaceChildren();
-
-    const remaining = SUGGESTED_TOOLS.filter((n) => !this.currentList.includes(n));
-    reconcile(menu, remaining, {
-      key: (name: string) => name,
-      mount: (name: string) => {
-        const item = el("button", { type: "button", className: "chip-menu-item" }, name);
-        item.addEventListener("click", () => {
-          this.addTool(name);
-          menu.classList.add("hidden");
-          adder.setAttribute("aria-expanded", "false");
-        });
-        return item;
-      },
-    });
-
-    menu.classList.remove("hidden");
-    adder.setAttribute("aria-expanded", "true");
   }
 
   // --- Private: command rules ---
@@ -411,12 +295,284 @@ registerCleanup(() => {
   controller.cancelRulesLoad();
 });
 
+// ---------------------------------------------------------------------------
+// NativePolicyController — the native (Cedar) policy VIEW + conservative
+// file-writing editor.
+//
+// The VIEW (GET /api/permissions) is the source of truth for what kiro-cli
+// ENFORCES: the layered rule set (kiro/administration/user/workspace/agent/
+// session) with per-rule capability, 3-valued effect, path match/exclude, and
+// source provenance. The EDITOR writes the user/workspace permissions.yaml
+// (POST /api/permissions/rules), which KAS hot-reloads — the server never
+// mutates the running policy directly. It is conservative: a new rule
+// defaults to Ask (server-enforced), and removing a Deny (which widens
+// access) is confirmed first. The list is a pure server projection: refetched
+// after every edit and on the permissions_changed SSE, so it can't drift from
+// what KAS enforces.
+// ---------------------------------------------------------------------------
+
+const NATIVE_SCOPE_ORDER = ["kiro", "administration", "user", "workspace", "agent", "session"];
+const NATIVE_SCOPE_LABEL: Record<string, string> = {
+  kiro: "Kiro built-in (read-only)",
+  administration: "Administration (read-only)",
+  user: "User — global",
+  workspace: "Workspace",
+  agent: "Agent — current mode (read-only)",
+  session: "Session — runtime (read-only)",
+};
+
+function splitGlobs(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
+function shortSource(src: string): string {
+  if (src === "") {
+    return "";
+  }
+  const parts = src.split("/");
+  return parts.length <= 2 ? src : ".../" + parts.slice(-2).join("/");
+}
+
+class NativePolicyController {
+  private writable = new Set<string>();
+  private ctrl: AbortController | null = null;
+
+  init(): void {
+    const addBtn = maybeEl<HTMLButtonElement>("native-rule-add");
+    if (addBtn === null) {
+      return; // permissions panel not present in this build
+    }
+    addBtn.addEventListener("click", () => {
+      void this.addRule();
+    });
+    maybeEl<HTMLButtonElement>("native-explain-run")?.addEventListener("click", () => {
+      void this.runExplain();
+    });
+    registerCleanup(bindLoadingState("permissions.edit_native_rule", addBtn));
+    registerCleanup(
+      onSSE("permissions_changed", () => {
+        void this.load();
+      }),
+    );
+    registerCleanup(
+      onSSE("policy_error", (_chatID, payload) => {
+        const msgs = (payload.errors ?? []).map((e) => e.message).filter((m) => m !== "");
+        this.showStatus(
+          msgs.length > 0 ? "Policy error: " + msgs.join("; ") : "Policy error.",
+          true,
+        );
+      }),
+    );
+    registerCleanup(() => {
+      this.cancel();
+    });
+    void this.load();
+  }
+
+  cancel(): void {
+    this.ctrl?.abort();
+    this.ctrl = null;
+  }
+
+  private async load(): Promise<void> {
+    this.ctrl?.abort();
+    this.ctrl = new AbortController();
+    const { signal } = this.ctrl;
+    const data = await apiGet<PolicyView>("/api/permissions", signal);
+    if (signal.aborted || data === null) {
+      return;
+    }
+    this.writable = new Set(data.writable_scopes);
+    this.populateCapabilities(data.capabilities);
+    if (data.available) {
+      this.showStatus("", false);
+    } else {
+      this.showStatus(
+        "Live policy unavailable (no active session) — showing your saved user/workspace rules only.",
+        false,
+      );
+    }
+    this.render(data.rules);
+  }
+
+  private populateCapabilities(caps: string[]): void {
+    for (const id of ["native-rule-capability", "native-explain-capability"]) {
+      const sel = maybeEl<HTMLSelectElement>(id);
+      // Populate only when empty: idempotent across refetches (so an SSE
+      // reload doesn't reset an in-progress selection) and correct per fresh
+      // DOM in tests.
+      if (sel === null || sel.options.length > 0) {
+        continue;
+      }
+      sel.replaceChildren(
+        ...caps.map((c) => {
+          const opt = el("option", { value: c }, c) as HTMLOptionElement;
+          opt.value = c; // set the property explicitly so the value is usable everywhere
+          return opt;
+        }),
+      );
+    }
+  }
+
+  private render(rules: PolicyRule[]): void {
+    const emptyHint = maybeEl("native-policy-empty-hint");
+    if (emptyHint !== null) {
+      emptyHint.classList.toggle("hidden", rules.length > 0);
+    }
+    const list = maybeEl("native-policy-list");
+    if (list === null) {
+      return;
+    }
+    const groups = new Map<string, PolicyRule[]>();
+    for (const r of rules) {
+      const g = groups.get(r.scope) ?? [];
+      g.push(r);
+      groups.set(r.scope, g);
+    }
+    const order = [
+      ...NATIVE_SCOPE_ORDER,
+      ...[...groups.keys()].filter((s) => !NATIVE_SCOPE_ORDER.includes(s)),
+    ];
+    const frag: HTMLElement[] = [];
+    for (const scope of order) {
+      const grp = groups.get(scope);
+      if (grp === undefined || grp.length === 0) {
+        continue;
+      }
+      frag.push(
+        el("div", { className: "native-policy-scope-label" }, NATIVE_SCOPE_LABEL[scope] ?? scope),
+      );
+      for (const r of grp) {
+        frag.push(this.ruleRow(r));
+      }
+    }
+    list.replaceChildren(...frag);
+  }
+
+  private ruleRow(r: PolicyRule): HTMLElement {
+    const row = el("div", { className: `native-rule native-rule-${r.effect}` });
+    row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
+    row.append(el("span", { className: "native-rule-cap mono" }, r.capability));
+    const globs = [
+      ...(r.match ?? []).map((m) => "+" + m),
+      ...(r.exclude ?? []).map((e) => "\u2212" + e),
+    ];
+    if (globs.length > 0) {
+      row.append(el("span", { className: "native-rule-globs mono" }, globs.join("  ")));
+    }
+    const src = el("span", { className: "native-rule-src" }, shortSource(r.source));
+    if (r.source !== "") {
+      src.setAttribute("title", r.source);
+    }
+    row.append(src);
+    if (this.writable.has(r.scope)) {
+      const rm = el("button", { type: "button", className: "native-rule-remove" }, "\u00d7");
+      rm.setAttribute("aria-label", "Remove rule");
+      rm.setAttribute("title", "Remove rule");
+      rm.addEventListener("click", () => {
+        void this.removeRule(r);
+      });
+      row.append(rm);
+    }
+    return row;
+  }
+
+  private async addRule(): Promise<void> {
+    const scope = (maybeEl<HTMLSelectElement>("native-rule-scope")?.value ?? "workspace") as
+      "user" | "workspace";
+    const capability = maybeEl<HTMLSelectElement>("native-rule-capability")?.value ?? "";
+    const effect = maybeEl<HTMLSelectElement>("native-rule-effect")?.value ?? "ask";
+    const match = splitGlobs(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
+    if (capability === "") {
+      return;
+    }
+    const res = await editNativeRule.dispatch({ op: "add", scope, capability, effect, match });
+    if (res !== null && res.error === undefined) {
+      const mi = maybeEl<HTMLInputElement>("native-rule-match");
+      if (mi !== null) {
+        mi.value = "";
+      }
+      void this.load();
+    }
+  }
+
+  private async removeRule(r: PolicyRule): Promise<void> {
+    const scope = r.scope as "user" | "workspace";
+    let confirmFlag = false;
+    if (r.effect === "deny") {
+      const ok = await confirm(
+        `Remove this deny rule for "${r.capability}"? That WIDENS what the agent is allowed to do.`,
+        "Remove deny rule",
+      );
+      if (!ok) {
+        return;
+      }
+      confirmFlag = true;
+    }
+    const res = await editNativeRule.dispatch({
+      op: "remove",
+      scope,
+      capability: r.capability,
+      effect: r.effect,
+      match: r.match ?? [],
+      exclude: r.exclude ?? [],
+      confirm: confirmFlag,
+    });
+    if (res !== null && res.error === undefined) {
+      void this.load();
+    }
+  }
+
+  private async runExplain(): Promise<void> {
+    const capability = maybeEl<HTMLSelectElement>("native-explain-capability")?.value ?? "";
+    const resource = (maybeEl<HTMLInputElement>("native-explain-resource")?.value ?? "").trim();
+    const out = maybeEl("native-explain-result");
+    if (capability === "" || out === null) {
+      return;
+    }
+    const res = await explainPolicy.dispatch({ capability, resource });
+    if (res === null) {
+      out.textContent = "Could not evaluate (no active session).";
+      return;
+    }
+    const parts = [`Effect: ${res.effect}`];
+    if (res.scope !== undefined && res.scope !== "") {
+      parts.push(`scope: ${res.scope}`);
+    }
+    if (res.source !== undefined && res.source !== "") {
+      parts.push(`source: ${shortSource(res.source)}`);
+    }
+    out.textContent = parts.join(" \u00b7 ");
+  }
+
+  private showStatus(text: string, isError: boolean): void {
+    const s = maybeEl("native-policy-status");
+    if (s === null) {
+      return;
+    }
+    s.textContent = text;
+    s.classList.toggle("hidden", text === "");
+    s.classList.toggle("native-policy-status-error", isError);
+  }
+}
+
+const nativePolicy = new NativePolicyController();
+
 // Public delegate functions preserving the existing module API.
 export function initPermissionsUI(initial: AppSettings): void {
   controller.initPermissions(initial);
 }
 export function initShellPolicyUI(initial: AppSettings): void {
   controller.initShellPolicy(initial);
+}
+
+/** Initialise the native Cedar policy view + editor. Fetches
+ *  GET /api/permissions and wires the add-rule / explain controls. */
+export function initNativePolicyUI(): void {
+  nativePolicy.init();
 }
 
 /** Thin alias kept for permission.ts: "approve and trust this

@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 )
 
 // writeIgnoreSettings writes config.json listing the given ignore files.
@@ -52,6 +55,54 @@ func TestIgnoreMatcher_NoSettingsFileIsNoOp(t *testing.T) {
 
 	if m.Matches(context.Background(), "any/path", false) {
 		t.Error("Matches on empty setup = true, want false (no-op matcher)")
+	}
+}
+
+func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
+	// The settled "agent read filter ON by default" behavior: on a fresh
+	// install (config dir has NO config.json, so agent_ignore_files is unset)
+	// the matcher must fall back to the seeded default ignore-file list and
+	// filter a .gitignore'd secret from the agent read path out of the box.
+	dir := t.TempDir()  // config dir: intentionally NO config.json written
+	work := t.TempDir() // workspace root
+
+	// The seeded default must be non-empty (otherwise a fresh install would
+	// filter nothing) and drive the workspace .gitignore.
+	def := cfgsettings.DefaultAgentIgnoreFiles()
+	if len(def) == 0 {
+		t.Fatal("DefaultAgentIgnoreFiles() is empty; fresh install would not filter agent reads")
+	}
+	if !slices.Contains(def, ".gitignore") {
+		t.Fatalf("default %v must include .gitignore for this test to be meaningful", def)
+	}
+	writeIgnoreFile(t, filepath.Join(work, ".gitignore"), ".env.dec\nsecrets/\n")
+
+	m := NewMatcher(dir, work)
+
+	if !m.Matches(context.Background(), ".env.dec", false) {
+		t.Error("fresh install: .env.dec should be filtered by the default .gitignore (agent read filter off?)")
+	}
+	if !m.Matches(context.Background(), "secrets/api.key", false) {
+		t.Error("fresh install: files under a gitignored secrets/ dir should be filtered")
+	}
+	if m.Matches(context.Background(), "src/main.go", false) {
+		t.Error("fresh install: a non-ignored path must still be readable")
+	}
+}
+
+func TestIgnoreMatcher_FreshInstallDefaultHonorsKiroignore(t *testing.T) {
+	// The seeded default also covers .kiroignore, so a workspace .kiroignore
+	// filters agent reads with no config.json present.
+	if !slices.Contains(cfgsettings.DefaultAgentIgnoreFiles(), ".kiroignore") {
+		t.Skip("default does not seed .kiroignore")
+	}
+	dir := t.TempDir() // no config.json
+	work := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(work, ".kiroignore"), "*.secret\n")
+
+	m := NewMatcher(dir, work)
+	if !m.Matches(context.Background(), "creds.secret", false) {
+		t.Error("fresh install: *.secret from the default .kiroignore should be filtered")
 	}
 }
 
@@ -564,11 +615,15 @@ func TestIgnoreMatcher_ExactCapFileIsParsed(t *testing.T) {
 
 func TestIgnoreMatcher_ConfigDeletedDoesNotPanic(t *testing.T) {
 	// After config.json is deleted between refreshes, a cached non-zero
-	// settings mtime must not lead the refresh to dereference a nil
-	// FileInfo. The matcher degrades to no-op (rules cleared), no panic.
+	// settings mtime must not lead the refresh to dereference a nil FileInfo
+	// (the regression this test pins). A deleted config.json now falls back
+	// to the seeded default list (settings.DefaultAgentIgnoreFiles); this test
+	// uses a NON-default ignore filename, so the fallback finds no matching
+	// file in workDir and the matcher degrades to no-op — the invariant under
+	// test is that it must not panic.
 	configDir := t.TempDir()
 	workDir := t.TempDir()
-	ignorePath := filepath.Join(workDir, ".gitignore")
+	ignorePath := filepath.Join(workDir, "custom.ignore")
 	writeIgnoreFile(t, ignorePath, "secret\n")
 	writeIgnoreSettings(t, configDir, []string{ignorePath})
 
@@ -587,8 +642,11 @@ func TestIgnoreMatcher_ConfigDeletedDoesNotPanic(t *testing.T) {
 			t.Errorf("Matches after config.json delete panicked: %v", r)
 		}
 	}()
+	// The default fallback looks for .gitignore/.kiroignore in workDir; neither
+	// exists here, so "secret" (from the now-unreferenced custom.ignore) is no
+	// longer matched.
 	if got := m.Matches(ctx, "secret", false); got {
-		t.Errorf("Matches(\"secret\") after config delete = true, want false (rules cleared)")
+		t.Errorf("Matches(\"secret\") after config delete = true, want false (default fallback finds no default-named file)")
 	}
 }
 

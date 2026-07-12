@@ -47,10 +47,22 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
 export function makeExpandable(
   pill: HTMLElement,
   contentEl: HTMLElement,
-  opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal },
+  opts?: {
+    onExpand?: () => void;
+    onCollapse?: () => void;
+    signal?: AbortSignal;
+    haspopup?: "menu" | "listbox" | "tree" | "grid" | "dialog" | true;
+  },
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
   pillContentMap.set(pill, opts !== undefined ? { contentEl, opts } : { contentEl });
+
+  // Centralized ARIA for every expandable pill: the pill is a disclosure
+  // trigger for a floating popup card, so announce the collapsed/expanded
+  // state (toggled in expand()/collapse()) and advertise the popup — mirroring
+  // createPopover's trigger contract. Call sites no longer set these ad hoc.
+  pill.setAttribute("aria-expanded", "false");
+  pill.setAttribute("aria-haspopup", String(opts?.haspopup ?? "true"));
 
   pill.addEventListener(
     "click",
@@ -101,6 +113,7 @@ function togglePill(
 
 function expand(pill: HTMLElement, contentEl: HTMLElement, onExpand?: () => void): void {
   pill.classList.add("pill-expanded");
+  pill.setAttribute("aria-expanded", "true");
   contentEl.classList.remove("hidden");
   activePills.add(pill);
   void contentEl.offsetHeight; // force reflow
@@ -113,6 +126,7 @@ const collapseGen = new WeakMap<HTMLElement, number>();
 
 function collapse(pill: HTMLElement, contentEl: HTMLElement, onCollapse?: () => void): void {
   pill.classList.remove("pill-expanded");
+  pill.setAttribute("aria-expanded", "false");
   contentEl.classList.remove("pill-expand-visible");
   activePills.delete(pill);
 

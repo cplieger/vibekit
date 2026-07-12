@@ -18,8 +18,6 @@ export interface UIState {
   editor_files: string[];
   fb_path: string;
   theme: "dark" | "light" | null;
-  merge_method: Record<string, string>;
-  merge_delete_branch: Record<string, boolean>;
   dismissed_banners: string[];
 }
 
@@ -31,8 +29,6 @@ function empty(): UIState {
     editor_files: [],
     fb_path: "",
     theme: null,
-    merge_method: {},
-    merge_delete_branch: {},
     dismissed_banners: [],
   };
 }

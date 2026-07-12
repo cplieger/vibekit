@@ -10,7 +10,7 @@
 // Cost vs valibot: zero runtime dependencies, zero build pipeline
 // change, full coverage by construction (every Go wire struct gets a
 // generated decoder), generator + helpers fit in ~1100 LOC across the
-// two files. Pattern shared with apps/subflux and apps/vibecli.
+// two files. Pattern shared with apps/subflux and apps/web-terminal-kiro.
 
 /** A decoder is a pure function that returns T or throws on shape mismatch. */
 export type Decoder<T> = (v: unknown) => T;

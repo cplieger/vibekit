@@ -4,11 +4,12 @@ package hub
 //
 // cmdSwitchModel: switch the model for an active chat. Two strategies:
 //
-//  1. Fast path (session/set_model): call the ACP-core method on the
-//     running bridge. kiro-cli swaps the model in-session without
-//     tearing down the subprocess. No priming, no token cost, instant.
+//  1. Fast path (session/set_config_option, configId "model"): call the
+//     v3 (KAS) config-option method on the running bridge. KAS swaps the
+//     model in-session without tearing down the subprocess. No priming,
+//     no token cost, instant.
 //
-//  2. Fallback (bridge restart): if session/set_model fails, close the
+//  2. Fallback (bridge restart): if the in-session switch fails, close the
 //     bridge, start a new one, and let getOrCreateBridge try session/load
 //     then session/new.
 
@@ -74,7 +75,7 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID, h.closeAndRemovePartial)
 	h.coord.CloseBridge(cmd.ChatID)
 
-	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, chat.Agent, model)
+	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
 	if err != nil {
 		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: err.Error()}))
 		h.respondErr(w, http.StatusInternalServerError, err)

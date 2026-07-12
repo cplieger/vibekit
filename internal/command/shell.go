@@ -3,6 +3,8 @@ package command
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os/exec"
@@ -78,6 +80,24 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		return
 	}
 
+	// Busy-guard: serialize against a real streaming turn on the same
+	// chat using the SAME per-chat bridge prompt lock CmdPrompt acquires
+	// (TryAcquireForPrompt/ReleaseAfterPrompt). If a turn is already in
+	// flight, return 409 so the client queue drains this !cmd after it —
+	// otherwise the shell path would clear thinking, drain the queue, and
+	// broadcast turn_ended in the middle of the real turn. A chat with no
+	// bridge yet has never run a turn, so !cmd runs locally with no lock
+	// (nothing to collide with); we broadcast the shell turn_ended only
+	// when we own the turn (locked) or when there is no bridge at all.
+	if sb := deps.GetBridge(cmd.ChatID); sb != nil {
+		if !sb.TryAcquireForPrompt() {
+			d.RespondErr(w, http.StatusConflict, errBusy)
+			return
+		}
+		defer sb.ReleaseAfterPrompt()
+		sb.SetLastActive()
+	}
+
 	deps.InflightAdd(1)
 	defer deps.InflightDone()
 
@@ -104,8 +124,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
 	start := time.Now()
 
-	// Derive timeout from the request context so both client disconnect
-	// and server shutdown cancel the shell process.
+	// Bound the command with a 30s timeout derived from the request
+	// context, so a client disconnect also cancels the shell process.
 	shellCtx, cancel := context.WithTimeout(ctx, ShellTimeout)
 	defer cancel()
 
@@ -117,21 +137,20 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	runErr := shellProc.Run()
 
 	raw := capped.Buf.String()
-	if runErr != nil {
-		raw += "\n" + runErr.Error()
-	}
 	if capped.Truncated {
 		raw += "\n[output truncated at 1 MiB]"
 	}
 	output := api.SanitizeOutput(raw)
+	timedOut := errors.Is(shellCtx.Err(), context.DeadlineExceeded)
 
 	slog.Info("shell interception complete",
 		"chat_id", cmd.ChatID,
 		"elapsed_ms", time.Since(start).Milliseconds(),
 		"exit_error", runErr != nil,
+		"timed_out", timedOut,
 		"truncated", capped.Truncated)
 
-	content := "```\n" + strings.TrimRight(output, "\n") + "\n```"
+	content := renderShellResult(output, runErr, timedOut)
 	msgID := ids.NewMessageID()
 	assistantMsg := api.Message{
 		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
@@ -146,4 +165,60 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
 	}
 	d.RespondOK(w, cmd.RequestID)
+}
+
+// renderShellResult wraps sanitized command output in a Markdown code
+// fence and appends a status line describing how the command ended.
+//
+// The fence length is dynamic — one backtick longer than the longest
+// backtick run anywhere in the body — so output that itself contains a
+// ``` run (e.g. `!cat README.md`, `!git show`) can never close the fence
+// early and leak the remainder to the client as rendered Markdown.
+func renderShellResult(output string, runErr error, timedOut bool) string {
+	output = strings.TrimRight(output, "\n")
+	body := shellStatusLine(runErr, timedOut)
+	if output != "" {
+		body = output + "\n" + body
+	}
+	fence := shellFence(body)
+	return fence + "\n" + body + "\n" + fence
+}
+
+// shellStatusLine reports the command's outcome as a bracketed status
+// line shown beneath the output. A timeout gets a clear message rather
+// than the opaque "signal: killed" the OS reports for the SIGKILL; every
+// other outcome shows the process exit code so a non-zero exit is visible.
+func shellStatusLine(runErr error, timedOut bool) string {
+	switch {
+	case timedOut:
+		return fmt.Sprintf("[command timed out after %s]", ShellTimeout)
+	case runErr == nil:
+		return "[exit 0]"
+	default:
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			return fmt.Sprintf("[exit %d]", exitErr.ExitCode())
+		}
+		// The command could not be run at all (e.g. sh missing, or the
+		// request context was cancelled before the process started).
+		return "[error: " + runErr.Error() + "]"
+	}
+}
+
+// shellFence returns a backtick code fence long enough to wrap body
+// without body's own backtick runs closing it: at least three backticks,
+// and always one more than the longest consecutive backtick run in body.
+func shellFence(body string) string {
+	longest, run := 0, 0
+	for _, r := range body {
+		if r == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(longest+1, 3))
 }

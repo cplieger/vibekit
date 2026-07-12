@@ -105,12 +105,26 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if resolved == "" {
 		return
 	}
-	info, err := h.root.Stat(h.relPath(resolved))
+	// Open through the os.Root (kernel-confined) rather than serving the
+	// absolute path with http.ServeFile. ServeFile re-opens by path and
+	// follows symlinks at serve time, which reintroduces the check-to-serve
+	// TOCTOU that resolvePath's EvalSymlinks otherwise closes: a symlink
+	// swapped in after resolution could point outside the root. Every other
+	// read/write goes through h.root; download now does too.
+	f, err := h.root.Open(h.relPath(resolved))
 	if err != nil {
 		if os.IsNotExist(err) {
 			api.NotFound(w, "not found")
 			return
 		}
+		slog.Warn("filehandler: download open failed", "path", resolved, "error", err)
+		api.WriteJSONStatus(w, http.StatusInternalServerError,
+			api.ErrorJSON(errReadFailed))
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
 		slog.Warn("filehandler: download stat failed", "path", resolved, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
@@ -132,6 +146,9 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
-	slog.Info("filehandler: download", "path", resolved, "size", info.Size())
-	http.ServeFile(w, r, resolved) //nolint:gosec // G703: path validated against workspace root
+	// Debug (not Info): the resolved path can name a workspace file and
+	// this line ships to Loki. http.ServeContent serves from the already-
+	// open, confined fd (handles Range requests + conditional headers too).
+	slog.Debug("filehandler: download", "path", resolved, "size", info.Size())
+	http.ServeContent(w, r, name, info.ModTime(), f)
 }

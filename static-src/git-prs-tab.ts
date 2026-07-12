@@ -683,7 +683,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
     if (status !== null) {
       status.textContent = "Generating description…";
     }
-    const res = await apiPost<{ title?: string; body?: string; error?: string }>(
+    const res = await apiPost<{ output?: string; error?: string }>(
       `/api/git/pr-description`,
       { repo: g.name, branch: baseInput.value.trim() || "main" },
       generateAbort.signal,
@@ -705,11 +705,10 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
       }
       return;
     }
-    if (res.title !== undefined && titleInput.value === "") {
-      titleInput.value = res.title;
-    }
-    if (res.body !== undefined && bodyInput.value === "") {
-      bodyInput.value = res.body;
+    // Server returns a single {output} description blob (Summary/Changes/
+    // Testing); it fills the body. Title stays user-controlled.
+    if (res.output !== undefined && res.output !== "" && bodyInput.value === "") {
+      bodyInput.value = res.output;
     }
     if (status !== null) {
       status.textContent = "Description generated. Edit and submit.";

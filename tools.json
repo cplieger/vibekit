@@ -187,23 +187,23 @@
       "method": "npm",
       "package": "typescript-language-server",
       "npm_extras": ["typescript@5.7.2"],
-      "description": "TypeScript / JavaScript LSP (Microsoft canonical, npm-installed). Requires Node runtime. Use this for full tsc compatibility; pick tsgo below for ~10x faster type-checking on most code.",
+      "description": "TypeScript / JavaScript LSP (Microsoft canonical, npm-installed). Requires Node runtime. Use this for full tsc compatibility; pick tsc below for ~10x faster type-checking on most code.",
       "requires": ["runtimes.node"]
     },
-    "tsgo": {
+    "tsc": {
       "enabled": false,
       "auto_update": true,
-      "version": "7.0.0-dev.20260707.2",
+      "version": "7.0.2",
       "update": {
         "method": "npm",
-        "package": "@typescript/native-preview"
+        "package": "typescript"
       },
       "method": "binary",
-      "description": "TypeScript native preview (tsgo from Microsoft, Go-compiled). Single ~14 MB binary, no Node runtime needed. Shimmed as typescript-language-server for kiro-cli compatibility. Use this for speed; pick typescript-language-server above for 100% tsc fidelity.",
-      "install": "curl -fsSL https://registry.npmjs.org/@typescript/native-preview-linux-${ARCH_X64_OR_ARM64}/-/native-preview-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz | tar -xz -C ${BIN} --strip-components=2 --wildcards 'package/lib/tsgo' 'package/lib/lib*.d.ts' && chmod 755 ${BIN}/tsgo",
+      "description": "TypeScript 7 native compiler (tsc, Go-compiled) from the stable `typescript` package's per-platform binary. Self-contained native binary, no Node runtime needed. Installed as `tsc` and shimmed as typescript-language-server for kiro-cli compatibility. Use this for speed; pick typescript-language-server above for 100% tsc fidelity.",
+      "install": "curl -fsSL https://registry.npmjs.org/@typescript/typescript-linux-${ARCH_X64_OR_ARM64}/-/typescript-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz | tar -xz -C ${BIN} --strip-components=2 --wildcards 'package/lib/tsc' 'package/lib/lib*.d.ts' && chmod 755 ${BIN}/tsc",
       "primary": "typescript-language-server",
       "shims": {
-        "typescript-language-server": "/config/tools/bin/tsgo --lsp --stdio"
+        "typescript-language-server": "/config/tools/bin/tsc --lsp --stdio"
       }
     },
     "pyright": {

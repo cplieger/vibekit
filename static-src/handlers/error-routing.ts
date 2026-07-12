@@ -14,7 +14,6 @@ export interface ErrorRoute {
 export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_not_found: { surface: "banner", level: "error", dismissible: true },
   agent_config_error: { surface: "banner", level: "error", dismissible: false },
-  model_not_found: { surface: "banner", level: "warning", dismissible: true },
   rate_limit: { surface: "banner", level: "warning", dismissible: true },
   compaction_failed: { surface: "banner", level: "error", dismissible: true },
   switch_failed: { surface: "send-error", level: "error", dismissible: false },

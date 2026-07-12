@@ -4,9 +4,9 @@
 // Instead of injecting file paths into the textarea, attachments appear
 // as removable pills in a row below the input. On submit, the list is
 // sent alongside the prompt text. The server classifies each by
-// extension: document types (PDF, DOCX, etc.) become ACP document
-// content blocks; everything else becomes a path reference the agent
-// reads via fs_read.
+// extension: supported document types (PDF, DOCX, XLSX, DOC, XLS, CSV)
+// are inlined as ACP embedded `resource` blocks; everything else becomes
+// a path reference the agent reads via fs_read.
 // ---------------------------------------------------------------------------
 
 import { el, createCollection, bindList, effect } from "@cplieger/reactive";

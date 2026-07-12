@@ -26,7 +26,7 @@ func (d *benchDeps) Draining() bool                             { return false }
 func (d *benchDeps) ChatStore() api.ChatStore                   { return nil }
 func (d *benchDeps) Broadcast(context.Context, api.ServerEvent) {}
 func (d *benchDeps) GetBridge(api.ChatID) Bridge                { return nil }
-func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string, string) (Bridge, error) {
+func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
 func (d *benchDeps) CloseBridge(api.ChatID)                                           {}
@@ -164,7 +164,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 			t.Error("IsEmptyTurn should be false")
 		}
 		d.EmitTurnEndedWithStats(context.Background(), "x", nil, 0, 0)
-		if _, err := d.GetOrCreateBridge(context.Background(), "x", "", ""); err != nil {
+		if _, err := d.GetOrCreateBridge(context.Background(), "x", ""); err != nil {
 			t.Errorf("GetOrCreateBridge returned error: %v", err)
 		}
 		if _, err := d.ResolveInsideWorkDir(""); err != nil {

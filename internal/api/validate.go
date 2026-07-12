@@ -93,9 +93,10 @@ func ValidIdent(s string) bool {
 
 // ValidSessionID reports whether s is safe to use as an ACP session id.
 // Rejects empty strings, strings over 128 bytes, path separators, NUL,
-// and parent-dir references. Session ids are concatenated into filesystem
-// paths under ~/.kiro/sessions/cli; this function is the single source of
-// truth for that safety gate. bridge/bridge.go delegates here.
+// and parent-dir references. Session ids (v3: `sess_`-prefixed) are
+// concatenated into filesystem paths under $KIRO_HOME/sessions/; this
+// function is the single source of truth for that safety gate.
+// bridge/bridge.go delegates here.
 func ValidSessionID(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false

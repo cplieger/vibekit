@@ -84,9 +84,3 @@ func KiroSteeringPath(name string) string {
 func KiroSettingsPath(name string) string {
 	return filepath.Join(KiroHome(), "settings", name)
 }
-
-// KiroSessionsCLIDir returns the directory kiro-cli uses for v2 ACP
-// session state files (~/.kiro/sessions/cli or $KIRO_HOME/sessions/cli).
-func KiroSessionsCLIDir() string {
-	return filepath.Join(KiroHome(), "sessions", "cli")
-}

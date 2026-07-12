@@ -19,7 +19,11 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 	c := *s
 	c.Args = append([]string(nil), s.Args...)
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
+	c.AutoApprove = append([]string(nil), s.AutoApprove...)
 	if maskSecrets {
+		if c.OAuthClientSecret != "" {
+			c.OAuthClientSecret = SecretMask
+		}
 		c.Env = make([]KeyPair, len(s.Env))
 		for i, kv := range s.Env {
 			c.Env[i] = KeyPair{Name: kv.Name, Value: SecretMask}
@@ -50,6 +54,28 @@ func copyPairs(in []KeyPair) []KeyPair {
 	out := make([]KeyPair, len(in))
 	copy(out, in)
 	return out
+}
+
+// preserveNilSlice keeps the existing value when the update omitted the
+// field entirely (nil patch) and otherwise takes the patch (including an
+// explicit empty slice = clear). Used for auto_approve, which has no
+// dedicated edit UI: a modal edit omits it and must not drop a value set
+// via the raw-JSON panel, while a raw edit can still set or clear it.
+func preserveNilSlice(patch, existing []string) []string {
+	if patch == nil {
+		return append([]string(nil), existing...)
+	}
+	return append([]string(nil), patch...)
+}
+
+// mergeSecret preserves the stored secret when the client re-submits the
+// SecretMask sentinel; otherwise the patch value wins. Scalar counterpart
+// to mergeSecrets (which operates on KeyPair slices).
+func mergeSecret(patch, existing string) string {
+	if patch == SecretMask {
+		return existing
+	}
+	return patch
 }
 
 // mergeSecrets returns a new slice that mirrors `patch` in order and
@@ -88,7 +114,11 @@ func (t Transport) buildACP(s *Server) acpServer {
 	switch t {
 	case TransportStdio:
 		return stdioBuilder(s)
-	case TransportHTTP:
+	case TransportHTTP, TransportSSE:
+		// remoteBuilder emits "type": string(s.Transport), so an SSE
+		// server produces {type:"sse", ...} and an HTTP server
+		// {type:"http", ...} from the same code path (identical fields
+		// per the ACP McpServerHttp / McpServerSse schemas).
 		return remoteBuilder(s)
 	default:
 		return nil
@@ -106,6 +136,9 @@ func stdioBuilder(s *Server) acpServer {
 	if len(s.DisabledTools) > 0 {
 		entry["disabledTools"] = s.DisabledTools
 	}
+	if len(s.AutoApprove) > 0 {
+		entry["autoApprove"] = s.AutoApprove
+	}
 	return entry
 }
 
@@ -119,12 +152,23 @@ func remoteBuilder(s *Server) acpServer {
 	if len(s.DisabledTools) > 0 {
 		entry["disabledTools"] = s.DisabledTools
 	}
+	if len(s.AutoApprove) > 0 {
+		entry["autoApprove"] = s.AutoApprove
+	}
 	// kiro-cli 2.3+ accepts a pre-registered OAuth client ID via
-	// the `oauth.clientId` field. Required for HTTP MCP servers that
-	// don't support Dynamic Client Registration (Slack, GitHub, Figma).
-	// Empty string falls back to DCR.
-	if s.OAuthClientID != "" {
-		entry["oauth"] = map[string]any{"clientId": s.OAuthClientID}
+	// `oauth.clientId`; 2.12+ adds `oauth.clientSecret` for confidential
+	// clients that authenticate at the token endpoint. Required for HTTP
+	// MCP servers that don't support Dynamic Client Registration (Slack,
+	// GitHub, Figma). Empty clientId falls back to DCR.
+	if s.OAuthClientID != "" || s.OAuthClientSecret != "" {
+		oauth := make(map[string]any, 2)
+		if s.OAuthClientID != "" {
+			oauth["clientId"] = s.OAuthClientID
+		}
+		if s.OAuthClientSecret != "" {
+			oauth["clientSecret"] = s.OAuthClientSecret
+		}
+		entry["oauth"] = oauth
 	}
 	return entry
 }

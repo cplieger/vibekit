@@ -64,7 +64,6 @@ func TestSafeKiroSetting(t *testing.T) {
 		// New settings (Wave 1 items 15, 16)
 		{"chat.enableSubagent", "chat.enableSubagent"},
 		{"chat.enablePromptHints", "chat.enablePromptHints"},
-		{"chat.enableContextUsageIndicator", "chat.enableContextUsageIndicator"},
 		{"chat.disableAutoCompaction", "chat.disableAutoCompaction"},
 		{"hooks.showStatus", "hooks.showStatus"},
 		{"compaction.excludeContextWindowPercent", "compaction.excludeContextWindowPercent"},
@@ -75,6 +74,10 @@ func TestSafeKiroSetting(t *testing.T) {
 		{"chat.defaultModel", ""},
 		{"api.timeout", ""},
 		{"arbitrary.key", ""},
+		// Removed from the allowlist: it only affected kiro-cli's own TUI
+		// prompt line (which vibekit never renders) and is absent from
+		// kiro-cli 2.12; vibekit reads context usage from usage_update.
+		{"chat.enableContextUsageIndicator", ""},
 	}
 	for _, tt := range tests {
 		got := safeKiroSetting(tt.key)

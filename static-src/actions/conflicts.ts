@@ -59,8 +59,13 @@ export const openConflictDiff = defineAction<OpenDiffArgs, void>({
   retry: { count: 1, delay: 500 },
   dedupe: true,
   run: async (args, signal) => {
+    // The "expected" side (what the OTHER chat last wrote) is a blob owned
+    // by that other chat — its SHA was never registered under the observing
+    // chat's blobRefs, so fetching it under args.chatID 404s. Fetch it under
+    // args.otherChat. The "actual" side (what this chat saw) stays under
+    // args.chatID.
     const [expected, actual] = await Promise.all([
-      fetchBlob(args.chatID, args.expectedSha, signal),
+      fetchBlob(args.otherChat, args.expectedSha, signal),
       fetchBlob(args.chatID, args.actualSha, signal),
     ]);
     // Dynamic import: keeps the editor-openers chain (which transitively

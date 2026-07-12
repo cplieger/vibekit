@@ -129,9 +129,17 @@ var (
 // Resolution is the outcome of a pending op after the resume channel
 // closes. Returned atomically by the readResolution closure from Add,
 // eliminating the need for separate MergedText/ClearMergedText calls.
+//
+// Merged distinguishes a user-authored partial merge (via ResolveWithText)
+// from a plain accept. It is the flag callers gate the write-override on —
+// NOT MergedText != "" — so a partial merge that resolves to an empty
+// file (e.g. a create whose only hunk was rejected) still overrides the
+// agent's content with the empty result instead of silently writing the
+// agent's original text.
 type Resolution struct {
 	MergedText string
 	Accepted   bool
+	Merged     bool
 }
 
 // op is one staged file operation. Opaque to callers; use Store.Get
@@ -150,6 +158,7 @@ type op struct {
 	mergedText string
 	Truncated  bool
 	accepted   bool
+	merged     bool
 }
 
 // Snapshot returns the wire-form view of the op. Safe to call any

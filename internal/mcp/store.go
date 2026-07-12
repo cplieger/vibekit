@@ -48,32 +48,35 @@ var (
 
 // Transport names the MCP transports vibekit accepts in mcp.json.
 // "stdio" is universal; "http" is the Streamable HTTP transport
-// (2025-03-26 MCP spec).
+// (2025-03-26 MCP spec); "sse" is the legacy HTTP+SSE remote transport.
 //
-// The legacy "sse" value is accepted ONLY at parse boundaries
-// (ParseTransport, UnmarshalJSON migration path, registry-proxy
-// passthrough) and silently normalized to "http" — kiro-cli's
-// client-side fallback handles servers that only speak the old
-// HTTP+SSE protocol. "sse" is never stored on disk and never appears
-// in API responses, so the wire surface is strictly stdio | http.
+// SSE is a first-class, stored transport (not normalized to "http"):
+// kiro-cli v3 (KAS) re-advertises mcpCapabilities.sse:true and accepts
+// a distinct {type:"sse", url, headers} entry on session/new
+// (verified against the KAS 2.12 acp-server bundle + a live session/new
+// probe; a bogus transport is rejected, so "sse" is genuinely accepted,
+// not merely tolerated). "sse" and "http" share the same remote wire
+// shape (url + headers) and differ only in the ACP `type` discriminator,
+// so both are validated as remote transports and both round-trip through
+// the store verbatim.
 type Transport string
 
-// TransportStdio and TransportHTTP define the valid Transport values for MCP server connections.
+// TransportStdio, TransportHTTP, and TransportSSE define the valid
+// Transport values for MCP server connections.
 const (
 	TransportStdio Transport = "stdio"
 	TransportHTTP  Transport = "http"
+	TransportSSE   Transport = "sse"
 )
 
-// ParseTransport validates a raw string as a known transport. The
-// legacy "sse" value is accepted and normalized to TransportHTTP per
-// the 2025-03-26 MCP spec (Streamable HTTP replaces HTTP+SSE; kiro-cli
-// implements the backwards-compat fallback at connection time).
+// ParseTransport validates a raw string as a known transport. All three
+// transports (stdio, http, sse) are first-class: "sse" is preserved as
+// TransportSSE, not folded into "http" — KAS accepts a distinct SSE
+// mcpServers entry over the v3 wire (see the Transport doc).
 func ParseTransport(s string) (Transport, error) {
 	switch Transport(s) {
-	case TransportStdio, TransportHTTP:
+	case TransportStdio, TransportHTTP, TransportSSE:
 		return Transport(s), nil
-	case "sse":
-		return TransportHTTP, nil
 	default:
 		return "", fmt.Errorf("unknown transport: %q", s)
 	}
@@ -82,7 +85,7 @@ func ParseTransport(s string) (Transport, error) {
 // Valid reports whether t is one of the known transport values.
 func (t Transport) Valid() bool {
 	switch t {
-	case TransportStdio, TransportHTTP:
+	case TransportStdio, TransportHTTP, TransportSSE:
 		return true
 	default:
 		return false
@@ -97,21 +100,23 @@ const SecretMask = api.SecretMask
 // Name is the user-visible label that also becomes the kiro-cli
 // mcpServer name (must be unique across the configured set).
 type Server struct {
-	URL           string    `json:"url,omitempty"`
-	Name          string    `json:"name"`
-	Command       string    `json:"command,omitempty"`
-	OAuthClientID string    `json:"oauth_client_id,omitempty"`
-	ID            ServerID  `json:"id"`
-	Transport     Transport `json:"transport"`
-	Args          []string  `json:"args,omitempty"`
-	Env           []KeyPair `json:"env,omitempty"`
-	Headers       []KeyPair `json:"headers,omitempty"`
-	DisabledTools []string  `json:"disabled_tools,omitempty"`
-	KnownTools    []string  `json:"known_tools,omitempty"`
-	CreatedAt     int64     `json:"created_at"`
-	UpdatedAt     int64     `json:"updated_at"`
-	Prewarm       bool      `json:"prewarm,omitempty"`
-	Enabled       bool      `json:"enabled"`
+	URL               string    `json:"url,omitempty"`
+	Name              string    `json:"name"`
+	Command           string    `json:"command,omitempty"`
+	OAuthClientID     string    `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret string    `json:"oauth_client_secret,omitempty"`
+	ID                ServerID  `json:"id"`
+	Transport         Transport `json:"transport"`
+	Args              []string  `json:"args,omitempty"`
+	Env               []KeyPair `json:"env,omitempty"`
+	Headers           []KeyPair `json:"headers,omitempty"`
+	DisabledTools     []string  `json:"disabled_tools,omitempty"`
+	AutoApprove       []string  `json:"auto_approve,omitempty"`
+	KnownTools        []string  `json:"known_tools,omitempty"`
+	CreatedAt         int64     `json:"created_at"`
+	UpdatedAt         int64     `json:"updated_at"`
+	Prewarm           bool      `json:"prewarm,omitempty"`
+	Enabled           bool      `json:"enabled"`
 }
 
 // NewServer constructs a Server with validated transport-specific fields.
@@ -155,6 +160,18 @@ func WithURL(url string) ServerOption {
 // WithOAuthClientID sets the OAuth client ID for HTTP transport servers.
 func WithOAuthClientID(id string) ServerOption {
 	return func(s *Server) { s.OAuthClientID = id }
+}
+
+// WithOAuthClientSecret sets the OAuth client secret for HTTP transport
+// servers (confidential clients that authenticate at the token endpoint;
+// kiro-cli 2.12+). Stored as a secret: masked on read, merged on write.
+func WithOAuthClientSecret(secret string) ServerOption {
+	return func(s *Server) { s.OAuthClientSecret = secret }
+}
+
+// WithAutoApprove sets MCP tool names to auto-approve without prompting.
+func WithAutoApprove(tools ...string) ServerOption {
+	return func(s *Server) { s.AutoApprove = tools }
 }
 
 // WithEnv sets environment variables for stdio transport servers.

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,23 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/steering"
+)
+
+// Per-.kiro-directory scan caps, consistent with the environment.md
+// generator (internal/steering/discovery.go). They bound the JSON
+// response and memory when a workspace holds many repos, each with a
+// large .kiro tree.
+const (
+	maxSteeringPerDir = 20
+	maxSkillsPerDir   = 20
+	maxAgentsPerDir   = 10
+
+	// steeringReadCap bounds how much of each steering .md is read for
+	// front-matter parsing. Only the head matters, so a crafted repo
+	// can't OOM the container with a giant file. Mirrors the 64 KiB cap
+	// in internal/steering.
+	steeringReadCap = 64 << 10
 )
 
 // handleKiroConfig scans .kiro/ for steering docs, skills, and agents.
@@ -21,6 +39,10 @@ type kiroConfigItem struct {
 }
 
 func (s *Server) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w)
+		return
+	}
 	items := s.collectKiroConfig(r.Context())
 	if items == nil {
 		items = []kiroConfigItem{}
@@ -97,7 +119,10 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		data, err := fs.ReadFile(root, "steering/"+e.Name())
+		// Read only the head of each file: front-matter is at the top,
+		// so an untrusted workspace repo can't OOM the container with a
+		// multi-GiB steering .md.
+		data, err := readCappedFS(root, "steering/"+e.Name(), steeringReadCap)
 		if err != nil {
 			slog.Warn("kiro config: read steering file",
 				"name", e.Name(), "error", err)
@@ -113,8 +138,25 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 			Type:      "steering",
 			Inclusion: parseSteeringInclusion(data),
 		})
+		if len(items) >= maxSteeringPerDir {
+			break
+		}
 	}
 	return items
+}
+
+// readCappedFS reads at most limit bytes of name from root. Used for
+// untrusted workspace steering files so a crafted large file can't OOM
+// the container — only the front-matter head is needed. Mirrors
+// readCappedFile in internal/steering, but over the fs.FS interface so
+// scanKiroDirFS stays testable with fstest.MapFS.
+func readCappedFS(root fs.FS, name string, limit int64) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 // scanSkills returns kiroConfigItems for subdirectories under skills/.
@@ -133,55 +175,70 @@ func scanSkills(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
 			Path: prefix + "/skills/" + e.Name() + "/SKILL.md",
 			Type: "skill",
 		})
+		if len(items) >= maxSkillsPerDir {
+			break
+		}
 	}
 	return items
 }
 
-// scanAgents returns kiroConfigItems for markdown files under agents/.
+// scanAgents returns kiroConfigItems for agent configs under agents/. An
+// agent may ship as a `.md` doc, a `.json` ACP config, or both; paired
+// files share a base name and produce ONE item, preferring the `.md`
+// (a JSON-only agent is otherwise omitted). Capped at maxAgentsPerDir.
 func scanAgents(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
-	var items []kiroConfigItem
 	entries, err := fs.ReadDir(root, "agents")
 	if err != nil {
-		return items
+		return nil
 	}
+	// De-dupe by base name; prefer the .md file when both .md and .json
+	// exist for the same agent.
+	chosen := make(map[string]string) // base name -> chosen filename
+	var order []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.ContainsRune(e.Name(), 0) {
+		if e.IsDir() || strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		name := strings.TrimSuffix(e.Name(), ".md")
+		var name string
+		switch {
+		case strings.HasSuffix(e.Name(), ".md"):
+			name = strings.TrimSuffix(e.Name(), ".md")
+		case strings.HasSuffix(e.Name(), ".json"):
+			name = strings.TrimSuffix(e.Name(), ".json")
+		default:
+			continue
+		}
 		if name == "" {
 			continue
 		}
+		existing, seen := chosen[name]
+		switch {
+		case !seen:
+			chosen[name] = e.Name()
+			order = append(order, name)
+		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
+			chosen[name] = e.Name()
+		}
+	}
+	items := make([]kiroConfigItem, 0, min(len(order), maxAgentsPerDir))
+	for _, name := range order {
+		if len(items) >= maxAgentsPerDir {
+			break
+		}
 		items = append(items, kiroConfigItem{
 			Name: name,
-			Path: prefix + "/agents/" + e.Name(),
+			Path: prefix + "/agents/" + chosen[name],
 			Type: "agent",
 		})
 	}
 	return items
 }
 
-// parseSteeringInclusion extracts the "inclusion:" value from a steering
-// markdown file's YAML front-matter. It is a pure function operating on
-// file content for testability.
+// parseSteeringInclusion returns the validated inclusion mode for a
+// steering doc. It delegates to steering.ParseInclusion so the REST scan
+// and the environment.md generator share one CRLF/BOM-tolerant,
+// validated front-matter parser rather than a divergent copy that
+// returned the raw value and broke on a CRLF- or BOM-authored file.
 func parseSteeringInclusion(data []byte) string {
-	const defaultInclusion = "always"
-	if len(data) == 0 {
-		return defaultInclusion
-	}
-	content := string(data)
-	if !strings.HasPrefix(content, "---\n") {
-		return defaultInclusion
-	}
-	end := strings.Index(content[4:], "\n---")
-	if end <= 0 {
-		return defaultInclusion
-	}
-	fm := content[4 : 4+end]
-	for line := range strings.SplitSeq(fm, "\n") {
-		if after, ok := strings.CutPrefix(line, "inclusion:"); ok {
-			return strings.TrimSpace(after)
-		}
-	}
-	return defaultInclusion
+	return steering.ParseInclusion(data)
 }

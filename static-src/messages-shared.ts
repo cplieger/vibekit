@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
-// Messages shared: symbols extracted to break circular imports between
-// conflicts.ts and messages-actions.ts.
+// Messages shared: the late-bound conflict-chip renderer + badge refresh,
+// extracted so conflicts.ts and messages-actions.ts don't form a static import
+// cycle (conflicts.ts registers the renderer; messages-actions.ts reaches
+// conflicts.ts via a dynamic import).
 // ---------------------------------------------------------------------------
 
 import { getActiveId } from "./store.js";

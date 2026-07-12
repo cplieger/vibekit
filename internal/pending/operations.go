@@ -97,7 +97,7 @@ func (s *Store) Add(ctx context.Context, p *AddParams) (waitCh <-chan struct{}, 
 		// happens-before from the Resolve write to this read.
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return Resolution{Accepted: op.accepted, MergedText: op.mergedText}
+		return Resolution{Accepted: op.accepted, MergedText: op.mergedText, Merged: op.merged}
 	}, nil
 }
 

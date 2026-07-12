@@ -436,8 +436,8 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 
 // TestEncryptPayload_buildsRFC8291WireBody pins the aes128gcm body
 // assembly: a valid subscription yields salt(16) || rs=4096(4) ||
-// idlen(1) || ephemeral P-256 key(65) || ciphertext(2-byte pad +
-// payload + 16-byte GCM tag). Every error gate on the success path
+// idlen(1) || ephemeral P-256 key(65) || ciphertext(payload +
+// 1-byte 0x02 delimiter + 16-byte GCM tag). Every error gate on the success path
 // (ephemeral keygen, ECDH, salt read, key/nonce derivation, AES cipher,
 // GCM) must be skipped for valid input, so a gate inverted to return on
 // the happy path yields a nil/short body and fails the length + header
@@ -453,8 +453,8 @@ func TestEncryptPayload_buildsRFC8291WireBody(t *testing.T) {
 
 	const ephLen = 65 // P-256 uncompressed point: 0x04 || X(32) || Y(32)
 	const gcmTag = 16
-	// salt(16) + rs(4) + idlen(1) + ephemeral key + (2-byte pad + payload + tag)
-	wantLen := 16 + 4 + 1 + ephLen + (2 + len(payload) + gcmTag)
+	// salt(16) + rs(4) + idlen(1) + ephemeral key + (payload + 1-byte 0x02 delimiter + tag)
+	wantLen := 16 + 4 + 1 + ephLen + (len(payload) + 1 + gcmTag)
 	if len(body) != wantLen {
 		t.Fatalf("len(body) = %d, want %d (salt+rs+idlen+ephKey+ciphertext)", len(body), wantLen)
 	}

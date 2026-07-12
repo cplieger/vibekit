@@ -55,13 +55,6 @@ type ElicitationNeededPayload struct {
 	RequestID       int64                     `json:"request_id"`
 }
 
-// ElicitationCompletePayload is the SSE payload for
-// type="elicitation_complete": an upstream cancellation telling the
-// client to dismiss the dialog for RequestID without a user answer.
-type ElicitationCompletePayload struct {
-	RequestID int64 `json:"request_id"`
-}
-
 // Elicitation actions per the MCP ElicitResult contract.
 const (
 	ElicitationActionAccept  = "accept"

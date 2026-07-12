@@ -238,15 +238,18 @@
   margin-left: 0.5rem;
 }
 
-/* Turn summary fallback (rendered only when turn-actions row is
- * missing — should never happen after the unification in
- * handlers/turn.ts, but kept as a safety net). */
-.turn-summary {
+/* Turn footer: the per-turn summary (credits · elapsed · files changed),
+ * projected from turn metadata on the assistant message into a keyed node
+ * under the turn (fundamentals/turn-footer.ts). Replaces the old direct-DOM
+ * .turn-summary / .turn-file-changes writes. */
+.turn-footer {
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
   font-style: italic;
   padding: var(--sp-1) 0;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+  animation: vk-chat-entry 200ms var(--ease-enter) both;
 }
 
 /* Turn actions: single row below the assistant bubble. Left slot
@@ -435,15 +438,6 @@
   border-color: var(--c-text-tertiary);
 }
 
-/* File-change summary banner after a turn */
-.turn-file-changes {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  padding: var(--sp-1) 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
 /* Frozen chat state (tangent active on parent) */
 [id="prompt-form"].frozen {
   opacity: 0.4;
@@ -459,16 +453,6 @@
   justify-content: center;
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
-  font-style: italic;
-}
-
-/* Steering inclusion badge */
-.steering-badge {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-family: var(--font-mono);
-  padding: var(--sp-1) 0;
-  text-align: center;
   font-style: italic;
 }
 
@@ -632,6 +616,9 @@
 
 /* Diff "Ask about this" button */
 .diff-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--fs-xs);
   color: var(--c-accent);
   background: none;
@@ -647,8 +634,22 @@
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 
-/* Hit target minimum: 24px desktop, 44px mobile (Vercel guidelines) */
-:where(.icon-btn, .shell-header-btn, .chip-remove, .tool-toggle, .action-pill, .pill, .tab-close) {
+/* Hit target minimum: 24px desktop, 44px mobile (Vercel guidelines).
+   The conflict / diff-hunk / ask buttons are included so the primary conflict
+   and per-hunk actions clear the touch-target floor — from their own tiny
+   padding they render well under 24px otherwise. */
+:where(
+  .icon-btn,
+  .shell-header-btn,
+  .chip-remove,
+  .tool-toggle,
+  .action-pill,
+  .pill,
+  .tab-close,
+  .conflict-btn,
+  .diff-hunk-btn,
+  .diff-ask-btn
+) {
   min-width: 24px;
   min-height: 24px;
 }
@@ -661,7 +662,10 @@
     .tool-toggle,
     .action-pill,
     .pill,
-    .tab-close
+    .tab-close,
+    .conflict-btn,
+    .diff-hunk-btn,
+    .diff-ask-btn
   ) {
     min-width: 44px;
     min-height: 44px;
@@ -826,6 +830,9 @@
 }
 
 .diff-hunk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--fs-xs);
   padding: 1px var(--sp-1);
   border-radius: 4px;
@@ -871,6 +878,7 @@
 :where(html[data-tab-hidden]) [id="messages"] .msg-row,
 :where(html[data-tab-hidden]) [id="messages"] .tool-call,
 :where(html[data-tab-hidden]) [id="messages"] .tool-group,
-:where(html[data-tab-hidden]) [id="messages"] .subagent-call {
+:where(html[data-tab-hidden]) [id="messages"] .subagent-block,
+:where(html[data-tab-hidden]) [id="messages"] .todo-list {
   animation: none !important; /* stylelint-disable-line declaration-no-important -- must override per-element animations when the tab is backgrounded */
 }

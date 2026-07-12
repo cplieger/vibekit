@@ -52,6 +52,23 @@ effect(() => {
   setSendState(sendState.value);
 });
 
+// Clear a sticky send-error when the active chat changes. `lastError` is a
+// global block, but it's raised for one chat, and the errors that set it
+// (prompt_failed / bridge_start_failed — see handlers/turn.ts) emit NO
+// turn_ended to clear it. Without this, a failure on one chat would wedge the
+// send button (and the textarea) on EVERY chat until an SSE reconnect;
+// switching chats — or opening a New Chat — is the natural in-app retry.
+let lastErrorActiveID = "";
+effect(() => {
+  const id = activeSession.value?.id ?? "";
+  if (id !== lastErrorActiveID) {
+    lastErrorActiveID = id;
+    if (lastError.peek() !== "") {
+      lastError.value = "";
+    }
+  }
+});
+
 export function setSSEStatus(s: ConnectionStatus): void {
   if (sseStatus.peek() === s) {
     return;

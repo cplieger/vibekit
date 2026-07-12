@@ -200,7 +200,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	}
 }
 
-// Fast path: session/set_model succeeds, bridge stays alive.
+// Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
@@ -209,7 +209,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		return true
 	})
 	// Create a bridge first so the fast path has something to call.
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "old-model")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -234,18 +234,19 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		t.Errorf("session id changed: %q → %q (bridge was restarted, fast path failed)",
 			origSessionID, fb2.SessionID())
 	}
-	// The fake bridge should have received a session/set_model call.
+	// The fake bridge should have received an in-session model switch
+	// (v3 session/set_config_option, configId "model").
 	fb2.mu.Lock()
 	calls := append([]string(nil), fb2.calls...)
 	fb2.mu.Unlock()
 	found := false
 	for _, c := range calls {
-		if c == "session/set_model" {
+		if c == "session/set_config_option" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("session/set_model not called on bridge; calls = %v", calls)
+		t.Errorf("session/set_config_option not called on bridge; calls = %v", calls)
 	}
 	// Chat model should be updated.
 	c, _ := cs.Get(context.Background(), "c1")

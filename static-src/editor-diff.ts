@@ -50,6 +50,14 @@ export function renderDiffModeUI(state: FileState): void {
         });
     },
   };
+  if (!pending) {
+    // Wire the "Ignore whitespace" toggle: diff.ts supports a
+    // whitespace-insensitive compare and diff-pane re-diffs + re-renders in
+    // place from these source texts. Left off for pending (supervised) diffs,
+    // whose per-hunk accept/reject indices must line up with the real,
+    // un-normalized diff that buildPartialMergeText walks.
+    paneOpts.source = { oldText: src.oldContent, newText: src.newContent };
+  }
   if (pending) {
     paneOpts.onAcceptHunk = (hunkIndex: number) => {
       state.pendingHunkDecisions.set(hunkIndex, "accept");

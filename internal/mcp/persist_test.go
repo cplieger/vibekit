@@ -5,12 +5,14 @@ import (
 	"testing"
 )
 
-// TestUnmarshalJSON_NormalizesSSEToHTTP verifies the disk-migration
-// invariant: a legacy `{"transport":"sse"}` payload round-trips to
-// Server.Transport == TransportHTTP. UnmarshalJSON used to discard
-// ParseTransport's return value, so legacy "sse" persisted into the
-// in-memory record verbatim and then failed Validate() on first read.
-func TestUnmarshalJSON_NormalizesSSEToHTTP(t *testing.T) {
+// TestUnmarshalJSON_PreservesTransport verifies the parse-boundary
+// invariant: every accepted transport (stdio/http/sse) round-trips to
+// its own Server.Transport value. "sse" is preserved as TransportSSE
+// (no longer folded into "http") — KAS accepts a distinct {type:"sse"}
+// mcpServers entry on the v3 wire, and UnmarshalJSON assigns
+// ParseTransport's return value so the parsed record passes Validate()
+// on first read.
+func TestUnmarshalJSON_PreservesTransport(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -19,9 +21,9 @@ func TestUnmarshalJSON_NormalizesSSEToHTTP(t *testing.T) {
 		want Transport
 	}{
 		{
-			name: "legacy sse normalized to http",
+			name: "sse preserved",
 			in:   `{"id":"abc","name":"linear","transport":"sse","url":"https://mcp.example.com/sse","enabled":true}`,
-			want: TransportHTTP,
+			want: TransportSSE,
 		},
 		{
 			name: "http preserved",

@@ -19,7 +19,7 @@
 #   shims          {n:c}  map of shim_name -> shell command line. After
 #                          install, each shim_name is created as a wrapper
 #                          script in $BIN that exec's the given command.
-#                          Lets us expose tsgo as typescript-language-server
+#                          Lets us expose tsc as typescript-language-server
 #                          (the name kiro-cli looks for) and pyrefly as
 #                          pyright/pyright-langserver, without baking
 #                          shim logic into the install command itself.

@@ -82,12 +82,25 @@ func TestValidate_AcceptReject(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "SSETransportAccepted",
+			name: "SSEAccepted",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok", URL: "https://x.example/sse",
+				Transport: TransportSSE, Name: "ok", URL: "https://x.example/sse",
 				Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
+		},
+		{
+			name:    "SSERejectsNonHTTPScheme",
+			srv:     &Server{Transport: TransportSSE, Name: "x", URL: "file:///tmp/x"},
+			wantErr: true,
+		},
+		{
+			name: "SSERejectsCommand",
+			srv: &Server{
+				Transport: TransportSSE, Name: "x",
+				URL: "https://x.example", Command: "leaked",
+			},
+			wantErr: true,
 		},
 	}
 	for _, tc := range cases {
@@ -530,7 +543,7 @@ func FuzzValidate(f *testing.F) {
 				if s.URL != "" || len(s.Headers) > 0 {
 					t.Fatal("Validate returned nil for stdio but url/headers set")
 				}
-			case TransportHTTP:
+			case TransportHTTP, TransportSSE:
 				if s.Command != "" || len(s.Args) > 0 || len(s.Env) > 0 {
 					t.Fatal("Validate returned nil for remote but command/args/env set")
 				}

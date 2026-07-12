@@ -52,13 +52,9 @@
         </div>
       </div>
       <div class="sidebar-actions">
-        <button type="button" id="new-chat" class="sidebar-action-btn" data-tooltip="New build session" aria-label="New build session">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-          Build
-        </button>
-        <button type="button" id="new-plan" class="sidebar-action-btn" data-tooltip="Planning agent" aria-label="Planning agent">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/></svg>
-          Plan
+        <button type="button" id="new-chat" class="sidebar-action-btn" data-tooltip="New chat" aria-label="New chat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+          New chat
         </button>
       </div>
       <div id="tab-list" role="tablist" aria-label="Tabs"></div>
@@ -79,6 +75,10 @@
               <span class="pill-detail" id="st-kiro">-</span>
               <span class="pill-sep"></span>
               <span class="pill-detail" id="st-auth">-</span>
+              <span class="pill-account" id="st-account" hidden>
+                <span class="pill-account-plan" id="acct-plan"></span>
+                <span class="pill-account-meter" id="acct-meter"></span>
+              </span>
             </span>
           </button>
         </div>
@@ -101,6 +101,9 @@
         <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
           <svg class="git-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
+        </button>
+        <button type="button" id="specs-btn" class="icon-btn" data-tooltip="Spec board" aria-label="Spec board">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
         </button>
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
@@ -143,7 +146,8 @@
         <form id="prompt-form" class="bottom-bar">
           <div class="prompt-box">
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
-            <ul id="attachment-row" class="attachment-row hidden"></ul>
+            <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
+            <ul id="queued-row" class="queued-row hidden" aria-label="Prompts queued to send"></ul>
             <div class="prompt-pills">
               <button id="context-indicator" class="pill pill-context pill-expandable" type="button" aria-label="Context usage">
                 <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
@@ -178,25 +182,19 @@
                 <span id="ctx-model-pill">auto</span>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
               </button>
+              <button id="role-pill" class="pill pill-role pill-expandable" type="button" aria-label="Agent role">
+                <span id="role-pill-icon" class="pill-role-icon"></span>
+                <span id="role-pill-label" class="pill-role-label">Default</span>
+                <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
+              </button>
               <button id="attach-btn" class="pill" type="button" data-tooltip="Attach file" aria-label="Attach file">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                 <span class="pill-label">Attach</span>
-              </button>
-              <button id="auto-approve-crew-btn" class="pill pill-auto-approve hidden" type="button" data-tooltip="Auto-approve subagent tools" aria-label="Toggle auto-approve for subagent tools" aria-pressed="false">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
               </button>
               <button id="supervised-pill" class="pill pill-expandable pill-supervised" type="button" aria-label="Supervised mode" aria-pressed="false">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
                 <span class="pill-label">Supervised</span>
                 <span class="pill-expand-content pill-supervised-body hidden"></span>
-              </button>
-              <button id="fork-pill" class="pill hidden" type="button" data-tooltip="Fork this conversation into a side chat" aria-label="Fork conversation">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v3c0 3.3 2.7 6 6 6h3"/></svg>
-                <span class="pill-label">Fork</span>
-              </button>
-              <button id="merge-tangent-pill" class="pill hidden" type="button" data-tooltip="Merge last Q&amp;A back to parent and close the tangent" aria-label="Merge tangent into parent chat">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6"/><path d="M9 6h3c3.3 0 6 2.7 6 6"/><path d="M9 18h3c3.3 0 6-2.7 6-6"/></svg>
-                <span class="pill-label">Keep &amp; return</span>
               </button>
               <button id="task-list-pill" class="pill pill-task-list pill-expandable hidden" type="button" data-tooltip="Task list" aria-label="Task list">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
@@ -295,16 +293,23 @@
               <div class="section-option">
                 <button type="button" id="diagnostics-run" class="btn">Run diagnostics</button>
                 <p class="section-hint">Collect a kiro-cli diagnostic report. The report goes to your clipboard so you can paste it into a bug report.</p>
-                <p id="diagnostics-status" class="section-hint" hidden></p>
+                <p id="diagnostics-status" class="section-hint" role="status" aria-live="polite" hidden></p>
               </div>
             </div>
 
+            <!-- Organization policy: read-only governance disclosure, rendered by governance.ts when known. -->
+            <div class="page-section" id="general-governance-section" hidden></div>
+
             <div class="page-section" id="general-retention-section">
               <h3 class="section-title">Chat retention</h3>
-              <p class="section-hint">Chats auto-archive when you close the tab. Archived chats stay in <strong>History</strong> (toolbar icon) for this many days, then are deleted. Set to 0 to keep archived chats forever.</p>
+              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
               <div class="section-option">
                 <label for="chat-retention-days" class="section-option-label">Days kept</label>
                 <input type="number" id="chat-retention-days" class="page-input-sm" min="0" max="90" value="1" aria-label="Chat retention days">
+              </div>
+              <div class="section-option">
+                <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
+                <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
               </div>
             </div>
 
@@ -398,6 +403,16 @@
               </div>
               <div class="section-option">
                 <label class="toggle">
+                  <input type="checkbox" id="flag-disable-inherit-resources" aria-label="Exclude default resources from custom agents">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Exclude default resources from custom agents</span>
+                  <p class="section-hint">When on, custom agents (your own agent definitions) no longer inherit the default resources — global/workspace steering docs, skills, and <code>AGENTS.md</code> — so a custom agent starts from a clean context you control explicitly. The built-in Default and Plan agents are unaffected. Off (default) keeps every custom agent loading those resources automatically. Requires kiro-cli 2.10+.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
                   <input type="checkbox" id="flag-debug-logs" aria-label="Debug logs">
                   <span class="toggle-slider"></span>
                 </label>
@@ -434,47 +449,53 @@
             </div>
           </div>
 
-          <!-- Permissions: approval policy + trust-list -->
+          <!-- Permissions: active (Cedar) policy + supervised mode + shell command policy -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">Three separate layers control what the agent can do to your workspace. Each one is independent — the defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces. The layers under it (supervised mode, shell command policy) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
 
             <div class="page-section">
-              <h3 class="section-title">Tool approval</h3>
-              <p class="section-hint">When the agent wants to run a tool, this decides whether it prompts you first. Applies to every tool — builtin, shell, and MCP integrations alike. Changes take effect on the next conversation.</p>
-              <div class="perm-mode-row">
-                <label class="perm-mode">
-                  <input type="radio" name="perm-mode" value="trust-all" id="perm-mode-trust-all">
-                  <span>Trust all tools</span>
-                  <span class="section-hint">No prompts. The agent can use any tool without asking.</span>
-                </label>
-                <label class="perm-mode">
-                  <input type="radio" name="perm-mode" value="trust-list" id="perm-mode-trust-list">
-                  <span>Trust selected tools</span>
-                  <span class="section-hint">Auto-approve a specific list; prompt for anything else.</span>
-                </label>
-                <label class="perm-mode">
-                  <input type="radio" name="perm-mode" value="prompt" id="perm-mode-prompt">
-                  <span>Prompt for every tool</span>
-                  <span class="section-hint">Maximum control. You'll click-to-approve every tool call.</span>
-                </label>
+              <h3 class="section-title">Active policy</h3>
+              <p class="section-hint">The native permission rules kiro-cli enforces, layered by scope. Precedence is <strong>deny</strong> &gt; <strong>ask</strong> &gt; <strong>allow</strong>. You can edit the <strong>user</strong> and <strong>workspace</strong> layers; edits take effect immediately, with no restart. New rules default to <strong>Ask</strong> — widen to Allow only deliberately.</p>
+              <p id="native-policy-status" class="section-hint hidden"></p>
+              <div id="native-policy-list" class="native-policy-list"></div>
+              <p id="native-policy-empty-hint" class="section-hint hidden">No policy rules loaded yet.</p>
+
+              <h4 class="section-subtitle">Add a rule</h4>
+              <div class="native-rule-adder">
+                <select id="native-rule-scope" class="chip-mode-select" aria-label="Rule scope">
+                  <option value="workspace">Workspace</option>
+                  <option value="user">User (global)</option>
+                </select>
+                <select id="native-rule-capability" class="chip-mode-select" aria-label="Capability"></select>
+                <select id="native-rule-effect" class="chip-mode-select" aria-label="Effect">
+                  <option value="ask" selected>Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="deny">Deny</option>
+                </select>
+                <input id="native-rule-match" class="chip-input" type="text" placeholder="match globs, comma-separated (optional)" aria-label="Match globs">
+                <button id="native-rule-add" class="action-pill" type="button" data-tooltip="Add policy rule" aria-label="Add policy rule">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
               </div>
-              <div id="trust-list-editor" class="hidden">
-                <div id="trust-list-chips" class="chip-list"></div>
-                <div class="chip-adder">
-                  <button id="trust-list-add" class="action-pill" type="button" data-tooltip="Add tool" aria-label="Add tool">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+              <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative (e.g. <code>src/**</code>); user paths are absolute (e.g. <code>/home/you/project/**</code>).</p>
+
+              <details id="native-policy-explain-box">
+                <summary class="section-subtitle native-explain-summary">Test a decision (why?)</summary>
+                <p class="section-hint">Simulate the decision for a capability + resource. This is a read-only check — it never runs the tool or raises a prompt.</p>
+                <div class="native-rule-adder">
+                  <select id="native-explain-capability" class="chip-mode-select" aria-label="Capability"></select>
+                  <input id="native-explain-resource" class="chip-input" type="text" placeholder="resource: a path, or a command for shell" aria-label="Resource">
+                  <button id="native-explain-run" class="action-pill" type="button" data-tooltip="Test" aria-label="Test decision">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>
-                  <div id="trust-list-menu" class="chip-menu hidden"></div>
                 </div>
-                <p id="trust-list-empty-hint" class="section-hint hidden">
-                  No tools trusted. With this mode and an empty list, every tool call will prompt.
-                </p>
-              </div>
+                <p id="native-explain-result" class="section-hint"></p>
+              </details>
             </div>
 
             <div class="page-section">
               <h3 class="section-title">Supervised mode (default for new chats)</h3>
-              <p class="section-hint">A separate layer from tool approval above. Tool approval decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
+              <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="supervised-default-checkbox">
                 <span>Turn on Supervised mode for new conversations</span>
@@ -556,6 +577,24 @@
               <h3 class="section-title">Steering docs, skills &amp; agents</h3>
               <p class="section-hint">Files in <code>.kiro/</code> your agent reads as context. Steering docs load automatically (always, when matched, or when referenced); skills and agents are invoked on demand.</p>
               <div id="kiro-config-list" class="list-container"><div class="list-empty">No steering docs, skills or agents found.</div></div>
+            </div>
+
+            <div class="page-section" id="knowledge-section">
+              <h3 class="section-title">Knowledge bases</h3>
+              <p class="section-hint">Local directories indexed for semantic search. When <code>chat.enableKnowledge</code> is on, your agent searches these for relevant context. Indexing runs in the background; large directories take a moment.</p>
+              <div class="section-actions-row">
+                <div class="action-bar action-bar-inline">
+                  <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
+                </div>
+              </div>
+              <p id="knowledge-hint" class="section-hint knowledge-hint" hidden>Knowledge is turned off. Enable it in <strong>General</strong> for the agent to use these bases during chats.</p>
+              <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet.</div></div>
+            </div>
+
+            <div class="page-section" id="hooks-section">
+              <h3 class="section-title">Hooks</h3>
+              <p class="section-hint">Workspace automations in <code>.kiro/hooks/</code>. Toggle to enable or disable a hook; <strong>Run now</strong> runs a command hook and shows its output. Agent hooks run their prompt in a chat. Hook status messages in chat are controlled by the <code>hooks.showStatus</code> toggle in <strong>General</strong>.</p>
+              <div id="hooks-list" class="list-container"><div class="list-empty">No hooks yet.</div></div>
             </div>
           </div>
 
@@ -690,7 +729,7 @@
             <div class="view-toolbar-inner">
               <span id="editor-filename" class="editor-filename"></span>
               <div class="editor-actions">
-                <button type="button" id="editor-send-plan-btn" class="btn-small hidden" data-tooltip="Switch to default agent and send this plan" aria-label="Switch to default agent and send this plan">Send plan</button>
+                <button type="button" id="editor-send-plan-btn" class="btn-small hidden" data-tooltip="Send this plan to the agent to implement (switches out of Plan mode if needed)" aria-label="Send this plan to the agent to implement (switches out of Plan mode if needed)">Send plan</button>
                 <button type="button" id="editor-pending-discuss-btn" class="btn-small hidden" data-tooltip="Ask the agent about this change" aria-label="Ask the agent about this change">Discuss</button>
                 <button type="button" id="editor-pending-apply-partial-btn" class="btn-small hidden primary" data-tooltip="Apply only the accepted hunks" aria-label="Apply only the accepted hunks">Apply selected</button>
                 <button type="button" id="editor-pending-reject-btn" class="btn-small hidden" data-tooltip="Reject this change" aria-label="Reject this change">Reject</button>
@@ -785,6 +824,17 @@
         </div>
       </div>
 
+      <!-- Specs board (full-page): live requirements→design→tasks view of .kiro/specs -->
+      <div id="specs-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <h2 class="page-title">Specs</h2>
+          <p class="section-hint">Spec workflows in <code>.kiro/specs/</code>. Each spec's requirements, design, and tasks — click a document to open it. Run spec work from a Spec-mode chat; task status updates here live.</p>
+          <div id="specs-list" class="specs-list">
+            <div class="spec-loading">Loading specs…</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Shell panel (global, PTY via WebSocket + server-side VT renderer) -->
       <div id="shell-panel" class="shell-panel shell-closed">
         <div id="shell-resize" class="shell-resize"></div>
@@ -797,10 +847,7 @@
             <button type="button" class="shell-tab active" data-shell-tab="user" role="tab" aria-selected="true">User</button>
           </div>
           <span id="shell-status" class="shell-status"></span>
-          <button type="button" id="shell-kill-btn" class="shell-header-btn" data-tooltip="Kill process" aria-label="Kill process">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-          </button>
-          <button type="button" id="shell-clear-btn" class="shell-header-btn" data-tooltip="Clear scrollback" aria-label="Clear scrollback">
+          <button type="button" id="shell-clear-btn" class="shell-header-btn" data-tooltip="Reset terminal" aria-label="Reset terminal">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4 4l16 16"/></svg>
           </button>
           <button type="button" id="shell-fullscreen-btn" class="shell-header-btn" data-tooltip="Full screen" aria-label="Toggle full screen">
@@ -810,21 +857,12 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
+        <!-- @cplieger/web-terminal-ui createTerminal() builds the terminal
+             subtree (display surface, hidden input, IME, mobile key toolbar,
+             context menu, connection banner) into #shell-terminal. shell.ts
+             calls it lazily on first panel open. -->
         <div id="shell-terminal" class="shell-terminal"></div>
         <div id="agent-terminals" class="agent-terminals hidden"></div>
-        <textarea id="term-input" class="term-input" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Terminal input" tabindex="-1"></textarea>
-        <div id="key-toolbar" class="key-toolbar collapsed no-transition" aria-label="Navigation keys" role="toolbar">
-          <button type="button" id="kb-toggle" class="kb-toggle"      aria-label="Toggle key toolbar"><svg class="icon-hamburger" viewBox="0 0 24 24"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg><svg class="icon-close" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
-          <button type="button" id="kb-tab"    class="kb-key kb-r1c1" aria-label="Tab">TAB</button>
-          <button type="button" id="kb-esc"    class="kb-key kb-r1c2" aria-label="Escape">ESC</button>
-          <button type="button" id="kb-up"     class="kb-key kb-r1c3" aria-label="Up"><svg viewBox="0 0 24 24"><polyline points="6 15 12 9 18 15"/></svg></button>
-          <button type="button" id="kb-enter"  class="kb-key kb-r1c4" aria-label="Enter"><svg viewBox="0 0 24 24"><polyline points="9 10 4 15 9 20"/><polyline points="20 4 20 15 4 15"/></svg></button>
-          <button type="button" id="kb-scroll-bottom" class="kb-scroll-bottom" aria-label="Scroll to bottom"><svg viewBox="0 0 24 24"><path fill="none" d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg></button>
-          <button type="button" id="kb-ctrl"   class="kb-key kb-r2c1" aria-label="Sticky Ctrl modifier" aria-pressed="false">CTRL</button>
-          <button type="button" id="kb-left"   class="kb-key kb-r2c2" aria-label="Left"><svg viewBox="0 0 24 24"><polyline points="15 6 9 12 15 18"/></svg></button>
-          <button type="button" id="kb-down"   class="kb-key kb-r2c3" aria-label="Down"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></button>
-          <button type="button" id="kb-right"  class="kb-key kb-r2c4" aria-label="Right"><svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg></button>
-        </div>
       </div>
     </main>
   </div>
@@ -921,12 +959,19 @@
       <div id="mcp-search-results" class="mcp-search-results"></div>
     </div>
 
-    <!-- Remote URL panel: HTTP (kiro-cli falls back to HTTP+SSE per the 2025-03-26 MCP spec) -->
+    <!-- Remote URL panel: Streamable HTTP or legacy SSE (transport selectable) -->
     <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
-      <p class="mcp-mode-hint">Point at a hosted MCP server over HTTP. kiro-cli speaks Streamable HTTP and automatically falls back to HTTP+SSE for legacy servers (2025-03-26 MCP spec). Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
+      <p class="mcp-mode-hint">Point at a hosted MCP server. Choose Streamable HTTP (the current MCP transport, 2025-03-26 spec) for most servers; pick SSE only for a server that exposes a legacy Server-Sent-Events endpoint. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
       <label class="tool-form-label">Name
         <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
         <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
+      </label>
+      <label class="tool-form-label">Transport
+        <select id="mcp-remote-transport" class="tool-form-input">
+          <option value="http">Streamable HTTP (recommended)</option>
+          <option value="sse">SSE (legacy HTTP+SSE)</option>
+        </select>
+        <span class="tool-form-hint">Streamable HTTP is the current MCP transport. Choose SSE only for a server that exposes a legacy Server-Sent-Events endpoint.</span>
       </label>
       <label class="tool-form-label">URL
         <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
@@ -934,6 +979,10 @@
       <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
         <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
         <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
+      </label>
+      <label class="tool-form-label">OAuth client secret <span class="tool-form-label-aux">(optional, advanced)</span>
+        <input id="mcp-remote-oauth-client-secret" class="tool-form-input" type="password" autocomplete="off" placeholder="for confidential clients (kiro-cli 2.12+)">
+        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_secret for confidential clients that authenticate at the token endpoint. Leave empty for public clients / DCR. Stored masked; shown as &bull;&bull;&bull; once set.</span>
       </label>
       <div class="mcp-form-section">
         <div class="mcp-form-section-head">
@@ -1041,17 +1090,6 @@
     <div id="git-branch-list" class="git-file-list git-file-list-scroll"></div>
   </div>
 
-  <!-- Subagent output modal -->
-  <div id="subagent-modal" class="subagent-modal-card hidden" data-modal>
-    <div class="modal-header-row">
-      <span id="subagent-modal-title" class="modal-title">subagent</span>
-      <button type="button" id="subagent-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <pre id="subagent-modal-body" class="subagent-modal-body"></pre>
-  </div>
-
   <!-- File picker popup (slim file browser for upload target selection) -->
   <div id="filepicker-modal" class="filepicker-card hidden" data-modal>
     <div class="modal-header-row">
@@ -1079,12 +1117,16 @@
         "@cplieger/fetch": "/vendor/cplieger-fetch/index.js",
         "@cplieger/reactive": "/vendor/cplieger-reactive/index.js",
         "@cplieger/web-terminal-engine": "/vendor/cplieger-web-terminal-engine/index.js",
+        "@cplieger/web-terminal-ui": "/vendor/cplieger-web-terminal-ui/index.js",
+        "@cplieger/web-terminal-ui/presets": "/vendor/cplieger-web-terminal-ui/presets.js",
         "@cplieger/ui-primitives/toast": "/vendor/cplieger-ui-primitives/toast/index.js",
         "@cplieger/ui-primitives/tooltip": "/vendor/cplieger-ui-primitives/tooltip.js",
         "@cplieger/ui-primitives/confirm": "/vendor/cplieger-ui-primitives/confirm.js",
         "@cplieger/ui-primitives/popover": "/vendor/cplieger-ui-primitives/popover.js",
         "@cplieger/ui-primitives/focus-trap": "/vendor/cplieger-ui-primitives/focus-trap.js",
         "@cplieger/ui-primitives/modal": "/vendor/cplieger-ui-primitives/modal.js",
+        "@cplieger/ui-primitives/dialog": "/vendor/cplieger-ui-primitives/dialog.js",
+        "@cplieger/ui-primitives/disclosure": "/vendor/cplieger-ui-primitives/disclosure.js",
         "@cplieger/ui-primitives/theme": "/vendor/cplieger-ui-primitives/theme.js",
         "@cplieger/ui-primitives/view-transition": "/vendor/cplieger-ui-primitives/view-transition.js",
         "@cplieger/ui-primitives/announce": "/vendor/cplieger-ui-primitives/announce.js"

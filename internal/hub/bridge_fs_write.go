@@ -12,6 +12,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -76,15 +79,34 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RP
 	// phantom-snapshot tradeoff on a failed write.
 	h.recordCheckpointSnapshot(ctx, chatID, abs, []byte(p.Content))
 
-	// Preserve the existing file's permission bits so the agent
-	// can't silently demote a 0o755 script or promote a 0o600
-	// secret to 0o644. New files use 0o644 as the default.
+	// Preserve the existing file's permission bits so the agent can't
+	// silently demote a 0o755 script or promote a 0o600 secret to 0o644.
+	// New files use 0o644 as the default. Lstat (not Stat) so a symlink
+	// at the target is seen as a symlink rather than its resolved target.
 	mode := os.FileMode(0o644)
-	if info, statErr := os.Stat(abs); statErr == nil {
+	if info, statErr := os.Lstat(abs); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			h.respondFSError(ctx, chatID, msg, errors.New("refusing to write through a symlink"))
+			return
+		}
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(abs, []byte(p.Content), mode); err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+	// Open with O_NOFOLLOW so a symlink planted at the final path component
+	// AFTER resolveInsideWorkDir evaluated the path (a TOCTOU race) can't
+	// redirect the write outside workDir — os.WriteFile follows symlinks,
+	// this doesn't. Behaviour is identical for normal (non-symlink) writes.
+	f, openErr := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
+	if openErr != nil {
+		h.respondFSError(ctx, chatID, msg, openErr)
+		return
+	}
+	if _, wErr := f.WriteString(p.Content); wErr != nil {
+		_ = f.Close()
+		h.respondFSError(ctx, chatID, msg, wErr)
+		return
+	}
+	if cErr := f.Close(); cErr != nil {
+		h.respondFSError(ctx, chatID, msg, cErr)
 		return
 	}
 	h.respondBridge(ctx, chatID, msg, map[string]any{}, nil)
@@ -103,7 +125,7 @@ func (h *Hub) applySupervisedWriteGate(ctx context.Context, chatID api.ChatID, m
 	if !h.chatInSupervisedMode(ctx, chatID) || h.perm.supervised.HasTrust(chatID) {
 		return true, content
 	}
-	accepted, override, err := h.stageFSWrite(ctx, chatID, msg, abs, reqPath, content)
+	accepted, override, merged, err := h.stageFSWrite(ctx, chatID, msg, abs, reqPath, content)
 	if err != nil {
 		h.respondFSError(ctx, chatID, msg, err)
 		return false, content
@@ -112,10 +134,13 @@ func (h *Hub) applySupervisedWriteGate(ctx context.Context, chatID api.ChatID, m
 		h.respondFSError(ctx, chatID, msg, errRejectedByUser)
 		return false, content
 	}
-	if override != "" {
+	if merged {
 		// User-edited merged content overrides the agent's proposal.
-		// Only set when resolve_pending_change_partial was used; a plain
-		// accept leaves override empty so the original content stands.
+		// Gated on the merged flag (set only when
+		// resolve_pending_change_partial was used), NOT on override != "",
+		// so an empty merge — e.g. a create whose only hunk was rejected —
+		// writes the empty result instead of falling back to the agent's
+		// original content.
 		content = override
 	}
 	return true, content
@@ -151,8 +176,59 @@ func (h *Hub) recordCheckpointSnapshot(ctx context.Context, chatID api.ChatID, a
 		return
 	}
 	messageCount := h.currentMessageCount(ctx, chatID)
-	if _, err := h.checkpoints.Snapshot(ctx, chatID, rel, content, messageCount); err != nil {
+	tag, err := h.checkpoints.Snapshot(ctx, chatID, rel, content, messageCount)
+	if err != nil {
 		slog.Warn("checkpoint snapshot failed", "chat_id", chatID, "path", rel, "error", err)
+		return
+	}
+	// Surface the server-allocated tag onto the wire so the client can
+	// drive Restore from the REAL tag rather than recomputing it from a
+	// 0-based turn index. See stampTurnCheckpointTag.
+	h.stampTurnCheckpointTag(ctx, chatID, string(tag))
+}
+
+// stampTurnCheckpointTag records the server-allocated checkpoint tag on
+// the message that started the current turn, so the client can drive
+// Restore/undo from the REAL per-turn tag instead of recomputing it from
+// a 0-based turn index (which was off-by-one against the 1-based
+// allocateTag and could not represent no-snapshot turns).
+//
+// Only the turn-canonical tag ("N", produced by the FIRST snapshot of a
+// turn) is stamped; per-tool tags within the turn ("N.1", "N.2", …) are
+// ignored so the field always holds the tag that reverts the WHOLE turn.
+// allocateTag emits "N" exactly once per turn (the first snapshot), so
+// this fires at most once per turn even under concurrent writes. The
+// turn's prompt is the most recent user message — the assistant turn is
+// still buffered in-memory (not yet persisted) when the agent's first
+// write lands, so scanning back for the last user message reliably
+// targets this turn. UpdateMessage persists the change and broadcasts
+// message_updated so live clients and reloads agree.
+func (h *Hub) stampTurnCheckpointTag(ctx context.Context, chatID api.ChatID, tag string) {
+	if tag == "" || strings.Contains(tag, ".") {
+		return
+	}
+	c, ok := h.chatStore.Get(ctx, chatID)
+	if !ok {
+		return
+	}
+	var userMsgID string
+	for i := range slices.Backward(c.Messages) {
+		if c.Messages[i].Role == api.RoleUser {
+			userMsgID = c.Messages[i].ID
+			break
+		}
+	}
+	if userMsgID == "" {
+		return
+	}
+	if err := h.chatStore.UpdateMessage(ctx, chatID, userMsgID, func(m *api.Message) {
+		// Set-once: the first snapshot of the turn wins, so a later
+		// (never-canonical) tag can't clobber it.
+		if m.CheckpointTag == "" {
+			m.CheckpointTag = tag
+		}
+	}); err != nil {
+		slog.Warn("checkpoint tag stamp failed", "chat_id", chatID, "tag", tag, "error", err)
 	}
 }
 

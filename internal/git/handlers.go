@@ -112,7 +112,7 @@ type gitStatusResp struct {
 }
 
 func parseGitStatus(ctx context.Context, dir string) []gitFile {
-	raw, err := gitExec(ctx, dir, "status", "--porcelain", "-uall").CombinedOutput()
+	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
 	if err != nil {
 		slog.Warn("git status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
 		return nil

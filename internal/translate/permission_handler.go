@@ -8,78 +8,74 @@ import (
 	"github.com/cplieger/vibekit/internal/permissions"
 )
 
+// permOptionWire decodes one inbound permission option. ACP sends the id
+// as camelCase `optionId`; the SSE-facing api.PermissionOption tags it
+// `option_id`, and Go's case-insensitive match does not bridge the
+// underscore — so we decode from this wire struct and map to the SSE type.
+type permOptionWire struct {
+	OptionID string `json:"optionId"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+}
+
 // HandlePermissionRequest processes session/request_permission from kiro-cli.
+//
+// The v3 params object is FLAT — {sessionId, toolCall{...}, options[]} —
+// and the JSON-RPC correlation id is on the envelope (msg.ID), NOT inside
+// params. unmarshalParams decodes msg.Params directly, so the decode struct
+// must match those fields at top level; a `params`-wrapped struct (or an
+// `id` field read from params) decodes to all-zero, yielding an empty dialog
+// and request_id=0 (the outcome would then be answered on id 0, wedging the
+// tool call and disabling the shell auto-policy). Mirror HandleElicitationCreate,
+// which decodes flat and reads *msg.ID.
 func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+	if msg.ID == nil {
+		// Without an id we cannot route the outcome back to the agent, so
+		// drop rather than show a dialog whose answer can never arrive.
+		slog.Warn("permission request missing id", "chat_id", chatID)
+		return
+	}
 	type permReq struct {
-		Params struct {
-			SessionID string `json:"sessionId"`
-			ToolCall  struct {
-				ToolCallID string       `json:"toolCallId"`
-				Title      string       `json:"title"`
-				Kind       api.ToolKind `json:"kind"`
-			} `json:"toolCall"`
-			Options []api.PermissionOption `json:"options"`
-		} `json:"params"`
-		ID int64 `json:"id"`
+		SessionID string `json:"sessionId"`
+		ToolCall  struct {
+			ToolCallID string       `json:"toolCallId"`
+			Title      string       `json:"title"`
+			Kind       api.ToolKind `json:"kind"`
+		} `json:"toolCall"`
+		Options []permOptionWire `json:"options"`
 	}
 	req, ok := unmarshalParams[permReq](msg, "session/request_permission")
 	if !ok {
 		return
 	}
+	reqID := *msg.ID
 
-	subSessionID := t.deriveSubSession(chatID, req.Params.SessionID)
+	subSessionID := t.deriveSubSession(chatID, req.SessionID)
 
-	// Auto-approve crew permissions when the chat has the flag set.
-	if subSessionID != "" && chatID != "" {
-		if t.tryAutoApproveCrew(ctx, chatID, subSessionID, req.ID, req.Params.Options, req.Params.ToolCall.Title) {
-			return
-		}
+	options := make([]api.PermissionOption, len(req.Options))
+	for i, o := range req.Options {
+		options[i] = api.PermissionOption{OptionID: o.OptionID, Name: o.Name, Kind: o.Kind}
 	}
 
 	// Shell safety tier: auto-approve or auto-reject shell commands.
-	if req.Params.ToolCall.Kind == api.ToolKindExecute && subSessionID == "" && t.configDir != "" {
-		if t.tryShellPolicy(ctx, chatID, req.ID, req.Params.ToolCall.Title, req.Params.Options) {
+	if req.ToolCall.Kind == api.ToolKindExecute && subSessionID == "" && t.configDir != "" {
+		if t.tryShellPolicy(ctx, chatID, reqID, req.ToolCall.Title, options) {
 			return
 		}
 	}
 
 	evt := api.NewEvent(api.EventPermissionNeeded, chatID, api.PermissionNeededPayload{
-		RequestID:    req.ID,
-		ToolCallID:   req.Params.ToolCall.ToolCallID,
-		Title:        req.Params.ToolCall.Title,
-		Kind:         req.Params.ToolCall.Kind,
+		RequestID:    reqID,
+		ToolCallID:   req.ToolCall.ToolCallID,
+		Title:        req.ToolCall.Title,
+		Kind:         req.ToolCall.Kind,
 		SubSessionID: subSessionID,
-		Options:      req.Params.Options,
+		Options:      options,
 	})
 	t.deps.Broadcast(ctx, evt)
-	t.deps.PendingPermsAdd(req.ID, evt)
+	t.deps.PendingPermsAdd(reqID, evt)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelApproval}))
 	t.deps.NotifyPush(ctx, "Permission needed", api.PushKindPermission)
-}
-
-// tryAutoApproveCrew auto-approves crew permissions when the chat has
-// AutoApproveCrew set. Returns true if the permission was handled.
-func (t *Translator) tryAutoApproveCrew(ctx context.Context, chatID api.ChatID, subSessionID string, reqID int64, options []api.PermissionOption, toolTitle string) bool {
-	chat, ok := t.deps.ChatStore().Get(ctx, chatID)
-	if !ok {
-		return false
-	}
-	optionID := FindAllowOnce(options)
-	decision := permissions.AutoDecideCrew(chat.AutoApproveCrew, optionID != "")
-	if decision != permissions.DecisionAllow {
-		return false
-	}
-	if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeSelected(optionID), nil); err != nil {
-		slog.Error("auto-approve crew: respond failed",
-			"chat_id", chatID, "error", err)
-		return false
-	}
-	t.deps.PendingPermsRemove(reqID)
-	slog.Info("auto-approved crew permission",
-		"chat_id", chatID,
-		"sub_session", subSessionID,
-		"tool", toolTitle)
-	return true
 }
 
 // tryShellPolicy evaluates the shell safety tier and auto-approves or

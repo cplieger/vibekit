@@ -214,7 +214,12 @@ if command -v kiro-cli >/dev/null 2>&1; then
     hooks.showStatus; do
     kiro-cli settings "$flag" true >/dev/null 2>&1 || true
   done
-  for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled; do
+  #   chat.disableInheritingDefaultResources — off, matching kiro-cli's
+  #     default. Custom agents inherit default steering/skills/AGENTS.md
+  #     unless the user turns this on (Settings -> General). Seeded so the
+  #     UI toggle reflects reality instead of the unset->on fallback.
+  for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled \
+    chat.disableInheritingDefaultResources; do
     kiro-cli settings "$flag" false >/dev/null 2>&1 || true
   done
   # Disable in-binary auto-update: KIRO_CLI_VERSION above is the
@@ -224,8 +229,14 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # and bypass the version-drift reinstall path. Bumps land via
   # Renovate PR → image rebuild → restart picks them up.
   kiro-cli settings "app.disableAutoupdates" true >/dev/null 2>&1 || true
-  # Auto-cleanup old conversations after 1 day (configurable in Settings → General).
-  kiro-cli settings cleanup.periodDays 1 >/dev/null 2>&1 || true
+  # Pin kiro-cli's own conversation/session cleanup OFF (0 = never purge).
+  # vibekit owns chat retention end to end: it purges its own archived chats
+  # and reaps KAS session state on delete + a periodic orphan sweep. Letting
+  # kiro-cli also purge (on its own timer, keyed to the same value) would be
+  # two systems fighting — and could delete a session out from under a chat
+  # vibekit still keeps. Retention lives in Settings → General (vibekit's
+  # config.json chat_retention_days), NOT this key.
+  kiro-cli settings cleanup.periodDays 0 >/dev/null 2>&1 || true
   exec /app/vibekit
 else
   printf "WARNING: kiro-cli not found, web UI not started\n"

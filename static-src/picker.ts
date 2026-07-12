@@ -17,24 +17,11 @@ import { wireArrowNav } from "./arrow-nav.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 
-/** Per-agent label + description for the picker header. The agent name
- *  from the session is the lookup key; unknown agents fall back to the
- *  default build-agent copy. */
-const AGENT_INFO: Record<string, { label: string; description: string }> = {
-  "": {
-    label: "Choose a model",
-    description:
-      "Start a build session with full tool access." +
-      " The agent can read, write, and run commands in your workspace.",
-  },
-  kiro_planner: {
-    label: "Choose a model",
-    description:
-      "Start a planning session." +
-      " The agent will help you think through architecture" +
-      " and design without modifying files.",
-  },
-};
+/** Static header copy for the model picker. Describes the model choice
+ *  itself — tool access is a per-mode concern on v3, not a model property,
+ *  so the old "full tool access…" copy was describing the wrong thing. */
+const PICKER_LABEL = "Choose a model";
+const PICKER_DESCRIPTION = "Pick the model for this conversation. You can switch it anytime.";
 
 class ModelPickerController {
   private models: ModelInfo[] = [];
@@ -49,20 +36,18 @@ class ModelPickerController {
     return this.models;
   }
 
-  show(currentModelId: string, onSelect: (modelId: string) => void, agent?: string): void {
+  show(currentModelId: string, onSelect: (modelId: string) => void): void {
     const picker = $.modelPicker;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const grid = picker.querySelector<HTMLElement>(".picker-grid")!;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const label = picker.querySelector(".picker-label")!;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const info = AGENT_INFO[agent ?? ""] ?? AGENT_INFO[""]!;
     this.callback = onSelect;
     this.currentId = currentModelId;
-    picker.setAttribute("aria-label", info.label);
+    picker.setAttribute("aria-label", PICKER_LABEL);
 
     const svg = label.querySelector("svg");
-    const labelText = document.createTextNode(info.label);
+    const labelText = document.createTextNode(PICKER_LABEL);
     if (svg !== null) {
       label.replaceChildren(svg, document.createTextNode(" "), labelText);
     } else {
@@ -74,10 +59,10 @@ class ModelPickerController {
       desc = el("div", { className: "picker-desc" });
       label.after(desc);
     }
-    desc.textContent = info.description;
+    desc.textContent = PICKER_DESCRIPTION;
 
     grid.setAttribute("role", "listbox");
-    grid.setAttribute("aria-label", info.label);
+    grid.setAttribute("aria-label", PICKER_LABEL);
 
     // Drop any non-keyed loading placeholder before reconciling.
     for (const child of [...grid.children]) {
@@ -187,12 +172,8 @@ export function getCachedModels(): ModelInfo[] {
   return instance.getCachedModels();
 }
 
-export function showModelPicker(
-  currentModelId: string,
-  onSelect: (modelId: string) => void,
-  agent?: string,
-): void {
-  instance.show(currentModelId, onSelect, agent);
+export function showModelPicker(currentModelId: string, onSelect: (modelId: string) => void): void {
+  instance.show(currentModelId, onSelect);
 }
 
 export function hideModelPicker(): void {

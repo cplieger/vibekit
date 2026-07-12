@@ -54,13 +54,6 @@
   overflow-wrap: anywhere;
 }
 
-/* Crew-row tool cards: always 1-line when the row is collapsed.
-   The .crew-row-expand.hidden parent hides the full card; when
-   visible, crew tool cards use the normal tier display. When the
-   expand is hidden, the tool container is also hidden, so no
-   special override needed — the activity line on the row head
-   serves as the 1-line summary. */
-
 /* Tool call grouping */
 .tool-group {
   display: flex;
@@ -337,8 +330,20 @@
   color: var(--c-accent);
 }
 
-/* Subagent inline box */
-.subagent-call {
+/* Assistant block region — a pure logical grouping (no layout box) so the
+ * text bubbles / reasoning / tool groups / subagent blocks flow inside the
+ * assistant message wrap exactly as they did before the grouping element
+ * existed. Keeps mountPlan/mountFooter's `:scope > .plan-message`/`.turn-footer`
+ * queries against the wrap correct while blocks live under .assistant-blocks. */
+.assistant-blocks {
+  display: contents;
+}
+
+/* Subagent block — a collapsible section whose body hosts the subagent's OWN
+ * blocks (real tool cards, reasoning, text) rendered by the same dispatcher,
+ * giving full parity with the main transcript. Open while the subagent runs;
+ * auto-collapses once it settles (the IDE baseline). */
+.subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
   border-inline-start: 0.1875rem solid var(--c-accent);
@@ -347,21 +352,8 @@
   overflow: hidden;
   flex-shrink: 0;
   max-width: calc(85% - 1.5rem - var(--sp-2));
-  cursor: pointer;
   margin-inline-start: calc(1.5rem + var(--sp-2));
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
-  transition: border-color var(--dur-micro) var(--ease-micro);
-}
-
-/* Folded nested tools: kept in DOM (so reconcile tracks identity) but
- * laid out as zero-size invisible placeholders. The user-visible
- * content lives inside the parent .subagent-call's transcript. */
-.subagent-folded-tool {
-  display: none;
-}
-
-.subagent-call:hover {
-  border-color: var(--c-accent);
 }
 
 .subagent-header {
@@ -369,6 +361,13 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+.subagent-header:hover {
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
 }
 
 .subagent-icon {
@@ -391,18 +390,130 @@
   color: var(--c-accent);
   font-weight: var(--fw-medium);
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.subagent-preview {
-  padding: 0 var(--sp-3) var(--sp-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
+.subagent-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: none;
   color: var(--c-text-tertiary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-  max-height: 4.5lh;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  padding: 0 var(--sp-1);
+}
+
+.subagent-toggle::before {
+  content: "\25BE"; /* ▾ */
+  display: inline-block;
+}
+
+.subagent-block.collapsed .subagent-toggle::before {
+  content: "\25B8"; /* ▸ */
+}
+
+/* Nested transcript. Collapses to zero height (interpolate-size:
+ * allow-keywords on :root animates height auto ↔ 0). */
+.subagent-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
   overflow: hidden;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.subagent-block.collapsed .subagent-body {
+  height: 0;
+  padding-block: 0;
+  border-block-start: none;
+}
+
+/* Nested blocks fill the subagent body (no avatar column, no 85% cap). */
+.subagent-body .message,
+.subagent-body .tool-group,
+.subagent-body .todo-list,
+.subagent-body .reasoning-block {
+  max-width: 100%;
+  margin-inline-start: 0;
+}
+
+/* Todo checklist (kiro-cli todo_list tool → a first-class checklist). */
+.todo-list {
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: var(--sp-2) var(--sp-3);
+  flex-shrink: 0;
+  max-width: calc(85% - 1.5rem - var(--sp-2));
+  margin-inline-start: calc(1.5rem + var(--sp-2));
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+}
+
+.todo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-block-end: var(--sp-2);
+}
+
+.todo-title {
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.todo-progress {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.todo-glyph {
+  flex-shrink: 0;
+  font-size: var(--fs-base);
+  line-height: 1.2;
+}
+
+.todo-row[data-status="completed"] .todo-glyph {
+  color: var(--c-green);
+}
+
+.todo-row[data-status="in_progress"] .todo-glyph {
+  color: var(--c-accent);
+}
+
+.todo-row[data-status="pending"] .todo-glyph {
+  color: var(--c-text-tertiary);
+}
+
+.todo-row[data-status="completed"] .todo-text {
+  color: var(--c-text-tertiary);
+  text-decoration: line-through;
+}
+
+.todo-text {
+  overflow-wrap: anywhere;
 }
 
 /* Subagent full-output modal */
@@ -450,235 +561,6 @@
 .plan-hi {
   color: var(--c-red);
   font-size: var(--fs-xs);
-}
-
-/* Crew card: collapsed container per subagent group. Subagent rows
-   show status icons (spinner/checkmark/warning). Click expands to
-   show full output + inline message input. */
-.crew-card {
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: var(--sp-3) var(--sp-4);
-  font-size: var(--fs-base);
-  flex-shrink: 0;
-  max-width: calc(85% - 1.5rem - var(--sp-2));
-  margin-inline-start: calc(1.5rem + var(--sp-2));
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
-}
-
-.crew-card.crew-done {
-  opacity: 0.85;
-}
-
-.crew-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  margin-block-end: var(--sp-2);
-}
-
-.crew-icon {
-  font-size: 1em;
-  color: var(--c-accent);
-}
-
-.crew-title {
-  color: var(--c-accent);
-  font-weight: var(--fw-semibold);
-  flex-grow: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.crew-count {
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-}
-
-.crew-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.crew-row {
-  border-inline-start: 2px solid var(--c-border);
-  padding-inline-start: var(--sp-2);
-}
-
-.crew-row.crew-status-working {
-  border-inline-start-color: var(--c-accent);
-}
-
-.crew-row.crew-status-terminated {
-  border-inline-start-color: var(--c-green);
-}
-
-.crew-row.crew-status-pending {
-  border-inline-start-color: var(--c-border);
-  opacity: 0.5;
-  font-style: italic;
-}
-
-.crew-row-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
-  background: transparent;
-  border: 0;
-  padding: var(--sp-1) 0;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  font-size: var(--fs-sm);
-}
-
-/* Status icons: spinner (working), checkmark (done), warning (error). */
-.crew-icon-status {
-  flex-shrink: 0;
-  width: 1rem;
-  height: 1rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.crew-spinning {
-  color: var(--c-accent);
-  animation: vk-spin 1.2s linear infinite;
-}
-
-.crew-done-icon {
-  color: var(--c-green);
-}
-
-.crew-error-icon {
-  color: var(--c-red);
-}
-
-.crew-pending-icon {
-  color: var(--c-text-tertiary);
-}
-
-.crew-chevron {
-  margin-inline-start: auto;
-  color: var(--c-text-tertiary);
-  font-size: 0.75rem;
-  transition: transform var(--dur-micro) var(--ease-micro);
-}
-
-.crew-chevron-open {
-  transform: rotate(90deg);
-}
-
-.crew-row-activity {
-  flex: 1;
-  min-width: 0;
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.crew-activity-done {
-  color: var(--c-green);
-  font-style: normal;
-}
-
-.crew-deps {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  cursor: help;
-  margin-inline-start: var(--sp-1);
-}
-
-.crew-name {
-  font-weight: var(--fw-semibold);
-}
-
-.crew-agent {
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
-}
-
-/* Expanded body: query + tools + message input. */
-.crew-row-expand {
-  padding: var(--sp-1) 0 var(--sp-2) var(--sp-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-.crew-row-expand.hidden {
-  display: none;
-}
-
-.crew-row-query {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.crew-row-tools {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.crew-tool-card {
-  font-size: var(--fs-xs);
-  padding: var(--sp-1) var(--sp-2);
-}
-
-/* Inline message input at the bottom of expanded row. */
-.crew-msg-input {
-  display: flex;
-  gap: var(--sp-1);
-  align-items: center;
-  border-top: 1px dashed var(--c-border);
-  padding-top: var(--sp-2);
-}
-
-.crew-msg-field {
-  flex: 1;
-  min-width: 0;
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: 0.375rem;
-  padding: var(--sp-1) var(--sp-2);
-  color: var(--c-text-primary);
-  font-size: var(--fs-xs);
-  font-family: inherit;
-}
-
-.crew-msg-field::placeholder {
-  color: var(--c-text-tertiary);
-}
-
-.crew-msg-send {
-  background: var(--c-accent);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 1.5rem;
-  height: 1.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.75rem;
-  flex-shrink: 0;
-}
-
-.crew-msg-send:hover {
-  opacity: 0.85;
 }
 
 /* Git panel */

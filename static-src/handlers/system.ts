@@ -9,25 +9,22 @@
 // counters reconcile alongside the message history.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
 import {
   getSessions,
   getActiveId,
-  get,
   setThinking,
   setCurrentMode,
-  clearMsgIndex,
   invalidateSession,
-  emitMessages,
 } from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
+import { maybeDrainIfIdle } from "../prompt-queue.js";
+import { drainModelSwitchQueue } from "../model-switcher.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
 import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
-import { clearCrewCache } from "../auto-approve.js";
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -63,6 +60,16 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     if (s.thinking) {
       setThinking(s.id, false);
     }
+    // A prompt queued before the outage would strand if we missed the
+    // turn_ended that should have drained it: thinking is now cleared, so no
+    // future turn_ended will fire for that turn. Re-drain any chat that is
+    // idle with a pending queue so the queued prompt (the user's intent)
+    // still gets sent instead of sitting forever behind a "queued" button.
+    maybeDrainIfIdle(s.id);
+    // Same reasoning for a queued mid-turn model switch: its drain rides
+    // turn_ended, which we missed during the gap. Fire it for the now-idle
+    // chat so the switch isn't stranded behind a stuck ".pending" pill.
+    drainModelSwitchQueue(s.id);
   }
   void loadList().then(() => {
     // Reconcile tabs: close any chat/plan tab whose session no longer
@@ -114,71 +121,24 @@ onSSE("mode_changed", (chatID, p) => {
   setCurrentMode(chatID, p.mode_id);
 });
 
-// Steering inclusion: render "Context loaded: tech.md, go.md" badges
-// in the message list when kiro-cli reports which steering docs were loaded.
-onSSE("steering_loaded", (chatID, payload) => {
-  if (chatID === "" || getActiveId() !== chatID) {
-    return;
-  }
-  if (!Array.isArray(payload.documents)) {
-    return;
-  }
-  const docs = payload.documents;
-  if (docs.length === 0) {
-    return;
-  }
-  const msgs = document.getElementById("messages");
-  if (msgs === null) {
-    return;
-  }
-  // Dedup: skip if a steering-badge already exists for this chat
-  if (msgs.querySelector(".steering-badge") !== null) {
-    return;
-  }
-  const badge = el(
-    "div",
-    { className: "steering-badge", "data-chat-entry": "" },
-    `Context loaded: ${docs.join(", ")}`,
-  );
-  msgs.appendChild(badge);
-});
-
 // checkpoint_restored arrives after the server rolls the workspace back
-// and truncates the chat transcript to match. The new-turn tail is now
-// gone on disk, so the cleanest recovery is: drop our cached messages
-// and refetch. The server's own chat_updated broadcast fires first and
-// updates the header (message_count, oldest_checkpoint_tag); we follow
-// up by reloading messages so the DOM drops stale checkpoint lines
-// referring to truncated turns.
+// and truncates the chat transcript to match. The server's own chat_updated
+// broadcast fires first and updates the header (message_count,
+// oldest_checkpoint_tag); we follow up by reloading messages so the DOM drops
+// stale checkpoint lines referring to truncated turns.
 onSSE("checkpoint_restored", (chatID, _payload) => {
   if (chatID === "") {
     return;
   }
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  // Clear local messages so renderSwitch starts fresh on the next
-  // loadMessages response. The activeId check guards against
-  // reloading a chat the user isn't looking at (server-side archive
-  // flow etc. don't restore checkpoints, but defence in depth).
-  // Clear the auto-approve crew cache — checkpoint restore may have
-  // rolled back past the crew event that set it.
-  clearCrewCache(s);
-
   if (getActiveId() === chatID) {
-    s.messages = [];
-    s.has_more = false;
-    clearMsgIndex(chatID);
-    emitMessages();
-    // Rely on the version-effect's renderUpdates (triggered by
-    // loadMessages bumping version) rather than an explicit
-    // renderSwitch here — avoids a redundant intermediate render
-    // that flashes empty state before messages arrive.
+    // Refetch-then-swap: loadMessages replaces the message array wholesale,
+    // rebuilds the index, and emits ONCE — the keyed reconcile then trims the
+    // rolled-back tail in a single render. Do NOT pre-clear messages here: the
+    // old empties-then-refetches sequence painted an empty transcript for the
+    // whole network round-trip (the flashing bug the render rewrite fixed).
     void loadMessages(chatID);
   } else {
-    // Background chat: just invalidate the cache so the next switch
-    // refetches from scratch.
+    // Background chat: just invalidate the cache so the next switch refetches.
     invalidateSession(chatID);
   }
 });

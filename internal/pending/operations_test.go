@@ -28,7 +28,7 @@ func TestAdd_BasicAcceptFlow(t *testing.T) {
 		done <- accepted().Accepted
 	}()
 
-	if _, err := s.Resolve(context.Background(), "tc-1", ActionAccept); err != nil {
+	if _, err := s.Resolve(context.Background(), "c-1", "tc-1", ActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	select {
@@ -58,7 +58,7 @@ func TestAdd_Reject(t *testing.T) {
 	done := make(chan bool, 1)
 	go func() { <-waitCh; done <- accepted().Accepted }()
 
-	if _, err := s.Resolve(context.Background(), "tc-1", ActionReject); err != nil {
+	if _, err := s.Resolve(context.Background(), "c-1", "tc-1", ActionReject); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	select {
@@ -126,7 +126,7 @@ func TestResolve_KeepsOtherStagedPathBusy(t *testing.T) {
 	if _, _, err := s.Add(ctx, &AddParams{ToolCallID: "tc2", ChatID: chat, Path: "p2.go", Kind: KindEdit, NewText: "b"}); err != nil {
 		t.Fatalf("Add op2: %v", err)
 	}
-	if _, err := s.Resolve(ctx, "tc1", ActionAccept); err != nil {
+	if _, err := s.Resolve(ctx, chat, "tc1", ActionAccept); err != nil {
 		t.Fatalf("Resolve op1: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestAdd_ContextCancelAfterResolve(t *testing.T) {
 	}
 
 	// Resolve normally first.
-	if _, err := s.Resolve(context.Background(), "tc-ctx2", ActionAccept); err != nil {
+	if _, err := s.Resolve(context.Background(), "c-1", "tc-ctx2", ActionAccept); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	<-waitCh
@@ -302,7 +302,7 @@ func TestConcurrentAddResolve(t *testing.T) {
 	// Resolve half via Accept, half via RejectAllForChat.
 	for i := range n / 2 {
 		id := string(rune('a'+i%26)) + string(rune('0'+i/26))
-		if _, err := s.Resolve(context.Background(), id, ActionAccept); err != nil {
+		if _, err := s.Resolve(context.Background(), "c-1", id, ActionAccept); err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
 	}

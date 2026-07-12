@@ -1,7 +1,7 @@
 // Agent terminal handler for kiro-cli's terminal/* ACP requests.
 //
 // When the bridge declares terminal: true, kiro-cli sends terminal/create,
-// terminal/output, terminal/release, terminal/waitForExit, and terminal/kill
+// terminal/output, terminal/release, terminal/wait_for_exit, and terminal/kill
 // requests. Each terminal is a headless subprocess (os/exec.Command) with
 // piped stdout/stderr and a byte-limited ring buffer for output.
 //
@@ -16,13 +16,19 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
+
+// keySignal is the wire key for a terminating signal in an ACP terminal
+// exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
+const keySignal = "signal"
 
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
@@ -31,8 +37,63 @@ type agentTerminal struct {
 	done     chan struct{}
 	output   *byteRing
 	chatID   api.ChatID
+	signal   string
 	exitCode int
 	mu       sync.Mutex
+}
+
+// termEnvVar is one entry of the ACP terminal/create `env` array (KAS
+// zEnvVariable: {name, value}). Decoded into cmd.Env.
+type termEnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// termEnv layers the requested env vars on top of the current process
+// environment. Returns nil when none are requested so cmd.Env stays nil
+// and the child inherits os.Environ() unchanged (identical to the
+// pre-env behaviour).
+func termEnv(vars []termEnvVar) []string {
+	if len(vars) == 0 {
+		return nil
+	}
+	env := os.Environ()
+	for _, v := range vars {
+		env = append(env, v.Name+"="+v.Value)
+	}
+	return env
+}
+
+// exitStatusObject returns the ACP exit-status object for an exited
+// terminal, matching KAS's zTerminalExitStatus ({exitCode?, signal?}). A
+// signal-killed process reports {signal} with exitCode omitted (KAS
+// requires exitCode>=0); a normal exit reports {exitCode}. Takes term.mu;
+// call only after term.done is closed.
+func (t *agentTerminal) exitStatusObject() map[string]any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.signal != "" {
+		return map[string]any{keySignal: t.signal}
+	}
+	return map[string]any{keyExitCode: t.exitCode}
+}
+
+// exitStatusFromState maps a finished process's state to (exitCode, signal).
+// ProcessState.ExitCode() is -1 on signal death, which KAS rejects
+// (zTerminalExitStatus requires exitCode>=0), so a signal death returns
+// (0, "<signal>") and callers omit exitCode in favour of the signal
+// string. A normal exit returns (code>=0, "").
+func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
+	if st == nil {
+		return 0, ""
+	}
+	if code := st.ExitCode(); code >= 0 {
+		return code, ""
+	}
+	if ws, ok := st.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 0, ws.Signal().String()
+	}
+	return 0, "unknown"
 }
 
 // agentTerminals holds all active terminals keyed by terminal ID.
@@ -138,10 +199,14 @@ func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, meth
 
 func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
-		Command         string   `json:"command"`
-		Cwd             string   `json:"cwd"`
-		Args            []string `json:"args"`
-		OutputByteLimit int      `json:"outputByteLimit"`
+		Command string   `json:"command"`
+		Cwd     string   `json:"cwd"`
+		Args    []string `json:"args"`
+		// Env is the ACP terminal/create env array (KAS zEnvVariable
+		// {name,value}); populated into cmd.Env so env-dependent agent
+		// commands run with the requested variables.
+		Env             []termEnvVar `json:"env"`
+		OutputByteLimit int          `json:"outputByteLimit"`
 	}
 	if parseRequest(msg, &params) != nil {
 		respondErr(ctx, h, chatID, msg, "invalid params")
@@ -157,19 +222,28 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		limit = params.OutputByteLimit
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cancel)
-	cmd := exec.CommandContext(ctx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
+	// The command must outlive the per-event ctx: translateACPEvent cancels
+	// that ctx the moment it returns, and a child of it would SIGTERM the
+	// just-spawned process before it does any work (C2). WithoutCancel keeps
+	// the ctx values but strips its cancellation; the AfterFunc re-attaches
+	// shutdown-scoped teardown so the command still dies on hub shutdown
+	// (and on terminal_kill / terminal_release / normal exit via cmdCancel).
+	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cmdCancel)
+	cmd := exec.CommandContext(cmdCtx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
 	// Graceful shutdown: SIGTERM on context cancel, escalate to SIGKILL
 	// after 2s. Matches the cplieger Go apps' consistent subprocess
 	// management pattern (fclones, bridge, subflux/ffmpeg).
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
+	if env := termEnv(params.Env); env != nil {
+		cmd.Env = env
+	}
 	if params.Cwd != "" {
 		abs, err := h.resolveInsideWorkDir(params.Cwd)
 		if err != nil {
 			stop()
-			cancel()
+			cmdCancel()
 			respondErr(ctx, h, chatID, msg, "cwd escapes workspace: "+err.Error())
 			return
 		}
@@ -188,37 +262,35 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stop()
-		cancel()
+		cmdCancel()
 		respondErr(ctx, h, chatID, msg, err.Error())
 		return
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		stop()
-		cancel()
+		cmdCancel()
 		respondErr(ctx, h, chatID, msg, err.Error())
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
 		stop()
-		cancel()
+		cmdCancel()
 		respondErr(ctx, h, chatID, msg, err.Error())
 		return
 	}
 
 	termID := newMessageID() // reuse the ID generator for unique terminal IDs
 
-	// Stream stdout + stderr into the ring buffer.
-	h.lifecycle.inflight.Go(func() {
-		h.pumpTerminalOutput(term, termID, chatID, io.MultiReader(stdout, stderr))
-	})
-
-	// Wait for exit in background.
-	h.lifecycle.inflight.Go(func() {
-		h.awaitTerminalExit(term, termID, chatID, cmd, stop, cancel)
-	})
-
+	// Register the terminal in the maps and broadcast terminal_created
+	// BEFORE starting the pump/exit goroutines. emit() assigns monotonic
+	// event ids in call order, and those goroutines emit terminal_output /
+	// terminal_exited; if they ran first, a fast write-and-exit command
+	// could emit output/exited with a lower event id than terminal_created.
+	// The client would then drop those events (unknown terminal id) and
+	// leave the tab stuck "running". Registering + broadcasting first
+	// guarantees terminal_created is ordered ahead of any output/exit event.
 	h.agentTerms.mu.Lock()
 	h.agentTerms.terms[termID] = term
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], termID)
@@ -231,54 +303,137 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		Args:       params.Args,
 	}))
 	respondOK(ctx, h, chatID, msg, map[string]string{"terminalId": termID})
+
+	// Stream stdout + stderr into the ring buffer. Started only after the
+	// terminal is registered and terminal_created is broadcast (see above).
+	h.lifecycle.inflight.Go(func() {
+		h.pumpTerminalOutput(term, termID, chatID, io.MultiReader(stdout, stderr))
+	})
+
+	// Wait for exit in background.
+	h.lifecycle.inflight.Go(func() {
+		h.awaitTerminalExit(term, termID, chatID, cmd, stop, cmdCancel)
+	})
 }
 
 // pumpTerminalOutput streams a terminal's combined stdout/stderr into
 // its ring buffer and broadcasts each chunk to SSE clients until the
 // reader hits EOF or an error.
 func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.ChatID, r io.Reader) {
+	// Hub-scoped context: this goroutine outlives the per-event ctx that
+	// spawned it (translateACPEvent cancels that on return), so derive a
+	// fresh one that lives until the reader hits EOF or the hub shuts down.
+	ctx, cancel := h.hubContext()
+	defer cancel()
 	buf := getPumpBuf()
 	defer pumpBufPool.Put(buf) //nolint:staticcheck // returned after loop exits
+
+	// pending carries a short (≤3-byte) trailing remainder from the previous
+	// read that formed an incomplete multi-byte UTF-8 rune split across the
+	// 4 KB read boundary. It is prepended to the next chunk before
+	// broadcasting so the live SSE terminal_output stream is always valid
+	// UTF-8 — without it string()/JSON coerces the split rune to U+FFFD in the
+	// browser's live view. The ring buffer still receives every raw byte
+	// exactly once (the agent pull path via byteRing.String() runs its own
+	// ToValidUTF8), so only the SSE broadcast needs the carry.
+	var pending []byte
+	broadcast := func(data string) {
+		h.Broadcast(ctx, api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
+			TerminalID: termID,
+			Data:       data,
+		}))
+	}
 	for {
 		n, readErr := r.Read(buf)
 		if n > 0 {
 			term.mu.Lock()
-			term.output.Write(buf[:n])
+			term.output.Write(buf[:n]) // ring gets every raw byte, unchanged
 			term.mu.Unlock()
-			// Broadcast output to SSE clients for the agent terminal tab.
-			h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
-				TerminalID: termID,
-				Data:       string(buf[:n]),
-			}))
+
+			// Assemble the broadcast chunk from any carried remainder plus the
+			// new bytes, then split off a fresh incomplete-rune tail.
+			chunk := buf[:n]
+			if len(pending) > 0 {
+				chunk = append(pending, chunk...)
+			}
+			hold := incompleteTailLen(chunk)
+			if emit := chunk[:len(chunk)-hold]; len(emit) > 0 {
+				broadcast(string(emit))
+			}
+			// Carry the incomplete tail (copied — buf is reused next Read).
+			pending = append(pending[:0:0], chunk[len(chunk)-hold:]...)
 		}
 		if readErr != nil {
 			break
 		}
 	}
+	// Flush any leftover incomplete bytes at EOF so no output is lost; they
+	// render as U+FFFD, matching the ring's ToValidUTF8 behaviour.
+	if len(pending) > 0 {
+		broadcast(string(pending))
+	}
+}
+
+// incompleteTailLen returns the number of trailing bytes of b that form an
+// incomplete (truncated) leading UTF-8 sequence — the start of a multi-byte
+// rune whose continuation bytes have not arrived yet. It returns 0 when b
+// ends on a complete rune, is empty, or ends in a standalone invalid byte
+// that will never complete. At most utf8.UTFMax-1 (3) bytes are ever held.
+// Used by pumpTerminalOutput to avoid splitting a rune across the read
+// boundary in the live SSE stream.
+func incompleteTailLen(b []byte) int {
+	if r, size := utf8.DecodeLastRune(b); r != utf8.RuneError || size > 1 {
+		// Ends on a complete rune (a real rune, or a genuine U+FFFD, which
+		// encodes as 3 bytes → size > 1). Nothing to hold.
+		return 0
+	}
+	// The final byte(s) don't decode as a complete rune. Walk back to the
+	// lead byte of the trailing sequence (bounded to UTFMax) and hold it only
+	// if it is a valid-but-not-yet-complete rune prefix.
+	for i := 1; i <= utf8.UTFMax && i <= len(b); i++ {
+		if lead := b[len(b)-i]; utf8.RuneStart(lead) {
+			if utf8.FullRune(b[len(b)-i:]) {
+				return 0 // a complete (though possibly invalid) rune — don't hold
+			}
+			return i
+		}
+	}
+	return 0
 }
 
 // awaitTerminalExit blocks on cmd.Wait, records the exit status on the
 // terminal, releases the per-terminal context resources (stop
-// unregisters the shutdown AfterFunc, cancel releases the command
-// context), closes term.done, and broadcasts terminal_exited.
-func (h *Hub) awaitTerminalExit(term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd, stop func() bool, cancel context.CancelFunc) {
+// unregisters the shutdown AfterFunc, cmdCancel releases the command
+// context), closes term.done, and broadcasts terminal_exited. A
+// signal-killed process records a signal string (ProcessState.ExitCode()
+// is -1) rather than exitCode -1, so the exit reports signal:"..." and
+// omits exit_code (KAS's zTerminalExitStatus requires exitCode>=0).
+func (h *Hub) awaitTerminalExit(term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd, stop func() bool, cmdCancel context.CancelFunc) {
+	// Hub-scoped context for the broadcast (outlives the per-event ctx).
+	ctx, cancel := h.hubContext()
+	defer cancel()
 	err := cmd.Wait()
-	stop()   // unregister the AfterFunc
-	cancel() // release context resources
+	stop()      // unregister the AfterFunc
+	cmdCancel() // release the command context
 	term.mu.Lock()
 	if err != nil {
 		term.exitErr = err
-		term.exitCode = cmd.ProcessState.ExitCode()
+		term.exitCode, term.signal = exitStatusFromState(cmd.ProcessState)
 	}
+	sig := term.signal
+	code := term.exitCode
 	term.mu.Unlock()
 	close(term.done)
-	h.Broadcast(context.Background(), api.NewEvent(api.EventTerminalExited, chatID, api.TerminalExitedPayload{
-		TerminalID: termID,
-		ExitCode:   term.exitCode,
-	}))
+	payload := api.TerminalExitedPayload{TerminalID: termID}
+	if sig != "" {
+		payload.Signal = sig
+	} else {
+		payload.ExitCode = &code
+	}
+	h.Broadcast(ctx, api.NewEvent(api.EventTerminalExited, chatID, payload))
 }
 
-func (h *Hub) termOutput(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termOutput(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -289,34 +444,29 @@ func (h *Hub) termOutput(ctx context.Context, _ api.ChatID, msg *api.RPCResponse
 	term, ok := h.agentTerms.terms[params.TerminalID]
 	h.agentTerms.mu.Unlock()
 	if !ok {
-		respondErr(ctx, h, "", msg, "terminal not found")
+		// Thread the real chatID (from the request) so the error response
+		// resolves a bridge; an empty chatID makes respondErr's bridge
+		// lookup miss and the error is silently dropped, hanging the agent.
+		respondErr(ctx, h, chatID, msg, "terminal not found")
 		return
 	}
 	term.mu.Lock()
 	output := term.output.String()
 	truncated := term.output.Truncated()
-	chatID := term.chatID
 	term.mu.Unlock()
 
-	// Check if process has exited.
-	var exitStatus *int
+	result := map[string]any{"output": output, "truncated": truncated}
+	// Check if the process has exited; v3/KAS zTerminalOutputResponse
+	// requires exitStatus to be an object {exitCode?, signal?} (or null).
 	select {
 	case <-term.done:
-		term.mu.Lock()
-		code := term.exitCode
-		term.mu.Unlock()
-		exitStatus = &code
+		result["exitStatus"] = term.exitStatusObject()
 	default:
-	}
-
-	result := map[string]any{"output": output, "truncated": truncated}
-	if exitStatus != nil {
-		result["exitStatus"] = *exitStatus
 	}
 	respondOK(ctx, h, chatID, msg, result)
 }
 
-func (h *Hub) termRelease(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termRelease(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -329,15 +479,14 @@ func (h *Hub) termRelease(ctx context.Context, _ api.ChatID, msg *api.RPCRespons
 			slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}
-	var chatID api.ChatID
-	if term != nil {
-		chatID = term.chatID
-	}
 	slog.Info("agent terminal released", "term_id", params.TerminalID)
-	respondOK(ctx, h, chatID, msg, map[string]bool{"ok": true})
+	// Respond with the request's chatID (not the possibly-nil term.chatID)
+	// so the ack resolves a bridge even for an unknown terminal id. KAS
+	// zReleaseTerminalResponse is an empty object.
+	respondOK(ctx, h, chatID, msg, map[string]any{})
 }
 
-func (h *Hub) termWaitForExit(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termWaitForExit(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -348,18 +497,21 @@ func (h *Hub) termWaitForExit(ctx context.Context, _ api.ChatID, msg *api.RPCRes
 	term, ok := h.agentTerms.terms[params.TerminalID]
 	h.agentTerms.mu.Unlock()
 	if !ok {
-		respondErr(ctx, h, "", msg, "terminal not found")
+		// Real chatID so the not-found error resolves a bridge (see termOutput).
+		respondErr(ctx, h, chatID, msg, "terminal not found")
 		return
 	}
-	chatID := term.chatID
-	// Block until the process exits or hub shuts down.
+	// Block until the process exits or the hub shuts down. Derive a fresh
+	// hub-scoped context inside the goroutine: the per-event ctx is cancelled
+	// the moment translateACPEvent returns (before this async responder runs),
+	// and Bridge.Respond drops a write on a cancelled ctx — which would hang
+	// the agent's wait_for_exit Call.
 	h.lifecycle.inflight.Go(func() {
+		fctx, cancel := h.hubContext()
+		defer cancel()
 		select {
 		case <-term.done:
-			term.mu.Lock()
-			code := term.exitCode
-			term.mu.Unlock()
-			respondOK(ctx, h, chatID, msg, map[string]int{"exitCode": code})
+			respondOK(fctx, h, chatID, msg, term.exitStatusObject())
 		case <-h.lifecycle.done:
 			// Shutdown in progress; bridge is dead, response is moot.
 			return
@@ -367,7 +519,7 @@ func (h *Hub) termWaitForExit(ctx context.Context, _ api.ChatID, msg *api.RPCRes
 	})
 }
 
-func (h *Hub) termKill(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termKill(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -378,7 +530,8 @@ func (h *Hub) termKill(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) 
 	term, ok := h.agentTerms.terms[params.TerminalID]
 	h.agentTerms.mu.Unlock()
 	if !ok {
-		respondErr(ctx, h, "", msg, "terminal not found")
+		// Real chatID so the not-found error resolves a bridge (see termOutput).
+		respondErr(ctx, h, chatID, msg, "terminal not found")
 		return
 	}
 	if term.cmd.Process != nil {
@@ -386,5 +539,6 @@ func (h *Hub) termKill(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) 
 			slog.Warn("terminal kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}
-	respondOK(ctx, h, term.chatID, msg, map[string]bool{"ok": true})
+	// KAS zKillTerminalResponse is an empty object.
+	respondOK(ctx, h, chatID, msg, map[string]any{})
 }

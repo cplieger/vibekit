@@ -46,17 +46,6 @@ func (wp *WritingPartial) Write(ctx context.Context, snap *PartialSnapshot) {
 	}
 }
 
-// Flush writes the final snapshot unconditionally (ignoring throttle),
-// ensuring the last state is captured before the partial file is removed.
-func (wp *WritingPartial) Flush(ctx context.Context, snap *PartialSnapshot) {
-	if wp.disabled {
-		return
-	}
-	if err := wp.writeOnce(ctx, snap); err != nil {
-		slog.Warn("partial flush failed", "message_id", snap.MessageID, "error", err)
-	}
-}
-
 // CloseAndRemove closes the fd and removes the file at path.
 func (wp *WritingPartial) CloseAndRemove(ctx context.Context, path string) {
 	if wp.file != nil {
@@ -116,7 +105,11 @@ type PartialSnapshot struct {
 	// the message from Content+ToolCalls only and fall back to the
 	// legacy "all text, then all tools" rendering.
 	Blocks []api.Block `json:"blocks,omitempty"`
-	Ts     int64       `json:"ts"`
+	// CodeReferences preserves licensed-code attributions accumulated
+	// during the turn so a crash mid-turn recovers them onto the
+	// interrupted assistant message.
+	CodeReferences []api.CodeReference `json:"code_references,omitempty"`
+	Ts             int64               `json:"ts"`
 }
 
 // PartialPath returns the path for a chat's partial recovery file.

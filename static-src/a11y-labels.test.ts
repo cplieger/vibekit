@@ -196,52 +196,6 @@ describe("a11y: aria-expanded on popover triggers", () => {
 
     document.body.removeChild(pill);
   });
-
-  it("auto-approve button has aria-label matching title", async () => {
-    vi.resetModules();
-    const btn = document.createElement("button");
-    btn.id = "auto-approve-crew-btn";
-    vi.doMock("./dom.js", () => ({
-      $: new Proxy(
-        { autoApproveCrewBtn: btn },
-        {
-          get: (t, p) =>
-            p in t ? (t as Record<string, unknown>)[p as string] : document.createElement("div"),
-        },
-      ),
-    }));
-    vi.doMock("./store.js", () => ({
-      getActive: () => ({
-        id: "s1",
-        auto_approve_crew: true,
-        messages: [{ event_kind: "crew" }],
-      }),
-      version: { value: 1 },
-      sessionsVersion: { value: 1 },
-      activeVersion: { value: 1 },
-      activeSession: {
-        value: { id: "s1", supervised_mode: true, pending_changes: [], messages: [] },
-      },
-      messagesVersion: { value: 1 },
-    }));
-    vi.doMock("./signals.js", () => ({
-      effect: (fn: () => void) => {
-        fn();
-      },
-    }));
-    vi.doMock("./actions/chat.js", () => ({ setAutoApproveCrew: { dispatch: vi.fn() } }));
-    vi.doMock("./actions/index.js", () => ({
-      bindLoadingState: () => () => {
-        /* noop */
-      },
-    }));
-
-    const { initAutoApprove } = await import("./auto-approve.js");
-    initAutoApprove();
-
-    expect(btn.getAttribute("aria-label")).toBe("Auto-approve subagent tools (on)");
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
-  });
 });
 
 describe("a11y: tool-card aria-expanded on toggle", () => {
@@ -405,22 +359,8 @@ describe("a11y: failed tool aria-expanded", () => {
       maybeCollapseGroup: noop,
       formatDuration: (ms: number) => String(ms),
     }));
-    vi.doMock("./crew-card.js", () => ({
-      getCrewToolEl: () => undefined,
-      addToolToCrewRow: noop,
-      onCrewToolCompleted: noop,
-      setSubagentActivity: noop,
-    }));
-    vi.doMock("./subagent.js", () => ({
-      isSubAgent: () => false,
-      isSubAgentActive: () => false,
-      appendToSubAgent: noop,
-      createSubAgentCard: () => document.createElement("div"),
-      updateSubAgentCard: noop,
-    }));
     vi.doMock("./messages-actions.js", () => ({ addEditActions: noop }));
     vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => undefined }));
-    vi.doMock("./format-tool-activity.js", () => ({ formatToolActivity: (t: string) => t }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const { initToolCallbacks, updateToolCall } = await import("./messages-tools.js");
@@ -465,10 +405,8 @@ describe("a11y: failed tool aria-expanded", () => {
     vi.doUnmock("./scroll.js");
     vi.doUnmock("./editor-openers.js");
     vi.doUnmock("./tool-group.js");
-    vi.doUnmock("./crew-card.js");
     vi.doUnmock("./subagent.js");
     vi.doUnmock("./messages-actions.js");
     vi.doUnmock("./actions/index.js");
-    vi.doUnmock("./format-tool-activity.js");
   });
 });

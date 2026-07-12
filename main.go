@@ -21,7 +21,6 @@ import (
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
 	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
-	"github.com/cplieger/vibekit/internal/permissions"
 	pushPkg "github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/steering"
@@ -83,6 +82,5 @@ func runMain() int {
 // only by the compile-time var block above.
 var (
 	_ = forgesPkg.NewManager
-	_ = permissions.Args
 	_ = server.New
 )

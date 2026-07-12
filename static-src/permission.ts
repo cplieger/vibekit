@@ -12,7 +12,6 @@ import { openDialog } from "@cplieger/ui-primitives/dialog";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
-import { getSubagentName } from "./crew-card.js";
 import { addWhitelistEntry } from "./permissions-ui.js";
 
 const approvalEl = $.toolApproval;
@@ -26,7 +25,6 @@ export function showPermissionDialog(
   input: unknown,
   options: PermissionOption[],
   onSelect: (optionId: string) => void,
-  subSessionId?: string,
 ): void {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const content = approvalEl.querySelector(".approval-body")!;
@@ -34,9 +32,7 @@ export function showPermissionDialog(
   const actions = approvalEl.querySelector(".approval-actions")!;
 
   const isModeSwitch = kind === "switch_mode";
-  const isSubagent = subSessionId !== undefined && subSessionId !== "";
   approvalEl.classList.toggle("mode-switch", isModeSwitch);
-  approvalEl.classList.toggle("subagent-permission", isSubagent);
 
   const preview = formatInputPreview(input);
 
@@ -54,11 +50,6 @@ export function showPermissionDialog(
 
   if (isModeSwitch) {
     content.appendChild(el("div", { className: "approval-origin" }, title));
-  } else if (isSubagent) {
-    const agentName = getSubagentName(subSessionId);
-    content.appendChild(
-      el("div", { className: "approval-origin" }, "for subagent ", el("strong", null, agentName)),
-    );
   } else if (mcp !== null) {
     content.appendChild(
       el(
@@ -96,7 +87,7 @@ export function showPermissionDialog(
   }
 
   // "Always allow..." expansion for shell commands.
-  if (kind === "execute" && !isModeSwitch && !isSubagent) {
+  if (kind === "execute" && !isModeSwitch) {
     const alwaysRow = buildAlwaysAllowRow(title, options, onSelect);
     if (alwaysRow !== null) {
       actions.appendChild(alwaysRow);

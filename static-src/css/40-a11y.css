@@ -63,7 +63,7 @@
   .uip-modal-dialog,
   .popup,
   .tool-call,
-  .subagent-call {
+  .subagent-block {
     border: 1px solid CanvasText;
   }
 }

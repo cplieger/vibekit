@@ -20,19 +20,19 @@ vi.mock("../transport.js", async (importOriginal) => {
   return { ...orig, send: vi.fn() };
 });
 
-vi.mock("../chat-commands.js", () => ({
-  sendPromptTo: vi.fn(),
+vi.mock("../prompt-queue.js", () => ({
+  submitPrompt: vi.fn(),
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 import { send as transportSend } from "../transport.js";
-import { sendPromptTo } from "../chat-commands.js";
+import { submitPrompt } from "../prompt-queue.js";
 
 const mockFetch = vi.fn();
 const mockSend = vi.mocked(transportSend);
-const mockSendPromptTo = vi.mocked(sendPromptTo);
+const mockSubmitPrompt = vi.mocked(submitPrompt);
 
 beforeEach(() => {
   resetActionFramework();
@@ -100,15 +100,22 @@ describe("messages.undo_edit", () => {
 });
 
 describe("plan.run", () => {
-  it("sends plan content via sendPromptTo", async () => {
-    mockSendPromptTo.mockResolvedValue("sent");
+  it("sends plan content via submitPrompt (queue-aware)", async () => {
+    mockSubmitPrompt.mockResolvedValue("sent");
     const { runPlan } = await import("./messages.js");
     await runPlan.dispatch({ chatID: "c1", content: "Step 1\nStep 2" });
-    expect(mockSendPromptTo).toHaveBeenCalledWith("c1", expect.stringContaining("Step 1"));
+    expect(mockSubmitPrompt).toHaveBeenCalledWith("c1", expect.stringContaining("Step 1"));
   });
 
-  it("records error when sendPromptTo returns 'failed'", async () => {
-    mockSendPromptTo.mockResolvedValue("failed");
+  it("treats a queued plan handoff as success (drains later)", async () => {
+    mockSubmitPrompt.mockResolvedValue("queued");
+    const { runPlan } = await import("./messages.js");
+    const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
+    expect(r).not.toBeNull();
+  });
+
+  it("records error when submitPrompt returns 'failed'", async () => {
+    mockSubmitPrompt.mockResolvedValue("failed");
     const { runPlan } = await import("./messages.js");
     const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
     expect(r).toBeNull();

@@ -23,13 +23,11 @@ function makeSession(id: string): Session {
   return {
     id,
     name: "test",
-    agent: "",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    auto_approve_crew: false,
     supervised_mode: false,
     pending_changes: [],
     usage: {

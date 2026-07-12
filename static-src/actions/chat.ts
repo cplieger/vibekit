@@ -1,7 +1,7 @@
 // Actions for chat lifecycle: delete, archive, restore, discard tangent,
-// load history, delete archived, cancel, switch model, send prompt, resolve
-// pending change, resolve all pending, permission response, restore checkpoint,
-// fork, merge tangent, set supervised, set auto-approve crew, trust pending,
+// load history, delete archived, cancel, switch model, set mode, send prompt,
+// resolve pending change, resolve all pending, permission response,
+// elicitation response, restore checkpoint, set supervised, trust pending,
 // clear pending trust.
 // ---------------------------------------------------------------------------
 
@@ -19,18 +19,21 @@ import {
   get,
   setThinking,
   setSupervisedMode,
-  setAutoApproveCrew as storeSetAutoApproveCrew,
-  enqueuePrompt,
   removeChat,
   reinsertSession,
   indexOfSession,
   setModel,
+  setCurrentMode,
   clearPendingChanges,
   addPendingChange,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
 
 // --- chat.delete ---
+// The tab-close path in the "no retention" mode (retention = 0): closing a
+// non-empty chat deletes it permanently (ephemeral chats). Retention > 0 uses
+// chat.archive instead (chat moves to History). This is the app's ONLY
+// active-chat delete path; History rows use chat.delete_archived.
 
 export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
   name: "chat.delete",
@@ -183,36 +186,39 @@ export const clearPendingTrust = transportAction<string>({
   error: "Couldn't clear pending trust",
 });
 
-// --- chat.set_auto_approve_crew ---
+// --- chat.set_mode ---
+//
+// Switch the chat's session mode (v3): the prompt-bar mode picker's apply
+// path. On a chat with a live bridge the server switches in place via
+// session/set_mode; on an empty chat it persists the choice and applies it
+// when the first prompt starts the session. Optimistic so the pill flips
+// instantly; the server's mode_changed broadcast reconciles (idempotent).
 
-export const setAutoApproveCrew = transportAction<
-  { chatID: string; enabled: boolean },
-  { prev: boolean }
->({
-  name: "chat.set_auto_approve_crew",
+export const setMode = transportAction<{ chatID: string; modeID: string }, { prev: string }>({
+  name: "chat.set_mode",
   scope: ({ chatID }) => `chat:${chatID}`,
-  command: ({ chatID, enabled }) => ({
-    type: "set_auto_approve_crew",
+  command: ({ chatID, modeID }) => ({
+    type: "set_mode",
     chat_id: chatID,
-    payload: { enabled },
+    payload: { mode_id: modeID },
   }),
-  optimistic: ({ chatID, enabled }) => {
+  optimistic: ({ chatID, modeID }) => {
     const session = get(chatID);
     if (session === undefined) {
       return undefined;
     }
-    const prev = session.auto_approve_crew;
-    storeSetAutoApproveCrew(chatID, enabled);
+    const prev = session.current_mode_id;
+    setCurrentMode(chatID, modeID);
     return { prev };
   },
   rollback: ({ chatID }, op) => {
     if (op !== undefined) {
-      storeSetAutoApproveCrew(chatID, op.prev);
+      setCurrentMode(chatID, op.prev);
     }
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't update auto-approve",
+  error: "Couldn't switch mode",
 });
 
 // --- chat.restore ---
@@ -358,7 +364,6 @@ interface SendPromptArgs {
   chatID: string;
   text: string;
   messageID: string;
-  agent: string;
   model: string;
   activeFile: string;
   openFiles: readonly string[];
@@ -379,7 +384,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, agent, model, activeFile, openFiles, attachments } = args;
+    const { chatID, text, messageID, model, activeFile, openFiles, attachments } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -387,7 +392,6 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
         payload: {
           text,
           message_id: messageID,
-          agent,
           model,
           active_file: activeFile,
           open_files: openFiles,
@@ -404,16 +408,10 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
       return "sent";
     }
     if (r.status === 409) {
-      // Server says "in-flight turn"; queue the text and report queued.
-      // The queue drains via SSE turn_ended. enqueuePrompt runs in
-      // run() (not optimistic) because it should only happen if the
-      // server actually 409'd, not on cancel.
-      //
-      // Limitation: if the SSE connection drops after queuing, the
-      // thinking state persists indefinitely. A staleness timer or
-      // SSE-reconnect hook that clears thinking after 60s of inactivity
-      // would fix this, but is not yet implemented.
-      enqueuePrompt(chatID, text, attachments);
+      // A turn is in flight on this chat. Report "queued" and let the caller
+      // (prompt-queue.ts submitPrompt) buffer it. Keeping this action a pure
+      // send is what lets the drain path re-send a queued prompt without
+      // double-enqueuing it (peek → send → remove-on-sent lives in the queue).
       return "queued";
     }
     throw new ActionError(r.error ?? "send failed", {

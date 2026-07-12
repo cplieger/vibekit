@@ -86,8 +86,14 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	chatFilter := api.ChatID(r.URL.Query().Get("chat_id"))
+	// Size the delivery buffer to the replay ring. On reconnect,
+	// replaySinceLastID does a non-blocking send of every unseen event
+	// (up to the full ring) BEFORE the drain loop below starts consuming,
+	// so a buffer smaller than the ring silently drops the overflow — and
+	// since Replay yields oldest→newest, the dropped events are the
+	// NEWEST. Matching replayBufSize guarantees a full replay lands.
 	sc := &sseClient{
-		ch:     make(chan sseEvent, 256),
+		ch:     make(chan sseEvent, replayBufSize),
 		cancel: cancel,
 		chatID: chatFilter,
 	}

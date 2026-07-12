@@ -10,15 +10,11 @@ import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/
 import { registerCleanup } from "./actions/index.js";
 import type { EffortLevel } from "./model-switcher.js";
 
-export type PermissionMode = "prompt" | "trust-list" | "trust-all";
-
 export interface AppSettings {
   last_model?: string;
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;
   notify_permission?: boolean;
-  permission_mode?: PermissionMode;
-  trust_tools?: string[];
   agent_ignore_files?: string[];
   debug_logs?: boolean;
   /** Default Supervised-mode state for new chats. When true, new
@@ -28,6 +24,12 @@ export interface AppSettings {
   supervised_default?: boolean;
   shell_policy?: "no_commands" | "safe_commands" | "all_commands";
   model_effort?: { last_model: string; effort: EffortLevel };
+  /** Chat retention, owned end to end by vibekit (kiro-cli's own
+   *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever
+   *  (archive on close, never purged — "backups"), 0 = off (delete on
+   *  close, History hidden — ephemeral), N = keep N days (archive on
+   *  close, purged after N). */
+  chat_retention_days?: number;
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;

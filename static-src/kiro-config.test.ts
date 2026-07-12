@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-// Tests for kiro-config.ts: cancel + dispatch freshness, render on success, error path.
+// Tests for kiro-config.ts: cancel + dispatch freshness, render on success,
+// error path, keyboard-operable rows, and the settings_updated live-refetch.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -38,7 +39,23 @@ vi.mock("./dom.js", () => {
   return { $: { kiroConfigList: div } };
 });
 
+// Capture the settings_updated handler so the live-refetch wiring is testable
+// (mirrors the specs.test.ts bus mock — the factory runs lazily at import time,
+// by which point the `let` is initialised).
+let settingsUpdatedHandler: (() => void) | undefined;
+vi.mock("./bus.js", () => ({
+  onSSE: (type: string, fn: () => void) => {
+    if (type === "settings_updated") {
+      settingsUpdatedHandler = fn;
+    }
+    return () => {
+      /* unsubscribe noop */
+    };
+  },
+}));
+
 import { apiGet } from "./api-client.js";
+import { openFile } from "./editor-openers.js";
 import { configure } from "@cplieger/actions";
 import { $ } from "./dom.js";
 import * as toast from "./toast.js";
@@ -107,5 +124,43 @@ describe("kiro-config", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect($.kiroConfigList.children.length).toBeGreaterThan(0);
     expect($.kiroConfigList.textContent).toContain("Failed to load config");
+  });
+
+  it("renders keyboard-operable rows that open the file on Enter", async () => {
+    vi.mocked(openFile).mockClear();
+    mockApiGet.mockResolvedValue({
+      items: [{ name: "env", path: "/workspace/.kiro/steering/env.md", type: "steering" }],
+    });
+
+    const { loadKiroConfig } = await import("./kiro-config.js");
+    loadKiroConfig();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const row = $.kiroConfigList.querySelector<HTMLElement>(".kiro-config-row");
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute("role")).toBe("button");
+    expect(row?.getAttribute("tabindex")).toBe("0");
+    expect(row?.getAttribute("aria-label")).toBe("Open env");
+
+    row?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(vi.mocked(openFile)).toHaveBeenCalledWith("/workspace/.kiro/steering/env.md");
+  });
+
+  it("live-refetches on settings_updated when the list is visible", async () => {
+    // offsetParent is null in happy-dom by default; force "visible".
+    Object.defineProperty($.kiroConfigList, "offsetParent", {
+      configurable: true,
+      get: () => document.body,
+    });
+    mockApiGet.mockResolvedValue({ items: [] });
+
+    const { initKiroConfig } = await import("./kiro-config.js");
+    initKiroConfig();
+    expect(settingsUpdatedHandler).toBeTypeOf("function");
+
+    mockApiGet.mockClear();
+    settingsUpdatedHandler?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
   });
 });

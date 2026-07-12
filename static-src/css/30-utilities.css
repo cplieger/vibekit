@@ -83,6 +83,10 @@
   }
 
   /* Text utilities */
+  .mono {
+    font-family: var(--font-mono);
+  }
+
   .mono-sm {
     font-family: var(--font-mono);
     font-size: var(--fs-sm);

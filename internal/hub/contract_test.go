@@ -25,7 +25,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -36,7 +36,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -47,7 +47,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -62,7 +62,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -73,7 +73,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Respond_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -84,7 +84,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -104,7 +104,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Agent: "agent", Model: "model"}); err != nil {
+		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

@@ -153,7 +153,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestPermission_RequiresBridge(t *testing.T) {
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
+	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
+	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,25 +290,6 @@ func TestPrompt_RejectsBadMessageID(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("message_id %q: code = %d, want 400", id, rec.Code)
 		}
-	}
-}
-
-func TestPrompt_RejectsBadAgentIdent(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	// Agent names are passed to kiro-cli as argv; kiro-cli uses them
-	// to resolve filesystem paths under .kiro/agents. Unsafe values
-	// must be rejected at the command layer, not defer to the bridge.
-	payload, _ := json.Marshal(map[string]string{
-		"text": "hi", "message_id": "m-1", "agent": "../../etc/passwd",
-	})
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "prompt", RequestID: "r-bad-agent", ChatID: "c1",
-		Payload: payload,
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", rec.Code)
 	}
 }
 
@@ -447,8 +428,9 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	if p, _ := resp["path"].(string); p != filepath.Join(".kiro", "hooks", "test-hook.json") {
 		t.Errorf("path = %q, want .kiro/hooks/test-hook.json (workDir-relative)", p)
 	}
-	// The JSON written to disk reflects askAgent branch with prompt
-	// + patterns. mode 0o600 — hooks can hold runCommand shell.
+	// The JSON written to disk is the v1 schema: askAgent maps to an
+	// agent action and patterns to a matcher. mode 0o600 — hooks can
+	// hold runCommand shell.
 	data, err := os.ReadFile(filepath.Join(h.lifecycle.workDir, ".kiro", "hooks", "test-hook.json"))
 	if err != nil {
 		t.Fatalf("hook file missing: %v", err)
@@ -465,19 +447,35 @@ func TestCreateHook_WritesFile(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	then, _ := got["then"].(map[string]any)
-	if then["type"] != "askAgent" || then["prompt"] != "review this" {
-		t.Errorf("then = %+v", then)
+	// v1 envelope: { version:"v1", hooks:[ { name, trigger, matcher, action } ] }.
+	if got["version"] != "v1" {
+		t.Errorf("version = %v, want v1", got["version"])
 	}
-	when, _ := got["when"].(map[string]any)
-	patterns, _ := when["patterns"].([]any)
-	if len(patterns) != 2 {
-		t.Errorf("patterns = %v, want 2 entries", patterns)
+	hooks, _ := got["hooks"].([]any)
+	if len(hooks) != 1 {
+		t.Fatalf("hooks = %v, want 1 entry", hooks)
+	}
+	hook, _ := hooks[0].(map[string]any)
+	// fileEdited maps to the PascalCase PostFileSave trigger; patterns
+	// become the single-regex matcher.
+	if hook["trigger"] != "PostFileSave" {
+		t.Errorf("trigger = %v, want PostFileSave", hook["trigger"])
+	}
+	if hook["matcher"] != "*.go,*.ts" {
+		t.Errorf("matcher = %v, want *.go,*.ts", hook["matcher"])
+	}
+	// askAgent maps to action.type=agent with a prompt (no command).
+	action, _ := hook["action"].(map[string]any)
+	if action["type"] != "agent" || action["prompt"] != "review this" {
+		t.Errorf("action = %+v", action)
+	}
+	if _, has := action["command"]; has {
+		t.Error("askAgent hook leaked a command field")
 	}
 }
 
 // TestCreateHook_RunCommandBranchWritesCommand pins the runCommand
-// branch distinct from askAgent: then.type=runCommand + then.command.
+// branch distinct from askAgent: v1 action.type=command + action.command.
 func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.lifecycle.workDir = t.TempDir()
@@ -498,11 +496,17 @@ func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	}
 	var got map[string]any
 	_ = json.Unmarshal(data, &got)
-	then, _ := got["then"].(map[string]any)
-	if then["type"] != "runCommand" || then["command"] != "lint %" {
-		t.Errorf("then = %+v", then)
+	hooks, _ := got["hooks"].([]any)
+	if len(hooks) != 1 {
+		t.Fatalf("hooks = %v, want 1 entry", hooks)
 	}
-	if _, has := then["prompt"]; has {
+	hook, _ := hooks[0].(map[string]any)
+	action, _ := hook["action"].(map[string]any)
+	// runCommand maps to action.type=command with a command (no prompt).
+	if action["type"] != "command" || action["command"] != "lint %" {
+		t.Errorf("action = %+v", action)
+	}
+	if _, has := action["prompt"]; has {
 		t.Error("runCommand hook leaked a prompt field")
 	}
 }
@@ -599,36 +603,21 @@ func TestIsEmptyTurn(t *testing.T) {
 	}{
 		{nil, "nil", "c1", false, false},
 		{&api.RPCResponse{}, "nil result", "c1", false, false},
+		// On v3 the prompt response carries only stopReason (no content array);
+		// emptiness is decided by stopReason==end_turn AND an empty buffer.
 		{
-			&api.RPCResponse{Result: mustJSON(t, map[string]any{
-				"stopReason": "end_turn",
-				"content":    []any{"text"},
-			})},
-			"end_turn with content",
-			"c1", false, false,
-		},
-		{
-			&api.RPCResponse{Result: mustJSON(t, map[string]any{
-				"stopReason": "end_turn",
-				"content":    []any{},
-			})},
-			"end_turn empty content, no buffer",
+			&api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})},
+			"end_turn, no buffer",
 			"c1", false, true,
 		},
 		{
-			&api.RPCResponse{Result: mustJSON(t, map[string]any{
-				"stopReason": "end_turn",
-				"content":    []any{},
-			})},
-			"end_turn empty content, empty buffer",
+			&api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})},
+			"end_turn, empty buffer",
 			"c-empty-buf", true, true,
 		},
 		{
-			&api.RPCResponse{Result: mustJSON(t, map[string]any{
-				"stopReason": "cancelled",
-				"content":    []any{},
-			})},
-			"cancelled empty content",
+			&api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})},
+			"cancelled",
 			"c1", false, false,
 		},
 	}
@@ -643,16 +632,13 @@ func TestIsEmptyTurn(t *testing.T) {
 		})
 	}
 
-	// Regression: a streamed turn with buffered content must NOT be
-	// treated as empty, even though the final response has empty
-	// content[] (normal for every successful streamed turn).
-	t.Run("end_turn empty content, buffer has content", func(t *testing.T) {
+	// Regression: a streamed turn with buffered content must NOT be treated as
+	// empty (the v3 prompt response is content-less for every turn, so the
+	// buffer is the only content signal).
+	t.Run("end_turn, buffer has content", func(t *testing.T) {
 		buf := h.bridge.assistantBufs.GetOrInit("c-with-content")
 		buf.Content.WriteString("hello from stream")
-		resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{
-			"stopReason": "end_turn",
-			"content":    []any{},
-		})}
+		resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 		if h.isEmptyTurn(resp, "c-with-content") {
 			t.Error("expected false for streamed turn with buffered content")
 		}
@@ -776,7 +762,7 @@ func TestShellCappedBuffer(t *testing.T) {
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "", "")
+	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -809,7 +795,6 @@ func TestBuildPromptBlocks(t *testing.T) {
 		wantMIME        string
 		attachments     []api.Attachment
 		wantLen         int
-		supportsDocs    bool
 	}{
 		{
 			name:         "TextOnly",
@@ -819,27 +804,32 @@ func TestBuildPromptBlocks(t *testing.T) {
 			wantContains: "hello",
 		},
 		{
-			name:        "DocumentAttachmentInlinedWhenSupported",
+			// v3: a supported document is always inlined as an embedded
+			// `resource` block (no `document` type in the v3 content-block
+			// union; embeddedContext is always advertised true).
+			name:        "SupportedDocumentInlinedAsResource",
 			text:        "hi",
 			attachments: []api.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "doc.pdf"), []byte("%PDF-1.7 fake"), 0o644)
 			},
-			supportsDocs: true,
-			wantLen:      2,
-			wantType:     "document",
-			wantMIME:     "application/pdf",
+			wantLen:  2,
+			wantType: "resource",
+			wantMIME: "application/pdf",
 		},
 		{
-			name:        "DocumentFallsBackToPathRefWhenUnsupported",
+			// A format KAS does not accept as an inline resource
+			// (.pptx/.ppt/.rtf/.odt/.ods/.odp) must route through the
+			// path-reference branch with a note — never a dropped block.
+			name:        "UnsupportedDocEmitsAnnotatedPathRef",
 			text:        "hi",
-			attachments: []api.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
+			attachments: []api.Attachment{{Name: "deck.pptx", Path: "deck.pptx"}},
 			setupFile: func(dir string) {
-				os.WriteFile(filepath.Join(dir, "doc.pdf"), []byte("%PDF-1.7 fake"), 0o644)
+				os.WriteFile(filepath.Join(dir, "deck.pptx"), []byte("PK fake pptx"), 0o644)
 			},
 			wantLen:      2,
 			wantType:     "text",
-			wantContains: "doc.pdf",
+			wantContains: "may not be readable",
 		},
 		{
 			name:        "OversizeDocumentFallsBackToText",
@@ -848,7 +838,6 @@ func TestBuildPromptBlocks(t *testing.T) {
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "big.pdf"), make([]byte, command.MaxDocumentBytes+1), 0o644)
 			},
-			supportsDocs: true,
 			wantLen:      2,
 			wantType:     "text",
 			wantContains: "too large",
@@ -857,7 +846,6 @@ func TestBuildPromptBlocks(t *testing.T) {
 			name:         "UnreadableDocumentFallsBackToText",
 			text:         "hi",
 			attachments:  []api.Attachment{{Name: "ghost.pdf", Path: "ghost.pdf"}},
-			supportsDocs: true,
 			wantLen:      2,
 			wantType:     "text",
 			wantContains: "unreadable",
@@ -891,7 +879,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir, tc.supportsDocs)
+			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}
@@ -900,8 +888,16 @@ func TestBuildPromptBlocks(t *testing.T) {
 			if last["type"] != tc.wantType {
 				t.Errorf("block[%d].type = %v, want %s", tc.wantLen-1, last["type"], tc.wantType)
 			}
-			if tc.wantMIME != "" && last["mimeType"] != tc.wantMIME {
-				t.Errorf("mimeType = %v, want %s", last["mimeType"], tc.wantMIME)
+			if tc.wantMIME != "" {
+				// On v3 a document rides an embedded `resource` block, so
+				// mimeType is nested under resource; text blocks have none.
+				mime := last["mimeType"]
+				if res, ok := last["resource"].(map[string]any); ok {
+					mime = res["mimeType"]
+				}
+				if mime != tc.wantMIME {
+					t.Errorf("mimeType = %v, want %s", mime, tc.wantMIME)
+				}
 			}
 			if tc.wantContains != "" {
 				text, _ := last["text"].(string)
@@ -1043,7 +1039,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 		},
 		"create_chat": {
 			Type: api.CmdCreateChat, RequestID: "bench-create", ChatID: "c-bench-new",
-			Payload: json.RawMessage(`{"name":"bench","agent":"default","model":"gpt-4"}`),
+			Payload: json.RawMessage(`{"name":"bench","model":"gpt-4"}`),
 		},
 		"cancel": {
 			Type: api.CmdCancel, RequestID: "bench-cancel", ChatID: "c-bench",
@@ -1072,7 +1068,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 		h, _, _ := newTestHub()
 		cmd := api.ClientCommand{
 			Type: api.CmdCreateChat, RequestID: "bench-cached", ChatID: "c-cached",
-			Payload: json.RawMessage(`{"name":"cached","agent":"default","model":"gpt-4"}`),
+			Payload: json.RawMessage(`{"name":"cached","model":"gpt-4"}`),
 		}
 		// Seed the cache with a first call.
 		body, _ := json.Marshal(cmd)

@@ -26,7 +26,7 @@ func newHubWithConfigDir(t *testing.T, cfg string) (*Hub, *fakeChatStore) {
 	t.Helper()
 	cs := newFakeChatStore()
 	factory := func() api.ACPBridge { return newFakeBridge() }
-	h := New(t.TempDir(), factory, cs, func() []string { return nil }, WithConfigDir(cfg))
+	h := New(t.TempDir(), factory, cs, WithConfigDir(cfg))
 	cs.SetBroadcaster(h)
 	h.mcpRegistry.signalReady()
 	return h, cs
@@ -258,5 +258,173 @@ func TestRecoverPartials_NoErrorLogsOnSuccess(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg, "chats", "c1.partial")); !os.IsNotExist(err) {
 		t.Errorf("partial file still present after recovery: err=%v", err)
+	}
+}
+
+// TestRecoverPartials_ToolFirstTurnOpensAndRecovers pins fix #8: a turn
+// whose FIRST streamed event is a tool call must still open the .partial
+// as soon as any content/reasoning arrives, so the whole turn is
+// crash-durable. Before the fix, the tool-first ensureTurnStarted set
+// Started=true without opening the file and the later content chunk's
+// ensureTurnStarted early-returned, so WritePartial was a no-op for the
+// entire turn and a crash lost it with no .partial.
+func TestRecoverPartials_ToolFirstTurnOpensAndRecovers(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	h, cs := newHubWithConfigDir(t, cfg)
+	if err := os.MkdirAll(filepath.Join(cfg, "chats"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// First event is a TOOL CALL (in_progress), then a content chunk.
+	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
+	h.translateACPEvent("c1", newChunkMsg(t, "text after a tool-first start"))
+
+	// The .partial must now exist and carry both the content and the tool call.
+	partial := filepath.Join(cfg, "chats", "c1.partial")
+	data, err := os.ReadFile(partial) // #nosec G304 -- test path
+	if err != nil {
+		t.Fatalf("tool-first turn did not open .partial: %v", err)
+	}
+	var snap buffer.PartialSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("parse .partial: %v", err)
+	}
+	if snap.Content != "text after a tool-first start" {
+		t.Errorf("partial content = %q, want the text chunk", snap.Content)
+	}
+	if len(snap.ToolCalls) != 1 || snap.ToolCalls[0].ID != "tc1" {
+		t.Fatalf("partial did not capture the earlier tool call: %+v", snap.ToolCalls)
+	}
+
+	// Recover (simulating restart): the turn merges into the chat, and the
+	// in_progress tool is normalized to failed (fix #10).
+	h.RecoverPartials()
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 2 {
+		t.Fatalf("recovered messages = %d, want 2 (assistant + interrupted)", len(c.Messages))
+	}
+	got := c.Messages[0]
+	if got.Content != "text after a tool-first start" {
+		t.Errorf("recovered content = %q", got.Content)
+	}
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Status != api.ToolFailed {
+		t.Errorf("recovered tool call = %+v, want single failed", got.ToolCalls)
+	}
+	if c.Messages[1].EventKind != api.EventInterrupted {
+		t.Errorf("second message = %+v, want interrupted event", c.Messages[1])
+	}
+}
+
+// TestRecoverPartials_NormalizesNonTerminalToolStatus pins fix #10:
+// recovered tool calls left pending / in_progress at crash time are
+// normalized to failed so replay doesn't render a permanently-spinning
+// chip; terminal statuses are untouched.
+func TestRecoverPartials_NormalizesNonTerminalToolStatus(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	h, cs := newHubWithConfigDir(t, cfg)
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	writePartialFile(t, cfg, "c1", buffer.PartialSnapshot{
+		MessageID: "m-tools",
+		Content:   "partial with tools",
+		ToolCalls: []api.ToolCall{
+			{ID: "done", Status: api.ToolCompleted},
+			{ID: "running", Status: api.ToolInProgress},
+			{ID: "queued", Status: api.ToolPending},
+		},
+	})
+
+	h.RecoverPartials()
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) < 1 {
+		t.Fatal("no messages recovered")
+	}
+	got := c.Messages[0].ToolCalls
+	if len(got) != 3 {
+		t.Fatalf("recovered tool calls = %d, want 3", len(got))
+	}
+	for _, tc := range got {
+		switch tc.ID {
+		case "done":
+			if tc.Status != api.ToolCompleted {
+				t.Errorf("done status = %q, want completed (terminal, untouched)", tc.Status)
+			}
+		case "running", "queued":
+			if tc.Status != api.ToolFailed {
+				t.Errorf("%s status = %q, want failed (non-terminal normalized)", tc.ID, tc.Status)
+			}
+		}
+	}
+}
+
+// TestRecoverPartials_IdempotentSkipsCommittedTurn pins fix #9's
+// idempotency: a .partial whose MessageID is already committed (a crash
+// after AppendMessage but before the .partial delete) must NOT
+// double-append — recovery skips it and removes the orphan file.
+func TestRecoverPartials_IdempotentSkipsCommittedTurn(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	h, cs := newHubWithConfigDir(t, cfg)
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Messages = []api.Message{{ID: "m-committed", Role: api.RoleAssistant, Content: "done"}}
+		return true
+	})
+	// The .partial survived a crash-after-commit with the SAME message id.
+	writePartialFile(t, cfg, "c1", buffer.PartialSnapshot{MessageID: "m-committed", Content: "done"})
+
+	h.RecoverPartials()
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1 (already-committed turn must not be re-appended)", len(c.Messages))
+	}
+	if c.Messages[0].ID != "m-committed" {
+		t.Errorf("message id = %q, want m-committed", c.Messages[0].ID)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "chats", "c1.partial")); !os.IsNotExist(err) {
+		t.Errorf("orphan .partial not removed after idempotent skip: %v", err)
+	}
+}
+
+// TestEmitTurnEnded_PersistsBeforeRemovingPartial pins fix #9's ordering:
+// a normal turn end persists the finalized message BEFORE removing the
+// .partial, and a subsequent recovery does not double-append the
+// committed turn.
+func TestEmitTurnEnded_PersistsBeforeRemovingPartial(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	h, cs := newHubWithConfigDir(t, cfg)
+	if err := os.MkdirAll(filepath.Join(cfg, "chats"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// Content chunk opens the .partial; turn_ended finalizes it.
+	h.translateACPEvent("c1", newChunkMsg(t, "final answer"))
+	partial := filepath.Join(cfg, "chats", "c1.partial")
+	if _, err := os.Stat(partial); err != nil {
+		t.Fatalf(".partial not opened by content chunk: %v", err)
+	}
+
+	h.EmitTurnEndedWithStats(context.Background(), "c1",
+		&api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+
+	c, _ := cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 || c.Messages[0].Content != "final answer" {
+		t.Fatalf("turn not persisted on turn_ended: %+v", c.Messages)
+	}
+	if _, err := os.Stat(partial); !os.IsNotExist(err) {
+		t.Errorf(".partial not removed after commit: %v", err)
+	}
+
+	// A fresh recovery must find nothing to double-append.
+	h.RecoverPartials()
+	c, _ = cs.Get(context.Background(), "c1")
+	if len(c.Messages) != 1 {
+		t.Errorf("recovery double-appended a committed turn: %d messages", len(c.Messages))
 	}
 }

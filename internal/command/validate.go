@@ -27,9 +27,6 @@ var (
 	errResolveMissingID = errors.New("tool_call_id is required")
 	errResolveUnknown   = errors.New("no such pending change")
 	errMergedTooLarge   = fmt.Errorf("merged_text exceeds %d byte cap", pending.Cap)
-
-	errTaskRequired      = errors.New("task is required")
-	errSubSessionAndText = errors.New("sub_session_id and text are required")
 )
 
 // validChatID reports whether id is safe to use as a chat identifier.

@@ -19,6 +19,7 @@ import {
   ICON_TAB_FILES,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
+  ICON_TAB_SPEC,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
@@ -29,6 +30,8 @@ import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { promoteRewindChat, discardRewindChat } from "./actions/rewind.js";
 import { showContextMenu } from "./context-menu.js";
+import type { ContextMenuItem } from "./context-menu.js";
+import { downloadChatExport } from "./chat-export.js";
 import { confirm as confirmDialog } from "./confirm.js";
 
 // --- Types ---
@@ -43,6 +46,7 @@ export const TAB_VIEWS = {
   files: "#files-view",
   editor: "#editor-view",
   history: "#history-view",
+  specs: "#specs-view",
 } as const;
 
 type TabKind = keyof typeof TAB_VIEWS;
@@ -52,6 +56,9 @@ export interface TabSpec {
   id: string;
   name: string;
   kind: TabKind;
+  /** Optional per-tab icon (SVG string) overriding the kind's default.
+   *  Used to give chat tabs a per-agent-role glyph. */
+  iconSvg?: string | undefined;
   /** CSS selector for the view element to show. */
   view: string;
   /** The URL route this tab maps to. */
@@ -68,6 +75,7 @@ const TAB_SETTINGS = "__settings__";
 const TAB_GIT = "__git__";
 const TAB_FILES = "__files__";
 const TAB_HISTORY = "__history__";
+const TAB_SPECS = "__specs__";
 
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
@@ -77,6 +85,7 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
+  specs: ICON_TAB_SPEC,
 };
 
 // --- Store ---
@@ -385,6 +394,7 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   git: () => $.gitBtn,
   files: () => $.filesBtn,
   history: () => $.historyBtn,
+  specs: () => $.specsBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
@@ -501,6 +511,24 @@ function renderDOM(): void {
   }
 }
 
+/** Swap a chat tab's icon (SVG string) in place — used when the chat's
+ *  agent/role changes on an empty chat. Updates both the live DOM node and
+ *  the stored spec so a later re-render keeps the new icon. No-op if the
+ *  tab isn't open or the icon is unchanged. */
+export function setTabIcon(id: string, svg: string): void {
+  const spec = state.tabs.find((t) => t.id === id);
+  if (spec === undefined || spec.iconSvg === svg) {
+    return;
+  }
+  spec.iconSvg = svg;
+  for (const child of $.tabList.children) {
+    if ((child as HTMLElement).dataset["tabId"] === id) {
+      child.querySelector(".tab-icon")?.replaceChildren(iconEl(svg));
+      break;
+    }
+  }
+}
+
 function createTabEl(tab: TabSpec): HTMLElement {
   const node = el("div", {
     className: "tab",
@@ -509,7 +537,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
     role: "tab",
   });
 
-  const icon = el("span", { className: "tab-icon" }, iconEl(ICONS[tab.kind]));
+  const icon = el("span", { className: "tab-icon" }, iconEl(tab.iconSvg ?? ICONS[tab.kind]));
 
   const name = el("span", { className: "tab-name" }, tab.name);
 
@@ -528,24 +556,37 @@ function createTabEl(tab: TabSpec): HTMLElement {
   node.append(icon, name, statusDot, close);
   attachTabInteraction(node, tab.id);
 
-  // Right-click "Promote" for rewind children.
+  // Right-click context menu for chat tabs: export (md/json), plus Promote
+  // for rewind children. Non-chat tabs keep the native browser menu.
   node.addEventListener("contextmenu", (e) => {
-    const s = storeGet(tab.id);
-    if (!s?.parent_chat_id) {
+    if (tab.kind !== "chat") {
       return;
     }
     e.preventDefault();
-    showContextMenu(
-      [
-        {
-          label: "Promote (replace original)",
-          action: () => {
-            void promoteRewindChat.dispatch({ chatID: s.id });
-          },
+    const s = storeGet(tab.id);
+    const items: ContextMenuItem[] = [
+      {
+        label: "Export as Markdown",
+        action: () => {
+          downloadChatExport(tab.id, tab.name, "md");
         },
-      ],
-      { x: e.clientX, y: e.clientY },
-    );
+      },
+      {
+        label: "Export as JSON",
+        action: () => {
+          downloadChatExport(tab.id, tab.name, "json");
+        },
+      },
+    ];
+    if (s?.parent_chat_id !== undefined && s.parent_chat_id !== "") {
+      items.push({
+        label: "Promote (replace original)",
+        action: () => {
+          void promoteRewindChat.dispatch({ chatID: s.id });
+        },
+      });
+    }
+    showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
 
   return node;
@@ -701,6 +742,18 @@ export function toggleHistoryView(onShow: () => void, onClose?: () => void): voi
     kind: "history",
     view: TAB_VIEWS.history,
     route: { kind: "history" },
+    onShow,
+    onClose,
+  });
+}
+
+export function toggleSpecsView(onShow: () => void, onClose?: () => void): void {
+  toggleSingleton({
+    id: TAB_SPECS,
+    name: "Specs",
+    kind: "specs",
+    view: TAB_VIEWS.specs,
+    route: { kind: "specs" },
     onShow,
     onClose,
   });

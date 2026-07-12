@@ -12,39 +12,31 @@ vi.mock("./actions/chat.js", () => ({
   resolvePendingChange: { dispatch: vi.fn() },
 }));
 
-vi.mock("./store.js", () => ({
-  get: vi.fn(() => ({ model: "claude" })),
-  setThinking: vi.fn(),
-  setModel: vi.fn(),
-  enqueuePrompt: vi.fn(),
-  setLastQueuedAttachments: vi.fn(),
-}));
-
 vi.mock("./transport.js", () => ({
   send: vi.fn(),
   newMessageID: vi.fn(() => "m-test-123"),
 }));
 
 vi.mock("./session-context.js", () => ({
-  getCurrentAgent: () => "default",
   getCurrentModel: () => "claude",
 }));
 vi.mock("./editor-types.js", () => ({
   getActiveFilePath: () => "src/main.ts",
   getOpenFilePaths: () => ["src/main.ts"],
 }));
-vi.mock("./attachments.js", () => ({ takeAttachments: vi.fn(() => []), addAttachment: vi.fn() }));
 
 import { sendPromptTo, switchModel } from "./chat-commands.js";
-import * as store from "./store.js";
-import * as attachments from "./attachments.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// sendPromptTo is a pure "send once" primitive now: it dispatches the prompt
+// command and maps the action result to sent/queued/failed. It does NOT own
+// the queue (that's prompt-queue.ts) — so there is no enqueue/attachment side
+// effect to assert here.
 describe("sendPromptTo", () => {
-  it("returns 'sent' on 2xx and calls setThinking(id, true)", async () => {
+  it("returns 'sent' on 2xx and forwards chat/text/model to the action", async () => {
     mockSendPromptDispatch.mockResolvedValue("sent");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("sent");
@@ -52,24 +44,27 @@ describe("sendPromptTo", () => {
       expect.objectContaining({
         chatID: "chat1",
         text: "hello",
+        model: "claude",
       }),
     );
+    // No attachments passed → the key is omitted (exactOptionalPropertyTypes),
+    // not sent as `undefined`.
+    expect(mockSendPromptDispatch.mock.calls[0]?.[0]).not.toHaveProperty("attachments");
   });
 
-  it("returns 'queued' on 409 and enqueues prompt", async () => {
+  it("returns 'queued' on 409 (no local enqueue — that's prompt-queue's job)", async () => {
     mockSendPromptDispatch.mockResolvedValue("queued");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
   });
 
-  it("returns 'queued' on 409 with attachments and calls setLastQueuedAttachments", async () => {
-    mockSendPromptDispatch.mockResolvedValue("queued");
-    vi.mocked(attachments.takeAttachments).mockReturnValueOnce([{ path: "foo", name: "foo" }]);
-    const result = await sendPromptTo("chat1", "hello");
-    expect(result).toBe("queued");
-    expect(store.setLastQueuedAttachments).toHaveBeenCalledWith("chat1", [
-      { path: "foo", name: "foo" },
-    ]);
+  it("forwards explicit opts (model + attachments) to the action", async () => {
+    mockSendPromptDispatch.mockResolvedValue("sent");
+    const att = [{ path: "foo.ts", name: "foo.ts" }];
+    await sendPromptTo("chat1", "hello", { model: "gpt-5.5", attachments: att });
+    expect(mockSendPromptDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5.5", attachments: att }),
+    );
   });
 
   it("returns 'failed' on null result (action error)", async () => {

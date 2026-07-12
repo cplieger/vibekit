@@ -10,8 +10,16 @@ import (
 )
 
 // cleanupChatState tears down every in-memory bookkeeping entry for a
-// chat that is about to be deleted.
-func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID) {
+// chat. reapDurable controls whether the chat's durable per-chat state —
+// its checkpoint (file-restore/undo) history AND its kiro-cli/KAS session
+// state — is destroyed: true for a permanent delete (hard delete / promote
+// / discard), false for the ARCHIVE path. Archive is reversible: a restored
+// chat must keep its checkpoints and be able to session/load its KAS
+// session, so both are reaped only at delete/purge, never on archive.
+// Everything else (flush the in-flight turn via CloseBridge, kill agent
+// terminals, clear pending perms + supervised trust, close+remove the
+// .partial) runs on both paths.
+func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurable bool) {
 	h.flushPendingForChat(ctx, chatID, api.ClearReasonChatDeleted)
 	h.perm.supervised.ClearTrust(chatID, api.ClearReasonChatDeleted)
 	h.clearPendingPermsForChat(chatID)
@@ -19,14 +27,31 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID) {
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()
 	buf := h.bridge.assistantBufs.Get(chatID)
-	h.translator.ClearCrewCache(chatID)
 	h.bridge.assistantBufs.Delete(chatID)
 	h.lifecycle.mu.Unlock()
 	h.closeAndRemovePartial(ctx, chatID, buf)
-	if h.checkpoints != nil {
-		h.checkpoints.Cleanup(ctx, chatID)
+	if reapDurable {
+		if h.checkpoints != nil {
+			h.checkpoints.Cleanup(ctx, chatID)
+		}
+		h.reapChatSession(ctx, chatID)
 	}
 	h.lines.Clear(chatID)
+}
+
+// reapChatSession removes the chat's on-disk kiro-cli/KAS session state on
+// permanent delete. cleanupChatState runs before the chat file is removed,
+// so acp_session_id is still readable. No-op when the reaper is unwired
+// (tests), the chat is already gone, or it never started a session.
+func (h *Hub) reapChatSession(ctx context.Context, chatID api.ChatID) {
+	if h.sessionReaper == nil {
+		return
+	}
+	c, ok := h.chatStore.Get(ctx, chatID)
+	if !ok || c.ACPSessionID == "" {
+		return
+	}
+	h.sessionReaper.Reap(c.ACPSessionID)
 }
 
 // clearPendingPermsForChat drops every unresolved permission_needed

@@ -44,8 +44,38 @@ type Buffer struct {
 	Reasoning      strings.Builder
 	ToolCalls      []api.ToolCall
 	Blocks         []api.Block
+	CodeReferences []api.CodeReference
 	mu             sync.Mutex
 	Started        bool
+}
+
+// AppendCodeReferences merges refs into the turn's licensed-code
+// attributions, deduping by (licenseName, repository, url) so the KAS
+// fan-out (the same references broadcast under every live session id) and
+// a completion that reproduces the same snippet twice don't produce
+// duplicate chips. Returns the full deduped list so the caller can
+// broadcast it idempotently (the client replaces its list rather than
+// appending). Empty entries (no license name) are dropped by the caller
+// before this point.
+func (buf *Buffer) AppendCodeReferences(refs []api.CodeReference) []api.CodeReference {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	seen := make(map[api.CodeReference]struct{}, len(buf.CodeReferences))
+	for _, r := range buf.CodeReferences {
+		seen[r] = struct{}{}
+	}
+	for _, r := range refs {
+		if _, dup := seen[r]; dup {
+			continue
+		}
+		seen[r] = struct{}{}
+		buf.CodeReferences = append(buf.CodeReferences, r)
+	}
+	// Return a copy so the caller's broadcast can't race a later append
+	// mutating the backing array.
+	out := make([]api.CodeReference, len(buf.CodeReferences))
+	copy(out, buf.CodeReferences)
+	return out
 }
 
 // AppendTextDelta extends the last text block with a delta, or starts
@@ -53,39 +83,48 @@ type Buffer struct {
 // of the (possibly new) text block — broadcast on
 // MessageChunkPayload.BlockIndex so the client knows which block the
 // delta belongs to.
-func (buf *Buffer) AppendTextDelta(delta string) int {
+//
+// subtaskID attributes the block to the agent that produced it ("" =
+// top-level agent). A trailing text block is only extended when it
+// belongs to the SAME subtask; a differing subtask starts a new block
+// so a subagent's text never merges into the parent's trailing block.
+func (buf *Buffer) AppendTextDelta(delta, subtaskID string) int {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockText {
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Text += delta
 		return n - 1
 	}
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockText, Text: delta})
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockText, Text: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1
 }
 
 // AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta.
 // Reasoning chunks share a block until a non-thinking block (tool_use
-// or text) breaks the run.
-func (buf *Buffer) AppendThinkingDelta(delta string) int {
+// or text) breaks the run — or until the subtask id differs, so a
+// subagent's reasoning starts its own block rather than merging into
+// the parent's trailing thinking block. subtaskID attributes the block
+// to the producing agent ("" = top-level).
+func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) int {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockThinking {
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Thinking += delta
 		return n - 1
 	}
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockThinking, Thinking: delta})
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1
 }
 
 // AppendToolUseBlock records a new tool_use block referencing the
 // given tool call id. Always allocates a new block (one per tool call,
 // even if back-to-back tool calls would coalesce into a single
-// "thinking" run for text). Returns the new block's index.
-func (buf *Buffer) AppendToolUseBlock(toolCallID string) int {
+// "thinking" run for text). Returns the new block's index. subtaskID
+// attributes the block to the agent that produced it ("" = top-level).
+func (buf *Buffer) AppendToolUseBlock(toolCallID, subtaskID string) int {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockToolUse, ToolCallID: toolCallID})
+	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockToolUse, ToolCallID: toolCallID, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1
 }
 
@@ -162,20 +201,26 @@ func (buf *Buffer) WritePartial(ctx context.Context) {
 		return
 	}
 	buf.Partial.Write(ctx, &PartialSnapshot{
-		MessageID: buf.MessageID,
-		Content:   buf.Content.String(),
-		Reasoning: buf.Reasoning.String(),
-		ToolCalls: buf.ToolCalls,
-		Blocks:    buf.Blocks,
-		Ts:        time.Now().UnixMilli(),
+		MessageID:      buf.MessageID,
+		Content:        buf.Content.String(),
+		Reasoning:      buf.Reasoning.String(),
+		ToolCalls:      buf.ToolCalls,
+		Blocks:         buf.Blocks,
+		CodeReferences: buf.CodeReferences,
+		Ts:             time.Now().UnixMilli(),
 	})
 }
 
-// OpenPartial opens the partial recovery file for a chat.
-// If opening fails, Partial remains nil (degraded mode).
+// OpenPartial opens the partial recovery file for a chat. Idempotent: a
+// no-op once the file is already open, so it can be called on every
+// content/reasoning chunk to open the .partial lazily (the first call
+// wins). If opening fails, Partial remains nil (degraded mode).
 func (buf *Buffer) OpenPartial(ctx context.Context, path string) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	if buf.Partial != nil {
+		return
+	}
 	buf.Partial = OpenPartial(ctx, path)
 }
 

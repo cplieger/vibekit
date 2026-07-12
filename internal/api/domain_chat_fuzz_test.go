@@ -11,7 +11,7 @@ import (
 // verifies that all header-level fields round-trip correctly from a Chat
 // populated with fuzzed data.
 func FuzzChatHeaderConsistency(f *testing.F) {
-	f.Add(`{"id":"c1","name":"test","agent":"a","model":"m","messages":[],"created_at":1,"updated_at":2,"message_count":0}`)
+	f.Add(`{"id":"c1","name":"test","model":"m","messages":[],"created_at":1,"updated_at":2,"message_count":0}`)
 	f.Add(`{"id":"c2","name":"","acp_session_id":"s1","current_mode_id":"code","messages":[{"id":"m1","role":"user","content":"hi","ts":1}],"supervised_mode":true}`)
 	f.Add(`{"id":"c3","name":"n","summary":"sum","compaction_watermark":"wm","parent_chat_id":"p1","messages":[{},{}]}`)
 
@@ -30,9 +30,6 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 		if header.Name != chat.Name {
 			t.Fatalf("Name mismatch: header=%q chat=%q", header.Name, chat.Name)
 		}
-		if header.Agent != chat.Agent {
-			t.Fatalf("Agent mismatch")
-		}
 		if header.Model != chat.Model {
 			t.Fatalf("Model mismatch")
 		}
@@ -50,9 +47,6 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 		}
 		if header.SupervisedMode != chat.SupervisedMode {
 			t.Fatalf("SupervisedMode mismatch")
-		}
-		if header.AutoApproveCrew != chat.AutoApproveCrew {
-			t.Fatalf("AutoApproveCrew mismatch")
 		}
 		if header.ParentChatID != chat.ParentChatID {
 			t.Fatalf("ParentChatID mismatch")

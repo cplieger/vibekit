@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-// Tests for chat.ts actions: setSupervised, setAutoApproveCrew, switchModel,
-// resolvePendingChange, respondPermission, restoreCheckpoint.
+// Tests for chat.ts actions: setSupervised, switchModel, resolvePendingChange,
+// respondPermission, restoreCheckpoint.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -29,13 +29,11 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
   return {
     id,
     name: "test",
-    agent: "",
     model: "claude-4",
     acp_session_id: "",
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    auto_approve_crew: false,
     supervised_mode: false,
     pending_changes: [],
     usage: {
@@ -81,16 +79,6 @@ describe("chat.set_supervised", () => {
     const { setSupervised } = await import("./chat.js");
     await setSupervised.dispatch({ chatID: "c1", enabled: true });
     expect(get("c1")!.supervised_mode).toBe(false);
-  });
-});
-
-describe("chat.set_auto_approve_crew", () => {
-  it("applies optimistic update and rolls back on failure", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 500, error: "fail" });
-    const { setAutoApproveCrew } = await import("./chat.js");
-    await setAutoApproveCrew.dispatch({ chatID: "c1", enabled: true });
-    // Rolled back to original value
-    expect(get("c1")!.auto_approve_crew).toBe(false);
   });
 });
 

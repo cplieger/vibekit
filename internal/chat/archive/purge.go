@@ -105,7 +105,13 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 		slog.Warn("chat purge_archived: stat", "name", entry.name, "error", err)
 		return purgeErr
 	}
-	if !info.ModTime().Before(cutoff) {
+	// Age from the explicit ArchivedAt stamp, not the file mtime: a
+	// skipped/failed post-archive summary write leaves mtime at the chat's
+	// last-activity time, which would purge an old-but-just-archived chat
+	// almost immediately. mtime is only the fallback for legacy archives
+	// (stamped before ArchivedAt existed) and the rare crash between the
+	// stamp and the rename.
+	if !s.purgeReferenceTime(entry, info.ModTime()).Before(cutoff) {
 		m.Unlock()
 		return purgeKept
 	}
@@ -120,6 +126,19 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 		s.onPurge(api.ChatID(entry.name))
 	}
 	return purgePurged
+}
+
+// purgeReferenceTime returns the time a purge decision ages from: the
+// chat's explicit ArchivedAt stamp when present, else the file mtime
+// (legacy archives written before the stamp existed, an unreadable file,
+// or the rare crash between the stamp write and the rename). Caller holds
+// the per-chat mutex.
+func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) time.Time {
+	c, err := s.loadArchived(api.ChatID(entry.name))
+	if err != nil || c.ArchivedAt <= 0 {
+		return mtime
+	}
+	return time.UnixMilli(c.ArchivedAt)
 }
 
 // removePurgedPlanDraft removes the companion plan-draft of a purged

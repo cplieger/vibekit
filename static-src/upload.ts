@@ -80,6 +80,11 @@ export function uploadFiles(opts: UploadOptions): void {
       fill.style.width = `${String(pct)}%`;
       label.textContent = `Uploading... ${String(pct)}%`;
       progress.setAttribute("aria-valuenow", String(pct));
+    } else {
+      // Total size unknown: mark the progressbar indeterminate. Per ARIA, an
+      // indeterminate progressbar omits aria-valuenow rather than reporting 0.
+      progress.removeAttribute("aria-valuenow");
+      label.textContent = "Uploading...";
     }
   });
   xhr.addEventListener("load", () => {
@@ -87,6 +92,7 @@ export function uploadFiles(opts: UploadOptions): void {
     if (xhr.status >= 200 && xhr.status < 300) {
       fill.style.width = "100%";
       label.textContent = "Upload complete";
+      progress.setAttribute("aria-valuenow", "100");
       setTimeout(() => {
         progress.classList.add("upload-closed");
       }, 1500);

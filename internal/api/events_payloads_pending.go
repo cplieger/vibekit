@@ -108,6 +108,12 @@ const (
 	ClearReasonChatDeleted  ClearReason = "chat_deleted"
 	ClearReasonShutdown     ClearReason = "shutdown"
 	ClearReasonUserCleared  ClearReason = "user_cleared"
+	// ClearReasonBridgeExited flushes a chat's staged writes when its
+	// kiro-cli bridge exits unexpectedly (crash, or a model-switch
+	// CloseBridge). Cancel/delete/mode-disable already flush; this is the
+	// bridge-exit sibling so a dead bridge can't leave a parked fs-handler
+	// goroutine plus a phantom "awaiting approval" pending op.
+	ClearReasonBridgeExited ClearReason = "bridge_exited"
 )
 
 // PendingTrustEnabledPayload is the payload for

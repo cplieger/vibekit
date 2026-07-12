@@ -67,10 +67,11 @@ const PermissionKindAllowOnce = "allow_once"
 // next text chunk to a new index. Clients use this to accumulate
 // deltas into the right block in Message.Blocks.
 type MessageChunkPayload struct {
-	MessageID   string `json:"message_id"`
-	Delta       string `json:"delta"`
-	IsReasoning bool   `json:"is_reasoning,omitempty"`
-	BlockIndex  int    `json:"block_index"`
+	MessageID      string `json:"message_id"`
+	Delta          string `json:"delta"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	BlockIndex     int    `json:"block_index"`
+	IsReasoning    bool   `json:"is_reasoning,omitempty"`
 }
 
 // CheckpointRestoredPayload is the payload for type="checkpoint_restored".
@@ -92,7 +93,6 @@ const (
 	ErrCodeBridgeStartFailed ErrorCode = "bridge_start_failed"
 	ErrCodePromptFailed      ErrorCode = "prompt_failed"
 	ErrCodeAgentNotFound     ErrorCode = "agent_not_found"
-	ErrCodeModelNotFound     ErrorCode = "model_not_found"
 	ErrCodeAgentConfigError  ErrorCode = "agent_config_error"
 	ErrCodeRateLimit         ErrorCode = "rate_limit"
 	ErrCodeStreamTimeout     ErrorCode = "stream_timeout"
@@ -114,6 +114,159 @@ type ErrorPayload struct {
 // instead of a generic "Thinking" indicator.
 type WorkingLabelPayload struct {
 	Label string `json:"label"`
+}
+
+// CodeReferencesPayload is the payload for type="code_references". Carries
+// the licensed-code attributions accumulated on the in-flight assistant
+// turn (v3/KAS). MessageID targets that turn's assistant message so the
+// client attaches the chip to it; References is the full deduped list so
+// the client can render idempotently (a later notification replaces rather
+// than appends). Also persisted on the Message so the chip survives reload.
+type CodeReferencesPayload struct {
+	MessageID  string          `json:"message_id"`
+	References []CodeReference `json:"references"`
+}
+
+// KnowledgeIndexingPayload is the payload for type="knowledge_indexing".
+// Translated from the KAS _kiro/knowledge/indexingStarted (Status="started",
+// carries FileCount) and _kiro/knowledge/indexingCompleted (Status="success"
+// or a failure string, carries ItemCount on success) notifications. Emitted
+// globally (no chat_id) because the knowledge store is workspace-global; the
+// client refetches GET /api/knowledge on receipt. Note: these fire only for
+// agent-declared knowledge_bases sync at session start — a user-initiated add
+// reports progress through the `show` active-operations list instead (verified
+// live), so the client also polls while an entry is still indexing.
+type KnowledgeIndexingPayload struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	FileCount int    `json:"file_count,omitempty"`
+	ItemCount int    `json:"item_count,omitempty"`
+}
+
+// SafetyStatus is the v3 (KAS) Infrastructure-Safety gate state (GateStatus).
+// The gate evaluates infrastructure-as-code tool calls (Terraform, CFN, CDK,
+// Docker, k8s, …) against remotely-formalized safety properties. Typed so the
+// valid set is discoverable and wiregen emits a TS union.
+type SafetyStatus string
+
+// SafetyStatusIdle and the following constants are the v3 (KAS) GateStatus
+// values carried on _kiro/safety/statusChanged.
+const (
+	SafetyStatusIdle        SafetyStatus = "idle"
+	SafetyStatusFormalizing SafetyStatus = "formalizing"
+	SafetyStatusEvaluating  SafetyStatus = "evaluating"
+	SafetyStatusBlocked     SafetyStatus = "blocked"
+	SafetyStatusError       SafetyStatus = "error"
+)
+
+// SafetyStatusPayload is the payload for type="safety_status", translated from
+// the v3 (KAS) _kiro/safety/statusChanged notification. It surfaces the
+// Infrastructure-Safety gate's live state so the client can show a transient
+// status banner. Defensive/forward-looking: KAS only installs the gate (and so
+// only emits this) when the client declares the infrastructureSafety capability
+// AND an AWS governance flag (infraSafetyMonitor/infraSafetyEnforce) is on — off
+// by default on individual/Builder-ID accounts, so this normally never fires.
+// Distinct from vibekit's own Supervised write-gate (see vibekit-supervised.md).
+type SafetyStatusPayload struct {
+	Status            SafetyStatus `json:"status"`
+	Detail            string       `json:"detail,omitempty"`
+	ToolID            string       `json:"tool_id,omitempty"`
+	BlockedProperties []string     `json:"blocked_properties,omitempty"`
+}
+
+// SafetyProperty is one formalized Infrastructure-Safety property. Properties
+// are authored OUT-OF-BAND: KAS "formalizes" them via a remote MCP tool
+// (evaluate_infrastructure_safety at runtime.us-east-1.kiro.dev) from the
+// agent's own infrastructure work — there is no client RPC to create, set, or
+// toggle one, so vibekit only ever displays them, never authors them.
+type SafetyProperty struct {
+	Description string `json:"description"`
+	Index       int    `json:"index,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
+}
+
+// SafetyPropertiesPayload is the payload for type="safety_properties",
+// translated from the v3 (KAS) _kiro/safety/propertiesChanged notification.
+// Reason is the KAS PropertyChangeReason (formalized/toggled/expired). Same
+// gating + authoring caveats as SafetyStatusPayload.
+type SafetyPropertiesPayload struct {
+	Reason     string           `json:"reason,omitempty"`
+	Properties []SafetyProperty `json:"properties"`
+}
+
+// GovernanceFeatures is the org/account feature-flag set carried by the v3
+// (KAS) _kiro/governance/state notification (KAS's GovernanceFeatures object,
+// verified against the KAS 2.12 acp-server bundle + a live probe). Every field
+// is the RESOLVED effective value: MCPEnabled/WebToolsEnabled/AutonomousAgents
+// are the negation of a "…GovernanceDisabled" flag; the analytics/logging/
+// tracker fields are direct "…GovernanceEnabled" flags. On an individual /
+// Builder-ID login these resolve to a permissive default (mcp/webTools/
+// autonomousAgents on; analytics/promptLogging/codeReferenceTracker off;
+// contentCollection on) with isEnterprise=false and no disabledReason.
+//
+// NOTE: Infrastructure-Safety (infraSafetyMonitor/infraSafetyEnforce) is NOT
+// here — it is a separate modelConfigProvider.isFeatureEnabled channel, not a
+// governance feature (verified: absent from _kiro/governance/state). So the
+// safety banner (translate/safety.go) is gated by KAS's own emission, not by
+// any field on this struct.
+type GovernanceFeatures struct {
+	// MCPEnabled reports whether the MCP subsystem is permitted. When false,
+	// enterprise governance has suppressed MCP entirely (vibekit disables the
+	// add-server affordance and shows a disabled state in Settings → Tools).
+	MCPEnabled bool `json:"mcp_enabled"`
+	// WebToolsEnabled reports whether built-in web tools are permitted.
+	WebToolsEnabled bool `json:"web_tools_enabled"`
+	// UsageAnalytics reports whether usage analytics collection is enabled.
+	UsageAnalytics bool `json:"usage_analytics"`
+	// ContentCollection reports whether content collection is enabled.
+	ContentCollection bool `json:"content_collection"`
+	// PromptLogging reports whether prompt logging is enabled.
+	PromptLogging bool `json:"prompt_logging"`
+	// CodeReferenceTracker reports whether licensed-code reference tracking is
+	// enabled — the flag that governs whether KAS emits _kiro/code_references
+	// (the attribution chip in code-refs.ts is dormant unless this is true).
+	CodeReferenceTracker bool `json:"code_reference_tracker"`
+	// AutonomousAgents reports whether autonomous agent runs are permitted.
+	AutonomousAgents bool `json:"autonomous_agents"`
+}
+
+// GovernanceStatePayload is the payload for type="governance_state", translated
+// from the v3 (KAS) _kiro/governance/state notification (buildNotification:
+// {sessionId, isEnterprise, features, disabledReason}). The account/workspace
+// feature-flag policy KAS pushes on every session/new + session/load, and
+// re-pushes on a prompt when it changes; vibekit caches the latest hub-side and
+// also serves it at GET /api/governance so a fresh page load can read it with
+// no chat open. The wire sessionId is used only for subagent-copy dedup and is
+// dropped from this payload — governance is account-global, so the SSE is
+// broadcast with an empty chat id (every client receives it).
+//
+// Known distinguishes "the server has told us the real policy" (Known=true, on
+// every SSE broadcast and a warm REST snapshot) from "not yet observed"
+// (Known=false, a cold REST snapshot before any bridge has started). Clients
+// MUST only gate/annotate affordances when Known is true — the all-false zero
+// value would otherwise read as "everything disabled" when we simply don't know
+// yet.
+type GovernanceStatePayload struct {
+	// DisabledReason is a human-readable reason surfaced by enterprise
+	// governance (e.g. why MCP is off); empty/absent on a normal account.
+	DisabledReason string `json:"disabled_reason,omitempty"`
+	// Features is the resolved effective feature-flag set.
+	Features GovernanceFeatures `json:"features"`
+	// Known is true once the real policy has been observed (see the type doc).
+	Known bool `json:"known"`
+	// IsEnterprise reports whether this is an enterprise/managed account.
+	IsEnterprise bool `json:"is_enterprise,omitempty"`
+}
+
+// OpenExternalURLPayload is the payload for type="open_external_url".
+// The agent (v3/KAS) asks the client to open a URL for the user, most
+// often an MCP server's OAuth authorization page. Browsers popup-block a
+// window.open() not driven by a user gesture, so the client surfaces a
+// clickable affordance (a banner link) the user activates rather than
+// auto-opening. Only http/https URLs are broadcast (server-side scheme
+// guard in hub/bridge_v3_auth.go; the client re-checks before rendering).
+type OpenExternalURLPayload struct {
+	URL string `json:"url"`
 }
 
 // RPC error code constants for typed dispatch in retry logic.
@@ -148,10 +301,15 @@ type TerminalOutputPayload struct {
 	Data       string `json:"data"`
 }
 
-// TerminalExitedPayload is the payload for type="terminal_exited".
+// TerminalExitedPayload is the payload for type="terminal_exited". A
+// signal-killed process carries Signal (e.g. "killed") with ExitCode
+// omitted; a normal exit carries ExitCode (>=0) with Signal empty. This
+// mirrors KAS's zTerminalExitStatus, which requires exitCode>=0 and a
+// separate signal string, so a signal death never reports exit_code:-1.
 type TerminalExitedPayload struct {
+	ExitCode   *int   `json:"exit_code,omitempty"`
 	TerminalID string `json:"terminal_id"`
-	ExitCode   int    `json:"exit_code"`
+	Signal     string `json:"signal,omitempty"`
 }
 
 // TerminalCreatedPayload is the payload for type="terminal_created".
@@ -159,17 +317,6 @@ type TerminalCreatedPayload struct {
 	TerminalID string   `json:"terminal_id"`
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
-}
-
-// SubagentActivityPayload is the payload for type="subagent_activity".
-type SubagentActivityPayload struct {
-	Event        any    `json:"event"`
-	SubSessionID string `json:"sub_session_id"`
-}
-
-// SessionListUpdatedPayload is the payload for type="session_list_updated".
-type SessionListUpdatedPayload struct {
-	Sessions []map[string]any `json:"sessions"`
 }
 
 // ModeChangedPayload is the payload for type="mode_changed".
@@ -201,11 +348,6 @@ type CommandsUpdatedPayload struct {
 	Prompts  []AvailableCommand `json:"prompts,omitempty"`
 }
 
-// SteeringLoadedPayload is the payload for type="steering_loaded".
-type SteeringLoadedPayload struct {
-	Documents []string `json:"documents"`
-}
-
 // CompactionStartedPayload is the payload for type="compaction_started".
 type CompactionStartedPayload struct{}
 
@@ -215,6 +357,12 @@ type MCPConfigChangedPayload struct{}
 // ForgesChangedPayload is the payload for type="forges_changed".
 // Sent after a forge is connected, disconnected, or re-probed.
 type ForgesChangedPayload struct{}
+
+// HooksChangedPayload is the payload for type="hooks_changed". Emitted
+// (empty, workspace-global — no chat_id) after a hook is created, toggled,
+// or its .kiro/hooks/*.json file changes on disk (KAS _kiro/hooks/didChange
+// on the utility bridge). The client refetches GET /api/hooks on receipt.
+type HooksChangedPayload struct{}
 
 // SettingsUpdatedPayload is the payload for type="settings_updated".
 type SettingsUpdatedPayload struct{}
