@@ -5,7 +5,7 @@ go 1.26.5
 require github.com/creack/pty v1.1.24 // indirect
 
 require (
-	github.com/cplieger/atomicfile/v2 v2.1.2
+	github.com/cplieger/atomicfile/v2 v2.1.3
 	github.com/cplieger/slogx v1.1.1
 	github.com/cplieger/ssrf/v2 v2.0.7
 	github.com/cplieger/web-terminal-engine/v2 v2.3.2
