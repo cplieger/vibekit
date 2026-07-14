@@ -288,11 +288,13 @@ button.spec-doc:hover {
 }
 
 .spec-badge-exec.exec-aborted,
+/* stylelint-disable-next-line selector-class-pattern -- class mirrors kiro-cli's snake_case pbtResult status enum */
 .spec-badge-pbt.pbt-not_run {
   color: var(--c-text-tertiary);
   background: var(--c-bg-tertiary);
 }
 
+/* stylelint-disable-next-line selector-class-pattern -- class mirrors kiro-cli's snake_case pbtResult status enum */
 .spec-badge-pbt.pbt-unexpected_pass {
   color: var(--c-yellow);
   background: color-mix(in srgb, var(--c-yellow) 16%, transparent);

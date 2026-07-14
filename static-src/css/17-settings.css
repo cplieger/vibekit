@@ -1846,11 +1846,11 @@ dd.governance-off {
 
 /* The whole row is the activation target (role="button"); keyboard users get a
  * visible focus ring, tucked inside the row edge with a negative offset. */
-#kiro-config-list .kiro-config-row {
+[id="kiro-config-list"] .kiro-config-row {
   cursor: pointer;
 }
 
-#kiro-config-list .kiro-config-row:focus-visible {
+[id="kiro-config-list"] .kiro-config-row:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: -2px;
 }
@@ -1871,17 +1871,17 @@ dd.governance-off {
 /* --- History (full-page table + sidebar): keyboard rows, skeleton, error --- */
 
 /* The title block restores the chat on click/Enter/Space (role="button"). */
-#history-table .list-row-title {
+[id="history-table"] .list-row-title {
   cursor: pointer;
   border-radius: var(--r);
 }
 
-#history-table .list-row-title:focus-visible {
+[id="history-table"] .list-row-title:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: -2px;
 }
 
-#history-list .history-restore:focus-visible {
+[id="history-list"] .history-restore:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 2px;
 }

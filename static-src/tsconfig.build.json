@@ -2,7 +2,7 @@
   "// purpose": "Production-build tsconfig used by the Dockerfile. Mirrors the tsconfig.test.json pattern: tsconfig.json is the IDE / eslint / projectService source of truth (includes test-helpers so type-aware linting works on them), and this file extends it with a stricter exclude for the actual ship-to-browser compile. See https://typescript-eslint.io/troubleshooting/typed-linting/ — 'tsconfig.json for linting; separate tsconfig.build.json for building'.",
   "extends": "./tsconfig.json",
   "exclude": [
-    "vitest.config.ts",
+    "vitest*.config.ts",
     "fc-strict-setup.ts",
     "**/__test-helpers__/**",
     "**/*.test.ts",

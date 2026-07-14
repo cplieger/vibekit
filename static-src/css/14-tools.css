@@ -173,9 +173,10 @@
     color: var(--c-text-tertiary);
   }
 
+  /* stylelint-disable-next-line selector-class-pattern -- class mirrors the server's snake_case tool-status enum value */
   &.in_progress {
     color: var(--c-yellow);
-  } /* stylelint-disable-line selector-class-pattern -- server API value */
+  }
   &.completed {
     color: var(--c-green);
   }
@@ -809,9 +810,10 @@
 }
 
 .git-st-a,
+/* stylelint-disable-next-line selector-class-pattern -- class is derived from git's raw status character ("?" for untracked) */
 .git-st-\? {
   color: var(--c-green);
-} /* stylelint-disable-line selector-class-pattern -- git status chars */
+}
 .git-st-d {
   color: var(--c-red);
 }

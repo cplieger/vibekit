@@ -100,11 +100,11 @@
 }
 
 /* No-results affordance: tint the field + counter without restructuring. */
-.chat-find--no-results .chat-find-input {
+.chat-find-no-results .chat-find-input {
   border-color: var(--c-red);
 }
 
-.chat-find--no-results .chat-find-count {
+.chat-find-no-results .chat-find-count {
   color: var(--c-red);
 }
 
@@ -124,10 +124,9 @@ mark.chat-find-hit-current {
 }
 
 /* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom. */
-@media (max-width: 40rem) {
+@media (width <= 40rem) {
   .chat-find {
     inset-inline: var(--sp-2);
-    inset-inline-end: var(--sp-2);
   }
 
   .chat-find-input {

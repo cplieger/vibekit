@@ -1,7 +1,8 @@
 /* Utility: must override all display values unconditionally. */
 .hidden {
+  /* stylelint-disable-next-line declaration-no-important -- the app-wide hide utility must beat every component display rule */
   display: none !important;
-} /* stylelint-disable-line declaration-no-important */
+}
 
 /* Initial loading screen: shown until auth state is resolved. */
 [id="app-loading"] {
@@ -34,7 +35,7 @@
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }

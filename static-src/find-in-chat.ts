@@ -449,7 +449,7 @@ function updateCounter(): void {
   }
   countEl.textContent = formatCount(engine.total, engine.currentIndex, inputEl.value);
   const noResults = inputEl.value !== "" && engine.total === 0;
-  overlayEl?.classList.toggle("chat-find--no-results", noResults);
+  overlayEl?.classList.toggle("chat-find-no-results", noResults);
 }
 
 function revealCurrent(): void {
