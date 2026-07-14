@@ -2,33 +2,12 @@ package hub
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"pgregory.net/rapid"
 )
-
-// flushRecorder is a ResponseWriter+Flusher that captures output so
-// replayPendingPermissions can be driven without a real SSE connection.
-type flushRecorder struct {
-	hdr     http.Header
-	body    strings.Builder
-	flushed int
-	status  int
-}
-
-func (r *flushRecorder) Header() http.Header {
-	if r.hdr == nil {
-		r.hdr = make(http.Header)
-	}
-	return r.hdr
-}
-
-func (r *flushRecorder) Write(p []byte) (int, error) { return r.body.Write(p) }
-func (r *flushRecorder) WriteHeader(code int)        { r.status = code }
-func (r *flushRecorder) Flush()                      { r.flushed++ }
 
 func seedPending(h *Hub, reqID int64, chatID api.ChatID) {
 	h.sse.pendingPerms.Add(reqID, api.ServerEvent{

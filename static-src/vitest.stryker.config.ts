@@ -7,14 +7,17 @@
 // initial dry run — before any mutant even runs. Raise the cap for mutation
 // runs only; per-MUTANT runaway protection stays with Stryker's own
 // timeoutMS/timeoutFactor, not vitest's cap.
-import { defineConfig, mergeConfig } from "vitest/config";
+//
+// Deliberately NO bare imports (vitest/config): CI's import-map coverage
+// check scans every non-test .ts file and only exempts vitest.config.ts by
+// name. Spreading the base config needs no defineConfig/mergeConfig helper —
+// they are identity functions over plain objects for this shape.
 import base from "./vitest.config.js";
 
-export default mergeConfig(
-  base,
-  defineConfig({
-    test: {
-      testTimeout: 30000,
-    },
-  }),
-);
+export default {
+  ...base,
+  test: {
+    ...base.test,
+    testTimeout: 30_000,
+  },
+};
