@@ -3,7 +3,6 @@ package hub
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -158,12 +157,4 @@ func (h *Hub) replayPendingTrust(writeFn func(api.ServerEvent) error, chatFilter
 		}
 	}
 	return nil
-}
-
-// sseHandshakeFrame renders the connected handshake for tests that assert
-// the exact wire shape.
-func sseHandshakeFrame(floor, head uint64) string {
-	evt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
-	data, _ := json.Marshal(evt)
-	return fmt.Sprintf("id: %d\ndata: %s\n\n", head, data)
 }

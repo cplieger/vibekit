@@ -51,6 +51,7 @@ type sessionInfoUpdate struct {
 			ContextUsage    struct {
 				UsagePercentage *float64 `json:"usagePercentage"`
 			} `json:"contextUsage"`
+			Kind string `json:"kind"`
 			// PromptTurnSummaries is KAS's per-turn metering record,
 			// emitted as a session_info_update just before the
 			// session/prompt response returns (verified on the live
@@ -58,7 +59,6 @@ type sessionInfoUpdate struct {
 			// usage:0.0619}], beside elapsedTime (ms).
 			PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
 			ElapsedTime         float64             `json:"elapsedTime"`
-			Kind                string              `json:"kind"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }
