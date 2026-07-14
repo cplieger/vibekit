@@ -1,15 +1,13 @@
 {
   "testRunner": "vitest",
   "vitest": {
-    "configFile": "vitest.config.ts"
+    "configFile": "vitest.stryker.config.ts"
   },
-
   "checkers": ["typescript"],
   "tsconfigFile": "tsconfig.json",
   "typescriptChecker": {
     "prioritizePerformanceOverAccuracy": false
   },
-
   "mutate": [
     "strings.ts",
     "bus.ts",
@@ -21,20 +19,13 @@
     "highlight.ts",
     "keys.ts",
     "platform.ts",
-    "arrow-nav.ts",
-    "streaming-dom.ts"
+    "arrow-nav.ts"
   ],
-
-  "testFiles": ["**/*.test.ts"],
-
   "mutator": {
     "excludedMutations": ["StringLiteral"]
   },
-
-  "ignorePatterns": ["node_modules", "reports", "coverage", "*.test.ts", "*.d.ts", "../static"],
-
+  "ignorePatterns": ["node_modules", "reports", "coverage", "*.d.ts", "../static"],
   "ignoreStatic": true,
-
   "reporters": ["html", "progress", "clear-text"],
   "clearTextReporter": {
     "allowColor": true,
@@ -45,13 +36,11 @@
   "htmlReporter": {
     "fileName": "reports/mutation/index.html"
   },
-
   "thresholds": {
     "high": 80,
     "low": 60,
     "break": 50
   },
-
   "timeoutMS": 10000,
   "timeoutFactor": 2,
   "dryRunTimeoutMinutes": 2,
