@@ -4,8 +4,9 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { upsertHeader, removeChat } from "../store.js";
+import { upsertHeader, removeChat, getActiveId } from "../store.js";
 import { closeTab, hasTab } from "../tabs.js";
+import { parseRoute, replaceRoute } from "../router.js";
 
 // Defensive `=== undefined` guards: the wire decoder marks payloads
 // non-nullable but the test suite (and a malformed frame at runtime)
@@ -18,6 +19,16 @@ onSSE("chat_created", (_chatID, header) => {
     return;
   }
   upsertHeader(header);
+  // B4: a zero-message ghost chat keeps "/" as its URL (applyInitialRoute
+  // deliberately doesn't rewrite it — the id exists nowhere but this tab's
+  // memory). Once the server persists the chat and echoes chat_created,
+  // flip the URL to the now-real id — but only when it's this device's
+  // active chat AND we're still sitting on "/" (never hijack a user who
+  // navigated to settings/files/another chat meanwhile).
+  const route = parseRoute(location.pathname);
+  if (header.id === getActiveId() && route.kind === "chat" && route.id === "") {
+    replaceRoute({ kind: "chat", id: header.id });
+  }
 });
 
 onSSE("chat_updated", (_chatID, header) => {

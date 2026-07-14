@@ -5,18 +5,13 @@
 // empty chat, idle, mid-turn queue).
 // ---------------------------------------------------------------------------
 
-import { getActive, getActiveId, isThinking, contextSizeFor, setModel } from "./store.js";
+import { getActive, getActiveId, isThinking, setModel } from "./store.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { wireArrowNav } from "./arrow-nav.js";
 import { setCurrentModel, setLastModel } from "./session-context.js";
-import {
-  showModelPicker,
-  hideModelPicker,
-  refreshPickerIfVisible,
-  getCachedModels,
-} from "./picker.js";
+import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import {
@@ -109,16 +104,11 @@ class ModelSwitchController {
     const expandContent = $.modelSwitchList;
     makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
-        const session = getActive();
-        const isEmpty =
-          session === undefined || (session.message_count === 0 && session.messages.length === 0);
-        if (isEmpty) {
-          setTimeout(() => {
-            collapseAll();
-            this.openRichPicker();
-          }, 0);
-          return;
-        }
+        // Always the inline list (models + effort row) — including on an
+        // empty chat. The old empty-chat branch collapsed the pill and
+        // re-showed the hero picker, which is ALREADY the empty-state
+        // content behind the prompt bar, so the click looked like a no-op
+        // and the effort control was unreachable before the first prompt.
         this.renderCondensedList();
       },
     });
@@ -127,14 +117,6 @@ class ModelSwitchController {
     // SSE (handlers/turn.ts → drainModelSwitchQueue), NOT the active-only
     // `turn:idle` bus event — so a switch queued on a background chat is no
     // longer stranded until that chat happens to become the active tab.
-  }
-
-  private openRichPicker(): void {
-    const currentModel = getActive()?.model ?? "";
-    showModelPicker(currentModel, (modelID: string) => {
-      this.applyLocalChoice(modelID);
-      hideModelPicker();
-    });
   }
 
   private renderCondensedList(): void {
@@ -240,6 +222,18 @@ class ModelSwitchController {
   private setEffort(level: string): void {
     const session = getActive();
     if (session === undefined) {
+      return;
+    }
+    // Empty chat = no bridge yet, so set_effort would 409 (no session to
+    // apply it to). Persist the choice locally instead: spawnBridge seeds
+    // it at session/new via StartOpts.Effort (effortForModel reads the
+    // same model_effort setting keyed by last_model).
+    const isEmpty = session.message_count === 0 && session.messages.length === 0;
+    if (isEmpty) {
+      currentEffort.value = level;
+      void patchSettings({
+        model_effort: { last_model: session.model, effort: level as EffortLevel },
+      });
       return;
     }
     // Dispatch through the actions framework (optimistic flip + rollback live
@@ -384,9 +378,16 @@ export function applyLocalModel(modelID: string): void {
   setLastModel(modelID);
   const session = getActive();
   if (session !== undefined) {
+    // setModel replaces the session object in the store (and refreshes the
+    // derived usage.context_size); re-read it so the context bar renders the
+    // NEW model. Refreshing from the stale reference was the "picker says
+    // sonnet, pill says auto" desync: the old object still carried the old
+    // model and its rAF-batched updateContextBar write landed last.
     setModel(session.id, modelID);
-    session.usage.context_size = contextSizeFor(modelID);
-    refreshContextUI(session);
+    const updated = getActive();
+    if (updated !== undefined) {
+      refreshContextUI(updated);
+    }
   }
   refreshPickerIfVisible(modelID);
 }

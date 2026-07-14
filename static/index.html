@@ -143,7 +143,15 @@
             <div class="elicitation-actions"></div>
           </form>
         </dialog>
-        <form id="prompt-form" class="bottom-bar">
+        <!-- action="javascript:void 0" is the native-submission backstop: if a
+             dynamically-added button ever lands in this form without
+             type="button", or the submit handler throws before preventDefault,
+             the browser would otherwise perform a GET navigation to the current
+             URL — the "sending a message reloads the whole page" failure. CSP
+             form-action 'self' blocks the javascript: navigation outright, so
+             the failure mode becomes "nothing happens + console violation"
+             instead of a page reload. -->
+        <form id="prompt-form" class="bottom-bar" action="javascript:void 0">
           <div class="prompt-box">
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
@@ -461,33 +469,47 @@
               <p id="native-policy-empty-hint" class="section-hint hidden">No policy rules loaded yet.</p>
 
               <h4 class="section-subtitle">Add a rule</h4>
-              <div class="native-rule-adder">
-                <select id="native-rule-scope" class="chip-mode-select" aria-label="Rule scope">
-                  <option value="workspace">Workspace</option>
-                  <option value="user">User (global)</option>
-                </select>
-                <select id="native-rule-capability" class="chip-mode-select" aria-label="Capability"></select>
-                <select id="native-rule-effect" class="chip-mode-select" aria-label="Effect">
-                  <option value="ask" selected>Ask</option>
-                  <option value="allow">Allow</option>
-                  <option value="deny">Deny</option>
-                </select>
-                <input id="native-rule-match" class="chip-input" type="text" placeholder="match globs, comma-separated (optional)" aria-label="Match globs">
-                <button id="native-rule-add" class="action-pill" type="button" data-tooltip="Add policy rule" aria-label="Add policy rule">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                </button>
+              <div class="rule-form" data-rule-form="policy" role="group" aria-label="Add a policy rule">
+                <label class="rf-field">
+                  <span class="rf-label">Scope</span>
+                  <select id="native-rule-scope" class="rf-select">
+                    <option value="workspace">Workspace</option>
+                    <option value="user">User (global)</option>
+                  </select>
+                </label>
+                <label class="rf-field">
+                  <span class="rf-label">Capability</span>
+                  <select id="native-rule-capability" class="rf-select"></select>
+                </label>
+                <label class="rf-field">
+                  <span class="rf-label">Effect</span>
+                  <select id="native-rule-effect" class="rf-select">
+                    <option value="ask" selected>Ask</option>
+                    <option value="allow">Allow</option>
+                    <option value="deny">Deny</option>
+                  </select>
+                </label>
+                <label class="rf-field rf-grow">
+                  <span class="rf-label">Match globs <span class="rf-optional">(optional)</span></span>
+                  <input id="native-rule-match" class="rf-input rf-mono" type="text" placeholder="src/**, docs/**…">
+                </label>
+                <button id="native-rule-add" class="btn rf-submit" type="button">Add rule</button>
               </div>
               <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative (e.g. <code>src/**</code>); user paths are absolute (e.g. <code>/home/you/project/**</code>).</p>
 
               <details id="native-policy-explain-box">
                 <summary class="section-subtitle native-explain-summary">Test a decision (why?)</summary>
                 <p class="section-hint">Simulate the decision for a capability + resource. This is a read-only check — it never runs the tool or raises a prompt.</p>
-                <div class="native-rule-adder">
-                  <select id="native-explain-capability" class="chip-mode-select" aria-label="Capability"></select>
-                  <input id="native-explain-resource" class="chip-input" type="text" placeholder="resource: a path, or a command for shell" aria-label="Resource">
-                  <button id="native-explain-run" class="action-pill" type="button" data-tooltip="Test" aria-label="Test decision">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-                  </button>
+                <div class="rule-form" data-rule-form="explain" role="group" aria-label="Test a policy decision">
+                  <label class="rf-field">
+                    <span class="rf-label">Capability</span>
+                    <select id="native-explain-capability" class="rf-select"></select>
+                  </label>
+                  <label class="rf-field rf-grow">
+                    <span class="rf-label">Resource</span>
+                    <input id="native-explain-resource" class="rf-input rf-mono" type="text" placeholder="a path, or a command for shell…">
+                  </label>
+                  <button id="native-explain-run" class="btn rf-submit" type="button">Test</button>
                 </div>
                 <p id="native-explain-result" class="section-hint"></p>
               </details>
@@ -526,20 +548,27 @@
                 <h4 class="section-subtitle">Command rules</h4>
                 <p class="section-hint">Per-command overrides. <strong>Allow</strong> auto-approves the pattern under Safe mode (ignored in Allow all / No commands). <strong>Deny</strong> forces a prompt regardless of policy — safety net for destructive one-shots. * is a wildcard.</p>
                 <div id="command-rules-chips" class="chip-list"></div>
-                <div class="chip-adder">
-                  <select id="command-rules-mode" class="chip-mode-select" aria-label="Rule mode">
-                    <option value="allow">Allow</option>
-                    <option value="deny">Deny</option>
-                  </select>
-                  <select id="command-rules-priority" class="chip-mode-select" aria-label="Rule priority">
-                    <option value="0">Normal</option>
-                    <option value="1">High</option>
-                    <option value="2">Override</option>
-                  </select>
-                  <input id="command-rules-input" class="chip-input" type="text" placeholder="e.g. npm * or *filter-repo*" aria-label="Add command pattern">
-                  <button id="command-rules-add" class="action-pill" type="button" data-tooltip="Add rule" aria-label="Add rule">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                  </button>
+                <div class="rule-form" data-rule-form="command" role="group" aria-label="Add a command rule">
+                  <label class="rf-field">
+                    <span class="rf-label">Mode</span>
+                    <select id="command-rules-mode" class="rf-select">
+                      <option value="allow">Allow</option>
+                      <option value="deny">Deny</option>
+                    </select>
+                  </label>
+                  <label class="rf-field">
+                    <span class="rf-label" title="Higher priority overrides lower-priority rules">Priority</span>
+                    <select id="command-rules-priority" class="rf-select">
+                      <option value="0">Normal</option>
+                      <option value="1">High</option>
+                      <option value="2">Override</option>
+                    </select>
+                  </label>
+                  <label class="rf-field rf-grow">
+                    <span class="rf-label">Pattern</span>
+                    <input id="command-rules-input" class="rf-input rf-mono" type="text" placeholder="e.g. npm * or *filter-repo*">
+                  </label>
+                  <button id="command-rules-add" class="btn rf-submit" type="button">Add rule</button>
                 </div>
                 <p id="command-rules-empty-hint" class="section-hint hidden">
                   No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.
@@ -549,11 +578,12 @@
                 <h4 class="section-subtitle">Agent ignore files</h4>
                 <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>
                 <div id="agent-ignore-chips" class="chip-list"></div>
-                <div class="chip-adder">
-                  <input id="agent-ignore-input" class="chip-input" type="text" placeholder="e.g. .gitignore" aria-label="Add ignore file path">
-                  <button id="agent-ignore-add" class="action-pill" type="button" data-tooltip="Add ignore file" aria-label="Add ignore file">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                  </button>
+                <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
+                  <label class="rf-field rf-grow">
+                    <span class="rf-label">Path</span>
+                    <input id="agent-ignore-input" class="rf-input rf-mono" type="text" placeholder="e.g. .gitignore">
+                  </label>
+                  <button id="agent-ignore-add" class="btn rf-submit" type="button">Add</button>
                 </div>
                 <p id="agent-ignore-empty-hint" class="section-hint hidden">
                   No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).

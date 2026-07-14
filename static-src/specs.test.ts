@@ -220,6 +220,32 @@ describe("initSpecs board wiring", () => {
     vi.useRealTimers();
   });
 
+  it("renders board-level empty and error states as spec-empty-board cards", async () => {
+    // Empty state: carries the card class (its frame comes from CSS — the
+    // board has no .list-container wrapper to supply border/radius).
+    mockDispatch.mockResolvedValue({ specs: [] });
+    initSpecs();
+    showSpecsView();
+    await flush();
+
+    const empty = document.querySelector("#specs-list .list-empty");
+    expect(empty).not.toBeNull();
+    expect(empty?.classList.contains("spec-empty-board")).toBe(true);
+
+    // Error state: same card treatment + a retry affordance.
+    _resetForTest();
+    document.body.innerHTML = `<button id="specs-btn"></button><div id="specs-list"></div>`;
+    mockDispatch.mockResolvedValue(null);
+    initSpecs();
+    showSpecsView();
+    await flush();
+
+    const error = document.querySelector("#specs-list .list-empty");
+    expect(error).not.toBeNull();
+    expect(error?.classList.contains("spec-empty-board")).toBe(true);
+    expect(error?.querySelector("button")).not.toBeNull();
+  });
+
   it("opens a document in the editor when a doc chip is clicked", async () => {
     mockDispatch.mockResolvedValue({ specs: [spec({ tasks: [] })] });
     initSpecs();

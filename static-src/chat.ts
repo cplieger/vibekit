@@ -12,6 +12,7 @@ import {
   get,
   getSessions,
   setActive,
+  setModel,
   upsertHeader,
   contextSizeFor,
   defaultUsage,
@@ -63,37 +64,45 @@ onBus(BUS_ACTIVATE_CHAT, (p) => {
 
 // --- Chat tab registration ---
 
-export function openChatTab(id: string, name: string): void {
-  openTab({
-    id,
-    name,
-    kind: "chat",
-    // Derive the tab icon from the chat's current mode so a reloaded or
-    // restored chat shows the right mode glyph; installStoreSubscribers keeps
-    // it in sync on later (user- or agent-initiated) mode changes.
-    iconSvg: iconForMode(get(id)?.current_mode_id ?? ""),
-    view: TAB_VIEWS.chat,
-    route: { kind: "chat", id },
-    onShow: () => {
-      activateChatView(id);
+/** Open (or activate) a chat tab. Pass `{ activate: false }` for the boot
+ *  restore loop: activation runs activateChatView (messages fetch +
+ *  conflicts prefetch), so bulk-opening N chats active would fan out 2N
+ *  requests at boot (B8) — the boot path activates exactly one tab at
+ *  the end instead. */
+export function openChatTab(id: string, name: string, opts?: { activate?: boolean }): void {
+  openTab(
+    {
+      id,
+      name,
+      kind: "chat",
+      // Derive the tab icon from the chat's current mode so a reloaded or
+      // restored chat shows the right mode glyph; installStoreSubscribers keeps
+      // it in sync on later (user- or agent-initiated) mode changes.
+      iconSvg: iconForMode(get(id)?.current_mode_id ?? ""),
+      view: TAB_VIEWS.chat,
+      route: { kind: "chat", id },
+      onShow: () => {
+        activateChatView(id);
+      },
+      onClose: () => {
+        // Retention > 0: archive so the chat appears in History (the server
+        // purges it after N days). Retention = 0 (OFF): delete permanently —
+        // this is intentional "no retention" mode: 0 is the least-retention end
+        // of the scale (ephemeral chats, lost on close, History button hidden),
+        // NOT "keep forever" — higher N = more retention. Zero-message chats
+        // were never persisted server-side, so just drop them locally.
+        const s = get(id);
+        if (isRetentionEnabled()) {
+          archiveChat(id);
+        } else if (s?.message_count === 0) {
+          removeChat(id);
+        } else {
+          deleteChat(id);
+        }
+      },
     },
-    onClose: () => {
-      // Retention > 0: archive so the chat appears in History (the server
-      // purges it after N days). Retention = 0 (OFF): delete permanently —
-      // this is intentional "no retention" mode: 0 is the least-retention end
-      // of the scale (ephemeral chats, lost on close, History button hidden),
-      // NOT "keep forever" — higher N = more retention. Zero-message chats
-      // were never persisted server-side, so just drop them locally.
-      const s = get(id);
-      if (isRetentionEnabled()) {
-        archiveChat(id);
-      } else if (s?.message_count === 0) {
-        removeChat(id);
-      } else {
-        deleteChat(id);
-      }
-    },
-  });
+    opts,
+  );
 }
 
 /** Archive a chat (move to archive dir). Used on tab close instead of
@@ -142,7 +151,10 @@ function activateChatView(id: string): void {
   }
 
   if (session.usage.context_size === 0 && session.model !== "") {
-    session.usage.context_size = contextSizeFor(session.model);
+    // Store-safe refresh of the derived context size (setModel recomputes
+    // usage.context_size); mutating `session.usage` directly writes to a
+    // reference subscribers never see.
+    setModel(id, session.model);
   }
 
   if (session.message_count === 0 && session.messages.length === 0) {

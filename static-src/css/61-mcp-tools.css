@@ -496,6 +496,15 @@
   overflow-x: auto;
 }
 
+/* With zero agent terminals the bar holds only the hardcoded "User" tab —
+   a lone, permanently-active pill labelling the same thing as the "Shell"
+   title. Hide the row until a second tab exists; createTab/evictIfOverCap
+   keep this self-maintaining. (.shell-title has flex:1, so the header's
+   status text and buttons stay right-aligned when the bar is hidden.) */
+.shell-tabs:has(> :only-child) {
+  display: none;
+}
+
 .shell-tab {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);

@@ -137,18 +137,28 @@ function tabsEffect(fn: Subscriber): () => void {
 
 // --- Public API ---
 
-/** Open a tab (or activate it if already open). */
-export function openTab(spec: TabSpec): void {
+/** Open a tab (or activate it if already open). Pass `{ activate: false }`
+ *  for bulk boot-time restores: the tab is inserted and rendered without
+ *  being activated (no view swap, no onShow data fetch), so restoring N
+ *  tabs doesn't fan out N fetches — the caller activates exactly one tab
+ *  at the end (B8). */
+export function openTab(spec: TabSpec, opts?: { activate?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === spec.id);
   if (idx >= 0) {
     // Tab already open — only callbacks (onShow/onClose) are updated;
     // name, kind, view, and route remain unchanged from the original open.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     state.tabs[idx] = { ...state.tabs[idx]!, onShow: spec.onShow, onClose: spec.onClose };
-    activateTab(spec.id);
+    if (opts?.activate !== false) {
+      activateTab(spec.id);
+    }
     return;
   }
   state.tabs.push(spec);
+  if (opts?.activate === false) {
+    emit();
+    return;
+  }
   activateTab(spec.id);
 }
 
@@ -291,6 +301,12 @@ export function hasTab(id: string): boolean {
 export function getActiveTabId(): string {
   return state.active;
 }
+/** Route of the currently active tab, or null when no tab is active.
+ *  Used by app.ts to canonicalize the URL to a restored non-chat tab. */
+export function getActiveTabRoute(): Route | null {
+  const tab = state.tabs.find((t) => t.id === state.active);
+  return tab?.route ?? null;
+}
 /** Return all open tab IDs. Used by system handlers to reconcile tabs
  *  without DOM scraping. */
 export function getOpenTabIDs(): string[] {
@@ -313,6 +329,27 @@ function scheduleEmpty(): void {
   }, 500);
 }
 
+// Snapshot of the persisted UI state, captured before the first save can
+// overwrite it. Boot-time tab opens emit through the persistence subscriber
+// BEFORE restoreTabState() runs, so without this capture the previous
+// session's tab order / active view would be clobbered by the first
+// intermediate save (B7) — reorderTabs would then "restore" the just-written
+// insertion order and singleton tabs could never be restored.
+let savedUIState: uiState.UIState | null = null;
+
+function capturedUIState(): uiState.UIState {
+  savedUIState ??= uiState.load();
+  return savedUIState;
+}
+
+/** The tab-related UI state as persisted by the PREVIOUS session, immune to
+ *  boot-time persistence writes. Used by app.ts to reopen singleton tabs
+ *  before restoreTabState() applies the saved order + active view. */
+export function getSavedTabState(): { tab_order: string[]; active_view: string } {
+  const s = capturedUIState();
+  return { tab_order: s.tab_order, active_view: s.active_view };
+}
+
 /** Register module-level subscribers. Extracted into a function so
  *  _resetForTest can re-register them after clearing the subscriber set.
  *  Effects defer their work until state has tabs — this matches the
@@ -332,6 +369,8 @@ function registerModuleSubscribers(): void {
     if (state.tabs.length === 0 && state.active === "") {
       return;
     }
+    // Capture the previous session's state before the first overwrite.
+    capturedUIState();
     uiState.save({
       tab_order: state.tabs.map((t) => t.id),
       active_view: state.active,
@@ -368,9 +407,11 @@ function registerModuleSubscribers(): void {
 }
 
 /** Restore tabs to match saved order and active ID. Called once at startup
- *  after modules have registered their tabs. */
+ *  after modules have registered their tabs. Reads the pre-boot snapshot
+ *  (capturedUIState), NOT live localStorage — by the time this runs the
+ *  boot-loop opens have already re-saved an intermediate state. */
 export function restoreTabState(): void {
-  const saved = uiState.load();
+  const saved = capturedUIState();
   if (saved.tab_order.length > 0) {
     reorderTabs(saved.tab_order);
   }
@@ -403,11 +444,36 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
   }
 }
 
+// Boot fast-path flag (B3/E1): view swaps before the initial route is applied
+// are bulk restores that shouldn't animate — and each queued startViewTransition
+// serializes behind the previous one's `finished`, so N boot activations starve
+// the deep-linked view's unhide for ~N crossfades (or forever when rendering is
+// suspended). app.ts flips this right after applyInitialRoute().
+let bootDone = false;
+
+/** Mark boot restore complete — view swaps start animating from here on.
+ *  Called once by app.ts right after the initial route is applied (and on
+ *  login success for the unauthenticated boot path). */
+export function markBootDone(): void {
+  bootDone = true;
+}
+
 // Queued view transition: wraps DOM swaps so tab switches cross-fade without
 // overlapping jank. Delegates to @cplieger/ui-primitives' viewTransition, which
-// owns the feature-detection + serialization queue (identical semantics to the
-// old local copy); kept as a void-returning wrapper so callers stay unchanged.
+// owns the feature-detection + serialization queue; kept as a void-returning
+// wrapper so callers stay unchanged. Two fast-paths run the swap directly
+// (un-queued, no animation):
+//   - boot restores (markBootDone not yet called), see above;
+//   - hidden documents (B5/E3, local half): startViewTransition's update
+//     callback needs a rendering opportunity, which a hidden/suspended tab
+//     may never get — the queued swap (and every later one chained behind
+//     it) would wedge app-wide. The upstream ui-primitives watchdog covers
+//     the visible-but-suspended case.
 function viewTransition(fn: () => void): void {
+  if (!bootDone || document.hidden) {
+    fn();
+    return;
+  }
   void uipViewTransition(fn);
 }
 
@@ -759,18 +825,26 @@ export function toggleSpecsView(onShow: () => void, onClose?: () => void): void 
   });
 }
 
-export function openEditorView(filePath: string, onShow: () => void, onClose?: () => void): void {
+export function openEditorView(
+  filePath: string,
+  onShow: () => void,
+  onClose?: () => void,
+  opts?: { activate?: boolean },
+): void {
   const id = `editor:${filePath}`;
   const name = filePath.split("/").pop() ?? filePath;
-  openTab({
-    id,
-    name,
-    kind: "editor",
-    view: TAB_VIEWS.editor,
-    route: { kind: "file", path: filePath },
-    onShow,
-    onClose,
-  });
+  openTab(
+    {
+      id,
+      name,
+      kind: "editor",
+      view: TAB_VIEWS.editor,
+      route: { kind: "file", path: filePath },
+      onShow,
+      onClose,
+    },
+    opts,
+  );
 }
 
 // --- Test helpers (no-op in production; used by tabs.test.ts) ---
@@ -786,6 +860,8 @@ export function _resetForTest(): void {
   }
   internal.emptyTimer = null;
   internal.renderQueued = false;
+  savedUIState = null;
+  bootDone = false;
   // Dispose existing module effects and re-register so tests observe
   // the same side-effects (persistence, view sync, DOM render) as
   // production.

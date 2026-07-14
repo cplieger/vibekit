@@ -131,6 +131,10 @@ func appendStatusEntries(files []gitFile, x, y byte, path string) []gitFile {
 func splitTrackedUntracked(ctx context.Context, dir string, files []string) (tracked, untracked []string) {
 	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.Debug("git status canceled during discard", "repo", dir, "cause", ctx.Err())
+			return nil, nil
+		}
 		slog.Warn("git status failed during discard", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
 		return nil, nil
 	}

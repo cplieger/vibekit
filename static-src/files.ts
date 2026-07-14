@@ -138,6 +138,11 @@ export function restoreFileBrowser(path: string): void {
 /** Reset the file browser to root. */
 function resetFileBrowser(): void {
   state.reset();
+  // Clear the DOM too: rows kept while hidden would replay their entry
+  // animation in unison on the next display flip (a block translate) and
+  // skip fresh mounts in reconcile. A fresh mount every open keeps the
+  // entry animation deterministic; entries are refetched on every open.
+  $.fbList.replaceChildren();
   uiState.save({ fb_path: "" });
 }
 
@@ -176,7 +181,12 @@ function loadDir(): void {
       state.entryMap.set(e.name, e);
     }
     state.dirWritable = d.writable;
-    renderList();
+    // First populate (empty list) renders WITHOUT a view transition: the
+    // view-open transition is usually still animating, and serializing a
+    // second one behind it turns the row entry into a geometry-only morph
+    // ("translate without fade"). Navigation between populated dirs keeps
+    // its crossfade.
+    renderList({ transition: $.fbList.childElementCount > 0 });
   });
 }
 
@@ -306,6 +316,16 @@ function renderList(opts: { transition?: boolean } = {}): void {
         }
       },
     });
+
+    // Staggered list entry (design system): 30ms per row, capped at 8.
+    // Set by visual position on every render; only freshly-mounted rows
+    // animate, so updating the property on kept rows is inert. Runs before
+    // the frame paints, so delays apply from the animation's first frame.
+    let idx = 0;
+    for (const row of $.fbList.children) {
+      (row as HTMLElement).style.setProperty("--stagger-index", String(Math.min(idx, 8)));
+      idx++;
+    }
 
     updateActionButtons();
     updateRowHighlights();

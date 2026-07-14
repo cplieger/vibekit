@@ -86,13 +86,16 @@ export function initAgentTerminals(): void {
     });
   }
 
-  // Wire full-screen toggle.
+  // Wire full-screen toggle. aria-pressed mirrors the panel class so the
+  // button reads as a toggle; shell.ts resets both when the panel closes.
   const fsBtn = document.getElementById("shell-fullscreen-btn");
   if (fsBtn !== null) {
+    fsBtn.setAttribute("aria-pressed", "false");
     fsBtn.addEventListener("click", () => {
       const panel = document.getElementById("shell-panel");
       if (panel !== null) {
-        panel.classList.toggle("shell-fullscreen");
+        const on = panel.classList.toggle("shell-fullscreen");
+        fsBtn.setAttribute("aria-pressed", on ? "true" : "false");
       }
     });
   }
@@ -196,9 +199,15 @@ function evictIfOverCap(): void {
   }
   const t = terms.get(evictId);
   if (t !== undefined) {
+    const wasActive = t.tab.classList.contains("active");
     t.tab.remove();
     t.pane.remove();
     terms.delete(evictId);
+    // Evicting the selected terminal would leave no visible pane (the user
+    // terminal stays hidden); fall back to the human PTY tab.
+    if (wasActive) {
+      switchTab("user");
+    }
   }
 }
 

@@ -382,7 +382,11 @@ func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
 
 	// Track this install so a DELETE can cancel it mid-run.
 	key := section + "." + name
-	ctx, cancel := context.WithTimeout(r.Context(), toolsInstallTimeout)
+	// Detached from r.Context(): a dropped client (tab close, mobile sleep,
+	// client-side abort) must not SIGKILL a multi-minute install mid-download.
+	// Cancellation stays available through inflightInstalls (the DELETE
+	// handler) and the overall budget below.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), toolsInstallTimeout)
 	defer cancel()
 	inflightMu.Lock()
 	if prior, exists := inflightInstalls[key]; exists {

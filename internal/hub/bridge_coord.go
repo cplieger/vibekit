@@ -135,7 +135,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 
 	if chat.ACPSessionID != "" {
 		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, mcpServers) {
-			go bc.Forward(chatID, sb.bridge)
 			return sb, nil
 		}
 	}
@@ -153,6 +152,14 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// needed. Same trust model as vibekit's `!cmd` interception: the hooks are
 	// the user's own automation. The utility bridge keeps its own EnableHooks
 	// for the hooks dashboard (list/setEnabled/Run-now); see hub/hooks.go.
+	//
+	// Forward MUST be draining NotifCh before Start: on v3 (KAS) the agent
+	// sends _kiro/auth/getAccessToken and _kiro/terminal/shell_type as
+	// server->client REQUESTS on the session-creation critical path, and
+	// session/new does not return until they are answered. Attaching the
+	// forward goroutine after Start deadlocks every fresh session. If Start
+	// fails it stops the bridge (NotifCh closes), so this goroutine exits.
+	go bc.Forward(chatID, sb.bridge)
 	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
 		return nil, setupErr(err)
 	}
@@ -174,8 +181,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	}
 	sb.state = bridgeIdle
 
-	go bc.Forward(chatID, sb.bridge)
-
 	return sb, nil
 }
 
@@ -187,10 +192,19 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// EnableHooks:true — the session/load path must opt into the hook engine
 	// too, so hooks autofire on resumed sessions after a container restart
 	// (same rationale as spawnBridge's session/new path above).
+	//
+	// Forward attaches BEFORE Start for the same reason as the fresh
+	// session/new path: v3 session/load also blocks on the host answering
+	// _kiro/auth/getAccessToken. On load failure the old bridge is swapped
+	// out of sb before it is stopped, so this goroutine's exit cleanup
+	// (removeIfBridge, identity-compared) cannot evict the replacement.
+	go bc.Forward(chatID, sb.bridge)
 	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
-		sb.bridge.Stop()
+		old := sb.bridge
+		sb.bridge = bc.bridge.mgr.factory()
+		old.Stop()
 		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 			if !ex {
 				return false
@@ -200,7 +214,6 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		}); mErr != nil {
 			slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", mErr)
 		}
-		sb.bridge = bc.bridge.mgr.factory()
 		return false
 	}
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/fileutil"
@@ -51,7 +50,13 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		// Skip only ".git" itself — a dot-NAMED repo (".github", ".kiro")
+		// is a legitimate clone target; hiding every dot-dir made such a
+		// clone succeed on disk yet stay invisible to /api/git/repos and
+		// status-all, so the Sources row kept offering Clone (which then
+		// failed on the non-empty dir). Hidden non-repo dirs (.cache,
+		// .venv) cost one IsGitRepo stat and are skipped by its result.
+		if !e.IsDir() || e.Name() == ".git" {
 			continue
 		}
 		name := e.Name()

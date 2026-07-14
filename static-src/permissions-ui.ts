@@ -97,6 +97,9 @@ class PermissionsUIController {
         const priority = parseInt(prioSel?.value ?? "0", 10) || 0;
         void this.addRule(val, mode, priority);
         input.value = "";
+        // Refocus for repeat entry (adding several rules in a row is the
+        // common flow; without this every add costs a pointer round-trip).
+        input.focus();
       };
       addBtn.addEventListener("click", submit);
       input.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -248,6 +251,8 @@ class PermissionsUIController {
       this.ignoreFiles.push(val);
       void patchSettings({ agent_ignore_files: this.ignoreFiles });
       input.value = "";
+      // Refocus for repeat entry, same as the command-rules adder.
+      input.focus();
       this.renderIgnoreChips();
     };
     addBtn.addEventListener("click", submit);
@@ -369,6 +374,16 @@ class NativePolicyController {
     registerCleanup(() => {
       this.cancel();
     });
+    // The initial fetch is deliberately NOT fired here (B2): init() runs
+    // during boot (restoreAll, before the auth check), and /api/permissions
+    // is utility-bridge-backed — an expensive fetch for a panel that isn't
+    // visible. refresh() fires on the Permissions tab's first activation
+    // instead (settings-tabs loader map, wired in settings.ts); the
+    // permissions_changed SSE registered above keeps it fresh afterwards.
+  }
+
+  /** Fetch + render the policy view. Public for the lazy tab loader. */
+  refresh(): void {
     void this.load();
   }
 
@@ -494,6 +509,8 @@ class NativePolicyController {
       const mi = maybeEl<HTMLInputElement>("native-rule-match");
       if (mi !== null) {
         mi.value = "";
+        // Refocus for repeat entry (adding several rules in a row).
+        mi.focus();
       }
       void this.load();
     }
@@ -569,10 +586,19 @@ export function initShellPolicyUI(initial: AppSettings): void {
   controller.initShellPolicy(initial);
 }
 
-/** Initialise the native Cedar policy view + editor. Fetches
- *  GET /api/permissions and wires the add-rule / explain controls. */
+/** Initialise the native Cedar policy view + editor: wires the add-rule /
+ *  explain controls and the permissions_changed SSE refetch. Does NOT fetch
+ *  GET /api/permissions — the initial load is lazy (loadNativePolicy). */
 export function initNativePolicyUI(): void {
   nativePolicy.init();
+}
+
+/** Load the native policy view. Wired to the Permissions tab's first
+ *  activation (settings-tabs loader map) instead of boot, so the
+ *  bridge-backed /api/permissions endpoint isn't hit for an invisible
+ *  panel. Safe to call repeatedly (in-flight loads are aborted). */
+export function loadNativePolicy(): void {
+  nativePolicy.refresh();
 }
 
 /** Thin alias kept for permission.ts: "approve and trust this

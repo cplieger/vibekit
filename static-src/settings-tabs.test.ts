@@ -62,13 +62,14 @@ describe("settings-tabs TAB_LABELS coverage", () => {
     { tab: "tools", label: "Tools" },
     { tab: "permissions", label: "Permissions" },
     { tab: "instructions", label: "Custom instructions" },
-    { tab: "git", label: "Git & forges" },
+    // "git" removed: the Git & forges settings tab was retired (it had no
+    // panel or pill in the DOM; /settings/git canonicalizes to General).
   ] as const)("$tab → $label", ({ tab, label }) => {
     expect(TAB_LABELS[tab]).toBe(label);
   });
 
-  it("TABS has exactly 5 entries", () => {
-    expect(TABS).toHaveLength(5);
+  it("TABS has exactly 4 entries", () => {
+    expect(TABS).toHaveLength(4);
   });
 });
 

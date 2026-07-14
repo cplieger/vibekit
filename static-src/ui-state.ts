@@ -15,6 +15,8 @@ export interface UIState {
   tab_order: string[];
   active_view: string;
   shell_open: boolean;
+  /** User-dragged shell panel height in px; 0 = use the CSS default (16rem). */
+  shell_h: number;
   editor_files: string[];
   fb_path: string;
   theme: "dark" | "light" | null;
@@ -26,6 +28,7 @@ function empty(): UIState {
     tab_order: [],
     active_view: "",
     shell_open: false,
+    shell_h: 0,
     editor_files: [],
     fb_path: "",
     theme: null,

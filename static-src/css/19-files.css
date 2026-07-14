@@ -8,16 +8,19 @@
   height: 100%;
 }
 
+/* The element dual-classes .page-content (max-width/padding) — pin the
+   scroller contract explicitly here so files-view stays an app-like pane
+   (internal scroller, pinned bottom toolbar) even as .page-content changes
+   for the document-style views (git/history get `flex: 1 0 auto` in a
+   sibling batch; `1 0 auto` on this element would size it to content and
+   push the toolbar out of the clipped #chat-area). Later file at equal
+   specificity → these longhands win. */
 .fb-list-wrap {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   min-height: 0;
   position: relative;
-}
-
-.fb-list {
-  view-transition-name: fb-list;
 }
 
 .fb-drop-overlay {
@@ -58,7 +61,12 @@
   transition: opacity var(--dur-standard);
 }
 
-/* Global upload progress bar */
+/* Global upload progress bar. Same open/close model as .shell-panel: the
+   element stays display:flex for its lifetime and collapses to a hidden
+   zero-height state, so the dismiss animates on every engine (the former
+   `display … allow-discrete` close snapped shut). Open (class removal)
+   animates from the collapsed state; no @starting-style needed since the
+   element never enters/leaves the layout. */
 .upload-progress {
   padding: var(--sp-2) var(--sp-4);
   background: var(--c-bg-secondary);
@@ -68,21 +76,27 @@
   gap: var(--sp-3);
   flex-shrink: 0;
   height: 2.5rem;
+  opacity: 1;
   overflow: hidden;
   transition:
     height var(--dur-standard) var(--ease-standard),
+    padding-block var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard),
-    display var(--dur-standard) allow-discrete;
-
-  @starting-style {
-    height: 0;
-    opacity: 0;
-  }
+    visibility 0s;
 
   &.upload-closed {
-    display: none;
     height: 0;
     opacity: 0;
+
+    /* border-box: height 0 alone still paints padding + top border. */
+    padding-block: 0;
+    border-block-start-width: 0;
+    visibility: hidden; /* unfocusable, out of the a11y tree */
+    transition:
+      height var(--dur-exit) var(--ease-exit),
+      padding-block var(--dur-exit) var(--ease-exit),
+      opacity var(--dur-exit) var(--ease-exit),
+      visibility 0s var(--dur-exit); /* flip AFTER the collapse finishes */
   }
 }
 
@@ -122,8 +136,8 @@
   border-radius: var(--r);
   cursor: pointer;
   transition:
-    background-color var(--dur-quick),
-    color var(--dur-quick);
+    background-color var(--dur-micro),
+    color var(--dur-micro);
 
   &:hover {
     background: var(--c-bg-hover);
@@ -176,11 +190,22 @@
   min-height: var(--btn-h);
   border-block-end: 1px solid var(--c-border);
   font-size: var(--fs-sm);
+
+  /* Long-list paint bound: rows are fixed-height (2.25rem + 1px border), so
+     the intrinsic size estimate is exact; `auto` remembers the real size
+     after first paint (keeps mobile's larger padding correct). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.3125rem;
   transition:
     background var(--dur-micro),
     opacity var(--dur-enter),
     transform var(--dur-enter);
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+
+  /* Staggered list entry (design system): 30ms per row, capped at 8 by the
+     JS that sets --stagger-index. `both` fill holds delayed rows invisible
+     until their turn. */
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
 
   &:last-child {
     border-block-end: none;

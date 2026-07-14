@@ -54,8 +54,13 @@
   padding-inline-start: var(--sp-2);
 }
 
-/* Global progress indicator: 2px stripe at the top of chat-area.
-   Visible when any action is in-flight (pendingCount > 0). */
+/* Global progress indicator: 2px indeterminate sweep at the top of
+   chat-area. Driven by app.ts, which shows it only for slow foreground
+   actions (150ms show-delay + 300ms min-visible; background polls are
+   ignored). The bar itself only fades opacity — the sweep lives on the
+   ::after element and exists only while .active, so the exit is a pure
+   fade. (The old scaleX fill transition played backwards on hide,
+   reading as a grow/shrink pulse on every quick action.) */
 .global-progress {
   position: absolute;
   top: 0;
@@ -63,29 +68,33 @@
   right: 0;
   height: 2px;
   z-index: 11;
-  background: var(--c-accent, #9046ff);
+  overflow: hidden;
   opacity: 0;
-  transform: scaleX(0);
-  transform-origin: left;
-  transition:
-    opacity 0.15s ease,
-    transform 0.2s ease;
+  transition: opacity 0.15s var(--ease-exit);
   pointer-events: none;
+}
+
+.global-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--c-accent, #9046ff);
+  transform: translateX(-100%);
 }
 
 .global-progress.active {
   opacity: 1;
-  transform: scaleX(1);
-  animation: progress-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes progress-pulse {
-  0%,
-  100% {
-    opacity: 0.7;
-  }
+.global-progress.active::after {
+  animation: vk-progress-sweep 1.2s var(--ease-standard) infinite;
+}
 
-  50% {
-    opacity: 1;
+/* 40%-wide runner: -100% own-width starts fully off-screen left;
+   350% own-width (= 140% of the bar) ends fully off-screen right. */
+@keyframes vk-progress-sweep {
+  to {
+    transform: translateX(350%);
   }
 }

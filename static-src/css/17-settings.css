@@ -9,8 +9,16 @@
   padding: var(--sp-4);
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+
+  /* was: flex: 1; min-height: 0 — as a flex item of the #settings-view
+     scroller, basis 0 + no content floor clamped the shell's box to exactly
+     the scrollport height. Tall panels overflowed the box, stranding the
+     shell's bottom padding one viewport up (no breathing room under the last
+     section) and capping the sticky .settings-header's containing block at
+     one viewport (header scrolled away). Basis auto + no shrink lets the
+     shell grow with its content; grow keeps short panels filling the
+     viewport. */
+  flex: 1 0 auto;
   gap: var(--sp-3);
 }
 
@@ -1665,16 +1673,124 @@ dd.governance-off {
   background: var(--c-bg-hover);
 }
 
-.native-rule-adder {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  margin: var(--sp-2) 0;
+/* --- Permissions rule forms (.rule-form) --------------------------------
+ * One shared labeled-field-grid vocabulary for the four adders on the
+ * Permissions panel (Active policy, Test a decision, Command rules, Agent
+ * ignore). Replaces the chat-surface chip-input/chip-mode-select reuse
+ * (11px, ~22px tall, unlabeled) that sat below the design system's 24px
+ * desktop hit floor. Do NOT restyle .chip-input/.chip-mode-select here —
+ * those still serve the MCP disabled-tools adder and the in-dialog
+ * always-allow row, where compact is intentional. */
+.rule-form {
+  display: grid;
+  gap: var(--sp-2) var(--sp-3);
+  align-items: end; /* labels float above; controls + button share a baseline */
+  margin-block: var(--sp-2);
 }
-.native-rule-adder .chip-input {
-  flex: 1 1 12rem;
-  min-inline-size: 0;
+
+/* Per-adder column plans (same field classes, different templates). */
+
+/* Scope | Capability | Effect | Match | submit */
+.rule-form[data-rule-form="policy"] {
+  grid-template-columns: 8rem minmax(10rem, 1fr) 6.5rem minmax(14rem, 2fr) auto;
+}
+
+/* Capability | Resource | Test */
+.rule-form[data-rule-form="explain"] {
+  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 2fr) auto;
+}
+
+/* Mode | Priority | Pattern | Add rule */
+.rule-form[data-rule-form="command"] {
+  grid-template-columns: 6.5rem 6.5rem minmax(14rem, 1fr) auto;
+}
+
+/* Path | Add */
+.rule-form[data-rule-form="ignore"] {
+  grid-template-columns: minmax(14rem, 1fr) auto;
+}
+
+.rf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.rf-label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-tertiary);
+}
+
+.rf-optional {
+  font-weight: var(--fw-normal);
+  opacity: 0.7;
+}
+
+.rf-select,
+.rf-input {
+  block-size: 2rem; /* 32px: above the 24px floor, visually lighter than --btn-h */
+  padding-inline: var(--sp-2);
+  font-size: var(--fs-sm); /* 12px, up from the chip surfaces' 11px */
+  font-family: var(--font-sans);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  touch-action: manipulation;
+  transition:
+    border-color var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
+}
+
+.rf-mono {
+  font-family: var(--font-mono);
+}
+
+.rf-select:focus-visible,
+.rf-input:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -1px;
+}
+
+/* Labeled submit button, not an icon pill. Shares the 2rem control
+ * baseline on desktop (overrides .btn's --btn-h min-height). */
+.rule-form .rf-submit {
+  block-size: 2rem;
+  min-height: 2rem;
+}
+
+/* Tablet: two columns; the grow field + submit take full rows.
+ * [data-rule-form] keeps specificity level with the per-adder
+ * templates above so the override wins by source order. */
+@media (width <= 48rem) {
+  .rule-form[data-rule-form] {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rule-form .rf-grow,
+  .rule-form .rf-submit {
+    grid-column: 1 / -1;
+  }
+
+  .rule-form .rf-submit {
+    justify-self: start;
+  }
+}
+
+/* Phone: single column, mobile hit heights. */
+@media (width <= 40rem) {
+  .rule-form[data-rule-form] {
+    grid-template-columns: 1fr;
+  }
+
+  .rf-select,
+  .rf-input,
+  .rule-form .rf-submit {
+    block-size: var(--btn-h);
+    min-height: var(--btn-h);
+  }
 }
 
 .native-policy-status-error {
@@ -1684,7 +1800,7 @@ dd.governance-off {
 .native-explain-summary {
   cursor: pointer;
 }
-#native-explain-result:empty {
+[id="native-explain-result"]:empty {
   display: none;
 }
 

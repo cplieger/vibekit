@@ -58,18 +58,14 @@ describe("tools.install", () => {
     expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
   });
 
-  it("retries on network error", async () => {
-    mockFetch
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
+  it("does NOT auto-retry on network error (C1: a retry re-POSTs and the server cancels + restarts the in-flight multi-minute install)", async () => {
+    mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
 
-    const p = installTools.dispatch(undefined);
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(600);
-    await p;
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-    expect(recentLog()[0]?.status).toBe("success");
+    const result = await installTools.dispatch(undefined);
+    await vi.advanceTimersByTimeAsync(1000); // would cover the old backoff windows
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+    expect(recentLog()[0]?.status).toBe("error");
   });
 });
 

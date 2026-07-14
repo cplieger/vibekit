@@ -140,7 +140,9 @@ export function initChangesTab(): void {
       // spinner while the refresh is in flight (then ✓/✗). The
       // button has no text label to keep, so this reads cleaner
       // than the icon + spinner side-by-side variant.
-      void withAsyncFeedback(refreshBtn, () => refreshChanges());
+      // Explicit user refresh → opt into the server-side git fetch
+      // so ahead/behind reflects the real remote state (18-F3).
+      void withAsyncFeedback(refreshBtn, () => refreshChanges(true));
     });
   }
 
@@ -158,20 +160,29 @@ export function initChangesTab(): void {
   onSSE("turn_ended", debouncedRefresh);
   onSSE("forges_changed", debouncedRefresh);
 
-  // Initial paint.
-  void refreshChanges();
+  // No initial refresh here (EX-1): initGitPanel's onGitTabChange
+  // subscription fires immediately with the current tab, so opening
+  // /git already triggers exactly one refreshChanges(true). A second
+  // call here would only abort that first request's server scan.
 }
 
 /** Force a full /api/git/status-all refresh and repaint. Concurrent
  *  calls are safe: a generation counter ensures stale responses are
- *  discarded. */
-export async function refreshChanges(): Promise<void> {
+ *  discarded.
+ *
+ *  `doFetch=true` opts into a per-repo server-side `git fetch`
+ *  (?fetch=1) so ahead/behind is measured against fresh origin refs —
+ *  reserved for explicit user navigation (the Refresh-all button,
+ *  git-tab activation). SSE-debounced and post-action refreshes stay
+ *  fetch-free so agent turns never fan out N network fetches (18-F3). */
+export async function refreshChanges(doFetch = false): Promise<void> {
   refreshAbort?.abort();
   const ctrl = new AbortController();
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
   const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
-  const data = await apiGet<StatusAllResponse>("/api/git/status-all", signal);
+  const url = doFetch ? "/api/git/status-all?fetch=1" : "/api/git/status-all";
+  const data = await apiGet<StatusAllResponse>(url, signal);
   if (gen < refreshGeneration) {
     return;
   } // stale — a newer call supersedes
@@ -520,70 +531,84 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     ) as HTMLButtonElement;
   };
 
-  const stageAllBtn = btn("Stage all", "Stage every unstaged change");
-  stageAllBtn.addEventListener("click", () => {
-    const files = r.files.filter((f) => !f.staged).map((f) => f.path);
-    if (files.length === 0) {
-      return;
-    }
-    void withAsyncFeedback(stageAllBtn, async () => {
-      assertOk(await stage.dispatch({ repo: r.repo, files }));
-      await refreshChanges();
-    });
-  });
-  bar.appendChild(stageAllBtn);
-  bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
+  // State-gated rendering (18-F2), mirroring the existing Push/Pop
+  // pattern: an action the repo state can't service (Stage all on a
+  // fully-staged tree, Discard all on a clean repo, Pull when not
+  // behind) doesn't render at all — no confirm-then-noop paths, no
+  // "Already up to date" pulls.
+  const unstagedCount = r.files.filter((f) => !f.staged).length;
+  const dirtyCount = r.files.length; // has_dirty ⇔ dirtyCount > 0
 
-  const discardAllBtn = btn(
-    "Discard all",
-    "Throw away all uncommitted changes (irreversible)",
-    true,
-  );
-  discardAllBtn.addEventListener("click", () => {
-    // Bug 2: Module-level guard prevents concurrent discard-all per repo.
-    if (discardPendingRepos.has(r.repo)) {
-      return;
-    }
-    discardPendingRepos.add(r.repo);
-    void (async () => {
-      try {
-        const ok = await confirmDialog(
-          `Discard ALL uncommitted changes in ${r.repo}? This cannot be undone.`,
-          "Discard",
-          "destructive",
-        );
-        if (!ok) {
-          return;
-        }
-        const files = r.files.map((f) => f.path);
-        if (files.length === 0) {
-          return;
-        }
-        await withAsyncFeedback(discardAllBtn, async () => {
-          assertOk(await discard.dispatch({ repo: r.repo, files }));
-          await refreshChanges();
-        });
-      } finally {
-        discardPendingRepos.delete(r.repo);
+  if (unstagedCount > 0) {
+    const stageAllBtn = btn(`Stage all (${unstagedCount})`, "Stage every unstaged change");
+    stageAllBtn.addEventListener("click", () => {
+      // Non-empty by the unstagedCount > 0 render gate above.
+      const files = r.files.filter((f) => !f.staged).map((f) => f.path);
+      void withAsyncFeedback(stageAllBtn, async () => {
+        assertOk(await stage.dispatch({ repo: r.repo, files }));
+        await refreshChanges();
+      });
+    });
+    bar.appendChild(stageAllBtn);
+    bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
+  }
+
+  if (dirtyCount > 0) {
+    const discardAllBtn = btn(
+      `Discard all (${dirtyCount})`,
+      "Throw away all uncommitted changes (irreversible)",
+      true,
+    );
+    discardAllBtn.addEventListener("click", () => {
+      // Bug 2: Module-level guard prevents concurrent discard-all per repo.
+      if (discardPendingRepos.has(r.repo)) {
+        return;
       }
-    })();
-  });
-  bar.appendChild(discardAllBtn);
-  bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
-
-  bar.appendChild(el("span", { className: "action-bar-sep", "aria-hidden": "true" }));
-
-  const pullBtn = btn("Pull", "git pull");
-  pullBtn.addEventListener("click", () => {
-    void withAsyncFeedback(pullBtn, async () => {
-      assertOk(await pull.dispatch({ repo: r.repo }));
-      await refreshChanges();
+      discardPendingRepos.add(r.repo);
+      void (async () => {
+        try {
+          const ok = await confirmDialog(
+            `Discard ${dirtyCount} uncommitted change${dirtyCount === 1 ? "" : "s"} in ${r.repo}? This cannot be undone.`,
+            "Discard",
+            "destructive",
+          );
+          if (!ok) {
+            return;
+          }
+          // Includes staged paths: the server resets them first, so
+          // "Discard all" genuinely discards everything (EX-2).
+          const files = r.files.map((f) => f.path);
+          await withAsyncFeedback(discardAllBtn, async () => {
+            assertOk(await discard.dispatch({ repo: r.repo, files }));
+            await refreshChanges();
+          });
+        } finally {
+          discardPendingRepos.delete(r.repo);
+        }
+      })();
     });
-  });
-  bar.appendChild(pullBtn);
-  bindingCleanups.push(
-    bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn),
-  );
+    bar.appendChild(discardAllBtn);
+    bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
+  }
+
+  // Separator between file ops and sync ops — only when file ops rendered.
+  if (bar.childElementCount > 0) {
+    bar.appendChild(el("span", { className: "action-bar-sep", "aria-hidden": "true" }));
+  }
+
+  if (r.behind > 0) {
+    const pullBtn = btn(`Pull ↓${r.behind}`, "git pull --ff-only");
+    pullBtn.addEventListener("click", () => {
+      void withAsyncFeedback(pullBtn, async () => {
+        assertOk(await pull.dispatch({ repo: r.repo }));
+        await refreshChanges();
+      });
+    });
+    bar.appendChild(pullBtn);
+    bindingCleanups.push(
+      bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn),
+    );
+  }
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);

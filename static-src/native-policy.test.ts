@@ -5,6 +5,11 @@
 // with per-scope remove affordances only on writable scopes, the
 // conservative Ask default flowing through an add, the deny-removal confirm
 // gate, and the permissions_changed SSE refetch.
+//
+// B2: initNativePolicyUI() no longer fires the initial GET /api/permissions
+// (it used to fetch eagerly at boot, pre-auth, for an invisible panel); the
+// first load is lazy via loadNativePolicy(), wired to the Permissions tab's
+// first activation. Tests call both where they need rendered data.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PolicyView } from "./types.js";
 
@@ -39,8 +44,15 @@ vi.mock("./actions/permissions.js", () => ({
   explainPolicy: { name: "permissions.explain", dispatch: mocks.explainDispatch },
 }));
 
-import { initNativePolicyUI } from "./permissions-ui.js";
+import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
+
+/** init + lazy first load, as wired in production (settings-tabs loader map
+ *  fires loadNativePolicy on the Permissions tab's first activation). */
+function initAndLoad(): void {
+  initNativePolicyUI();
+  loadNativePolicy();
+}
 
 function el<T extends HTMLElement>(tag: string, id: string): T {
   const e = document.createElement(tag) as T;
@@ -125,8 +137,14 @@ beforeEach(() => {
 });
 
 describe("native policy view", () => {
-  it("renders rules grouped by scope with remove buttons only on writable scopes", async () => {
+  it("does not fetch at init — the initial load is lazy (B2)", async () => {
     initNativePolicyUI();
+    await flush();
+    expect(mocks.apiGet).not.toHaveBeenCalled();
+  });
+
+  it("renders rules grouped by scope with remove buttons only on writable scopes", async () => {
+    initAndLoad();
     await flush();
 
     const rows = policyRows();
@@ -149,7 +167,9 @@ describe("native policy view", () => {
   });
 
   it("refetches when a permissions_changed SSE arrives", async () => {
-    initNativePolicyUI();
+    // The SSE listener is registered at init (boot); only the initial fetch
+    // moved to the lazy loader (B2).
+    initAndLoad();
     await flush();
     expect(mocks.apiGet).toHaveBeenCalledTimes(1);
     mocks.sseHandlers.get("permissions_changed")?.("");
@@ -160,7 +180,7 @@ describe("native policy view", () => {
 
 describe("native policy editor", () => {
   it("adds a rule with the selected scope/capability/effect and splits comma globs", async () => {
-    initNativePolicyUI();
+    initAndLoad();
     await flush();
 
     byId<HTMLSelectElement>("native-rule-capability").value = "fs_write";
@@ -177,13 +197,14 @@ describe("native policy editor", () => {
       effect: "ask", // conservative default carried from the select
       match: ["src/**", "dist/**"],
     });
-    // match input cleared + refetched on success.
+    // match input cleared + refocused (repeat entry) + refetched on success.
     expect(byId<HTMLInputElement>("native-rule-match").value).toBe("");
+    expect(document.activeElement).toBe(byId<HTMLInputElement>("native-rule-match"));
     expect(mocks.apiGet).toHaveBeenCalledTimes(2);
   });
 
   it("removes a non-deny rule directly (no confirm)", async () => {
-    initNativePolicyUI();
+    initAndLoad();
     await flush();
     const userRow = policyRows().find(
       (r) => r.querySelector(".native-rule-cap")?.textContent === "shell",
@@ -216,7 +237,7 @@ describe("native policy editor", () => {
         },
       ],
     });
-    initNativePolicyUI();
+    initAndLoad();
     await flush();
 
     const denyRow = policyRows()[0];
@@ -246,7 +267,7 @@ describe("native policy editor", () => {
         },
       ],
     });
-    initNativePolicyUI();
+    initAndLoad();
     await flush();
 
     policyRows()[0]?.querySelector<HTMLButtonElement>(".native-rule-remove")?.click();
@@ -262,7 +283,7 @@ describe("native policy editor", () => {
       scope: "workspace",
       source: "/w/permissions.yaml",
     });
-    initNativePolicyUI();
+    initAndLoad();
     await flush();
 
     byId<HTMLSelectElement>("native-explain-capability").value = "fs_write";

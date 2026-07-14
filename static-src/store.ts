@@ -559,12 +559,20 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
 }
 
-/** Set session model and notify subscribers. Used by switchModel. */
+/** Set session model and notify subscribers. Used by switchModel. The
+ *  usage.context_size is derived from the model, so it is refreshed in the
+ *  same update — callers must never mutate `session.usage` on a stale
+ *  reference (sessions.update replaces the object; writes to the old one
+ *  are invisible to subscribers and re-renders). */
 export function setModel(chatID: string, model: string): void {
   if (!sessions.has(chatID)) {
     return;
   }
-  sessions.update(chatID, (cur) => ({ ...cur, model }));
+  sessions.update(chatID, (cur) => ({
+    ...cur,
+    model,
+    usage: { ...cur.usage, context_size: contextSizeFor(model) },
+  }));
 }
 
 /** Set session name and notify subscribers. */

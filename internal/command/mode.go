@@ -45,7 +45,19 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 
 	var changed bool
 	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, ex bool) bool {
-		if !ex || c.CurrentModeID == p.ModeID {
+		if !ex {
+			// New chat whose first prompt hasn't been sent — the record
+			// exists only client-side. Auto-create it (mirroring
+			// cmdCreateChat's seeding) so the picked mode survives to
+			// session/new via StartOpts.Mode. Without this every mode
+			// pick on a fresh chat 404'd and the pill silently rolled
+			// back to Default. Tombstoned ids are refused by Mutate.
+			c.Name = api.DefaultChatName
+			c.CurrentModeID = p.ModeID
+			changed = true
+			return true
+		}
+		if c.CurrentModeID == p.ModeID {
 			return false
 		}
 		c.CurrentModeID = p.ModeID
@@ -57,6 +69,8 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 	}
 	if !changed {
 		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
+			// Only reachable for a tombstoned id (Mutate refuses to
+			// resurrect a just-deleted chat).
 			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 			return
 		}
