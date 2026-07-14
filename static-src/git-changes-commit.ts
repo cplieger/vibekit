@@ -134,6 +134,10 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
       if (message === "") {
         throw new Error("Commit message required");
       }
+      // git.commit rejects the HTTP-200 {error} envelope (a hook or
+      // identity failure resolves null), so assertOk throws BEFORE the
+      // draft is cleared — the typed message survives a failed commit
+      // (18-F1). Only a genuinely successful commit clears it.
       deps.assertOk(await commitAction.dispatch({ repo: r.repo, message }));
       ta.value = "";
       deps.commitMessages.delete(r.repo);

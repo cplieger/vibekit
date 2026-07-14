@@ -14,7 +14,6 @@
 //   /settings/tools               Settings → Tools
 //   /settings/permissions         Settings → Permissions
 //   /settings/instructions        Settings → Custom Instructions
-//   /settings/git                 Settings → Git & forges
 //
 // Shell, popups, modals, and the model-switch affordance are transient UI;
 // they don't get URLs.
@@ -25,7 +24,11 @@
 
 // --- Route types ---
 
-export type SettingsTab = "general" | "tools" | "permissions" | "instructions" | "git";
+// There is no "git" settings tab: the old "Git & forges" pane was retired with
+// the multi-repo git-page rewrite (forge accounts live on the git view's
+// Sources tab). /settings/git canonicalizes to General via parseSettingsTab's
+// default branch.
+export type SettingsTab = "general" | "tools" | "permissions" | "instructions";
 
 // The git view's three sub-tabs. "changes" is the canonical default (its URL
 // omits the segment: /git, not /git/changes), mirroring how SettingsTab's
@@ -138,9 +141,10 @@ function parseSettingsTab(seg: string | undefined): SettingsTab {
     case "tools":
     case "permissions":
     case "instructions":
-    case "git":
       return seg;
     default:
+      // Unknown segments include the retired "git" tab (/settings/git),
+      // which had no panel or pill in the DOM — deep links land on General.
       return "general";
   }
 }

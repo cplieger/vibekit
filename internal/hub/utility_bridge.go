@@ -322,6 +322,16 @@ func (ub *utilityBridge) start(ctx context.Context) error {
 	// (KAS) like every chat bridge (resolveAgentEngine, bridge_coord.go)
 	// — without the engine it would default to v2, which vibekit can no
 	// longer talk to.
+	// The forward goroutine must be draining NotifCh BEFORE Start: on v3
+	// (KAS) session/new blocks until the host answers the
+	// _kiro/auth/getAccessToken and _kiro/terminal/shell_type requests,
+	// which arrive on NotifCh and are answered by forward's
+	// answerHostRequest. Channels are locals so a failed Start (bridge
+	// stopped, NotifCh closed, goroutine exits) leaves no ub state behind.
+	responseCh := make(chan utilityChunkPayload, 64)
+	forwardDone := make(chan struct{})
+	go ub.forward(bridge, bridge.NotifCh(), responseCh, forwardDone)
+
 	if err := bridge.Start(ub.shutdownCtx, &api.StartOpts{Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: ub.enableHooks}); err != nil {
 		return err
 	}
@@ -335,11 +345,8 @@ func (ub *utilityBridge) start(ctx context.Context) error {
 	ub.promptCount = 0
 	ub.lastActiveAt = time.Now()
 
-	// Start the forward goroutine to continuously drain NotifCh.
-	// This prevents the channel from filling up between prompts.
-	ub.responseCh = make(chan utilityChunkPayload, 64)
-	ub.forwardDone = make(chan struct{})
-	go ub.forward(bridge, bridge.NotifCh(), ub.responseCh, ub.forwardDone)
+	ub.responseCh = responseCh
+	ub.forwardDone = forwardDone
 
 	slog.Info("utility bridge started", "model", model)
 	return nil

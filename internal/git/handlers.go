@@ -22,10 +22,11 @@ type Option func(*Handler)
 
 // Handler implements git HTTP endpoints (non-AI operations).
 type Handler struct {
-	fetchFlight singleflight.Group
-	repoFlight  singleflight.Group
-	workDir     string
-	timeouts    gitexec.Timeouts
+	fetchFlight  singleflight.Group
+	repoFlight   singleflight.Group
+	statusFlight singleflight.Group
+	workDir      string
+	timeouts     gitexec.Timeouts
 }
 
 // NewHandler returns a Handler scoped to workDir.
@@ -114,6 +115,14 @@ type gitStatusResp struct {
 func parseGitStatus(ctx context.Context, dir string) []gitFile {
 	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
 	if err != nil {
+		// Cancellation (per-repo budget, server shutdown) SIGKILLs the
+		// subprocess — an expected partial result, not a git failure;
+		// keep WARN for genuine errors only so a busy dashboard doesn't
+		// flood the log with kill noise.
+		if ctx.Err() != nil {
+			slog.Debug("git status canceled", "repo", dir, "cause", ctx.Err())
+			return nil
+		}
 		slog.Warn("git status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
 		return nil
 	}

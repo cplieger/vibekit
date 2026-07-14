@@ -1,12 +1,14 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
@@ -23,32 +25,63 @@ type allRepoStatus struct {
 	gitStatusResp
 }
 
+// statusAllBudget bounds one full status-all scan; perRepoBudget bounds
+// each repo inside it so a single wedged repo degrades to a partial row
+// instead of stalling the whole dashboard.
+const (
+	statusAllBudget = 30 * time.Second
+	perRepoBudget   = 10 * time.Second
+)
+
 // handleStatusAll fans out collectStatus across every cloned repo
 // under workDir (plus workDir itself if it's a repo) and returns a
 // merged array. This is what the Changes tab on the new git page
 // fetches once per refresh, instead of N round-trips for N repos.
 //
-// We deliberately skip the network fetch (`fetch --quiet`) inside
-// each per-repo collectStatus call: doing N fetches in parallel on
-// every page load is too aggressive for slow forges and wastes
-// network. The fetch still runs on per-repo refresh through the
-// single-repo /api/git/status endpoint.
+// The scan is singleflighted and DETACHED from the request context:
+// boot fires several concurrent callers (changes tab + badge poll),
+// and a client-side abort used to cancel the shared context mid-scan,
+// SIGKILLing every in-flight `git status` and logging a WARN burst per
+// repo. Now concurrent callers join one scan, an abandoned scan runs
+// to completion (bounded by statusAllBudget), and the next poll gets a
+// fast answer.
+//
+// By default the network fetch (`fetch --quiet`) is skipped inside each
+// per-repo collectStatus call: doing N fetches in parallel on every
+// 15s badge poll is too aggressive for slow forges. ?fetch=1 (the
+// user-initiated "Refresh all" / git-tab activation) opts in so
+// ahead/behind counts are actually refreshed against the remotes —
+// without it `behind` went permanently stale because no UI path ever
+// fetched. Fetching callers get their own singleflight key so a
+// cheap poll never piggybacks a fetch-less result onto them (and vice
+// versa).
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	repos := h.cachedDiscoverRepos(ctx)
-
-	results := make([]allRepoStatus, len(repos))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	for i, e := range repos {
-		g.Go(func() error {
-			st := collectStatus(gctx, e.Dir, h.timeouts, &h.fetchFlight, false)
-			results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
-			return nil
-		})
+	doFetch := r.URL.Query().Get("fetch") == "1"
+	key := "status-all"
+	if doFetch {
+		key = "status-all-fetch"
 	}
-	_ = g.Wait()
+	v, _, _ := h.statusFlight.Do(key, func() (any, error) {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), statusAllBudget)
+		defer cancel()
+		repos := h.cachedDiscoverRepos(sctx)
+		results := make([]allRepoStatus, len(repos))
+		g, gctx := errgroup.WithContext(sctx)
+		g.SetLimit(8)
+		for i, e := range repos {
+			g.Go(func() error {
+				rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
+				defer rcancel()
+				st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
+				results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
+				return nil
+			})
+		}
+		_ = g.Wait()
+		return results, nil
+	})
+	results, _ := v.([]allRepoStatus)
+	// Treated as read-only by every singleflight sharer.
 	api.WriteJSON(w, map[string]any{"repos": results})
 }
 

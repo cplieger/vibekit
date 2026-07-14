@@ -164,7 +164,9 @@ func (s *Server) handleToolsInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.installing.Store(false)
-	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.ToolsInstall)
+	// Detached from r.Context(): the full setup run takes minutes; a client
+	// disconnect must not kill it halfway (the budget below still bounds it).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.cliTimeouts.ToolsInstall)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh")
 	out, err := cmd.CombinedOutput()

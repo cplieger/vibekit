@@ -547,7 +547,10 @@
  * Keeps the context pill, model pill, and task-list pill visually
  * consistent with the auto-approve and supervised pill active states. */
 .pill-expandable.pill-expanded {
-  color: var(--c-accent);
+  /* Accent border + background tint only. Recoloring the pill's TEXT to
+   * the accent (as this rule once did) made the context pill's "%" figure
+   * and every other expanded pill label low-contrast purple — the popup
+   * open state is already signalled by border, tint, and the card. */
   border-color: var(--c-accent);
   background: var(--c-accent-subtle);
 }

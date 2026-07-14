@@ -108,7 +108,8 @@ class ContextBarController {
 
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
 
-    $.ctxModelPill.textContent = humanName(model);
+    // Empty model = server-side default; label it "auto" rather than blank.
+    $.ctxModelPill.textContent = model === "" ? "auto" : humanName(model);
     $.ctxTokens.textContent =
       contextSize > 0
         ? `${formatTokens(Math.round((contextSize * pct) / 100))} / ${formatTokens(contextSize)}`

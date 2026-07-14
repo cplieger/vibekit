@@ -1,18 +1,74 @@
 // Actions for tools.ts user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  apiAction,
+  defineAction,
+  ActionError,
+  classifyFetchError,
+  hasErrorString,
+  withTimeout,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./index.js";
+import type { ActionContext } from "./index.js";
 
 import { MCP_API } from "./mcp.js";
 
+// Install/enable runs execute setup-tools.sh synchronously server-side —
+// a cold Rust toolchain, clangd (~160 MB), or a JRE takes MINUTES. The
+// framework's uniform 30s API timeout killed such installs mid-download
+// (the abort cancels the request context server-side), and retryNetwork
+// then re-POSTed, cancelling and restarting the run twice more (C1). So
+// these two actions run a raw fetch with a 16-minute budget (matching the
+// server's 15-minute script cap) and are never auto-retried.
+const TOOLS_RUN_TIMEOUT_MS = 16 * 60 * 1000;
+
+/** Same header apiAction sets from ctx.idempotencyKey (see git-changes.ts). */
+const IDEMPOTENCY_HEADER = "Idempotency-Key";
+
+/** POST a long-running tools mutation with the extended timeout, decoding
+ *  the JSON body regardless of status. Non-2xx → ActionError with status
+ *  (409 = install already in progress, surfaced verbatim). */
+async function runToolsPost<T>(path: string, signal: AbortSignal, ctx?: ActionContext): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (ctx?.idempotencyKey !== undefined) {
+    headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers,
+      signal: withTimeout(signal, TOOLS_RUN_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw classifyFetchError(e, signal);
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch (e) {
+    if (signal.aborted) {
+      throw classifyFetchError(e, signal);
+    }
+    parsed = undefined;
+  }
+  if (!res.ok) {
+    const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
+    throw new ActionError(msg, { status: res.status });
+  }
+  return parsed as T;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const installTools = apiAction<void, { output?: string; error?: string }>({
+export const installTools = defineAction<void, { output?: string; error?: string }>({
   name: "tools.install",
   scope: "tools",
   idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: () => ({ method: "POST", path: "/api/tools/install" }),
+  // NOT retryable: a "timeout" here means a 16-minute install budget was
+  // exhausted; re-POSTing would cancel and restart the server-side run.
+  run: (_args, signal, ctx) => runToolsPost("/api/tools/install", signal, ctx),
   error: "Tool install failed",
 });
 
@@ -73,19 +129,22 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
 // and every transitive dep, then runs setup-tools.sh. The response
 // includes the chain that was enabled and the script's combined
 // output for the rolling-output UI.
-export const enableTool = apiAction<
+export const enableTool = defineAction<
   { section: string; name: string },
   { output?: string; error?: string; enabled_chain?: string[]; section?: string; name?: string }
 >({
   name: "tools.enable",
   scope: "tools",
   idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ section, name }) => ({
-    method: "POST",
-    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}/enable`,
-  }),
+  // NOT retryable — see installTools: a retry cancels + restarts the
+  // in-flight setup run for the same entry (the server's inflightInstalls
+  // prior() cancel), turning one slow install into three killed ones.
+  run: ({ section, name }, signal, ctx) =>
+    runToolsPost(
+      `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}/enable`,
+      signal,
+      ctx,
+    ),
   error: "Couldn't enable tool",
 });
 

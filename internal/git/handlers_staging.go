@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -132,11 +133,13 @@ func countStashes(ctx context.Context, dir string) int {
 	return strings.Count(out, "\n") + 1
 }
 
-// hasGH reports whether the gh CLI is available on PATH.
-func hasGH() bool {
+// hasGH reports whether the gh CLI is available on PATH. Memoized: the
+// answer is process-global and status-all was paying one PATH walk per
+// repo per scan for it.
+var hasGH = sync.OnceValue(func() bool {
 	_, err := exec.LookPath("gh")
 	return err == nil
-}
+})
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
@@ -215,6 +218,15 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	dir := h.repoDir(body.Repo)
+	// Unstage the requested paths first: `checkout --` restores the
+	// worktree FROM THE INDEX, so a staged modification silently survived
+	// "Discard all", and a staged NEW file (no index-vs-worktree diff)
+	// made checkout error with "pathspec did not match". Best-effort —
+	// paths with nothing staged are a no-op for reset.
+	if out, err := gitCmd(ctx, dir, append([]string{"reset", "-q", refHEAD, "--"}, files...)...); err != nil {
+		slog.Debug("git discard: reset before discard failed (continuing)",
+			"repo", body.Repo, "error", err, "out", gitexec.ScrubAuth(out))
+	}
 	tracked, untracked := splitTrackedUntracked(ctx, dir, files)
 	slog.Info("git discard", "repo", body.Repo, "tracked_count", len(tracked), "untracked_count", len(untracked))
 	var errs []string

@@ -159,3 +159,19 @@ describe("per-terminal isolation", () => {
     expect(outputEl("t-iso-b")!.textContent).toBe("beta");
   });
 });
+
+describe("fullscreen toggle", () => {
+  it("mirrors the panel class onto aria-pressed (initialized false at wiring)", () => {
+    const btn = document.getElementById("shell-fullscreen-btn") as HTMLButtonElement;
+    const panel = document.getElementById("shell-panel")!;
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+
+    btn.click();
+    expect(panel.classList.contains("shell-fullscreen")).toBe(true);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+
+    btn.click();
+    expect(panel.classList.contains("shell-fullscreen")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+});

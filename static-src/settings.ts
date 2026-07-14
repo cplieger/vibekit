@@ -18,15 +18,19 @@ import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
 import { initThemeToggle } from "./theme.js";
 import { initSettingsTabs } from "./settings-tabs.js";
-import { initPermissionsUI, initShellPolicyUI, initNativePolicyUI } from "./permissions-ui.js";
+import {
+  initPermissionsUI,
+  initShellPolicyUI,
+  initNativePolicyUI,
+  loadNativePolicy,
+} from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
-import { initKnowledge } from "./knowledge.js";
-import { initHooks } from "./hooks.js";
-import { initKiroConfig } from "./kiro-config.js";
+import { initKnowledge, loadKnowledge } from "./knowledge.js";
+import { initHooks, loadHooks } from "./hooks.js";
+import { initKiroConfig, loadKiroConfig } from "./kiro-config.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
-import { apiGet, apiGetTyped } from "./api-client.js";
-import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
@@ -167,23 +171,40 @@ function initChatRetention(s: AppSettings): void {
 
 // --- UI init ---
 
+/** Load the lists the Instructions tab shows: the .kiro/ steering-docs/
+ *  skills/agents list, the workspace knowledge bases, and the hooks
+ *  dashboard (the "workspace context" family). Fired once on the tab's
+ *  first activation via the settings-tabs loader map. */
+function loadInstructionsPanel(): void {
+  loadKiroConfig();
+  loadKnowledge();
+  loadHooks();
+}
+
 export function initUI(): void {
   initThemeToggle();
 
   // Settings gear opens the tabbed Settings panel. Default tab is General;
   // deep-link URLs (e.g. /settings/tools) override this via applyRoute.
+  // Panel data loads lazily on each tab's first activation (see the loader
+  // map below) — the gear no longer preloads the Tools list while opening
+  // the General panel (B9).
   $.settingsBtn.addEventListener("click", () => {
-    toggleSettingsView("general", loadToolsList);
+    toggleSettingsView("general");
   });
 
-  initSettingsTabs();
+  // Per-tab lazy data loaders: fired by settings-tabs on the first
+  // activation of each tab. General has no loader (static panel).
+  initSettingsTabs({
+    tools: loadToolsList,
+    permissions: loadNativePolicy,
+    instructions: loadInstructionsPanel,
+  });
   initSteeringEditor();
   initLogoutButton();
   initNotificationToggles();
   initDiagnostics();
   initExperimentalToggles();
-  void loadAbout();
-  void loadIdentity();
 
   initTools();
   initMCP();
@@ -203,6 +224,15 @@ export function initUI(): void {
     // on first open) so the URL the tab pushes matches the visible panel.
     toggleGitView(getGitTab(), loadGitRepos);
   });
+}
+
+/** Post-auth UI init: fetches that must not fire on the login screen (B2).
+ *  loadAbout hits /api/version; initGitPanel starts the git-badge poll
+ *  (/api/git/status-all + /api/forges every 15s). Called once by app.ts
+ *  after whoami succeeds — at boot when already authenticated, or after
+ *  the first successful login. */
+export function initPostAuthUI(): void {
+  void loadAbout();
   initGitPanel();
 }
 
@@ -433,14 +463,10 @@ export function initDiagnostics(): void {
   });
 }
 
-/** Refreshes the identity label from the live /api/whoami endpoint.
- *  Called on startup to populate the sidebar email. */
-async function loadIdentity(): Promise<void> {
-  const info = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
-  if (info?.email !== undefined && info.email !== "") {
-    setUserEmail(info.email);
-  }
-}
+// (loadIdentity was removed: it duplicated the /api/whoami fetch that
+// checkAuthAndStart / onLoginSuccess in app.ts already perform — both call
+// setUserEmail with their result, so the sidebar label needs no second
+// fetch at boot.)
 
 // --- User display ---
 

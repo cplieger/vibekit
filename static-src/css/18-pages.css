@@ -13,6 +13,23 @@
   min-height: 0;
 }
 
+/* Page-scrolling views only: let the wrapper grow with its content
+   (flex-basis auto, no shrink) instead of clamping to the scrollport.
+   The bare rule above sizes the box to exactly one viewport (basis 0 +
+   min-height 0), so overflowing content strands the wrapper's bottom
+   padding a viewport up AND caps the sticky .settings-header's
+   containing block at one viewport — the header scrolls away. Growing
+   fixes both; `flex-grow: 1` still fills the viewport when content is
+   short (the .git-empty-state centering contract relies on that).
+   Deliberately NOT applied to the bare .page-content: the files view
+   dual-classes .fb-list-wrap.page-content and a parallel batch pins it
+   as an inner scroller. */
+[id="git-view"] > .page-content,
+[id="history-view"] > .page-content,
+[id="specs-view"] > .page-content {
+  flex: 1 0 auto;
+}
+
 .page-title {
   font-size: var(--fs-xl);
   font-weight: var(--fw-semibold);
@@ -246,6 +263,12 @@ h3.section-title {
 .chip-adder {
   position: relative;
   display: inline-flex;
+
+  /* Adjacent bordered controls need breathing room — zero gap rendered
+     them butted edge-to-edge (borders touching). The permissions-panel
+     adders moved to .rule-form; the remaining users (MCP disabled-tools
+     adder, in-dialog rows) stay compact but separated. */
+  gap: var(--sp-2);
 }
 
 .chip-menu {
@@ -484,7 +507,12 @@ h3.section-title {
   border: none;
   color: var(--c-text-tertiary);
   cursor: pointer;
-  padding: var(--sp-1);
+
+  /* 0.375rem (6px) padding around the 12-14px row icons yields 24-26px —
+     meets the 24px desktop hit-target floor (was var(--sp-1) = 4px,
+     ~20-22px). touch-action prevents double-tap zoom on touch. */
+  padding: 0.375rem;
+  touch-action: manipulation;
   border-radius: var(--r);
   line-height: 0;
   transition:

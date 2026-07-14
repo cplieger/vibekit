@@ -115,7 +115,12 @@
     font-size: var(--fs-base);
     background: var(--c-bg-primary);
     color: var(--c-text-primary);
+
+    /* dvh tracks the visual viewport on mobile (100vh includes the region
+       behind the collapsible URL bar, pushing bottom-anchored toolbars
+       off-screen while browser chrome is shown). vh line is the fallback. */
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     font-optical-sizing: auto;
     scrollbar-gutter: stable;

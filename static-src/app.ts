@@ -26,20 +26,23 @@ import { $ } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
-import { loadSettings, restoreAll, initUI, setUserEmail } from "./settings.js";
+import { loadSettings, restoreAll, initUI, initPostAuthUI, setUserEmail } from "./settings.js";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import {
   setOnEmpty,
   restoreTabState,
+  getSavedTabState,
   getActiveTabId,
+  getActiveTabRoute,
   activateTab,
   openTab,
+  markBootDone,
   TAB_VIEWS,
 } from "./tabs.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
-import type { Route, SettingsTab } from "./router.js";
+import type { Route } from "./router.js";
 import { refreshPickerIfVisible, setPickerModels } from "./picker.js";
 import { setStatus } from "./status.js";
 import { initShellPanel } from "./shell.js";
@@ -58,11 +61,7 @@ import { initSpecs, showSpecsView } from "./specs.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { handleFindHotkey } from "./find-in-chat.js";
-import { loadToolsList } from "./tools.js";
-import { loadKiroConfig } from "./kiro-config.js";
-import { loadKnowledge } from "./knowledge.js";
-import { loadHooks } from "./hooks.js";
-import { forceSettingsTab } from "./settings-tabs.js";
+import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
 import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
 import { restoreLastModel } from "./session-context.js";
@@ -96,17 +95,14 @@ import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
-import { subscribeToActions, pendingCount } from "./actions/index.js";
+import { subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
+import { error as toastError } from "./toast.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
 // immediacy.
 import "./conflicts.js";
-
-const noop = (): void => {
-  /* noop */
-};
 
 function dismissLoadingScreen(): void {
   document.getElementById("app-loading")?.remove();
@@ -203,12 +199,9 @@ function init(): void {
   initTooltips();
   initHistory();
   initSpecs();
-  // Fetch the org/account governance snapshot + subscribe to live updates.
-  // Gates MCP availability (Settings → Tools), renders the read-only
-  // Organization-policy disclosure (Settings → General), and gates the
-  // code-reference chip. Safe before transport connects: the SSE fills in
-  // updates, the REST snapshot seeds the initial state.
-  initGovernance();
+  // initGovernance() moved to initPostAuth(): its /api/governance snapshot
+  // (and settings.ts's version/git-badge fetches) shouldn't fire on the
+  // login screen (B2).
   initLoginModal(onLoginSuccess);
   initSidebarSwipe($.chatArea, $.sidebar);
   initKeyboardShortcuts({
@@ -264,30 +257,61 @@ function init(): void {
     );
   });
 
-  // Global progress indicator: toggle a CSS class on the 2px top
-  // stripe whenever any action is in-flight. Edge-only toggling
-  // (0→N and N→0) avoids flicker from rapid intermediate changes.
-  // The falling edge is debounced by 200ms so very-fast actions
-  // (0→1→0 within a single frame) still produce a visible flash.
+  // Global progress indicator: the 2px sweep stripe at the top of the chat
+  // area, shown only for genuinely slow foreground work (B1). Three rules
+  // keep it calm — the old raw pendingCount edge-toggle lit it on every
+  // view/tab switch and every background poll:
+  //   - background/advisory actions never drive it (name filter below);
+  //   - it appears only after 150ms of continuous pending work, so fast
+  //     actions never flash it (design-system skeleton timing);
+  //   - once shown it stays visible >= 300ms, so it never flickers.
   const progressEl = document.getElementById("global-progress");
   if (progressEl !== null) {
-    let wasActive = false;
-    let offTimer: ReturnType<typeof setTimeout> | undefined;
-    subscribeToActions(() => {
-      const active = pendingCount() > 0;
-      if (active !== wasActive) {
-        wasActive = active;
-        if (active) {
-          if (offTimer !== undefined) {
-            clearTimeout(offTimer);
-            offTimer = undefined;
-          }
-          progressEl.classList.add("active");
-        } else {
-          offTimer = setTimeout(() => {
-            offTimer = undefined;
-            progressEl.classList.remove("active");
-          }, 200);
+    const SHOW_DELAY_MS = 150;
+    const MIN_VISIBLE_MS = 300;
+    // Advisory background actions: the git-badge poll family (fires every
+    // 15s with zero user interaction) and the conflicts prefetch dispatched
+    // on every chat activation. User-initiated conflict work
+    // (conflicts.open_diff) still drives the bar.
+    const PROGRESS_IGNORE = /^(?:git-badge\.|conflicts\.load$)/;
+    const pendingIds = new Set<string>();
+    let showTimer: ReturnType<typeof setTimeout> | undefined;
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+    let shownAt = 0;
+    subscribeToActions((inst) => {
+      if (PROGRESS_IGNORE.test(inst.name)) {
+        return;
+      }
+      if (inst.status === "pending") {
+        pendingIds.add(inst.id);
+      } else {
+        pendingIds.delete(inst.id);
+      }
+      if (pendingIds.size > 0) {
+        if (hideTimer !== undefined) {
+          clearTimeout(hideTimer);
+          hideTimer = undefined;
+        }
+        if (showTimer === undefined && !progressEl.classList.contains("active")) {
+          showTimer = setTimeout(() => {
+            showTimer = undefined;
+            shownAt = Date.now();
+            progressEl.classList.add("active");
+          }, SHOW_DELAY_MS);
+        }
+      } else {
+        if (showTimer !== undefined) {
+          clearTimeout(showTimer);
+          showTimer = undefined;
+        }
+        if (progressEl.classList.contains("active") && hideTimer === undefined) {
+          hideTimer = setTimeout(
+            () => {
+              hideTimer = undefined;
+              progressEl.classList.remove("active");
+            },
+            Math.max(0, MIN_VISIBLE_MS - (Date.now() - shownAt)),
+          );
         }
       }
     });
@@ -335,6 +359,7 @@ async function checkAuthAndStart(): Promise<void> {
   }
 
   dismissLoadingScreen();
+  initPostAuth();
 
   // Pre-conversation catalog so the picker has content before the
   // first chat's session/new lands. Fire-and-forget; session-sourced
@@ -357,13 +382,29 @@ async function checkAuthAndStart(): Promise<void> {
     const ok = await loadList();
     skel.remove();
     if (!ok || getSessions().length === 0) {
+      if (!ok) {
+        // Surface the boot failure BEFORE falling back to the empty state,
+        // so the fresh "New conversation" reads as a fallback rather than
+        // silently impersonating the user's (unreachable) chats (B2).
+        toastError("Couldn't load your chats.", {
+          label: "Reload",
+          onClick: () => {
+            location.reload();
+          },
+        });
+      }
       if (!shareWillCreate) {
         createSession();
       }
     } else {
+      // Open every chat tab WITHOUT activating (B8): activation runs
+      // activateChatView (messages fetch + conflicts prefetch) per chat,
+      // so activating all N at boot cost 2N requests for chats the user
+      // isn't looking at. Exactly one tab is activated below.
       for (const s of getSessions()) {
-        openChatTab(s.id, s.name);
+        openChatTab(s.id, s.name, { activate: false });
       }
+      restoreSingletonTabs();
       restoreTabState();
       if (getActiveTabId() === "" && getSessions().length > 0) {
         activateTab(getSessions()[0]!.id); // eslint-disable-line @typescript-eslint/no-non-null-assertion
@@ -371,6 +412,12 @@ async function checkAuthAndStart(): Promise<void> {
     }
   } catch {
     skel.remove();
+    toastError("Couldn't load your chats.", {
+      label: "Reload",
+      onClick: () => {
+        location.reload();
+      },
+    });
     if (!shareWillCreate) {
       createSession();
     }
@@ -379,11 +426,95 @@ async function checkAuthAndStart(): Promise<void> {
 
   applyShareTarget();
   applyInitialRoute();
+  // Boot restores are done — view swaps animate from here on (B3).
+  markBootDone();
+}
+
+// One-time post-auth initialization: fetches gated behind a successful
+// whoami so the login screen doesn't fan out API calls — the governance
+// snapshot, /api/version, and the git-badge poll (/api/git/status-all +
+// /api/forges every 15s) all used to fire before auth resolved (B2).
+// Runs on boot when already authenticated, or after the first login.
+let postAuthInitDone = false;
+function initPostAuth(): void {
+  if (postAuthInitDone) {
+    return;
+  }
+  postAuthInitDone = true;
+  // Governance snapshot + live-update subscription. Gates MCP availability
+  // (Settings → Tools), renders the read-only Organization-policy
+  // disclosure (Settings → General), and gates the code-reference chip.
+  initGovernance();
+  // Version info (Settings → About) + git panel wiring incl. badge poll.
+  initPostAuthUI();
+}
+
+/** Reopen singleton tabs (Settings / Source Control / Files) that were open
+ *  last session, without activating them, so restoreTabState() can restore
+ *  their saved order and active state (B7). Chat tabs are reopened by the
+ *  boot loop and editor tabs by restoreAll(); singletons were previously
+ *  never reopened, so `hasTab(saved.active_view)` was always false for them
+ *  and their position in the saved order was silently dropped.
+ *  TODO(B7): History and Specs are still not restored — their data loaders
+ *  are module-internal (history.ts / specs.ts export only toggle-style
+ *  openers, which would close the tab when fired from onShow of an
+ *  already-active tab). Export plain loaders from those modules and add
+ *  them here. */
+function restoreSingletonTabs(): void {
+  for (const id of getSavedTabState().tab_order) {
+    switch (id) {
+      case "__settings__":
+        openTab(
+          {
+            id,
+            name: "Settings",
+            kind: "settings",
+            view: TAB_VIEWS.settings,
+            route: { kind: "settings", tab: "general" },
+            onShow: () => {
+              loadSettingsTabData("general");
+            },
+          },
+          { activate: false },
+        );
+        break;
+      case "__git__":
+        openTab(
+          {
+            id,
+            name: "Source Control",
+            kind: "git",
+            view: TAB_VIEWS.git,
+            route: { kind: "git", tab: "changes" },
+            onShow: loadGitRepos,
+          },
+          { activate: false },
+        );
+        break;
+      case "__files__":
+        // restoreAll() already restored the browser path from ui-state.
+        openTab(
+          {
+            id,
+            name: "Files",
+            kind: "files",
+            view: TAB_VIEWS.files,
+            route: { kind: "files", path: "." },
+            onShow: loadFileBrowser,
+          },
+          { activate: false },
+        );
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 function onLoginSuccess(): void {
   hideLoginModal();
   dismissLoadingScreen();
+  initPostAuth();
   void apiGetTyped("/api/whoami", decodeWhoamiResponse).then((d) => {
     if (d?.email !== undefined) {
       setUserEmail(d.email);
@@ -396,6 +527,9 @@ function onLoginSuccess(): void {
   if (getSessions().length === 0) {
     createSession();
   }
+  // The unauthenticated boot path returns before applyInitialRoute(), so
+  // flip the boot flag here too — view swaps animate from first login on.
+  markBootDone();
 }
 
 async function fetchModelsFromREST(): Promise<void> {
@@ -533,7 +667,12 @@ function applyRoute(route: Route): void {
         kind: "settings",
         view: TAB_VIEWS.settings,
         route: { kind: "settings", tab: route.tab },
-        onShow: loadSettingsForTab(route.tab),
+        // First-activation panel data (tools list, instructions lists,
+        // native policy) — idempotent, shared with the pill-click path
+        // in settings-tabs.ts (B9).
+        onShow: () => {
+          loadSettingsTabData(route.tab);
+        },
       });
       break;
     case "git":
@@ -576,40 +715,35 @@ function applyRoute(route: Route): void {
   }
 }
 
-// loadSettingsForTab returns the on-open callback for the given settings
-// tab. Keeps applyRoute readable while preserving the lazy-load behaviour
-// each tab currently has (tools list, kiro config list, etc. only fetch
-// when their tab actually opens).
-// loadInstructionsPanel loads both lists the Instructions tab shows: the
-// .kiro/ steering-docs/skills/agents list and the workspace knowledge bases
-// (the same "workspace context" family).
-function loadInstructionsPanel(): void {
-  loadKiroConfig();
-  loadKnowledge();
-  loadHooks();
-}
-
-function loadSettingsForTab(tab: SettingsTab): () => void {
-  switch (tab) {
-    case "tools":
-      return loadToolsList;
-    case "instructions":
-      return loadInstructionsPanel;
-    case "general":
-      return noop;
-    case "permissions":
-      return noop;
-    case "git":
-      return noop; // settings.ts onTabChange handles the fetch
-  }
-}
+// (Per-settings-tab data loading moved to the lazy loader map in
+// settings-tabs.ts — registered by settings.ts initUI, fired once per tab
+// on first activation. The retired "git" settings tab was removed with it;
+// /settings/git now canonicalizes to General in parseSettingsTab.)
 
 function applyInitialRoute(): void {
   const route = parseRoute(location.pathname);
-  if (route.kind === "chat" && route.id === "" && getActiveId() !== "") {
-    replaceRoute({ kind: "chat", id: getActiveId() });
-  } else if (route.kind !== "chat" || route.id !== "") {
+  if (route.kind !== "chat" || route.id !== "") {
     applyRoute(route);
+    return;
+  }
+  // Default "/" route. Canonicalize the URL to what's actually visible:
+  //   - active chat WITH server-persisted messages → /chat/{id};
+  //   - active chat with zero messages → stay on "/" (B4): the id is a
+  //     client-side ghost the server doesn't know about — reloading
+  //     /chat/{ghost} can't resolve it and would mint a fresh ghost id on
+  //     every load. handlers/chat.ts flips the URL to the real id once the
+  //     server echoes chat_created for it.
+  //   - restored non-chat tab (Settings, git, …) → its route, so the
+  //     restored view and the URL agree (their boot-time pushRoute was
+  //     suppressed).
+  const active = getActive();
+  if (getActiveId() !== "" && active !== undefined && active.message_count > 0) {
+    replaceRoute({ kind: "chat", id: getActiveId() });
+    return;
+  }
+  const tabRoute = getActiveTabRoute();
+  if (tabRoute !== null && tabRoute.kind !== "chat") {
+    replaceRoute(tabRoute);
   }
 }
 

@@ -345,10 +345,13 @@ class SpecsController {
     retry.addEventListener("click", () => {
       void this.load();
     });
+    // spec-empty-board: same card chrome as the empty state — the error
+    // renders bare into #specs-list (no .list-container wrapper), so the
+    // class supplies the border/radius frame itself.
     list.replaceChildren(
       el(
         "div",
-        { className: "list-empty" },
+        { className: "list-empty spec-empty-board" },
         el("p", {}, "Couldn't load specs. Check your connection and try again."),
         retry,
       ),

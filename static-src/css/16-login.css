@@ -119,7 +119,8 @@
 [id="git-view"],
 [id="editor-view"],
 [id="files-view"],
-[id="history-view"] {
+[id="history-view"],
+[id="specs-view"] {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -156,8 +157,13 @@
   view-transition-name: history-view;
 }
 
+[id="specs-view"] {
+  view-transition-name: specs-view;
+}
+
 [id="settings-view"],
 [id="git-view"],
-[id="history-view"] {
+[id="history-view"],
+[id="specs-view"] {
   overflow-y: auto;
 }

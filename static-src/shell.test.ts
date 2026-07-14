@@ -30,34 +30,73 @@ interface Harness {
   createTerminal: ReturnType<typeof vi.fn>;
   render: { resetScrollback: ReturnType<typeof vi.fn>; resetScreen: ReturnType<typeof vi.fn> };
   sendSpy: ReturnType<typeof vi.fn>;
+  termFocus: ReturnType<typeof vi.fn>;
   shellBtn: HTMLButtonElement;
   shellToggleBtn: HTMLButtonElement;
   shellClearBtn: HTMLButtonElement;
+  shellFullscreenBtn: HTMLButtonElement;
   shellPanel: HTMLDivElement;
   shellTerminal: HTMLDivElement;
+  shellResize: HTMLDivElement;
   save: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
 }
 
-async function setup(): Promise<Harness> {
+/** happy-dom lacks pointer capture; back the three methods with a Set so the
+ *  resize handlers' capture-gated move/up paths run. */
+function stubPointerCapture(el: HTMLElement): void {
+  const captured = new Set<number>();
+  el.setPointerCapture = (id: number): void => {
+    captured.add(id);
+  };
+  el.releasePointerCapture = (id: number): void => {
+    captured.delete(id);
+  };
+  el.hasPointerCapture = (id: number): boolean => captured.has(id);
+}
+
+/** Synthetic pointer event: happy-dom's PointerEvent support is spotty, and
+ *  the handlers only read pointerId/isPrimary/clientY, so a plain Event with
+ *  those fields assigned is sufficient. */
+function ptr(
+  type: string,
+  clientY: number,
+  opts: { pointerId?: number; isPrimary?: boolean } = {},
+): Event {
+  return Object.assign(new Event(type), {
+    pointerId: opts.pointerId ?? 1,
+    isPrimary: opts.isPrimary ?? true,
+    clientY,
+  });
+}
+
+async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   vi.resetModules();
 
   const shellBtn = document.createElement("button");
   const shellToggleBtn = document.createElement("button");
   const shellClearBtn = document.createElement("button");
+  const shellFullscreenBtn = document.createElement("button");
   const shellPanel = document.createElement("div");
   shellPanel.classList.add("shell-closed");
   const shellTerminal = document.createElement("div");
+  const shellResize = document.createElement("div");
+  stubPointerCapture(shellResize);
+  shellPanel.append(shellResize, shellTerminal);
+  // Panel + toolbar button live in the document so focus()/activeElement and
+  // contains() checks behave; replaceChildren drops the previous test's DOM.
+  document.body.replaceChildren(shellPanel, shellBtn);
 
   // The kernel's sanitizing send funnel, captured by the host-bridge feature
   // when createTerminal runs its setup.
   const sendSpy = vi.fn();
+  const termFocus = vi.fn();
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       const hb = (opts.features ?? []).find((f) => f.name === "vibekit-host-bridge");
       // The host-bridge feature only reads ctx.send; a partial context suffices.
       hb?.setup({ send: sendSpy } as unknown as TerminalContext);
-      return { focus: vi.fn(), destroy: vi.fn() };
+      return { focus: termFocus, destroy: vi.fn() };
     },
   );
   const presetTouch = vi.fn(() => ["preset-feature"]);
@@ -69,15 +108,25 @@ async function setup(): Promise<Harness> {
     runCb = cb;
   });
   const save = vi.fn();
+  // initShellPanel reads load().shell_h to restore a persisted height.
+  const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
 
   vi.doMock("@cplieger/web-terminal-ui", () => ({ createTerminal }));
   vi.doMock("@cplieger/web-terminal-ui/presets", () => ({ presetTouch }));
   vi.doMock("@cplieger/web-terminal-engine", () => ({ render }));
   vi.doMock("./messages.js", () => ({ getScrollEl }));
   vi.doMock("./code-blocks.js", () => ({ setShellRunCallback }));
-  vi.doMock("./ui-state.js", () => ({ save, load: vi.fn() }));
+  vi.doMock("./ui-state.js", () => ({ save, load }));
   vi.doMock("./dom.js", () => ({
-    $: { shellBtn, shellToggleBtn, shellClearBtn, shellPanel, shellTerminal },
+    $: {
+      shellBtn,
+      shellToggleBtn,
+      shellClearBtn,
+      shellFullscreenBtn,
+      shellPanel,
+      shellTerminal,
+      shellResize,
+    },
   }));
 
   const mod = await import("./shell.js");
@@ -86,11 +135,14 @@ async function setup(): Promise<Harness> {
     createTerminal,
     render,
     sendSpy,
+    termFocus,
     shellBtn,
     shellToggleBtn,
     shellClearBtn,
+    shellFullscreenBtn,
     shellPanel,
     shellTerminal,
+    shellResize,
     save,
     getRunCb: () => runCb,
   };
@@ -179,5 +231,145 @@ describe("shell.ts: restore", () => {
     expect(h.createTerminal).toHaveBeenCalledTimes(1);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
     expect(h.save).toHaveBeenCalledWith({ shell_open: true });
+  });
+
+  it("restoreShell does NOT steal focus at boot; a user open does focus", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.mod.restoreShell();
+    await nextFrame();
+    expect(h.termFocus).not.toHaveBeenCalled();
+
+    h.shellToggleBtn.click(); // close
+    h.shellBtn.click(); // user-initiated open
+    await nextFrame();
+    expect(h.termFocus).toHaveBeenCalled();
+  });
+
+  it("restores a persisted height (clamped) onto --shell-h at init", async () => {
+    const h = await setup({ shell_h: 300 });
+    h.mod.initShellPanel();
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("300px");
+  });
+
+  it("leaves --shell-h unset when no height was persisted (CSS default)", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("");
+  });
+});
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
+describe("shell.ts: resize handle", () => {
+  it("gets its separator a11y contract from init (markup ships a bare div)", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellResize.getAttribute("role")).toBe("separator");
+    expect(h.shellResize.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(h.shellResize.getAttribute("aria-label")).toBe("Resize shell");
+    expect(h.shellResize.tabIndex).toBe(0);
+  });
+
+  it("drag up grows the panel (bottom-docked math) and persists on release", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    // happy-dom rects are 0-height, so startH = 0; dragging the pointer up
+    // by 200px (500 → 300) must yield --shell-h: 200px.
+    h.shellResize.dispatchEvent(ptr("pointerdown", 500));
+    expect(h.shellResize.classList.contains("dragging")).toBe(true);
+    expect(h.shellPanel.classList.contains("resizing")).toBe(true);
+
+    h.shellResize.dispatchEvent(ptr("pointermove", 300));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("200px");
+
+    h.shellResize.dispatchEvent(ptr("pointerup", 300));
+    expect(h.shellResize.classList.contains("dragging")).toBe(false);
+    expect(h.shellPanel.classList.contains("resizing")).toBe(false);
+    expect(h.save).toHaveBeenCalledWith({ shell_h: 200 });
+  });
+
+  it("clamps the drag to [96px, 80% of innerHeight]", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    const max = Math.round(window.innerHeight * 0.8);
+
+    h.shellResize.dispatchEvent(ptr("pointerdown", 500));
+    // Tiny drag (below the 96px floor) clamps up to the minimum.
+    h.shellResize.dispatchEvent(ptr("pointermove", 490));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
+    // Huge drag clamps down to 80% of the viewport.
+    h.shellResize.dispatchEvent(ptr("pointermove", 500 - max - 5000));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe(`${String(max)}px`);
+
+    h.shellResize.dispatchEvent(ptr("pointerup", 0));
+    expect(h.save).toHaveBeenCalledWith({ shell_h: max });
+  });
+
+  it("ignores pointermove without capture and non-primary pointerdown", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellResize.dispatchEvent(ptr("pointermove", 100));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("");
+    h.shellResize.dispatchEvent(ptr("pointerdown", 500, { isPrimary: false }));
+    expect(h.shellResize.classList.contains("dragging")).toBe(false);
+  });
+
+  it("ArrowUp/ArrowDown resize from the keyboard and persist each step", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    // Panel rect height is 0 in happy-dom → 0 + 32 clamps to the 96px floor.
+    h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
+    expect(h.save).toHaveBeenCalledWith({ shell_h: 96 });
+  });
+});
+
+describe("shell.ts: close behavior", () => {
+  it("clears fullscreen (class + aria-pressed) when closing", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click(); // open
+    // Simulate the agent-terminal fullscreen toggle having been used.
+    h.shellPanel.classList.add("shell-fullscreen");
+    h.shellFullscreenBtn.setAttribute("aria-pressed", "true");
+
+    h.shellToggleBtn.click(); // close
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
+  });
+
+  it("returns focus to the toolbar button when the panel held it", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click(); // open
+
+    const inner = document.createElement("input");
+    h.shellPanel.appendChild(inner);
+    inner.focus();
+    expect(document.activeElement).toBe(inner);
+
+    h.shellToggleBtn.click(); // close
+    expect(document.activeElement).toBe(h.shellBtn);
+  });
+
+  it("leaves focus alone when it was outside the panel", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click(); // open
+
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    h.shellToggleBtn.click(); // close
+    expect(document.activeElement).toBe(outside);
   });
 });

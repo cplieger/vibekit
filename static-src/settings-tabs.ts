@@ -32,7 +32,6 @@ export const TABS: readonly SettingsTab[] = [
   "tools",
   "permissions",
   "instructions",
-  "git",
 ] as const;
 
 export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
@@ -40,7 +39,6 @@ export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
   tools: "Tools",
   permissions: "Permissions",
   instructions: "Custom instructions",
-  git: "Git & forges",
 };
 
 // --- Store ---
@@ -70,11 +68,38 @@ function setSettingsTab(tab: SettingsTab): void {
   activeTab.value = tab;
 }
 
+// --- Per-tab lazy data loaders (B9) ---
+//
+// Panel data loads are keyed to tab ACTIVATION, not to how Settings was
+// opened. Each registered loader fires once, on the first activation of its
+// tab — pill click, mobile select, deep link via forceSettingsTab, or a
+// route-driven openTab in app.ts (which calls loadSettingsTabData directly).
+// Previously loads were keyed off route-driven opens plus the gear button's
+// hardcoded loadToolsList (which fetched Tools data while opening the General
+// panel), and a pill click inside Settings loaded nothing at all.
+const tabLoaders = new Map<SettingsTab, () => void>();
+const loadedTabs = new Set<SettingsTab>();
+
+/** Run the tab's registered lazy loader on its first use. Idempotent. */
+export function loadSettingsTabData(tab: SettingsTab): void {
+  if (loadedTabs.has(tab)) {
+    return;
+  }
+  loadedTabs.add(tab);
+  tabLoaders.get(tab)?.();
+}
+
 // --- DOM wiring ---
 
 /** Build the tab bar (desktop pills + mobile select) and wire panel
- *  visibility. Called once from settings.ts initUI. */
-export function initSettingsTabs(): void {
+ *  visibility. Called once from settings.ts initUI, which registers the
+ *  per-tab lazy data loaders here. */
+export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => void>>): void {
+  if (loaders !== undefined) {
+    for (const [tab, fn] of Object.entries(loaders)) {
+      tabLoaders.set(tab as SettingsTab, fn);
+    }
+  }
   const bar = $.settingsTabBar;
   const select = $.settingsTabSelect;
 
@@ -134,6 +159,10 @@ export function initSettingsTabs(): void {
     if (title !== null) {
       title.textContent = TAB_LABELS[tab];
     }
+    // Lazy panel data: first activation of a tab fires its loader (B9).
+    // The immediate subscribe-time fire covers "general", which has no
+    // registered loader — a harmless no-op.
+    loadSettingsTabData(tab);
   });
 }
 

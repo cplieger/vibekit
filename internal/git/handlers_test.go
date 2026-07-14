@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/gitexec"
@@ -1017,7 +1018,14 @@ func TestHandleCommitMessage_NilUtilityPromptReturnsError(t *testing.T) {
 
 func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	workDir := t.TempDir()
+	// Dot-NAMED repos (".github", ".kiro") are legitimate clone targets
+	// and must be discovered; only ".git" itself is excluded.
 	if err := os.MkdirAll(filepath.Join(workDir, ".hidden", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A workspace-root .git dir must not be listed as a repo named ".git"
+	// (the root repo itself is reported as "." by the workDir check).
+	if err := os.MkdirAll(filepath.Join(workDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(workDir, "plaindir"), 0o755); err != nil {
@@ -1042,8 +1050,15 @@ func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(resp.Repos) != 1 || resp.Repos[0] != "repoA" {
-		t.Errorf("repos = %v, want [repoA]", resp.Repos)
+	// workDir itself has .git → "." leads; then subdir repos sorted.
+	want := []string{".", ".hidden", "repoA"}
+	if len(resp.Repos) != len(want) {
+		t.Fatalf("repos = %v, want %v", resp.Repos, want)
+	}
+	for i, w := range want {
+		if resp.Repos[i] != w {
+			t.Errorf("repos[%d] = %q, want %q (full: %v)", i, resp.Repos[i], w, resp.Repos)
+		}
 	}
 }
 
@@ -2632,9 +2647,22 @@ func TestCollectStatus_HasGH(t *testing.T) {
 		return repo
 	}
 
+	// hasGH is memoized (sync.OnceValue) — the answer is process-global —
+	// so each subtest swaps in a fresh once-value bound to its PATH.
+	freshHasGH := func(t *testing.T) {
+		t.Helper()
+		orig := hasGH
+		hasGH = sync.OnceValue(func() bool {
+			_, err := exec.LookPath("gh")
+			return err == nil
+		})
+		t.Cleanup(func() { hasGH = orig })
+	}
+
 	t.Run("gh_absent", func(t *testing.T) {
 		repo := mkRepo(t)
 		t.Setenv("PATH", t.TempDir()) // empty bin dir: gh not found
+		freshHasGH(t)
 		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 		if st.HasGH {
 			t.Errorf("HasGH = true with gh absent")
@@ -2649,6 +2677,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("PATH", binDir)
+		freshHasGH(t)
 		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 		if !st.HasGH {
 			t.Errorf("HasGH = false with gh present")

@@ -63,7 +63,8 @@ describe("a11y: missing labels", () => {
     bar.id = "settings-tab-bar";
     const select = document.createElement("select");
     select.id = "settings-tab-select";
-    const tabs = ["general", "tools", "permissions", "instructions", "git"];
+    // ("git" removed: the Git & forges settings tab was retired.)
+    const tabs = ["general", "tools", "permissions", "instructions"];
     for (const t of tabs) {
       const btn = document.createElement("button");
       btn.setAttribute("data-settings-tab", t);
@@ -90,6 +91,74 @@ describe("a11y: missing labels", () => {
 
     document.body.removeChild(bar);
     document.body.removeChild(select);
+  });
+});
+
+describe("a11y: permissions rule-form labels (static markup)", () => {
+  // The four Permissions-panel adders (Active policy, Test a decision,
+  // Command rules, Agent ignore) were reworked from unlabeled chip rows into
+  // labeled .rule-form grids (audit C7). Guard the real markup: every
+  // control sits inside a <label> that carries a visible .rf-label, and the
+  // submit affordance is a labeled button, not an icon-only pill.
+  it("every rule-form control has a visible label and a labeled submit button", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const html = readFileSync(join(here, "..", "static", "index.html"), "utf8");
+
+    // Parse only the permissions-panel slice (comment marker to the next
+    // panel's marker): parsing the full document would make happy-dom chase
+    // the <link rel=stylesheet> over the network.
+    const start = html.indexOf("<!-- Permissions:");
+    const end = html.indexOf("<!-- Instructions:");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const doc = document.createElement("div");
+    doc.innerHTML = html.slice(start, end);
+
+    const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
+    const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
+    expect(kinds.sort()).toEqual(["command", "explain", "ignore", "policy"]);
+
+    for (const form of forms) {
+      // Grouped + named for assistive tech.
+      expect(form.getAttribute("role")).toBe("group");
+      expect(form.getAttribute("aria-label")).toBeTruthy();
+
+      for (const control of Array.from(form.querySelectorAll("select, input"))) {
+        const label = control.closest("label");
+        expect(label, `control #${control.id} must be wrapped in a <label>`).not.toBeNull();
+        const labelText = label?.querySelector(".rf-label")?.textContent?.trim() ?? "";
+        expect(labelText, `control #${control.id} needs visible label text`).not.toBe("");
+      }
+
+      const submit = form.querySelector<HTMLButtonElement>("button.rf-submit");
+      expect(submit).not.toBeNull();
+      expect(submit?.textContent?.trim(), "submit must carry a visible text label").not.toBe("");
+    }
+
+    // The permissions-ui.ts ids the controllers bind to must all survive the
+    // markup rework (the redesign keeps ids stable so the TS needs no
+    // structural changes).
+    for (const id of [
+      "native-rule-scope",
+      "native-rule-capability",
+      "native-rule-effect",
+      "native-rule-match",
+      "native-rule-add",
+      "native-explain-capability",
+      "native-explain-resource",
+      "native-explain-run",
+      "command-rules-mode",
+      "command-rules-priority",
+      "command-rules-input",
+      "command-rules-add",
+      "agent-ignore-input",
+      "agent-ignore-add",
+    ]) {
+      expect(doc.querySelector(`[id="${id}"]`), `#${id} must exist`).not.toBeNull();
+    }
   });
 });
 

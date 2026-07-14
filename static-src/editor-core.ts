@@ -140,6 +140,11 @@ export function restoreEditorTabs(paths: string[]): void {
     if (!fileStates.has(p)) {
       fileStates.set(p, freshState(p));
     }
+    // Open WITHOUT activating (B8): activation runs activateFile, which
+    // fetches the file — restoring N saved editor tabs active fanned out
+    // N pre-auth fetches at boot. The saved active tab (if it's an editor
+    // tab) is activated exactly once by restoreTabState(), which fetches
+    // just that file; the rest load lazily on first click.
     openEditorView(
       p,
       () => {
@@ -148,6 +153,7 @@ export function restoreEditorTabs(paths: string[]): void {
       () => {
         closeEditorFile(p);
       },
+      { activate: false },
     );
   }
 }

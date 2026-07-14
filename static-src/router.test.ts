@@ -147,10 +147,13 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "settings", tab: "instructions" },
     },
     {
-      name: "/settings/git",
+      // The "git" settings tab was retired (no panel/pill existed in the
+      // DOM — deep-linking it landed on a blank Settings body); the segment
+      // now canonicalizes to General like any unknown tab.
+      name: "/settings/git (retired tab) → general",
       pathname: "/settings/git",
       hash: "",
-      expected: { kind: "settings", tab: "git" },
+      expected: { kind: "settings", tab: "general" },
     },
     {
       name: "/settings/unknown → general",
@@ -182,7 +185,8 @@ describe("parseRoute (table-driven)", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseRoute/buildPath round-trip (property-based)", () => {
-  const settingsTabs: SettingsTab[] = ["general", "tools", "permissions", "instructions", "git"];
+  // "git" removed: the retired Git & forges settings tab no longer exists.
+  const settingsTabs: SettingsTab[] = ["general", "tools", "permissions", "instructions"];
 
   // Arbitrary for a canonical Route (one that round-trips cleanly).
   const arbRoute: fc.Arbitrary<Route> = fc.oneof(

@@ -129,6 +129,106 @@ export function initShellPanel(): void {
   setShellRunCallback((cmd: string) => {
     hostSend(encoder.encode(`${cmd}\n`));
   });
+
+  initShellResize();
+}
+
+// --- Panel resize ---
+
+/** Smallest useful panel height (6rem): a few terminal rows + the header. */
+const SHELL_MIN_H = 96;
+/** Keyboard resize step (2rem) per ArrowUp/ArrowDown on the handle. */
+const SHELL_KEY_STEP = 32;
+
+/** Upper clamp: leave at least 20% of the viewport for the chat column. */
+function shellMaxH(): number {
+  return Math.round(window.innerHeight * 0.8);
+}
+
+function clampShellH(h: number): number {
+  return Math.min(Math.max(h, SHELL_MIN_H), shellMaxH());
+}
+
+/** Clamp (and round) a panel height, then apply it via the --shell-h custom
+ *  property the panel's `height` consumes. Returns the applied value. */
+function applyShellH(h: number): number {
+  const clamped = Math.round(clampShellH(h));
+  $.shellPanel.style.setProperty("--shell-h", `${String(clamped)}px`);
+  return clamped;
+}
+
+/**
+ * Drag-to-resize on the panel's top edge handle: one pointer-capture path for
+ * mouse + touch (bottom-docked panel, so dragging up = smaller clientY =
+ * taller panel). The height lands in --shell-h and persists per-device in
+ * ui-state (shell_h; 0 = CSS default). The handle is also a keyboard
+ * separator: ArrowUp grows, ArrowDown shrinks (WCAG 2.1.1).
+ */
+function initShellResize(): void {
+  const resizeEl = $.shellResize;
+
+  // The markup ships a bare div; the a11y contract is set here so index.html
+  // stays untouched.
+  resizeEl.setAttribute("role", "separator");
+  resizeEl.setAttribute("aria-orientation", "horizontal");
+  resizeEl.setAttribute("aria-label", "Resize shell");
+  resizeEl.tabIndex = 0;
+
+  let startY = 0;
+  let startH = 0;
+  let lastH = 0;
+
+  resizeEl.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (!e.isPrimary) {
+      return;
+    }
+    startY = e.clientY;
+    startH = $.shellPanel.getBoundingClientRect().height;
+    lastH = Math.round(startH);
+    resizeEl.setPointerCapture(e.pointerId);
+    resizeEl.classList.add("dragging");
+    // Suspend the panel's height transition so it tracks the pointer 1:1
+    // instead of easing 200ms behind it (see .shell-panel.resizing).
+    $.shellPanel.classList.add("resizing");
+    e.preventDefault();
+  });
+
+  resizeEl.addEventListener("pointermove", (e: PointerEvent) => {
+    if (!resizeEl.hasPointerCapture(e.pointerId)) {
+      return;
+    }
+    lastH = applyShellH(startH + (startY - e.clientY));
+  });
+
+  const end = (e: PointerEvent): void => {
+    if (!resizeEl.hasPointerCapture(e.pointerId)) {
+      return;
+    }
+    resizeEl.releasePointerCapture(e.pointerId);
+    resizeEl.classList.remove("dragging");
+    $.shellPanel.classList.remove("resizing");
+    uiState.save({ shell_h: lastH });
+  };
+  resizeEl.addEventListener("pointerup", end);
+  resizeEl.addEventListener("pointercancel", end);
+
+  resizeEl.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") {
+      return;
+    }
+    e.preventDefault();
+    const cur = $.shellPanel.getBoundingClientRect().height;
+    const next = applyShellH(cur + (e.key === "ArrowUp" ? SHELL_KEY_STEP : -SHELL_KEY_STEP));
+    uiState.save({ shell_h: next });
+  });
+
+  // Restore the persisted height (re-clamped: the viewport may have changed
+  // since it was saved). Harmless while closed — the closed state pins
+  // height 0; the value takes effect on open.
+  const saved = uiState.load().shell_h;
+  if (saved > 0) {
+    applyShellH(saved);
+  }
 }
 
 /** Build the terminal exactly once, into the (empty) #shell-terminal root. The
@@ -155,10 +255,13 @@ let shellOpen = false;
  *
  *  Open: build the terminal on first use (opening its WebSocket), remove
  *  `shell-closed` (CSS slides the panel up), mark the toolbar button active,
- *  then focus the terminal via its handle. Close: hide the panel; the server
- *  PTY keeps running so reopening resumes the same session. State is persisted
- *  per-device in ui-state so a reload restores it (see restoreShell). */
-function setShellOpen(open: boolean): void {
+ *  then focus the terminal via its handle (skipped with focus:false — the
+ *  boot-time restore must not steal focus from the prompt input). Close:
+ *  collapse the panel (the CSS animates height/opacity, then flips
+ *  visibility); the server PTY keeps running so reopening resumes the same
+ *  session. State is persisted per-device in ui-state so a reload restores
+ *  it (see restoreShell). */
+function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
   shellOpen = open;
   if (open) {
     // Capture the chat scroll-area height before the panel steals vertical
@@ -168,13 +271,26 @@ function setShellOpen(open: boolean): void {
     $.shellPanel.classList.remove("shell-closed", "collapsed");
     $.shellBtn.classList.add("active");
     requestAnimationFrame(() => {
-      handle?.focus();
+      if (opts.focus !== false) {
+        handle?.focus();
+      }
       const shrunk = prevHeight - getScrollEl().clientHeight;
       if (shrunk > 0) {
         getScrollEl().scrollTop += shrunk;
       }
     });
   } else {
+    // Leave fullscreen before closing: the fullscreen rule pins height with
+    // !important (un-animatable collapse), and a persisted class would make
+    // the next open start fullscreen.
+    $.shellPanel.classList.remove("shell-fullscreen");
+    $.shellFullscreenBtn.setAttribute("aria-pressed", "false");
+    // The panel usually holds focus (the terminal's hidden textarea); hiding
+    // it would drop focus to <body> and restart Tab order from the document
+    // top (WCAG 2.4.3). Hand focus back to the toolbar button instead.
+    if ($.shellPanel.contains(document.activeElement)) {
+      $.shellBtn.focus({ preventScroll: true });
+    }
     $.shellPanel.classList.add("shell-closed");
     $.shellBtn.classList.remove("active");
   }
@@ -183,9 +299,10 @@ function setShellOpen(open: boolean): void {
 
 /**
  * Restore the shell panel on page load when ui-state had it open. Runs the full
- * open path (build terminal + CSS slide + focus), so the WebSocket only opens
- * when the shell was actually left open.
+ * open path (build terminal + CSS slide), so the WebSocket only opens when the
+ * shell was actually left open — but without focusing the terminal, so boot
+ * doesn't steal focus from the prompt input.
  */
 export function restoreShell(): void {
-  setShellOpen(true);
+  setShellOpen(true, { focus: false });
 }

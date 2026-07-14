@@ -2,6 +2,14 @@
    Shell Panel
    ========================================================================== */
 
+/* The panel is a singleton that lives for the app's lifetime: it stays
+   display:flex and animates between its open height and a fully collapsed,
+   hidden state. The former `display:none` close relied on the discrete
+   `display … allow-discrete` transition leg, which snapped shut in practice;
+   the visibility variant animates on every engine. Open (class removal)
+   transitions height 0 → var(--shell-h) via the base transition — no
+   @starting-style needed since the element never enters/leaves the layout
+   (this also makes the first restoreShell() open animate consistently). */
 .shell-panel {
   border-block-start: 1px solid var(--c-border);
   flex-shrink: 0;
@@ -15,21 +23,26 @@
   transition:
     height var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard),
-    display var(--dur-standard) allow-discrete;
-
-  @starting-style {
-    height: 0;
-    opacity: 0;
-  }
+    visibility 0s;
 
   &.shell-closed {
-    display: none;
     height: 0;
     opacity: 0;
+    visibility: hidden; /* unfocusable, out of the a11y tree */
+    border-block-start-width: 0; /* the 1px top border would stay visible */
+    transition:
+      height var(--dur-exit) var(--ease-exit),
+      opacity var(--dur-exit) var(--ease-exit),
+      visibility 0s var(--dur-exit); /* flip AFTER the collapse finishes */
   }
 
   &.collapsed {
     height: 2rem;
+  }
+
+  /* Live resize drag: the pointer must track 1:1, not ease 200ms behind. */
+  &.resizing {
+    transition: none;
   }
 }
 
@@ -42,7 +55,17 @@
   cursor: ns-resize;
   background: transparent;
   z-index: 1;
+
+  /* Touch drags must fire pointermove, not pan/scroll the page. */
+  touch-action: none;
   transition: background var(--dur-micro) var(--ease-micro);
+}
+
+/* Design system: ~24px minimum hit target; the visual bar stays 3px. */
+.shell-resize::before {
+  content: "";
+  position: absolute;
+  inset: -0.625rem 0;
 }
 
 .shell-resize:hover,
@@ -83,10 +106,17 @@
   border: none;
   color: var(--c-text-primary);
   cursor: pointer;
-  padding: var(--sp-1);
+  padding: 0;
+
+  /* Fixed square (matches .tab-close) so the three header buttons are
+     uniform and the glyph centers on both axes; every sibling icon-button
+     class centers, this one was missed. */
+  width: 1.5rem;
+  height: 1.5rem;
   border-radius: var(--r);
   display: flex;
   align-items: center;
+  justify-content: center;
   line-height: 0;
   transition: background var(--dur-micro) var(--ease-micro);
 }

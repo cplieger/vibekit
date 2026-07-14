@@ -39,9 +39,10 @@ type v3Summarization struct {
 }
 
 // sessionInfoUpdate is the v3 session_info_update payload. The _meta.kiro
-// block carries context-usage stats (kind == "context_usage") and, on
-// compaction, a summarization sub-block. Other kinds carry neither and
-// are ignored.
+// block carries context-usage stats (kind == "context_usage"), on
+// compaction a summarization sub-block, and at turn end a per-turn
+// metering summary (promptTurnSummaries + elapsedTime). Other kinds carry
+// none of these and are ignored.
 type sessionInfoUpdate struct {
 	Meta struct {
 		Kiro struct {
@@ -50,9 +51,22 @@ type sessionInfoUpdate struct {
 			ContextUsage    struct {
 				UsagePercentage *float64 `json:"usagePercentage"`
 			} `json:"contextUsage"`
-			Kind string `json:"kind"`
+			// PromptTurnSummaries is KAS's per-turn metering record,
+			// emitted as a session_info_update just before the
+			// session/prompt response returns (verified on the live
+			// 2.12.1 wire): [{unit:"credit", unitPlural:"credits",
+			// usage:0.0619}], beside elapsedTime (ms).
+			PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
+			ElapsedTime         float64             `json:"elapsedTime"`
+			Kind                string              `json:"kind"`
 		} `json:"kiro"`
 	} `json:"_meta"`
+}
+
+// promptTurnSummary is one metering line of a turn-end summary.
+type promptTurnSummary struct {
+	Unit  string  `json:"unit"`
+	Usage float64 `json:"usage"`
 }
 
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage so
@@ -71,6 +85,14 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 	// Compaction rides here on v3 (v2 used _kiro.dev/compaction/status).
 	if s := u.Meta.Kiro.Summarization; s != nil && s.Status != "" {
 		t.handleV3Summarization(ctx, chatID, s)
+		return
+	}
+	// Turn-end metering summary: the ONLY v3 channel that reliably carries
+	// the turn's credit spend + duration (usage_update.cost never arrived
+	// on the live 2.12.1 wire). Without this, Usage.TurnCount/LastTurnMs/
+	// Credits had no writer and the context popup showed zeros forever.
+	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
+		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
 		return
 	}
 	// Context usage. usage_update is the primary v3 channel (HandleUsageUpdate),
@@ -108,6 +130,37 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID api.ChatI
 	default:
 		// Any other non-empty status is a genuine failure reason.
 		t.handleCompactionFailed(ctx, chatID, s.Status)
+	}
+}
+
+// persistTurnSummary folds a turn-end metering summary into the chat's
+// usage: one more turn, the turn's wall time, and the credit spend summed
+// over the summary's credit lines. Credits ACCUMULATE here; the absolute
+// usage_update.cost channel (persistUsage) keeps overwrite precedence if
+// KAS ever ships both — an absolute value arriving after an increment
+// simply corrects it.
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64) {
+	var credits float64
+	for i := range summaries {
+		if summaries[i].Unit == "" || summaries[i].Unit == "credit" {
+			credits += summaries[i].Usage
+		}
+	}
+	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		c.Usage.TurnCount++
+		if elapsedMs > 0 {
+			c.Usage.LastTurnMs = elapsedMs
+		}
+		if credits > 0 {
+			c.Usage.Credits += credits
+			c.Usage.HasRealData = true
+		}
+		return true
+	}); err != nil {
+		slog.Error("persist v3 turn summary", "chat_id", chatID, "error", err)
 	}
 }
 

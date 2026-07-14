@@ -69,10 +69,15 @@ export function initGitPanel(): void {
 
     // When the user switches into a tab, run a fresh fetch so they
     // see up-to-date state. Keeps each module's data ownership tight.
+    // The subscription fires immediately with the current tab, which
+    // doubles as the Changes tab's initial load (initChangesTab itself
+    // no longer fires one — EX-1). Activation is explicit user
+    // navigation, so it opts into the server-side per-repo git fetch
+    // (?fetch=1) for fresh ahead/behind data (18-F3).
     onGitTabChange((tab) => {
       switch (tab) {
         case "changes":
-          void refreshChanges();
+          void refreshChanges(true);
           break;
         case "prs":
           void refreshPRs.dispatch(undefined);
@@ -85,10 +90,11 @@ export function initGitPanel(): void {
   } else {
     // Subsequent invocations refresh the currently active tab so the
     // entry from another part of the app (Files → click commit, agent
-    // ended a turn, etc.) sees fresh state.
+    // ended a turn, etc.) sees fresh state. Re-entering the git view
+    // is user navigation → fetch=1, same as tab activation.
     switch (getGitTab()) {
       case "changes":
-        void refreshChanges();
+        void refreshChanges(true);
         break;
       case "prs":
         void refreshPRs.dispatch(undefined);

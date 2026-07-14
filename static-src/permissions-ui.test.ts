@@ -205,6 +205,19 @@ describe("renderRuleChips — mode flip", () => {
     expect(ruleChip("npm *")?.querySelector<HTMLElement>(".chip-mode")?.textContent).toBe("Allow");
   });
 
+  it("clears and refocuses the pattern input after an add (repeat entry)", async () => {
+    await initWith([]);
+
+    const patternInput = byId<HTMLInputElement>("command-rules-input");
+    patternInput.value = "git *";
+    byId<HTMLButtonElement>("command-rules-add").click();
+    await flush();
+
+    expect(mocks.addRuleDispatch).toHaveBeenCalledTimes(1);
+    expect(patternInput.value).toBe("");
+    expect(document.activeElement).toBe(patternInput);
+  });
+
   it("removes a rule chip via its remove button", async () => {
     await initWith([rule("git *", "allow", 0), rule("npm *", "deny", 0)]);
     expect(ruleChips()).toHaveLength(2);
@@ -252,6 +265,19 @@ describe("renderRuleChips — priority change", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderIgnoreChips — keyed reconcile", () => {
+  it("clears and refocuses the path input after an add (repeat entry)", async () => {
+    await initWith([], []);
+
+    const pathInput = byId<HTMLInputElement>("agent-ignore-input");
+    pathInput.value = ".kiroignore";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    await flush();
+
+    expect(ignoreChips()).toHaveLength(1);
+    expect(pathInput.value).toBe("");
+    expect(document.activeElement).toBe(pathInput);
+  });
+
   it("preserves existing chip nodes on add and drops only the removed one", async () => {
     await initWith([], [".gitignore", ".env.dec"]);
 

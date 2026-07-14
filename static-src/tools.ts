@@ -552,24 +552,50 @@ class ToolsManager {
     if (this.toolsData[cat] === undefined) {
       this.toolsData[cat] = {};
     }
-    const entry: Record<string, unknown> = {};
+    // Merge into the existing entry instead of rebuilding it from the four
+    // visible form fields. Pre-populated entries carry fields the form never
+    // shows (enabled, auto_update, requires, update, method, package,
+    // npm_extras, shims, primary, probe, uninstall, sha256, ...); a
+    // from-scratch rebuild silently destroyed them — dependency ordering,
+    // version checks, and install methods all broke on the next run — and
+    // the corrupted manifest was then PUT back over the good copy. Start
+    // from the current entry, overwrite only what the form edits, and
+    // delete a key only when its form field is VISIBLE for this method and
+    // was cleared by the user.
+    const prior =
+      this.editingTool !== null
+        ? this.toolsData[this.editingTool.cat]?.[this.editingTool.name]
+        : this.toolsData[cat][name];
+    const entry: Record<string, unknown> = { ...(prior ?? {}) };
     if (fields.version) {
-      entry["version"] = version;
+      entry["version"] = version; // non-empty when visible: validated above
     }
     const install = f.install.value.trim();
-    if (fields.install && install !== "") {
-      entry["install"] = install;
+    if (fields.install) {
+      if (install !== "") {
+        entry["install"] = install;
+      } else {
+        delete entry["install"];
+      }
     }
     const binaries = f.binaries.value.trim();
-    if (fields.binaries && binaries !== "") {
-      entry["binaries"] = binaries
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s !== "");
+    if (fields.binaries) {
+      if (binaries !== "") {
+        entry["binaries"] = binaries
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== "");
+      } else {
+        delete entry["binaries"];
+      }
     }
     const pkg = f.pkg.value.trim();
-    if (fields.pkg && pkg !== "") {
-      entry["package"] = pkg;
+    if (fields.pkg) {
+      if (pkg !== "") {
+        entry["package"] = pkg;
+      } else {
+        delete entry["package"];
+      }
     }
     if (uiCat === "mcp") {
       entry["kind"] = "mcp";

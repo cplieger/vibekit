@@ -119,8 +119,22 @@ button.spec-doc:hover {
   padding: var(--sp-2) 0;
 }
 
+/* Board-level empty/error state. Rendered bare into #specs-list (no
+   .list-container wrapper to supply the frame), so it carries its own
+   card chrome — border + radius tokens matching .spec-card so /specs
+   and /history read with the same corner language. Overrides
+   .list-empty's italic row styling. */
 .spec-empty-board {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  padding: var(--sp-5) var(--sp-4);
+  font-style: normal;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: center;
 }
 
 /* --- Task tree --- */
