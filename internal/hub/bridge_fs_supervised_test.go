@@ -234,7 +234,7 @@ func TestFSWrite_SupervisedBroadcastsEvents(t *testing.T) {
 	<-done
 
 	h.lifecycle.mu.Lock()
-	types := extractTypes(t, h.sse.replayBuf.Events())
+	types := extractTypes(t, h.sse.hub.Buffered())
 	h.lifecycle.mu.Unlock()
 	wantSubset(t, types,
 		"pending_change_added",

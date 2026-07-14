@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"sync"
 	"testing"
 )
 
@@ -108,64 +107,5 @@ func TestByteRing_ExactCapacityAcrossWrites(t *testing.T) {
 	r.Write([]byte("9"))
 	if !r.Truncated() {
 		t.Fatal("Truncated() = false after overwriting the full buffer; data was evicted")
-	}
-}
-
-// TestReplayRing_BoundsEmpty verifies Bounds returns (0,0) on empty ring.
-func TestReplayRing_BoundsEmpty(t *testing.T) {
-	r := newReplayRing(8)
-	floor, head := r.Bounds()
-	if floor != 0 || head != 0 {
-		t.Fatalf("Bounds() on empty ring = (%d, %d), want (0, 0)", floor, head)
-	}
-}
-
-// TestReplayRing_OverflowWraparound verifies that after capacity+1
-// appends, the oldest event is evicted and Len stays at capacity.
-func TestReplayRing_OverflowWraparound(t *testing.T) {
-	const cap = 4
-	r := newReplayRing(cap)
-
-	for i := uint64(1); i <= uint64(cap)+1; i++ {
-		r.Append(sseEvent{eventID: i, chatID: "c"})
-	}
-
-	if r.Len() != cap {
-		t.Fatalf("Len() = %d after overflow, want %d", r.Len(), cap)
-	}
-	floor, head := r.Bounds()
-	if floor != 2 {
-		t.Fatalf("floor = %d, want 2 (oldest after eviction)", floor)
-	}
-	if head != 5 {
-		t.Fatalf("head = %d, want 5 (newest)", head)
-	}
-}
-
-// TestReplayRing_ConcurrentAppendReplay runs append and replay in
-// parallel under -race. The ring's mutex should prevent data races.
-func TestReplayRing_ConcurrentAppendReplay(t *testing.T) {
-	r := newReplayRing(32)
-
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		for i := uint64(1); i <= 500; i++ {
-			r.Append(sseEvent{eventID: i, chatID: "c"})
-		}
-	})
-
-	wg.Go(func() {
-		for range 500 {
-			_ = r.Replay(0, "")
-			_, _ = r.Bounds()
-			_ = r.Len()
-		}
-	})
-
-	wg.Wait()
-
-	if r.Len() > 32 {
-		t.Fatalf("Len() = %d exceeds capacity 32", r.Len())
 	}
 }

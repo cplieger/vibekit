@@ -25,6 +25,7 @@ import (
 	"github.com/cplieger/vibekit/internal/pending"
 	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/webhttp/sse"
 )
 
 const (
@@ -66,10 +67,11 @@ type bridgePlane struct {
 }
 
 // ssePlane groups Hub fields related to SSE transport, replay,
-// idempotency, and pending permissions.
+// idempotency, and pending permissions. The transport (fan-out, replay
+// ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's hub;
+// vibekit layers chat-topic filtering and pending-state replay on top.
 type ssePlane struct {
-	ctrl         *sseController
-	replayBuf    *replayRing
+	hub          *sse.Hub
 	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
 }
@@ -148,7 +150,7 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) map[str
 // (agent engine + model + effort); tool-call authorization is owned by
 // kiro-cli's native Cedar policy on v3, not by CLI trust flags.
 func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
-	sseC := newSSEController(replayBufSize)
+	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
 	lc := &lifecyclePlane{
 		workDir: workDir,
 		done:    make(chan struct{}),
@@ -163,8 +165,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 			assistantBufs: buffer.NewStore(),
 		},
 		sse: &ssePlane{
-			ctrl:         sseC,
-			replayBuf:    sseC.replay,
+			hub:          sseHub,
 			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
 		},
@@ -426,7 +427,7 @@ func (h *Hub) Shutdown() {
 
 	// 5. Tear down shell + SSE clients.
 	h.shellMgr.kill()
-	h.sse.ctrl.closeAll()
+	h.sse.hub.Shutdown()
 	slog.Info("hub shutdown complete")
 }
 

@@ -79,7 +79,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 
 func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	h.mcpRegistry.recordInitFailure(context.Background(), "broken", "connection refused")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -93,7 +93,7 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 		t.Errorf("error = %q", snap[0].Error)
 	}
 	// mcp_failed SSE must be emitted.
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	found := false
 	for _, tp := range types {
 		if tp == "mcp_failed" {
@@ -110,13 +110,13 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil)
 	h.mcpRegistry.recordConnected(context.Background(), "b", nil, nil)
 
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	h.mcpRegistry.clearAll(context.Background())
 
 	if len(h.mcpRegistry.Snapshot()) != 0 {
 		t.Error("clearAll left entries in registry")
 	}
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	got := 0
 	for _, tp := range types {
 		if tp == "mcp_disconnected" {
@@ -130,9 +130,9 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	h.mcpRegistry.clearAll(context.Background())
-	if h.sse.replayBuf.Len() != before {
+	if _, head := h.sse.hub.Bounds(); head != before {
 		t.Error("clearAll on empty registry emitted events")
 	}
 }

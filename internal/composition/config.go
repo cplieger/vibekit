@@ -5,8 +5,8 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/cplieger/envx"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/webhttp"
 )
@@ -31,16 +31,16 @@ type Config struct {
 // sensible defaults.
 func ConfigFromEnv() Config {
 	ac := auth.DefaultConfig
-	ac.LoginURLTimeout = envDuration("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
-	ac.LoginProcessCap = envDuration("VIBEKIT_AUTH_LOGIN_PROCESS_CAP", ac.LoginProcessCap)
-	ac.LogoutTimeout = envDuration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
-	ac.WhoamiTimeout = envDuration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
+	ac.LoginURLTimeout = envx.Duration("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
+	ac.LoginProcessCap = envx.Duration("VIBEKIT_AUTH_LOGIN_PROCESS_CAP", ac.LoginProcessCap)
+	ac.LogoutTimeout = envx.Duration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
+	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
 	return Config{
-		WorkDir:        envOr("KIRO_WORK_DIR", "/workspace"),
-		ConfigDir:      envOr("KIRO_CONFIG_DIR", "/config"),
-		CLIPath:        envOr("KIRO_CLI_PATH", "kiro-cli"),
-		VapidSub:       envOr("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
+		WorkDir:        envx.String("KIRO_WORK_DIR", "/workspace"),
+		ConfigDir:      envx.String("KIRO_CONFIG_DIR", "/config"),
+		CLIPath:        envx.String("KIRO_CLI_PATH", "kiro-cli"),
+		VapidSub:       envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
 		TrustedProxies: parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		AuthConfig:     ac,
 	}
@@ -70,28 +70,4 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 			"entries", invalid)
 	}
 	return nets
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// envDuration parses the env var named key as a time.Duration, or
-// returns fallback if the var is unset or unparseable. Unparseable
-// values log a warning so operators notice typos in deployment config.
-func envDuration(key string, fallback time.Duration) time.Duration {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		slog.Warn("config: ignoring malformed env var, using default",
-			"key", key, "value", raw, "default", fallback, "error", err)
-		return fallback
-	}
-	return d
 }
