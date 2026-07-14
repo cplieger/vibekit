@@ -34,7 +34,7 @@
     "@cplieger/fetch": "1.1.2",
     "@cplieger/reactive": "1.2.4",
     "@cplieger/ui-primitives": "2.1.1",
-    "@cplieger/web-terminal-engine": "2.3.2",
+    "@cplieger/web-terminal-engine": "2.3.3",
     "@cplieger/web-terminal-ui": "3.4.3"
   }
 }
