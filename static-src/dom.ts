@@ -538,21 +538,11 @@ export const $ = new Elements();
 // --- View Transition helper ---
 
 /** Wrap a DOM swap in a queued, feature-detected view transition. Delegates to
- *  @cplieger/ui-primitives' `viewTransition`, which owns the feature detection
- *  and a serialization queue so overlapping swaps don't clash (an improvement
- *  over the old fire-and-forget local copy). Kept as a void-returning wrapper
- *  on the historical name so call sites (settings-tabs, files) and their test
- *  mocks are unchanged.
- *
- *  Hidden-document fast path (B5/E3, local half): startViewTransition's update
- *  callback needs a rendering opportunity, which a hidden/suspended tab may
- *  never get — the queued swap (and everything chained behind it) would wedge.
- *  Swap directly instead; there is nothing to animate while hidden anyway.
- *  The upstream ui-primitives watchdog covers the visible-but-suspended case. */
+ *  @cplieger/ui-primitives' `viewTransition`, which owns the feature detection,
+ *  a serialization queue so overlapping swaps don't clash, the
+ *  document.hidden fast-path, and the suspended-renderer watchdog (>= 2.1.2).
+ *  Kept as a void-returning wrapper on the historical name so call sites
+ *  (settings-tabs, files) and their test mocks are unchanged. */
 export function maybeViewTransition(fn: () => void): void {
-  if (document.hidden) {
-    fn();
-    return;
-  }
   void viewTransition(fn);
 }

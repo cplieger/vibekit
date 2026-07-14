@@ -460,17 +460,13 @@ export function markBootDone(): void {
 
 // Queued view transition: wraps DOM swaps so tab switches cross-fade without
 // overlapping jank. Delegates to @cplieger/ui-primitives' viewTransition, which
-// owns the feature-detection + serialization queue; kept as a void-returning
-// wrapper so callers stay unchanged. Two fast-paths run the swap directly
-// (un-queued, no animation):
-//   - boot restores (markBootDone not yet called), see above;
-//   - hidden documents (B5/E3, local half): startViewTransition's update
-//     callback needs a rendering opportunity, which a hidden/suspended tab
-//     may never get — the queued swap (and every later one chained behind
-//     it) would wedge app-wide. The upstream ui-primitives watchdog covers
-//     the visible-but-suspended case.
+// owns feature-detection, the serialization queue, the document.hidden
+// fast-path, and the suspended-renderer watchdog (>= 2.1.2); kept as a
+// void-returning wrapper so callers stay unchanged. One local fast-path runs
+// the swap directly (un-queued, no animation): boot restores (markBootDone
+// not yet called), see above.
 function viewTransition(fn: () => void): void {
-  if (!bootDone || document.hidden) {
+  if (!bootDone) {
     fn();
     return;
   }
