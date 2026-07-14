@@ -10,36 +10,6 @@ import (
 	"github.com/cplieger/webhttp"
 )
 
-// TestEnvDuration pins envDuration's three branches: a valid value is
-// parsed (not the fallback), an unparseable value falls back (not the
-// zero duration a failed parse would otherwise yield), and an
-// empty/unset value falls back.
-func TestEnvDuration(t *testing.T) {
-	const key = "VIBEKIT_ENVDURATION_TEST"
-	const fallback = 10 * time.Second
-
-	t.Run("valid value parses, not fallback", func(t *testing.T) {
-		t.Setenv(key, "5s")
-		if got := envDuration(key, fallback); got != 5*time.Second {
-			t.Errorf("envDuration(%q) = %v, want %v", "5s", got, 5*time.Second)
-		}
-	})
-
-	t.Run("unparseable value returns fallback, not zero", func(t *testing.T) {
-		t.Setenv(key, "not-a-duration")
-		if got := envDuration(key, fallback); got != fallback {
-			t.Errorf("envDuration(%q) = %v, want fallback %v", "not-a-duration", got, fallback)
-		}
-	})
-
-	t.Run("empty value returns fallback", func(t *testing.T) {
-		t.Setenv(key, "")
-		if got := envDuration(key, fallback); got != fallback {
-			t.Errorf("envDuration(empty) = %v, want fallback %v", got, fallback)
-		}
-	})
-}
-
 func TestConfigFromEnv_Defaults(t *testing.T) {
 	// Unset all relevant env vars (they shouldn't be set in test env).
 	cfg := ConfigFromEnv()

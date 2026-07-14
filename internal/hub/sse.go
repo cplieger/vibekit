@@ -1,245 +1,137 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp/sse"
 )
 
-// sseEvent is one serialized outbound message held in the replay buffer.
-type sseEvent struct {
-	chatID  api.ChatID
-	data    []byte
-	eventID uint64
-}
-
-// sseClient is one connected SSE subscriber.
-type sseClient struct {
-	ch     chan sseEvent
-	cancel context.CancelFunc
-	chatID api.ChatID
-}
-
 // emit is the single path for broadcasting an event to SSE clients. It
-// marshals the event once, assigns a monotonic ID, appends to the replay
-// ring buffer, and fans out to subscribed clients.
+// marshals the event once and hands it to the shared sse hub, which assigns
+// the monotonic ID, appends to the replay ring, and fans out to subscribed
+// clients (topic = chat ID; events with an empty ChatID are global).
 func (h *Hub) emit(evt api.ServerEvent) {
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
 		return
 	}
-	h.sse.ctrl.emit(evt, data)
-}
-
-// parseLastEventID parses the Last-Event-ID header value. Empty or
-// malformed values produce 0 (the client either hasn't seen any
-// events yet, or the header was mangled by a proxy). Parse failures
-// are logged at Debug so an operator tracing a spurious gap-detector
-// flash can correlate with upstream header mangling.
-func parseLastEventID(raw string) uint64 {
-	if raw == "" {
-		return 0
-	}
-	n, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil {
-		slog.Debug("SSE Last-Event-ID parse failed", "raw", raw, "error", err)
-		return 0
-	}
-	return n
+	h.sse.hub.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
 }
 
 // handleSSE is the /api/events handler: opens a long-lived server-sent
-// events stream for the connected browser.
+// events stream for the connected browser. The transport (headers,
+// Last-Event-ID replay, keepalives, slow-client eviction, drain gate) is
+// the sse library's; vibekit owns the draining envelope, the connected
+// handshake carrying the replay bounds, and the initial per-client state
+// replay (pending permissions, staged writes, per-turn trust).
 func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
-	// Gate new SSE connections once Shutdown has flipped draining.
-	// Without this a last-minute reconnect can register in sseClients
-	// after Shutdown's client-cancel loop has already run, leaving a
-	// goroutine holding the ResponseWriter past hub teardown.
+	// Gate new SSE connections once Shutdown has flipped draining, with
+	// vibekit's own envelope (the library's drain gate 503s as a backstop
+	// after hub.Shutdown, closing the last-instant-reconnect race).
 	if h.lifecycle.draining.Load() {
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("shutting down"))
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		api.InternalError(w, errors.New("streaming not supported"))
-		return
-	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	// no-transform is RFC 7234 §5.2.2.4: intermediaries MUST NOT transform
-	// the body. Caddy's encode middleware honors this (isEncodeAllowed in
-	// modules/caddyhttp/encode/encode.go), as do nginx, ALB, and Cloudflare.
-	// Without it, a compressing proxy may wrap SSE in gzip, which buffers
-	// per-event flushes and breaks live event delivery on some clients.
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 	chatFilter := api.ChatID(r.URL.Query().Get("chat_id"))
-	// Size the delivery buffer to the replay ring. On reconnect,
-	// replaySinceLastID does a non-blocking send of every unseen event
-	// (up to the full ring) BEFORE the drain loop below starts consuming,
-	// so a buffer smaller than the ring silently drops the overflow — and
-	// since Replay yields oldest→newest, the dropped events are the
-	// NEWEST. Matching replayBufSize guarantees a full replay lands.
-	sc := &sseClient{
-		ch:     make(chan sseEvent, replayBufSize),
-		cancel: cancel,
-		chatID: chatFilter,
+	lastRaw := r.Header.Get("Last-Event-ID")
+	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastRaw)
+
+	// A reconnect (any Last-Event-ID) reloads push preferences from disk so
+	// settings edited while SSE was down take effect without a restart
+	// (deduplicated via singleflight inside the push service).
+	if lastRaw != "" && h.push != nil {
+		h.push.ReloadPreferences(r.Context())
 	}
 
-	// Replay events since Last-Event-ID, if provided. This makes SSE
-	// resilient across transient network drops.
-	lastID := parseLastEventID(r.Header.Get("Last-Event-ID"))
-
-	h.sse.ctrl.add(sc)
-	h.replaySinceLastID(ctx, sc, lastID, chatFilter)
-
-	defer func() {
-		h.sse.ctrl.remove(sc)
-	}()
-
-	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastID)
-
-	// Send the connected handshake plus a replay of all pending
-	// per-client state (permissions, staged writes, per-turn trust).
-	// Returns false if the client disconnected mid-replay or the
-	// handshake failed to marshal.
-	if !h.streamInitialState(ctx, w, flusher, chatFilter) {
-		return
-	}
-
-	keepalive := time.NewTicker(keepaliveInterval)
-	defer keepalive.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("SSE disconnected", "chat_filter", chatFilter)
-			return
-		case e := <-sc.ch:
-			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.eventID, e.data)
-			flusher.Flush()
-		case <-keepalive.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
-		}
-	}
-}
-
-// replaySinceLastID replays buffered events newer than lastID to a
-// reconnecting client. A lastID of 0 (first connect or a header mangled
-// by a proxy) is a no-op. On reconnect it also reloads push preferences
-// from disk so settings edited while SSE was down take effect without a
-// restart (deduplicated via singleflight).
-func (h *Hub) replaySinceLastID(ctx context.Context, sc *sseClient, lastID uint64, chatFilter api.ChatID) {
-	if lastID == 0 {
-		return
-	}
-	if h.push != nil {
-		h.push.ReloadPreferences(ctx)
-	}
-	for _, e := range h.sse.ctrl.replay.Replay(lastID, chatFilter) {
-		select {
-		case sc.ch <- e:
-		default:
-		}
-	}
+	h.sse.hub.Serve(w, r,
+		sse.WithTopic(string(chatFilter)),
+		sse.OnConnect(func(sw *sse.Writer, floor, head uint64) error {
+			return h.streamInitialState(sw, floor, head, chatFilter)
+		}),
+	)
+	slog.Info("SSE disconnected", "chat_filter", chatFilter)
 }
 
 // streamInitialState writes the connected handshake and then replays the
 // client's outstanding state — pending permissions, staged Supervised
 // writes, and per-turn trust — so a reconnecting browser rebuilds its UI
-// exactly as it was. It returns false (caller should stop) when the
-// handshake fails to marshal or the connection is cancelled mid-replay.
+// exactly as it was.
 //
 // The handshake's ConnectedPayload carries the ring-buffer floor (oldest
-// replayable event ID) and head (newest) so the client can detect a
-// replay gap: a last-seen ID below the floor means events were lost and
-// it must refetch authoritative state.
-func (h *Hub) streamInitialState(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, chatFilter api.ChatID) bool {
-	floor, head := h.replayBounds()
+// replayable event ID) and head (newest) so the client can detect a replay
+// gap: a last-seen ID below the floor means events were lost and it must
+// refetch authoritative state. The hook runs after the library's
+// Last-Event-ID replay, so the bounds are consistent with what the client
+// has already received.
+func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter api.ChatID) error {
 	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
 	connectedData, err := json.Marshal(connectedEvt)
 	if err != nil {
 		slog.Error("marshal connected event", "error", err)
-		return false
+		return errors.New("marshal connected event")
 	}
-	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", head, connectedData)
-	flusher.Flush()
-
-	// Replay any pending permissions that may have fallen out of the
-	// ring buffer. This ensures permission dialogs survive reconnects.
-	h.replayPendingPermissions(w, flusher, chatFilter)
-	if ctx.Err() != nil {
-		return false
+	if err := sw.Event(head, "", connectedData); err != nil {
+		return err
 	}
 
-	// writeEvent serializes one event to the stream; shared by the
-	// staged-change and per-turn-trust replays below.
-	writeEvent := func(evt api.ServerEvent) {
-		if data, err := json.Marshal(evt); err == nil {
-			fmt.Fprintf(w, "data: %s\n\n", data)
+	// writeEvent serializes one replayed state event to the stream (no id:
+	// replayed state is synthesized, not part of the event sequence).
+	writeEvent := func(evt api.ServerEvent) error {
+		data, err := json.Marshal(evt)
+		if err != nil {
+			return nil //nolint:nilerr // skip unmarshalable event, keep stream
 		}
+		return sw.Event(0, "", data)
+	}
+
+	// Replay any pending permissions that may have fallen out of the ring
+	// buffer, so permission dialogs survive reconnects.
+	if err := h.replayPendingPermissions(writeEvent, chatFilter); err != nil {
+		return err
 	}
 
 	// Replay every outstanding Supervised-mode staged op so the client
-	// rebuilds its pending pill and per-card Accept/Reject buttons
-	// exactly as they were before the disconnect.
-	h.replayPendingChanges(writeEvent, chatFilter)
-	if ctx.Err() != nil {
-		return false
+	// rebuilds its pending pill and per-card Accept/Reject buttons.
+	if err := h.replayPendingChanges(writeEvent, chatFilter); err != nil {
+		return err
 	}
 
 	// Replay per-turn trust state. Without this, a reconnect mid-turn
 	// silently reverts the Supervised pill to plain "Supervised" even
-	// though the perTurnTrust flag is still active — the user would have
-	// no way to tell their trust decision was still in force.
-	h.replayPendingTrust(writeEvent, chatFilter)
-	if ctx.Err() != nil {
-		return false
-	}
-
-	flusher.Flush()
-	return true
+	// though the perTurnTrust flag is still active.
+	return h.replayPendingTrust(writeEvent, chatFilter)
 }
 
 // replayBounds returns (floor, head) of the current replay buffer, both
 // inclusive. Floor is the oldest event ID still replayable; head is the
-// newest. When the buffer is empty, floor == 0 and head == current seq.
-// Clients with last-seen-id < floor know they missed events.
+// newest. Clients with last-seen-id < floor know they missed events.
 func (h *Hub) replayBounds() (floor, head uint64) {
-	return h.sse.ctrl.bounds()
+	return h.sse.hub.Bounds()
 }
 
-// replayPendingPermissions sends any unresolved permission_needed events
-// to a newly connected SSE client. Ensures permission dialogs survive
-// reconnects even if the ring buffer has wrapped.
-func (h *Hub) replayPendingPermissions(w http.ResponseWriter, flusher http.Flusher, chatFilter api.ChatID) {
-	perms := h.sse.pendingPerms.List(chatFilter)
-	for _, evt := range perms {
-		if data, err := json.Marshal(evt); err == nil {
-			fmt.Fprintf(w, "data: %s\n\n", data)
+// replayPendingPermissions sends any unresolved permission_needed events to
+// a newly connected SSE client, so permission dialogs survive reconnects
+// even when the ring buffer has wrapped.
+func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
+	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
+		if err := writeFn(evt); err != nil {
+			return err
 		}
 	}
-	flusher.Flush()
+	return nil
 }
 
-// replayPendingChanges sends every outstanding pending op for a new
-// SSE client. Called from handleSSE after replayPendingPermissions.
-// The replay uses pending_change_added events so client handlers are
-// identical to the live path.
-func (h *Hub) replayPendingChanges(writeFn func(api.ServerEvent), chatFilter api.ChatID) {
+// replayPendingChanges sends every outstanding pending op for a new SSE
+// client. The replay uses pending_change_added events so client handlers
+// are identical to the live path.
+func (h *Hub) replayPendingChanges(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	var chatIDs []api.ChatID
 	if chatFilter != "" {
 		chatIDs = []api.ChatID{chatFilter}
@@ -248,18 +140,30 @@ func (h *Hub) replayPendingChanges(writeFn func(api.ServerEvent), chatFilter api
 	}
 	for _, id := range chatIDs {
 		for _, snap := range h.perm.pending.ListForChat(id) {
-			writeFn(api.NewEvent(api.EventPendingChangeAdded, id, api.PendingChangeAddedPayload{Change: snap}))
+			if err := writeFn(api.NewEvent(api.EventPendingChangeAdded, id, api.PendingChangeAddedPayload{Change: snap})); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-// replayPendingTrust emits a pending_trust_enabled event for every
-// chat that currently has perTurnTrust set. Called from handleSSE
-// after replayPendingChanges. Keeps the Supervised pill's "Trusted ·
-// this turn" state alive across reconnects.
-func (h *Hub) replayPendingTrust(writeFn func(api.ServerEvent), chatFilter api.ChatID) {
-	ids := h.perm.supervised.TrustedChatIDs(chatFilter)
-	for _, id := range ids {
-		writeFn(api.NewEvent(api.EventPendingTrustEnabled, id, api.PendingTrustEnabledPayload{}))
+// replayPendingTrust emits a pending_trust_enabled event for every chat
+// that currently has perTurnTrust set, keeping the Supervised pill's
+// "Trusted · this turn" state alive across reconnects.
+func (h *Hub) replayPendingTrust(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
+	for _, id := range h.perm.supervised.TrustedChatIDs(chatFilter) {
+		if err := writeFn(api.NewEvent(api.EventPendingTrustEnabled, id, api.PendingTrustEnabledPayload{})); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// sseHandshakeFrame renders the connected handshake for tests that assert
+// the exact wire shape.
+func sseHandshakeFrame(floor, head uint64) string {
+	evt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
+	data, _ := json.Marshal(evt)
+	return fmt.Sprintf("id: %d\ndata: %s\n\n", head, data)
 }

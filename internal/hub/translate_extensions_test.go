@@ -69,7 +69,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			before := h.sse.replayBuf.Len()
+			_, before := h.sse.hub.Bounds()
 			msg := &api.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
 			h.translateACPEvent("", msg)
 
@@ -77,7 +77,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 				tc.wantSnap(t, h.mcpRegistry.Snapshot())
 			}
 			if len(tc.wantEvents) > 0 {
-				types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+				types := extractTypes(t, bufferedSince(h, before))
 				wantSubset(t, types, tc.wantEvents...)
 			}
 		})
@@ -89,7 +89,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 
 	msg := &api.RPCResponse{
 		Method: api.MethodSessionUpdate,
@@ -104,7 +104,7 @@ func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "commands_updated")
 }
 
@@ -113,7 +113,7 @@ func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 
 	msg := &api.RPCResponse{
 		Method: api.MethodSessionUpdate,
@@ -126,7 +126,7 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "compaction_started")
 }
 
@@ -194,7 +194,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 		c.CurrentModeID = "nonexistent"
 		return true
 	})
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	msg := &api.RPCResponse{
 		Method: "_kiro/customAgent/not_found",
 		Params: mustJSON(t, map[string]any{
@@ -208,14 +208,14 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	if c.CurrentModeID != "vibe" {
 		t.Errorf("current_mode_id = %q, want vibe", c.CurrentModeID)
 	}
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "error")
 }
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	msg := &api.RPCResponse{
 		Method: "_kiro/customAgent/config_error",
 		Params: mustJSON(t, map[string]any{
@@ -224,14 +224,14 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 		}),
 	}
 	h.translateACPEvent("c1", msg)
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "error")
 }
 
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	msg := &api.RPCResponse{
 		Method: "_kiro/error/rate_limit",
 		Params: mustJSON(t, map[string]any{
@@ -239,7 +239,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 		}),
 	}
 	h.translateACPEvent("c1", msg)
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "error")
 }
 
@@ -247,7 +247,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 
 func TestTranslateSystemNotify_EmitsError(t *testing.T) {
 	h, _, _ := newTestHub()
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	// No sessionId on _kiro/system/notify — broadcast at bridge scope.
 	msg := &api.RPCResponse{
 		Method: "_kiro/system/notify",
@@ -257,6 +257,6 @@ func TestTranslateSystemNotify_EmitsError(t *testing.T) {
 		}),
 	}
 	h.translateACPEvent("", msg)
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "error")
 }

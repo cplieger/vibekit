@@ -20,7 +20,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
 	msg := &api.RPCResponse{
 		Method: "session/update",
@@ -28,7 +28,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	gotTypes := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	gotTypes := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, gotTypes, "message_created", "message_chunk")
 
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
@@ -206,7 +206,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	before := h.sse.replayBuf.Len()
+	_, before := h.sse.hub.Bounds()
 	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
 	// and the params are FLAT ({sessionId, toolCall, options}); the option id
 	// is camelCase `optionId`. (The pre-fix shape nested id+params inside
@@ -226,7 +226,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+	types := extractTypes(t, bufferedSince(h, before))
 	wantSubset(t, types, "permission_needed")
 }
 
@@ -344,7 +344,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		before := h.sse.replayBuf.Len()
+		_, before := h.sse.hub.Bounds()
 		var idx int
 		if len(data) > 0 {
 			idx = int(data[0]) % len(methods)
@@ -355,8 +355,8 @@ func FuzzTranslateInitErrors(f *testing.F) {
 		}
 		// Must not panic.
 		h.translateACPEvent("fuzz", msg)
-		if h.sse.replayBuf.Len() < before {
-			t.Errorf("replay buffer shrank: %d → %d", before, h.sse.replayBuf.Len())
+		if _, head := h.sse.hub.Bounds(); head < before {
+			t.Errorf("event head went backwards from %d", before)
 		}
 	})
 }

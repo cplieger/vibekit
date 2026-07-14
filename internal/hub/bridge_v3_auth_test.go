@@ -44,17 +44,17 @@ func openExternalURLMsg(t *testing.T, id int64, url string) *api.RPCResponse {
 func TestHandleOpenExternalURL(t *testing.T) {
 	t.Run("SafeURLBroadcasts", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		before := h.sse.replayBuf.Len()
+		_, before := h.sse.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
-		types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+		types := extractTypes(t, bufferedSince(h, before))
 		wantSubset(t, types, string(api.EventOpenExternalURL))
 	})
 
 	t.Run("UnsafeURLDoesNotBroadcast", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		before := h.sse.replayBuf.Len()
+		_, before := h.sse.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
-		types := extractTypes(t, h.sse.replayBuf.Events()[before:])
+		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {
 			if ty == string(api.EventOpenExternalURL) {
 				t.Fatalf("unsafe URL must not broadcast open_external_url; got %v", types)

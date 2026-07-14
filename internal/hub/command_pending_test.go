@@ -472,8 +472,9 @@ func TestReplayPendingTrust(t *testing.T) {
 	h.perm.supervised.SetTrust("c1")
 
 	var got []api.ServerEvent
-	h.replayPendingTrust(func(evt api.ServerEvent) {
+	h.replayPendingTrust(func(evt api.ServerEvent) error {
 		got = append(got, evt)
+		return nil
 	}, "c1")
 	if len(got) != 1 {
 		t.Fatalf("replayed %d events, want 1", len(got))
@@ -487,8 +488,9 @@ func TestReplayPendingTrust(t *testing.T) {
 
 	// A client filtering on a different chat must get nothing.
 	got = nil
-	h.replayPendingTrust(func(evt api.ServerEvent) {
+	h.replayPendingTrust(func(evt api.ServerEvent) error {
 		got = append(got, evt)
+		return nil
 	}, "c2")
 	if len(got) != 0 {
 		t.Errorf("cross-chat leak: %+v", got)
@@ -500,9 +502,9 @@ func TestReplayPendingTrust(t *testing.T) {
 // without the complexity of wiring up a real SSE subscriber.
 func countReplayType(h *Hub, typ api.EventType) int {
 	n := 0
-	for _, evt := range h.sse.replayBuf.Events() {
+	for _, evt := range h.sse.hub.Buffered() {
 		var msg api.ServerEvent
-		if err := json.Unmarshal(evt.data, &msg); err != nil {
+		if err := json.Unmarshal(evt.Event.Data, &msg); err != nil {
 			continue
 		}
 		if msg.Type == typ {
@@ -516,10 +518,10 @@ func countReplayType(h *Hub, typ api.EventType) int {
 // the replay buffer, or nil if absent. Used when a test needs to
 // inspect the payload of a broadcast rather than just count it.
 func lastReplayEventOfType(h *Hub, typ api.EventType) *api.ServerEvent {
-	evts := h.sse.replayBuf.Events()
+	evts := h.sse.hub.Buffered()
 	for i := range slices.Backward(evts) {
 		var msg api.ServerEvent
-		if err := json.Unmarshal(evts[i].data, &msg); err != nil {
+		if err := json.Unmarshal(evts[i].Event.Data, &msg); err != nil {
 			continue
 		}
 		if msg.Type == typ {
@@ -698,7 +700,7 @@ func TestReplayPendingChanges_NoFilterReplaysAll(t *testing.T) {
 	_, _ = stageOp(h, "c2", "tc-2", "b.go")
 
 	var got []api.ServerEvent
-	h.replayPendingChanges(func(evt api.ServerEvent) { got = append(got, evt) }, "")
+	h.replayPendingChanges(func(evt api.ServerEvent) error { got = append(got, evt); return nil }, "")
 
 	if len(got) != 2 {
 		t.Fatalf("replayed %d events, want 2", len(got))
@@ -722,7 +724,7 @@ func TestReplayPendingChanges_FilterReplaysOnlyMatching(t *testing.T) {
 	_, _ = stageOp(h, "c2", "tc-2", "b.go")
 
 	var got []api.ServerEvent
-	h.replayPendingChanges(func(evt api.ServerEvent) { got = append(got, evt) }, "c1")
+	h.replayPendingChanges(func(evt api.ServerEvent) error { got = append(got, evt); return nil }, "c1")
 
 	if len(got) != 1 {
 		t.Fatalf("replayed %d events, want 1", len(got))
@@ -739,7 +741,7 @@ func TestReplayPendingChanges_EmptyStoreReplaysNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 
 	var got []api.ServerEvent
-	h.replayPendingChanges(func(evt api.ServerEvent) { got = append(got, evt) }, "")
+	h.replayPendingChanges(func(evt api.ServerEvent) error { got = append(got, evt); return nil }, "")
 
 	if len(got) != 0 {
 		t.Errorf("replayed %d events, want 0", len(got))

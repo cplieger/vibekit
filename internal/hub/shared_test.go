@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp/sse"
 )
 
 // --- Hub construction helpers ---
@@ -47,14 +48,27 @@ func postCmd(t *testing.T, h *Hub, cmd api.ClientCommand) *httptest.ResponseReco
 
 // --- Event inspection helpers ---
 
+// bufferedSince returns the hub's buffered events with ID greater than
+// sinceID — the test-side filter over sse.(*Hub).Buffered (the library's
+// inspection surface is a parameterless snapshot).
+func bufferedSince(h *Hub, sinceID uint64) []sse.ReplayEvent {
+	var out []sse.ReplayEvent
+	for _, e := range h.sse.hub.Buffered() {
+		if e.ID > sinceID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // extractTypes decodes each event in a replay-buffer slice and returns
 // their types in order. Used to assert an emit sequence.
-func extractTypes(t *testing.T, events []sseEvent) []string {
+func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
 	for _, e := range events {
 		var msg api.ServerEvent
-		if err := json.Unmarshal(e.data, &msg); err != nil {
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
 		out = append(out, string(msg.Type))

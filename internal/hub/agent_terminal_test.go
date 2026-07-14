@@ -212,7 +212,7 @@ type ringEvent struct {
 func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 	t.Helper()
 	var out []ringEvent
-	for _, e := range h.sse.ctrl.replay.Events() {
+	for _, e := range h.sse.hub.Buffered() {
 		var env struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -220,13 +220,13 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 				Data       string `json:"data"`
 			} `json:"payload"`
 		}
-		if err := json.Unmarshal(e.data, &env); err != nil {
+		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
 		switch env.Type {
 		case string(api.EventTerminalCreated), string(api.EventTerminalOutput), string(api.EventTerminalExited):
 			out = append(out, ringEvent{
-				eventID: e.eventID,
+				eventID: e.ID,
 				typ:     env.Type,
 				termID:  env.Payload.TerminalID,
 				data:    env.Payload.Data,
@@ -438,7 +438,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
 		}
 		chunkSize := int(chunkRaw)%8 + 1
-		preSeq := h.sse.ctrl.seq.Load()
+		_, preSeq := h.sse.hub.Bounds()
 		term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1 << 20)}
 		h.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
@@ -448,14 +448,14 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		}
 
 		var got []byte
-		for _, e := range h.sse.ctrl.replay.Replay(preSeq, "") {
+		for _, e := range bufferedSince(h, preSeq) {
 			var env struct {
 				Type    string `json:"type"`
 				Payload struct {
 					Data string `json:"data"`
 				} `json:"payload"`
 			}
-			if err := json.Unmarshal(e.data, &env); err != nil {
+			if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 				t.Fatalf("unmarshal ring event: %v", err)
 			}
 			if env.Type == string(api.EventTerminalOutput) {

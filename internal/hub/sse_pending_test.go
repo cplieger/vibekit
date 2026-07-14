@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -41,23 +42,36 @@ func seedPending(h *Hub, reqID int64, chatID api.ChatID) {
 	})
 }
 
+// collectPendingPerms runs the pending-permission replay through the
+// writeFn seam and returns the concatenated JSON payloads.
+func collectPendingPerms(t *testing.T, h *Hub, filter api.ChatID) string {
+	t.Helper()
+	var sb strings.Builder
+	if err := h.replayPendingPermissions(func(evt api.ServerEvent) error {
+		data, err := json.Marshal(evt)
+		if err != nil {
+			return err
+		}
+		sb.Write(data)
+		sb.WriteByte('\n')
+		return nil
+	}, filter); err != nil {
+		t.Fatalf("replayPendingPermissions: %v", err)
+	}
+	return sb.String()
+}
+
 func TestReplayPendingPermissions_noFilter_sendsAll(t *testing.T) {
 	h, _, _ := newTestHub()
 	seedPending(h, 1, "c1")
 	seedPending(h, 2, "c2")
 
-	rec := &flushRecorder{}
-	h.replayPendingPermissions(rec, rec, "")
-
-	body := rec.body.String()
+	body := collectPendingPerms(t, h, "")
 	if !strings.Contains(body, `"request_id":1`) {
 		t.Errorf("body missing request 1: %q", body)
 	}
 	if !strings.Contains(body, `"request_id":2`) {
 		t.Errorf("body missing request 2: %q", body)
-	}
-	if rec.flushed == 0 {
-		t.Error("flusher was never called")
 	}
 }
 
@@ -66,10 +80,7 @@ func TestReplayPendingPermissions_withFilter(t *testing.T) {
 	seedPending(h, 10, "c1")
 	seedPending(h, 20, "c2")
 
-	rec := &flushRecorder{}
-	h.replayPendingPermissions(rec, rec, "c1")
-
-	body := rec.body.String()
+	body := collectPendingPerms(t, h, "c1")
 	if !strings.Contains(body, `"request_id":10`) {
 		t.Errorf("filtered replay missing c1 perm: %q", body)
 	}
@@ -84,22 +95,15 @@ func TestReplayPendingPermissions_globalEventsAlwaysSent(t *testing.T) {
 	// globals visible to chat-filtered clients.
 	seedPending(h, 99, "")
 
-	rec := &flushRecorder{}
-	h.replayPendingPermissions(rec, rec, "c1")
-	if !strings.Contains(rec.body.String(), `"request_id":99`) {
-		t.Errorf("global perm dropped by chat filter: %q", rec.body.String())
+	if body := collectPendingPerms(t, h, "c1"); !strings.Contains(body, `"request_id":99`) {
+		t.Errorf("global perm dropped by chat filter: %q", body)
 	}
 }
 
 func TestReplayPendingPermissions_emptyQueue_justFlushes(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := &flushRecorder{}
-	h.replayPendingPermissions(rec, rec, "")
-	if rec.body.Len() != 0 {
-		t.Errorf("empty queue wrote body: %q", rec.body.String())
-	}
-	if rec.flushed != 1 {
-		t.Errorf("empty queue: flushed %d times, want 1", rec.flushed)
+	if body := collectPendingPerms(t, h, ""); body != "" {
+		t.Errorf("empty queue wrote body: %q", body)
 	}
 }
 
