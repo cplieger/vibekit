@@ -691,11 +691,13 @@
 }
 
 .mcp-raw-error {
-  color: var(--c-red) !important; /* stylelint-disable-line declaration-no-important */
+  /* stylelint-disable-next-line declaration-no-important -- error tint must beat the shared mono-output color regardless of nesting */
+  color: var(--c-red) !important;
 }
 
 .mcp-form-error {
-  color: var(--c-red) !important; /* stylelint-disable-line declaration-no-important */
+  /* stylelint-disable-next-line declaration-no-important -- error tint must beat the shared form-hint color regardless of nesting */
+  color: var(--c-red) !important;
 }
 
 /* Mobile: single-column pair rows so name+value don't get squeezed. */

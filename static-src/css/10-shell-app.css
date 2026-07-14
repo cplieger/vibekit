@@ -242,7 +242,7 @@
    * press context menu that iOS shows before user-select kicks in. */
     &.dragging {
       user-select: none;
-      -webkit-touch-callout: none; /* stylelint-disable-line property-no-vendor-prefix */
+      -webkit-touch-callout: none;
     }
   }
 
@@ -303,8 +303,12 @@
       opacity: 0;
       margin: -0.0625rem 0;
       border: 0;
+
+      /* stylelint-disable-next-line declaration-no-important -- must beat the component's own height rule while visually collapsed */
       height: 0 !important;
-      padding: 0 !important; /* stylelint-disable-line declaration-no-important */
+
+      /* stylelint-disable-next-line declaration-no-important -- same: collapse padding regardless of component rules */
+      padding: 0 !important;
       min-height: 0;
     }
 

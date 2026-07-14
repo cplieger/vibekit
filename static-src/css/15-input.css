@@ -537,8 +537,8 @@
 
 /* awaiting_approval status pill: warmer tone than in_progress to make
  * the "your turn" state legible at a glance. */
+/* stylelint-disable-next-line selector-class-pattern -- class mirrors the server's snake_case tool-status enum value */
 .tool-status.awaiting_approval {
-  /* stylelint-disable-line selector-class-pattern -- mirrors in_progress snake_case; server API value */
   color: var(--c-yellow);
   background: color-mix(in srgb, var(--c-yellow) 14%, transparent);
 }
