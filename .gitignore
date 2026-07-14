@@ -34,3 +34,7 @@ static/style.css
 # Local-dev workspace file (resolves the unpublished engine from ../vterm)
 go.work
 go.work.sum
+
+# Stryker mutation-testing artifacts (weekly-stryker.yaml / local npx stryker run)
+reports/
+.stryker-tmp/
