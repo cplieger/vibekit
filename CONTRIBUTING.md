@@ -233,7 +233,13 @@ npm test                   # vitest --run
 npm run lint:eslint        # eslint . (strict typed linting)
 npm run lint:prettier      # prettier --check ../..
 npm run lint:knip          # unused-export / dependency check
+npx stryker run            # mutation testing (slow; config in stryker.config.json)
 ```
+
+Mutation runs use their own vitest config (`vitest.stryker.config.ts`, a
+raised test-timeout overlay on `vitest.config.ts`). Keep it free of bare
+imports and out of the browser build: CI's import-map coverage check and
+`tsconfig.build.json` both only exempt `vitest*.config.ts` shapes.
 
 CSS is linted with stylelint (`.stylelintrc.json`) and HTML with html-validate
 (`.htmlvalidate.json`); both ship as devDependencies and run in CI. Invoke them
