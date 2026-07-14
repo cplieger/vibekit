@@ -8,7 +8,7 @@ require (
 	github.com/cplieger/atomicfile/v2 v2.1.3
 	github.com/cplieger/slogx v1.1.1
 	github.com/cplieger/ssrf/v2 v2.0.7
-	github.com/cplieger/web-terminal-engine/v2 v2.3.2
+	github.com/cplieger/web-terminal-engine/v2 v2.3.4
 	github.com/cplieger/webhttp v1.6.0
 	github.com/cplieger/wiregen v1.3.4
 	golang.org/x/sync v0.22.0
