@@ -25,12 +25,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"gopkg.in/yaml.v3"
-
 	"github.com/cplieger/vibekit/internal/tools"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -45,9 +45,26 @@ func main() {
 	}
 
 	catalog := &tools.Catalog{Refs: parseRefs(*refsFlag), Entries: map[string]tools.CatalogEntry{}}
+	stats := compileMiseEntries(catalog, *miseDir, *aquaDir)
 
-	stats := struct{ tools, aquaBacked, skipped int }{}
-	entries, err := os.ReadDir(*miseDir)
+	if *overlayPath != "" {
+		if err := applyOverlay(catalog, *overlayPath, *aquaDir); err != nil {
+			log.Fatalf("toolcatalog: overlay: %v", err)
+		}
+	}
+
+	checkCatalogInvariants(catalog)
+	writeCatalog(catalog, *outPath, stats)
+}
+
+// compileStats counts the outcome of a catalog compile run.
+type compileStats struct{ tools, aquaBacked, skipped int }
+
+// compileMiseEntries walks the mise registry, compiling each usable
+// tool into the catalog and returning the run's counts.
+func compileMiseEntries(catalog *tools.Catalog, miseDir, aquaDir string) compileStats {
+	var stats compileStats
+	entries, err := os.ReadDir(miseDir)
 	if err != nil {
 		log.Fatalf("toolcatalog: read mise registry: %v", err)
 	}
@@ -56,9 +73,9 @@ func main() {
 			continue
 		}
 		name := strings.TrimSuffix(de.Name(), ".toml")
-		entry, ok, err := compileEntry(*miseDir, *aquaDir, name)
-		if err != nil {
-			log.Fatalf("toolcatalog: %s: %v", name, err)
+		entry, ok, cerr := compileEntry(miseDir, aquaDir, name)
+		if cerr != nil {
+			log.Fatalf("toolcatalog: %s: %v", name, cerr)
 		}
 		if !ok {
 			stats.skipped++
@@ -70,13 +87,12 @@ func main() {
 			stats.aquaBacked++
 		}
 	}
+	return stats
+}
 
-	if *overlayPath != "" {
-		if err := applyOverlay(catalog, *overlayPath, *aquaDir); err != nil {
-			log.Fatalf("toolcatalog: overlay: %v", err)
-		}
-	}
-
+// checkCatalogInvariants fails the build if the compiled catalog is
+// implausibly small or a featured entry lacks a source.
+func checkCatalogInvariants(catalog *tools.Catalog) {
 	// Build invariants: a Renovate ref bump that guts the catalog must
 	// fail loudly, not ship. Floor chosen well under the current 718
 	// but far above any plausible healthy shrink.
@@ -85,26 +101,30 @@ func main() {
 		log.Fatalf("toolcatalog: only %d entries compiled (< %d) — registry format drift?",
 			len(catalog.Entries), minEntries)
 	}
-	for name, e := range catalog.Entries {
+	for name := range catalog.Entries {
+		e := catalog.Entries[name]
 		if e.Featured && e.Source == "" {
 			log.Fatalf("toolcatalog: featured entry %q has no source", name)
 		}
 	}
+}
 
+// writeCatalog marshals the catalog to outPath and prints a summary.
+func writeCatalog(catalog *tools.Catalog, outPath string, stats compileStats) {
 	data, err := json.Marshal(catalog)
 	if err != nil {
 		log.Fatalf("toolcatalog: marshal: %v", err)
 	}
-	if err := os.WriteFile(*outPath, data, 0o644); err != nil {
+	if err := os.WriteFile(outPath, data, 0o600); err != nil {
 		log.Fatalf("toolcatalog: write: %v", err)
 	}
 	fmt.Printf("toolcatalog: %d tools (%d aqua-backed, %d skipped) -> %s (%d KB)\n",
-		stats.tools, stats.aquaBacked, stats.skipped, *outPath, len(data)/1024)
+		stats.tools, stats.aquaBacked, stats.skipped, outPath, len(data)/1024)
 }
 
 func parseRefs(s string) map[string]string {
 	refs := map[string]string{}
-	for _, pair := range strings.Split(s, ",") {
+	for pair := range strings.SplitSeq(s, ",") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(pair), "="); ok {
 			refs[k] = v
 		}
@@ -130,7 +150,7 @@ func compileEntry(miseDir, aquaDir, name string) (tools.CatalogEntry, bool, erro
 	if _, err := toml.DecodeFile(filepath.Join(miseDir, name+".toml"), &mt); err != nil {
 		return tools.CatalogEntry{}, false, err
 	}
-	if len(mt.OS) > 0 && !contains(mt.OS, "linux") {
+	if len(mt.OS) > 0 && !slices.Contains(mt.OS, "linux") {
 		return tools.CatalogEntry{}, false, nil
 	}
 	entry := tools.CatalogEntry{
@@ -177,29 +197,35 @@ func backendString(raw any) string {
 	case string:
 		return v
 	case map[string]any:
-		s, _ := v["backend"].(string)
-		if s == "" {
-			s, _ = v["full"].(string)
-		}
-		for _, key := range []string{"os", "platforms"} {
-			list, ok := v[key].([]any)
-			if !ok || len(list) == 0 {
-				continue
-			}
-			linux := false
-			for _, o := range list {
-				if o == "linux" {
-					linux = true
-				}
-			}
-			if !linux {
-				return ""
-			}
-		}
-		return s
+		return backendFromMap(v)
 	default:
 		return ""
 	}
+}
+
+// backendFromMap extracts the backend spec from a table-form entry,
+// returning "" when the entry restricts itself to non-linux platforms.
+func backendFromMap(v map[string]any) string {
+	s, _ := v["backend"].(string)
+	if s == "" {
+		s, _ = v["full"].(string)
+	}
+	for _, key := range []string{"os", "platforms"} {
+		if !platformListAllowsLinux(v[key]) {
+			return ""
+		}
+	}
+	return s
+}
+
+// platformListAllowsLinux reports whether a table's os/platforms list
+// permits linux. An absent or empty list means no restriction.
+func platformListAllowsLinux(raw any) bool {
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		return true
+	}
+	return slices.Contains(list, any("linux"))
 }
 
 // errUnsupported marks a backend/definition vibekit deliberately does
@@ -288,13 +314,14 @@ func applyOverlay(catalog *tools.Catalog, path, aquaDir string) error {
 	if err := json.Unmarshal(data, &ov); err != nil {
 		return err
 	}
-	for name, patch := range ov.Entries {
+	for name := range ov.Entries {
+		patch := ov.Entries[name]
 		if patch.Source == "" {
 			cur, ok := catalog.Entries[name]
 			if !ok {
 				return fmt.Errorf("overlay patches unknown tool %q", name)
 			}
-			mergeOverlay(&cur, patch)
+			mergeOverlay(&cur, &patch)
 			catalog.Entries[name] = cur
 			continue
 		}
@@ -311,7 +338,7 @@ func applyOverlay(catalog *tools.Catalog, path, aquaDir string) error {
 	return nil
 }
 
-func mergeOverlay(cur *tools.CatalogEntry, patch tools.CatalogEntry) {
+func mergeOverlay(cur, patch *tools.CatalogEntry) {
 	if patch.Featured {
 		cur.Featured = true
 	}
@@ -329,18 +356,7 @@ func mergeOverlay(cur *tools.CatalogEntry, patch tools.CatalogEntry) {
 	}
 }
 
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
 func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return strings.TrimSpace(s)
+	first, _, _ := strings.Cut(s, "\n")
+	return strings.TrimSpace(first)
 }

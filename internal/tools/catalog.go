@@ -39,9 +39,9 @@ func (c *Catalog) Lookup(name string) (CatalogEntry, bool) {
 	if e, ok := c.Entries[name]; ok {
 		return e, true
 	}
-	for _, e := range c.Entries {
-		if slices.Contains(e.Aliases, name) {
-			return e, true
+	for k := range c.Entries {
+		if slices.Contains(c.Entries[k].Aliases, name) {
+			return c.Entries[k], true
 		}
 	}
 	return CatalogEntry{}, false
@@ -63,8 +63,9 @@ func (c *Catalog) Search(query string) []CatalogEntry {
 		score int
 	}
 	var hits []scored
-	for name, e := range c.Entries {
-		score := matchScore(name, e, q)
+	for name := range c.Entries {
+		e := c.Entries[name]
+		score := matchScore(name, &e, q)
 		if score == 0 {
 			continue
 		}
@@ -76,14 +77,15 @@ func (c *Catalog) Search(query string) []CatalogEntry {
 		}
 		return hits[i].e.Name < hits[j].e.Name
 	})
-	out := make([]CatalogEntry, 0, min(len(hits), searchLimit))
-	for _, h := range hits[:min(len(hits), searchLimit)] {
-		out = append(out, h.e)
+	lim := min(len(hits), searchLimit)
+	out := make([]CatalogEntry, 0, lim)
+	for i := range hits[:lim] {
+		out = append(out, hits[i].e)
 	}
 	return out
 }
 
-func matchScore(name string, e CatalogEntry, q string) int {
+func matchScore(name string, e *CatalogEntry, q string) int {
 	ln := strings.ToLower(name)
 	switch {
 	case ln == q:
@@ -113,9 +115,9 @@ func matchScore(name string, e CatalogEntry, q string) int {
 // sorted by name.
 func (c *Catalog) Featured() []CatalogEntry {
 	var out []CatalogEntry
-	for _, e := range c.Entries {
-		if e.Featured {
-			out = append(out, e)
+	for k := range c.Entries {
+		if c.Entries[k].Featured {
+			out = append(out, c.Entries[k])
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

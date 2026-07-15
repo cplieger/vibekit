@@ -22,11 +22,11 @@ import (
 // It is owned by the Engine and always invoked from the single job
 // worker goroutine, so no internal locking is needed.
 type installer struct {
-	toolsDir string // /config/tools
-	client   *http.Client
+	client *http.Client
 	// output receives human-readable progress lines (wired to the
 	// running job's ring buffer + SSE stream).
-	output func(line string)
+	output   func(line string)
+	toolsDir string // /config/tools
 }
 
 func (in *installer) binDir() string    { return filepath.Join(in.toolsDir, "bin") }
@@ -45,7 +45,7 @@ const maxArtifactSize = 1 << 30
 // install dispatches one tool install and returns the bins it now owns
 // in the bin dir (symlinks/wrappers) plus pm-owned bins. prevPM is the
 // tool's previously recorded pm bin set (ownership survives updates).
-func (in *installer) install(ctx context.Context, name string, t Tool, aq *AquaPackage, prevPM []string) (bins, pmBins []string, err error) {
+func (in *installer) install(ctx context.Context, name string, t *Tool, aq *AquaPackage, prevPM []string) (bins, pmBins []string, err error) {
 	kind, ref, _ := strings.Cut(t.Source, ":")
 	switch kind {
 	case SourceAqua:
@@ -97,58 +97,78 @@ func (in *installer) installAqua(ctx context.Context, name, version string, aq *
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp) //nolint:errcheck // best-effort temp cleanup
+	defer os.RemoveAll(tmp)
 
 	artifact := filepath.Join(tmp, lastPathSegment(spec.URL))
-	if err := in.download(ctx, spec.URL, artifact); err != nil {
-		return nil, err
+	if derr := in.download(ctx, spec.URL, artifact); derr != nil {
+		return nil, derr
 	}
 	if spec.ChecksumURL != "" {
-		if err := in.verifyChecksum(ctx, artifact, spec); err != nil {
-			return nil, err
+		if verr := in.verifyChecksum(ctx, artifact, spec); verr != nil {
+			return nil, verr
 		}
 		in.logf("checksum verified (%s)", spec.ChecksumAlg)
 	}
 
-	// Extract into a fresh versioned dir; success swaps it into place.
+	versDir, err := in.extractAndSwap(ctx, name, version, spec, artifact)
+	if err != nil {
+		return nil, err
+	}
+	bins, err := in.linkDeclaredFiles(versDir, spec.Files)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prune superseded versions now that the new one is linked.
+	in.pruneOldVersions(name, version)
+	in.logf("installed %s %s (%s)", name, version, strings.Join(bins, ", "))
+	return bins, nil
+}
+
+// extractAndSwap extracts the artifact into a fresh staging dir and
+// atomically swaps it into the versioned opt dir. The backup rename
+// means a same-version reinstall never has a window where the tool is
+// deleted but the replacement rename hasn't happened.
+func (in *installer) extractAndSwap(ctx context.Context, name, version string, spec *InstallSpec, artifact string) (string, error) {
 	versDir := filepath.Join(in.optDir(), name, version)
 	staging := versDir + ".staging"
 	if err := os.RemoveAll(staging); err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := os.MkdirAll(staging, 0o755); err != nil {
-		return nil, err
+		return "", err
 	}
 	binName := name
 	if len(spec.Files) > 0 {
 		binName = spec.Files[0].Name
 	}
 	if err := extractArtifact(ctx, artifact, spec.Format, staging, binName); err != nil {
-		return nil, err
+		return "", err
 	}
-	// Swap staging into place via a backup rename: a same-version
-	// reinstall never has a window where the tool is deleted but the
-	// replacement rename hasn't happened.
 	backup := versDir + ".old"
 	if err := os.RemoveAll(backup); err != nil {
-		return nil, err
+		return "", err
 	}
 	if _, err := os.Stat(versDir); err == nil {
 		if err := os.Rename(versDir, backup); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	if err := os.Rename(staging, versDir); err != nil {
 		if _, berr := os.Stat(backup); berr == nil {
 			_ = os.Rename(backup, versDir) // restore on failure
 		}
-		return nil, err
+		return "", err
 	}
 	_ = os.RemoveAll(backup)
+	return versDir, nil
+}
 
-	// Link the declared binaries into the bin dir.
+// linkDeclaredFiles resolves and symlinks each declared binary from the
+// install dir into the bin dir, returning the linked bin names.
+func (in *installer) linkDeclaredFiles(versDir string, files []AquaFile) ([]string, error) {
 	var bins []string
-	for _, f := range spec.Files {
+	for _, f := range files {
 		src := f.Src
 		if src == "" {
 			src = f.Name
@@ -178,10 +198,6 @@ func (in *installer) installAqua(ctx context.Context, name, version string, aq *
 		}
 		bins = append(bins, f.Name)
 	}
-
-	// Prune superseded versions now that the new one is linked.
-	in.pruneOldVersions(name, version)
-	in.logf("installed %s %s (%s)", name, version, strings.Join(bins, ", "))
 	return bins, nil
 }
 
@@ -189,7 +205,7 @@ func (in *installer) installAqua(ctx context.Context, name, version string, aq *
 func (in *installer) download(ctx context.Context, rawURL, dest string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -197,7 +213,7 @@ func (in *installer) download(ctx context.Context, rawURL, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close() //nolint:errcheck // read-only body
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", rawURL, res.StatusCode)
 	}
@@ -223,7 +239,7 @@ func (in *installer) download(ctx context.Context, rawURL, dest string) error {
 // download's digest. The checksum file may be a bare digest or the
 // standard "digest  filename" list (sha256sum style).
 func (in *installer) verifyChecksum(ctx context.Context, artifact string, spec *InstallSpec) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.ChecksumURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.ChecksumURL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -231,7 +247,7 @@ func (in *installer) verifyChecksum(ctx context.Context, artifact string, spec *
 	if err != nil {
 		return fmt.Errorf("fetch checksum: %w", err)
 	}
-	defer res.Body.Close() //nolint:errcheck // read-only body
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("fetch checksum %s: HTTP %d", spec.ChecksumURL, res.StatusCode)
 	}
@@ -257,7 +273,7 @@ func (in *installer) verifyChecksum(ctx context.Context, artifact string, spec *
 	if err != nil {
 		return err
 	}
-	defer f.Close() //nolint:errcheck // read-only file
+	defer f.Close()
 	if _, err := io.Copy(h, f); err != nil {
 		return err
 	}
@@ -328,7 +344,20 @@ func (in *installer) writeShim(name, cmdline string) error {
 		return err
 	}
 	body := fmt.Sprintf("#!/bin/sh\nexec %s \"$@\"\n", cmdline)
-	return os.WriteFile(filepath.Join(in.binDir(), name), []byte(body), 0o755)
+	path := filepath.Join(in.binDir(), filepath.Base(name))
+	// Created 0o600; the Chmod grants exec (a shim must be runnable).
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o755)
 }
 
 // --- package-manager backends ---
@@ -381,18 +410,7 @@ func (in *installer) streamCmd(cmd *exec.Cmd, label string) error {
 		n, rerr := pipe.Read(buf)
 		if n > 0 {
 			pending.WriteString(string(buf[:n]))
-			for {
-				s := pending.String()
-				i := strings.IndexByte(s, '\n')
-				if i < 0 {
-					break
-				}
-				if line := strings.TrimRight(s[:i], "\r"); line != "" {
-					in.output(line)
-				}
-				pending.Reset()
-				pending.WriteString(s[i+1:])
-			}
+			in.drainLines(&pending)
 		}
 		if rerr != nil {
 			break
@@ -405,6 +423,22 @@ func (in *installer) streamCmd(cmd *exec.Cmd, label string) error {
 		return fmt.Errorf("%s failed: %w", label, err)
 	}
 	return nil
+}
+
+// drainLines emits every complete (newline-terminated) line buffered in
+// pending, leaving any trailing partial line behind for the next read.
+func (in *installer) drainLines(pending *strings.Builder) {
+	for {
+		line, rest, found := strings.Cut(pending.String(), "\n")
+		if !found {
+			return
+		}
+		if trimmed := strings.TrimRight(line, "\r"); trimmed != "" {
+			in.output(trimmed)
+		}
+		pending.Reset()
+		pending.WriteString(rest)
+	}
 }
 
 // binDiff snapshots dir before fn and returns entries added by fn.
@@ -536,7 +570,7 @@ func (in *installer) installGo(ctx context.Context, module, version string) ([]s
 // installManual runs a user-provided shell command with the engine's
 // path variables exported. The command is responsible for placing
 // binaries in $BIN (or $OPT for larger trees).
-func (in *installer) installManual(ctx context.Context, name string, t Tool) ([]string, error) {
+func (in *installer) installManual(ctx context.Context, name string, t *Tool) ([]string, error) {
 	if strings.TrimSpace(t.Install) == "" {
 		return nil, fmt.Errorf("manual tool %s has no install command", name)
 	}
@@ -596,7 +630,7 @@ func (in *installer) runShell(ctx context.Context, command, version, optDir stri
 
 // uninstall removes a tool's footprint: bin symlinks/shims, versioned
 // opt dirs, and (for pm backends) the package itself.
-func (in *installer) uninstall(ctx context.Context, name string, t Tool, st ToolStatus) error {
+func (in *installer) uninstall(ctx context.Context, name string, t *Tool, st *ToolStatus) error {
 	kind, ref, _ := strings.Cut(t.Source, ":")
 	switch kind {
 	case SourceNpm:

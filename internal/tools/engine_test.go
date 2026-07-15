@@ -116,7 +116,7 @@ func TestStore_MutateRoundtrip(t *testing.T) {
 
 func TestCreate_ManualInstallRuns(t *testing.T) {
 	e := newTestEngine(t, nil)
-	job, err := e.Create(context.Background(), CreateRequest{
+	job, err := e.Create(context.Background(), &CreateRequest{
 		Name:    "hello",
 		Source:  SourceManual,
 		Version: "1.0.0",
@@ -140,7 +140,7 @@ func TestCreate_ManualInstallRuns(t *testing.T) {
 
 func TestCreate_ManualProbeMissingFails(t *testing.T) {
 	e := newTestEngine(t, nil)
-	job, err := e.Create(context.Background(), CreateRequest{
+	job, err := e.Create(context.Background(), &CreateRequest{
 		Name:    "ghost",
 		Source:  SourceManual,
 		Version: "1.0.0",
@@ -164,12 +164,12 @@ func TestCreate_Validation(t *testing.T) {
 	cases := []CreateRequest{
 		{Name: "bad name!", Source: SourceManual, Version: "1", Install: "true"},
 		{Name: "x", Source: "weird:ref", Version: "1"},
-		{Name: "x", Source: SourceManual, Version: "1"},            // no install cmd
-		{Name: "x", Source: "npm:pkg", Version: "1; rm -rf /"},     // bad version
+		{Name: "x", Source: SourceManual, Version: "1"},        // no install cmd
+		{Name: "x", Source: "npm:pkg", Version: "1; rm -rf /"}, // bad version
 		{Name: "unknown-tool-with-no-source-or-catalog", Version: "1"},
 	}
 	for i, req := range cases {
-		if _, err := e.Create(context.Background(), req); err == nil {
+		if _, err := e.Create(context.Background(), &req); err == nil {
 			t.Errorf("case %d: want error, got nil", i)
 		}
 	}
@@ -177,19 +177,21 @@ func TestCreate_Validation(t *testing.T) {
 
 func TestCreate_DuplicateRejected(t *testing.T) {
 	e := newTestEngine(t, nil)
-	req := CreateRequest{Name: "dup", Source: SourceManual, Version: "1",
-		Install: `printf x > "$BIN/dup" && chmod 755 "$BIN/dup"`}
-	if _, err := e.Create(context.Background(), req); err != nil {
+	req := CreateRequest{
+		Name: "dup", Source: SourceManual, Version: "1",
+		Install: `printf x > "$BIN/dup" && chmod 755 "$BIN/dup"`,
+	}
+	if _, err := e.Create(context.Background(), &req); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Create(context.Background(), req); err == nil {
+	if _, err := e.Create(context.Background(), &req); err == nil {
 		t.Fatal("duplicate create should fail")
 	}
 }
 
 func TestPatch_PinSyncAndVersionJob(t *testing.T) {
 	e := newTestEngine(t, nil)
-	job, err := e.Create(context.Background(), CreateRequest{
+	job, err := e.Create(context.Background(), &CreateRequest{
 		Name: "t", Source: SourceManual, Version: "1.0.0",
 		Install: `printf x > "$BIN/t" && chmod 755 "$BIN/t"`, Probe: "t",
 	})
@@ -229,7 +231,7 @@ func TestPatch_PinSyncAndVersionJob(t *testing.T) {
 func TestDelete_DependentsConflict(t *testing.T) {
 	e := newTestEngine(t, nil)
 	mk := func(name string, requires []string) {
-		job, err := e.Create(context.Background(), CreateRequest{
+		job, err := e.Create(context.Background(), &CreateRequest{
 			Name: name, Source: SourceManual, Version: "1", Requires: requires,
 			Install: fmt.Sprintf(`printf x > "$BIN/%s" && chmod 755 "$BIN/%s"`, name, name),
 		})
@@ -269,8 +271,10 @@ func TestDelete_DependentsConflict(t *testing.T) {
 func TestInstallOrder_BackendDepFromCatalog(t *testing.T) {
 	// npm-sourced tool pulls node from the catalog automatically.
 	cat := &Catalog{Entries: map[string]CatalogEntry{
-		"node": {Name: "node", Source: SourceManual, Version: "1.0.0",
-			Install: `printf x > "$BIN/node" && chmod 755 "$BIN/node"`, Probe: "node"},
+		"node": {
+			Name: "node", Source: SourceManual, Version: "1.0.0",
+			Install: `printf x > "$BIN/node" && chmod 755 "$BIN/node"`, Probe: "node",
+		},
 	}}
 	e := newTestEngine(t, cat)
 	err := e.store.MutateManifest(func(m *Manifest) error {
@@ -370,7 +374,7 @@ func TestInstallAqua_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	job, err := e.Create(context.Background(), CreateRequest{Name: "mytool", Version: "v1.2.0"})
+	job, err := e.Create(context.Background(), &CreateRequest{Name: "mytool", Version: "v1.2.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +423,7 @@ func TestInstallAqua_ChecksumMismatch(t *testing.T) {
 		"tool": {Name: "tool", Source: "aqua:o/tool", Aqua: aq},
 	}}
 	e := newTestEngine(t, cat)
-	job, err := e.Create(context.Background(), CreateRequest{Name: "tool", Version: "v1.0.0"})
+	job, err := e.Create(context.Background(), &CreateRequest{Name: "tool", Version: "v1.0.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +439,7 @@ func TestInstallAqua_ChecksumMismatch(t *testing.T) {
 func TestJobs_CancelQueued(t *testing.T) {
 	e := newTestEngine(t, nil)
 	// Occupy the worker with a slow manual install.
-	slow, err := e.Create(context.Background(), CreateRequest{
+	slow, err := e.Create(context.Background(), &CreateRequest{
 		Name: "slow", Source: SourceManual, Version: "1",
 		Install: `sleep 5 && printf x > "$BIN/slow"`,
 	})
@@ -494,7 +498,7 @@ func TestSearch_HidesManifestEntries(t *testing.T) {
 
 func TestList_LatestFromCache(t *testing.T) {
 	e := newTestEngine(t, nil)
-	job, err := e.Create(context.Background(), CreateRequest{
+	job, err := e.Create(context.Background(), &CreateRequest{
 		Name: "t", Source: SourceManual, Version: "1.0.0",
 		Install: `printf x > "$BIN/t" && chmod 755 "$BIN/t"`,
 	})
@@ -560,7 +564,7 @@ func TestChecksumConfigured_FailsClosed(t *testing.T) {
 func TestCreate_QueueFullRollsBackManifest(t *testing.T) {
 	e := newTestEngine(t, nil)
 	// Occupy the worker, then fill the queue to its cap.
-	slow, err := e.Create(context.Background(), CreateRequest{
+	slow, err := e.Create(context.Background(), &CreateRequest{
 		Name: "slow", Source: SourceManual, Version: "1",
 		Install: `sleep 3 && printf x > "$BIN/slow"`,
 	})
@@ -584,7 +588,7 @@ func TestCreate_QueueFullRollsBackManifest(t *testing.T) {
 			t.Fatal(err) // filling to cap must succeed
 		}
 	}
-	if _, err := e.Create(context.Background(), CreateRequest{
+	if _, err := e.Create(context.Background(), &CreateRequest{
 		Name: "phantom", Source: SourceManual, Version: "1", Install: "true",
 	}); err == nil {
 		t.Fatal("expected queue-full error")
@@ -601,7 +605,7 @@ func TestCreate_QueueFullRollsBackManifest(t *testing.T) {
 func TestUninstall_UsesRemovedDefinitions(t *testing.T) {
 	e := newTestEngine(t, nil)
 	marker := filepath.Join(e.toolsDir, "uninstall-ran")
-	job, err := e.Create(context.Background(), CreateRequest{
+	job, err := e.Create(context.Background(), &CreateRequest{
 		Name: "m", Source: SourceManual, Version: "1",
 		Install:   `printf x > "$BIN/m" && chmod 755 "$BIN/m"`,
 		Uninstall: fmt.Sprintf(`touch %q`, marker),
@@ -695,7 +699,7 @@ func TestInstallAqua_SymlinkEscapeRejected(t *testing.T) {
 		"tool": {Name: "tool", Source: "aqua:o/tool", Aqua: aq},
 	}}
 	e := newTestEngine(t, cat)
-	job, err := e.Create(context.Background(), CreateRequest{Name: "tool", Version: "v1.0.0"})
+	job, err := e.Create(context.Background(), &CreateRequest{Name: "tool", Version: "v1.0.0"})
 	if err != nil {
 		t.Fatal(err)
 	}

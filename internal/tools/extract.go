@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,17 +34,16 @@ func extractArtifact(ctx context.Context, artifact, format, destDir, binName str
 		return decompressTo(ctx, filepath.Join(destDir, binName), "gunzip", "-c", artifact)
 	case "xz":
 		return decompressTo(ctx, filepath.Join(destDir, binName), "xz", "-dc", artifact)
-	case "raw", "":
+	case formatRaw, "":
 		// Plain binary: move into place under the bin name.
-		out := filepath.Join(destDir, binName)
-		if err := os.Rename(artifact, out); err != nil {
-			// Cross-device fallback: copy.
-			data, rerr := os.ReadFile(artifact)
-			if rerr != nil {
-				return err
-			}
-			if werr := os.WriteFile(out, data, 0o755); werr != nil {
-				return werr
+		// filepath.Base strips any directory components so the bin name
+		// can never escape destDir.
+		out := filepath.Join(destDir, filepath.Base(binName))
+		if rerr := os.Rename(artifact, out); rerr != nil {
+			// Cross-device fallback: stream-copy (binaries can be large,
+			// so avoid slurping the whole artifact into memory).
+			if cerr := copyFile(artifact, out); cerr != nil {
+				return cerr
 			}
 		}
 		return os.Chmod(out, 0o755)
@@ -51,9 +52,28 @@ func extractArtifact(ctx context.Context, artifact, format, destDir, binName str
 	}
 }
 
+// copyFile stream-copies src to dst (mode 0o600; callers chmod to add
+// exec bits). The cross-device fallback when os.Rename can't move a file.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
 // decompressTo runs a decompressor with its stdout wired straight to
 // the output file — no shell, no quoting concerns.
-func decompressTo(ctx context.Context, out string, name string, args ...string) error {
+func decompressTo(ctx context.Context, out, name string, args ...string) error {
 	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
@@ -105,7 +125,7 @@ func mustRel(base, target string) string {
 // against writing outside the tool's install dir.
 func safeJoin(base, rel string) (string, error) {
 	if rel == "" {
-		return "", fmt.Errorf("empty path")
+		return "", errors.New("empty path")
 	}
 	if filepath.IsAbs(rel) {
 		return "", fmt.Errorf("absolute path %q not allowed", rel)

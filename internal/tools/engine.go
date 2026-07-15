@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,8 @@ var systemBinaries = []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", 
 
 // Config wires an Engine.
 type Config struct {
+	// Broadcaster publishes tool_job_* SSE events (optional).
+	Broadcaster api.Broadcaster
 	// ConfigDir holds tools.json + tools-state.json (the persistent
 	// config volume root).
 	ConfigDir string
@@ -40,8 +43,6 @@ type Config struct {
 	// CatalogPath is the compiled catalog baked into the image
 	// (optional; missing = degraded search).
 	CatalogPath string
-	// Broadcaster publishes tool_job_* SSE events (optional).
-	Broadcaster api.Broadcaster
 }
 
 // Engine is the tools subsystem: the single owner of the manifest and
@@ -115,7 +116,7 @@ func (e *Engine) List() (*api.ToolsList, error) {
 			Shims:            t.Shims,
 			Description:      t.Description,
 			Origin:           t.Origin,
-			Installed:        e.probeInstalled(n, t, s),
+			Installed:        e.probeInstalled(n, &t, &s),
 			InstalledVersion: s.InstalledVersion,
 			Installing:       installing[n],
 			LastError:        s.LastError,
@@ -131,7 +132,7 @@ func (e *Engine) List() (*api.ToolsList, error) {
 // probeInstalled checks the tool's bin presence: every recorded bin
 // (or the derived probe name before first status write) resolves in
 // the bin dir.
-func (e *Engine) probeInstalled(name string, t Tool, s ToolStatus) bool {
+func (e *Engine) probeInstalled(name string, t *Tool, s *ToolStatus) bool {
 	bins := append(append([]string{}, s.Bins...), s.PMBins...)
 	if len(bins) == 0 {
 		// No recorded bins (never installed by this engine): fall back
@@ -169,9 +170,9 @@ func (e *Engine) Search(query string) []CatalogEntry {
 		return hits
 	}
 	out := hits[:0]
-	for _, h := range hits {
-		if _, exists := m.Tools[h.Name]; !exists {
-			out = append(out, h)
+	for i := range hits {
+		if _, exists := m.Tools[hits[i].Name]; !exists {
+			out = append(out, hits[i])
 		}
 	}
 	return out
@@ -187,24 +188,24 @@ func (e *Engine) CancelJob(id string) bool { return e.queue.Cancel(id) }
 
 // CreateRequest is the POST /api/tools body.
 type CreateRequest struct {
+	Shims       map[string]string `json:"shims,omitempty"`
 	Name        string            `json:"name"`
 	Source      string            `json:"source,omitempty"`  // optional when the catalog knows the name
 	Version     string            `json:"version,omitempty"` // optional: resolve latest
-	Pin         bool              `json:"pin,omitempty"`
-	Requires    []string          `json:"requires,omitempty"`
-	Shims       map[string]string `json:"shims,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Origin      string            `json:"origin,omitempty"`
 	Install     string            `json:"install,omitempty"`
 	Uninstall   string            `json:"uninstall,omitempty"`
 	Probe       string            `json:"probe,omitempty"`
+	Requires    []string          `json:"requires,omitempty"`
+	Pin         bool              `json:"pin,omitempty"`
 }
 
 // Create adds a tool to the manifest and enqueues its install.
-func (e *Engine) Create(ctx context.Context, req CreateRequest) (*api.ToolJob, error) {
+func (e *Engine) Create(ctx context.Context, req *CreateRequest) (*api.ToolJob, error) {
 	name := strings.TrimSpace(req.Name)
 	if !validToolName(name) {
-		return nil, fmt.Errorf("invalid tool name")
+		return nil, errors.New("invalid tool name")
 	}
 	t, err := e.resolveNewTool(ctx, name, req)
 	if err != nil {
@@ -237,7 +238,7 @@ func (e *Engine) Create(ctx context.Context, req CreateRequest) (*api.ToolJob, e
 
 // resolveNewTool merges the request with catalog knowledge and resolves
 // a concrete version.
-func (e *Engine) resolveNewTool(ctx context.Context, name string, req CreateRequest) (Tool, error) {
+func (e *Engine) resolveNewTool(ctx context.Context, name string, req *CreateRequest) (Tool, error) {
 	t := Tool{
 		Source:      strings.TrimSpace(req.Source),
 		Version:     strings.TrimSpace(req.Version),
@@ -251,32 +252,7 @@ func (e *Engine) resolveNewTool(ctx context.Context, name string, req CreateRequ
 		Probe:       strings.TrimSpace(req.Probe),
 	}
 	if cat, ok := e.catalog.Lookup(name); ok {
-		if t.Source == "" {
-			t.Source = cat.Source
-		}
-		if t.Source == cat.Source {
-			if t.Description == "" {
-				t.Description = cat.Description
-			}
-			if t.Requires == nil {
-				t.Requires = cat.Requires
-			}
-			if t.Shims == nil {
-				t.Shims = cat.Shims
-			}
-			if t.Install == "" {
-				t.Install = cat.Install
-			}
-			if t.Uninstall == "" {
-				t.Uninstall = cat.Uninstall
-			}
-			if t.Probe == "" {
-				t.Probe = cat.Probe
-			}
-			if t.Version == "" {
-				t.Version = cat.Version
-			}
-		}
+		mergeCatalogDefaults(&t, &cat)
 	}
 	if t.Source == "" {
 		return t, fmt.Errorf("unknown tool %q: pick a source (npm:/pip:/cargo:/go:/aqua:/manual)", name)
@@ -292,9 +268,43 @@ func (e *Engine) resolveNewTool(ctx context.Context, name string, req CreateRequ
 		t.Version = latest
 	}
 	if !validVersionString(t.Version) {
-		return t, fmt.Errorf("invalid version string")
+		return t, errors.New("invalid version string")
 	}
 	return t, nil
+}
+
+// mergeCatalogDefaults fills unset fields of t from the catalog entry.
+// Fields other than the source are inherited only when the sources
+// agree, so a user's explicit source override never pulls in a
+// mismatched definition.
+func mergeCatalogDefaults(t *Tool, cat *CatalogEntry) {
+	if t.Source == "" {
+		t.Source = cat.Source
+	}
+	if t.Source != cat.Source {
+		return
+	}
+	if t.Description == "" {
+		t.Description = cat.Description
+	}
+	if t.Requires == nil {
+		t.Requires = cat.Requires
+	}
+	if t.Shims == nil {
+		t.Shims = cat.Shims
+	}
+	if t.Install == "" {
+		t.Install = cat.Install
+	}
+	if t.Uninstall == "" {
+		t.Uninstall = cat.Uninstall
+	}
+	if t.Probe == "" {
+		t.Probe = cat.Probe
+	}
+	if t.Version == "" {
+		t.Version = cat.Version
+	}
 }
 
 // PatchRequest is the PATCH /api/tools/{name} body. Pointer fields
@@ -313,7 +323,7 @@ type PatchRequest struct {
 // a reinstall job (returned non-nil).
 func (e *Engine) Patch(name string, req PatchRequest) (*api.ToolJob, error) {
 	if req.Version != nil && !validVersionString(*req.Version) {
-		return nil, fmt.Errorf("invalid version string")
+		return nil, errors.New("invalid version string")
 	}
 	versionChanged := false
 	prevVersion := ""
@@ -322,29 +332,7 @@ func (e *Engine) Patch(name string, req PatchRequest) (*api.ToolJob, error) {
 		if !ok {
 			return errNotFound
 		}
-		if req.Version != nil && *req.Version != t.Version {
-			prevVersion = t.Version
-			t.Version = *req.Version
-			versionChanged = true
-		}
-		if req.Pin != nil {
-			t.Pin = *req.Pin
-		}
-		if req.Description != nil {
-			t.Description = *req.Description
-		}
-		if req.Requires != nil {
-			t.Requires = *req.Requires
-		}
-		if req.Shims != nil {
-			t.Shims = *req.Shims
-		}
-		if req.Install != nil {
-			t.Install = *req.Install
-		}
-		if req.Uninstall != nil {
-			t.Uninstall = *req.Uninstall
-		}
+		prevVersion, versionChanged = applyPatch(&t, &req)
 		m.Tools[name] = t
 		return nil
 	})
@@ -352,28 +340,62 @@ func (e *Engine) Patch(name string, req PatchRequest) (*api.ToolJob, error) {
 		return nil, err
 	}
 	if versionChanged {
-		jv, err := e.queue.Enqueue(JobKindInstall, []string{name})
-		if err != nil {
-			// Queue full: restore the previous version so the manifest
-			// doesn't claim a version no job will ever install.
-			if rollback := e.store.MutateManifest(func(m *Manifest) error {
-				if t, ok := m.Tools[name]; ok {
-					t.Version = prevVersion
-					m.Tools[name] = t
-				}
-				return nil
-			}); rollback != nil {
-				slog.Error("tools: patch rollback failed", "error", rollback)
-			}
-			return nil, err
-		}
-		return jv, nil
+		return e.enqueueReinstall(name, prevVersion)
 	}
 	return nil, nil
 }
 
+// applyPatch overlays the request's set fields onto t, reporting whether
+// the version changed and the prior version (for rollback).
+func applyPatch(t *Tool, req *PatchRequest) (prevVersion string, versionChanged bool) {
+	if req.Version != nil && *req.Version != t.Version {
+		prevVersion = t.Version
+		t.Version = *req.Version
+		versionChanged = true
+	}
+	if req.Pin != nil {
+		t.Pin = *req.Pin
+	}
+	if req.Description != nil {
+		t.Description = *req.Description
+	}
+	if req.Requires != nil {
+		t.Requires = *req.Requires
+	}
+	if req.Shims != nil {
+		t.Shims = *req.Shims
+	}
+	if req.Install != nil {
+		t.Install = *req.Install
+	}
+	if req.Uninstall != nil {
+		t.Uninstall = *req.Uninstall
+	}
+	return prevVersion, versionChanged
+}
+
+// enqueueReinstall enqueues a reinstall job after a version bump,
+// restoring prevVersion if the queue rejects it so the manifest never
+// claims a version no job will install.
+func (e *Engine) enqueueReinstall(name, prevVersion string) (*api.ToolJob, error) {
+	jv, err := e.queue.Enqueue(JobKindInstall, []string{name})
+	if err != nil {
+		if rollback := e.store.MutateManifest(func(m *Manifest) error {
+			if t, ok := m.Tools[name]; ok {
+				t.Version = prevVersion
+				m.Tools[name] = t
+			}
+			return nil
+		}); rollback != nil {
+			slog.Error("tools: patch rollback failed", "error", rollback)
+		}
+		return nil, err
+	}
+	return jv, nil
+}
+
 // errNotFound distinguishes a missing tool from other mutate errors.
-var errNotFound = fmt.Errorf("tool not found")
+var errNotFound = errors.New("tool not found")
 
 // IsNotFound reports whether err is the engine's not-found sentinel.
 func IsNotFound(err error) bool { return err == errNotFound }
@@ -387,27 +409,7 @@ func (e *Engine) Delete(name string, force bool) (*api.ToolJob, []string, error)
 	var dependents []string
 	removed := map[string]Tool{}
 	err := e.store.MutateManifest(func(m *Manifest) error {
-		t, ok := m.Tools[name]
-		if !ok {
-			return errNotFound
-		}
-		for other, ot := range m.Tools {
-			if other != name && slices.Contains(ot.Requires, name) {
-				dependents = append(dependents, other)
-			}
-		}
-		if len(dependents) > 0 && !force {
-			return errHasDependents
-		}
-		removed[name] = t
-		delete(m.Tools, name)
-		if force {
-			for _, d := range dependents {
-				removed[d] = m.Tools[d]
-				delete(m.Tools, d)
-			}
-		}
-		return nil
+		return removeFromManifest(m, name, force, &dependents, removed)
 	})
 	if err != nil {
 		return nil, dependents, err
@@ -419,26 +421,58 @@ func (e *Engine) Delete(name string, force bool) (*api.ToolJob, []string, error)
 	sort.Strings(names)
 	jv, err := e.queue.EnqueueRemoval(names, removed)
 	if err != nil {
-		// Queue full: roll the manifest rows back so intent and reality
-		// don't diverge (the tool is still installed on disk).
-		rollback := e.store.MutateManifest(func(m *Manifest) error {
-			for n, t := range removed {
-				if _, exists := m.Tools[n]; !exists {
-					m.Tools[n] = t
-				}
-			}
-			return nil
-		})
-		if rollback != nil {
-			slog.Error("tools: delete rollback failed", "error", rollback)
-		}
+		e.rollbackRemoval(removed)
 		return nil, dependents, err
 	}
 	return jv, dependents, nil
 }
 
+// removeFromManifest deletes name (and, with force, its dependents) from
+// m, recording the removed entries. It refuses with errHasDependents
+// when others require name and force is false.
+func removeFromManifest(m *Manifest, name string, force bool, dependents *[]string, removed map[string]Tool) error {
+	t, ok := m.Tools[name]
+	if !ok {
+		return errNotFound
+	}
+	for other := range m.Tools {
+		if other != name && slices.Contains(m.Tools[other].Requires, name) {
+			*dependents = append(*dependents, other)
+		}
+	}
+	if len(*dependents) > 0 && !force {
+		return errHasDependents
+	}
+	removed[name] = t
+	delete(m.Tools, name)
+	if force {
+		for _, d := range *dependents {
+			removed[d] = m.Tools[d]
+			delete(m.Tools, d)
+		}
+	}
+	return nil
+}
+
+// rollbackRemoval restores manifest rows after a rejected uninstall job
+// so intent and on-disk reality don't diverge (the tool is still
+// installed on disk).
+func (e *Engine) rollbackRemoval(removed map[string]Tool) {
+	rollback := e.store.MutateManifest(func(m *Manifest) error {
+		for n := range removed {
+			if _, exists := m.Tools[n]; !exists {
+				m.Tools[n] = removed[n]
+			}
+		}
+		return nil
+	})
+	if rollback != nil {
+		slog.Error("tools: delete rollback failed", "error", rollback)
+	}
+}
+
 // errHasDependents marks a refused delete (dependents present, no force).
-var errHasDependents = fmt.Errorf("tool has dependents")
+var errHasDependents = errors.New("tool has dependents")
 
 // IsHasDependents reports whether err is the dependents-conflict sentinel.
 func IsHasDependents(err error) bool { return err == errHasDependents }
@@ -483,14 +517,15 @@ func (e *Engine) EnsureInstalled(ctx context.Context, name string) error {
 		return err
 	}
 	t, inManifest := m.Tools[name]
-	if inManifest && e.probeInstalled(name, t, e.store.State().Tools[name]) {
+	status := e.store.State().Tools[name]
+	if inManifest && e.probeInstalled(name, &t, &status) {
 		return nil
 	}
 	var jv *api.ToolJob
 	if inManifest {
 		jv, err = e.InstallOne(name)
 	} else {
-		jv, err = e.Create(ctx, CreateRequest{Name: name})
+		jv, err = e.Create(ctx, &CreateRequest{Name: name})
 	}
 	if err != nil {
 		return err
@@ -573,56 +608,73 @@ func (e *Engine) runInstall(ctx context.Context, names []string, output func(str
 // manifest entries from the catalog for missing deps) and returns them
 // dependency-first.
 func (e *Engine) installOrder(ctx context.Context, m *Manifest, names []string) ([]string, error) {
-	var ordered []string
-	seen := map[string]bool{}
-	var visit func(n string, stack []string) error
-	visit = func(n string, stack []string) error {
-		if seen[n] {
-			return nil
-		}
-		if slices.Contains(stack, n) {
-			return fmt.Errorf("requires cycle through %q", n)
-		}
-		t, ok := m.Tools[n]
-		if !ok {
-			// A dependency not yet in the manifest: adopt it from the
-			// catalog at its latest version.
-			req := CreateRequest{Name: n}
-			nt, err := e.resolveNewTool(ctx, n, req)
-			if err != nil {
-				return fmt.Errorf("dependency %q: %w", n, err)
-			}
-			if err := e.store.MutateManifest(func(mm *Manifest) error {
-				if _, exists := mm.Tools[n]; !exists {
-					mm.Tools[n] = nt
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			m.Tools[n] = nt
-			t = nt
-		}
-		stack = append(stack, n)
-		for _, dep := range e.depsOf(n, t) {
-			if err := visit(dep, stack); err != nil {
-				return err
-			}
-		}
-		seen[n] = true
-		ordered = append(ordered, n)
-		return nil
-	}
+	p := &installPlan{e: e, m: m, seen: map[string]bool{}}
 	for _, n := range names {
-		if err := visit(n, nil); err != nil {
+		if err := p.visit(ctx, n, nil); err != nil {
 			return nil, err
 		}
 	}
-	return ordered, nil
+	return p.ordered, nil
+}
+
+// installPlan carries the shared state of the dependency-first DFS
+// installOrder runs.
+type installPlan struct {
+	e       *Engine
+	m       *Manifest
+	seen    map[string]bool
+	ordered []string
+}
+
+// visit walks a tool's dependencies depth-first, appending each to the
+// plan's order after its deps. A tool already on the stack is a cycle.
+func (p *installPlan) visit(ctx context.Context, n string, stack []string) error {
+	if p.seen[n] {
+		return nil
+	}
+	if slices.Contains(stack, n) {
+		return fmt.Errorf("requires cycle through %q", n)
+	}
+	t, ok := p.m.Tools[n]
+	if !ok {
+		adopted, err := p.e.adoptDependency(ctx, p.m, n)
+		if err != nil {
+			return err
+		}
+		t = adopted
+	}
+	stack = append(stack, n)
+	for _, dep := range p.e.depsOf(n, &t) {
+		if err := p.visit(ctx, dep, stack); err != nil {
+			return err
+		}
+	}
+	p.seen[n] = true
+	p.ordered = append(p.ordered, n)
+	return nil
+}
+
+// adoptDependency pulls a not-yet-manifested dependency into the
+// manifest from the catalog at its latest version.
+func (e *Engine) adoptDependency(ctx context.Context, m *Manifest, n string) (Tool, error) {
+	nt, err := e.resolveNewTool(ctx, n, &CreateRequest{Name: n})
+	if err != nil {
+		return Tool{}, fmt.Errorf("dependency %q: %w", n, err)
+	}
+	if err := e.store.MutateManifest(func(mm *Manifest) error {
+		if _, exists := mm.Tools[n]; !exists {
+			mm.Tools[n] = nt
+		}
+		return nil
+	}); err != nil {
+		return Tool{}, err
+	}
+	m.Tools[n] = nt
+	return nt, nil
 }
 
 // depsOf merges backend-implied deps with the entry's Requires.
-func (e *Engine) depsOf(name string, t Tool) []string {
+func (e *Engine) depsOf(name string, t *Tool) []string {
 	var deps []string
 	kind, _, _ := strings.Cut(t.Source, ":")
 	if d, ok := backendDeps[kind]; ok && d != name {
@@ -648,12 +700,12 @@ func (e *Engine) installTool(ctx context.Context, name string, output func(strin
 		return errNotFound
 	}
 	st := e.store.State().Tools[name]
-	if st.InstalledVersion == t.Version && e.probeInstalled(name, t, st) {
+	if st.InstalledVersion == t.Version && e.probeInstalled(name, &t, &st) {
 		output(fmt.Sprintf("%s %s already installed", name, t.Version))
 		return nil
 	}
 	output(fmt.Sprintf("installing %s %s (%s)", name, t.Version, t.Source))
-	bins, pmBins, err := e.inst.install(ctx, name, t, e.aquaDef(t.Source), st.PMBins)
+	bins, pmBins, err := e.inst.install(ctx, name, &t, e.aquaDef(t.Source), st.PMBins)
 	if err != nil {
 		e.store.setToolStatus(name, func(s *ToolStatus) { s.LastError = err.Error() })
 		return err
@@ -684,7 +736,8 @@ func (e *Engine) runUninstall(ctx context.Context, j *job) error {
 			// cleanup still covers the user-visible footprint.
 			t = Tool{Source: SourceManual}
 		}
-		if err := e.inst.uninstall(ctx, n, t, st.Tools[n]); err != nil {
+		status := st.Tools[n]
+		if err := e.inst.uninstall(ctx, n, &t, &status); err != nil {
 			return err
 		}
 		e.store.dropToolStatus(n)
@@ -706,46 +759,60 @@ func (e *Engine) runUpdate(ctx context.Context, names []string, output func(stri
 		}
 		sort.Strings(targets)
 	}
+	explicit := len(names) > 0
 	var bumped []string
 	for _, n := range targets {
-		t, ok := m.Tools[n]
-		if !ok {
-			continue
-		}
-		if t.Pin && len(names) == 0 {
-			output(fmt.Sprintf("%s pinned at %s, skipping", n, t.Version))
-			continue
-		}
-		if t.Source == SourceManual {
-			continue
-		}
-		latest, err := e.versions.Latest(ctx, t.Source, e.aquaDef(t.Source))
+		did, err := e.updateOne(ctx, m, n, explicit, output)
 		if err != nil {
-			output(fmt.Sprintf("%s: version check failed: %v", n, err))
-			continue
-		}
-		if latest == t.Version {
-			continue
-		}
-		output(fmt.Sprintf("%s: %s -> %s", n, t.Version, latest))
-		if err := e.store.MutateManifest(func(mm *Manifest) error {
-			cur, ok := mm.Tools[n]
-			if !ok {
-				return nil
-			}
-			cur.Version = latest
-			mm.Tools[n] = cur
-			return nil
-		}); err != nil {
 			return err
 		}
-		bumped = append(bumped, n)
+		if did {
+			bumped = append(bumped, n)
+		}
 	}
 	if len(bumped) == 0 {
 		output("everything up to date")
 		return nil
 	}
 	return e.runInstall(ctx, bumped, output)
+}
+
+// updateOne checks one tool for a newer upstream version and records the
+// bump in the manifest, reporting whether it changed. Pinned tools are
+// skipped unless explicitly named; manual tools have no upstream source.
+func (e *Engine) updateOne(ctx context.Context, m *Manifest, n string, explicit bool, output func(string)) (bool, error) {
+	t, ok := m.Tools[n]
+	if !ok {
+		return false, nil
+	}
+	if t.Pin && !explicit {
+		output(fmt.Sprintf("%s pinned at %s, skipping", n, t.Version))
+		return false, nil
+	}
+	if t.Source == SourceManual {
+		return false, nil
+	}
+	latest, err := e.versions.Latest(ctx, t.Source, e.aquaDef(t.Source))
+	if err != nil {
+		output(fmt.Sprintf("%s: version check failed: %v", n, err))
+		return false, nil
+	}
+	if latest == t.Version {
+		return false, nil
+	}
+	output(fmt.Sprintf("%s: %s -> %s", n, t.Version, latest))
+	if err := e.store.MutateManifest(func(mm *Manifest) error {
+		cur, ok := mm.Tools[n]
+		if !ok {
+			return nil
+		}
+		cur.Version = latest
+		mm.Tools[n] = cur
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // runSync is the boot job: install everything missing, then update
@@ -757,8 +824,10 @@ func (e *Engine) runSync(ctx context.Context, output func(string)) error {
 	}
 	st := e.store.State()
 	var missing []string
-	for n, t := range m.Tools {
-		if !e.probeInstalled(n, t, st.Tools[n]) {
+	for n := range m.Tools {
+		t := m.Tools[n]
+		status := st.Tools[n]
+		if !e.probeInstalled(n, &t, &status) {
 			missing = append(missing, n)
 		}
 	}
@@ -778,9 +847,9 @@ func (e *Engine) aquaDef(source string) *AquaPackage {
 	if kind != SourceAqua {
 		return nil
 	}
-	for _, entry := range e.catalog.Entries {
-		if entry.Source == source && entry.Aqua != nil {
-			return entry.Aqua
+	for k := range e.catalog.Entries {
+		if e.catalog.Entries[k].Source == source && e.catalog.Entries[k].Aqua != nil {
+			return e.catalog.Entries[k].Aqua
 		}
 	}
 	// Fallback: synthesize a plain github_release definition so an
@@ -789,7 +858,7 @@ func (e *Engine) aquaDef(source string) *AquaPackage {
 	if !ok {
 		return nil
 	}
-	return &AquaPackage{Type: "github_release", RepoOwner: owner, RepoName: repo}
+	return &AquaPackage{Type: aquaTypeGitHubRelease, RepoOwner: owner, RepoName: repo}
 }
 
 // validToolName mirrors the v1 rule plus @scope/name support: the name
@@ -800,39 +869,57 @@ func validToolName(name string) bool {
 	if name == "" || len(name) > 80 {
 		return false
 	}
-	if i := strings.IndexByte(name, '/'); i >= 0 {
-		if !strings.HasPrefix(name, "@") || i < 2 || i == len(name)-1 ||
-			strings.Count(name, "/") > 1 {
-			return false
-		}
+	if !validSlashForm(name) {
+		return false
 	}
 	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '.' || r == '-' || r == '_' || r == '+' || r == '@' || r == '/':
-		default:
+		if !validToolNameRune(r) {
 			return false
 		}
 	}
 	return true
 }
 
+// validSlashForm allows a slash only in the exact npm scoped form
+// `@scope/name` with non-empty halves (rejects `@/x`, `@x/`, `x/y`,
+// `@a/b/c`).
+func validSlashForm(name string) bool {
+	i := strings.IndexByte(name, '/')
+	if i < 0 {
+		return true
+	}
+	return strings.HasPrefix(name, "@") && i >= 2 && i != len(name)-1 &&
+		strings.Count(name, "/") == 1
+}
+
+// validToolNameRune reports whether r is an allowed tool-name character.
+func validToolNameRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '.' || r == '-' || r == '_' || r == '+' || r == '@' || r == '/':
+		return true
+	default:
+		return false
+	}
+}
+
 // validateSource sanity-checks a source string at create time.
 func validateSource(source, install string) error {
 	if source == SourceManual {
 		if strings.TrimSpace(install) == "" {
-			return fmt.Errorf("manual tools need an install command")
+			return errors.New("manual tools need an install command")
 		}
 		return nil
 	}
 	kind, ref, ok := strings.Cut(source, ":")
 	if !ok || ref == "" {
-		return fmt.Errorf("source must be <kind>:<ref> or manual")
+		return errors.New("source must be <kind>:<ref> or manual")
 	}
 	switch kind {
 	case SourceAqua:
 		if !strings.Contains(ref, "/") {
-			return fmt.Errorf("aqua source must be aqua:owner/repo")
+			return errors.New("aqua source must be aqua:owner/repo")
 		}
 	case SourceNpm, SourcePip, SourceCargo, SourceGo:
 	default:

@@ -546,9 +546,10 @@ function stateDot(t: ToolInfo): HTMLElement {
 }
 
 function metaText(t: ToolInfo): string {
-  const version = t.installed && t.installed_version !== undefined && t.installed_version !== ""
-    ? t.installed_version
-    : t.version;
+  const version =
+    t.installed && t.installed_version !== undefined && t.installed_version !== ""
+      ? t.installed_version
+      : t.version;
   if (t.latest !== undefined && t.latest !== "") {
     return `${version} → ${t.latest}`;
   }

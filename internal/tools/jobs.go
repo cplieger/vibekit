@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -96,23 +97,21 @@ func (j *job) view(withTail bool) *api.ToolJob {
 
 // jobQueue serializes tool work: one job runs at a time, in order.
 type jobQueue struct {
-	mu      sync.Mutex
-	active  *job
-	pending []*job
-	recent  []*job
+	broadcaster api.Broadcaster
+	active      *job
 	// terminal records every finished job's final view by id so Wait
 	// can't be starved by the recent ring's cap (a >10-job burst
 	// between polls would otherwise strand a waiter).
 	terminal map[string]*api.ToolJob
 	wake     chan struct{}
-	nextID   int
-
-	broadcaster api.Broadcaster
-	run         func(ctx context.Context, j *job, output func(string)) error
-
-	// stop closes the worker; wg waits for it on Close.
-	stopped bool
+	run      func(ctx context.Context, j *job, output func(string)) error
+	pending  []*job
+	recent   []*job
+	// wg waits for the worker to exit on Close; stopped signals it to stop.
 	wg      sync.WaitGroup
+	nextID  int
+	mu      sync.Mutex
+	stopped bool
 }
 
 func newJobQueue(b api.Broadcaster, run func(ctx context.Context, j *job, output func(string)) error) *jobQueue {
@@ -141,11 +140,11 @@ func (q *jobQueue) enqueue(kind string, names []string, removed map[string]Tool)
 	q.mu.Lock()
 	if q.stopped {
 		q.mu.Unlock()
-		return nil, fmt.Errorf("engine shutting down")
+		return nil, errors.New("engine shutting down")
 	}
 	if len(q.pending) >= jobQueueCap {
 		q.mu.Unlock()
-		return nil, fmt.Errorf("too many queued tool jobs")
+		return nil, errors.New("too many queued tool jobs")
 	}
 	q.nextID++
 	j := &job{
@@ -211,8 +210,8 @@ func (q *jobQueue) Snapshot() (active *api.ToolJob, recent []*api.ToolJob) {
 	} else if len(q.pending) > 0 {
 		active = q.pending[0].view(true)
 	}
-	for i := len(q.recent) - 1; i >= 0; i-- {
-		recent = append(recent, q.recent[i].view(true))
+	for _, r := range slices.Backward(q.recent) {
+		recent = append(recent, r.view(true))
 	}
 	return active, recent
 }

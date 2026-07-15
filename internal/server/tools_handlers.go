@@ -16,6 +16,7 @@
 //	GET    /api/tools/jobs             active job (with output tail) + recent history
 //	POST   /api/tools/jobs/{id}/cancel abort a queued/running job
 //	GET    /api/tools/status           bare PATH probes for feature-gating UIs
+
 package server
 
 import (
@@ -65,7 +66,7 @@ func (s *Server) handleToolsCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	job, err := s.tools.Create(r.Context(), req)
+	job, err := s.tools.Create(r.Context(), &req)
 	if err != nil {
 		api.BadRequest(w, err.Error())
 		return
@@ -172,7 +173,8 @@ func (s *Server) handleToolsSearch(w http.ResponseWriter, r *http.Request) {
 	// Strip the embedded aqua definitions: the client needs the
 	// display fields, not the install internals.
 	out := make([]api.ToolCatalogHit, 0, len(results))
-	for _, e := range results {
+	for i := range results {
+		e := &results[i]
 		out = append(out, api.ToolCatalogHit{
 			Name:        e.Name,
 			Description: e.Description,

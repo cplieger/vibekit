@@ -194,7 +194,6 @@ export function setAgentStatus(id: string, status: string, text: string): void {
   });
 }
 
-
 export function setWorkingLabel(id: string, label: string): void {
   sessions.update(id, (s) => ({ ...s, working_label: label }));
 }

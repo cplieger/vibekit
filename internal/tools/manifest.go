@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,9 +21,9 @@ import (
 // runs under mu. Files are re-read on each access so an out-of-band
 // hand edit of the manifest is picked up on the next operation.
 type store struct {
-	mu           sync.Mutex
 	manifestPath string
 	statePath    string
+	mu           sync.Mutex
 }
 
 func newStore(configDir string) *store {
@@ -50,7 +51,7 @@ func (s *store) initFiles() error {
 		}
 	}
 	if m != nil && m.Version != 0 && m.Version != ManifestVersion {
-		backup := s.manifestPath + ".v" + fmt.Sprint(m.Version) + ".bak"
+		backup := s.manifestPath + ".v" + strconv.Itoa(m.Version) + ".bak"
 		if renameErr := os.Rename(s.manifestPath, backup); renameErr == nil {
 			slog.Info("tools: old manifest backed up", "backup", backup)
 		}

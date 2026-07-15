@@ -21,18 +21,16 @@ import (
 // available" without network calls; the cache is refreshed by update
 // and sync jobs.
 type versionResolver struct {
-	client *http.Client
-
-	mu    sync.Mutex
-	cache map[string]string // source -> latest version
-
+	ghTokenChecked time.Time
+	client         *http.Client
+	cache          map[string]string // source -> latest version
 	// ghToken caches the gh auth token lookup. Successes cache forever;
 	// an empty result is retried after ghTokenRetry so a forge login
 	// performed after boot is picked up (sync.Once would pin the
 	// pre-login empty result for the process lifetime).
-	ghTokenMu      sync.Mutex
-	ghToken        string
-	ghTokenChecked time.Time
+	ghToken   string
+	mu        sync.Mutex
+	ghTokenMu sync.Mutex
 }
 
 // ghTokenRetry is how long an empty gh-token probe result is trusted.
@@ -133,21 +131,17 @@ func (v *versionResolver) latestGitHubTag(ctx context.Context, owner, repo strin
 	}
 	var candidates []string
 	for page := 1; page <= tagPageCap; page++ {
+		tagURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
 		var tags []struct {
 			Name string `json:"name"`
 		}
-		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
-		if err := v.getJSON(ctx, url, &tags); err != nil {
+		if err := v.getJSON(ctx, tagURL, &tags); err != nil {
 			return "", err
 		}
 		for _, t := range tags {
-			if prefix != "" && !strings.HasPrefix(t.Name, prefix) {
-				continue
+			if tagPasses(t.Name, prefix, filter) {
+				candidates = append(candidates, t.Name)
 			}
-			if !evalVersionFilter(filter, t.Name, prefix) {
-				continue
-			}
-			candidates = append(candidates, t.Name)
 		}
 		if len(tags) < 100 {
 			break
@@ -157,6 +151,15 @@ func (v *versionResolver) latestGitHubTag(ctx context.Context, owner, repo strin
 		return "", fmt.Errorf("no tag of %s/%s passes the version filter", owner, repo)
 	}
 	return maxVersionTag(candidates, prefix), nil
+}
+
+// tagPasses reports whether a tag satisfies the package's version prefix
+// and version_filter.
+func tagPasses(name, prefix, filter string) bool {
+	if prefix != "" && !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	return evalVersionFilter(filter, name, prefix)
 }
 
 // maxVersionTag picks the highest candidate by go-version comparison
@@ -274,7 +277,7 @@ func (v *versionResolver) latestGoModule(ctx context.Context, modPath string) (s
 func (v *versionResolver) getJSON(ctx context.Context, rawURL string, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -287,7 +290,7 @@ func (v *versionResolver) getJSON(ctx context.Context, rawURL string, out any) e
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close() //nolint:errcheck // read-only body
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", rawURL, res.StatusCode)
 	}

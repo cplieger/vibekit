@@ -55,6 +55,7 @@ COPY . ./
 ARG MISE_REGISTRY_REF=v2026.7.6
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.537.0
+# hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \

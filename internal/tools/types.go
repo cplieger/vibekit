@@ -41,6 +41,10 @@ const ManifestVersion = 2
 
 // Tool is one manifest entry: the user's intent for a single tool.
 type Tool struct {
+	// Shims maps extra bin names to command lines, written as wrapper
+	// scripts in the bin dir (e.g. typescript-language-server ->
+	// "tsc --lsp --stdio").
+	Shims map[string]string `json:"shims,omitempty"`
 	// Source locates the install definition: "aqua:cli/cli",
 	// "npm:pyright", "pip:x", "cargo:x", "go:golang.org/x/tools/gopls",
 	// or "manual".
@@ -48,17 +52,6 @@ type Tool struct {
 	// Version is the concrete upstream version, exactly as upstream
 	// tags it (may or may not carry a leading v). Never a range.
 	Version string `json:"version"`
-	// Pin freezes the version: update runs skip this tool.
-	Pin bool `json:"pin,omitempty"`
-	// Requires lists other manifest/catalog tool names that must be
-	// installed before (or alongside) this one, e.g. jdtls -> java.
-	// Backend-level needs (npm->node, pip->uv, cargo->rust, go->go)
-	// are implied and need not be listed.
-	Requires []string `json:"requires,omitempty"`
-	// Shims maps extra bin names to command lines, written as wrapper
-	// scripts in the bin dir (e.g. typescript-language-server ->
-	// "tsc --lsp --stdio").
-	Shims map[string]string `json:"shims,omitempty"`
 	// Description is display text (catalog-provided or user-written).
 	Description string `json:"description,omitempty"`
 	// Origin records provenance for linked entries, e.g. "mcp:<name>"
@@ -73,29 +66,36 @@ type Tool struct {
 	// (manual installs only; other sources derive it). Defaults to the
 	// tool name.
 	Probe string `json:"probe,omitempty"`
+	// Requires lists other manifest/catalog tool names that must be
+	// installed before (or alongside) this one, e.g. jdtls -> java.
+	// Backend-level needs (npm->node, pip->uv, cargo->rust, go->go)
+	// are implied and need not be listed.
+	Requires []string `json:"requires,omitempty"`
+	// Pin freezes the version: update runs skip this tool.
+	Pin bool `json:"pin,omitempty"`
 }
 
 // Manifest is the tools.json v2 document.
 type Manifest struct {
-	Version int             `json:"version"`
 	Tools   map[string]Tool `json:"tools"`
+	Version int             `json:"version"`
 }
 
 // ToolStatus is the engine-owned per-tool machine state.
 type ToolStatus struct {
+	// UpdatedAt is when this status last changed.
+	UpdatedAt time.Time `json:"updated_at"`
 	// InstalledVersion is the version last installed successfully.
 	InstalledVersion string `json:"installed_version,omitempty"`
+	// LastError is the failure message of the most recent install
+	// attempt; cleared on success.
+	LastError string `json:"last_error,omitempty"`
 	// Bins are the names this tool owns in the bin dir (symlinks and
 	// shim wrappers), removed on uninstall.
 	Bins []string `json:"bins,omitempty"`
 	// PMBins are package-manager bin names discovered by diffing the
 	// pm's bin dir (npm/pip), symlinked into the bin dir.
 	PMBins []string `json:"pm_bins,omitempty"`
-	// LastError is the failure message of the most recent install
-	// attempt; cleared on success.
-	LastError string `json:"last_error,omitempty"`
-	// UpdatedAt is when this status last changed.
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // State is the tools-state.json document.
@@ -129,20 +129,20 @@ const (
 // aqua sources, the embedded aqua package definition. Overlay entries
 // (vibekit-curated) may add requires/shims/manual install commands.
 type CatalogEntry struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Source      string   `json:"source"`
-	Aliases     []string `json:"aliases,omitempty"`
-	Featured    bool     `json:"featured,omitempty"`
+	Shims       map[string]string `json:"shims,omitempty"`
+	Aqua        *AquaPackage      `json:"aqua,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Source      string            `json:"source"`
 	// Version is the default pinned version for entries without an
 	// upstream version source (manual installs).
-	Version   string            `json:"version,omitempty"`
-	Requires  []string          `json:"requires,omitempty"`
-	Shims     map[string]string `json:"shims,omitempty"`
-	Install   string            `json:"install,omitempty"`   // manual-source entries
-	Uninstall string            `json:"uninstall,omitempty"` // manual-source entries
-	Probe     string            `json:"probe,omitempty"`     // manual-source entries
-	Aqua      *AquaPackage      `json:"aqua,omitempty"`
+	Version   string   `json:"version,omitempty"`
+	Install   string   `json:"install,omitempty"`   // manual-source entries
+	Uninstall string   `json:"uninstall,omitempty"` // manual-source entries
+	Probe     string   `json:"probe,omitempty"`     // manual-source entries
+	Aliases   []string `json:"aliases,omitempty"`
+	Requires  []string `json:"requires,omitempty"`
+	Featured  bool     `json:"featured,omitempty"`
 }
 
 // Catalog is the compiled tool-catalog.json document.
