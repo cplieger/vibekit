@@ -38,7 +38,7 @@
     "@cplieger/reactive": "1.2.4",
     "@cplieger/ui-primitives": "2.1.2",
     "@cplieger/web-terminal-engine": "2.4.0",
-    "@cplieger/web-terminal-ui": "3.4.5"
+    "@cplieger/web-terminal-ui": "3.5.0"
   },
   "overrides": {
     "typed-rest-client": {
