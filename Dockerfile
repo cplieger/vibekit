@@ -52,7 +52,7 @@ COPY . ./
 # read-only JSON the tools engine loads; both refs are Renovate-pinned
 # so catalog updates arrive as ordinary dependency PRs.
 # renovate: datasource=github-releases depName=jdx/mise
-ARG MISE_REGISTRY_REF=v2026.7.6
+ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.538.0
 # hadolint ignore=DL3062
