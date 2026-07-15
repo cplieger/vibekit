@@ -10,35 +10,35 @@ package api
 type ToolJob struct {
 	ID    string   `json:"id"`
 	Kind  string   `json:"kind"`
-	Names []string `json:"names,omitempty"`
 	State string   `json:"state"`
 	Error string   `json:"error,omitempty"`
-	// Timestamps are Unix milliseconds.
-	CreatedAt int64 `json:"created_at"`
-	StartedAt int64 `json:"started_at,omitempty"`
-	EndedAt   int64 `json:"ended_at,omitempty"`
+	Names []string `json:"names,omitempty"`
 	// OutputTail carries the job's most recent output lines; populated
 	// on the jobs endpoints only (live output streams via the
 	// tool_job_output SSE event).
 	OutputTail []string `json:"output_tail,omitempty"`
+	// Timestamps are Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+	StartedAt int64 `json:"started_at,omitempty"`
+	EndedAt   int64 `json:"ended_at,omitempty"`
 }
 
 // ToolInfo is one tool row in GET /api/tools: the manifest entry
 // joined with the engine's install state.
 type ToolInfo struct {
+	Shims            map[string]string `json:"shims,omitempty"`
 	Name             string            `json:"name"`
 	Source           string            `json:"source"`
 	Version          string            `json:"version"`
-	Pin              bool              `json:"pin,omitempty"`
-	Requires         []string          `json:"requires,omitempty"`
-	Shims            map[string]string `json:"shims,omitempty"`
 	Description      string            `json:"description,omitempty"`
 	Origin           string            `json:"origin,omitempty"`
-	Installed        bool              `json:"installed"`
 	InstalledVersion string            `json:"installed_version,omitempty"`
 	Latest           string            `json:"latest,omitempty"`
-	Installing       bool              `json:"installing"`
 	LastError        string            `json:"last_error,omitempty"`
+	Requires         []string          `json:"requires,omitempty"`
+	Pin              bool              `json:"pin,omitempty"`
+	Installed        bool              `json:"installed"`
+	Installing       bool              `json:"installing"`
 }
 
 // SystemTool is one image-baked binary surfaced read-only in the UI.
@@ -49,9 +49,9 @@ type SystemTool struct {
 
 // ToolsList is the GET /api/tools response body.
 type ToolsList struct {
+	Job    *ToolJob     `json:"job,omitempty"`
 	Tools  []ToolInfo   `json:"tools"`
 	System []SystemTool `json:"system"`
-	Job    *ToolJob     `json:"job,omitempty"`
 }
 
 // ToolCatalogHit is one catalog search result (GET /api/tools/search).
@@ -59,10 +59,10 @@ type ToolCatalogHit struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Source      string `json:"source"`
-	Featured    bool   `json:"featured,omitempty"`
 	// Version is the catalog's default pinned version, set only for
 	// entries without an upstream version source (manual installs).
-	Version string `json:"version,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Featured bool   `json:"featured,omitempty"`
 }
 
 // ToolsSearchResponse is the GET /api/tools/search response body.

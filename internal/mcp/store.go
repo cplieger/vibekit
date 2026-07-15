@@ -162,18 +162,6 @@ func WithOAuthClientID(id string) ServerOption {
 	return func(s *Server) { s.OAuthClientID = id }
 }
 
-// WithOAuthClientSecret sets the OAuth client secret for HTTP transport
-// servers (confidential clients that authenticate at the token endpoint;
-// kiro-cli 2.12+). Stored as a secret: masked on read, merged on write.
-func WithOAuthClientSecret(secret string) ServerOption {
-	return func(s *Server) { s.OAuthClientSecret = secret }
-}
-
-// WithAutoApprove sets MCP tool names to auto-approve without prompting.
-func WithAutoApprove(tools ...string) ServerOption {
-	return func(s *Server) { s.AutoApprove = tools }
-}
-
 // WithEnv sets environment variables for stdio transport servers.
 func WithEnv(env []KeyPair) ServerOption {
 	return func(s *Server) { s.Env = env }

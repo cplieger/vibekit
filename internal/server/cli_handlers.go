@@ -153,5 +153,3 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		api.MethodNotAllowed(w)
 	}
 }
-
-

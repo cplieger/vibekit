@@ -149,7 +149,7 @@ async function runDelete(
     parsed = undefined;
   }
   if (res.ok || res.status === 409) {
-    return (parsed ?? {});
+    return parsed ?? {};
   }
   const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
   throw new ActionError(msg, { status: res.status });
@@ -202,7 +202,7 @@ async function runEnsure(
     const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
     throw new ActionError(msg, { status: res.status });
   }
-  return (parsed ?? {});
+  return parsed ?? {};
 }
 
 export const ensureTool = defineAction<{ name: string }, ToolJobAccepted>({
